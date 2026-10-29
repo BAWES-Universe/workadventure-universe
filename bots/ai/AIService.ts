@@ -1025,9 +1025,9 @@ export class AIService {
                                 // Proper streaming with ID - accumulate by ID
                                 const existing = toolCallAccumulator.get(toolCall.id);
                                 if (existing) {
-                                    // Append to existing arguments (streaming)
-                                    // Skip '{}' default - only append actual argument strings
-                                    if (toolCall.arguments && toolCall.arguments !== '{}') {
+                                    // Append to existing arguments (streaming). A piece that is exactly '{}' is part of
+                                    // the arguments too (an empty `catch(e){}` in a page's code), so it is kept.
+                                    if (toolCall.arguments) {
                                         existing.arguments += toolCall.arguments;
                                     }
                                     // Update name if provided (should be same, but just in case)
@@ -1044,7 +1044,7 @@ export class AIService {
                                         arguments: initArgs
                                     });
                                 }
-                            } else if (toolCall.arguments && toolCall.arguments !== '{}') {
+                            } else if (toolCall.arguments) {
                                 // No ID but has arguments - this is a continuation chunk
                                 // Find the most recent tool call (by insertion order) and append to it
                                 // In practice, there should only be one active tool call at a time
@@ -1469,7 +1469,7 @@ export class AIService {
                                             if (toolCall.id) {
                                                 const existing = toolCallAccumulator.get(toolCall.id);
                                                 if (existing) {
-                                                    if (toolCall.arguments && toolCall.arguments !== '{}') {
+                                                    if (toolCall.arguments) {
                                                         existing.arguments += toolCall.arguments;
                                                     }
                                                     if (toolCall.name) {
@@ -1483,7 +1483,7 @@ export class AIService {
                                                         arguments: initArgs,
                                                     });
                                                 }
-                                            } else if (toolCall.arguments && toolCall.arguments !== '{}') {
+                                            } else if (toolCall.arguments) {
                                                 if (toolCallAccumulator.size > 0) {
                                                     const entries = Array.from(toolCallAccumulator.entries());
                                                     const lastEntry = entries[entries.length - 1];
