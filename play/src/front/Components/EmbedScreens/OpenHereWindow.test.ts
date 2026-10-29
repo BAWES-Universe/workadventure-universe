@@ -23,14 +23,19 @@ import { expressTrayStore } from "../../Stores/ExpressStore";
 import { lightboxOpenStore } from "../../Stores/UserInputStore";
 import { askOpenHereForRoom } from "../../Stores/OpenHereSheetStore";
 import { openHereTuckedStore } from "../../Stores/SideWindowInFrontStore";
+import { coWebsiteRatio, fullScreenCowebsite } from "../../Stores/CoWebsiteStore";
 import { gameManager } from "../../Phaser/Game/GameManager";
+import type { GameScene } from "../../Phaser/Game/GameScene";
 import OpenHereWindow from "./OpenHereWindow.svelte";
 
 describe("OpenHereWindow Esc", () => {
     let component: OpenHereWindow | undefined;
     let target: HTMLDivElement;
+    let scene: ReturnType<typeof vi.spyOn> | undefined;
 
     beforeEach(() => {
+        // The window centres the map when it opens: there is no map here.
+        scene = vi.spyOn(gameManager, "tryGetCurrentGameScene").mockReturnValue(undefined);
         target = document.createElement("div");
         document.body.append(target);
         component = new OpenHereWindow({ target, props: { floating: true } });
@@ -41,6 +46,7 @@ describe("OpenHereWindow Esc", () => {
     afterEach(() => {
         component?.$destroy();
         component = undefined;
+        scene?.mockRestore();
         target.remove();
         emoteMenuStore.closeEmoteMenu();
         expressTrayStore.close();
@@ -97,5 +103,81 @@ describe("OpenHereWindow asked for room", () => {
         target.remove();
         openHereTuckedStore.set(false);
         scene.mockRestore();
+    });
+});
+
+describe("OpenHereWindow and the map", () => {
+    const reposition = vi.fn();
+    let component: OpenHereWindow | undefined;
+    let target: HTMLDivElement;
+    let scene: ReturnType<typeof vi.spyOn> | undefined;
+
+    const frame = () => target.querySelector<HTMLElement>('[data-testid="openHereWindow"]');
+
+    function transitionEnd(element: Element | null | undefined, propertyName: string): void {
+        const event = new Event("transitionend", { bubbles: true });
+        Object.defineProperty(event, "propertyName", { value: propertyName });
+        element?.dispatchEvent(event);
+    }
+
+    beforeEach(async () => {
+        reposition.mockClear();
+        scene = vi.spyOn(gameManager, "tryGetCurrentGameScene").mockReturnValue({ reposition } as unknown as GameScene);
+        target = document.createElement("div");
+        document.body.append(target);
+        component = new OpenHereWindow({ target, props: { floating: true } });
+        await tick();
+    });
+
+    afterEach(() => {
+        component?.$destroy();
+        component = undefined;
+        scene?.mockRestore();
+        target.remove();
+        fullScreenCowebsite.set(false);
+    });
+
+    it("takes its side of the screen, as Orbit's does, so the player is kept in the space beside it", () => {
+        expect(frame()?.classList.contains("screen-blocker")).toBe(true);
+        expect(reposition).toHaveBeenCalledTimes(1);
+    });
+
+    it("covers the whole map when expanded, and takes its side again when it comes back", async () => {
+        reposition.mockClear();
+        fullScreenCowebsite.set(true);
+        await tick();
+        expect(frame()?.classList.contains("screen-blocker")).toBe(false);
+        expect(reposition).toHaveBeenCalledTimes(1);
+
+        fullScreenCowebsite.set(false);
+        await tick();
+        expect(frame()?.classList.contains("screen-blocker")).toBe(true);
+        expect(reposition).toHaveBeenCalledTimes(2);
+    });
+
+    it("centres the map again for a new width, and once more as the width stops moving", async () => {
+        const width = get(coWebsiteRatio);
+        try {
+            reposition.mockClear();
+            coWebsiteRatio.set(get(coWebsiteRatio) === 0.33 ? 0.5 : 0.33);
+            await tick();
+            expect(reposition).toHaveBeenCalledTimes(1);
+
+            transitionEnd(frame(), "width");
+            expect(reposition).toHaveBeenCalledTimes(2);
+            // Not for another property, nor for something inside that moved.
+            transitionEnd(frame(), "top");
+            transitionEnd(frame()?.querySelector("#cowebsites-window"), "width");
+            expect(reposition).toHaveBeenCalledTimes(2);
+        } finally {
+            coWebsiteRatio.set(width);
+        }
+    });
+
+    it("gives the map its space back when it closes", () => {
+        reposition.mockClear();
+        component?.$destroy();
+        component = undefined;
+        expect(reposition).toHaveBeenCalledTimes(1);
     });
 });
