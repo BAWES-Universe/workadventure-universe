@@ -6,6 +6,8 @@
     import SimpleCowebsiteComponent from "../Cowebsites/SimpleCowebsiteComponent.svelte";
     import ArtifactCowebsiteComponent from "../Cowebsites/ArtifactCowebsiteComponent.svelte";
     import { ArtifactCoWebsite } from "../../WebRtc/CoWebsite/ArtifactCoWebsite";
+    import { YourArtifactsCoWebsite } from "../../WebRtc/CoWebsite/YourArtifactsCoWebsite";
+    import YourArtifactsCowebsiteComponent from "../Cowebsites/YourArtifactsCowebsiteComponent.svelte";
     import FileViewerCowebsiteComponent from "../Cowebsites/FileViewerCowebsiteComponent.svelte";
     import { JitsiCoWebsite } from "../../WebRtc/CoWebsite/JitsiCoWebsite";
     import { SimpleCoWebsite } from "../../WebRtc/CoWebsite/SimpleCoWebsite";
@@ -411,6 +413,8 @@
                     />
                 {:else if coWebsite instanceof ArtifactCoWebsite}
                     <ArtifactCowebsiteComponent actualCowebsite={coWebsite} visible={coWebsite === activeCowebsite} />
+                {:else if coWebsite instanceof YourArtifactsCoWebsite}
+                    <YourArtifactsCowebsiteComponent visible={coWebsite === activeCowebsite} />
                 {:else if coWebsite instanceof SimpleCoWebsite}
                     <SimpleCowebsiteComponent
                         actualCowebsite={coWebsite}

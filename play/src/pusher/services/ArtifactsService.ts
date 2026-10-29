@@ -51,7 +51,14 @@ const ArtifactView = z.object({
     expiresAt: z.string().nullable(),
 });
 
-const Rights = z.object({ owner: z.boolean(), change: z.boolean(), manage: z.boolean(), copy: z.boolean() });
+const Rights = z.object({
+    owner: z.boolean(),
+    change: z.boolean(),
+    manage: z.boolean(),
+    copy: z.boolean(),
+    // In the chat it was made in right now (game #1584); an Orbit that does not say it yet counts as not in it
+    inChat: z.boolean().optional(),
+});
 
 const Opened = z.object({ artifact: ArtifactView, version: VersionView, you: Rights });
 export type OpenedArtifact = z.infer<typeof Opened>;
@@ -68,6 +75,24 @@ export interface ArtifactSharing {
     openScope?: (typeof OPEN_SCOPES)[number];
     changeScope?: (typeof CHANGE_SCOPES)[number];
 }
+
+/** A row of a chat's list (game #1474): also when it last changed and whether it is the asking person's own. */
+const ChatArtifactView = ArtifactView.extend({ yours: z.boolean(), updatedAt: z.string() });
+const ChatArtifactPage = z.object({
+    artifacts: z.array(ChatArtifactView),
+    total: z.number().int().min(0),
+    next: z.number().int().min(0).nullable(),
+});
+export type ChatArtifactPage = z.infer<typeof ChatArtifactPage>;
+
+/** A row of Your artifacts (game #1609): every one the person owns, with when it last changed. */
+const OwnedArtifactView = ArtifactView.extend({ updatedAt: z.string() });
+const OwnedArtifactPage = z.object({
+    artifacts: z.array(OwnedArtifactView),
+    total: z.number().int().min(0),
+    next: z.number().int().min(0).nullable(),
+});
+export type OwnedArtifactPage = z.infer<typeof OwnedArtifactPage>;
 
 const VersionList = z.object({ versions: z.array(VersionView) });
 const VersionCode = z.object({ version: VersionView, content: z.string() });
@@ -119,6 +144,22 @@ export class ArtifactsService {
     /** The code of one version, for the Code view. */
     readCode(id: string, number: number, viewer: ArtifactViewer): Promise<ArtifactVersionCode> {
         return this.call(`/api/artifacts/${encodeURIComponent(id)}/versions/${number}`, { viewer }, VersionCode);
+    }
+
+    /**
+     * The artifacts made in this chat that the person may open, newest change first, a page at a time (the chat's
+     * Artifacts group and list). `offset` is where the page starts: the `next` of the page before.
+     */
+    listInChat(viewer: ArtifactViewer, offset = 0): Promise<ChatArtifactPage> {
+        return this.call("/api/artifacts/chat", { viewer, offset }, ChatArtifactPage);
+    }
+
+    /**
+     * Every artifact the person owns, from every chat and bot, newest change first, a page at a time (Your artifacts in
+     * the window, game #1609). A guest owns none.
+     */
+    listOwned(person: ArtifactPerson, offset = 0): Promise<OwnedArtifactPage> {
+        return this.call("/api/artifacts/owned", { person, offset }, OwnedArtifactPage);
     }
 
     private async call<T>(

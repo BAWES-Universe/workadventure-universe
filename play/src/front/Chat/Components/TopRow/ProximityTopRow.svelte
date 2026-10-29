@@ -5,7 +5,9 @@
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import type { ProximityChatParticipant, ProximityChatRoom } from "../../Connection/Proximity/ProximityChatRoom";
     import type { SpaceUserExtended } from "../../../Space/SpaceInterface";
+    import { isBotUser } from "../../UserProvider/ChatUserMapper";
     import { areaPresenceStore } from "../../Stores/AreaPresenceStore";
+    import { createPersonColourOf } from "../../Stores/ChatUserWokaStore";
     import WokaFromUserId from "../../../Components/Woka/WokaFromUserId.svelte";
     import TopRowAvatar from "./TopRowAvatar.svelte";
     import type { TopRowArea } from "./TopRowSummary";
@@ -34,11 +36,19 @@
     const hasUserInProximityChat = proximityChatRoom.hasUserInProximityChat;
     const hasUnreadMessages = proximityChatRoom.hasUnreadMessages;
     const messages = proximityChatRoom.messages;
+    // Each woka sits on the person's colour from People, as in a direct chat's row.
+    const colourOf = createPersonColourOf(gameManager.tryGetCurrentGameScene()?.userProviderMerger);
 
     function toParticipants(users: Map<string, SpaceUserExtended>): ProximityChatParticipant[] {
         return Array.from(users.values())
             .filter((user) => user.spaceUserId !== mySpaceUserId)
-            .map((user) => ({ id: user.spaceUserId, name: user.name, pictureStore: user.pictureStore }));
+            .map((user) => ({
+                id: user.spaceUserId,
+                name: user.name,
+                pictureStore: user.pictureStore,
+                bot: isBotUser(user),
+                chatId: user.chatID,
+            }));
     }
 
     // Areas the proximity chat is not connected to (meetings without chat, Matrix-only areas), with the
@@ -152,7 +162,11 @@
                     <div class="flex items-center">
                         {#each stackedPeople as person, index (person.id)}
                             <div class={index === 0 ? "" : "-ms-3"} style:z-index={MAX_STACKED_AVATARS - index}>
-                                <TopRowAvatar pictureStore={person.pictureStore} name={person.name} />
+                                <TopRowAvatar
+                                    pictureStore={person.pictureStore}
+                                    name={person.name}
+                                    color={$colourOf(person.chatId, person.name)}
+                                />
                             </div>
                         {/each}
                         {#if extraPeople > 0}

@@ -6,6 +6,8 @@
  * by their (translated) text: only the `session` field counts. Everything stays local to this tab.
  */
 
+import type { UnsentVoiceNote } from "../../VoiceNote/VoiceNote";
+
 export interface ProximitySessionMarker {
     /** "start" when this tab joined a group or a meeting area, "end" when it left. */
     kind: "start" | "end";
@@ -172,6 +174,8 @@ export interface ProximitySession<M extends SessionTimelineMessage = SessionTime
     messages: M[];
     lastMessage: M | undefined;
     unsentDraft: string | undefined;
+    /** A voice note recorded for this chat and not sent before the people walked off. */
+    unsentVoiceNote?: UnsentVoiceNote;
     /** True while the stay has no end marker. At most one session is live. */
     isLive: boolean;
 }
@@ -242,6 +246,7 @@ function mergeInto<M extends SessionTimelineMessage>(target: ProximitySession<M>
     target.isLive = next.isLive;
     // A draft left when you walked away is kept, to go back into the composer once you're back.
     if (next.unsentDraft !== undefined) target.unsentDraft = next.unsentDraft;
+    if (next.unsentVoiceNote !== undefined) target.unsentVoiceNote = next.unsentVoiceNote;
 }
 
 /**
@@ -260,7 +265,7 @@ function continueConversations<M extends SessionTimelineMessage>(
         let candidate: ProximitySession<M> | undefined;
         let candidateEnd = -Infinity;
         for (const earlier of result) {
-            if (earlier.messages.length === 0 && earlier.unsentDraft === undefined) continue;
+            if (!hasSomethingSaid(earlier)) continue;
             if (!continues(earlier, session, rules)) continue;
             // The most recent one wins (a group can share people with several earlier chats).
             const end = earlier.endedAt ?? -Infinity;
@@ -278,6 +283,11 @@ function continueConversations<M extends SessionTimelineMessage>(
     return result;
 }
 
+/** Whether anything was written in a session, sent or not. */
+function hasSomethingSaid(session: ProximitySession<SessionTimelineMessage>): boolean {
+    return session.messages.length > 0 || session.unsentDraft !== undefined || session.unsentVoiceNote !== undefined;
+}
+
 /**
  * Splits the timeline into stays. Each start marker opens a session that runs until its end marker;
  * messages before the first start or between an end and the next start go to the room messages session.
@@ -286,13 +296,15 @@ function continueConversations<M extends SessionTimelineMessage>(
  *
  * Coming back to the same people (or the same meeting area) within the continuation window carries on the
  * same session instead of starting another: its stays are listed in `stayIds`, and the later starts become
- * "resume" entries. `drafts` holds the text left in the composer when a stay ended, by stay id.
+ * "resume" entries. `drafts` holds the text left in the composer when a stay ended, by stay id, and `voiceNotes` the
+ * voice notes left unsent.
  */
 export function buildProximitySessions<M extends SessionTimelineMessage>(
     messages: readonly M[],
     currentSpaceJoinedAt: number | undefined,
     rules: ContinuationRules = DEFAULT_CONTINUATION,
-    drafts?: ReadonlyMap<string, string>
+    drafts?: ReadonlyMap<string, string>,
+    voiceNotes?: ReadonlyMap<string, UnsentVoiceNote>
 ): ProximitySession<M>[] {
     const sessions: ProximitySession<M>[] = [];
     const loose: ProximitySession<M> = {
@@ -358,6 +370,7 @@ export function buildProximitySessions<M extends SessionTimelineMessage>(
                 if (!open.isArea) addPeople(open, marker.participants, marker.participantIds ?? []);
                 open.endedAt = message.date?.getTime();
                 open.unsentDraft = marker.unsentDraft ?? drafts?.get(open.id);
+                open.unsentVoiceNote = voiceNotes?.get(open.id);
                 sessions.push(open);
                 open = undefined;
             } else {
@@ -374,6 +387,8 @@ export function buildProximitySessions<M extends SessionTimelineMessage>(
             open.startedAt >= currentSpaceJoinedAt - 1000;
         open.isLive = startedRecently;
         if (!open.isLive) open.unsentDraft = open.unsentDraft ?? drafts?.get(open.id);
+        // A note can be kept in the live stay too: put back in the recorder, then the chat was closed before it went.
+        open.unsentVoiceNote = voiceNotes?.get(open.id);
         sessions.push(open);
     }
     const conversations = continueConversations(sessions, rules);
@@ -410,6 +425,6 @@ export function listableSessions<M extends SessionTimelineMessage>(
     return sessions.filter((session) => {
         if (session.isLive) return false;
         if (session.id === ROOM_MESSAGES_SESSION_ID) return !hasLive && session.messages.length > 0;
-        return session.messages.length > 0 || session.unsentDraft !== undefined;
+        return hasSomethingSaid(session);
     });
 }

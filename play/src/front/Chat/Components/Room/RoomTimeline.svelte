@@ -11,8 +11,7 @@
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import type { ChatMessage, ChatRoom, ChatRoomMembershipManagement } from "../../Connection/ChatConnection";
     import getCloseImg from "../../images/get-close.png";
-    import { selectedChatMessageToReply, shouldRestoreChatStateStore } from "../../Stores/ChatStore";
-    import { selectedRoomStore } from "../../Stores/SelectRoomStore";
+    import { chatBackPeekStore, leaveChat } from "../../ChatBack";
     import { matrixSecurity } from "../../Connection/Matrix/MatrixSecurity";
     import { localUserStore } from "../../../Connection/LocalUserStore";
     import { ProximityChatRoom } from "../../Connection/Proximity/ProximityChatRoom";
@@ -48,7 +47,11 @@
     import Avatar from "../Avatar.svelte";
     import { MatrixChatRoom } from "../../Connection/Matrix/MatrixChatRoom";
     import { openProfileRoomIdStore } from "../../Stores/PartnerProfileStore";
-    import { openRoomDetailsIdStore, openSharedItemsStore } from "../../Stores/ChatDetailsStore";
+    import {
+        openArtifactsListStore,
+        openRoomDetailsIdStore,
+        openSharedItemsStore,
+    } from "../../Stores/ChatDetailsStore";
     import { chatCarriesItsCloseStore } from "../../ChatSidebarWidthStore";
     import { installStrayFileDropGuard, isFileDrag } from "../../../Utils/strayFileDropGuard";
     import { mapEditorToolbarInUseStore } from "../../../Stores/MapEditorStore";
@@ -75,9 +78,11 @@
     import RoomDetailsPanel from "./Details/RoomDetailsPanel.svelte";
     import NearbyDetailsPanel from "./Details/NearbyDetailsPanel.svelte";
     import SharedPanel from "./Details/SharedPanel.svelte";
+    import ArtifactsPanel from "./Details/ArtifactsPanel.svelte";
     import PinnedBar from "./Details/PinnedBar.svelte";
     import { DIRECT_PARTNER_CONTEXT, directPartnerStore, type DirectPartner } from "./DirectChat/DirectPartnerStore";
     import { dayLabel, messageRuns, runSenderKey } from "./MessageRuns";
+    import { drawnFrom, drawnStart, screenfulCount, onDrawEveryMessage } from "./DrawnMessages";
     import { IconChevronLeft, IconChevronRight, IconLoader, IconLock, IconMailBox } from "@wa-icons";
 
     export let room: ChatRoom;
@@ -111,13 +116,14 @@
         return room instanceof MatrixChatRoom && room.type === "direct" ? { kind: "dm", ref: room.id } : undefined;
     });
 
-    // In a direct chat, each person's woka sits on their colour from People (header, profile, messages).
-    const isDirectChat = writable(false);
+    // In a direct chat and a proximity chat, each person's woka sits on their colour from People (header, profile,
+    // messages). Group chats keep the plain circle.
+    const showsPeopleColours = writable(false);
     const colourByChatId = createColourByChatIdStore(gameManager.getCurrentGameScene().userProviderMerger);
     setContext<Readable<PersonColourOf>>(
         PERSON_COLOUR_CONTEXT,
-        derived([isDirectChat, colourByChatId], ([$isDirectChat, $colourByChatId]) =>
-            $isDirectChat
+        derived([showsPeopleColours, colourByChatId], ([$showsPeopleColours, $colourByChatId]) =>
+            $showsPeopleColours
                 ? (chatId: string | undefined, name: string | undefined) => personColour($colourByChatId, chatId, name)
                 : () => undefined
         )
@@ -222,12 +228,14 @@
         if (!proximityRoom) return;
         if (get(openRoomDetailsIdStore) === room.id) openRoomDetailsIdStore.set(undefined);
         if (get(openSharedItemsStore)?.roomId === room.id) openSharedItemsStore.set(undefined);
+        if (get(openArtifactsListStore) === room.id) openArtifactsListStore.set(undefined);
     }
+    $: artifactsOpen = (matrixRoom !== undefined || proximityRoom !== undefined) && $openArtifactsListStore === room.id;
     $: sharedOpen =
         (matrixRoom !== undefined || proximityRoom !== undefined) && $openSharedItemsStore?.roomId === room.id
             ? $openSharedItemsStore
             : undefined;
-    $: isDirectChat.set(directPartner !== undefined);
+    $: showsPeopleColours.set(directPartner !== undefined || proximityRoom !== undefined);
     $: partnerForCards.set(directPartner ? $directPartner : undefined);
     $: roomMembers = matrixRoom ? matrixRoom.members : readable([]);
     $: memberCount = $roomMembers.length;
@@ -270,6 +278,32 @@
     // Notices keep the spacing they had before the run labels: room above them after a message (the message row used
     // to end with its own), and nothing added below them.
     $: noticeFlags = timelineEntries.map(isNoticeEntry);
+    // A long chat opens on its newest messages (#1591): drawing every message it holds before the first frame took most
+    // of a second. What fills the screen is drawn first; the older messages it holds are drawn as the reader scrolls up
+    // to them, before any page is asked of the server. The oldest message drawn, or undefined once all are.
+    let drawnFromId: string | undefined;
+    let firstDrawDone = false;
+    $: entryIds = timelineEntries.map((entry) => entry.message.id);
+    $: if (!firstDrawDone && entryIds.length > 0) {
+        firstDrawDone = true;
+        drawnFromId = drawnFrom(entryIds, undefined, screenfulCount(window.innerHeight));
+    }
+    $: firstDrawnIndex = drawnStart(entryIds, drawnFromId);
+    $: drawnEntries = firstDrawnIndex > 0 ? timelineEntries.slice(firstDrawnIndex) : timelineEntries;
+
+    // Draws `count` more of the older messages the chat holds, above those drawn.
+    async function drawMore(count: number): Promise<void> {
+        if (drawnFromId === undefined) return;
+        drawnFromId = drawnFrom(entryIds, drawnFromId, count);
+        await tick();
+    }
+
+    async function drawEveryMessage(): Promise<void> {
+        if (drawnFromId === undefined) return;
+        drawnFromId = undefined;
+        await tick();
+    }
+    const stopDrawingOnRequest = onDrawEveryMessage(drawEveryMessage);
     $: endedTitle = shownSession
         ? isRoomMessages
             ? $LL.chat.session.roomMessages()
@@ -409,10 +443,17 @@
                 }
 
                 // The room loads its first messages itself: take what it has, and ask for more only if the screen
-                // is not filled yet (a chat that already has enough opens with no request at all).
+                // is not filled yet (a chat that already has enough opens with no request at all). Messages it
+                // holds but hasn't drawn yet fill it first.
                 await waitForRoomToLoad();
                 await tick();
-                while (messageListRef && get(room.hasPreviousMessage) && isViewportNotFilled()) {
+                while (messageListRef && isViewportNotFilled()) {
+                    if (drawnFromId !== undefined) {
+                        // eslint-disable-next-line no-await-in-loop
+                        await drawMore(Math.max(1, entryIds.length - firstDrawnIndex));
+                        continue;
+                    }
+                    if (!get(room.hasPreviousMessage)) break;
                     const messageCount = get(room.messages).length;
                     // eslint-disable-next-line no-await-in-loop
                     await room.loadMorePreviousMessages();
@@ -656,12 +697,7 @@
     }
 
     function goBackAndClearSelectedChatMessage() {
-        openProfileRoomIdStore.set(undefined);
-        openRoomDetailsIdStore.set(undefined);
-        openSharedItemsStore.set(undefined);
-        selectedChatMessageToReply.set(null);
-        selectedRoomStore.set(undefined);
-        shouldRestoreChatStateStore.set(false);
+        leaveChat();
     }
 
     function handleScroll() {
@@ -675,7 +711,17 @@
     }
 
     function loadMorePreviousMessages() {
-        if (loadingMessagePromise || !shouldLoadMoreMessages()) return;
+        if (loadingMessagePromise) return;
+        // Older messages the chat already holds come first, a screen's worth at a time, before any page is asked of the
+        // server. Still near the top after that: the next screen's worth.
+        if (drawnFromId !== undefined) {
+            if (!readingNearTop()) return;
+            drawMore(screenfulCount(window.innerHeight))
+                .then(() => loadMorePreviousMessages())
+                .catch((error) => console.error(error));
+            return;
+        }
+        if (!shouldLoadMoreMessages()) return;
 
         loadingMessagePromise = new Promise<void>((resolve) => {
             (async () => {
@@ -708,6 +754,10 @@
     }
 
     function shouldLoadMoreMessages() {
+        return readingNearTop() && get(room.hasPreviousMessage);
+    }
+
+    function readingNearTop(): boolean {
         const messages = Array.from(messageListRef?.querySelectorAll("li") || []);
         // The first message showing at the top of the list. The list can start halfway down the screen (the phone
         // sheet), so it is measured from the list's own top, not the screen's.
@@ -715,10 +765,9 @@
         const messagesBeforeViewportTop = messages.find((msg) => msg.getBoundingClientRect().top >= listTop);
 
         return (
-            messagesBeforeViewportTop &&
+            messagesBeforeViewportTop !== undefined &&
             messages.indexOf(messagesBeforeViewportTop) < 10 &&
-            messages.indexOf(messagesBeforeViewportTop) !== -1 &&
-            get(room.hasPreviousMessage)
+            messages.indexOf(messagesBeforeViewportTop) !== -1
         );
     }
 
@@ -830,6 +879,7 @@
     }
 
     onDestroy(() => {
+        stopDrawingOnRequest();
         resizeObserver?.disconnect();
         childListObserver?.disconnect();
         clearTimeout(redrawTimer);
@@ -843,6 +893,7 @@
         // back opens on the conversation.
         if (get(openRoomDetailsIdStore) === room.id) openRoomDetailsIdStore.set(undefined);
         if (get(openSharedItemsStore)?.roomId === room.id) openSharedItemsStore.set(undefined);
+        if (get(openArtifactsListStore) === room.id) openArtifactsListStore.set(undefined);
     });
 </script>
 
@@ -856,7 +907,11 @@
     class:profile-open={(profileOpen && matrixRoom && $directPartner) ||
         roomDetailsOpen ||
         nearbyDetailsOpen ||
-        sharedOpen}
+        sharedOpen ||
+        artifactsOpen}
+    class:shared-open={sharedOpen !== undefined || artifactsOpen}
+    class:peek-conversation={$chatBackPeekStore === "conversation"}
+    class:peek-panel={$chatBackPeekStore === "panel"}
     on:dragover|preventDefault
     on:drop|preventDefault|stopPropagation={onDropFiles}
 >
@@ -869,9 +924,9 @@
     {/if}
     <!-- Made again when the chat is, so a panel never shows the old one. -->
     {#key roomInstance}
-        {#if sharedOpen}
-            <SharedPanel {room} tab={sharedOpen.tab} partnerChatId={$directPartner?.chatId} chatTitle={nearbyName} />
-        {:else if profileOpen && matrixRoom && $directPartner}
+        <!-- "Media, links and files" sits over the details or profile it was opened from, which stay as they were for
+             when you come back (and show under it while you swipe back). -->
+        {#if profileOpen && matrixRoom && $directPartner}
             <!-- Over the conversation, which stays as it was (draft, files, scroll) for when you come back. Above the
                  message options (z-50) and menus that live in it; "isolate" keeps all of that inside this panel. -->
             <PartnerProfilePanel
@@ -883,6 +938,11 @@
             <RoomDetailsPanel room={matrixRoom} />
         {:else if nearbyDetailsOpen && proximityRoom}
             <NearbyDetailsPanel room={proximityRoom} />
+        {/if}
+        {#if sharedOpen}
+            <SharedPanel {room} tab={sharedOpen.tab} partnerChatId={$directPartner?.chatId} chatTitle={nearbyName} />
+        {:else if artifactsOpen}
+            <ArtifactsPanel {room} partnerChatId={$directPartner?.chatId} chatTitle={nearbyName} />
         {/if}
     {/key}
     {#if room !== undefined}
@@ -1087,7 +1147,8 @@
                         </li>
                     {/if}
                 {/if}
-                {#each timelineEntries as entry, index (entry.message.id)}
+                {#each drawnEntries as entry, drawnIndex (entry.message.id)}
+                    {@const index = firstDrawnIndex + drawnIndex}
                     {@const place = runs.get(entry.message.id)}
                     {@const isNotice = noticeFlags[index]}
                     {@const afterNotice = index > 0 && noticeFlags[index - 1]}
@@ -1146,7 +1207,12 @@
 
         {#if isEnded && shownSession}
             <!-- An ended proximity chat can't receive anything: a way back to the people replaces the composer. -->
-            <ProximityEndedFooter session={shownSession} live={liveSession} onContinue={() => proximityRoom?.open()} />
+            <ProximityEndedFooter
+                session={shownSession}
+                live={liveSession}
+                room={proximityRoom}
+                onContinue={() => proximityRoom?.open()}
+            />
         {:else}
             <!-- One composer per conversation: its draft, files and pending sends belong to this room only.
                  Keyed by id: re-selecting the same room must not remount it (files, focus and uploads are kept). -->
@@ -1165,6 +1231,7 @@
                         {room}
                         partner={$directPartner}
                         inputHint={botPlaceholder}
+                        allowVoiceNotes={partnerBotId === undefined}
                         bind:this={messageInputBarRef}
                     />
                 {/key}
@@ -1204,13 +1271,12 @@
         pointer-events: none;
     }
     /* The profile has no background of its own: it sits on the chat panel's surface, like the conversation. What it
-       covers is hidden instead, and keeps its draft, files and scroll for when you come back. */
-    .profile-open
-        > :global(
-            :not([data-testid="partnerProfilePanel"]):not([data-testid="roomDetailsPanel"]):not(
-                    [data-testid="sharedPanel"]
-                ):not([data-testid="nearbyDetailsPanel"])
-        ) {
+       covers is hidden instead, and keeps its draft, files and scroll for when you come back. A swipe back shows it
+       again under the level sliding away (#1553). */
+    .profile-open:not(.peek-conversation) > :global(:not([data-chat-layer])) {
+        visibility: hidden;
+    }
+    .shared-open:not(.peek-panel) > :global([data-chat-layer="panel"]) {
         visibility: hidden;
     }
     .room-title {
