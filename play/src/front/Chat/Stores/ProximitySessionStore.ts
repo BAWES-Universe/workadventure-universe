@@ -1,5 +1,6 @@
 import { writable } from "svelte/store";
 import type { ChatMessage, ChatRoom } from "../Connection/ChatConnection";
+import type { UnsentVoiceNote } from "../VoiceNote/VoiceNote";
 
 /**
  * Which stay of the proximity chat the thread shows: a session id, ROOM_MESSAGES_SESSION_ID for the messages
@@ -16,6 +17,7 @@ export interface ProximityHistoryStash {
     messages: ChatMessage[];
     unreadBySession: Map<string, number>;
     unsentDrafts: Map<string, string>;
+    unsentVoiceNotes: Map<string, UnsentVoiceNote>;
     /** The proximity chat was the one open: the next map's opens in its place (a reconnect keeps you in it). */
     wasSelected?: boolean;
     /** What leaving the bubble puts back (the chat open before it), when the old map still had to put it back. */
@@ -27,11 +29,12 @@ export interface ProximityHistoryStash {
     };
     /**
      * The next map's proximity chat, once it took this. What the old chat still gets after the hand-over (a reconnect
-     * keeps it open while the game gets back in) goes to it: the composer's text when it closes, and messages sent
-     * meanwhile, marked as not sent.
+     * keeps it open while the game gets back in) goes to it: the composer's text and voice note when it closes, and
+     * messages sent meanwhile, marked as not sent.
      */
     takenBy?: {
         keepUnsentDraft(sessionId: string | undefined, text: string): void;
+        keepUnsentVoiceNote(sessionId: string | undefined, note: UnsentVoiceNote): void;
         carryNotSentMessage(message: ChatMessage, stayEnd: ChatMessage | undefined): void;
     };
 }

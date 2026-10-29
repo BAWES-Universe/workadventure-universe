@@ -10,6 +10,7 @@
         VOICE_NOTE_BARS,
         VOICE_NOTE_MAX_SECONDS,
         VOICE_NOTE_WARNING_SECONDS,
+        type UnsentVoiceNote,
         type VoiceNoteDetails,
     } from "../../../VoiceNote/VoiceNote";
     import { startVoiceNoteRecording, type VoiceNoteRecording } from "../../../VoiceNote/VoiceNoteRecorder";
@@ -34,6 +35,8 @@
     const LIVE_BARS = 28;
 
     let recording: VoiceNoteRecording | undefined;
+    // The recording being finished into a note, while it is: what `takeNote` hands over when it comes in that moment.
+    let finishing: Promise<UnsentVoiceNote> | undefined;
     // Counts the notes dropped: a stop that finishes after Delete was pressed (or the chat closed) must not bring the
     // note back.
     let dropped = 0;
@@ -106,12 +109,13 @@
 
     async function finishRecording() {
         clearInterval(timer);
-        const finishing = recording;
+        const stopped = recording;
         recording = undefined;
-        if (!finishing) return;
+        if (!stopped) return;
         const droppedBefore = dropped;
         try {
-            const done = await finishing.stop();
+            finishing = stopped.stop();
+            const done = await finishing;
             if (dropped !== droppedBefore) return;
             note = {
                 ...done,
@@ -125,7 +129,39 @@
             if (dropped !== droppedBefore) return;
             discard();
             onError($LL.chat.voiceNote.recordingFailed());
+        } finally {
+            // eslint-disable-next-line require-atomic-updates
+            finishing = undefined;
         }
+    }
+
+    /**
+     * Takes the note out of here, recorded so far or held for review, and leaves the recorder empty: the people it was
+     * for walked off, and it is kept with their chat. Undefined when there is nothing to keep.
+     */
+    export function takeNote(): Promise<UnsentVoiceNote | undefined> {
+        clearInterval(timer);
+        const stopped = recording;
+        recording = undefined;
+        const held = note ? { file: note.file, details: note.details } : undefined;
+        const taken = stopped ? stopped.stop() : finishing ?? Promise.resolve(held);
+        discard();
+        return taken.catch((error: unknown) => {
+            console.error(error);
+            return undefined;
+        });
+    }
+
+    /** Puts a note kept from before back in, ready to listen to and send. */
+    export function load(kept: UnsentVoiceNote) {
+        discard();
+        note = {
+            ...kept,
+            url: URL.createObjectURL(kept.file),
+            shape: resampleWaveform(kept.details.waveform, VOICE_NOTE_BARS),
+        };
+        seconds = kept.details.duration;
+        state = "review";
     }
 
     /** Drops the recording or the note held for review, and lets the microphone go. */

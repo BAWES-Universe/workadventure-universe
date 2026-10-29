@@ -111,6 +111,35 @@ describe("buildProximitySessions", () => {
         expect(sessions[0].unsentDraft).toBe("was about to say");
     });
 
+    it("keeps a stay with only an unsent voice note, and carries it into the stay that continues it", () => {
+        const note = { file: new File(["x"], "voice.weba"), details: { duration: 5, waveform: [1] } };
+        const ended = buildProximitySessions(
+            [start("s1", 0, "a", ["Sara"], ["sara"]), end("e1", 2, "a", undefined, ["Sara"], ["sara"])],
+            undefined,
+            undefined,
+            undefined,
+            new Map([["a", note]])
+        );
+        expect(listableSessions(ended).map((session) => session.id)).toEqual(["a"]);
+        expect(ended[0].unsentVoiceNote).toBe(note);
+
+        // Back with Sara a few minutes later: the same chat, live again, with the note in it.
+        const back = buildProximitySessions(
+            [
+                start("s1", 0, "a", ["Sara"], ["sara"]),
+                end("e1", 2, "a", undefined, ["Sara"], ["sara"]),
+                start("s2", 5, "b", ["Sara"], ["sara"]),
+            ],
+            at(5).getTime(),
+            undefined,
+            undefined,
+            new Map([["a", note]])
+        );
+        expect(back).toHaveLength(1);
+        expect(back[0].isLive).toBe(true);
+        expect(back[0].unsentVoiceNote).toBe(note);
+    });
+
     it("pairs markers without ids by order, for timelines written before ids existed", () => {
         const sessions = buildProximitySessions(
             [

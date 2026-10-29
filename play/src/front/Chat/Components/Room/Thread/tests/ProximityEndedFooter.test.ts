@@ -48,7 +48,26 @@ vi.mock("../../../../Bots/BotStatusStore", async () => {
         },
     };
 });
-vi.mock("../../../../Utils", () => ({ openDirectChatRoom: botsHolder.openDirectChatRoom }));
+// Sending what was left unsent to a direct chat: the room it would go to is handed to the send.
+const directHolder = vi.hoisted(() => ({
+    sendToDirectChat: vi.fn((chatID: string, send: (room: unknown) => Promise<void>) => {
+        void chatID;
+        return Promise.resolve(true);
+    }),
+}));
+vi.mock("../../../../Utils", () => ({
+    openDirectChatRoom: botsHolder.openDirectChatRoom,
+    sendToDirectChat: directHolder.sendToDirectChat,
+}));
+vi.mock("../../../../../Stores/MenuStore", async () => {
+    const { writable: store } = await import("svelte/store");
+    return { userIsConnected: store(true) };
+});
+vi.mock("../../../../Connection/Matrix/MatrixChatRoom", () => ({
+    MatrixChatRoom: class {
+        sendVoiceNote = vi.fn(() => Promise.resolve());
+    },
+}));
 vi.mock("../../../../../../i18n/i18n-svelte", () => {
     const fn: unknown = new Proxy(() => "x", { get: () => fn, apply: () => "x" });
     return { default: readable(fn), LL: readable(fn) };
@@ -57,6 +76,8 @@ vi.mock("../../../../../../i18n/i18n-svelte", () => {
 import type { ProximitySession } from "../../../../Connection/Proximity/ProximitySessions";
 import type { ChatMessage } from "../../../../Connection/ChatConnection";
 import ProximityEndedFooter from "../ProximityEndedFooter.svelte";
+import { MatrixChatRoom } from "../../../../Connection/Matrix/MatrixChatRoom";
+import type { ProximityChatRoom } from "../../../../Connection/Proximity/ProximityChatRoom";
 import { gameSceneIsLoadedStore } from "../../../../../Stores/GameSceneStore";
 
 const endedWithBot: ProximitySession<ChatMessage> = {
@@ -87,6 +108,7 @@ describe("ProximityEndedFooter", () => {
         botsHolder.allowed.clear();
         botsHolder.asked = 0;
         botsHolder.openDirectChatRoom.mockClear();
+        directHolder.sendToDirectChat.mockClear();
     });
 
     it("offers the way back once the new map has loaded, when it first showed during the swap", async () => {
@@ -283,5 +305,82 @@ describe("ProximityEndedFooter", () => {
         await tick();
 
         expect(target.innerHTML).not.toBe("");
+    });
+
+    describe("what was left unsent", () => {
+        const note = { file: new File(["x"], "voice.weba"), details: { duration: 5, waveform: [1] } };
+        const withNoura = {
+            ...endedWithBot,
+            label: "Noura",
+            participants: ["Noura"],
+            participantIds: ["space-noura"],
+            unsentVoiceNote: note,
+        };
+        const proximityRoom = () =>
+            ({ takeUnsentVoiceNote: vi.fn(), takeUnsentDraft: vi.fn() } as unknown as ProximityChatRoom & {
+                takeUnsentVoiceNote: ReturnType<typeof vi.fn>;
+                takeUnsentDraft: ReturnType<typeof vi.fn>;
+            });
+        const show = async (session: ProximitySession<ChatMessage>, room: ProximityChatRoom, noura: object) => {
+            URL.createObjectURL = vi.fn(() => "blob:note");
+            URL.revokeObjectURL = vi.fn();
+            // jsdom does not play media.
+            HTMLMediaElement.prototype.pause = vi.fn();
+            sceneHolder.scene = {
+                allUsersInWorldStore: readable(new Map([["space-noura", noura]])),
+                roomUrl: "https://play.example.test/room",
+                room: { isChatOnlineListEnabled: true, isChatDisconnectedListEnabled: false },
+                userProviderMerger: Promise.resolve({ usersByRoomStore: readable(new Map()) }),
+            };
+            const target = document.createElement("div");
+            document.body.append(target);
+            component = new ProximityEndedFooter({ target, props: { session, room } });
+            await tick();
+            return target;
+        };
+        const signedIn = { uuid: "uuid-noura", name: "Noura", chatID: "@noura:chat", playUri: "x" };
+
+        it("sends the voice note to Noura as a direct message, and takes it out of the ended chat", async () => {
+            const room = proximityRoom();
+            const target = await show(withNoura, room, signedIn);
+            expect(target.querySelector('[data-testid="proximityUnsentVoiceNote"]')).not.toBeNull();
+
+            target.querySelector<HTMLButtonElement>('[data-testid="proximityVoiceToDirect"]')?.click();
+            await vi.waitFor(() => expect(room.takeUnsentVoiceNote).toHaveBeenCalledWith(withNoura));
+            const [chatID, send] = directHolder.sendToDirectChat.mock.calls[0];
+            expect(chatID).toBe("@noura:chat");
+            const MockedRoom = MatrixChatRoom as unknown as new () => { sendVoiceNote: ReturnType<typeof vi.fn> };
+            const direct = new MockedRoom();
+            await send(direct);
+            expect(direct.sendVoiceNote).toHaveBeenCalledWith(note.file, note.details);
+        });
+
+        it("keeps the voice note there, with no direct message, when Noura is a guest", async () => {
+            const target = await show(withNoura, proximityRoom(), { uuid: "uuid-noura", name: "Noura", playUri: "x" });
+            expect(target.querySelector('[data-testid="proximityUnsentVoiceNote"]')).not.toBeNull();
+            expect(target.querySelector('[data-testid="proximityUnsentVoicePlay"]')).not.toBeNull();
+            expect(target.querySelector('[data-testid="proximityVoiceToDirect"]')).toBeNull();
+        });
+
+        it("has no direct message for a group", async () => {
+            const target = await show(
+                { ...withNoura, participants: ["Noura", "Sara"], participantIds: ["space-noura", "space-sara"] },
+                proximityRoom(),
+                signedIn
+            );
+            expect(target.querySelector('[data-testid="proximityVoiceToDirect"]')).toBeNull();
+        });
+
+        it("sends typed text left unsent the same way", async () => {
+            const room = proximityRoom();
+            const session = { ...withNoura, unsentVoiceNote: undefined, unsentDraft: "Can you send me the deck?" };
+            const target = await show(session, room, signedIn);
+            target.querySelector<HTMLButtonElement>('[data-testid="proximityDraftToDirect"]')?.click();
+            await vi.waitFor(() => expect(room.takeUnsentDraft).toHaveBeenCalledWith(session));
+            const [, send] = directHolder.sendToDirectChat.mock.calls[0];
+            const direct = { sendMessage: vi.fn() };
+            await send(direct);
+            expect(direct.sendMessage).toHaveBeenCalledWith("Can you send me the deck?");
+        });
     });
 });

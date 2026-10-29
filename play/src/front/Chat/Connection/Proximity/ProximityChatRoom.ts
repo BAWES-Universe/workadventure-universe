@@ -59,7 +59,7 @@ import { CharacterLayerManager } from "../../../Phaser/Entity/CharacterLayerMana
 import { BubbleNotification as BasicNotification } from "../../../Notification/BubbleNotification";
 import { formatPeopleNames } from "../../Components/TopRow/TopRowSummary";
 import { composerDraftStore } from "../../Stores/ComposerDraftStore";
-import { isVoiceNoteFileName } from "../../VoiceNote/VoiceNote";
+import { isVoiceNoteFileName, type UnsentVoiceNote } from "../../VoiceNote/VoiceNote";
 import { areaChatRooms } from "../../Stores/AreaPresenceStore";
 import { rememberProximityChat } from "../../Stores/SayHiCardStore";
 import {
@@ -293,6 +293,8 @@ export class ProximityChatRoom implements ChatRoom {
     public readonly unreadBySession: Readable<Map<string, number>> = { subscribe: this._unreadBySession.subscribe };
     // Text left in the composer when a stay ended, by session id. Shown as unsent in that stay, never sent on.
     private readonly _unsentDrafts: Writable<Map<string, string>> = writable(new Map());
+    // Voice notes recorded for a stay that ended before they were sent, by session id. Same life as the drafts.
+    private readonly _unsentVoiceNotes: Writable<Map<string, UnsentVoiceNote>> = writable(new Map());
     /** The timeline split into stays, room messages first, the live one last. */
     public readonly sessions: Readable<ProximitySession<ChatMessage>[]>;
 
@@ -369,9 +371,15 @@ export class ProximityChatRoom implements ChatRoom {
     ) {
         this.typingMembers = writable([]);
         this.sessions = derived(
-            [this.messages, this._spaceJoinedAt, this._unsentDrafts],
-            ([$messages, $spaceJoinedAt, $unsentDrafts]) =>
-                buildProximitySessions(Array.from($messages), $spaceJoinedAt, DEFAULT_CONTINUATION, $unsentDrafts)
+            [this.messages, this._spaceJoinedAt, this._unsentDrafts, this._unsentVoiceNotes],
+            ([$messages, $spaceJoinedAt, $unsentDrafts, $unsentVoiceNotes]) =>
+                buildProximitySessions(
+                    Array.from($messages),
+                    $spaceJoinedAt,
+                    DEFAULT_CONTINUATION,
+                    $unsentDrafts,
+                    $unsentVoiceNotes
+                )
         );
         // The first proximity chat you had is remembered on this device as soon as someone writes in it, whether or not
         // the chat panel is open and before the stay ends: the "Say hi in person" card on the Chats tab never comes back
@@ -394,6 +402,7 @@ export class ProximityChatRoom implements ChatRoom {
             this.messages.push(...stash.messages);
             this._unreadBySession.set(stash.unreadBySession);
             this._unsentDrafts.set(stash.unsentDrafts);
+            this._unsentVoiceNotes.set(stash.unsentVoiceNotes);
             this.refreshUnreadTotals(stash.unreadBySession);
             const last = stash.messages[stash.messages.length - 1];
             if (last?.date) this.lastMessageTimestamp = last.date.getTime();
@@ -1070,6 +1079,36 @@ export class ProximityChatRoom implements ChatRoom {
         return text;
     }
 
+    /**
+     * Hands back the voice note left unsent in this session, and forgets it: it goes back in the recorder when you're
+     * back with the same people, or out as a direct message.
+     */
+    public takeUnsentVoiceNote(session: ProximitySession<ChatMessage>): UnsentVoiceNote | undefined {
+        const notes = new Map(get(this._unsentVoiceNotes));
+        let note: UnsentVoiceNote | undefined;
+        for (const id of session.stayIds) {
+            note = notes.get(id) ?? note;
+            notes.delete(id);
+        }
+        if (note === undefined) return undefined;
+        this._unsentVoiceNotes.set(notes);
+        return note;
+    }
+
+    /** Keeps a voice note recorded for a stay that ended before it was sent, to show it there as unsent. */
+    public keepUnsentVoiceNote(sessionId: string | undefined, note: UnsentVoiceNote): void {
+        if (sessionId === undefined) return;
+        // As for the text: once this room handed its chats to the next map, the note goes along with them.
+        if (this.handedOver) {
+            if (this.handedOver.takenBy) this.handedOver.takenBy.keepUnsentVoiceNote(sessionId, note);
+            else this.handedOver.unsentVoiceNotes.set(sessionId, note);
+            return;
+        }
+        const notes = new Map(get(this._unsentVoiceNotes));
+        notes.set(sessionId, note);
+        this._unsentVoiceNotes.set(notes);
+    }
+
     private refreshUnreadTotals(unread: Map<string, number>): void {
         let total = 0;
         for (const count of unread.values()) total += count;
@@ -1138,6 +1177,7 @@ export class ProximityChatRoom implements ChatRoom {
             messages,
             unreadBySession: new Map(get(this._unreadBySession)),
             unsentDrafts,
+            unsentVoiceNotes: new Map(get(this._unsentVoiceNotes)),
             wasSelected: get(selectedRoomStore) === this,
             // Still in a bubble: leaving it on the next map puts back what was open before it, as it would have here.
             chatStateToRestore: get(shouldRestoreChatStateStore)

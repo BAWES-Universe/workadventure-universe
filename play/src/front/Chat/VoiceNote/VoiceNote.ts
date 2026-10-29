@@ -27,6 +27,12 @@ export interface VoiceNoteDetails {
     waveform: number[];
 }
 
+/** A recorded note that was never sent: the people it was for walked off first. Kept in this tab's memory. */
+export interface UnsentVoiceNote {
+    file: File;
+    details: VoiceNoteDetails;
+}
+
 export interface RecordingFormat {
     /** What MediaRecorder is asked for. */
     recorderType: string;

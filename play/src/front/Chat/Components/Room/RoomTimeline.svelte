@@ -1157,7 +1157,12 @@
 
         {#if isEnded && shownSession}
             <!-- An ended proximity chat can't receive anything: a way back to the people replaces the composer. -->
-            <ProximityEndedFooter session={shownSession} live={liveSession} onContinue={() => proximityRoom?.open()} />
+            <ProximityEndedFooter
+                session={shownSession}
+                live={liveSession}
+                room={proximityRoom}
+                onContinue={() => proximityRoom?.open()}
+            />
         {:else}
             <!-- One composer per conversation: its draft, files and pending sends belong to this room only.
                  Keyed by id: re-selecting the same room must not remount it (files, focus and uploads are kept). -->

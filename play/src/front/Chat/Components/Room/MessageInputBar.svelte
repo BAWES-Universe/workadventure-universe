@@ -178,13 +178,26 @@
     function restoreContinuedDraft(sessions: ProximitySession<ChatMessage>[], loaded: boolean) {
         if (!loaded || !(room instanceof ProximityChatRoom)) return;
         const live = sessions.find((session) => session.isLive);
-        if (!live || live.unsentDraft === undefined || restoredDraftFor === live.id) return;
+        if (!live) return;
+        restoreContinuedVoiceNote(room, live);
+        if (live.unsentDraft === undefined || restoredDraftFor === live.id) return;
         // Never over something being typed: the draft then stays with the chat, shown as unsent once it ends.
         if (!isEmptyMessage(message)) return;
         const text = room.takeUnsentDraft(live);
         if (text === undefined) return;
         restoredDraftFor = live.id;
         message = text;
+    }
+
+    // The same for a voice note left unsent: back in the recorder, ready to send, unless another one is being made.
+    function restoreContinuedVoiceNote(proximityRoom: ProximityChatRoom, live: ProximitySession<ChatMessage>) {
+        if (live.unsentVoiceNote === undefined || voiceActive || !voiceComposer) return;
+        const note = proximityRoom.takeUnsentVoiceNote(live);
+        if (!note) return;
+        voiceComposer.load(note);
+        voiceSpaceGeneration = spaceGenerationOf(room);
+        voiceForStay = true;
+        voiceSessionId = proximityRoom.currentSessionId;
     }
 
     const selectedChatChatMessageToReplyUnsubscriber = selectedChatMessageToReply.subscribe((chatMessage) => {
@@ -528,6 +541,8 @@
         unsubscribeComposerFocusRequest();
         // Leaving the conversation ends the typing status there.
         typingSignal.stop();
+        // The stay ended while a voice note for it was being made: it is kept there as unsent, never sent on.
+        if (voiceActive && voiceForStay) keepVoiceNoteOfEndedStay();
         if (
             room instanceof ProximityChatRoom &&
             mountSessionId !== undefined &&
@@ -771,19 +786,27 @@
         files.length === 0;
 
     // The nearby chat keeps one room while the people in it change. A note is for the people nearby when it was
-    // started: once they are gone it is dropped, never sent on to whoever is nearby next.
+    // started: once they are gone it is kept in their ended chat as unsent, never sent on to whoever is nearby next.
     let voiceComposer: VoiceNoteComposer | undefined;
     let voiceSpaceGeneration = spaceGenerationOf(room);
     // False for a note started while alone: the people who arrive later are not people it was left behind by.
     let voiceForStay = false;
-    $: if ($proximitySessions) dropVoiceNoteOfEndedStay();
+    // The stay the note is for, once there is one: where it is kept when that stay ends.
+    let voiceSessionId: string | undefined;
+    $: if ($proximitySessions) {
+        if (voiceForStay && voiceSessionId === undefined && room instanceof ProximityChatRoom) {
+            voiceSessionId = room.currentSessionId;
+        }
+        keepVoiceNoteOfEndedStay();
+    }
 
     function startVoiceNote() {
         voiceSpaceGeneration = spaceGenerationOf(room);
-        voiceForStay = room instanceof ProximityChatRoom && room.currentSessionId !== undefined;
+        voiceSessionId = room instanceof ProximityChatRoom ? room.currentSessionId : undefined;
+        voiceForStay = voiceSessionId !== undefined;
     }
 
-    function dropVoiceNoteOfEndedStay(): boolean {
+    function keepVoiceNoteOfEndedStay(): boolean {
         if (voiceSpaceGeneration === spaceGenerationOf(room)) return false;
         voiceSpaceGeneration = spaceGenerationOf(room);
         if (!voiceForStay) {
@@ -791,9 +814,15 @@
             voiceForStay = true;
             return false;
         }
-        if (!voiceActive) return false;
-        voiceComposer?.discard();
-        showUploadError($LL.chat.voiceNote.stayEnded());
+        if (!voiceActive || !voiceComposer || !(room instanceof ProximityChatRoom)) return false;
+        const proximityRoom = room;
+        const sessionId = voiceSessionId;
+        voiceComposer
+            .takeNote()
+            .then((note) => {
+                if (note) proximityRoom.keepUnsentVoiceNote(sessionId, note);
+            })
+            .catch((error) => console.error(error));
         return true;
     }
 
@@ -803,7 +832,7 @@
      */
     async function sendVoiceNote(file: File, details: VoiceNoteDetails): Promise<boolean> {
         stopTypingNow();
-        if (dropVoiceNoteOfEndedStay()) return false;
+        if (keepVoiceNoteOfEndedStay()) return false;
         const destination = captureSendDestination(room);
         clearUploadError();
         isUploading = true;
