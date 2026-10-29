@@ -912,10 +912,9 @@ export class BotApiService {
                 if (!response.ok) return null;
                 const data = (await response.json()) as { room?: unknown };
                 return data.room ?? null;
-            } catch (error) {
-                // The bot server refusing is an answer (no room to show); being down or slow is not.
-                const status = (error as { status?: number }).status;
-                return status !== undefined && status >= 400 && status < 500 ? null : undefined;
+            } catch {
+                // The bot server answers "no room" (or "not for you") with `room: null`: any error is no answer.
+                return undefined;
             }
         })();
         return Promise.race([asking, late]).finally(() => {
