@@ -82,6 +82,7 @@
     import PinnedBar from "./Details/PinnedBar.svelte";
     import { DIRECT_PARTNER_CONTEXT, directPartnerStore, type DirectPartner } from "./DirectChat/DirectPartnerStore";
     import { dayLabel, messageRuns, runSenderKey } from "./MessageRuns";
+    import { drawnFrom, drawnStart, screenfulCount, onDrawEveryMessage } from "./DrawnMessages";
     import { IconChevronLeft, IconChevronRight, IconLoader, IconLock, IconMailBox } from "@wa-icons";
 
     export let room: ChatRoom;
@@ -276,6 +277,32 @@
     // Notices keep the spacing they had before the run labels: room above them after a message (the message row used
     // to end with its own), and nothing added below them.
     $: noticeFlags = timelineEntries.map(isNoticeEntry);
+    // A long chat opens on its newest messages (#1591): drawing every message it holds before the first frame took most
+    // of a second. What fills the screen is drawn first; the older messages it holds are drawn as the reader scrolls up
+    // to them, before any page is asked of the server. The oldest message drawn, or undefined once all are.
+    let drawnFromId: string | undefined;
+    let firstDrawDone = false;
+    $: entryIds = timelineEntries.map((entry) => entry.message.id);
+    $: if (!firstDrawDone && entryIds.length > 0) {
+        firstDrawDone = true;
+        drawnFromId = drawnFrom(entryIds, undefined, screenfulCount(window.innerHeight));
+    }
+    $: firstDrawnIndex = drawnStart(entryIds, drawnFromId);
+    $: drawnEntries = firstDrawnIndex > 0 ? timelineEntries.slice(firstDrawnIndex) : timelineEntries;
+
+    // Draws `count` more of the older messages the chat holds, above those drawn.
+    async function drawMore(count: number): Promise<void> {
+        if (drawnFromId === undefined) return;
+        drawnFromId = drawnFrom(entryIds, drawnFromId, count);
+        await tick();
+    }
+
+    async function drawEveryMessage(): Promise<void> {
+        if (drawnFromId === undefined) return;
+        drawnFromId = undefined;
+        await tick();
+    }
+    const stopDrawingOnRequest = onDrawEveryMessage(drawEveryMessage);
     $: endedTitle = shownSession
         ? isRoomMessages
             ? $LL.chat.session.roomMessages()
@@ -415,10 +442,17 @@
                 }
 
                 // The room loads its first messages itself: take what it has, and ask for more only if the screen
-                // is not filled yet (a chat that already has enough opens with no request at all).
+                // is not filled yet (a chat that already has enough opens with no request at all). Messages it
+                // holds but hasn't drawn yet fill it first.
                 await waitForRoomToLoad();
                 await tick();
-                while (messageListRef && get(room.hasPreviousMessage) && isViewportNotFilled()) {
+                while (messageListRef && isViewportNotFilled()) {
+                    if (drawnFromId !== undefined) {
+                        // eslint-disable-next-line no-await-in-loop
+                        await drawMore(Math.max(1, entryIds.length - firstDrawnIndex));
+                        continue;
+                    }
+                    if (!get(room.hasPreviousMessage)) break;
                     const messageCount = get(room.messages).length;
                     // eslint-disable-next-line no-await-in-loop
                     await room.loadMorePreviousMessages();
@@ -676,7 +710,17 @@
     }
 
     function loadMorePreviousMessages() {
-        if (loadingMessagePromise || !shouldLoadMoreMessages()) return;
+        if (loadingMessagePromise) return;
+        // Older messages the chat already holds come first, a screen's worth at a time, before any page is asked of the
+        // server. Still near the top after that: the next screen's worth.
+        if (drawnFromId !== undefined) {
+            if (!readingNearTop()) return;
+            drawMore(screenfulCount(window.innerHeight))
+                .then(() => loadMorePreviousMessages())
+                .catch((error) => console.error(error));
+            return;
+        }
+        if (!shouldLoadMoreMessages()) return;
 
         loadingMessagePromise = new Promise<void>((resolve) => {
             (async () => {
@@ -709,6 +753,10 @@
     }
 
     function shouldLoadMoreMessages() {
+        return readingNearTop() && get(room.hasPreviousMessage);
+    }
+
+    function readingNearTop(): boolean {
         const messages = Array.from(messageListRef?.querySelectorAll("li") || []);
         // The first message showing at the top of the list. The list can start halfway down the screen (the phone
         // sheet), so it is measured from the list's own top, not the screen's.
@@ -716,10 +764,9 @@
         const messagesBeforeViewportTop = messages.find((msg) => msg.getBoundingClientRect().top >= listTop);
 
         return (
-            messagesBeforeViewportTop &&
+            messagesBeforeViewportTop !== undefined &&
             messages.indexOf(messagesBeforeViewportTop) < 10 &&
-            messages.indexOf(messagesBeforeViewportTop) !== -1 &&
-            get(room.hasPreviousMessage)
+            messages.indexOf(messagesBeforeViewportTop) !== -1
         );
     }
 
@@ -831,6 +878,7 @@
     }
 
     onDestroy(() => {
+        stopDrawingOnRequest();
         resizeObserver?.disconnect();
         childListObserver?.disconnect();
         clearTimeout(redrawTimer);
@@ -1098,7 +1146,8 @@
                         </li>
                     {/if}
                 {/if}
-                {#each timelineEntries as entry, index (entry.message.id)}
+                {#each drawnEntries as entry, drawnIndex (entry.message.id)}
+                    {@const index = firstDrawnIndex + drawnIndex}
                     {@const place = runs.get(entry.message.id)}
                     {@const isNotice = noticeFlags[index]}
                     {@const afterNotice = index > 0 && noticeFlags[index - 1]}

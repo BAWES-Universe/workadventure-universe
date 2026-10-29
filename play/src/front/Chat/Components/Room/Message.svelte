@@ -34,6 +34,7 @@
     import { messageGestures } from "./MessageActions/messageGestures";
     import { availableActions, hasAnyAction, replyTo } from "./MessageActions/availableActions";
     import { flashMessage } from "./Details/Pins";
+    import { drawEveryHeldMessage } from "./DrawnMessages";
     import { chatTime } from "./MessageTime";
     import { IconArrowBackUp, IconInfoCircle, IconPaperclip, IconTrash } from "@wa-icons";
 
@@ -152,9 +153,13 @@
     }
 
     /** Tapping a quote scrolls to the message it quotes, if it is loaded, and flashes it. */
-    function jumpToQuoted() {
+    async function jumpToQuoted() {
         if (!quotedMessage) return;
-        const target = document.querySelector(`[data-event-id="${CSS.escape(quotedMessage.id)}"]`);
+        const quotedId = quotedMessage.id;
+        const find = () => document.querySelector(`[data-event-id="${CSS.escape(quotedId)}"]`);
+        // Loaded but not drawn yet (a long chat that just opened draws its older messages a little later).
+        if (!find()) await drawEveryHeldMessage();
+        const target = find();
         if (target instanceof HTMLElement) flashMessage(target);
     }
 
@@ -272,7 +277,10 @@
                     <div class="px-2 pt-1 text-xxs font-bold">{isMyMessage ? "You" : sender?.username}</div>
                 {/if}
                 {#if quotedMessage && replyDepth === 0}
-                    <QuotedMessage message={quotedMessage} onJump={jumpToQuoted} />
+                    <QuotedMessage
+                        message={quotedMessage}
+                        onJump={() => jumpToQuoted().catch((error) => console.error(error))}
+                    />
                 {/if}
 
                 {#if isSteps}

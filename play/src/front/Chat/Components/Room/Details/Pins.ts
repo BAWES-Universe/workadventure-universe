@@ -3,6 +3,7 @@ import type { Readable } from "svelte/store";
 import { tick } from "svelte";
 import { hasPins, type ChatMessage, type ChatRoom, type ChatRoomPins } from "../../../Connection/ChatConnection";
 import { selectedRoomStore } from "../../../Stores/SelectRoomStore";
+import { drawEveryHeldMessage } from "../DrawnMessages";
 
 export type PinAction = "pin" | "unpin";
 
@@ -112,6 +113,8 @@ const MAX_LOADS_TO_FIND = 10;
  */
 export async function jumpToMessage(room: ChatRoom, messageId: string): Promise<boolean> {
     const find = () => document.querySelector(`[data-event-id="${CSS.escape(messageId)}"]`);
+    // Loaded but not drawn yet (a long chat that just opened draws its older messages a little later).
+    if (!find()) await drawEveryHeldMessage();
     let target = find();
     for (let load = 0; !target && load < MAX_LOADS_TO_FIND && get(room.hasPreviousMessage); load++) {
         // eslint-disable-next-line no-await-in-loop
