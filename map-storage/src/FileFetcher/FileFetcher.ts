@@ -44,13 +44,22 @@ export function proxyFiles(fileSystem: FileSystemInterface) {
             res.set("Content-Security-Policy", SVG_NO_CODE_POLICY);
         }
 
-        // The year-long cache above is for the file. A file that is not there yet, like a new upload asked for before
-        // it is written, must not keep its "not found" for a year: the browser would never ask again.
-        fileSystem.serveStaticFile(virtualPath, res, (err?: unknown) => {
-            if (!res.headersSent) {
-                res.set("Cache-Control", "no-store");
-            }
-            next(err);
-        });
+        fileSystem.serveStaticFile(virtualPath, res, next);
     };
+}
+
+// Last in the chain: nothing served the request, so it ends in "not found". proxyFiles may already have marked it
+// "keep for a year"; a file that is not there yet, like a new upload asked for before it is written, must not keep
+// its "not found" for a year, or the browser never asks again.
+export function noStoreWhenNotServed(req: Request, res: Response, next: NextFunction): void {
+    res.set("Cache-Control", "no-store");
+    next();
+}
+
+// The same for a request that ended in an error.
+export function noStoreOnError(err: unknown, req: Request, res: Response, next: NextFunction): void {
+    if (!res.headersSent) {
+        res.set("Cache-Control", "no-store");
+    }
+    next(err);
 }

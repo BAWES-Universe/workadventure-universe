@@ -9,7 +9,7 @@ vi.hoisted(() => {
 });
 
 import type { FileSystemInterface } from "../../Upload/FileSystemInterface";
-import { proxyFiles, SVG_NO_CODE_POLICY } from "../FileFetcher";
+import { noStoreOnError, noStoreWhenNotServed, proxyFiles, SVG_NO_CODE_POLICY } from "../FileFetcher";
 
 function serve(path: string, found = true): { headers: Record<string, string>; served: string[] } {
     const headers: Record<string, string> = {};
@@ -17,7 +17,8 @@ function serve(path: string, found = true): { headers: Record<string, string>; s
     const fileSystem = {
         serveStaticFile: (virtualPath: string, _res: Response, next: NextFunction) => {
             served.push(virtualPath);
-            if (!found) next();
+            // Nothing else in the chain serves it: the request ends in "not found", as in index.ts.
+            if (!found) noStoreWhenNotServed(req, res, () => undefined);
         },
     } as unknown as FileSystemInterface;
     const req = { path, hostname: "localhost", headers: {} } as unknown as Request;
@@ -75,5 +76,20 @@ describe("proxyFiles", () => {
     it("does not cache a picture that is not there yet, so the browser asks again", () => {
         const { headers } = serve("/u/w/entities/0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0-arcade.png", false);
         expect(headers["cache-control"]).toBe("no-store");
+    });
+
+    it("does not cache a request that ended in an error", () => {
+        const headers: Record<string, string> = {};
+        const res = {
+            headersSent: false,
+            set: (name: string, value: string) => {
+                headers[name.toLowerCase()] = value;
+            },
+        } as unknown as Response;
+        const error = new Error("storage down");
+        let passedOn: unknown;
+        noStoreOnError(error, {} as Request, res, ((err: unknown) => (passedOn = err)) as NextFunction);
+        expect(headers["cache-control"]).toBe("no-store");
+        expect(passedOn).toBe(error);
     });
 });
