@@ -140,4 +140,24 @@ describe("ArtifactsService", () => {
         });
         await expect(odd.open(ID, viewer)).rejects.toThrow();
     });
+
+    it("lists a chat's artifacts a page at a time, as the viewer, and keeps whether each is theirs", async () => {
+        const row = { ...opened.artifact, yours: false, updatedAt: "2026-10-28T09:00:00.000Z" };
+        const http = {
+            put: vi.fn(),
+            post: vi.fn(() => Promise.resolve({ data: { artifacts: [row], total: 51, next: 50 } })),
+        };
+        const service = new ArtifactsService("https://orbit.test", "secret", http);
+        const chat = { kind: "dm" as const, ref: "!room:chat.example" };
+        const answer = await service.listInChat({ ...viewer, inChat: false, chat }, 50);
+        expect(http.post).toHaveBeenCalledWith(
+            "https://orbit.test/api/artifacts/chat",
+            { viewer: { ...viewer, inChat: false, chat }, offset: 50 },
+            { headers: { Authorization: "secret" } }
+        );
+        expect(answer.total).toBe(51);
+        expect(answer.next).toBe(50);
+        expect(answer.artifacts[0]).toMatchObject({ id: ID, yours: false, updatedAt: row.updatedAt });
+        expect(answer.artifacts[0]).not.toHaveProperty("makerBotId");
+    });
 });

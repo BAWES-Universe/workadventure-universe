@@ -29,6 +29,7 @@ const OpenBody = z.object({
     version: z.number().int().min(1).optional(),
 });
 const ViewerBody = z.object({ chat: Chat.optional() });
+const InChatBody = z.object({ chat: Chat, offset: z.number().int().min(0).max(1_000_000).optional() });
 const RestoreBody = z.object({ chat: Chat.optional(), number: z.number().int().min(1) });
 const ShareBody = z
     .object({
@@ -85,6 +86,9 @@ export class ArtifactController extends BaseHttpController {
          *       429:
          *         description: Too many requests; try again in a minute
          */
+        this.app.options("/artifacts/in-chat", (req: Request, res: Response) => {
+            res.status(200).send("");
+        });
         this.app.options("/artifacts/:id/open", (req: Request, res: Response) => {
             res.status(200).send("");
         });
@@ -99,6 +103,34 @@ export class ArtifactController extends BaseHttpController {
         });
         this.app.options("/artifacts/:id/share", (req: Request, res: Response) => {
             res.status(200).send("");
+        });
+
+        /**
+         * @openapi
+         * /artifacts/in-chat:
+         *   post:
+         *     description: The artifacts made in one chat that the signed token's person may open, newest change first,
+         *       50 at a time (the chat's Artifacts group and list). Answers { artifacts, total, next }.
+         *     responses:
+         *       200:
+         *         description: One page of the chat's artifacts
+         *       400:
+         *         description: No chat named, or a bad offset
+         *       429:
+         *         description: Too many requests; try again in a minute
+         */
+        this.app.post("/artifacts/in-chat", [authenticated], async (req: Request, res: ResponseWithUserIdentifier) => {
+            await this.answer(
+                req,
+                res,
+                "list",
+                async (viewer) => {
+                    const body = InChatBody.safeParse(req.body ?? {});
+                    if (!body.success) throw new ArtifactsError("invalid_request", 400);
+                    return artifactsService.listInChat(viewer(body.data.chat), body.data.offset ?? 0);
+                },
+                true
+            );
         });
 
         this.app.post("/artifacts/:id/open", [authenticated], async (req: Request, res: ResponseWithUserIdentifier) => {
@@ -196,10 +228,11 @@ export class ArtifactController extends BaseHttpController {
         req: Request,
         res: ResponseWithUserIdentifier,
         what: string,
-        handle: (viewer: (chat: z.infer<typeof Chat> | undefined) => ArtifactViewer, id: string) => Promise<unknown>
+        handle: (viewer: (chat: z.infer<typeof Chat> | undefined) => ArtifactViewer, id: string) => Promise<unknown>,
+        noId = false
     ): Promise<void> {
         debug(`ArtifactController => [${req.method}] ${req.originalUrl} — IP: ${req.ip} — Time: ${Date.now()}`);
-        const id = ArtifactId.safeParse(req.params.id);
+        const id = noId ? { success: true as const, data: "" } : ArtifactId.safeParse(req.params.id);
         if (!id.success) {
             res.status(404).json({ error: "not_found" });
             return;

@@ -1,6 +1,5 @@
 <script lang="ts">
-    import { onMount } from "svelte";
-    import { get } from "svelte/store";
+    import { get, readable } from "svelte/store";
     import { requestVisitCardsStore, selectedChatIDRemotePlayerStore } from "../../Stores/GameStore";
     import { wokaMenuStore } from "../../Stores/WokaMenuStore";
     import { actionsMenuStore } from "../../Stores/ActionsMenuStore";
@@ -14,10 +13,13 @@
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { openDirectChatRoom } from "../../Chat/Utils";
     import { isHttpUrl } from "../../Utils/SafeUrl";
+    import { botApiService } from "../../external-modules/bots/services/BotApiService";
     import chat from "../images/chat.png";
 
     import ButtonClose from "../Input/ButtonClose.svelte";
     import Spinner from "../Icons/Spinner.svelte";
+    import ProfileCard from "./ProfileCard.svelte";
+    import { orbitProfileUuid, profileCardStore, type ProfileCardState } from "./ProfileCard";
     import { IconLoader } from "@wa-icons";
 
     export let visitCardUrl: string;
@@ -39,6 +41,20 @@
         }
     }
     $: safeVisitCardUrl = isWebPage(visitCardUrl) ? visitCardUrl : undefined;
+
+    // An Orbit card is drawn here from its data and kept while you're in the game, so it shows again at once (#1585).
+    // Any other card, or one Orbit can't give as data, is its page in a frame.
+    $: profileUuid = safeVisitCardUrl
+        ? orbitProfileUuid(safeVisitCardUrl, botApiService.adminOrigin, window.location.href)
+        : undefined;
+    $: cardState = profileUuid
+        ? profileCardStore(profileUuid, (uuid) => botApiService.getProfileCard(uuid))
+        : readable<ProfileCardState>({ kind: "frame" });
+    $: framed = $cardState.kind === "frame";
+    $: drawn = $cardState.kind === "card" ? $cardState.card : undefined;
+    $: waiting = framed ? hidden : $cardState.kind === "loading";
+    let drawnHeight = 0;
+    $: cardHeight = framed ? h : drawnHeight;
 
     const chatConnection = gameManager.chatConnection;
     const selectPlayerChatID = get(selectedChatIDRemotePlayerStore);
@@ -90,43 +106,53 @@
         wokaMenuStore.clear();
         actionsMenuStore.clear();
     }
-
-    onMount(() => {
-        cvIframe.onload = () => (hidden = false);
-        cvIframe.onerror = () => (hidden = false);
-    });
 </script>
 
 <!-- A profile with nothing written and no links reports no height: embedded, the card then takes no room at all
      (an empty frame would still leave a dark strip). -->
-<section class="visitCard {isEmbedded ? 'w-full' : 'max-w-[320px]'}" class:collapsed={isEmbedded && !hidden && h === 0}>
+<section
+    class="visitCard {isEmbedded ? 'w-full' : 'max-w-[320px]'}"
+    class:collapsed={isEmbedded && framed && !hidden && h === 0}
+>
     <div class="{isEmbedded ? '' : 'bg-contrast/80 rounded-lg backdrop-blur'} relative">
         {#if !isEmbedded}
-            <div class="absolute top-2 {h > maxHeigth ? 'right-5' : ' right-2'}">
+            <div class="absolute top-2 {cardHeight > maxHeigth ? 'right-5' : ' right-2'}">
                 <ButtonClose size="xs" dataTestId="closeVisitCardButton" on:click={closeCard} />
             </div>
         {/if}
-        {#if hidden}
+        {#if waiting}
             <div class="w-full flex justify-center items-center p-4">
                 <Spinner size="lg" />
             </div>
         {/if}
-        <div class={isEmbedded ? "" : "px-2 py-4"}>
-            <iframe
-                title="visitCard"
-                src={safeVisitCardUrl ? `${safeVisitCardUrl}&embed=${isEmbedded}` : "about:blank"}
-                class="max-h-lg"
-                class:block={isEmbedded}
-                allow="clipboard-read; clipboard-write {safeVisitCardUrl ?? ''}"
-                style="width: {isEmbedded ? '100%' : w}; height: {Math.max(
-                    isEmbedded ? 1 : 0,
-                    Math.min(h, maxHeigth)
-                )}px; color-scheme: dark"
-                class:hidden
-                bind:this={cvIframe}
-            />
-        </div>
-        {#if !hidden && !isEmbedded}
+        {#if drawn}
+            <div class={isEmbedded ? "" : "px-2 py-4"}>
+                <div class="overflow-y-auto" style:max-height="{maxHeigth}px">
+                    <div bind:offsetHeight={drawnHeight}>
+                        <ProfileCard card={drawn} on:openedHere={closeCards} />
+                    </div>
+                </div>
+            </div>
+        {:else if framed}
+            <div class={isEmbedded ? "" : "px-2 py-4"}>
+                <iframe
+                    title="visitCard"
+                    src={safeVisitCardUrl ? `${safeVisitCardUrl}&embed=${isEmbedded}` : "about:blank"}
+                    class="max-h-lg"
+                    class:block={isEmbedded}
+                    allow="clipboard-read; clipboard-write {safeVisitCardUrl ?? ''}"
+                    style="width: {isEmbedded ? '100%' : w}; height: {Math.max(
+                        isEmbedded ? 1 : 0,
+                        Math.min(h, maxHeigth)
+                    )}px; color-scheme: dark"
+                    class:hidden
+                    bind:this={cvIframe}
+                    on:load={() => (hidden = false)}
+                    on:error={() => (hidden = false)}
+                />
+            </div>
+        {/if}
+        {#if !waiting && !isEmbedded}
             <div class="buttonContainer p-2.5 flex flex-row justify-end gap-2 bg-contrast rounded-b-lg">
                 {#if selectPlayerChatID && showSendMessageButton}
                     {#if !$roomCreationInProgress}

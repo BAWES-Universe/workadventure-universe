@@ -544,6 +544,83 @@ describe('MCPConnector', () => {
             expect(result.error).toContain('Invalid params');
         });
 
+        describe('a stream answer (#1565)', () => {
+            const sse = (...messages: unknown[]) =>
+                messages.map((m) => `event: message\ndata: ${JSON.stringify(m)}\n\n`).join('');
+            const logNotice = { jsonrpc: '2.0', method: 'notifications/message', params: { level: 'info', data: 'working' } };
+            const progressNotice = { jsonrpc: '2.0', method: 'notifications/progress', params: { progressToken: 't', progress: 1 } };
+            const call = async (stream: string) => {
+                mockedAxios.post.mockImplementation(async (_url: string, body: any) =>
+                    body?.method === 'initialize'
+                        ? MOCK_INIT_RESPONSE
+                        : { data: stream, headers: { 'content-type': 'text/event-stream' } }
+                );
+                return MCPConnector.executeToolCall('server-1', 'https://weather.example.com/mcp', 'get_weather', { location: 'Paris' }, 'none');
+            };
+
+            it('returns the result when the stream has one message', async () => {
+                expect(await call(sse(MOCK_WEATHER_CALL_RESPONSE))).toEqual(MOCK_WEATHER_CALL_RESPONSE.result.content);
+            });
+
+            it('skips log and progress notices sent before the result', async () => {
+                expect(await call(sse(logNotice, progressNotice, MOCK_WEATHER_CALL_RESPONSE))).toEqual(
+                    MOCK_WEATHER_CALL_RESPONSE.result.content
+                );
+            });
+
+            it('reads a stream whose lines end with \r\n', async () => {
+                const stream = sse(logNotice, MOCK_WEATHER_CALL_RESPONSE).replace(/\n/g, '\r\n');
+                expect(await call(stream)).toEqual(MOCK_WEATHER_CALL_RESPONSE.result.content);
+            });
+
+            it('takes the message that answers our request over another answer in the stream', async () => {
+                const other = { jsonrpc: '2.0', id: '9', result: { content: [{ type: 'text', text: 'not ours' }] } };
+                expect(await call(sse(other, MOCK_WEATHER_CALL_RESPONSE))).toEqual(MOCK_WEATHER_CALL_RESPONSE.result.content);
+            });
+
+            it('reports a tool error that follows a notice', async () => {
+                const failed = { jsonrpc: '2.0', id: '2', result: { isError: true, content: [{ type: 'text', text: 'No such city' }] } };
+                expect(await call(sse(logNotice, failed))).toEqual({ error: 'Tool error: No such city' });
+            });
+
+            it('still tells a stream with no answer from a result', async () => {
+                expect(await call(sse(logNotice))).toEqual({ error: 'Tool get_weather returned no content' });
+            });
+        });
+
+        describe('data only in structuredContent (#1566)', () => {
+            const callWith = async (result: unknown) => {
+                mockedAxios.post.mockImplementation(async (_url: string, body: any) =>
+                    body?.method === 'initialize' ? MOCK_INIT_RESPONSE : { data: { jsonrpc: '2.0', id: '2', result } }
+                );
+                return MCPConnector.executeToolCall('server-1', 'https://weather.example.com/mcp', 'get_weather', {}, 'none');
+            };
+            const data = { temperature: 22.5, conditions: 'Partly cloudy' };
+
+            it('adds the data as text when content holds no text', async () => {
+                expect(await callWith({ content: [], structuredContent: data })).toEqual([
+                    { type: 'text', text: JSON.stringify(data) },
+                ]);
+            });
+
+            it('keeps other content items and adds the data after them', async () => {
+                const link = { type: 'resource_link', uri: 'https://example.com/a.json', name: 'a.json' };
+                expect(await callWith({ content: [link], structuredContent: data })).toEqual([
+                    link,
+                    { type: 'text', text: JSON.stringify(data) },
+                ]);
+            });
+
+            it('adds nothing when a text item already carries it, as the spec asks servers to', async () => {
+                const content = [{ type: 'text', text: JSON.stringify(data) }];
+                expect(await callWith({ content, structuredContent: data })).toEqual(content);
+            });
+
+            it('passes on any JSON value, such as a list', async () => {
+                expect(await callWith({ content: [], structuredContent: [1, 2] })).toEqual([{ type: 'text', text: '[1,2]' }]);
+            });
+        });
+
         it('returns error when no content in response', async () => {
             mockedAxios.post
                 .mockResolvedValueOnce(MOCK_INIT_RESPONSE)

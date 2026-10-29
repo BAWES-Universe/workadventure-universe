@@ -2,9 +2,13 @@ import { derived, get, type Readable } from "svelte/store";
 import { coWebsites, openedByPersonCoWebsite } from "../Stores/CoWebsiteStore";
 import { lowerChatSheet } from "../Chat/ChatSheetStore";
 import { bringOpenHereInFront } from "../Stores/SideWindowInFrontStore";
-import { FileViewerCoWebsite, type FileViewerSource } from "../WebRtc/CoWebsite/FileViewerCoWebsite";
+import {
+    FileViewerCoWebsite,
+    type FileViewerAudio,
+    type FileViewerSource,
+} from "../WebRtc/CoWebsite/FileViewerCoWebsite";
 import { saveMessageFiles } from "../Chat/Components/Room/MessageActions/availableActions";
-import { extensionOf, fileKindOfLink, MAP_VIEWER_KINDS, textEncodingOf } from "./fileKinds";
+import { extensionOf, fileKindOf, fileKindOfLink, MAP_VIEWER_KINDS, textEncodingOf } from "./fileKinds";
 
 /** The keys of the files the viewer has open now, for the cards of those files. */
 export const openFileViewerKeys: Readable<ReadonlySet<string>> = derived(coWebsites, ($coWebsites) => {
@@ -89,6 +93,9 @@ export interface ChatFileToOpen {
     name: string;
     senderName?: string;
     sentByMe?: boolean;
+    /** For an audio file: see `FileViewerAudio`. */
+    inChat?: FileViewerAudio["inChat"];
+    startPlaying?: boolean;
 }
 
 /**
@@ -111,11 +118,26 @@ export function openChatFileInViewer(file: ChatFileToOpen): void {
         bringOpenHereInFront();
         return;
     }
+    const isAudio = fileKindOf(file.name) === "audio";
+    // Only one audio plays at a time, so the window holds one song: another takes its place.
+    if (isAudio) {
+        for (const other of get(coWebsites)) {
+            if (other instanceof FileViewerCoWebsite && other.source.audio) coWebsites.remove(other);
+        }
+    }
     const source: FileViewerSource = {
         key,
         name: file.name,
         senderName: file.senderName,
         sentByMe: file.sentByMe,
+        audio: isAudio
+            ? {
+                  url: file.url,
+                  inChat: file.inChat,
+                  startPlaying: file.startPlaying,
+                  openOther: openChatFileInViewer,
+              }
+            : undefined,
         load: async (signal) => readBytes(await fetch(file.url, { signal })),
         // The same save as the card's Download button and the message menu: the share sheet on phones.
         download: () => saveMessageFiles([{ url: file.url, name: file.name }]),

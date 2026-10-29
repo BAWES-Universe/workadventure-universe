@@ -2,6 +2,8 @@
  * Type definitions for AI infrastructure
  */
 
+import type { ToolStep, ToolStepResult } from './ToolSteps';
+
 /**
  * Provider configuration from Admin API
  */
@@ -25,6 +27,14 @@ export interface AIProviderConfig {
      * (their own computer, or their own NIM), so every call to it goes through the address guard.
      */
     ownKey?: { addressTyped: boolean };
+    /**
+     * Where the part of the system prompt that stays the same from message to message ends, as character offsets into
+     * the system prompt, in order. Only the Claude provider reads this (it marks those ends for Claude's cache); every
+     * other provider ignores it, so their requests are unchanged.
+     */
+    promptCacheEnds?: number[];
+    /** Called with the cache reads and writes of each finished call (only when there were any), so the caller can total a turn. */
+    onCacheTokens?: (read: number, write: number) => void;
     /** The bot's limits (Orbit #666), when Orbit served them with the bot's credentials. */
     limits?: BotLimits;
 }
@@ -50,8 +60,22 @@ export interface BotLimits {
     /** 0 keeps every version. */
     artifactVersions: number;
     artifactSaveSeconds: number;
+    /** Songs, images and videos one save may add to an artifact, in bytes (#1510); 0 lets none in. */
+    artifactMediaBytes: number;
     /** "Say when nothing was saved". */
     guard: boolean;
+    /** Files in chats (#1508): this person's newest files the bot sees before each reply. */
+    recentFiles: number;
+    /** Files found in one search. */
+    findResults: number;
+    /** Characters it reads from an earlier file at a time. */
+    partChars: number;
+    /** Characters of step results one reply keeps. */
+    roomChars: number;
+    /** Characters of a file's text Orbit keeps ("Text kept from a file"). */
+    fileTextChars: number;
+    /** Orbit keeps files in bot chats: it served their limits, so it has the routes the file tools use. */
+    files?: boolean;
 }
 
 /** The recommended limits, the same as Orbit's (lib/bot-limit-values.ts there). */
@@ -65,11 +89,18 @@ export const BOT_LIMIT_DEFAULTS: BotLimits = {
     artifactBytes: 2 * 1024 * 1024,
     artifactVersions: 0,
     artifactSaveSeconds: 30,
+    artifactMediaBytes: 50 * 1024 * 1024,
     guard: true,
+    recentFiles: 5,
+    findResults: 10,
+    partChars: 8000,
+    roomChars: 80000,
+    fileTextChars: 2_000_000,
 };
 
-/** Limits where 0 means something: keep every version, never carry on by itself. A 0 anywhere else (a save with no time limit) is broken. */
-const ZERO_ALLOWED = new Set<keyof BotLimits>(['artifactVersions', 'continuations']);
+/** Limits where 0 means something: keep every version, never carry on by itself, no newest files in the prompt, no media
+ * in a save. A 0 anywhere else (a save with no time limit) is broken. */
+const ZERO_ALLOWED = new Set<keyof BotLimits>(['artifactVersions', 'continuations', 'recentFiles', 'artifactMediaBytes']);
 
 /** The limits Orbit sent, each checked, with the recommended value for any that is missing or broken. */
 export function readBotLimits(raw: unknown): BotLimits {
@@ -84,6 +115,8 @@ export function readBotLimits(raw: unknown): BotLimits {
             (out as unknown as Record<string, number>)[key] = value;
         }
     }
+    // An Orbit that keeps files in bot chats serves their limits; an older one doesn't, and the file tools stay out
+    if (typeof given.findResults === 'number') out.files = true;
     return out;
 }
 
@@ -128,7 +161,13 @@ export interface AIStreamChunk {
     replyLimit?: ReplyLimitReached;
     reset?: boolean; // If true, frontend should clear current stream content before processing this chunk
     toolNames?: string[]; // Names of tools being called (for status display in the new bubble)
+    /** The calls this reset starts, in plain words, for the steps line of a direct message (#1545). */
+    toolSteps?: ToolStep[];
+    /** How the calls of the last round ended: sent once they ran, before the bot carries on. */
+    toolStepResults?: ToolStepResult[];
     toolCalls?: ToolCall[]; // Tool calls requested by AI
+    /** On the done chunk: the model's reasoning for this call, when its provider streams it (DeepSeek thinking). It goes back with the reply's steps. */
+    reasoning?: string;
     metadata?: {
         tokensUsed?: number;
         promptTokens?: number;
@@ -137,6 +176,8 @@ export interface AIStreamChunk {
         /** Prompt tokens the provider wrote to its cache on this call (a subset of promptTokens). Undefined when it does not say. */
         cacheWriteTokens?: number;
         completionTokens?: number;
+        /** Part of promptTokens that was read from the provider's cache, and part that was written to it (Claude only for now). */
+        cacheReadTokens?: number;
         /** Reasoning tokens inside completionTokens. Undefined when the provider does not say. */
         reasoningTokens?: number;
         /** What the provider charged for this call, in dollars (OpenRouter sends it). Undefined when it does not say. */
@@ -148,6 +189,10 @@ export interface AIStreamChunk {
         cancelled?: boolean;
         errorStatus?: number; // HTTP status the provider answered with when the call failed (401/403 = the key was rejected)
         truncated?: boolean; // true when the provider hit finish_reason='length' (max_tokens cap)
+        /** The provider turned the call down as longer than the model takes (its context window). */
+        tooLong?: boolean;
+        /** The tokens the model takes and was asked, when the "too long" error says both. */
+        context?: { limit: number; asked: number };
         /** Why the provider ended the call ('stop', 'length', 'tool_calls', ...), when it said. */
         finishReason?: string;
         /** What the provider said when the call failed, short and without logins (see providerErrorText). */
@@ -191,6 +236,8 @@ export interface AIUsageMetadata {
     tokensUsed?: number;
     promptTokens?: number;
     completionTokens?: number;
+    /** Part of promptTokens read from / written to the provider's cache (both are inside promptTokens, not on top of it). */
+    cacheReadTokens?: number;
     /** Parts of promptTokens the provider read from / wrote to its cache, and of completionTokens spent reasoning. */
     cachedPromptTokens?: number;
     cacheWriteTokens?: number;

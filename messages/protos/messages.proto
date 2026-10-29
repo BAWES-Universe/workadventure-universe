@@ -1409,6 +1409,7 @@ message SpaceStreamMessage {
   bool isError = 5;            // True if the stream ended with an error
   optional string errorMessage = 6; // Error description when isError=true
   bool reset = 7;              // Clear any existing buffer for this responseId (used on regeneration)
+  optional string steps = 8;   // A bot's steps line (#1545): its universe.steps field as JSON; the message is drawn as that line
 }
 
 message PrivateEvent {
