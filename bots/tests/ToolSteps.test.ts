@@ -15,11 +15,16 @@ describe('ToolSteps', () => {
     it("uses the tool server's own title, and the prompt as the detail", () => {
         expect(describeStep({ id: 'a', name: 'generate_music', arguments: '{"prompt":"upbeat  8-bit\\nfunk","seconds":90}' }, 'Make a song')).toEqual({
             id: 'a',
-            doing: 'Make a song',
-            done: 'Make a song',
+            doing: 'Using Make a song',
+            done: 'Used Make a song',
             detail: 'upbeat 8-bit funk',
             group: 'tool:generate_music',
         });
+    });
+
+    it('says "Using" while it runs and "Used" once done, so a name never reads as an order', () => {
+        expect(describeStep({ id: 'a', name: 'generate_music' })).toMatchObject({ doing: 'Using Generate music', done: 'Used Generate music' });
+        expect(describeStep({ id: 'a', name: '__' })).toMatchObject({ doing: 'Using a tool', done: 'Used a tool' });
     });
 
     it('never shows a private field, and cuts a long detail to one short line', () => {
@@ -75,8 +80,8 @@ describe('ToolSteps', () => {
     it('sums up what worked, grouped, in the order it first ran', () => {
         const step = (group: string, done: string, state: 'done' | 'failed' = 'done') => ({ group, done, state });
         expect(
-            summaryOf([step('page', 'Read a page'), ...Array(6).fill(step('tool:generate_music', 'Generate music')), step('page', 'Read a page')])
-        ).toBe('Read 2 pages · Generate music 6 times');
+            summaryOf([step('page', 'Read a page'), ...Array(6).fill(step('tool:generate_music', 'Used Generate music')), step('page', 'Read a page')])
+        ).toBe('Read 2 pages · Used Generate music 6 times');
         expect(summaryOf([step('page', 'Read a page')])).toBe('Read 1 page');
         expect(summaryOf([step('tool:x', 'Search', 'failed')])).toBe('1 step');
         expect(summaryOf([step('tool:x', 'Search', 'failed'), step('tool:y', 'Fetch', 'failed')])).toBe('2 steps');
@@ -96,19 +101,19 @@ describe('ToolSteps', () => {
             describeStep({ id: 'm1', name: 'generate_music', arguments: { prompt: 'funk' } }),
             describeStep({ id: 'm2', name: 'generate_music', arguments: { prompt: 'funk' } }),
         ]);
-        expect(steps.field().line).toBe('Generate music');
+        expect(steps.field().line).toBe('Using Generate music');
         steps.finish([{ id: 'm1', ok: true }, { id: 'm2', ok: false, note: 'daily limit reached' }]);
         steps.end();
         const field = steps.field();
         expect(field.state).toBe('done');
-        expect(field.line).toBe('Read 1 page · Generate music');
+        expect(field.line).toBe('Read 1 page · Used Generate music');
         expect(field.steps.map((s) => [s.state, s.again ?? false])).toEqual([
             ['done', false],
             ['done', false],
             ['failed', true],
         ]);
         expect(field.steps[2].note).toBe('daily limit reached');
-        expect(steps.text()).toBe("Read 1 page · Generate music · 1 didn't work");
+        expect(steps.text()).toBe("Read 1 page · Used Generate music · 1 didn't work");
     });
 
     it('marks what never finished as failed when the reply stops part-way', () => {
