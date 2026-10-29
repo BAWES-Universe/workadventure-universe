@@ -51,7 +51,14 @@ const ArtifactView = z.object({
     expiresAt: z.string().nullable(),
 });
 
-const Rights = z.object({ owner: z.boolean(), change: z.boolean(), manage: z.boolean(), copy: z.boolean() });
+const Rights = z.object({
+    owner: z.boolean(),
+    change: z.boolean(),
+    manage: z.boolean(),
+    copy: z.boolean(),
+    // In the chat it was made in right now (game #1584); an Orbit that does not say it yet counts as not in it
+    inChat: z.boolean().optional(),
+});
 
 const Opened = z.object({ artifact: ArtifactView, version: VersionView, you: Rights });
 export type OpenedArtifact = z.infer<typeof Opened>;

@@ -31,7 +31,7 @@ const opened = {
         makerBotId: "bot1",
     },
     version,
-    you: { owner: true, change: true, manage: true, copy: true },
+    you: { owner: true, change: true, manage: true, copy: true, inChat: true },
 };
 
 function orbitError(status: number, data: unknown): AxiosError {
@@ -59,7 +59,7 @@ describe("ArtifactsService", () => {
             { headers: { Authorization: "secret" } }
         );
         expect(answer.version.url).toBe(version.url);
-        expect(answer.you).toEqual({ owner: true, change: true, manage: true, copy: true });
+        expect(answer.you).toEqual({ owner: true, change: true, manage: true, copy: true, inChat: true });
         expect(answer.artifact).not.toHaveProperty("makerBotId");
     });
 
