@@ -14,6 +14,7 @@ import { fetchFor, providerErrorText, statusFromError } from './ownKeyHttp';
 import * as Sentry from '@sentry/node';
 import { stepMessages, tooLongOf, type ReplySteps } from '../replySteps';
 import { refusesStreamOptions, statedContext, statedOutputCeiling } from './OpenAIProvider';
+import { inlineImages } from './inlineImages';
 
 export class LMStudioProvider implements AIProvider {
     private readonly DEFAULT_TIMEOUT = 30000; // 30 seconds
@@ -133,20 +134,23 @@ export class LMStudioProvider implements AIProvider {
      * Build the user message content: plain text, or multipart (text + image_url
      * blocks) when the model supports vision and images are present. Mirrors
      * OpenAIProvider so local vision models (llava, qwen-vl, ...) get the same
-     * treatment as remote ones.
+     * treatment as remote ones. A person's own key gets each picture inside the
+     * request (#1570): Ollama takes no links. The server's own LM Studio keeps
+     * getting links, as before.
      */
-    private buildUserContent(
+    private async buildUserContent(
         userMessage: string,
         config: AIProviderConfig,
         images?: string[]
-    ): string | Array<Record<string, any>> {
+    ): Promise<string | Array<Record<string, any>>> {
         if (images && images.length > 0 && this.supportsVision(config)) {
             if (process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[LMStudioProvider] Sending ${images.length} image(s) as multipart content to vision-capable model ${config.model}`);
             }
+            const sent = config.ownKey ? await inlineImages(images) : images;
             return [
                 { type: 'text', text: userMessage },
-                ...images.map((url) => ({ type: 'image_url', image_url: { url } })),
+                ...sent.map((url) => ({ type: 'image_url', image_url: { url } })),
             ];
         }
         return userMessage;
@@ -175,6 +179,8 @@ export class LMStudioProvider implements AIProvider {
 
         try {
             const endpoint = `${config.endpoint.replace(/\/+$/, '')}/v1/chat/completions`;
+            // Before the connection timeout starts: fetching pictures is not the server's time
+            const userContent = await this.buildUserContent(userMessage, config, images);
 
             const controller = new AbortController();
             cleanupExternalAbort = linkExternalAbort(externalSignal, controller);
@@ -184,7 +190,7 @@ export class LMStudioProvider implements AIProvider {
                 model: config.model,
                 messages: [
                     { role: 'system', content: systemPrompt },
-                    { role: 'user', content: this.buildUserContent(userMessage, config, images) },
+                    { role: 'user', content: userContent },
                     // The reply's steps so far
                     ...stepMessages(steps),
                 ],
@@ -356,12 +362,13 @@ export class LMStudioProvider implements AIProvider {
             const timeoutId = setTimeout(() => controller.abort(), timeout);
             try {
                 const endpoint = `${config.endpoint.replace(/\/+$/, '')}/v1/chat/completions`;
+                const userContent = await this.buildUserContent(userMessage, config, images);
 
                 const response = await this.post(endpoint, {
                     model: config.model,
                     messages: [
                         { role: 'system', content: systemPrompt },
-                        { role: 'user', content: this.buildUserContent(userMessage, config, images) },
+                        { role: 'user', content: userContent },
                     ],
                     stream: false,
                     stream_options: {
