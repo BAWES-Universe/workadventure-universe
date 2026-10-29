@@ -11,14 +11,18 @@ vi.hoisted(() => {
 import type { FileSystemInterface } from "../../Upload/FileSystemInterface";
 import { proxyFiles, SVG_NO_CODE_POLICY } from "../FileFetcher";
 
-function serve(path: string): { headers: Record<string, string>; served: string[] } {
+function serve(path: string, found = true): { headers: Record<string, string>; served: string[] } {
     const headers: Record<string, string> = {};
     const served: string[] = [];
     const fileSystem = {
-        serveStaticFile: (virtualPath: string) => served.push(virtualPath),
+        serveStaticFile: (virtualPath: string, _res: Response, next: NextFunction) => {
+            served.push(virtualPath);
+            if (!found) next();
+        },
     } as unknown as FileSystemInterface;
     const req = { path, hostname: "localhost", headers: {} } as unknown as Request;
     const res = {
+        headersSent: false,
         set: (name: string, value: string) => {
             headers[name.toLowerCase()] = value;
         },
@@ -61,5 +65,15 @@ describe("proxyFiles", () => {
     ])("leaves %s exactly as before", (path) => {
         const { headers } = serve(path);
         expect(headers["content-security-policy"]).toBeUndefined();
+    });
+
+    it("caches an uploaded picture for a year once it is there", () => {
+        const { headers } = serve("/u/w/entities/0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0-arcade.png");
+        expect(headers["cache-control"]).toBe("public, max-age=31536000, immutable");
+    });
+
+    it("does not cache a picture that is not there yet, so the browser asks again", () => {
+        const { headers } = serve("/u/w/entities/0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0-arcade.png", false);
+        expect(headers["cache-control"]).toBe("no-store");
     });
 });
