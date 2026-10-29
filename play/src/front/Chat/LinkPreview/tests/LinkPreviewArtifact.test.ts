@@ -102,12 +102,13 @@ describe("an artifact's share link pasted in a chat", () => {
         await tick();
     }
 
-    it("shows the artifact's card, which opens it in the game window at whatever is latest", async () => {
-        vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    it("shows the artifact's card, which opens the latest version in the game window when tapped", async () => {
+        const opened = (version: number) =>
             answer(200, {
-                artifact: { id: ID, title: "Dubai trip, day 3", kind: "page", makerName: "Laura", version: 4 },
-            })
-        );
+                artifact: { id: ID, title: "Dubai trip, day 3", kind: "page", makerName: "Laura", version },
+            });
+        // A newer version is made between the card showing and the tap
+        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(opened(4)).mockResolvedValueOnce(opened(5));
         await show(`Here is the page ${LINK}`);
         const card = target.querySelector<HTMLButtonElement>('[data-testid="artifactCard"]');
         expect(card?.textContent).toContain("Dubai trip, day 3");
@@ -117,12 +118,11 @@ describe("an artifact's share link pasted in a chat", () => {
         expect(fetchWebPreview).not.toHaveBeenCalled();
 
         card?.click();
+        await vi.waitFor(() => expect(openArtifactFromCard).toHaveBeenCalled());
         expect(openArtifactFromCard).toHaveBeenCalledWith(
-            expect.objectContaining({ id: ID, title: "Dubai trip, day 3", maker: "Laura" }),
+            expect.objectContaining({ id: ID, version: 5, title: "Dubai trip, day 3", maker: "Laura" }),
             undefined,
-            undefined,
-            // At whatever is latest when tapped, not the version seen when the card was checked
-            true
+            undefined
         );
     });
 

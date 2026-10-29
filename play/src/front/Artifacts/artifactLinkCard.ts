@@ -28,11 +28,10 @@ const checked = new Map<string, Promise<ArtifactCard | undefined>>();
 /**
  * The card a pasted artifact link shows, or undefined when this person may not open it from
  * here (or it is gone): then the link stays a plain link and nothing about the artifact is shown. Orbit decides, with
- * the same rules as tapping a bot's card. Its version is only the one seen when checked: the card opens whatever is
- * latest when tapped.
+ * the same rules as tapping a bot's card.
  */
 export function linkedArtifactCard(id: string, chat: ArtifactChat | undefined): Promise<ArtifactCard | undefined> {
-    const key = `${id}|${chat?.kind ?? ""}|${chat?.ref ?? ""}`;
+    const key = keyOf(id, chat);
     const known = checked.get(key);
     if (known) return known;
     const card = fetchArtifact(id, chat).then(
@@ -51,6 +50,22 @@ export function linkedArtifactCard(id: string, chat: ArtifactChat | undefined): 
     );
     checked.set(key, card);
     return card;
+}
+
+/**
+ * The card asked again when it is tapped: the latest version may be newer than the one seen when it showed, and the
+ * owner may have switched the link off since. The answer replaces the one kept.
+ */
+export function refreshLinkedArtifactCard(
+    id: string,
+    chat: ArtifactChat | undefined
+): Promise<ArtifactCard | undefined> {
+    checked.delete(keyOf(id, chat));
+    return linkedArtifactCard(id, chat);
+}
+
+function keyOf(id: string, chat: ArtifactChat | undefined): string {
+    return `${id}|${chat?.kind ?? ""}|${chat?.ref ?? ""}`;
 }
 
 /** Only for tests. */

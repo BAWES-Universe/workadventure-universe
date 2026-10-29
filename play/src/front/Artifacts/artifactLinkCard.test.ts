@@ -6,7 +6,12 @@ vi.mock("../Connection/LocalUserStore", () => ({ localUserStore: { getAuthToken:
 
 import type { ArtifactChat } from "./ArtifactApi";
 import { artifactLink } from "./ArtifactApi";
-import { artifactIdOfLink, forgetLinkedArtifacts, linkedArtifactCard } from "./artifactLinkCard";
+import {
+    artifactIdOfLink,
+    forgetLinkedArtifacts,
+    linkedArtifactCard,
+    refreshLinkedArtifactCard,
+} from "./artifactLinkCard";
 
 const ID = "0f8fad5b-d9cb-469f-a165-70867728950e";
 const chat: ArtifactChat = { kind: "dm", ref: "!room:chat.example" };
@@ -83,5 +88,19 @@ describe("the card a pasted artifact link shows", () => {
         expect(await linkedArtifactCard(ID, chat)).toBeDefined();
         expect(await linkedArtifactCard(ID, { kind: "nearby", ref: "bubble-2" })).toBeUndefined();
         expect(fetching).toHaveBeenCalledTimes(2);
+    });
+
+    it("is asked again on the tap, which sees a newer version or a link switched off", async () => {
+        const fetching = vi
+            .spyOn(globalThis, "fetch")
+            .mockResolvedValueOnce(answer(200, opened))
+            .mockResolvedValueOnce(answer(200, { ...opened, artifact: { ...opened.artifact, version: 5 } }))
+            .mockResolvedValueOnce(answer(404, { error: "not_found" }));
+        expect((await linkedArtifactCard(ID, chat))?.version).toBe(4);
+        expect((await refreshLinkedArtifactCard(ID, chat))?.version).toBe(5);
+        // The newer answer is the one kept
+        expect((await linkedArtifactCard(ID, chat))?.version).toBe(5);
+        expect(await refreshLinkedArtifactCard(ID, chat)).toBeUndefined();
+        expect(fetching).toHaveBeenCalledTimes(3);
     });
 });

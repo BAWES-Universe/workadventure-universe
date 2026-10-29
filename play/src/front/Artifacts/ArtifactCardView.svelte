@@ -7,6 +7,7 @@
     import { artifactBadge, artifactKindName } from "./artifactBadge";
     import type { ArtifactCard } from "./artifactCard";
     import { ARTIFACT_CHAT_CONTEXT, type ArtifactChatOf } from "./artifactChatContext";
+    import { refreshLinkedArtifactCard } from "./artifactLinkCard";
     import { openArtifactFromCard } from "./openArtifact";
 
     /** A bot's artifact as a card in the chat: tap it to open the artifact in the window. */
@@ -25,9 +26,10 @@
             coWebsite instanceof ArtifactCoWebsite && coWebsite.artifactId === card.id
     );
     $: shownVersion = openWindow?.version;
-    // A pasted link's card stands for the latest version, whichever number that is now.
-    $: isOpen =
-        openWindow !== undefined && ($shownVersion === card.version || (fromLink && $shownVersion === undefined));
+    /** A pasted link's card, as asked again on its last tap: the version its window opened at. */
+    let tapped: ArtifactCard | undefined;
+    $: shownCard = tapped?.id === card.id ? tapped : card;
+    $: isOpen = openWindow !== undefined && $shownVersion === shownCard.version;
     $: badge = artifactBadge(card.kind, $LL);
     $: kindName = artifactKindName(card.kind, $LL);
     $: linkMaker = card.maker ?? makerName;
@@ -37,11 +39,20 @@
                   kind: kindName,
                   maker: linkMaker,
               })
-            : $LL.chat.artifacts.cardLine({ kind: kindName, version: card.version });
+            : $LL.chat.artifacts.cardLine({ kind: kindName, version: shownCard.version });
 
-    function open() {
+    async function open() {
         const chat: ArtifactChat | undefined = chatOf?.();
-        openArtifactFromCard(card, chat, makerName, fromLink);
+        if (fromLink) {
+            // A link means the latest version: ask again on the tap, since one may have been made since it showed.
+            // Refused now (the link was switched off): the window says it can't open it, as for a bot's card.
+            const { id } = card;
+            const latest = await refreshLinkedArtifactCard(id, chat);
+            if (latest) tapped = latest;
+            openArtifactFromCard(latest ?? card, chat, makerName);
+            return;
+        }
+        openArtifactFromCard(card, chat, makerName);
     }
 </script>
 
