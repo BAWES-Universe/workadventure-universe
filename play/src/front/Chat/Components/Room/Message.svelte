@@ -254,7 +254,7 @@
                 ? 'bg-contrast'
                 : ''}
                     {isMyMessage && !messageFromSystem && !$isDeleted && replyDepth === 0 && !notSent
-                ? 'bg-secondary'
+                ? 'u-bubble-mine'
                 : ''}
                     {notSent ? 'message-not-sent bg-white/5 border border-dashed border-white/20' : ''}
                     {$reactionsWithUsers.length > 0 && !$isDeleted && replyDepth === 0 ? 'mb-4 p-0.5' : ''}
