@@ -8,6 +8,7 @@ import { friendMenuAction } from "../../UserList/FriendMenuAction";
 import type { FriendMenuAction } from "../../UserList/FriendMenuAction";
 import { ringStore } from "../../../Stores/RingStore";
 import type { Relationship } from "../../../Stores/FriendsStore";
+import { forgetPerson } from "../../../Stores/ProfileMemory";
 import type { TranslationFunctions } from "../../../../../i18n/i18n-types";
 import type { DirectPartner } from "./DirectPartnerStore";
 
@@ -112,6 +113,8 @@ export async function setPartnerBlocked(partner: DirectPartner, blocked: boolean
     await gameManager.chatConnection.setUserIgnored(partner.chatId, blocked);
     const uuid = partner.user?.uuid;
     if (!uuid) return;
+    // What their profile showed is asked again next time, as you now stand with them.
+    forgetPerson(uuid);
     if (blocked) blackListManager.blackList(uuid);
     else blackListManager.cancelBlackList(uuid);
 }
