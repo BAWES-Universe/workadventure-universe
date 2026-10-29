@@ -55,6 +55,11 @@ export function holdGifPicture(session: GifSession, url: string | undefined): vo
     session.pictures.set(url, picture);
 }
 
+/** Whether a tile picture was already loaded this session: its tile can show it at once, without waiting. */
+export function isGifPictureHeld(session: GifSession | undefined, url: string | undefined): boolean {
+    return url !== undefined && session?.pictures?.has(url) === true;
+}
+
 let sharedClient: { apiKey: string; client: KlipyClient } | undefined;
 
 /** One Klipy client for the page, so what is kept for the session follows it from one opening to the next. */

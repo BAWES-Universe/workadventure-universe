@@ -30,9 +30,12 @@ export function showFloatingUi<Component extends SvelteComponentTyped>(
     props: ComponentProps<Component>,
     options?: Partial<ComputePositionConfig>,
     offsetMainAxis = 0,
-    withArrow = true
+    withArrow = true,
+    // For a "-start" or "-end" placement: how far in from that edge of the element the popup stops.
+    offsetAlignmentAxis = 0
 ): () => void {
-    return mountFloatingUi(referenceNode, component, props, options, offsetMainAxis, withArrow).destroy;
+    return mountFloatingUi(referenceNode, component, props, options, offsetMainAxis, withArrow, offsetAlignmentAxis)
+        .destroy;
 }
 
 export interface HideableFloatingUi {
@@ -76,7 +79,8 @@ function mountFloatingUi<Component extends SvelteComponentTyped>(
     props: ComponentProps<Component>,
     options: Partial<ComputePositionConfig> | undefined,
     offsetMainAxis: number,
-    withArrow: boolean
+    withArrow: boolean,
+    offsetAlignmentAxis = 0
 ): { id: string; destroy: () => void } {
     let arrowNode: HTMLElement | undefined;
     let contentNode: HTMLElement | undefined;
@@ -119,7 +123,7 @@ function mountFloatingUi<Component extends SvelteComponentTyped>(
             const middlewares = [
                 flip(),
                 shift({ padding: 5, limiter: limitShift() }),
-                offset({ mainAxis: offsetMainAxis }),
+                offset({ mainAxis: offsetMainAxis, alignmentAxis: offsetAlignmentAxis }),
             ];
             if (arrowNode) {
                 middlewares.push(arrow({ element: arrowNode }));

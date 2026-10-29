@@ -123,14 +123,15 @@ export function runsOnCards(
 }
 
 /**
- * The maker's own keys that are not lent to this bot's universe (#1375). Only lent keys show under "Runs on", so the page
- * names these and says how to lend them. Empty for anyone but the maker, and when their keys can't be loaded.
+ * The viewer's own keys that are not lent to this bot's universe (#1375). Only lent keys show under "Runs on", so the page
+ * names these and says how to lend them. Anyone who manages a bot may put it on their own key (#1579), so this is for
+ * everyone, not only the maker. Empty when their keys can't be loaded.
  */
 export function unlentKeyNames(
     options: BotAiOptions,
     myKeys: ReadonlyArray<{ id: string; name: string }> | null
 ): string[] {
-    if (!options.viewerIsMaker || !myKeys) return [];
+    if (!myKeys) return [];
     const lent = new Set(options.keys.map((key) => key.id));
     return myKeys.filter((key) => !lent.has(key.id)).map((key) => key.name);
 }
@@ -188,11 +189,7 @@ export function mindBriefName(
 
 /** Who may change what a bot runs on: its maker may pick their own lent keys; anyone who manages bots may move it to Universe AI. */
 export function canPick(options: BotAiOptions, card: RunsOnCard): boolean {
-    return (
-        card.selectable &&
-        !card.picked &&
-        (card.kind === "universe-ai" || (card.kind === "mine" && options.viewerIsMaker))
-    );
+    return card.selectable && !card.picked && (card.kind === "universe-ai" || card.kind === "mine");
 }
 
 /** What a new bot starts on: Universe AI when Orbit says it is ready, otherwise nothing is decided here (the page keeps its old choice). */

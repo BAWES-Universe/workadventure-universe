@@ -5,9 +5,12 @@
     export let disabled = false;
     // The 44px tap size, for a button that stands on its own line
     export let tall = false;
+    export let go = false;
 </script>
 
-<button type="button" class="bp-btn" class:danger class:tall {disabled} data-testid={testId} on:click><slot /></button>
+<button type="button" class="bp-btn" class:danger class:tall class:go {disabled} data-testid={testId} on:click
+    ><slot /></button
+>
 
 <style>
     .bp-btn {
@@ -32,6 +35,9 @@
     .bp-btn.tall {
         height: 44px;
         padding: 0 16px;
+    }
+    .bp-btn.go {
+        background: linear-gradient(135deg, #8629fc, #4156f6);
     }
     .bp-btn.danger {
         color: #ff8a7a;

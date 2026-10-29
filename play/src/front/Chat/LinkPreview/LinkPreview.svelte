@@ -1,8 +1,12 @@
 <script lang="ts">
-    import { onDestroy } from "svelte";
+    import { getContext, hasContext, onDestroy } from "svelte";
     import { v4 as uuid } from "uuid";
     import LL from "../../../i18n/i18n-svelte";
     import Lightbox from "../Components/Room/Message/Lightbox.svelte";
+    import ArtifactCardView from "../../Artifacts/ArtifactCardView.svelte";
+    import type { ArtifactCard } from "../../Artifacts/artifactCard";
+    import { ARTIFACT_CHAT_CONTEXT, type ArtifactChatOf } from "../../Artifacts/artifactChatContext";
+    import { artifactIdOfLink, linkedArtifactCard } from "../../Artifacts/artifactLinkCard";
     import type { LinkKind } from "./LinkKind";
     import { APP_ICONS, youtubeSvg } from "./appIcons";
     import { classifyChatLink, previewedLinkOf } from "./ChatLinkKind";
@@ -24,8 +28,13 @@
     const VIDEO_POLICY = "autoplay; encrypted-media; fullscreen; picture-in-picture;";
 
     const previewId = uuid();
+    const chatOf: ArtifactChatOf | undefined = hasContext(ARTIFACT_CHAT_CONTEXT)
+        ? getContext(ARTIFACT_CHAT_CONTEXT)
+        : undefined;
 
     let link: LinkKind | undefined;
+    /** A pasted share link of an artifact this person may open from here: its card, as a bot's artifact gets. */
+    let artifact: ArtifactCard | undefined;
     let web: WebPreview | undefined;
     let video: YoutubePreview = {};
     let imageFailed = false;
@@ -39,12 +48,29 @@
         if (url === loadedFor) return;
         loadedFor = url;
         link = undefined;
+        artifact = undefined;
         web = undefined;
         video = {};
         imageFailed = false;
         pictureOpen = false;
         if (!url) return;
 
+        const artifactId = artifactIdOfLink(url);
+        if (artifactId) {
+            // Nothing shows until Orbit says whether this person may open it: then its card, or else the plain preview.
+            linkedArtifactCard(artifactId, chatOf?.())
+                .then((card) => {
+                    if (loadedFor !== url) return;
+                    if (card) artifact = card;
+                    else loadLink(url);
+                })
+                .catch((error) => console.error(error));
+            return;
+        }
+        loadLink(url);
+    }
+
+    function loadLink(url: string) {
         const kind = classifyChatLink(url);
         link = kind;
 
@@ -116,7 +142,11 @@
     });
 </script>
 
-{#if link?.kind === "youtube"}
+{#if artifact}
+    <div class="link-artifact" class:link-preview-alone={alone} data-testid="artifactLinkPreview">
+        <ArtifactCardView card={artifact} fromLink />
+    </div>
+{:else if link?.kind === "youtube"}
     <div
         class="link-preview"
         class:link-preview-mine={mine}
@@ -342,6 +372,15 @@
         background: rgba(255, 255, 255, 0.05);
         border: 1px solid rgba(255, 255, 255, 0.1);
         color: white;
+    }
+    /* A pasted artifact link: the bot's artifact card, where a link's card would be. */
+    .link-artifact {
+        width: 300px;
+        max-width: calc(100% - 16px);
+        margin: 2px 8px 8px;
+    }
+    .link-artifact.link-preview-alone {
+        margin-top: 8px;
     }
     /* The page's part of a card with buttons under it: the card's own white text, not a link's colour. */
     .link-preview-card,

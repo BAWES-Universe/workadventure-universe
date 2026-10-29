@@ -45,11 +45,23 @@ export interface PinnedEntry {
     message: ChatMessage | undefined;
 }
 
+const pinnedEntriesByRoom = new WeakMap<ChatRoom, Readable<PinnedEntry[]>>();
+
 /**
  * The chat's pinned messages, the most recently pinned first. One already loaded is used as it is; an older one is
- * fetched on its own. A deleted one is left out.
+ * fetched on its own, once for the chat rather than each time its profile or details open (#1585). A deleted one is
+ * left out.
  */
 export function pinnedEntriesStore(room: ChatRoom & ChatRoomPins): Readable<PinnedEntry[]> {
+    let entries = pinnedEntriesByRoom.get(room);
+    if (!entries) {
+        entries = makePinnedEntriesStore(room);
+        pinnedEntriesByRoom.set(room, entries);
+    }
+    return entries;
+}
+
+function makePinnedEntriesStore(room: ChatRoom & ChatRoomPins): Readable<PinnedEntry[]> {
     const fetched = writable(new Map<string, ChatMessage | null>());
     const messages: Readable<readonly ChatMessage[]> = { subscribe: (run) => room.messages.subscribe(run) };
     const asking = new Set<string>();

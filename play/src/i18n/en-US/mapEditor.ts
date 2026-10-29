@@ -691,6 +691,15 @@ const mapEditor: BaseTranslation = {
                     briefNone: "No one has chatted with {name:string} yet",
                     briefLoading: "Loading…",
                     briefFailed: "Couldn't load usage. Open to try again.",
+                    freshTitle: "Usage fills in once people chat with {name:string}",
+                    freshLine:
+                        "You'll see how many replies it gives each day, who chats with it, what it runs on and if anyone runs out of replies.",
+                    whoFresh: "Names show here once people chat",
+                    ranOnFresh: "Shows once {name:string} replies",
+                    peopleFresh:
+                        "No one has chatted with {name:string} yet. When people do, each one shows here with how many replies they got and when.",
+                    ranOnFreshLine:
+                        "Nothing yet. Once {name:string} replies, each AI it runs on shows here with its replies and tokens.",
                     range: "Range",
                     today: "Today",
                     week: "7 days",
@@ -840,8 +849,8 @@ const mapEditor: BaseTranslation = {
                     downNow: "Down now",
                     downUseUniverseAi: ", so Universe AI answers until it’s back.",
                     downStops: ", so this bot rests until it’s back.",
-                    othersKey: "{owner:string}’s key. Only {owner} can put {bot:string} on it.",
-                    othersKeyUnknown: "Someone else’s key. Only its owner can put {bot:string} on it.",
+                    othersKey: "{owner:string}’s key. {owner} pays.",
+                    othersKeyUnknown: "Someone else’s key. Its owner pays.",
                     pinned: "Pinned to a provider by an admin.",
                     keyGoneTitle: "A key that was removed",
                     keyGone: "This key isn’t there anymore. Pick Universe AI to get replies.",
@@ -852,9 +861,13 @@ const mapEditor: BaseTranslation = {
                     unlentStepOne: "In AI keys, tap Lend to a universe on it. It shows here as soon as it’s lent.",
                     unlentStepMany:
                         "In AI keys, tap Lend to a universe on the one you want. It shows here as soon as it’s lent.",
-                    managerHint:
-                        "You manage bots here, so you can switch {bot:string} to Universe AI. Your own keys never show on someone else’s bot.",
-                    pinTo: "Pin to a provider",
+                    noKeysHint: "Lend one of your AI keys to this universe to run {bot:string} on it.",
+                    moveAsk: "Move to {target:string}?",
+                    movePay: "You pay for its replies from now on.",
+                    moveBack: "{owner:string} is told. Only {owner} can move it back to their key.",
+                    moveBackUnknown: "Its owner is told. Only its owner can move it back to their key.",
+                    moveKeep: "Keep",
+                    moveGo: "Move",
                     model: {
                         title: "Model",
                         change: "Change",

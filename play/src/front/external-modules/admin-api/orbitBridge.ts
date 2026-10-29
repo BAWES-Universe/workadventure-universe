@@ -13,6 +13,10 @@
  * are requests: the game checks reach, Busy and blocks itself, exactly as when you invite from the People tab. Orbit
  * also asks which of someone's profile links the game can show in its window (`orbit-check-links`, answered with
  * `orbit-links`) and to open one there (`orbit-open-link`); the game checks each page itself, as it does a chat link.
+ * And Orbit says how many steps its pages have added to the tab's history (`orbit-history`), so closing Orbit walks
+ * back over exactly those (#1556).
+ * From Your artifacts, Orbit asks the game to open one of yours in its window (`orbit-open-artifact`); the game's server
+ * checks with Orbit that this person may open it, as when its card is tapped.
  *
  * Every visit (a room join or a reconnect) gets a new room revision. Requests carry it; Orbit refuses one from another
  * revision, and the game ignores answers from another revision, so an old Orbit frame can't act after a room or
@@ -144,6 +148,35 @@ export interface OrbitOpenLinkMessage {
     url: string;
 }
 
+/** Orbit asks the game to open one of your artifacts in its window (the game's "open-artifact" capability, #1474). */
+export interface OrbitOpenArtifactMessage {
+    type: "orbit-open-artifact";
+    version: typeof ORBIT_BRIDGE_VERSION;
+    roomRevision: string;
+    id: string;
+    title: string;
+    kind: string;
+    /** The version Orbit's list shows (its latest). */
+    artifactVersion: number;
+    /** The bot that made it. */
+    maker: string;
+}
+
+/**
+ * How many steps Orbit's pages have added to the tab's history above the one the game added when Orbit opened (the
+ * game's "history" capability). Sent whenever it changes. A page loaded afresh counts from 0, so the number is never
+ * more than the real one.
+ */
+export interface OrbitHistoryMessage {
+    type: "orbit-history";
+    version: typeof ORBIT_BRIDGE_VERSION;
+    roomRevision: string;
+    step: number;
+}
+
+/** The most Orbit steps the game walks back over at once. */
+export const MAX_ORBIT_HISTORY_STEPS = 1000;
+
 /** The most links Orbit asks about at once. */
 export const MAX_CHECKED_LINKS = 10;
 
@@ -243,6 +276,38 @@ export function isOrbitOpenLinkMessage(value: unknown): value is OrbitOpenLinkMe
     );
 }
 
+const ARTIFACT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isOrbitOpenArtifactMessage(value: unknown): value is OrbitOpenArtifactMessage {
+    return (
+        isRecord(value) &&
+        value.type === "orbit-open-artifact" &&
+        value.version === ORBIT_BRIDGE_VERSION &&
+        isBoundedString(value.roomRevision, 16, 128) &&
+        typeof value.id === "string" &&
+        ARTIFACT_ID.test(value.id) &&
+        isBoundedString(value.title, 1, 120) &&
+        isBoundedString(value.kind, 1, 32) &&
+        typeof value.artifactVersion === "number" &&
+        Number.isInteger(value.artifactVersion) &&
+        value.artifactVersion >= 1 &&
+        isBoundedString(value.maker, 0, 128)
+    );
+}
+
+export function isOrbitHistoryMessage(value: unknown): value is OrbitHistoryMessage {
+    return (
+        isRecord(value) &&
+        value.type === "orbit-history" &&
+        value.version === ORBIT_BRIDGE_VERSION &&
+        isBoundedString(value.roomRevision, 16, 128) &&
+        typeof value.step === "number" &&
+        Number.isInteger(value.step) &&
+        value.step >= 0 &&
+        value.step <= MAX_ORBIT_HISTORY_STEPS
+    );
+}
+
 /** A fresh room revision for a new visit. */
 export function newRoomRevision(): string {
     return `rev-${crypto.randomUUID()}`;
@@ -283,7 +348,17 @@ export class OrbitBridge {
             type: "orbit-bridge-init",
             version: ORBIT_BRIDGE_VERSION,
             roomRevision: this.roomRevision,
-            capabilities: ["navigate", "event", "view", "profile", "invite", "message", "open-link"],
+            capabilities: [
+                "navigate",
+                "event",
+                "view",
+                "profile",
+                "invite",
+                "message",
+                "open-link",
+                "history",
+                "open-artifact",
+            ],
             view: this.view,
             ...(this.maxNameLength ? { maxNameLength: this.maxNameLength } : {}),
         });
