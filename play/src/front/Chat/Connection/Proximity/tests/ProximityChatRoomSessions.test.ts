@@ -3,7 +3,7 @@ import { get, readable, writable } from "svelte/store";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProximityChatRoom } from "../ProximityChatRoom";
 import type { ProximityChatMessage } from "../ProximityChatRoom";
-import { listableSessions } from "../ProximitySessions";
+import { listableSessions, sessionOfStay } from "../ProximitySessions";
 import { selectedRoomStore } from "../../../Stores/SelectRoomStore";
 import { keepOnlyProximityHistory, selectedProximitySessionStore } from "../../../Stores/ProximitySessionStore";
 import { areaChatRooms } from "../../../Stores/AreaPresenceStore";
@@ -300,6 +300,116 @@ describe("ProximityChatRoom sessions", () => {
         expect(room.takeUnsentDraft(live)).toBe("was about to say");
         expect(get(room.sessions)[0].unsentDraft).toBeUndefined();
         expect(room.takeUnsentDraft(get(room.sessions)[0])).toBeUndefined();
+    });
+
+    it("keeps a voice note left unsent when you walked away, and hands it back once you're back", async () => {
+        const note = { file: new File(["x"], "voice.weba"), details: { duration: 5, waveform: [1] } };
+        room.setDisplayName("Design room");
+        await room.joinSpace("bubble", [], true);
+        fake.space.usersStore.set(
+            new Map([
+                ["room_1", spaceUser("room_1", "Me", "a")],
+                ["room_3", spaceUser("room_3", "Sara", "b")],
+            ])
+        );
+        const first = room.currentSessionId ?? "";
+        await room.leaveSpace("bubble", true);
+        room.keepUnsentVoiceNote(first, note);
+        expect(get(room.sessions)[0].unsentVoiceNote).toBe(note);
+
+        await room.joinSpace("bubble", [], true);
+        const live = get(room.sessions)[0];
+        expect(live.isLive).toBe(true);
+        expect(room.takeUnsentVoiceNote(live)).toBe(note);
+        expect(get(room.sessions)[0].unsentVoiceNote).toBeUndefined();
+        expect(room.takeUnsentVoiceNote(get(room.sessions)[0])).toBeUndefined();
+    });
+
+    it("hands back one voice note at a time when two stays of a chat each kept one, latest first", async () => {
+        const older = { file: new File(["x"], "older.weba"), details: { duration: 5, waveform: [1] } };
+        const newer = { file: new File(["y"], "newer.weba"), details: { duration: 7, waveform: [1] } };
+        room.setDisplayName("Design room");
+        const people = new Map([
+            ["room_1", spaceUser("room_1", "Me", "a")],
+            ["room_3", spaceUser("room_3", "Sara", "b")],
+        ]);
+        await room.joinSpace("bubble", [], true);
+        fake.space.usersStore.set(people);
+        const first = room.currentSessionId ?? "";
+        await room.leaveSpace("bubble", true);
+        room.keepUnsentVoiceNote(first, older);
+        await room.joinSpace("bubble", [], true);
+        fake.space.usersStore.set(people);
+        const second = room.currentSessionId ?? "";
+        await room.leaveSpace("bubble", true);
+        room.keepUnsentVoiceNote(second, newer);
+
+        const ended = get(room.sessions)[0];
+        expect(ended.stayIds).toEqual([first, second]);
+        expect(ended.unsentVoiceNote).toBe(newer);
+        expect(room.takeUnsentVoiceNote(ended)).toBe(newer);
+        expect(get(room.sessions)[0].unsentVoiceNote).toBe(older);
+        expect(room.takeUnsentVoiceNote(get(room.sessions)[0])).toBe(older);
+        expect(get(room.sessions)[0].unsentVoiceNote).toBeUndefined();
+    });
+
+    it("moves the thread to the live stay when taking back the note leaves the stay it was in empty", async () => {
+        const note = { file: new File(["x"], "voice.weba"), details: { duration: 5, waveform: [1] } };
+        const people = new Map([
+            ["room_1", spaceUser("room_1", "Me", "a")],
+            ["room_3", spaceUser("room_3", "Sara", "b")],
+        ]);
+        await room.joinSpace("bubble", [], true);
+        fake.space.usersStore.set(people);
+        const first = room.currentSessionId ?? "";
+        await room.leaveSpace("bubble", true);
+        room.keepUnsentVoiceNote(first, note);
+        room.open(first);
+        await room.joinSpace("bubble", [], true);
+        fake.space.usersStore.set(people);
+        const live = get(room.sessions)[0];
+        expect(live.isLive).toBe(true);
+        expect(live.stayIds[0]).toBe(first);
+
+        expect(room.takeUnsentVoiceNote(live)).toBe(note);
+        expect(get(selectedProximitySessionStore)).toBe(room.currentSessionId);
+        expect(sessionOfStay(get(room.sessions), get(selectedProximitySessionStore) ?? "")?.isLive).toBe(true);
+    });
+
+    it("shows a voice note kept in the live stay on it, to go back in the recorder", async () => {
+        const note = { file: new File(["x"], "voice.weba"), details: { duration: 5, waveform: [1] } };
+        await room.joinSpace("bubble", [], true);
+        fake.space.usersStore.set(
+            new Map([
+                ["room_1", spaceUser("room_1", "Me", "a")],
+                ["room_3", spaceUser("room_3", "Sara", "b")],
+            ])
+        );
+        room.keepUnsentVoiceNote(room.currentSessionId, note);
+        const live = get(room.sessions)[0];
+        expect(live.isLive).toBe(true);
+        expect(live.unsentVoiceNote).toBe(note);
+        expect(room.takeUnsentVoiceNote(live)).toBe(note);
+    });
+
+    it("carries an unsent voice note to the next map", async () => {
+        const note = { file: new File(["x"], "voice.weba"), details: { duration: 5, waveform: [1] } };
+        room.setDisplayName("Design room");
+        await room.joinSpace("bubble", [], true);
+        fake.space.usersStore.set(
+            new Map([
+                ["room_1", spaceUser("room_1", "Me", "a")],
+                ["room_3", spaceUser("room_3", "Sara", "b")],
+            ])
+        );
+        fake.emit("spaceMessage", { sender: "room_3", spaceMessage: { message: "hello", name: "Sara" } });
+        const stayId = room.currentSessionId ?? "";
+        // The recorder closes right after the hand-over: its note follows the chats to the next map.
+        room.stashHistoryForNextScene();
+        room.keepUnsentVoiceNote(stayId, note);
+        const next = nextMapRoom();
+        expect(get(next.sessions)[0].unsentVoiceNote).toBe(note);
+        next.destroy();
     });
 
     it("shows where a script message lands: the live stay, or the whole timeline when alone", async () => {

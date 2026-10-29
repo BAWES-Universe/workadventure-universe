@@ -45,3 +45,8 @@ export function artifactKindName(kind: ArtifactKind | undefined, texts: Translat
             return chat.kindUnknown();
     }
 }
+
+/** Your artifacts' icon (game #1609): a grid of four, white on the brand gradient. */
+export const YOUR_ARTIFACTS_ICON =
+    "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-6 -6 36 36' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 4h6v6h-6zM14 4h6v6h-6zM4 14h6v6h-6zM14 14h6v6h-6z'/%3E%3C/svg%3E";
+export const YOUR_ARTIFACTS_ICON_BACKGROUND = "linear-gradient(120deg, #8629fc, #4156f6)";

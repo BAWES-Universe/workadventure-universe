@@ -27,6 +27,9 @@ const api = vi.hoisted(() => {
     };
 });
 vi.mock("../../../src/front/Artifacts/ArtifactApi", () => api);
+// Who is in the nearby chat with you now, as the Share menu names them
+const nearby = vi.hoisted(() => ({ nearbyPeopleNames: vi.fn() }));
+vi.mock("../../../src/front/Artifacts/nearbyPeople", () => nearby);
 // Every text is the key it comes from, so the test reads the parts by their test ids.
 vi.mock("../../../src/i18n/i18n-svelte", () => {
     const deep = (): unknown => new Proxy(() => "", { get: () => deep() });
@@ -41,7 +44,14 @@ import { openHereRoomRequestStore } from "../../../src/front/Stores/OpenHereShee
 
 const ID = "0f8fad5b-d9cb-469f-a165-70867728950e";
 
-function opened(number: number, latest = 3, kind = "app", owner = true) {
+function opened(
+    number: number,
+    latest = 3,
+    kind = "app",
+    owner = true,
+    chatKind: string | null = "nearby",
+    inChat = true
+) {
     return {
         artifact: {
             id: ID,
@@ -51,6 +61,7 @@ function opened(number: number, latest = 3, kind = "app", owner = true) {
             version: latest,
             openScope: "chat",
             changeScope: "owner",
+            chatKind,
             expiresAt: null,
         },
         version: {
@@ -61,7 +72,7 @@ function opened(number: number, latest = 3, kind = "app", owner = true) {
             createdAt: "2026-10-26T10:00:00Z",
             url: `https://artifacts.test/v${number}.html`,
         },
-        you: { owner, change: owner, manage: owner, copy: true },
+        you: { owner, change: owner, manage: owner, copy: true, inChat },
     };
 }
 
@@ -75,6 +86,7 @@ describe("the artifact window", () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
+        nearby.nearbyPeopleNames.mockReturnValue(readable(["Laura", "Sam", "Omar"]));
         target = document.createElement("div");
         document.body.appendChild(target);
     });
@@ -397,7 +409,6 @@ describe("the artifact window", () => {
         await vi.waitFor(() => expect(byTestId("artifactShareMenu")).not.toBeNull());
         expect(byTestId("artifactVersionMenu")).toBeNull();
         expect(byTestId("artifactOpenChat")?.getAttribute("aria-checked")).toBe("true");
-        expect(byTestId("artifactChangeOwner")?.getAttribute("aria-checked")).toBe("true");
         expect(byTestId("artifactCopyLink")).toBeNull();
 
         byTestId("artifactOpenLink")?.click();
@@ -405,7 +416,7 @@ describe("the artifact window", () => {
         expect(api.shareArtifact).toHaveBeenCalledWith(ID, { openScope: "link" }, { kind: "nearby", ref: "bubble" });
         expect(byTestId("artifactOpenLink")?.getAttribute("aria-checked")).toBe("true");
         // Nothing else is sent until it is saved
-        byTestId("artifactChangeOpeners")?.click();
+        byTestId("artifactOpenChat")?.click();
         expect(api.shareArtifact).toHaveBeenCalledTimes(1);
 
         // The link shows at once, but it is copied only once it works
@@ -439,10 +450,49 @@ describe("the artifact window", () => {
         byTestId("artifactCopyLink")?.click();
         await vi.waitFor(() => expect(byTestId("artifactLinkText")?.textContent).toBe(`https://orbit.test/a/${ID}`));
 
-        byTestId("artifactChangeOpeners")?.click();
+        byTestId("artifactOpenChat")?.click();
         await vi.waitFor(() => expect(byTestId("artifactShareFailed")).not.toBeNull());
-        expect(byTestId("artifactChangeOwner")?.getAttribute("aria-checked")).toBe("true");
-        expect(byTestId("artifactChangeOpeners")?.getAttribute("aria-checked")).toBe("false");
+        expect(byTestId("artifactOpenLink")?.getAttribute("aria-checked")).toBe("true");
+        expect(byTestId("artifactOpenChat")?.getAttribute("aria-checked")).toBe("false");
+    });
+
+    async function openShareMenu() {
+        await vi.waitFor(() => expect(byTestId("artifactShare")).not.toBeNull());
+        byTestId("artifactShare")?.click();
+        await vi.waitFor(() => expect(byTestId("artifactShareMenu")).not.toBeNull());
+    }
+
+    it("names the people in the nearby chat it was made in while the owner is in it, and asks nothing about changes", async () => {
+        api.fetchArtifact.mockResolvedValue(opened(3));
+        mountWindow(3);
+        await openShareMenu();
+        expect(byTestId("artifactOpenChatPeople")?.textContent).toBe("Laura, Sam, Omar");
+        expect(nearby.nearbyPeopleNames).toHaveBeenCalledWith("bubble");
+        expect(byTestId("artifactOpenJustYou")).toBeNull();
+        expect(byTestId("artifactChangeOwner")).toBeNull();
+        expect(byTestId("artifactChangeOpeners")).toBeNull();
+        expect(byTestId("artifactShareMenu")?.querySelectorAll(".menu-title")).toHaveLength(1);
+        expect(byTestId("artifactShareMenu")?.querySelector(".menu-note")).not.toBeNull();
+    });
+
+    it("reads Just you when the owner is not in the nearby chat it was made in", async () => {
+        api.fetchArtifact.mockResolvedValue(opened(3, 3, "app", true, "nearby", false));
+        mountWindow(3);
+        await openShareMenu();
+        expect(byTestId("artifactOpenJustYou")).not.toBeNull();
+        expect(byTestId("artifactOpenChatPeople")).toBeNull();
+        expect(nearby.nearbyPeopleNames).not.toHaveBeenCalled();
+        // Saved as before: the same choice, under the words that are true for it now
+        expect(byTestId("artifactOpenChat")?.getAttribute("aria-checked")).toBe("true");
+        expect(byTestId("artifactShareMenu")?.querySelector(".menu-note")).toBeNull();
+    });
+
+    it("reads Just you for an artifact made in a direct message", async () => {
+        api.fetchArtifact.mockResolvedValue(opened(3, 3, "app", true, "dm", false));
+        mountWindow(3);
+        await openShareMenu();
+        expect(byTestId("artifactOpenJustYou")).not.toBeNull();
+        expect(byTestId("artifactOpenChatPeople")).toBeNull();
     });
 
     it("opens the device's share sheet beside Copy link, and copies only when the sheet cannot open", async () => {

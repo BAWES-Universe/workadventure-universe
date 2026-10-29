@@ -6,6 +6,7 @@ import type { UserProviderMerger } from "../../UserProviderMerger/UserProviderMe
 import type { ChatPerson } from "../ChatPeopleStore";
 import {
     createNameByChatIdStore,
+    createPersonColourOf,
     createWokaByChatIdStore,
     indexColoursByChatId,
     indexNamesByChatId,
@@ -240,5 +241,25 @@ describe("people outside the world, asked of Orbit", () => {
         const names = valueOf(createNameByChatIdStore(fakeMerger([{ ...user("@a:m", undefined), gameName: "A" }])));
         await vi.waitFor(() => expect(names.current.get("@a:m")).toBe("A"));
         names.stop();
+    });
+});
+
+describe("createPersonColourOf", () => {
+    const merger = (users: ChatUser[]) =>
+        Promise.resolve({
+            usersByRoomStore: readable(new Map([["map", { roomName: "Map", users }]])),
+        } as unknown as UserProviderMerger);
+
+    it("gives a proximity chat's people the same colour as their direct chat row", async () => {
+        const colourOf = valueOf(createPersonColourOf(merger([user("@bot_7:m", "/w/bot.png", "#4d9996")])));
+        await vi.waitFor(() => expect(colourOf.current("@bot_7:m", "GitHub")).toBe("#4d9996"));
+        expect(colourOf.current("@sara:m", "Sara")).toBe(Color.getColorByString("Sara"));
+        colourOf.stop();
+    });
+
+    it("still colours by name before the game's people are known", () => {
+        const colourOf = valueOf(createPersonColourOf(undefined));
+        expect(colourOf.current(undefined, "Sales Researcher")).toBe(Color.getColorByString("Sales Researcher"));
+        colourOf.stop();
     });
 });

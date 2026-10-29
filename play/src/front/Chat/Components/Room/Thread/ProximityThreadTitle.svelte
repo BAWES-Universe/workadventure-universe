@@ -1,4 +1,7 @@
 <script lang="ts">
+    import { getContext, hasContext } from "svelte";
+    import { readable } from "svelte/store";
+    import type { Readable } from "svelte/store";
     import LL from "../../../../../i18n/i18n-svelte";
     import type { ProximityChatRoom } from "../../../Connection/Proximity/ProximityChatRoom";
     import TopRowAvatar from "../../TopRow/TopRowAvatar.svelte";
@@ -6,6 +9,7 @@
     import RaisedHandsPill from "../../../../Components/Video/RaisedHandsPill.svelte";
     import { chatSheetLayoutStore } from "../../../ChatSheetStore";
     import { openRoomDetailsIdStore } from "../../../Stores/ChatDetailsStore";
+    import { PERSON_COLOUR_CONTEXT, type PersonColourOf } from "../../../Stores/ChatUserWokaStore";
     import { nearbyTitleLines } from "./nearbyTitle";
     import { IconMessageCircle2 } from "@wa-icons";
 
@@ -20,6 +24,11 @@
     const participants = room.participants;
     const spaceKind = room.spaceKind;
     const spaceName = room.name;
+
+    // Each woka sits on the person's colour from People, as in the chat list.
+    const colourOf: Readable<PersonColourOf> = hasContext(PERSON_COLOUR_CONTEXT)
+        ? getContext(PERSON_COLOUR_CONTEXT)
+        : readable(() => undefined);
 
     // Only what the proximity chat itself is connected to: that is where a message sent now goes.
     $: state = resolveTopRowState({
@@ -51,7 +60,11 @@
             {#if stackedPeople.length > 0}
                 {#each stackedPeople as person, index (person.id)}
                     <span class={index === 0 ? "" : "-ms-3"} style:z-index={MAX_STACKED_AVATARS - index}>
-                        <TopRowAvatar pictureStore={person.pictureStore} name={person.name} />
+                        <TopRowAvatar
+                            pictureStore={person.pictureStore}
+                            name={person.name}
+                            color={$colourOf(person.chatId, person.name)}
+                        />
                     </span>
                 {/each}
                 {#if isLive}
