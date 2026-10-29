@@ -163,8 +163,11 @@
         if (!floating && event.target === event.currentTarget) reposition();
     }
 
-    function onSheetTransitionEnd(event: TransitionEvent) {
-        if (!floating && event.target === event.currentTarget && event.propertyName === "height") reposition();
+    // The sheet settles when its height stops moving; the window when its width does (expanded, collapsed, or snapped
+    // to a stop once the grip is let go).
+    function onTransitionEnd(event: TransitionEvent) {
+        if (event.target !== event.currentTarget) return;
+        if (event.propertyName === (floating ? "width" : "height")) reposition();
     }
 
     // With reduced motion the sheet does not animate or transition, so nothing ends: it has settled as soon as it is drawn
@@ -292,6 +295,14 @@
     // A split dragged on an upright phone has no limits: the window opened by turning the phone keeps within these.
     $: ratio = dragRatio ?? clampOpenHereRatio($coWebsiteRatio);
 
+    // The window takes its side of the screen the way Orbit's does: the camera keeps the player in the space it leaves
+    // free beside the chat. Expanded, it covers the whole map, so it does not count. The sheet counts until it is tucked.
+    $: blocksMap = floating ? !expanded : !tucked;
+    // Opening the window, expanding or collapsing it, or a new width once the grip is let go changes what it covers:
+    // the map is centred again at once, and once more as the width's motion ends (on:transitionend), as Orbit's does.
+    $: floatingPlace = floating && dragRatio === undefined ? `${expanded} ${ratio}` : undefined;
+    $: if (floatingPlace !== undefined) reposition();
+
     function startDrag(event: PointerEvent) {
         if (!card || event.button !== 0) return;
         const rect = card.getBoundingClientRect();
@@ -331,9 +342,9 @@
         // A sheet closed while tucked must not bring what Undo restores back tucked: it comes back up.
         openHereTuckedStore.set(false);
         fullScreenCowebsite.set(false);
-        // The sheet is gone, and the map has the space again. The chat goes back to the height it had before a file
-        // took the screen above it.
-        if (!floating) reposition();
+        // The window or the sheet is gone, and the map has the space again. The chat goes back to the height it had
+        // before a file took the screen above it.
+        reposition();
         restoreChatAfterFile();
     });
 </script>
@@ -349,7 +360,7 @@
     class={floating ? "open-here" : "open-here-sheet u-surface-flat"}
     class:expanded
     class:tucked
-    class:screen-blocker={!floating && !tucked}
+    class:screen-blocker={blocksMap}
     class:behind-orbit={behindOrbit}
     class:behind-chat={!behindOrbit && behindChat}
     class:dragging={dragRatio !== undefined || sheetDragHeight !== undefined || switching}
@@ -358,7 +369,7 @@
     on:pointerdown|capture={bringForward}
     on:click={onSheetClick}
     on:animationend={onSheetAnimationEnd}
-    on:transitionend={onSheetTransitionEnd}
+    on:transitionend={onTransitionEnd}
 >
     {#if floating}
         <div
