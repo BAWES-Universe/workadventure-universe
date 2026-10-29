@@ -359,10 +359,12 @@ export class LMStudioProvider implements AIProvider {
             const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
             const controller = new AbortController();
             const cleanupExternalAbort = linkExternalAbort(externalSignal, controller);
-            const timeoutId = setTimeout(() => controller.abort(), timeout);
+            let timeoutId: ReturnType<typeof setTimeout> | undefined;
             try {
                 const endpoint = `${config.endpoint.replace(/\/+$/, '')}/v1/chat/completions`;
+                // Before the request timeout starts: fetching pictures is not the server's time
                 const userContent = await this.buildUserContent(userMessage, config, images);
+                timeoutId = setTimeout(() => controller.abort(), timeout);
 
                 const response = await this.post(endpoint, {
                     model: config.model,

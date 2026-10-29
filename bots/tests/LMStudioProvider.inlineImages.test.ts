@@ -75,6 +75,24 @@ describe("an own-computer key with a vision model", () => {
         await new LMStudioProvider().generate("sys", "what is this?", config(), undefined, undefined, [PICTURE]);
         expect(sentImages(ownFetch.mock.calls[0])).toEqual([PNG_DATA]);
     });
+
+    it("does not count a slow picture against the request's time limit", async () => {
+        vi.useFakeTimers();
+        try {
+            vi.stubGlobal("fetch", vi.fn(() => new Promise((resolve) => setTimeout(() => resolve(picture(PNG)), 1500))));
+            let abortedWhenSent: boolean | undefined;
+            ownFetch.mockImplementation(async (_url: string, init: { signal: AbortSignal }) => {
+                abortedWhenSent = init.signal.aborted;
+                return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: "a cat" } }] }) };
+            });
+            const reply = new LMStudioProvider().generate("sys", "what is this?", config({ settings: { timeout: 1000 } }), undefined, undefined, [PICTURE]);
+            await vi.advanceTimersByTimeAsync(1600);
+            await reply;
+            expect(abortedWhenSent).toBe(false);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
 });
 
 describe("links stay links", () => {

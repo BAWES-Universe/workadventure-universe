@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 
 // The helper only reads one Phaser constant; the loader and the scene are faked below.
 beforeAll(() => {
-    vi.stubGlobal("Phaser", { Loader: { Events: { FILE_LOAD_ERROR: "loaderror" } } });
+    vi.stubGlobal("Phaser", { Loader: { Events: { FILE_LOAD_ERROR: "loaderror", COMPLETE: "complete" } } });
 });
 
 class FakeLoader extends EventEmitter {
@@ -43,6 +43,19 @@ describe("TexturesHelper.loadEntityImage", () => {
 
         await expect(promise).rejects.toThrow(`Could not load the picture "${URL}"`);
         expect(load.listenerCount("loaderror")).toBe(0);
+        expect(load.listenerCount(`filecomplete-image-${URL}`)).toBe(0);
+    });
+
+    it("fails a picture the browser can't read, which ends the loading with no texture and no error of its own", async () => {
+        const { TexturesHelper } = await import("../TexturesHelper");
+        const { load, scene } = fakeScene();
+        const promise = TexturesHelper.loadEntityImage(scene, URL, URL);
+
+        load.emit("complete");
+
+        await expect(promise).rejects.toThrow(`Could not load the picture "${URL}"`);
+        expect(load.listenerCount("loaderror")).toBe(0);
+        expect(load.listenerCount("complete")).toBe(0);
         expect(load.listenerCount(`filecomplete-image-${URL}`)).toBe(0);
     });
 

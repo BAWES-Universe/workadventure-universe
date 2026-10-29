@@ -56,6 +56,35 @@ describe("a chat's artifacts", () => {
         expect(get(list).artifacts).toHaveLength(1);
     });
 
+    it("asks again for the read that failed: the first page of a list that was complete, the next page otherwise", async () => {
+        vi.spyOn(console, "error").mockImplementation(() => undefined);
+        const fetchPage = vi
+            .fn()
+            .mockResolvedValueOnce(page(["a"], 1, null))
+            .mockRejectedValueOnce(new Error("offline"))
+            .mockResolvedValueOnce(page(["a", "b"], 2, null));
+        const list = new ChatArtifactsList(chat, fetchPage);
+        await list.refresh();
+        await list.refresh();
+        expect(get(list)).toMatchObject({ failed: true, next: null });
+        await list.retry();
+        expect(fetchPage).toHaveBeenLastCalledWith(chat, 0);
+        expect(get(list)).toMatchObject({ failed: false, total: 2 });
+        expect(get(list).artifacts.map((one) => one.id)).toEqual(["a", "b"]);
+
+        const paged = vi
+            .fn()
+            .mockResolvedValueOnce(page(["a"], 2, 1))
+            .mockRejectedValueOnce(new Error("offline"))
+            .mockResolvedValueOnce(page(["b"], 2, null));
+        const second = new ChatArtifactsList(chat, paged);
+        await second.refresh();
+        await second.loadMore();
+        await second.retry();
+        expect(paged).toHaveBeenLastCalledWith(chat, 1);
+        expect(get(second).artifacts.map((one) => one.id)).toEqual(["a", "b"]);
+    });
+
     it("drops an answer that a newer read overtook", async () => {
         let answerFirst: (page: ChatArtifactPage) => void = () => undefined;
         const fetchPage = vi

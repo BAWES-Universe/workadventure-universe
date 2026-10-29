@@ -101,7 +101,7 @@
                 <button
                     type="button"
                     class="u-menu-row !m-0 w-full justify-center"
-                    on:click={() => ($list.loaded ? more() : list.refresh())}
+                    on:click={() => list.retry()}
                 >
                     {$LL.chat.artifacts.tryAgain()}
                 </button>
