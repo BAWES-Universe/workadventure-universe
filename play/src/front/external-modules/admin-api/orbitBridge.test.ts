@@ -7,6 +7,7 @@ import {
     isOrbitCheckLinksMessage,
     isOrbitOpenArtifactMessage,
     isOrbitOpenLinkMessage,
+    isOrbitHistoryMessage,
     isOrbitInvitePersonMessage,
     isOrbitMessagePersonMessage,
     isOrbitProfileChangedMessage,
@@ -147,6 +148,19 @@ describe("Orbit's profile link requests", () => {
     });
 });
 
+describe("Orbit's history steps", () => {
+    it("accepts a whole number of steps, and nothing else", () => {
+        const message = { type: "orbit-history", version: 1, roomRevision: "rev-0123456789abcdef", step: 2 };
+        expect(isOrbitHistoryMessage(message)).toBe(true);
+        expect(isOrbitHistoryMessage({ ...message, step: 0 })).toBe(true);
+        expect(isOrbitHistoryMessage({ ...message, step: -1 })).toBe(false);
+        expect(isOrbitHistoryMessage({ ...message, step: 1.5 })).toBe(false);
+        expect(isOrbitHistoryMessage({ ...message, step: 1001 })).toBe(false);
+        expect(isOrbitHistoryMessage({ ...message, step: "2" })).toBe(false);
+        expect(isOrbitHistoryMessage({ ...message, roomRevision: "short" })).toBe(false);
+    });
+});
+
 describe("OrbitBridge", () => {
     beforeEach(() => vi.restoreAllMocks());
 
@@ -160,7 +174,17 @@ describe("OrbitBridge", () => {
             type: "orbit-bridge-init",
             version: 1,
             roomRevision: revision,
-            capabilities: ["navigate", "event", "view", "profile", "invite", "message", "open-link", "open-artifact"],
+            capabilities: [
+                "navigate",
+                "event",
+                "view",
+                "profile",
+                "invite",
+                "message",
+                "open-link",
+                "history",
+                "open-artifact",
+            ],
             view: "compact",
         });
         expect(posted[1]).toEqual({
