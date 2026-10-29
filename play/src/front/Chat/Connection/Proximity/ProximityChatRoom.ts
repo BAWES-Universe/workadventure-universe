@@ -99,6 +99,7 @@ export interface ProximityChatParticipant {
     readonly id: string;
     readonly name: string;
     readonly pictureStore: PictureStore;
+    readonly bot: boolean;
 }
 
 /**
@@ -1368,7 +1369,12 @@ export class ProximityChatRoom implements ChatRoom {
             this._participants.set(
                 Array.from(users.values())
                     .filter((user) => user.spaceUserId !== this._spaceUserId)
-                    .map((user) => ({ id: user.spaceUserId, name: user.name, pictureStore: user.pictureStore }))
+                    .map((user) => ({
+                        id: user.spaceUserId,
+                        name: user.name,
+                        pictureStore: user.pictureStore,
+                        bot: isBotUser(user),
+                    }))
             );
             if (!hasUserInProximityChat && users.size > 1) {
                 let name = "unknown";

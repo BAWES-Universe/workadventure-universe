@@ -27,10 +27,13 @@ export interface OpenedArtifact {
         version: number;
         openScope: string;
         changeScope: string;
+        /** The kind of chat it was made in; a copy has none. */
+        chatKind: string | null;
         expiresAt: string | null;
     };
     version: ArtifactVersionInfo;
-    you: { owner: boolean; change: boolean; manage: boolean; copy: boolean };
+    /** `inChat`: in the chat it was made in right now, as the game's server vouched. */
+    you: { owner: boolean; change: boolean; manage: boolean; copy: boolean; inChat?: boolean };
 }
 
 /** One artifact made in a chat, as its Artifacts group and list show it (game #1474). */

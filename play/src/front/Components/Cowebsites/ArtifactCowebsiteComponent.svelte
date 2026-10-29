@@ -10,12 +10,12 @@
         fetchArtifactVersions,
         restoreArtifactVersion,
         shareArtifact,
-        type ArtifactChangeScope,
         type ArtifactOpenScope,
         type ArtifactVersionInfo,
         type OpenedArtifact,
     } from "../../Artifacts/ArtifactApi";
     import { artifactBadge } from "../../Artifacts/artifactBadge";
+    import { nearbyPeopleNames } from "../../Artifacts/nearbyPeople";
     import type { ArtifactKind } from "../../Artifacts/artifactCard";
     import { whenLabel } from "../../Artifacts/whenLabel";
     import { codeKindOfArtifact, codeLinesOf, coloredCodeBlocks } from "../../FileViewer/codeHighlight";
@@ -70,7 +70,7 @@
     /** The owner's Share list is open (one list drops down at a time). */
     let shareOpen = false;
     /** A choice the owner just made, showing at once while it is on its way to be saved. */
-    let pendingShare: { openScope?: ArtifactOpenScope; changeScope?: ArtifactChangeScope } | undefined;
+    let pendingShare: ArtifactOpenScope | undefined;
     let shareFailed = false;
     let copied: "no" | "yes" | "failed" = "no";
     let copiedTimer: ReturnType<typeof setTimeout> | undefined;
@@ -117,8 +117,18 @@
         ? $LL.chat.artifacts.by({ maker: makerName })
         : "";
     $: badge = artifactBadge(kind, $LL);
-    $: openScope = pendingShare?.openScope ?? opened?.artifact.openScope;
-    $: changeScope = pendingShare?.changeScope ?? opened?.artifact.changeScope;
+    $: openScope = pendingShare ?? opened?.artifact.openScope;
+    // "People in this chat" only while the owner is in the nearby chat it was made in, naming who is in it now;
+    // otherwise the same choice reads "Just you", the only one who can open it then
+    $: inItsChat =
+        opened?.artifact.chatKind === "nearby" && opened.you.inChat && actualCowebsite.chat?.kind === "nearby";
+    $: peopleHere = inItsChat && actualCowebsite.chat ? nearbyPeopleNames(actualCowebsite.chat.ref) : undefined;
+    $: justYouHelp =
+        opened?.artifact.chatKind === "dm"
+            ? $LL.chat.artifacts.justYouDm({ maker: makerName })
+            : opened?.artifact.chatKind === "nearby"
+            ? $LL.chat.artifacts.justYouNearby()
+            : "";
     // A document is drawn from its text, a drawing as a picture, a page or app in the locked frame.
     $: needsText = codeOn || kind === "markdown";
 
@@ -261,18 +271,12 @@
     }
 
     // Saved at once, one choice at a time: the list shows the choice while it is on its way, and goes back if it fails.
-    function setSharing(change: { openScope?: ArtifactOpenScope; changeScope?: ArtifactChangeScope }) {
-        if (!opened || pendingShare) return;
-        if (
-            (change.openScope ?? openScope) === opened.artifact.openScope &&
-            (change.changeScope ?? changeScope) === opened.artifact.changeScope
-        ) {
-            return;
-        }
+    function setSharing(change: ArtifactOpenScope) {
+        if (!opened || pendingShare || change === opened.artifact.openScope) return;
         pendingShare = change;
         shareFailed = false;
         copied = "no";
-        void shareArtifact(id, change, actualCowebsite.chat).then(
+        void shareArtifact(id, { openScope: change }, actualCowebsite.chat).then(
             (artifact) => {
                 if (destroyed) return;
                 pendingShare = undefined;
@@ -282,7 +286,6 @@
                         artifact: {
                             ...opened.artifact,
                             openScope: artifact.openScope,
-                            changeScope: artifact.changeScope,
                         },
                     };
                 }
@@ -556,9 +559,20 @@
                         aria-checked={openScope === "chat"}
                         disabled={!!pendingShare}
                         data-testid="artifactOpenChat"
-                        on:click={() => setSharing({ openScope: "chat" })}
+                        on:click={() => setSharing("chat")}
                     >
-                        <span class="menu-text"><b>{$LL.chat.artifacts.openChat()}</b></span>
+                        {#if inItsChat}
+                            <span class="menu-text"
+                                ><b>{$LL.chat.artifacts.openChat()}</b>{#if $peopleHere?.length}<small
+                                        data-testid="artifactOpenChatPeople">{$peopleHere.join(", ")}</small
+                                    >{/if}</span
+                            >
+                        {:else}
+                            <span class="menu-text" data-testid="artifactOpenJustYou"
+                                ><b>{$LL.chat.artifacts.justYou()}</b>{#if justYouHelp}<small>{justYouHelp}</small
+                                    >{/if}</span
+                            >
+                        {/if}
                         <span class="radio" />
                     </button>
                     <button
@@ -569,41 +583,12 @@
                         aria-checked={openScope === "link"}
                         disabled={!!pendingShare}
                         data-testid="artifactOpenLink"
-                        on:click={() => setSharing({ openScope: "link" })}
+                        on:click={() => setSharing("link")}
                     >
                         <span class="menu-text"
                             ><b>{$LL.chat.artifacts.openLink()}</b><small>{$LL.chat.artifacts.openLinkHelp()}</small
                             ></span
                         >
-                        <span class="radio" />
-                    </button>
-                </div>
-                <b class="menu-title" id="artifact-change-scope-{id}">{$LL.chat.artifacts.whoCanChange()}</b>
-                <div class="choices" role="radiogroup" aria-labelledby="artifact-change-scope-{id}">
-                    <button
-                        type="button"
-                        role="radio"
-                        class="choice"
-                        class:picked={changeScope === "owner"}
-                        aria-checked={changeScope === "owner"}
-                        disabled={!!pendingShare}
-                        data-testid="artifactChangeOwner"
-                        on:click={() => setSharing({ changeScope: "owner" })}
-                    >
-                        <span class="menu-text"><b>{$LL.chat.artifacts.changeOwner()}</b></span>
-                        <span class="radio" />
-                    </button>
-                    <button
-                        type="button"
-                        role="radio"
-                        class="choice"
-                        class:picked={changeScope === "openers"}
-                        aria-checked={changeScope === "openers"}
-                        disabled={!!pendingShare}
-                        data-testid="artifactChangeOpeners"
-                        on:click={() => setSharing({ changeScope: "openers" })}
-                    >
-                        <span class="menu-text"><b>{$LL.chat.artifacts.changeOpeners()}</b></span>
                         <span class="radio" />
                     </button>
                 </div>
@@ -644,7 +629,7 @@
                         <p class="menu-note" role="alert">{$LL.chat.artifacts.copyFailed()}</p>
                         <code class="link-text" data-testid="artifactLinkText">{link}</code>
                     {/if}
-                {:else if openScope === "chat"}
+                {:else if openScope === "chat" && inItsChat}
                     <p class="menu-note">{$LL.chat.artifacts.openChatNote()}</p>
                 {/if}
             {:else}

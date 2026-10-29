@@ -5,6 +5,7 @@
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import type { ProximityChatParticipant, ProximityChatRoom } from "../../Connection/Proximity/ProximityChatRoom";
     import type { SpaceUserExtended } from "../../../Space/SpaceInterface";
+    import { isBotUser } from "../../UserProvider/ChatUserMapper";
     import { areaPresenceStore } from "../../Stores/AreaPresenceStore";
     import WokaFromUserId from "../../../Components/Woka/WokaFromUserId.svelte";
     import TopRowAvatar from "./TopRowAvatar.svelte";
@@ -38,7 +39,12 @@
     function toParticipants(users: Map<string, SpaceUserExtended>): ProximityChatParticipant[] {
         return Array.from(users.values())
             .filter((user) => user.spaceUserId !== mySpaceUserId)
-            .map((user) => ({ id: user.spaceUserId, name: user.name, pictureStore: user.pictureStore }));
+            .map((user) => ({
+                id: user.spaceUserId,
+                name: user.name,
+                pictureStore: user.pictureStore,
+                bot: isBotUser(user),
+            }));
     }
 
     // Areas the proximity chat is not connected to (meetings without chat, Matrix-only areas), with the
