@@ -227,18 +227,22 @@
         if (sendingDirect || !room) return;
         const proximityRoom = room;
         const leftIn = session;
+        // Taken out before it goes: being back with them meanwhile can't put it in the composer to send it twice.
+        const taken = proximityRoom.takeUnsentDraft(leftIn);
+        if (taken === undefined) return;
+        const stayId = leftIn.stayIds[leftIn.stayIds.length - 1];
         sendingDirect = true;
+        let sent = false;
         try {
-            const sent = await sendToDirectChat(chatID, (direct) => {
+            sent = await sendToDirectChat(chatID, (direct) => {
                 // The box writes line breaks as <br>: they go out as line breaks, as Enter sends them.
                 direct.sendMessage(withoutBlankEdges(text).replace(/<br\s*\/?>/gi, "\n"));
                 return Promise.resolve();
             });
-            if (sent) {
-                analyticsClient.chatMessageSent("matrix");
-                proximityRoom.takeUnsentDraft(leftIn);
-            }
+            if (sent) analyticsClient.chatMessageSent("matrix");
         } finally {
+            // Not sent: back in this chat, to try again.
+            if (!sent) proximityRoom.keepUnsentDraft(stayId, taken);
             // eslint-disable-next-line require-atomic-updates
             sendingDirect = false;
         }

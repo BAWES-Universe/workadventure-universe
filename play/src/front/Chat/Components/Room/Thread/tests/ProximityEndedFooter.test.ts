@@ -321,11 +321,13 @@ describe("ProximityEndedFooter", () => {
                 takeUnsentVoiceNote: vi.fn(() => note),
                 unsentVoiceNoteStayId: vi.fn(() => "stay-1"),
                 keepUnsentVoiceNote: vi.fn(),
-                takeUnsentDraft: vi.fn(),
+                takeUnsentDraft: vi.fn(() => "Can you send<br>the deck?<br>"),
+                keepUnsentDraft: vi.fn(),
             } as unknown as ProximityChatRoom & {
                 takeUnsentVoiceNote: ReturnType<typeof vi.fn>;
                 keepUnsentVoiceNote: ReturnType<typeof vi.fn>;
                 takeUnsentDraft: ReturnType<typeof vi.fn>;
+                keepUnsentDraft: ReturnType<typeof vi.fn>;
             });
         const show = async (session: ProximitySession<ChatMessage>, room: ProximityChatRoom, noura: object) => {
             URL.createObjectURL = vi.fn(() => "blob:note");
@@ -398,6 +400,17 @@ describe("ProximityEndedFooter", () => {
             const direct = { sendMessage: vi.fn() };
             await send(direct);
             expect(direct.sendMessage).toHaveBeenCalledWith("Can you send\nthe deck?");
+        });
+
+        it("puts typed text back in the ended chat when the direct message could not go", async () => {
+            directHolder.sendToDirectChat.mockImplementationOnce(() => Promise.resolve(false));
+            const room = proximityRoom();
+            const session = { ...withNoura, unsentVoiceNote: undefined, unsentDraft: "Can you send<br>the deck?<br>" };
+            const target = await show(session, room, signedIn);
+            target.querySelector<HTMLButtonElement>('[data-testid="proximityDraftToDirect"]')?.click();
+            await vi.waitFor(() =>
+                expect(room.keepUnsentDraft).toHaveBeenCalledWith("stay-1", "Can you send<br>the deck?<br>")
+            );
         });
     });
 });
