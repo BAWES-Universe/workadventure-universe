@@ -61,9 +61,12 @@ export function readUsageDetail(usage: any): AIUsageDetail {
     return detail;
 }
 
-/** Does this error say the provider refused `stream_options` (the request asking a stream to report usage)? */
+/**
+ * Does this error say the provider refused `stream_options` (the request asking a stream to report usage)? vLLM words it
+ * "Stream options can only be defined when `stream=True`."
+ */
 export function refusesStreamOptions(status: number, errorText: string): boolean {
-    return (status === 400 || status === 422) && /stream_options|include_usage/i.test(errorText);
+    return (status === 400 || status === 422) && /stream[_ ]options|include_usage/i.test(errorText);
 }
 
 /** Orbit's smallest longest reply: a stated maximum below it is a number about something else. */
@@ -96,8 +99,26 @@ const MODEL_CAP_WORDING = [
     /`?max_(?:completion_)?tokens`? must be (?:less than or equal to|at most|<=) `?(\d+)/i,
 ];
 
-/** vLLM and others: "maximum context length is 131072 tokens. However, you requested 140000 tokens (108000 in the messages, 32000 in the completion)". */
-const CONTEXT_WORDING = /maximum context length is (\d+) tokens[\s\S]*?\((\d+) in the messages/i;
+/**
+ * How vLLM and others word a request bigger than the model's context, the context being the first group and the messages the second:
+ * - "maximum context length is 131072 tokens. However, you requested 140000 tokens (108000 in the messages, 32000 in the completion)"
+ * - vLLM since 0.6: "'max_tokens' or 'max_completion_tokens' is too large: 32000. This model's maximum context length is 8192 tokens and your request has 500 input tokens (32000 > 8192 - 500)"
+ */
+const CONTEXT_WORDING = [
+    /maximum context length is (\d+) tokens[\s\S]*?\((\d+) in the messages/i,
+    /maximum context length is (\d+) tokens and your request has (\d+) input tokens/i,
+];
+
+/** The model's context and what this request's messages took of it, when the error says the request did not fit. */
+export function statedContext(status: number, errorText: string): { context: number; messages: number } | undefined {
+    if (status !== 400 && status !== 422) return undefined;
+    const words = errorWords(errorText);
+    for (const wording of CONTEXT_WORDING) {
+        const match = wording.exec(words);
+        if (match) return { context: Number(match[1]), messages: Number(match[2]) };
+    }
+    return undefined;
+}
 
 /**
  * The most output tokens a model allows, read from the error it gave for being asked more (Orbit #666 recommends 32,000
@@ -112,8 +133,8 @@ export function statedOutputCeiling(status: number, errorText: string, asked: nu
         const match = wording.exec(words);
         if (match && fits(Number(match[1]))) return { tokens: Number(match[1]), lasting: true };
     }
-    const context = CONTEXT_WORDING.exec(words);
-    const left = context ? Number(context[1]) - Number(context[2]) : 0;
+    const context = statedContext(status, errorText);
+    const left = context ? context.context - context.messages : 0;
     return context && fits(left) ? { tokens: left, lasting: false } : undefined;
 }
 
