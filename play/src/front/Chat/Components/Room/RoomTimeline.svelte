@@ -47,7 +47,11 @@
     import Avatar from "../Avatar.svelte";
     import { MatrixChatRoom } from "../../Connection/Matrix/MatrixChatRoom";
     import { openProfileRoomIdStore } from "../../Stores/PartnerProfileStore";
-    import { openRoomDetailsIdStore, openSharedItemsStore } from "../../Stores/ChatDetailsStore";
+    import {
+        openArtifactsListStore,
+        openRoomDetailsIdStore,
+        openSharedItemsStore,
+    } from "../../Stores/ChatDetailsStore";
     import { chatCarriesItsCloseStore } from "../../ChatSidebarWidthStore";
     import { installStrayFileDropGuard, isFileDrag } from "../../../Utils/strayFileDropGuard";
     import { mapEditorToolbarInUseStore } from "../../../Stores/MapEditorStore";
@@ -74,6 +78,7 @@
     import RoomDetailsPanel from "./Details/RoomDetailsPanel.svelte";
     import NearbyDetailsPanel from "./Details/NearbyDetailsPanel.svelte";
     import SharedPanel from "./Details/SharedPanel.svelte";
+    import ArtifactsPanel from "./Details/ArtifactsPanel.svelte";
     import PinnedBar from "./Details/PinnedBar.svelte";
     import { DIRECT_PARTNER_CONTEXT, directPartnerStore, type DirectPartner } from "./DirectChat/DirectPartnerStore";
     import { dayLabel, messageRuns, runSenderKey } from "./MessageRuns";
@@ -221,7 +226,9 @@
         if (!proximityRoom) return;
         if (get(openRoomDetailsIdStore) === room.id) openRoomDetailsIdStore.set(undefined);
         if (get(openSharedItemsStore)?.roomId === room.id) openSharedItemsStore.set(undefined);
+        if (get(openArtifactsListStore) === room.id) openArtifactsListStore.set(undefined);
     }
+    $: artifactsOpen = (matrixRoom !== undefined || proximityRoom !== undefined) && $openArtifactsListStore === room.id;
     $: sharedOpen =
         (matrixRoom !== undefined || proximityRoom !== undefined) && $openSharedItemsStore?.roomId === room.id
             ? $openSharedItemsStore
@@ -837,6 +844,7 @@
         // back opens on the conversation.
         if (get(openRoomDetailsIdStore) === room.id) openRoomDetailsIdStore.set(undefined);
         if (get(openSharedItemsStore)?.roomId === room.id) openSharedItemsStore.set(undefined);
+        if (get(openArtifactsListStore) === room.id) openArtifactsListStore.set(undefined);
     });
 </script>
 
@@ -850,8 +858,9 @@
     class:profile-open={(profileOpen && matrixRoom && $directPartner) ||
         roomDetailsOpen ||
         nearbyDetailsOpen ||
-        sharedOpen}
-    class:shared-open={sharedOpen !== undefined}
+        sharedOpen ||
+        artifactsOpen}
+    class:shared-open={sharedOpen !== undefined || artifactsOpen}
     class:peek-conversation={$chatBackPeekStore === "conversation"}
     class:peek-panel={$chatBackPeekStore === "panel"}
     on:dragover|preventDefault
@@ -883,6 +892,8 @@
         {/if}
         {#if sharedOpen}
             <SharedPanel {room} tab={sharedOpen.tab} partnerChatId={$directPartner?.chatId} chatTitle={nearbyName} />
+        {:else if artifactsOpen}
+            <ArtifactsPanel {room} partnerChatId={$directPartner?.chatId} chatTitle={nearbyName} />
         {/if}
     {/key}
     {#if room !== undefined}

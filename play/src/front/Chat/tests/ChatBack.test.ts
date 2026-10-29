@@ -10,7 +10,7 @@ import { chatVisibilityStore } from "../../Stores/ChatStore";
 import { selectedRoomStore } from "../Stores/SelectRoomStore";
 import { selectedChatMessageToReply, shouldRestoreChatStateStore } from "../Stores/ChatStore";
 import { openProfileRoomIdStore } from "../Stores/PartnerProfileStore";
-import { openRoomDetailsIdStore, openSharedItemsStore } from "../Stores/ChatDetailsStore";
+import { openArtifactsListStore, openRoomDetailsIdStore, openSharedItemsStore } from "../Stores/ChatDetailsStore";
 import type { ChatRoom } from "../Connection/ChatConnection";
 import { chatDepth, chatDepthStore, closeChatLevel, leaveChat } from "../ChatBack";
 
@@ -66,6 +66,18 @@ describe("closeChatLevel", () => {
         // On all chats: nothing more to close.
         closeChatLevel();
         expect(get(chatDepthStore)).toBe(0);
+    });
+
+    it("closes a chat's Artifacts page back to the profile it was opened from", () => {
+        openRoom();
+        openProfileRoomIdStore.set("!room");
+        openArtifactsListStore.set("!room");
+        expect(get(chatDepthStore)).toBe(3);
+        closeChatLevel();
+        expect(get(openArtifactsListStore)).toBeUndefined();
+        expect(get(openProfileRoomIdStore)).toBe("!room");
+        leaveChat();
+        expect(get(openArtifactsListStore)).toBeUndefined();
     });
 
     it("closes a direct chat's profile like a group's details", () => {

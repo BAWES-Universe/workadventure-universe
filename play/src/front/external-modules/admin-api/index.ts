@@ -20,6 +20,8 @@ import { blackListManager } from "../../WebRtc/BlackListManager";
 import { ringStore } from "../../Chat/Stores/RingStore";
 import { openDirectChatRoom } from "../../Chat/Utils";
 import { openProfileLinkHere, profileLinksOpeningHere } from "../../Chat/LinkPreview/ProfileLinks";
+import { openArtifactFromCard } from "../../Artifacts/openArtifact";
+import { artifactKindOf } from "../../Artifacts/artifactCard";
 import {
     ORBIT_AUTH_VERSION,
     buildAdminLoginUrl,
@@ -36,6 +38,7 @@ import {
     isOrbitInvitePersonMessage,
     isOrbitMessagePersonMessage,
     isOrbitCheckLinksMessage,
+    isOrbitOpenArtifactMessage,
     isOrbitOpenLinkMessage,
     isOrbitProfileChangedMessage,
     newRoomRevision,
@@ -263,6 +266,23 @@ function handleAdminAuthMessage(event: MessageEvent<unknown>) {
     if (isOrbitOpenLinkMessage(event.data)) {
         // The window comes in front, and Orbit stays as it is behind it: its button brings it back.
         if (bridge && event.data.roomRevision === bridge.roomRevision) openProfileLinkHere(event.data.url);
+        return;
+    }
+    if (isOrbitOpenArtifactMessage(event.data)) {
+        // One of yours, from Your artifacts: the window comes in front, as its card opens it, and Orbit stays behind.
+        // The game's server asks Orbit whether this person may open it.
+        const { roomRevision, id, title, kind, artifactVersion, maker } = event.data;
+        if (bridge && roomRevision === bridge.roomRevision)
+            openArtifactFromCard(
+                {
+                    id: id.toLowerCase(),
+                    version: artifactVersion,
+                    title,
+                    kind: artifactKindOf(kind),
+                    maker: maker || undefined,
+                },
+                undefined
+            );
         return;
     }
     if (!isOrbitAuthReadyMessage(event.data)) return;
