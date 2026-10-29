@@ -60,6 +60,8 @@ export interface BotLimits {
     /** 0 keeps every version. */
     artifactVersions: number;
     artifactSaveSeconds: number;
+    /** Songs, images and videos one save may add to an artifact, in bytes (#1510); 0 lets none in. */
+    artifactMediaBytes: number;
     /** "Say when nothing was saved". */
     guard: boolean;
     /** Files in chats (#1508): this person's newest files the bot sees before each reply. */
@@ -87,6 +89,7 @@ export const BOT_LIMIT_DEFAULTS: BotLimits = {
     artifactBytes: 2 * 1024 * 1024,
     artifactVersions: 0,
     artifactSaveSeconds: 30,
+    artifactMediaBytes: 50 * 1024 * 1024,
     guard: true,
     recentFiles: 5,
     findResults: 10,
@@ -95,9 +98,9 @@ export const BOT_LIMIT_DEFAULTS: BotLimits = {
     fileTextChars: 2_000_000,
 };
 
-/** Limits where 0 means something: keep every version, never carry on by itself, no newest files in the prompt. A 0
- * anywhere else (a save with no time limit) is broken. */
-const ZERO_ALLOWED = new Set<keyof BotLimits>(['artifactVersions', 'continuations', 'recentFiles']);
+/** Limits where 0 means something: keep every version, never carry on by itself, no newest files in the prompt, no media
+ * in a save. A 0 anywhere else (a save with no time limit) is broken. */
+const ZERO_ALLOWED = new Set<keyof BotLimits>(['artifactVersions', 'continuations', 'recentFiles', 'artifactMediaBytes']);
 
 /** The limits Orbit sent, each checked, with the recommended value for any that is missing or broken. */
 export function readBotLimits(raw: unknown): BotLimits {

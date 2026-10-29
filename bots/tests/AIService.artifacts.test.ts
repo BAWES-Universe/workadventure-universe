@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AIService } from '../ai/AIService';
+import type { TurnMedia } from '../ai/ArtifactMedia';
 import { MCPConnector } from '../mcp/MCPConnector';
 
 vi.mock('../client/BotClient', () => ({ BotClient: vi.fn() }));
@@ -70,7 +71,8 @@ describe('artifact tools in AIService', () => {
         expect(orbit.makeArtifact).toHaveBeenCalledWith(
             { botId: 'bot1', person: { signedIn: true, identifier: 'uuid-1', name: 'Khalid' }, chat: { kind: 'nearby', ref: 'bubble-1' } },
             expect.objectContaining({ title: 'Quests board', kind: 'app' }),
-            30_000
+            30_000,
+            []
         );
         expect(client.getPersonForArtifacts).toHaveBeenCalledWith(7);
         expect(client.sendChatMessage).toHaveBeenCalledWith('bubble-1', '::artifact:art-1:1:app::Quests board');
@@ -84,7 +86,8 @@ describe('artifact tools in AIService', () => {
         expect(orbit.makeArtifact).toHaveBeenCalledWith(
             { botId: 'bot1', person: { signedIn: true, identifier: 'uuid-9', name: 'Alice' }, chat: { kind: 'dm', ref: '!dm:matrix.test' } },
             expect.anything(),
-            30_000
+            30_000,
+            []
         );
         expect(memory.pendingArtifacts).toEqual([{ id: 'art-1', version: 1, title: 'Quests board', kind: 'app', maker: 'Scout' }]);
         expect(result.result).toMatchObject({ success: true });
@@ -214,5 +217,25 @@ describe('artifact tools in AIService', () => {
         const botMemory = { pendingMedia: [] as unknown[], maxPendingMedia: 5 };
         service(botMemory)['preQueueToolResults'](withLink, new Set(), 'bot1', 7);
         expect(botMemory.pendingMedia).toEqual([]);
+    });
+    it('keeps the whole turn list of media from tools, each round, for an artifact to carry (#1510)', () => {
+        const turn: TurnMedia[] = [{ ref: 'm1', url: 'https://chat.example/a.jpg', kind: 'image', by: 'person' }];
+        const ai = service();
+        const first = ai['noteTurnMedia']([{ id: '1', name: 'generate_music', result: { url: 'https://cdn.example/song.mp3' } }], turn);
+        // A round with nothing new still answers the whole list, so a song from two steps back stays usable
+        const later = ai['noteTurnMedia']([{ id: '2', name: 'search', result: { text: 'no media' } }], turn);
+        expect(first.map((media: { ref: string }) => media.ref)).toEqual(['m1', 'm2']);
+        expect(later).toEqual(first);
+        expect(ai['noteTurnMedia']([{ id: '3', name: 'make_artifact', result: { url: 'https://cdn.example/x.mp3' } }], turn)).toHaveLength(2);
+    });
+
+    it('adds a turn\'s media only to its own list, not to a newer turn\'s that replaced it (#1510)', () => {
+        const memory: Record<string, unknown> = { turnMedia: [] };
+        const ai = service(memory);
+        const older: never[] = [];
+        memory.turnMedia = [{ ref: 'm1', url: 'https://chat.example/new.jpg', kind: 'image', by: 'person' }];
+        ai['noteTurnMedia']([{ id: '1', name: 'generate_music', result: { url: 'https://cdn.example/old.mp3' } }], older);
+        expect(memory.turnMedia).toHaveLength(1);
+        expect(older).toHaveLength(1);
     });
 });

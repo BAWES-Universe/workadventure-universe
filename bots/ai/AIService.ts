@@ -109,6 +109,7 @@ import {
 import { MAX_OUTGOING_MEDIA_BYTES, type BotPlayerMemory, type PendingMedia } from '../memory/ConversationMemory';
 import { FIND_FILES_TOOL, OPEN_FILE_TOOL, SEND_AGAIN_TOOL, fileToolDefinitions, formatFileResult, isFileTool, runFileTool } from './FileTools';
 import { linkOfStore } from '../services/ChatFiles';
+import { addTurnMedia, startTurnMedia, turnMediaNotice, type TurnMedia } from './ArtifactMedia';
 import { charsToFree, StepRoom, stepOf, stepsAsText, withStepsAsText, type ReplySteps } from './replySteps';
 
 /** What one turn did, for the "Say when nothing was saved" check (Orbit #666). */
@@ -577,6 +578,11 @@ export class AIService {
             memory?.artifactCalls?.clear();
             memory?.sentAgain?.clear();
         }
+        // This turn's media (#1510): what the person sent with this message; its tools add theirs as they run. The turn
+        // holds its own list, so a turn that a newer message replaced can't add to the newer one's
+        const turnMemory = playerId !== undefined ? this.conversationMemory?.getMemory(botId, playerId) : undefined;
+        const turnMedia: TurnMedia[] = isRetry ? turnMemory?.turnMedia ?? [] : startTurnMedia(message, images);
+        if (turnMemory) turnMemory.turnMedia = turnMedia;
         // Buffer for content received before tool calls are detected
         // Discarded if tool calls arrive (was filler/thinking text);
         // flushed as final response if no tool calls.
@@ -802,7 +808,10 @@ export class AIService {
                 conversationContext,
                 // Reads pendingMedia directly so the AI always knows about
                 // pending items at turn start.
-                pendingMediaNotice: this.conversationMemory.getPendingMediaNotice(botId, playerId),
+                pendingMediaNotice: [
+                    this.conversationMemory.getPendingMediaNotice(botId, playerId),
+                    artifactsEnabled() ? turnMediaNotice(turnMedia) : '',
+                ].filter(Boolean).join('\n\n') || undefined,
                 channel,
                 recentFiles: await recentFiles,
             });
@@ -1308,7 +1317,7 @@ export class AIService {
                             // Tool calls from a reply that hit its length cap may hold half a file (the repair of broken JSON would still
                             // pass it): the first round reads the cap from this chunk, later rounds from the previous round's last chunk
                             const replyCutOff = !!(followUpIterations === 1 ? chunk.metadata?.truncated : lastFollowUpDoneChunk?.metadata?.truncated);
-                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source);
+                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia);
                             // Which tool made each file, and what it was asked for, for the bot's list of files (#1508)
                             this.noteMadeMedia(pendingToolCalls, toolResults);
                             // The steps line marks each shown call done or failed before the bot carries on (#1545)
@@ -1351,6 +1360,8 @@ export class AIService {
                             // (user leaves mid-turn), the URLs are already persisted
                             // and will be delivered by flushPendingMedia on re-entry.
                             this.preQueueToolResults(toolResults, iterationSentUrls, botId, playerId, channel === 'dm');
+                            // Before the auto-send below replaces results that carried media with a short note
+                            const turnMediaSoFar = this.noteTurnMedia(toolResults, turnMedia);
 
                             // Cancellation during tool execution: persist the queued
                             // media (safety net above) but skip inline delivery and
@@ -1383,7 +1394,9 @@ export class AIService {
                             const followUpRules = `Continue this reply from the tool results above. Do NOT restate your intent or repeat anything you already said.\n\nCRITICAL RESPONSE RULES:\n- Continue naturally — do NOT re-introduce yourself, re-greet, apologize, or repeat anything you already said\n- This is the same conversation turn — just keep answering\n- Use ONLY information from tool results above - never invent or make up details\n- **CRITICAL: Do NOT repeat location (universe/world/room) if you already said it in this conversation - check "Recent conversation" first!**\n- Only mention location if this is the FIRST time they ask "where are we" - otherwise just answer the question directly\n- For "what areas" questions: Just list the areas (e.g., "There's a Social Area and Meeting Room here") - do NOT say the location again\n${channel === 'dm' ? DM_NAVIGATION_FOLLOW_UP : WORLD_NAVIGATION_FOLLOW_UP}\n- Use actual names from results - never placeholders or made-up text\n- Be conversational and natural - avoid repetitive responses`;
 
                             // Add /no_think for Qwen models in follow-up message
-                            followUpAfter = isQwenModel ? followUpRules + '\n\n/no_think' : followUpRules;
+                            // The whole turn's list every round: a song made two steps back must still be one it can put in a page
+                            const followUpRulesWithMedia = turnMediaSoFar.length > 0 ? `${followUpRules}\n\n${turnMediaNotice(turnMediaSoFar)}` : followUpRules;
+                            followUpAfter = isQwenModel ? followUpRulesWithMedia + '\n\n/no_think' : followUpRulesWithMedia;
                             const followUpSteps: ReplySteps = { steps: stepRoom.steps, after: followUpAfter };
                             // Telemetry reads this round's results and rules, as before the steps went back as messages
                             followUpInput = `${step.results.map((result) => result.content).join('\n')}\n\n${followUpAfter}`;
@@ -2958,7 +2971,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     private async runArtifactToolCall(
         name: string,
         args: Record<string, unknown>,
-        where: { botClient?: BotClient; adminApiService?: AdminApiService; spaceName?: string; botId?: string; playerId?: number }
+        where: { botClient?: BotClient; adminApiService?: AdminApiService; spaceName?: string; botId?: string; playerId?: number; turnMedia?: TurnMedia[] }
     ): Promise<Record<string, unknown>> {
         const { botClient, spaceName, botId, playerId } = where;
         const admin = where.adminApiService ?? this.adminApiService;
@@ -2975,7 +2988,15 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const earlier = repeatKey ? memory?.artifactCalls?.get(repeatKey) : undefined;
         if (earlier) return earlier;
 
-        const run = await runArtifactTool(name, args, { admin, botId, person, chat, saveTimeoutMs: this.limitsFor(botId).artifactSaveSeconds * 1000 });
+        const limits = this.limitsFor(botId);
+        const run = await runArtifactTool(name, args, {
+            admin,
+            botId,
+            person,
+            chat,
+            saveTimeoutMs: limits.artifactSaveSeconds * 1000,
+            media: { turn: where.turnMedia ?? memory?.turnMedia ?? [], maxBytes: limits.artifactMediaBytes },
+        });
         if (!run.card) return run.result;
         if (!this.deliverArtifactCard(run.card, botClient, spaceName, memory)) {
             // The bubble closed while the file was being made: the file is saved, but nobody was shown it, so a retry may place it
@@ -3019,7 +3040,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         /** The reply these calls came from was cut off by its length cap. */
         replyCutOff = false,
         /** What this reply runs on ("own-key", "universe-ai"…): a person's own key never has an image looked at by Universe AI. */
-        source?: string
+        source?: string,
+        /** This turn's media list (#1510), for an artifact to carry. */
+        turnMedia?: TurnMedia[]
     ): Promise<Array<{ id: string; name: string; result: any }>> {
         // Filter out invalid tool calls (empty name, undefined, etc.)
         const validToolCalls = toolCalls.filter(tc => tc && tc.name && tc.name.trim() !== '');
@@ -3335,7 +3358,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         result = await this.runArtifactToolCall(
                             toolCall.name,
                             typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
-                            { botClient, adminApiService, spaceName, botId, playerId }
+                            { botClient, adminApiService, spaceName, botId, playerId, turnMedia }
                         );
                         break;
 
@@ -3432,6 +3455,22 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             // truncated JSON, unescaped strings, comments, Python constants, etc.
             return JSON.parse(jsonrepair(raw));
         }
+    }
+
+    /**
+     * The songs, images and videos this round's tools made or found, added to the turn's list (#1510) so the bot can put
+     * them in an artifact by their short names. Only while artifacts are on; the media tools and artifact tools are left
+     * out as autoSendMedia leaves them, since they made nothing new. Answers the whole list so far.
+     */
+    private noteTurnMedia(toolResults: Array<{ id: string; name: string; result: any }>, list: TurnMedia[]): TurnMedia[] {
+        if (!artifactsEnabled()) return [];
+        const found: Array<{ url: string }> = [];
+        for (const tr of toolResults) {
+            if (['send_image', 'send_file', 'send_audio', 'send_video', READ_WEB_PAGE_TOOL].includes(tr.name) || isArtifactTool(tr.name)) continue;
+            for (const url of this.extractUrlsFromResult(tr.result)) found.push({ url });
+        }
+        addTurnMedia(list, found, 'tool');
+        return list;
     }
 
     /**

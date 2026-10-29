@@ -100,6 +100,15 @@ export interface ArtifactSummary {
 export interface ArtifactVersionSummary {
     number: number;
     summary: string | null;
+    /** The songs, images and videos it carries (#1510); missing from an Orbit before that. */
+    media?: Array<{ name: string; contentType: string; sizeBytes: number }>;
+}
+
+/** A song, image or video sent with a make or a change (#1510), under the name the page uses. */
+export interface ArtifactMediaUpload {
+    name: string;
+    contentType: string;
+    body: Uint8Array;
 }
 
 /** Orbit said no, or could not be asked. `code` is Orbit's (edit_not_found, change_not_allowed, ...) or orbit_unavailable. */
@@ -1143,14 +1152,26 @@ export class AdminApiService {
      * One call to Orbit's artifact routes with the bot service token. A refusal comes back as an ArtifactCallError with
      * Orbit's own code and line (no content is ever logged); anything that stops Orbit answering is `orbit_unavailable`.
      */
-    private async artifactCall<T>(path: string, body: object, timeoutMs = ARTIFACT_TIMEOUT_MS): Promise<T> {
+    private async artifactCall<T>(path: string, body: object, timeoutMs = ARTIFACT_TIMEOUT_MS, media: ArtifactMediaUpload[] = []): Promise<T> {
         const botServiceToken = process.env.BOT_SERVICE_TOKEN;
         if (!this.isConfigured() || !botServiceToken) {
             throw new ArtifactCallError('orbit_unavailable', 503, 'Orbit is not set up for artifacts.');
         }
+        // With songs, images or videos (#1510) the same JSON goes as a form's "request" part, one "media" part per file
+        let payload: object | FormData = body;
+        if (media.length > 0) {
+            const form = new FormData();
+            form.append('request', JSON.stringify(body));
+            for (const file of media) form.append('media', new Blob([file.body], { type: file.contentType }), file.name);
+            payload = form;
+        }
         try {
-            const response: AxiosResponse<T> = await axios.post(resolveAdminApiEndpoint(this.adminApiUrl, path), body, {
-                headers: { Authorization: `Bearer ${botServiceToken}`, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+            const response: AxiosResponse<T> = await axios.post(resolveAdminApiEndpoint(this.adminApiUrl, path), payload, {
+                headers: {
+                    Authorization: `Bearer ${botServiceToken}`,
+                    ...(media.length > 0 ? {} : { 'Content-Type': 'application/json' }),
+                    'Cache-Control': 'no-store',
+                },
                 // 0 would mean no time limit at all to axios
                 timeout: timeoutMs > 0 ? timeoutMs : ARTIFACT_TIMEOUT_MS,
                 maxBodyLength: Infinity,
@@ -1175,19 +1196,21 @@ export class AdminApiService {
     makeArtifact(
         call: ArtifactCall,
         artifact: { title: string; kind: ArtifactKind; content: string; summary?: string | null },
-        timeoutMs?: number
+        timeoutMs?: number,
+        media: ArtifactMediaUpload[] = []
     ): Promise<{ artifact: ArtifactSummary; version: ArtifactVersionSummary; hidden: boolean }> {
-        return this.artifactCall('api/artifacts', { ...call, ...artifact }, timeoutMs);
+        return this.artifactCall('api/artifacts', { ...call, ...artifact }, timeoutMs, media);
     }
 
     /** Change one with small edits (or the whole new file). Every change is a new version. */
     changeArtifact(
         id: string,
         call: ArtifactCall,
-        change: { edits?: ArtifactEdit[]; content?: string; summary?: string | null; title?: string | null; baseVersion?: number | null },
-        timeoutMs?: number
+        change: { edits?: ArtifactEdit[]; content?: string; summary?: string | null; title?: string | null; baseVersion?: number | null; dropMedia?: string[] },
+        timeoutMs?: number,
+        media: ArtifactMediaUpload[] = []
     ): Promise<{ artifact: ArtifactSummary; version: ArtifactVersionSummary; hidden: boolean }> {
-        return this.artifactCall(`api/artifacts/${encodeURIComponent(id)}/change`, { ...call, ...change }, timeoutMs);
+        return this.artifactCall(`api/artifacts/${encodeURIComponent(id)}/change`, { ...call, ...change }, timeoutMs, media);
     }
 
     /** Read one version of an artifact, with its text. */
