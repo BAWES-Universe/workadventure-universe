@@ -12,7 +12,7 @@ export const STEPS_KEY = 'universe.steps';
 export interface ToolStep {
     /** The call's id, so its result finds it. */
     id: string;
-    /** While it runs, e.g. "Reading workadventu.re" or "Generate music". */
+    /** While it runs, e.g. "Reading workadventu.re" or "Using Generate music". */
     doing: string;
     /** Once it ran, e.g. "Read a page". */
     done: string;
@@ -81,6 +81,9 @@ const OWN_GROUPS: Record<string, (count: number) => string> = {
     change_artifact: (n) => (n === 1 ? 'Changed an artifact' : `Changed an artifact ${n} times`),
 };
 
+/** What a tool with no usable name reads as. */
+const NO_NAME = 'Use a tool';
+
 /** Whether the line shows this tool: the bot's tool servers, and our own tools above. */
 export function showsAsStep(name: string, fromToolServer: boolean): boolean {
     return fromToolServer || name in OWN_STEPS;
@@ -88,14 +91,22 @@ export function showsAsStep(name: string, fromToolServer: boolean): boolean {
 
 /**
  * A call in plain words. A tool server's own title for the tool is used when it gave one, else its name tidied up
- * ("generate_music" reads "Generate music").
+ * ("generate_music" reads "Generate music"), after "Using" and "Used" so it never reads as an order. The words stay
+ * the tool server's: "Used Generate music 6 times".
  */
 export function describeStep(call: { id: string; name: string; arguments?: unknown }, title?: string): ToolStep {
     const args = parseArgs(call.arguments);
     const own = OWN_STEPS[call.name];
     if (own && !title) return { id: call.id, ...own(args) };
     const words = oneLine(title) ?? tidyName(call.name);
-    return { id: call.id, doing: words, done: words, detail: detailOf(args), group: `tool:${call.name}` };
+    const named = words !== NO_NAME;
+    return {
+        id: call.id,
+        doing: named ? `Using ${words}` : 'Using a tool',
+        done: named ? `Used ${words}` : 'Used a tool',
+        detail: detailOf(args),
+        group: `tool:${call.name}`,
+    };
 }
 
 /** "generate_music" and "generateMusic" read "Generate music". */
@@ -105,7 +116,7 @@ export function tidyName(name: string): string {
         .replace(/[_\-.]+/g, ' ')
         .trim()
         .toLowerCase();
-    return words ? words[0].toUpperCase() + words.slice(1) : 'Use a tool';
+    return words ? words[0].toUpperCase() + words.slice(1) : NO_NAME;
 }
 
 /** How a tool's result ended, from the shapes our tools and tool servers answer with. */
@@ -203,7 +214,7 @@ export class ReplySteps {
     }
 }
 
-/** "Read 1 page · Generate music 6 times": every group that worked at least once, in the order it first ran. */
+/** "Read 1 page · Used Generate music 6 times": every group that worked at least once, in the order it first ran. */
 export function summaryOf(steps: Array<{ group?: string; done: string; state: StepState }>): string {
     const groups = new Map<string, { done: string; count: number }>();
     for (const step of steps) {
