@@ -541,8 +541,19 @@
         unsubscribeComposerFocusRequest();
         // Leaving the conversation ends the typing status there.
         typingSignal.stop();
-        // The stay ended while a voice note for it was being made: it is kept there as unsent, never sent on.
-        if (voiceActive && voiceForStay) keepVoiceNoteOfEndedStay();
+        // The stay ended while a voice note for it was being made: it is kept there as unsent, never sent on. Leaving
+        // the map closes the stay without a new space, so the stay's id says it too.
+        if (
+            voiceActive &&
+            voiceForStay &&
+            !keepVoiceNoteOfEndedStay() &&
+            !sendingVoice &&
+            room instanceof ProximityChatRoom &&
+            voiceSessionId !== undefined &&
+            room.currentSessionId !== voiceSessionId
+        ) {
+            keepVoiceNoteIn(room, voiceSessionId);
+        }
         if (
             room instanceof ProximityChatRoom &&
             mountSessionId !== undefined &&
@@ -821,15 +832,18 @@
             return false;
         }
         if (!voiceActive || !voiceComposer || !(room instanceof ProximityChatRoom)) return false;
-        const proximityRoom = room;
-        const sessionId = voiceSessionId;
+        keepVoiceNoteIn(room, voiceSessionId);
+        return true;
+    }
+
+    /** Takes the note out of the recorder and keeps it as unsent in the stay it was for. */
+    function keepVoiceNoteIn(proximityRoom: ProximityChatRoom, sessionId: string | undefined) {
         voiceComposer
-            .takeNote()
+            ?.takeNote()
             .then((note) => {
                 if (note) proximityRoom.keepUnsentVoiceNote(sessionId, note);
             })
             .catch((error) => console.error(error));
-        return true;
     }
 
     /**

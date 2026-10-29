@@ -126,6 +126,8 @@
         (lastMessage.sender?.username ?? "").trim() === title.trim();
     $: preview = session.unsentDraft
         ? `${$LL.chat.session.unsentDraft()}: ${toPlainText(session.unsentDraft)}`
+        : session.unsentVoiceNote
+        ? $LL.chat.session.unsentVoiceNote()
         : lastText
         ? senderIsTitle
             ? lastText
