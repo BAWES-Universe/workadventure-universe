@@ -4,10 +4,10 @@ import { chatVisibilityStore } from "../Stores/ChatStore";
 import { selectedChatMessageToReply, shouldRestoreChatStateStore } from "./Stores/ChatStore";
 import { selectedRoomStore } from "./Stores/SelectRoomStore";
 import { openProfileRoomIdStore } from "./Stores/PartnerProfileStore";
-import { openRoomDetailsIdStore, openSharedItemsStore } from "./Stores/ChatDetailsStore";
+import { openArtifactsListStore, openRoomDetailsIdStore, openSharedItemsStore } from "./Stores/ChatDetailsStore";
 
 /**
- * Going back one level in the chat (#1553): from "Media, links and files" to the details or profile, from there to the
+ * Going back one level in the chat (#1553): from "Media, links and files" (or "Artifacts") to the details or profile, from there to the
  * conversation, from the conversation to all chats. The ‹ arrows, the swipe from the chat's edge and the Back button
  * all go back this way.
  */
@@ -21,17 +21,26 @@ export function chatDepth(
     roomId: string | undefined,
     profileRoomId: string | undefined,
     detailsRoomId: string | undefined,
-    sharedRoomId: string | undefined
+    sharedRoomId: string | undefined,
+    artifactsRoomId?: string
 ): number {
     if (!visible || roomId === undefined) return 0;
     const panel = profileRoomId === roomId || detailsRoomId === roomId;
-    return 1 + (panel ? 1 : 0) + (sharedRoomId === roomId ? 1 : 0);
+    const page = sharedRoomId === roomId || artifactsRoomId === roomId;
+    return 1 + (panel ? 1 : 0) + (page ? 1 : 0);
 }
 
 export const chatDepthStore: Readable<number> = derived(
-    [chatVisibilityStore, selectedRoomStore, openProfileRoomIdStore, openRoomDetailsIdStore, openSharedItemsStore],
-    ([$visible, $room, $profile, $details, $shared]) =>
-        chatDepth($visible, $room?.id, $profile, $details, $shared?.roomId)
+    [
+        chatVisibilityStore,
+        selectedRoomStore,
+        openProfileRoomIdStore,
+        openRoomDetailsIdStore,
+        openSharedItemsStore,
+        openArtifactsListStore,
+    ],
+    ([$visible, $room, $profile, $details, $shared, $artifacts]) =>
+        chatDepth($visible, $room?.id, $profile, $details, $shared?.roomId, $artifacts)
 );
 
 /** Leaves the conversation for all chats, closing whatever was open over it. */
@@ -39,6 +48,7 @@ export function leaveChat(): void {
     openProfileRoomIdStore.set(undefined);
     openRoomDetailsIdStore.set(undefined);
     openSharedItemsStore.set(undefined);
+    openArtifactsListStore.set(undefined);
     selectedChatMessageToReply.set(null);
     selectedRoomStore.set(undefined);
     shouldRestoreChatStateStore.set(false);
@@ -48,8 +58,9 @@ export function leaveChat(): void {
 export function closeChatLevel(): void {
     const roomId = get(selectedRoomStore)?.id;
     if (roomId === undefined) return;
-    if (get(openSharedItemsStore)?.roomId === roomId) {
+    if (get(openSharedItemsStore)?.roomId === roomId || get(openArtifactsListStore) === roomId) {
         openSharedItemsStore.set(undefined);
+        openArtifactsListStore.set(undefined);
     } else if (get(openProfileRoomIdStore) === roomId || get(openRoomDetailsIdStore) === roomId) {
         openProfileRoomIdStore.set(undefined);
         openRoomDetailsIdStore.set(undefined);

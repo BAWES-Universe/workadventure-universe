@@ -6,6 +6,7 @@
     import { formatPeopleNames, resolveTopRowState } from "../../TopRow/TopRowSummary";
     import { nearbyTitleLines } from "../Thread/nearbyTitle";
     import SharedSummary from "./SharedSummary.svelte";
+    import ArtifactsSummary from "./ArtifactsSummary.svelte";
     import { IconChevronLeft, IconChevronRight, IconMessageCircle2 } from "@wa-icons";
 
     /**
@@ -86,6 +87,8 @@
                 <span class="truncate">{subtitle}</span>
             </div>
         </div>
+
+        <ArtifactsSummary {room} />
 
         <SharedSummary {room} note={$LL.chat.details.keptOnAccount()} />
 

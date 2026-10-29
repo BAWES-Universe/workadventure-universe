@@ -33,6 +33,27 @@ export interface OpenedArtifact {
     you: { owner: boolean; change: boolean; manage: boolean; copy: boolean };
 }
 
+/** One artifact made in a chat, as its Artifacts group and list show it (game #1474). */
+export interface ChatArtifact {
+    id: string;
+    title: string;
+    kind: string;
+    makerName: string;
+    /** The person who asked for it; null for a guest's. */
+    owner: { name: string | null } | null;
+    version: number;
+    /** Whether it is the asking person's own: the row names the owner only when it isn't. */
+    yours: boolean;
+    updatedAt: string;
+}
+
+/** One page of a chat's artifacts: `total` in all, and where the next page starts (null at the end). */
+export interface ChatArtifactPage {
+    artifacts: ChatArtifact[];
+    total: number;
+    next: number | null;
+}
+
 /** An artifact request the game's server refused or could not make. */
 export class ArtifactRequestError extends Error {
     constructor(public readonly status: number, public readonly code: string) {
@@ -66,6 +87,11 @@ async function post<T>(path: string, body: Record<string, unknown>): Promise<T> 
 /** The artifact, the version to show (the latest unless one is asked for) and what this person may do with it. */
 export function fetchArtifact(id: string, chat: ArtifactChat | undefined, version?: number): Promise<OpenedArtifact> {
     return post<OpenedArtifact>(`${encodeURIComponent(id)}/open`, { chat, version });
+}
+
+/** The artifacts made in this chat that this person may open, newest change first, from `offset` on. */
+export function fetchChatArtifacts(chat: ArtifactChat, offset = 0): Promise<ChatArtifactPage> {
+    return post<ChatArtifactPage>("in-chat", { chat, offset });
 }
 
 /** Every version, newest first. */

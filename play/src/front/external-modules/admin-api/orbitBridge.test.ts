@@ -5,6 +5,7 @@ import {
     isOrbitBridgeAckMessage,
     isOrbitBridgeReadyMessage,
     isOrbitCheckLinksMessage,
+    isOrbitOpenArtifactMessage,
     isOrbitOpenLinkMessage,
     isOrbitHistoryMessage,
     isOrbitInvitePersonMessage,
@@ -125,6 +126,26 @@ describe("Orbit's profile link requests", () => {
         expect(isOrbitOpenLinkMessage({ ...open, url: "" })).toBe(false);
         expect(isOrbitOpenLinkMessage({ ...open, roomRevision: "short" })).toBe(false);
     });
+
+    it("accepts a well-formed request to open one of your artifacts", () => {
+        const open = {
+            type: "orbit-open-artifact",
+            version: 1,
+            roomRevision: revision,
+            id: "11111111-1111-4111-8111-111111111111",
+            title: "Tip calculator",
+            kind: "app",
+            artifactVersion: 3,
+            maker: "Scout",
+        };
+        expect(isOrbitOpenArtifactMessage(open)).toBe(true);
+        expect(isOrbitOpenArtifactMessage({ ...open, maker: "" })).toBe(true);
+        expect(isOrbitOpenArtifactMessage({ ...open, id: "../etc" })).toBe(false);
+        expect(isOrbitOpenArtifactMessage({ ...open, title: "" })).toBe(false);
+        expect(isOrbitOpenArtifactMessage({ ...open, artifactVersion: 0 })).toBe(false);
+        expect(isOrbitOpenArtifactMessage({ ...open, artifactVersion: 1.5 })).toBe(false);
+        expect(isOrbitOpenArtifactMessage({ ...open, roomRevision: "short" })).toBe(false);
+    });
 });
 
 describe("Orbit's history steps", () => {
@@ -153,7 +174,17 @@ describe("OrbitBridge", () => {
             type: "orbit-bridge-init",
             version: 1,
             roomRevision: revision,
-            capabilities: ["navigate", "event", "view", "profile", "invite", "message", "open-link", "history"],
+            capabilities: [
+                "navigate",
+                "event",
+                "view",
+                "profile",
+                "invite",
+                "message",
+                "open-link",
+                "history",
+                "open-artifact",
+            ],
             view: "compact",
         });
         expect(posted[1]).toEqual({

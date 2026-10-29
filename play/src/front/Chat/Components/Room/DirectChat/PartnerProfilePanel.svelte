@@ -27,6 +27,7 @@
     import TopRowAvatar from "../../TopRow/TopRowAvatar.svelte";
     import VisitCard from "../../../../Components/VisitCard/VisitCard.svelte";
     import SharedSummary from "../Details/SharedSummary.svelte";
+    import ArtifactsSummary from "../Details/ArtifactsSummary.svelte";
     import PinnedSummary from "../Details/PinnedSummary.svelte";
     import { gameSceneStore } from "../../../../Stores/GameSceneStore";
     import { botApiService } from "../../../../external-modules/bots/services/BotApiService";
@@ -269,6 +270,8 @@
         {/if}
 
         <PinnedSummary {room} />
+
+        <ArtifactsSummary {room} botName={partner.isBot ? name : undefined} />
 
         <SharedSummary {room} />
 

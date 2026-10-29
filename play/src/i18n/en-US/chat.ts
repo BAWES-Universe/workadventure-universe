@@ -492,6 +492,13 @@ const chat: BaseTranslation = {
         allPinsLabel: "See all pinned messages",
         nextPin: "Go to the pinned message, then the next one",
         pinnedLoading: "Pinned message",
+        artifacts: "Artifacts",
+        artifactsOpen: "See all {count:number} artifacts",
+        artifactsBotHint: "Ask {name:string} for a page, a mini app, a doc or a drawing, and find it here any time.",
+        allYourArtifacts: "All your artifacts",
+        artifactsEmpty: "No artifacts yet",
+        artifactsMore: "Show more",
+        artifactsFailed: "The artifacts could not be loaded.",
     },
     folderMenu: {
         leaveFolder: {
