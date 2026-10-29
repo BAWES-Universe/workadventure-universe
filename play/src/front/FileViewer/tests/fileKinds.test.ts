@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+    badgeOfKind,
     bytesMatchKind,
     chatFileOpensInViewer,
     extensionOf,
@@ -7,6 +8,7 @@ import {
     fileKindOf,
     formatFileSize,
     imageMimeTypeOf,
+    MAP_VIEWER_KINDS as mapFileKinds,
 } from "../fileKinds";
 
 const bytes = (...values: number[]) => new Uint8Array(values);
@@ -58,6 +60,21 @@ describe("picking how a file is shown", () => {
         expect(chatFileOpensInViewer("welcome.ts")).toBe(true);
         expect(chatFileOpensInViewer("program.exe")).toBe(false);
         expect(chatFileOpensInViewer(undefined)).toBe(false);
+    });
+
+    it("plays audio in the window, while an audio card in the chat keeps playing there", () => {
+        for (const name of ["a.mp3", "a.M4A", "a.wav", "a.ogg", "a.oga", "a.opus", "a.aac", "a.flac", "a.weba"]) {
+            expect(fileKindOf(name)).toBe("audio");
+        }
+        expect(chatFileOpensInViewer("song.mp3")).toBe(false);
+        // A map's "Open file" is unchanged.
+        expect(mapFileKinds.has("audio")).toBe(false);
+    });
+
+    it("badges audio with its own ending, in words too, as its name is often just Audio", () => {
+        expect(badgeOfKind("audio", "447c3eec.mp3")).toEqual({ label: "MP3", color: "#c2571a", kindName: "MP3" });
+        expect(badgeOfKind("audio", "take.m4a")).toMatchObject({ label: "M4A", kindName: "M4A" });
+        expect(badgeOfKind("audio", undefined)).toMatchObject({ label: "MP3", kindName: "Audio" });
     });
 
     it("gives pictures their own type, and anything else a download type", () => {
