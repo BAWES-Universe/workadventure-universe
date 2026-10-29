@@ -69,6 +69,15 @@ export interface ArtifactSharing {
     changeScope?: (typeof CHANGE_SCOPES)[number];
 }
 
+/** A row of a chat's list (game #1474): also when it last changed and whether it is the asking person's own. */
+const ChatArtifactView = ArtifactView.extend({ yours: z.boolean(), updatedAt: z.string() });
+const ChatArtifactPage = z.object({
+    artifacts: z.array(ChatArtifactView),
+    total: z.number().int().min(0),
+    next: z.number().int().min(0).nullable(),
+});
+export type ChatArtifactPage = z.infer<typeof ChatArtifactPage>;
+
 const VersionList = z.object({ versions: z.array(VersionView) });
 const VersionCode = z.object({ version: VersionView, content: z.string() });
 export type ArtifactVersionCode = z.infer<typeof VersionCode>;
@@ -119,6 +128,14 @@ export class ArtifactsService {
     /** The code of one version, for the Code view. */
     readCode(id: string, number: number, viewer: ArtifactViewer): Promise<ArtifactVersionCode> {
         return this.call(`/api/artifacts/${encodeURIComponent(id)}/versions/${number}`, { viewer }, VersionCode);
+    }
+
+    /**
+     * The artifacts made in this chat that the person may open, newest change first, a page at a time (the chat's
+     * Artifacts group and list). `offset` is where the page starts: the `next` of the page before.
+     */
+    listInChat(viewer: ArtifactViewer, offset = 0): Promise<ChatArtifactPage> {
+        return this.call("/api/artifacts/chat", { viewer, offset }, ChatArtifactPage);
     }
 
     private async call<T>(

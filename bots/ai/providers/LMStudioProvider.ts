@@ -12,9 +12,87 @@ import { resolveVisionSupport } from './visionModels';
 import { decryptApiKey } from '../encryption';
 import { fetchFor, providerErrorText, statusFromError } from './ownKeyHttp';
 import * as Sentry from '@sentry/node';
+import { stepMessages, tooLongOf, type ReplySteps } from '../replySteps';
+import { refusesStreamOptions, statedContext, statedOutputCeiling } from './OpenAIProvider';
 
 export class LMStudioProvider implements AIProvider {
     private readonly DEFAULT_TIMEOUT = 30000; // 30 seconds
+
+    /**
+     * Endpoints that refused `stream_options` once, for a reply that streams or one that does not (vLLM refuses it only on
+     * a call that does not stream). They are not sent it again.
+     */
+    private static readonly refusedStreamOptions = new Set<string>();
+
+    /** The output cap each model stated once it refused more (endpoint and model). It is asked within it from then on. */
+    private static readonly outputCeilings = new Map<string, number>();
+
+    /**
+     * The context each model stated once a request did not fit it (endpoint and model). When it is no more than the longest
+     * reply, no reply can be longer than it anyway: `max_tokens` is left out from then on, and the server (vLLM) fills
+     * what the messages leave, so the reply needs no second call.
+     */
+    private static readonly contextLengths = new Map<string, number>();
+
+    private static streamOptionsKey(endpoint: string, body: Record<string, any>): string {
+        return `${endpoint} ${body.stream ? 'stream' : 'once'}`;
+    }
+
+    /** The body as sent to this endpoint today, less what it refused before: `stream_options`, or a longest reply its model can't take. */
+    private remembered(body: Record<string, any>, endpoint: string, config: AIProviderConfig): Record<string, any> {
+        const sent = { ...body };
+        if (LMStudioProvider.refusedStreamOptions.has(LMStudioProvider.streamOptionsKey(endpoint, sent))) delete sent.stream_options;
+        if (typeof sent.max_tokens === 'number') {
+            const model = `${endpoint} ${config.model}`;
+            const ceiling = LMStudioProvider.outputCeilings.get(model);
+            if (ceiling !== undefined && sent.max_tokens > ceiling) sent.max_tokens = ceiling;
+            const context = LMStudioProvider.contextLengths.get(model);
+            if (context !== undefined && context <= sent.max_tokens) delete sent.max_tokens;
+        }
+        return sent;
+    }
+
+    /**
+     * Posts the body, and asks again (twice at most) when the server refuses what `OpenAIProvider` also asks again for
+     * (#1569): `stream_options`, or a longest reply above the model's cap or above what the messages left of its context
+     * (vLLM refuses any request whose reply cap and messages are more than the context). What the model or endpoint
+     * refused for good is remembered, so later replies make one call. Any other refusal throws, as before.
+     */
+    private async post(endpoint: string, body: Record<string, any>, config: AIProviderConfig, signal: AbortSignal): Promise<Response> {
+        let sent = this.remembered(body, endpoint, config);
+        for (let attempt = 0; ; attempt++) {
+            const response = await fetchFor(config)(endpoint, {
+                method: 'POST',
+                headers: this.headers(config),
+                body: JSON.stringify(sent),
+                signal,
+            });
+            if (response.ok) return response;
+            const errorText = await response.text();
+            const retry = attempt < 2 ? this.retryBody(response.status, errorText, sent, endpoint, config) : undefined;
+            if (!retry) throw new Error(`LMStudio API error: ${response.status} ${errorText}`);
+            sent = retry;
+        }
+    }
+
+    /** The body to ask again with after a refusal, or undefined when asking again would not help. */
+    private retryBody(status: number, errorText: string, sent: Record<string, any>, endpoint: string, config: AIProviderConfig): Record<string, any> | undefined {
+        if (sent.stream_options && refusesStreamOptions(status, errorText)) {
+            LMStudioProvider.refusedStreamOptions.add(LMStudioProvider.streamOptionsKey(endpoint, sent));
+            const retry = { ...sent };
+            delete retry.stream_options;
+            return retry;
+        }
+        const ceiling = statedOutputCeiling(status, errorText, sent.max_tokens);
+        if (!ceiling) return undefined;
+        const model = `${endpoint} ${config.model}`;
+        if (ceiling.lasting) LMStudioProvider.outputCeilings.set(model, ceiling.tokens);
+        else {
+            const context = statedContext(status, errorText);
+            if (context) LMStudioProvider.contextLengths.set(model, context.context);
+        }
+        return { ...sent, max_tokens: ceiling.tokens };
+    }
 
     getName(): string {
         return 'LMStudio';
@@ -80,7 +158,8 @@ export class LMStudioProvider implements AIProvider {
         config: AIProviderConfig,
         tools?: any[],
         externalSignal?: AbortSignal,
-        images?: string[]
+        images?: string[],
+        steps?: ReplySteps
     ): AsyncGenerator<AIStreamChunk> {
         const startTime = Date.now();
         let tokensUsed = 0;
@@ -101,32 +180,24 @@ export class LMStudioProvider implements AIProvider {
             cleanupExternalAbort = linkExternalAbort(externalSignal, controller);
             timeoutId = setTimeout(() => controller.abort(), timeout);
 
-            const response = await fetchFor(config)(endpoint, {
-                method: 'POST',
-                headers: this.headers(config),
-                body: JSON.stringify({
-                    model: config.model,
-                    messages: [
-                        { role: 'system', content: systemPrompt },
-                        { role: 'user', content: this.buildUserContent(userMessage, config, images) },
-                    ],
-                    stream: true,
-                    stream_options: {
-                        include_usage: true,
-                    },
-                    temperature: config.temperature,
-                    max_tokens: config.maxTokens,
-                    ...(tools && tools.length > 0 ? { tools, tool_choice: 'auto' } : {}),
-                }),
-                signal: controller.signal,
-            });
+            const response = await this.post(endpoint, {
+                model: config.model,
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: this.buildUserContent(userMessage, config, images) },
+                    // The reply's steps so far
+                    ...stepMessages(steps),
+                ],
+                stream: true,
+                stream_options: {
+                    include_usage: true,
+                },
+                temperature: config.temperature,
+                max_tokens: config.maxTokens,
+                ...(tools && tools.length > 0 ? { tools, tool_choice: 'auto' } : {}),
+            }, config, controller.signal);
 
             clearTimeout(timeoutId); // Connection established — clear connection timeout
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`LMStudio API error: ${response.status} ${errorText}`);
-            }
 
             // Per-chunk idle timeout
             timeoutId = setTimeout(() => controller.abort(), timeout);
@@ -250,7 +321,7 @@ export class LMStudioProvider implements AIProvider {
                     latency,
                     error: !externallyCancelled,
                     errorStatus: statusFromError(error),
-                    ...(externallyCancelled ? {} : { errorText: providerErrorText(error) }),
+                    ...(externallyCancelled ? {} : { ...tooLongOf(error?.message), errorText: providerErrorText(error) }),
                 },
             };
         } finally {
@@ -286,32 +357,22 @@ export class LMStudioProvider implements AIProvider {
             try {
                 const endpoint = `${config.endpoint.replace(/\/+$/, '')}/v1/chat/completions`;
 
-                const response = await fetchFor(config)(endpoint, {
-                    method: 'POST',
-                    headers: this.headers(config),
-                    body: JSON.stringify({
-                        model: config.model,
-                        messages: [
-                            { role: 'system', content: systemPrompt },
-                            { role: 'user', content: this.buildUserContent(userMessage, config, images) },
-                        ],
-                        stream: false,
-                        stream_options: {
-                            include_usage: true,
-                        },
-                        temperature: config.temperature,
-                        max_tokens: config.maxTokens,
-                        ...(tools && tools.length > 0 ? { tools, tool_choice: 'auto' } : {}),
-                    }),
-                    signal: controller.signal,
-                });
+                const response = await this.post(endpoint, {
+                    model: config.model,
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: this.buildUserContent(userMessage, config, images) },
+                    ],
+                    stream: false,
+                    stream_options: {
+                        include_usage: true,
+                    },
+                    temperature: config.temperature,
+                    max_tokens: config.maxTokens,
+                    ...(tools && tools.length > 0 ? { tools, tool_choice: 'auto' } : {}),
+                }, config, controller.signal);
 
                 clearTimeout(timeoutId);
-
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    throw new Error(`LMStudio API error: ${response.status} ${errorText}`);
-                }
 
                 const data = await response.json() as { choices?: Array<{ message?: { content?: string }; finish_reason?: string }>; usage?: { total_tokens?: number; prompt_tokens?: number; completion_tokens?: number }; model?: string };
                 const content = data.choices?.[0]?.message?.content || '';

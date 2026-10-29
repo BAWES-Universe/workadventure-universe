@@ -172,6 +172,73 @@ describe('MatrixDmBridge', () => {
         });
     });
 
+    it("puts each file it sent on the person's list once it reached them, and not one that failed (#1508)", async () => {
+        await bridge.onEvent(invite());
+        const song = { url: 'https://tools.example.com/song.mp3', mediaType: 'audio', mimeType: '', createdAt: 0, retryCount: 0 };
+        const lost = { ...song, url: 'https://tools.example.com/lost.mp3' };
+        const mediaSent = vi.fn(() => {
+            throw new Error('Orbit down');
+        });
+        deps.reply.mockResolvedValueOnce({ text: 'Here it is.', media: [song, lost], mediaSent });
+        vi.spyOn(bridge as any, 'sendMedia').mockImplementation(async (_bot: unknown, _room: unknown, item: any) => {
+            if (item === lost) throw new Error('too big');
+        });
+        await bridge.onEvent(message('make me a song'));
+        expect(mediaSent).toHaveBeenCalledTimes(1);
+        expect(mediaSent).toHaveBeenCalledWith(song);
+    });
+
+    describe('the copy of a sent file on our uploader (#1572)', () => {
+        const song = { url: 'https://tools.example.com/song.mp3?sig=abc', mediaType: 'audio', mimeType: 'audio/mpeg', createdAt: 0, retryCount: 0 };
+
+        async function sendOne(item: any, uploadAttachment?: (...args: any[]) => Promise<string | null>) {
+            const { FileParser } = await import('../services/FileParser');
+            vi.spyOn(FileParser, 'validateUrl').mockResolvedValue(undefined as never);
+            const axios = (await import('axios')).default;
+            vi.spyOn(axios, 'get').mockResolvedValue({ data: Buffer.from('song'), headers: { 'content-type': 'audio/mpeg' } } as never);
+            deps.uploadAttachment = uploadAttachment;
+            const mediaSent = vi.fn();
+            await bridge.onEvent(invite());
+            deps.reply.mockResolvedValueOnce({ text: 'Here it is.', media: [item], mediaSent });
+            await bridge.onEvent(message('make me a song'));
+            return mediaSent;
+        }
+
+        it("keeps our uploader's copy on the list, not the tool's link, and still sends the file", async () => {
+            const upload = vi.fn(async () => 'https://uploader.test/upload-file/song.mp3');
+            const mediaSent = await sendOne(song, upload);
+            expect(upload).toHaveBeenCalledWith(Buffer.from('song'), 'audio/mpeg', 'song.mp3');
+            expect(client.sendMessage).toHaveBeenCalledWith(BOT_USER, ROOM, expect.objectContaining({ msgtype: 'm.audio', url: 'mxc://matrix.test/abc' }));
+            expect(mediaSent).toHaveBeenCalledWith({ ...song, originalUrl: song.url, url: 'https://uploader.test/upload-file/song.mp3' });
+        });
+
+        it("keeps the tool's link when the copy fails, and the file still reaches the person", async () => {
+            const mediaSent = await sendOne(song, vi.fn(async () => { throw new Error('uploader down'); }));
+            expect(client.sendMessage).toHaveBeenCalledWith(BOT_USER, ROOM, expect.objectContaining({ msgtype: 'm.audio' }));
+            expect(mediaSent).toHaveBeenCalledWith(song);
+        });
+
+        it('makes no copy of a file sent again from the list', async () => {
+            const upload = vi.fn(async () => 'https://uploader.test/upload-file/again.mp3');
+            const mediaSent = await sendOne({ ...song, again: true }, upload);
+            expect(upload).not.toHaveBeenCalled();
+            expect(mediaSent).toHaveBeenCalledWith({ ...song, again: true });
+        });
+
+        it('makes no second copy of a file already on the uploader', async () => {
+            vi.stubEnv('UPLOADER_URL', 'https://uploader.test');
+            try {
+                const upload = vi.fn(async () => 'https://uploader.test/upload-file/other.mp3');
+                const kept = { ...song, url: 'https://uploader.test/upload-file/song.mp3' };
+                const mediaSent = await sendOne(kept, upload);
+                expect(upload).not.toHaveBeenCalled();
+                expect(mediaSent).toHaveBeenCalledWith(kept);
+            } finally {
+                vi.unstubAllEnvs();
+            }
+        });
+    });
+
     it('answers with just the card when the bot made an artifact and said nothing', async () => {
         await bridge.onEvent(invite());
         const card = { id: 'art-1', version: 1, title: 'Clock', kind: 'page', maker: 'Guide' };
@@ -303,6 +370,39 @@ describe('MatrixDmBridge', () => {
             return { text: 'Found it.', media: [] };
         });
         client.sendText.mockRejectedValueOnce(new Error('timeout'));
+        await bridge.onEvent(invite());
+        await bridge.onEvent(message('find it'));
+        expect(client.sendText).toHaveBeenLastCalledWith(BOT_USER, ROOM, 'Found it.');
+    });
+
+    it('shows the steps line as one notice and updates that same message, before the answer (#1545)', async () => {
+        const working = { v: 1, state: 'working', line: 'Generate music', startedAt: 1, steps: [] };
+        const done = { ...working, state: 'done', line: 'Generate music 2 times' };
+        client.sendMessage.mockResolvedValueOnce('$steps');
+        deps.reply.mockImplementationOnce(async (_b: string, _p: unknown, _t: string, _a: unknown, hooks: any) => {
+            await hooks.onSteps(working, 'Generate music…');
+            await hooks.onSteps(done, 'Generate music 2 times');
+            return { text: 'Here they are.', media: [] };
+        });
+        await bridge.onEvent(invite());
+        await bridge.onEvent(message('make two songs'));
+        const sent = client.sendMessage.mock.calls.map((c: any[]) => c[2]);
+        expect(sent[0]).toEqual({ msgtype: 'm.notice', body: 'Generate music…', 'universe.steps': working });
+        expect(sent[1]).toEqual({
+            msgtype: 'm.notice',
+            body: '* Generate music 2 times',
+            'm.new_content': { msgtype: 'm.notice', body: 'Generate music 2 times', 'universe.steps': done },
+            'm.relates_to': { rel_type: 'm.replace', event_id: '$steps' },
+        });
+        expect(client.sendText).toHaveBeenLastCalledWith(BOT_USER, ROOM, 'Here they are.');
+    });
+
+    it('still answers when the steps line fails to send', async () => {
+        client.sendMessage.mockRejectedValueOnce(new Error('timeout'));
+        deps.reply.mockImplementationOnce(async (_b: string, _p: unknown, _t: string, _a: unknown, hooks: any) => {
+            await hooks.onSteps({ v: 1, state: 'working', line: 'Search', startedAt: 1, steps: [] }, 'Search…');
+            return { text: 'Found it.', media: [] };
+        });
         await bridge.onEvent(invite());
         await bridge.onEvent(message('find it'));
         expect(client.sendText).toHaveBeenLastCalledWith(BOT_USER, ROOM, 'Found it.');
@@ -1506,6 +1606,101 @@ describe('DmReplyService history', () => {
         // Something new is kept as usual.
         await (service as any).replyNow(BOT, person, 'are you back?', [], {});
         expect(history.map((entry) => entry.message)).toEqual(['left while resting', 'are you back?']);
+    });
+
+    const stepsService = async (stream: () => AsyncGenerator<any>, showToolCalls = true) => {
+        const { DmReplyService } = await import('../server/DmReplyService');
+        const { ConversationMemory } = await import('../memory/ConversationMemory');
+        const service = Object.create(DmReplyService.prototype) as InstanceType<typeof DmReplyService>;
+        Object.assign(service, {
+            playerIds: new Map(),
+            nextPlayerId: -1,
+            loadedBots: new Set([BOT]),
+            botManager: { getBot: () => null },
+            getBotConfig: async () => ({ botId: BOT, name: 'Guide', aiProviderRef: 'p' }),
+            aiService: { generateBotResponseStream: vi.fn(stream) },
+            conversationMemory: new ConversationMemory(),
+            conversationStorage: { startConversation: vi.fn(), addMessage: vi.fn(async () => undefined) },
+            shouldShowToolCalls: vi.fn(async () => showToolCalls),
+        });
+        return service;
+    };
+    const song = (id: string, prompt: string) => ({ id, doing: 'Make a song', done: 'Make a song', detail: prompt, group: 'tool:generate_music' });
+
+    it('shows the steps line while tools run, and folds it as the answer arrives (#1545)', async () => {
+        const service = await stepsService(async function* () {
+            yield { content: "I'll make it.", done: false };
+            yield { content: '', done: false, reset: true, toolNames: ['generate_music'], toolSteps: [song('a', 'funk'), song('b', 'disco')] };
+            yield { content: '', done: false, toolStepResults: [{ id: 'a', ok: true }, { id: 'b', ok: false, note: 'daily limit reached' }] };
+            yield { content: 'Here it is.', done: false };
+            yield { content: '', done: true, metadata: {} };
+        });
+        const shown: Array<[any, string]> = [];
+        const onInterimMessage = vi.fn(async () => undefined);
+        const reply = await (service as any).replyNow(BOT, { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false }, 'make songs', [], {
+            onInterimMessage,
+            onSteps: async (field: any, text: string) => void shown.push([structuredClone(field), text]),
+        });
+        expect(reply.text).toBe('Here it is.');
+        // The line before the tools stays its own message; no "🔍 tool..." messages any more
+        expect(onInterimMessage.mock.calls).toEqual([["I'll make it."]]);
+        expect(shown.map(([field, text]) => [field.state, text])).toEqual([
+            ['working', 'Make a song…'],
+            ['working', 'Make a song…'],
+            ['done', "Make a song · 1 didn't work"],
+        ]);
+        expect(shown[0][0].steps.map((s: any) => s.state)).toEqual(['running', 'running']);
+        expect(shown[2][0].steps).toEqual([
+            { doing: 'Make a song', done: 'Make a song', detail: 'funk', state: 'done' },
+            { doing: 'Make a song', done: 'Make a song', detail: 'disco', state: 'failed', note: 'daily limit reached' },
+        ]);
+    });
+
+    it("shows no steps when the bot's Show tool calls switch is off", async () => {
+        const onSteps = vi.fn(async () => undefined);
+        const service = await stepsService(async function* () {
+            yield { content: '', done: false, reset: true, toolNames: ['generate_music'], toolSteps: [song('a', 'funk')] };
+            yield { content: '', done: false, toolStepResults: [{ id: 'a', ok: true }] };
+            yield { content: 'Done.', done: false };
+            yield { content: '', done: true, metadata: {} };
+        }, false);
+        await (service as any).replyNow(BOT, { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false }, 'make a song', [], { onSteps });
+        expect(onSteps).not.toHaveBeenCalled();
+    });
+
+    it('marks the line stopped when the reply fails part-way', async () => {
+        const shown: any[] = [];
+        const service = await stepsService(async function* () {
+            yield { content: '', done: false, reset: true, toolNames: ['generate_music'], toolSteps: [song('a', 'funk')] };
+            throw new Error('provider down');
+        });
+        const reply = await (service as any).replyNow(BOT, { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false }, 'make a song', [], {
+            onSteps: async (field: any) => void shown.push(structuredClone(field)),
+        });
+        expect(reply.failed).toBe(true);
+        expect(shown.at(-1)).toMatchObject({ state: 'stopped', steps: [{ state: 'failed' }] });
+    });
+
+    it('marks the line stopped when shaping the answer fails after the stream', async () => {
+        const shown: any[] = [];
+        const service = await stepsService(async function* () {
+            yield { content: '', done: false, reset: true, toolNames: ['generate_music'], toolSteps: [song('a', 'funk')] };
+            yield { content: 'Here it is.', done: false };
+            yield { content: '', done: true, metadata: {} };
+        });
+        Object.assign(service, {
+            responseProcessor: {
+                processResponse: () => {
+                    throw new Error('processor broke');
+                },
+            },
+        });
+        await expect(
+            (service as any).replyNow(BOT, { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false }, 'make a song', [], {
+                onSteps: async (field: any) => void shown.push(structuredClone(field)),
+            })
+        ).rejects.toThrow('processor broke');
+        expect(shown.at(-1)).toMatchObject({ state: 'stopped', steps: [{ state: 'failed' }] });
     });
 
     it('answers the words that waited behind an answer once, together; a file on its own (#1159)', async () => {

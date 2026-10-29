@@ -117,7 +117,8 @@ async function toolFollowUpFor(channel: "world" | "dm") {
         "bot-1", -1, "take me to the Library", "You are Friend.", "test-provider", "matrix-dm", "", undefined, mocks.adminApiService,
         undefined, undefined, channel, undefined, ROOM
     )) { /* drain */ }
-    return String(mockGenerateStream.mock.calls[1][2]);
+    // How to carry on goes after the reply's steps (#1508)
+    return String(mockGenerateStream.mock.calls[1][7]?.after);
 }
 
 describe("AIService: where a bot lives, in a direct message", () => {
@@ -159,7 +160,7 @@ describe("AIService: where a bot lives, in a direct message", () => {
 
     it("never tells a direct message to say 'Follow me!' after a tool result", async () => {
         const followUp = await toolFollowUpFor("dm");
-        expect(followUp).toContain("You just received these new tool results");
+        expect(followUp).toContain("Continue this reply from the tool results above");
         expect(followUp).not.toContain("Follow me!");
         expect(followUp).toContain("Invite them to come find you in your room by name");
     });

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { get } from "svelte/store";
+import { get, readable } from "svelte/store";
 
 const { saveMessageFiles } = vi.hoisted(() => ({ saveMessageFiles: vi.fn(() => Promise.resolve()) }));
 vi.mock("../../Chat/Components/Room/MessageActions/availableActions", () => ({ saveMessageFiles }));
@@ -8,6 +8,7 @@ vi.mock("../../Chat/ChatSheetStore", () => ({ lowerChatSheet }));
 
 import { coWebsites, fullScreenCowebsite } from "../../Stores/CoWebsiteStore";
 import { FileViewerCoWebsite } from "../../WebRtc/CoWebsite/FileViewerCoWebsite";
+import type { SharedItem } from "../../Chat/Components/Room/Details/SharedItems";
 import {
     createMapFileViewer,
     mapFileName,
@@ -115,6 +116,32 @@ describe("opening a chat file in the viewer", () => {
         openChatFileInViewer({ url: "blob:http://play/mine", name: "plan.pdf", sentByMe: true });
 
         expect(opened()[0].source.sentByMe).toBe(true);
+    });
+
+    it("plays a song from the link chat holds, with the chat it came from", () => {
+        const tracks = readable<SharedItem[]>([]);
+        openChatFileInViewer({
+            url: "blob:http://play/song",
+            name: "447c3eec.mp3",
+            senderName: "Imagine [Music]",
+            inChat: { tracks, key: "$event 0" },
+        });
+
+        expect(opened()[0].source.audio).toMatchObject({
+            url: "blob:http://play/song",
+            inChat: { tracks, key: "$event 0" },
+            openOther: openChatFileInViewer,
+        });
+    });
+
+    it("holds one song: another song takes its place, and a document stays", () => {
+        openChatFileInViewer({ url: "blob:http://play/doc", name: "plan.pdf" });
+        openChatFileInViewer({ url: "blob:http://play/one", name: "one.mp3" });
+        openChatFileInViewer({ url: "blob:http://play/two", name: "two.mp3", startPlaying: true });
+
+        expect(opened().map((viewer) => viewer.source.name)).toEqual(["plan.pdf", "two.mp3"]);
+        expect(opened()[1].source.audio?.startPlaying).toBe(true);
+        expect(opened()[0].source.audio).toBeUndefined();
     });
 
     it("opens a PDF in the browser's own viewer in a new tab with a PDF type", () => {

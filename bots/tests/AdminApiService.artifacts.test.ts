@@ -48,6 +48,21 @@ describe('AdminApiService artifacts', () => {
         );
     });
 
+    it('sends songs, images and videos as a form: the same JSON in "request", one "media" part each (#1510)', async () => {
+        post.mockResolvedValue({ data: {} });
+        await service.makeArtifact(call, { title: 'Song', kind: 'page', content: '<audio src="song.mp3">' }, 5000, [
+            { name: 'song.mp3', contentType: 'audio/mpeg', body: new Uint8Array([1, 2, 3]) },
+        ]);
+        const [, form, options] = post.mock.calls[0];
+        expect(form).toBeInstanceOf(FormData);
+        expect(JSON.parse((form as FormData).get('request') as string)).toEqual({ ...call, title: 'Song', kind: 'page', content: '<audio src="song.mp3">' });
+        const file = (form as FormData).get('media') as File;
+        expect([file.name, file.type, file.size]).toEqual(['song.mp3', 'audio/mpeg', 3]);
+        // The form sets its own type, with the boundary
+        expect(options.headers).not.toHaveProperty('Content-Type');
+        expect(options.timeout).toBe(5000);
+    });
+
     it('changes, reads and lists through the routes Orbit has, with the id made safe for the address', async () => {
         post.mockResolvedValue({ data: {} });
         await service.changeArtifact('a/b', call, { edits: [{ old: 'x', new: 'y' }], baseVersion: 2 });
