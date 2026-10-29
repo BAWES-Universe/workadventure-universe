@@ -130,13 +130,17 @@ describe("a gallery joined from the messages of files sent together", () => {
     it("waits for every file's address, and leaves out a file that could not be fetched", async () => {
         const members = [groupFile(0, 3), groupFile(1, 3, { mxc: "mxc://matrix.test/broken" }), groupFile(2, 3)];
         members[0].joinGroup(members);
-        const seen: Array<{ url?: string; urls?: string[] }> = [];
-        const stop = members[0].content.subscribe((v) => seen.push({ url: v.url, urls: v.urls }));
+        const seen: Array<{ url?: string; urls?: string[]; fileNames?: string[] }> = [];
+        const stop = members[0].content.subscribe((v) =>
+            seen.push({ url: v.url, urls: v.urls, fileNames: v.fileNames })
+        );
         await settled(() => undefined);
         await settled(() => undefined);
         stop();
         // Nothing half drawn first.
         expect(seen[0].url).toBeUndefined();
+        // Still, a notification or a list line can say how many files it holds before they are fetched.
+        expect(seen[0].fileNames).toEqual(["beach-1.jpg", "beach-2.jpg", "beach-3.jpg"]);
         const last = seen[seen.length - 1];
         expect(last.url).toBe("blob:mxc://matrix.test/beach-1.jpg");
         expect(last.urls).toEqual(["blob:mxc://matrix.test/beach-3.jpg"]);
@@ -220,6 +224,17 @@ describe("joining the messages of a group", () => {
         expect(files[0].type).toBe("gallery");
         expect(assembler.addLive(files[2])).toBe(files[2]);
         expect(files[2].type).toBe("image");
+    });
+
+    it("tells a file kept inside a gallery when it comes again", () => {
+        const files = [groupFile(0, 2), groupFile(1, 2)];
+        assembler.joinHistory(files);
+
+        expect(assembler.hasJoined(files[1].id)).toBe(true);
+        expect(assembler.hasJoined(files[0].id)).toBe(false);
+
+        assembler.reset();
+        expect(assembler.hasJoined(files[1].id)).toBe(false);
     });
 
     it("lets a message without a tag straight through", () => {

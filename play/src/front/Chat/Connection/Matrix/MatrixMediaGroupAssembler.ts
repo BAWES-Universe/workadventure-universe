@@ -21,6 +21,8 @@ export class MediaGroupAssembler {
     private readonly held = new Map<string, Held>();
     /** Groups already shown: a message that comes in late is shown on its own, never lost. */
     private readonly shown = new Set<string>();
+    /** The ids of the messages kept inside a gallery: they are not in the list, so a repeat is told by this. */
+    private readonly joined = new Set<string>();
 
     /** `show` gets a gallery that was held while it waited for its last messages. */
     constructor(
@@ -31,6 +33,18 @@ export class MediaGroupAssembler {
     private static key(message: MatrixChatMessage): string | undefined {
         const tag = message.groupTag;
         return tag ? `${message.senderId ?? ""}|${tag.id}` : undefined;
+    }
+
+    /** Whether this message is already kept inside a gallery (it came again, for instance after a sync). */
+    hasJoined(messageId: string): boolean {
+        return this.joined.has(messageId);
+    }
+
+    /** The list is built again: nothing held or joined before it applies. */
+    reset() {
+        this.dispose();
+        this.shown.clear();
+        this.joined.clear();
     }
 
     /** Messages read from the history, oldest first: whole groups are joined at once, nothing is held. */
@@ -54,7 +68,7 @@ export class MediaGroupAssembler {
         return out.map((item) => {
             if (typeof item !== "string") return item;
             const members = MediaGroupAssembler.ordered(groups.get(item) ?? []);
-            MediaGroupAssembler.join(members);
+            this.join(members);
             return members[0];
         });
     }
@@ -90,7 +104,7 @@ export class MediaGroupAssembler {
         this.held.delete(key);
         this.shown.add(key);
         const members = MediaGroupAssembler.ordered([...held.members.values()]);
-        MediaGroupAssembler.join(members);
+        this.join(members);
         if (announce) this.show(members[0], held.isFresh);
         return members[0];
     }
@@ -99,7 +113,9 @@ export class MediaGroupAssembler {
         return [...members].sort((a, b) => (a.groupTag?.index ?? 0) - (b.groupTag?.index ?? 0));
     }
 
-    private static join(members: MatrixChatMessage[]) {
-        if (members.length >= 2) members[0].joinGroup(members);
+    private join(members: MatrixChatMessage[]) {
+        if (members.length < 2) return;
+        members[0].joinGroup(members);
+        members.slice(1).forEach((member) => this.joined.add(member.id));
     }
 }

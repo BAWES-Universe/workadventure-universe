@@ -61,7 +61,9 @@ function galleryContent(kinds: ChatMessageType[], contents: ChatMessageContent[]
             url: undefined,
             urls: undefined,
             filename: undefined,
-            fileNames: undefined,
+            // What the gallery holds is known before its addresses are: a notification or a list line can say it.
+            fileNames: items.map((item) => item.content.filename ?? item.content.body ?? ""),
+            itemTypes: items.map((item) => galleryItemType(item.type)),
             mediaFailed: !loading && ready.length === 0 ? true : undefined,
         };
     }

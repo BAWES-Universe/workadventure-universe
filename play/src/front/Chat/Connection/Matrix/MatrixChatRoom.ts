@@ -427,6 +427,7 @@ export class MatrixChatRoom
                 this.matrixRoom.getLiveTimeline().getTimelineSet()
             );
             this.messages.clear();
+            this.mediaGroups.reset();
             try {
                 await this.initMatrixRoomMessagesAndReactions();
             } catch (error) {
@@ -482,6 +483,8 @@ export class MatrixChatRoom
     private handleNewMessage(event: MatrixEvent, isFresh = true) {
         // The list built again after a gap can already hold it: it is never added twice.
         const eventId = event.getId();
+        // A file kept inside a gallery is not in the list itself: it comes again as an event already shown.
+        if (eventId && this.mediaGroups.hasJoined(eventId)) return;
         const existing = eventId ? this.messages.get(eventId) : undefined;
         const message = existing ?? new MatrixChatMessage(event, this.matrixRoom, false, this.type === "direct");
         // Files sent together arrive one by one: the gallery is shown once its last file is here.
