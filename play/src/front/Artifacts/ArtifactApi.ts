@@ -97,6 +97,12 @@ export function fetchChatArtifacts(chat: ArtifactChat, offset = 0): Promise<Chat
     return post<ChatArtifactPage>("in-chat", { chat, offset });
 }
 
+/** Every artifact this person owns, from every chat and bot, newest change first, from `offset` on (game #1609). */
+export async function fetchYourArtifacts(offset = 0): Promise<ChatArtifactPage> {
+    const page = await post<ChatArtifactPage>("owned", { offset });
+    return { ...page, artifacts: page.artifacts.map((artifact) => ({ ...artifact, yours: true })) };
+}
+
 /** Every version, newest first. */
 export async function fetchArtifactVersions(
     id: string,

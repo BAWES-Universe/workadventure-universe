@@ -13,12 +13,15 @@
      * isn't yours, and when it last changed. A tap opens its latest version in the window, as its card does.
      */
     export let artifact: ChatArtifact;
-    export let chat: ArtifactChat;
+    /** The chat the row shows in; none in Your artifacts, where every row is the person's own. */
+    export let chat: ArtifactChat | undefined = undefined;
+    /** Your artifacts come from every bot, so each row says which made it. */
+    export let showMaker = false;
 
     $: kind = artifactKindOf(artifact.kind);
     $: badge = artifactBadge(kind, $LL);
     $: details = [
-        artifactKindName(kind, $LL),
+        showMaker ? $LL.chat.artifacts.by({ maker: artifact.makerName }) : artifactKindName(kind, $LL),
         $LL.chat.artifacts.versionRow({ version: artifact.version }),
         artifact.yours ? undefined : artifact.owner?.name ?? undefined,
         sentLabel(new Date(artifact.updatedAt), $locale),

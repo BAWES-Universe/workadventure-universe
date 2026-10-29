@@ -162,6 +162,13 @@ export interface OrbitOpenArtifactMessage {
     maker: string;
 }
 
+/** Orbit asks the game to open Your artifacts in its window (the game's "open-artifacts-list" capability, #1609). */
+export interface OrbitOpenArtifactsListMessage {
+    type: "orbit-open-artifacts-list";
+    version: typeof ORBIT_BRIDGE_VERSION;
+    roomRevision: string;
+}
+
 /**
  * How many steps Orbit's pages have added to the tab's history above the one the game added when Orbit opened (the
  * game's "history" capability). Sent whenever it changes. A page loaded afresh counts from 0, so the number is never
@@ -295,6 +302,15 @@ export function isOrbitOpenArtifactMessage(value: unknown): value is OrbitOpenAr
     );
 }
 
+export function isOrbitOpenArtifactsListMessage(value: unknown): value is OrbitOpenArtifactsListMessage {
+    return (
+        isRecord(value) &&
+        value.type === "orbit-open-artifacts-list" &&
+        value.version === ORBIT_BRIDGE_VERSION &&
+        isBoundedString(value.roomRevision, 16, 128)
+    );
+}
+
 export function isOrbitHistoryMessage(value: unknown): value is OrbitHistoryMessage {
     return (
         isRecord(value) &&
@@ -358,6 +374,7 @@ export class OrbitBridge {
                 "open-link",
                 "history",
                 "open-artifact",
+                "open-artifacts-list",
             ],
             view: this.view,
             ...(this.maxNameLength ? { maxNameLength: this.maxNameLength } : {}),

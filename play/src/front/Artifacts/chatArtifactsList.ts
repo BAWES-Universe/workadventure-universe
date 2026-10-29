@@ -1,6 +1,6 @@
 import { get, writable } from "svelte/store";
 import type { Readable } from "svelte/store";
-import { fetchChatArtifacts } from "./ArtifactApi";
+import { fetchChatArtifacts, fetchYourArtifacts } from "./ArtifactApi";
 import type { ArtifactChat, ChatArtifact, ChatArtifactPage } from "./ArtifactApi";
 
 /** A chat's artifacts as far as they were read, for its Artifacts group and page (game #1474). */
@@ -26,22 +26,13 @@ const NOTHING_YET: ChatArtifactsState = {
     loaded: false,
 };
 
-/**
- * One chat's artifacts, read from the game's server a page at a time. The group on the details reads the first page
- * each time it shows, and the page with all of them reads on from there, so both show the same list.
- */
-export class ChatArtifactsList implements Readable<ChatArtifactsState> {
+/** A list of artifacts read from the game's server a page at a time: a chat's, or all of yours. */
+export class ArtifactsList implements Readable<ChatArtifactsState> {
     private readonly state = writable<ChatArtifactsState>(NOTHING_YET);
     private reading = 0;
     readonly subscribe = this.state.subscribe;
 
-    constructor(
-        readonly chat: ArtifactChat,
-        private readonly fetchPage: (
-            chat: ArtifactChat,
-            offset: number
-        ) => Promise<ChatArtifactPage> = fetchChatArtifacts
-    ) {}
+    constructor(private readonly fetchFrom: (offset: number) => Promise<ChatArtifactPage>) {}
 
     /** The newest ones again, from the top. */
     refresh(): Promise<void> {
@@ -59,7 +50,7 @@ export class ChatArtifactsList implements Readable<ChatArtifactsState> {
         const reading = ++this.reading;
         this.state.update((state) => ({ ...state, loading: true, failed: false }));
         try {
-            const page = await this.fetchPage(this.chat, offset);
+            const page = await this.fetchFrom(offset);
             if (reading !== this.reading) return;
             this.state.update((state) => {
                 // One that changed between two pages moved up: it shows once, where it is now
@@ -76,10 +67,31 @@ export class ChatArtifactsList implements Readable<ChatArtifactsState> {
             });
         } catch (error) {
             if (reading !== this.reading) return;
-            console.error("Could not read the chat's artifacts", error);
+            console.error("Could not read the artifacts", error);
             this.state.update((state) => ({ ...state, loading: false, failed: true }));
         }
     }
+}
+
+/**
+ * One chat's artifacts. The group on the details reads the first page each time it shows, and the page with all of
+ * them reads on from there, so both show the same list.
+ */
+export class ChatArtifactsList extends ArtifactsList {
+    constructor(
+        readonly chat: ArtifactChat,
+        fetchPage: (chat: ArtifactChat, offset: number) => Promise<ChatArtifactPage> = fetchChatArtifacts
+    ) {
+        super((offset) => fetchPage(chat, offset));
+    }
+}
+
+let yours: ArtifactsList | undefined;
+
+/** Every artifact this person owns, from every chat and bot (Your artifacts in the window, game #1609). */
+export function yourArtifactsList(): ArtifactsList {
+    yours ??= new ArtifactsList(fetchYourArtifacts);
+    return yours;
 }
 
 /** The chats whose lists are kept while the game runs; the oldest goes first past this many. */

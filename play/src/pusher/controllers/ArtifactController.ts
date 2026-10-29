@@ -30,6 +30,7 @@ const OpenBody = z.object({
 });
 const ViewerBody = z.object({ chat: Chat.optional() });
 const InChatBody = z.object({ chat: Chat, offset: z.number().int().min(0).max(1_000_000).optional() });
+const OwnedBody = z.object({ offset: z.number().int().min(0).max(1_000_000).optional() });
 const RestoreBody = z.object({ chat: Chat.optional(), number: z.number().int().min(1) });
 const ShareBody = z
     .object({
@@ -89,6 +90,9 @@ export class ArtifactController extends BaseHttpController {
         this.app.options("/artifacts/in-chat", (req: Request, res: Response) => {
             res.status(200).send("");
         });
+        this.app.options("/artifacts/owned", (req: Request, res: Response) => {
+            res.status(200).send("");
+        });
         this.app.options("/artifacts/:id/open", (req: Request, res: Response) => {
             res.status(200).send("");
         });
@@ -128,6 +132,34 @@ export class ArtifactController extends BaseHttpController {
                     const body = InChatBody.safeParse(req.body ?? {});
                     if (!body.success) throw new ArtifactsError("invalid_request", 400);
                     return artifactsService.listInChat(viewer(body.data.chat), body.data.offset ?? 0);
+                },
+                true
+            );
+        });
+
+        /**
+         * @openapi
+         * /artifacts/owned:
+         *   post:
+         *     description: Every artifact the signed token's person owns, from every chat and bot, newest change first,
+         *       50 at a time (Your artifacts in the window). Answers { artifacts, total, next }; a guest gets none.
+         *     responses:
+         *       200:
+         *         description: One page of the person's artifacts
+         *       400:
+         *         description: A bad offset
+         *       429:
+         *         description: Too many requests; try again in a minute
+         */
+        this.app.post("/artifacts/owned", [authenticated], async (req: Request, res: ResponseWithUserIdentifier) => {
+            await this.answer(
+                req,
+                res,
+                "list",
+                async (viewer) => {
+                    const body = OwnedBody.safeParse(req.body ?? {});
+                    if (!body.success) throw new ArtifactsError("invalid_request", 400);
+                    return artifactsService.listOwned(viewer(undefined).person, body.data.offset ?? 0);
                 },
                 true
             );

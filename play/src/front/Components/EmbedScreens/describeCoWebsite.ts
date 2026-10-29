@@ -6,7 +6,9 @@ import { JitsiCoWebsite } from "../../WebRtc/CoWebsite/JitsiCoWebsite";
 import { BBBCoWebsite } from "../../WebRtc/CoWebsite/BBBCoWebsite";
 import { FileViewerCoWebsite } from "../../WebRtc/CoWebsite/FileViewerCoWebsite";
 import { ArtifactCoWebsite } from "../../WebRtc/CoWebsite/ArtifactCoWebsite";
-import { artifactBadge } from "../../Artifacts/artifactBadge";
+import { YourArtifactsCoWebsite } from "../../WebRtc/CoWebsite/YourArtifactsCoWebsite";
+import { artifactBadge, YOUR_ARTIFACTS_ICON, YOUR_ARTIFACTS_ICON_BACKGROUND } from "../../Artifacts/artifactBadge";
+import { yourArtifactsList } from "../../Artifacts/chatArtifactsList";
 import { badgeOfKind, extensionOf, fileKindOf } from "../../FileViewer/fileKinds";
 import { audioFileTitle } from "../../Chat/Components/Room/Message/audioFileTitle";
 import jitsiIcon from "../images/jitsi.png";
@@ -43,6 +45,14 @@ export function describeCoWebsite(coWebsite: CoWebsite, texts: TranslationFuncti
             name: title,
             line: makerName ? texts.chat.artifacts.by({ maker: makerName }) : "",
             badge: artifactBadge(kind, texts),
+        };
+    }
+    if (coWebsite instanceof YourArtifactsCoWebsite) {
+        return {
+            name: texts.chat.artifacts.yours(),
+            line: texts.chat.artifacts.yoursLine({ count: get(yourArtifactsList()).total }),
+            iconSrc: YOUR_ARTIFACTS_ICON,
+            iconBackground: YOUR_ARTIFACTS_ICON_BACKGROUND,
         };
     }
     if (coWebsite instanceof FileViewerCoWebsite) {

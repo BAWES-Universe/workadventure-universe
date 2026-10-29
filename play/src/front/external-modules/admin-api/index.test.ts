@@ -58,6 +58,7 @@ const mocks = vi.hoisted(() => ({
     profileLinksOpeningHere: vi.fn((urls: readonly string[]): Promise<string[]> => Promise.resolve(urls.slice(0, 1))),
     openProfileLinkHere: vi.fn((_url: string): boolean => true),
     openArtifactFromCard: vi.fn(),
+    openYourArtifacts: vi.fn(),
     // Whether the room is loaded and shown (false while the game gets back in after a reconnect), as a small store.
     gameLoaded: (() => {
         let value = true;
@@ -142,6 +143,7 @@ vi.mock("../../Chat/LinkPreview/ProfileLinks", () => ({
 }));
 
 vi.mock("../../Artifacts/openArtifact", () => ({ openArtifactFromCard: mocks.openArtifactFromCard }));
+vi.mock("../../Artifacts/openYourArtifacts", () => ({ openYourArtifacts: mocks.openYourArtifacts }));
 
 vi.mock("../../Connection/Capabilities", () => ({
     hasCapability: (name: string) => name === "api/save-name",
@@ -554,6 +556,7 @@ describe("The Orbit bridge", () => {
                     "open-link",
                     "history",
                     "open-artifact",
+                    "open-artifacts-list",
                 ],
                 view: "compact",
                 maxNameLength: 25,
@@ -746,6 +749,22 @@ describe("The Orbit bridge", () => {
             expect(mocks.modalVisibilitySet).not.toHaveBeenCalledWith(false);
             fromOrbit({ ...open, roomRevision: "rev-from-an-earlier-visit-0000" });
             expect(mocks.openArtifactFromCard).toHaveBeenCalledTimes(1);
+        });
+
+        it("opens Your artifacts in its window, from Orbit's View all, and leaves Orbit behind it", async () => {
+            const revision = await openOrbit();
+            const init = frame.postMessage.mock.calls.find((call) => call[0].type === "orbit-bridge-init");
+            expect(init?.[0].capabilities).toContain("open-artifacts-list");
+            mocks.openYourArtifacts.mockClear();
+            fromOrbit({ type: "orbit-open-artifacts-list", version: 1, roomRevision: revision });
+            expect(mocks.openYourArtifacts).toHaveBeenCalledTimes(1);
+            expect(mocks.modalVisibilitySet).not.toHaveBeenCalledWith(false);
+            fromOrbit({
+                type: "orbit-open-artifacts-list",
+                version: 1,
+                roomRevision: "rev-from-an-earlier-visit-0000",
+            });
+            expect(mocks.openYourArtifacts).toHaveBeenCalledTimes(1);
         });
 
         it("ignores both from another visit's frame", async () => {

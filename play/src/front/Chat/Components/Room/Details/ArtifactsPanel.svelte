@@ -7,10 +7,10 @@
     import { openArtifactsListStore } from "../../../Stores/ChatDetailsStore";
     import { NAME_BY_CHAT_ID_CONTEXT, personName } from "../../../Stores/ChatUserWokaStore";
     import { localUserStore } from "../../../../Connection/LocalUserStore";
-    import { canOpenOrbit, openOrbitPage } from "../../../../external-modules/admin-api/index";
     import type { ChatArtifact } from "../../../../Artifacts/ArtifactApi";
     import { ARTIFACT_CHAT_CONTEXT, type ArtifactChatOf } from "../../../../Artifacts/artifactChatContext";
     import { chatArtifactsList, type ChatArtifactsState } from "../../../../Artifacts/chatArtifactsList";
+    import { openYourArtifacts } from "../../../../Artifacts/openYourArtifacts";
     import ArtifactRow from "./ArtifactRow.svelte";
     import { sharedSectionOf, type SharedSection } from "./SharedItems";
     import { IconChevronLeft, IconChevronRight, IconLoader } from "@wa-icons";
@@ -18,7 +18,7 @@
     /**
      * Every artifact made in the chat that the person may open, over its details (game #1474): newest change first
      * under the same week and month headings as its files, the next ones read as the list reaches its end. It ends
-     * with the way to all of yours, from every chat, in Orbit. Back returns to the details.
+     * with the way to all of yours, from every chat, in the window (game #1609). Back returns to the details.
      */
     export let room: ChatRoom;
     /** In a direct chat, the other person: the chat is named after the name they go by now. */
@@ -39,8 +39,8 @@
         ? getContext(NAME_BY_CHAT_ID_CONTEXT)
         : readable(new Map<string, string>());
     $: chatName = chatTitle ?? personName($nameByChatId, partnerChatId, $roomName);
-    // A guest owns none, and Orbit is where all of them are
-    const showAllYours = localUserStore.isLogged() && canOpenOrbit();
+    // A guest owns none
+    const showAllYours = localUserStore.isLogged();
     const now = new Date();
 
     function label(section: SharedSection): string {
@@ -168,7 +168,7 @@
                     type="button"
                     class="u-menu-row !m-0"
                     data-testid="allYourArtifacts"
-                    on:click={() => openOrbitPage("/admin/you/artifacts")}
+                    on:click={openYourArtifacts}
                 >
                     <span class="u-menu-label min-w-0 flex-1 truncate">{$LL.chat.details.allYourArtifacts()}</span>
                     <span class="u-menu-tile !w-6">

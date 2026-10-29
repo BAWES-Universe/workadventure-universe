@@ -6,6 +6,7 @@ import {
     isOrbitBridgeReadyMessage,
     isOrbitCheckLinksMessage,
     isOrbitOpenArtifactMessage,
+    isOrbitOpenArtifactsListMessage,
     isOrbitOpenLinkMessage,
     isOrbitHistoryMessage,
     isOrbitInvitePersonMessage,
@@ -146,6 +147,13 @@ describe("Orbit's profile link requests", () => {
         expect(isOrbitOpenArtifactMessage({ ...open, artifactVersion: 1.5 })).toBe(false);
         expect(isOrbitOpenArtifactMessage({ ...open, roomRevision: "short" })).toBe(false);
     });
+
+    it("accepts a well-formed request to open Your artifacts", () => {
+        const open = { type: "orbit-open-artifacts-list", version: 1, roomRevision: revision };
+        expect(isOrbitOpenArtifactsListMessage(open)).toBe(true);
+        expect(isOrbitOpenArtifactsListMessage({ ...open, version: 2 })).toBe(false);
+        expect(isOrbitOpenArtifactsListMessage({ ...open, roomRevision: "short" })).toBe(false);
+    });
 });
 
 describe("Orbit's history steps", () => {
@@ -184,6 +192,7 @@ describe("OrbitBridge", () => {
                 "open-link",
                 "history",
                 "open-artifact",
+                "open-artifacts-list",
             ],
             view: "compact",
         });

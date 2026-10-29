@@ -160,4 +160,22 @@ describe("ArtifactsService", () => {
         expect(answer.artifacts[0]).toMatchObject({ id: ID, yours: false, updatedAt: row.updatedAt });
         expect(answer.artifacts[0]).not.toHaveProperty("makerBotId");
     });
+
+    it("lists every artifact the person owns a page at a time, naming only the person", async () => {
+        const row = { ...opened.artifact, updatedAt: "2026-10-28T09:00:00.000Z" };
+        const http = {
+            put: vi.fn(),
+            post: vi.fn(() => Promise.resolve({ data: { artifacts: [row], total: 51, next: 50 } })),
+        };
+        const service = new ArtifactsService("https://orbit.test", "secret", http);
+        const answer = await service.listOwned(viewer.person, 50);
+        expect(http.post).toHaveBeenCalledWith(
+            "https://orbit.test/api/artifacts/owned",
+            { person: viewer.person, offset: 50 },
+            { headers: { Authorization: "secret" } }
+        );
+        expect(answer).toMatchObject({ total: 51, next: 50 });
+        expect(answer.artifacts[0]).toMatchObject({ id: ID, makerName: "Scout", updatedAt: row.updatedAt });
+        expect(answer.artifacts[0]).not.toHaveProperty("makerBotId");
+    });
 });
