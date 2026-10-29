@@ -317,8 +317,14 @@ describe("ProximityEndedFooter", () => {
             unsentVoiceNote: note,
         };
         const proximityRoom = () =>
-            ({ takeUnsentVoiceNote: vi.fn(), takeUnsentDraft: vi.fn() } as unknown as ProximityChatRoom & {
+            ({
+                takeUnsentVoiceNote: vi.fn(() => note),
+                unsentVoiceNoteStayId: vi.fn(() => "stay-1"),
+                keepUnsentVoiceNote: vi.fn(),
+                takeUnsentDraft: vi.fn(),
+            } as unknown as ProximityChatRoom & {
                 takeUnsentVoiceNote: ReturnType<typeof vi.fn>;
+                keepUnsentVoiceNote: ReturnType<typeof vi.fn>;
                 takeUnsentDraft: ReturnType<typeof vi.fn>;
             });
         const show = async (session: ProximitySession<ChatMessage>, room: ProximityChatRoom, noura: object) => {
@@ -346,13 +352,24 @@ describe("ProximityEndedFooter", () => {
             expect(target.querySelector('[data-testid="proximityUnsentVoiceNote"]')).not.toBeNull();
 
             target.querySelector<HTMLButtonElement>('[data-testid="proximityVoiceToDirect"]')?.click();
-            await vi.waitFor(() => expect(room.takeUnsentVoiceNote).toHaveBeenCalledWith(withNoura));
+            // Taken out before it goes, so being back with Noura meanwhile can't put it in the recorder too.
+            expect(room.takeUnsentVoiceNote).toHaveBeenCalledWith(withNoura);
             const [chatID, send] = directHolder.sendToDirectChat.mock.calls[0];
             expect(chatID).toBe("@noura:chat");
             const MockedRoom = MatrixChatRoom as unknown as new () => { sendVoiceNote: ReturnType<typeof vi.fn> };
             const direct = new MockedRoom();
             await send(direct);
             expect(direct.sendVoiceNote).toHaveBeenCalledWith(note.file, note.details);
+            await tick();
+            expect(room.keepUnsentVoiceNote).not.toHaveBeenCalled();
+        });
+
+        it("puts the voice note back in the ended chat when the direct message could not go", async () => {
+            directHolder.sendToDirectChat.mockImplementationOnce(() => Promise.resolve(false));
+            const room = proximityRoom();
+            const target = await show(withNoura, room, signedIn);
+            target.querySelector<HTMLButtonElement>('[data-testid="proximityVoiceToDirect"]')?.click();
+            await vi.waitFor(() => expect(room.keepUnsentVoiceNote).toHaveBeenCalledWith("stay-1", note));
         });
 
         it("keeps the voice note there, with no direct message, when Noura is a guest", async () => {

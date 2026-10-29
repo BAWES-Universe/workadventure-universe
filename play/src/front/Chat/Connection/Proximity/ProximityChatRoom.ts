@@ -1075,8 +1075,21 @@ export class ProximityChatRoom implements ChatRoom {
             drafts.delete(id);
         }
         if (text === undefined) return undefined;
+        this.followLiveStay(session);
         this._unsentDrafts.set(drafts);
         return text;
+    }
+
+    /**
+     * Taking back what was left unsent can leave an earlier stay with nothing in it, and the live stay then no longer
+     * carries it on: the thread showing that earlier stay moves to the live one, never to an empty ended chat.
+     */
+    private followLiveStay(session: ProximitySession<ChatMessage>): void {
+        const selected = get(selectedProximitySessionStore);
+        if (!session.isLive || this._currentSessionId === undefined || selected === this._currentSessionId) return;
+        if (selected !== undefined && session.stayIds.includes(selected)) {
+            selectedProximitySessionStore.set(this._currentSessionId);
+        }
     }
 
     /**
@@ -1084,14 +1097,23 @@ export class ProximityChatRoom implements ChatRoom {
      * back with the same people, or out as a direct message.
      */
     public takeUnsentVoiceNote(session: ProximitySession<ChatMessage>): UnsentVoiceNote | undefined {
-        const notes = new Map(get(this._unsentVoiceNotes));
-        // The latest one, the note the session shows. An earlier stay's note stays kept: it shows once this one is out.
-        const id = [...session.stayIds].reverse().find((stayId) => notes.has(stayId));
+        const id = this.unsentVoiceNoteStayId(session);
         if (id === undefined) return undefined;
+        const notes = new Map(get(this._unsentVoiceNotes));
         const note = notes.get(id);
         notes.delete(id);
+        this.followLiveStay(session);
         this._unsentVoiceNotes.set(notes);
         return note;
+    }
+
+    /**
+     * The stay that holds the voice note this session shows: the latest one. An earlier stay's note stays kept, and
+     * shows once this one is out.
+     */
+    public unsentVoiceNoteStayId(session: ProximitySession<ChatMessage>): string | undefined {
+        const notes = get(this._unsentVoiceNotes);
+        return [...session.stayIds].reverse().find((stayId) => notes.has(stayId));
     }
 
     /** Keeps a voice note recorded for a stay that ended before it was sent, to show it there as unsent. */

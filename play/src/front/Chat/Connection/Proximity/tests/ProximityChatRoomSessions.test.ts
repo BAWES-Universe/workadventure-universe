@@ -3,7 +3,7 @@ import { get, readable, writable } from "svelte/store";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProximityChatRoom } from "../ProximityChatRoom";
 import type { ProximityChatMessage } from "../ProximityChatRoom";
-import { listableSessions } from "../ProximitySessions";
+import { listableSessions, sessionOfStay } from "../ProximitySessions";
 import { selectedRoomStore } from "../../../Stores/SelectRoomStore";
 import { keepOnlyProximityHistory, selectedProximitySessionStore } from "../../../Stores/ProximitySessionStore";
 import { areaChatRooms } from "../../../Stores/AreaPresenceStore";
@@ -351,6 +351,29 @@ describe("ProximityChatRoom sessions", () => {
         expect(get(room.sessions)[0].unsentVoiceNote).toBe(older);
         expect(room.takeUnsentVoiceNote(get(room.sessions)[0])).toBe(older);
         expect(get(room.sessions)[0].unsentVoiceNote).toBeUndefined();
+    });
+
+    it("moves the thread to the live stay when taking back the note leaves the stay it was in empty", async () => {
+        const note = { file: new File(["x"], "voice.weba"), details: { duration: 5, waveform: [1] } };
+        const people = new Map([
+            ["room_1", spaceUser("room_1", "Me", "a")],
+            ["room_3", spaceUser("room_3", "Sara", "b")],
+        ]);
+        await room.joinSpace("bubble", [], true);
+        fake.space.usersStore.set(people);
+        const first = room.currentSessionId ?? "";
+        await room.leaveSpace("bubble", true);
+        room.keepUnsentVoiceNote(first, note);
+        room.open(first);
+        await room.joinSpace("bubble", [], true);
+        fake.space.usersStore.set(people);
+        const live = get(room.sessions)[0];
+        expect(live.isLive).toBe(true);
+        expect(live.stayIds[0]).toBe(first);
+
+        expect(room.takeUnsentVoiceNote(live)).toBe(note);
+        expect(get(selectedProximitySessionStore)).toBe(room.currentSessionId);
+        expect(sessionOfStay(get(room.sessions), get(selectedProximitySessionStore) ?? "")?.isLive).toBe(true);
     });
 
     it("shows a voice note kept in the live stay on it, to go back in the recorder", async () => {

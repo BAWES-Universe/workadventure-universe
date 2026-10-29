@@ -245,14 +245,17 @@
     }
 
     async function sendVoiceNoteAsDirectMessage(chatID: string) {
-        const note = session.unsentVoiceNote;
-        if (sendingDirect || !room || !note) return;
+        if (sendingDirect || !room) return;
         const proximityRoom = room;
-        const leftIn = session;
+        // Taken out before it goes: being back with them meanwhile can't put it in the recorder to send it twice.
+        const stayId = proximityRoom.unsentVoiceNoteStayId(session);
+        const note = stayId === undefined ? undefined : proximityRoom.takeUnsentVoiceNote(session);
+        if (stayId === undefined || !note) return;
         sendingDirect = true;
         player?.pause();
+        let sent = false;
         try {
-            const sent = await sendToDirectChat(
+            sent = await sendToDirectChat(
                 chatID,
                 async (direct) => {
                     if (!(direct instanceof MatrixChatRoom)) throw new Error("Not a Matrix room");
@@ -260,11 +263,10 @@
                 },
                 $LL.chat.voiceNote.notSent()
             );
-            if (sent) {
-                analyticsClient.chatMessageSent("matrix");
-                proximityRoom.takeUnsentVoiceNote(leftIn);
-            }
+            if (sent) analyticsClient.chatMessageSent("matrix");
         } finally {
+            // Not sent: back in this chat, to try again.
+            if (!sent) proximityRoom.keepUnsentVoiceNote(stayId, note);
             // eslint-disable-next-line require-atomic-updates
             sendingDirect = false;
         }
