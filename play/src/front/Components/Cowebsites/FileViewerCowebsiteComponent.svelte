@@ -17,11 +17,14 @@
     import OpenHereRow from "../EmbedScreens/OpenHereRow.svelte";
     import OpenHereItemIcon from "../EmbedScreens/OpenHereItemIcon.svelte";
     import { fileBadgeFor } from "../EmbedScreens/describeCoWebsite";
+    import { audioFileTitle } from "../../Chat/Components/Room/Message/audioFileTitle";
+    import { formatDuration } from "../Broadcast/voiceRecorder";
     import FileViewerExcel from "./FileViewer/FileViewerExcel.svelte";
     import FileViewerPdf from "./FileViewer/FileViewerPdf.svelte";
     import FileViewerImage from "./FileViewer/FileViewerImage.svelte";
     import FileViewerText from "./FileViewer/FileViewerText.svelte";
     import FileViewerWord from "./FileViewer/FileViewerWord.svelte";
+    import FileViewerAudio from "./FileViewer/FileViewerAudio.svelte";
     import { IconDots, IconDownload, IconLayoutSidebar, IconMinus, IconPlus, IconSearch } from "@wa-icons";
 
     export let actualCowebsite: FileViewerCoWebsite;
@@ -95,6 +98,10 @@
 
     const badge = fileBadgeFor(source.name);
     const isOldWord = fileKindOf(source.name) === "oldword";
+    // A song plays from the link chat already holds: nothing is read first. Its name is the chat player's title.
+    const audio = source.audio;
+    const shownName = audio ? audioFileTitle(source.name) ?? $LL.chat.audioFile.untitled() : source.name;
+    let audioDuration: number | undefined;
     $: sender = source.sentByMe
         ? $LL.chat.fileViewer.fromYou()
         : source.senderName
@@ -108,14 +115,22 @@
             : rowCount !== undefined
             ? $LL.chat.fileViewer.rows({ count: rowCount })
             : "";
-    $: subtitle = [sender, pagesLabel].filter(Boolean).join(" · ");
+    $: subtitle = [sender, pagesLabel, audio && audioDuration ? formatDuration(audioDuration) : ""]
+        .filter(Boolean)
+        .join(" · ");
     // A text file has nothing to hand to a browser viewer: Ctrl or Cmd click on its card opens it as plain text.
     $: canOpenInNewTab =
+        !audio &&
         source.openInNewTab !== undefined &&
         (phase === "ready" || source.openInNewTabFromLink === true) &&
         !(kind && NO_BROWSER_VIEWER_KINDS.has(kind));
 
     async function open(): Promise<void> {
+        if (audio) {
+            kind = "audio";
+            phase = "ready";
+            return;
+        }
         try {
             const loaded = await source.load(abort.signal);
             if (abort.signal.aborted) return;
@@ -261,7 +276,7 @@
     on:keydown={onKeydown}
     data-testid="fileViewer"
 >
-    <OpenHereRow name={source.name} line={subtitle}>
+    <OpenHereRow name={shownName} line={subtitle}>
         <svelte:fragment slot="icon">
             <OpenHereItemIcon {badge} />
         </svelte:fragment>
@@ -440,6 +455,17 @@
                 {/if}
             </div>
         </div>
+    {:else if audio && kind === "audio"}
+        <!-- Before `putAway`: a song keeps playing while another item is in front. -->
+        <FileViewerAudio
+            {audio}
+            name={source.name}
+            senderName={source.senderName}
+            sentByMe={source.sentByMe === true}
+            {visible}
+            onDuration={(seconds) => (audioDuration = seconds)}
+            onDownload={download}
+        />
     {:else if putAway}
         <!-- Put away: see `parked`. -->
     {:else if bytes && kind === "pdf"}

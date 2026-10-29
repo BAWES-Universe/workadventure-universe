@@ -11,7 +11,8 @@ export type FileViewerKind =
     | "csv"
     | "word"
     | "oldword"
-    | "excel";
+    | "excel"
+    | "audio";
 
 const KIND_BY_EXTENSION: Record<string, FileViewerKind> = {
     pdf: "pdf",
@@ -32,6 +33,16 @@ const KIND_BY_EXTENSION: Record<string, FileViewerKind> = {
     webp: "image",
     bmp: "image",
     svg: "image",
+    // Audio plays in the window's own player, from a chat's Files: its cards in the chat keep playing there.
+    mp3: "audio",
+    m4a: "audio",
+    wav: "audio",
+    ogg: "audio",
+    oga: "audio",
+    opus: "audio",
+    aac: "audio",
+    flac: "audio",
+    weba: "audio",
     // Code (a script, a web page's source, a stylesheet) is shown as colored text: nothing in it runs.
     ...Object.fromEntries(CODE_EXTENSIONS.map((extension) => [extension, "code" as const])),
 };
@@ -135,16 +146,18 @@ const BADGE_BY_KIND: Record<FileViewerKind, FileBadge> = {
     word: { label: "DOCX", color: "#2b579a", kindName: "Word" },
     oldword: { label: "DOC", color: "#2b579a", kindName: "Word" },
     excel: { label: "XLSX", color: "#1e7145", kindName: "Excel" },
+    audio: { label: "MP3", color: "#c2571a", kindName: "Audio" },
 };
 
 /**
  * The badge of a file the viewer opens, from its kind. A spreadsheet's badge shows its own ending (XLSX, XLS, ODS), and
- * so does code (JS, TS, HTML).
+ * so does code (JS, TS, HTML). Audio says its ending in words too ("MP3 · 2.1 MB"), as its name is often just "Audio".
  */
 export function badgeOfKind(kind: FileViewerKind, name?: string): FileBadge {
     const badge = BADGE_BY_KIND[kind];
-    if (kind !== "excel" && kind !== "code") return badge;
+    if (kind !== "excel" && kind !== "code" && kind !== "audio") return badge;
     const extension = extensionOf(name).toUpperCase();
+    if (kind === "audio") return { ...badge, label: extension || badge.label, kindName: extension || badge.kindName };
     return { ...badge, label: extension || badge.label };
 }
 

@@ -8,6 +8,7 @@ import { FileViewerCoWebsite } from "../../WebRtc/CoWebsite/FileViewerCoWebsite"
 import { ArtifactCoWebsite } from "../../WebRtc/CoWebsite/ArtifactCoWebsite";
 import { artifactBadge } from "../../Artifacts/artifactBadge";
 import { badgeOfKind, extensionOf, fileKindOf } from "../../FileViewer/fileKinds";
+import { audioFileTitle } from "../../Chat/Components/Room/Message/audioFileTitle";
 import jitsiIcon from "../images/jitsi.png";
 import meetingIcon from "../images/meeting.svg";
 import { coWebsiteIconBackground, coWebsiteIconUrl, coWebsiteSiteName } from "./coWebsiteRow";
@@ -47,7 +48,8 @@ export function describeCoWebsite(coWebsite: CoWebsite, texts: TranslationFuncti
     if (coWebsite instanceof FileViewerCoWebsite) {
         const { source } = coWebsite;
         return {
-            name: source.name,
+            // A song is named as the chat player names it: a random file name says nothing.
+            name: source.audio ? audioFileTitle(source.name) ?? texts.chat.audioFile.untitled() : source.name,
             line: source.sentByMe
                 ? texts.chat.fileViewer.fromYou()
                 : source.senderName
