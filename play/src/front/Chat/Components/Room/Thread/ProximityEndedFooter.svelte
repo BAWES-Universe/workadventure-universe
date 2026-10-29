@@ -230,7 +230,8 @@
         sendingDirect = true;
         try {
             const sent = await sendToDirectChat(chatID, (direct) => {
-                direct.sendMessage(withoutBlankEdges(text));
+                // The box writes line breaks as <br>: they go out as line breaks, as Enter sends them.
+                direct.sendMessage(withoutBlankEdges(text).replace(/<br\s*\/?>/gi, "\n"));
                 return Promise.resolve();
             });
             if (sent) {

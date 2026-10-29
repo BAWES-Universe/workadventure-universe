@@ -793,11 +793,14 @@
     let voiceForStay = false;
     // The stay the note is for, once there is one: where it is kept when that stay ends.
     let voiceSessionId: string | undefined;
+    // True while a note is being uploaded.
+    let sendingVoice = false;
     $: if ($proximitySessions) {
+        keepVoiceNoteOfEndedStay();
+        // The stay a note started alone is for gets its id once that stay has one (just after the space is joined).
         if (voiceForStay && voiceSessionId === undefined && room instanceof ProximityChatRoom) {
             voiceSessionId = room.currentSessionId;
         }
-        keepVoiceNoteOfEndedStay();
     }
 
     function startVoiceNote() {
@@ -808,10 +811,13 @@
 
     function keepVoiceNoteOfEndedStay(): boolean {
         if (voiceSpaceGeneration === spaceGenerationOf(room)) return false;
+        // Left as is while it uploads: the send keeps it once it can't go, or a failed send leaves it to the next check.
+        if (sendingVoice) return true;
         voiceSpaceGeneration = spaceGenerationOf(room);
         if (!voiceForStay) {
             // Someone came into range of a note recorded alone: it is now for them, and ends with their stay.
             voiceForStay = true;
+            voiceSessionId = room instanceof ProximityChatRoom ? room.currentSessionId : undefined;
             return false;
         }
         if (!voiceActive || !voiceComposer || !(room instanceof ProximityChatRoom)) return false;
@@ -834,15 +840,18 @@
         stopTypingNow();
         if (keepVoiceNoteOfEndedStay()) return false;
         const destination = captureSendDestination(room);
+        const stayId = voiceSessionId;
         clearUploadError();
         isUploading = true;
+        sendingVoice = true;
         try {
             if (destination.room instanceof ProximityChatRoom) {
                 const userToken = gameManager.getCurrentGameScene().connection?.userRoomToken;
                 const uploaded = await uploadToUploader(file, userToken);
                 if (!isSendDestinationOpen(destination)) {
-                    // The conversation ended while uploading: shown, marked as not sent, where it was written.
-                    destination.room.addNotSentMessage("", [file.name], new Date());
+                    // The conversation ended while uploading: kept in it as unsent, as when it ends while recording.
+                    if (stayId !== undefined) destination.room.keepUnsentVoiceNote(stayId, { file, details });
+                    else destination.room.addNotSentMessage("", [file.name], new Date());
                 } else {
                     destination.room.sendMessage(
                         "",
@@ -872,6 +881,7 @@
             reportUploadFailure([failure], 1);
             return false;
         } finally {
+            sendingVoice = false;
             isUploading = false;
         }
     }

@@ -371,16 +371,16 @@ describe("ProximityEndedFooter", () => {
             expect(target.querySelector('[data-testid="proximityVoiceToDirect"]')).toBeNull();
         });
 
-        it("sends typed text left unsent the same way", async () => {
+        it("sends typed text left unsent the same way, with its line breaks", async () => {
             const room = proximityRoom();
-            const session = { ...withNoura, unsentVoiceNote: undefined, unsentDraft: "Can you send me the deck?" };
+            const session = { ...withNoura, unsentVoiceNote: undefined, unsentDraft: "Can you send<br>the deck?<br>" };
             const target = await show(session, room, signedIn);
             target.querySelector<HTMLButtonElement>('[data-testid="proximityDraftToDirect"]')?.click();
             await vi.waitFor(() => expect(room.takeUnsentDraft).toHaveBeenCalledWith(session));
             const [, send] = directHolder.sendToDirectChat.mock.calls[0];
             const direct = { sendMessage: vi.fn() };
             await send(direct);
-            expect(direct.sendMessage).toHaveBeenCalledWith("Can you send me the deck?");
+            expect(direct.sendMessage).toHaveBeenCalledWith("Can you send\nthe deck?");
         });
     });
 });
