@@ -29,7 +29,7 @@
         <b class="ask-title" dir="auto">{ask.title}</b>
         {#if ask.actsAs}
             <span class="ask-acts" dir="auto">Uses {ask.actsAs}{ask.everyTime ? " · asks every time" : ""}{ask.notReviewed
-                    ? " · not reviewed yet"
+                    ? " · not confirmed yet"
                     : ""}</span>
         {/if}
     </div>

@@ -672,22 +672,7 @@
                 {#if expanded}
                     <div class="mcp-body">
                         <div class="mcp-url" title={server.serverUrl}>{server.serverUrl}</div>
-                        {#if server.toolKinds}
-                            <ToolKinds
-                                serverName={server.name}
-                                tools={server.toolKinds.tools}
-                                runs={server.toolKinds.runs}
-                                openTool={server.toolKinds.openTool ?? null}
-                                reviewRequired={server.toolKinds.reviewRequired ?? true}
-                                legacy={server.toolKinds.legacy ?? false}
-                            />
-                        {:else if server.lastTestResult?.success && server.lastTestResult?.toolNames?.length > 0}
-                            <div class="mcp-tools" aria-label="Available tools">
-                                {#each server.lastTestResult.toolNames as toolName (toolName)}
-                                    <span>{toolName}</span>
-                                {/each}
-                            </div>
-                        {/if}
+                        <!-- Server actions sit with the server's own address, above its tools, so none reads as acting on a tool -->
                         <div class="mcp-actions">
                             {#if server.authType !== "oauth" || server.oauthConnected}
                                 <button
@@ -696,7 +681,7 @@
                                     on:click={() => handleTestConnection(server.id)}
                                     disabled={testingServerId === server.id}
                                 >
-                                    {testingServerId === server.id ? "Testing..." : "Test"}
+                                    {testingServerId === server.id ? "Testing..." : "Test server"}
                                 </button>
                             {/if}
                             {#if server.authType === "oauth" && !server.oauthConnected}
@@ -709,7 +694,9 @@
                                     {oauthConnectingServerId === server.id ? "Connecting..." : "Connect"}
                                 </button>
                             {/if}
-                            <button type="button" class="mcp-chip" on:click={() => openEditModal(server)}>Edit</button>
+                            <button type="button" class="mcp-chip" on:click={() => openEditModal(server)}
+                                >Edit server</button
+                            >
                             {#if removingServerId === server.id}
                                 <span class="mcp-m">Remove {server.name}?</span>
                                 <button
@@ -729,10 +716,26 @@
                                     class="mcp-chip mcp-bad"
                                     on:click={() => (removingServerId = server.id)}
                                 >
-                                    Remove
+                                    Remove server
                                 </button>
                             {/if}
                         </div>
+                        {#if server.toolKinds}
+                            <ToolKinds
+                                serverName={server.name}
+                                tools={server.toolKinds.tools}
+                                runs={server.toolKinds.runs}
+                                openTool={server.toolKinds.openTool ?? null}
+                                reviewRequired={server.toolKinds.reviewRequired ?? true}
+                                legacy={server.toolKinds.legacy ?? false}
+                            />
+                        {:else if server.lastTestResult?.success && server.lastTestResult?.toolNames?.length > 0}
+                            <div class="mcp-tools" aria-label="Available tools">
+                                {#each server.lastTestResult.toolNames as toolName (toolName)}
+                                    <span>{toolName}</span>
+                                {/each}
+                            </div>
+                        {/if}
                     </div>
                 {/if}
             </div>
@@ -1189,6 +1192,7 @@
         flex-wrap: wrap;
         align-items: center;
         gap: 6px;
+        margin-bottom: 8px;
     }
     .mcp-chip {
         display: inline-flex;

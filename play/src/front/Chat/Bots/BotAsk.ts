@@ -25,7 +25,7 @@ export interface BotAsk {
     actsAs?: string;
     /** "Asks every time": deletes and sends out. */
     everyTime?: boolean;
-    /** The tool still needs its maker's review: only people who manage the bot get here, and every use asks. */
+    /** What the tool does isn't confirmed yet: only people who manage the bot get here, and every use asks. */
     notReviewed?: boolean;
     /** Where to look when the bot couldn't confirm the outcome ("Linear" and a link). */
     checkAt?: { label: string; url: string };

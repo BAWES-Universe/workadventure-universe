@@ -1,7 +1,7 @@
 <script lang="ts">
-    // What a server's tools do (prototype): each tool in one of four groups, with where that came from, and one choice
-    // per group: runs right away, asks first, or off. A tool can be moved to another group. A group is only ever a
-    // suggestion until someone who manages the bot reviews it.
+    // What a server's tools do (prototype): each tool sits under one of four kinds of action, with where that came from,
+    // and one choice per kind: runs right away, asks first, or off. A tool can be moved to another kind. A kind is only
+    // ever a suggestion until someone who manages the bot confirms it.
     import PageChips from "./page/PageChips.svelte";
     import PageSegment from "./page/PageSegment.svelte";
     import type { KindedTool, ToolKind, ToolRun } from "../toolKindsModel";
@@ -9,13 +9,13 @@
     export let serverName: string;
     export let tools: KindedTool[];
     export let runs: Record<ToolKind, ToolRun>;
-    /** A tool shown opened, with its group choices. */
+    /** A tool shown opened, with the kinds it can move to. */
     export let openTool: string | null = null;
-    /** Who is looking, for "Reviewed by" once they accept the groups. */
+    /** Who is looking, for "Confirmed by" once they confirm the tools. */
     export let viewerName = "you";
-    /** Whether suggested groups wait for a review (the option being decided; off shows suggestions applying at once). */
+    /** Whether suggested kinds wait to be confirmed (off shows suggestions applying at once). */
     export let reviewRequired = true;
-    /** A server from before groups existed: it keeps working as it did in text until someone reviews it. */
+    /** A server from before kinds existed: it keeps working as it did in text until someone confirms its tools. */
     export let legacy = false;
 
     $: needsReview = reviewRequired && tools.some((tool) => !tool.reviewedBy);
@@ -38,7 +38,7 @@
     function fromLine(tool: KindedTool): string {
         if (tool.from === "you") return `Moved here by ${tool.reviewedBy ?? viewerName}`;
         const suggested = tool.from === "server" ? `Suggested by ${serverName}` : "Suggested from its description";
-        return tool.reviewedBy ? `${suggested} · Reviewed by ${tool.reviewedBy}` : suggested;
+        return tool.reviewedBy ? `${suggested} · Confirmed by ${tool.reviewedBy}` : suggested;
     }
 
     function move(tool: KindedTool, kind: ToolKind) {
@@ -55,21 +55,21 @@
 <div class="tk" data-testid="bot-tool-kinds">
     <div>
         <div class="tk-t">What its tools do</div>
-        <div class="tk-m">Each tool is in the group that matches what it does. Tap a tool to move it.</div>
+        <div class="tk-m">Each tool sits under what it does. Tap a tool to move it.</div>
     </div>
     {#if needsReview}
         <div class="tk-review" data-testid="bot-tool-review">
-            <div class="tk-t">{legacy ? "Not reviewed yet" : "Needs review"}</div>
+            <div class="tk-t">{legacy ? "Not checked yet" : "Check what each tool does"}</div>
             <div class="tk-m">
                 {#if legacy}
                     This server works as it did before: in text chat its tools run right away for everyone who can
-                    chat with the bot, and voice can't use them. Review the suggested groups below to switch to them.
+                    chat with the bot, and voice can't use them. Confirm what each tool does to use the settings below.
                 {:else}
-                    The groups below are suggestions. Until you review them, only people who manage this bot can use
-                    these tools, and every use asks first.
+                    Below is what each tool seems to do. Until you confirm it, only people who manage this bot can
+                    use these tools, and every use asks first.
                 {/if}
             </div>
-            <button type="button" class="tk-accept" on:click={acceptAll}>Use these groups</button>
+            <button type="button" class="tk-accept" on:click={acceptAll}>Confirm all tools</button>
         </div>
     {/if}
     {#each KINDS as group (group.kind)}
@@ -101,9 +101,9 @@
                             </button>
                             {#if opened}
                                 <div class="tk-move">
-                                    <span class="tk-m">This tool</span>
+                                    <span class="tk-m">What this tool does</span>
                                     <PageChips
-                                        label="Group for {tool.title}"
+                                        label="What {tool.title} does"
                                         options={KINDS.map((k) => ({ value: k.kind, label: k.title }))}
                                         value={tool.kind}
                                         onPick={(kind) => move(tool, kind)}
