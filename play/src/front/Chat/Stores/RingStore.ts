@@ -10,9 +10,9 @@ export interface RingConnection {
     friendsUpdateMessageStream: Observable<FriendsUpdateMessage>;
 }
 
-/** How long a ring lasts, and how long an unanswered one keeps you from ringing them again (the pusher's rules). */
+/** How long a ring lasts, and how long their row keeps saying how an unanswered one ended. */
 export const RING_MS = 30_000;
-export const RING_AGAIN_MS = 10 * 60_000;
+export const RING_RESULT_MS = 10 * 60_000;
 /** "On the way" stays on their row this long, or until they arrive. */
 const ON_THE_WAY_MS = 3 * 60_000;
 
@@ -24,7 +24,7 @@ export interface OutgoingRing {
     name: string;
     state: OutgoingState;
     startedAt: number;
-    /** When Ring works again for them; set once a ring ends without them coming. */
+    /** When Ring works again for them, once the pusher has said so (it decides how long to wait, not this). */
     retryAt?: number;
     /** When this entry goes away by itself. */
     until: number;
@@ -102,10 +102,10 @@ export function createRingStore(now: () => number = Date.now) {
         }
     }
 
-    // A ring that ended without them coming: Ring waits until the pusher allows it again.
+    // A ring that ended without them coming: the row says so for a while. Whether Ring works again is the pusher's
+    // call: it answers a ring made too soon with how long to wait.
     function endUnanswered(uuid: string, entry: OutgoingRing, state: "declined" | "no_answer" | "stopped") {
-        const retryAt = now() + RING_AGAIN_MS;
-        setEntry(uuid, { ...entry, state, retryAt, until: retryAt });
+        setEntry(uuid, { ...entry, state, retryAt: undefined, until: now() + RING_RESULT_MS });
     }
 
     function findByRingId(ringId: string): [string, OutgoingRing] | undefined {
@@ -225,8 +225,15 @@ export function createRingStore(now: () => number = Date.now) {
         },
         /** Rings a friend. A refusal shows a toast; resolves whether it is ringing. */
         async ring(uuid: string, name: string): Promise<boolean> {
-            // Still ringing, on their way, or rung lately: one at a time.
-            if (get(outgoing).has(uuid)) return false;
+            // Still ringing or on their way: one at a time. Told to wait: say how long, as the pusher did.
+            const lately = get(outgoing).get(uuid);
+            if (lately?.retryAt !== undefined && lately.retryAt > now()) {
+                toast("too_soon", name, Math.max(1, Math.ceil((lately.retryAt - now()) / 60_000)));
+                return false;
+            }
+            if (lately && (lately.state === "starting" || lately.state === "ringing" || lately.state === "accepted")) {
+                return false;
+            }
             // One friend at a time, as the pusher has it: say so now rather than show two rings for a moment.
             for (const entry of get(outgoing).values()) {
                 if (entry.state === "starting" || entry.state === "ringing") {

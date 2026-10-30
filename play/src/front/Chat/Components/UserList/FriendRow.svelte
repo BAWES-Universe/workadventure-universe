@@ -9,7 +9,13 @@
     import { openDirectChatRoom } from "../../Utils";
     import { canOpenOrbit, openOrbitProfile } from "../../../external-modules/admin-api/index";
     import { adminDashboardActivatedStore } from "../../../Stores/MenuStore";
-    import { RING_MS, outgoingRingsStore, ringClockStore } from "../../Stores/RingStore";
+    import {
+        RING_MS,
+        invitesEnabledStore,
+        outgoingRingsStore,
+        ringClockStore,
+        ringStore,
+    } from "../../Stores/RingStore";
     import PersonActionButton from "./PersonActionButton.svelte";
     import FriendAvatar from "./FriendAvatar.svelte";
     import FriendMenuButton from "./FriendMenuButton.svelte";
@@ -18,7 +24,6 @@
     import { statusLabel } from "./PersonStatus";
     import { goToPersonRoom, walkToPerson } from "./PersonNavigation";
     import { runFriendAction } from "./FriendActions";
-    import RingButton from "./RingButton.svelte";
     import { ringLine } from "./Ring";
     import {
         IconChevronDown,
@@ -27,13 +32,14 @@
         IconMessage,
         IconUserCircle,
         IconUserMinus,
+        IconUsersPlus,
         IconWalk,
     } from "@wa-icons";
 
     /**
      * One friend in the Friends view: where they are (or that they hide it, or when they were last seen) and how
-     * to reach them. Online: Walk to when they're here, Go when they're elsewhere and say where, and Ring to ask them
-     * over (Message moves to ⋮). Offline: Message.
+     * to reach them. Online: Walk to when they're here, Go when they're elsewhere and say where. Message second, and
+     * Invite first in ⋮ (online only), the same row as everyone's.
      */
     export let entry: PlacedFriend;
     /** Their woka, when they are in this world. */
@@ -107,8 +113,15 @@
     }
 
     $: menuItems = [
-        ...(canRing && canMessage
-            ? [{ key: "message", label: $LL.chat.userList.message(), icon: IconMessage, act: message }]
+        ...(canRing && $invitesEnabledStore
+            ? [
+                  {
+                      key: "invite",
+                      label: $LL.chat.friends.ring.ring(),
+                      icon: IconUsersPlus,
+                      act: () => ringStore.ring(friend.uuid, friend.name).catch((e) => console.error(e)),
+                  },
+              ]
             : []),
         ...(canViewProfile
             ? [
@@ -195,14 +208,7 @@
                     <IconDoorIn font-size="20" />
                 </PersonActionButton>
             {/if}
-            {#if canRing}
-                <RingButton
-                    uuid={friend.uuid}
-                    name={friend.name}
-                    status={entry.status}
-                    testId={`friend-ring-${friend.name}`}
-                />
-            {:else if canMessage}
+            {#if canMessage}
                 <PersonActionButton
                     label={$LL.chat.userList.message()}
                     ariaLabel={$LL.chat.userList.messageUser({ userName: friend.name })}

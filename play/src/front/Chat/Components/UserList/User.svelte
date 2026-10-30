@@ -39,7 +39,6 @@
     } from "./PersonNavigation";
     import { friendMenuAction } from "./FriendMenuAction";
     import type { FriendMenuAction } from "./FriendMenuAction";
-    import RingButton from "./RingButton.svelte";
     import RoleBadge from "./RoleBadge.svelte";
     import {
         IconChevronDown,
@@ -148,12 +147,9 @@
         $friendsEnabledStore && !isMe && !isMine && !user.isBot && user.uuid && user.chatId
             ? friendMenuAction(relationship, user.uuid, displayName, $LL)
             : undefined;
-    // A friend who is here can be invited over from the row; Message then moves to ⋮ so the row keeps three buttons.
-    $: canRing = $friendsEnabledStore && $invitesEnabledStore && isFriend && !isMe && !!user.uuid && !!$userStatus;
-    // Anyone else who is here, guests too, can be invited from ⋮, so Message stays in the row as it was.
+    // Anyone who is here, friends and guests too, can be invited from ⋮, so Message is second in every row.
     $: menuInvite =
         $invitesEnabledStore &&
-        !canRing &&
         !isMe &&
         !isMine &&
         !user.isBot &&
@@ -171,24 +167,8 @@
                   },
               ] satisfies FriendMenuAction[])
             : [];
-    $: menuMessage =
-        canRing && actions.message !== "hidden"
-            ? ([
-                  {
-                      label: $LL.chat.userList.message(),
-                      icon: IconMessage,
-                      danger: false,
-                      act: sendMessage,
-                  },
-              ] satisfies FriendMenuAction[])
-            : [];
     $: hasMenu =
-        showLocateInMenu ||
-        actions.viewProfile ||
-        actions.ban ||
-        friendAction !== undefined ||
-        menuMessage.length > 0 ||
-        menuInvite.length > 0;
+        showLocateInMenu || actions.viewProfile || actions.ban || friendAction !== undefined || menuInvite.length > 0;
 
     function walkTo() {
         if (choosesSession) {
@@ -413,14 +393,7 @@
                         <IconDoorIn font-size="20" />
                     </PersonActionButton>
                 {/if}
-                {#if canRing && user.uuid}
-                    <RingButton
-                        uuid={user.uuid}
-                        name={displayName}
-                        status={$userStatus}
-                        testId={`ring-${user.username}`}
-                    />
-                {:else if actions.message !== "hidden"}
+                {#if actions.message !== "hidden"}
                     <PersonActionButton
                         label={$LL.chat.userList.message()}
                         ariaLabel={$LL.chat.userList.messageUser({ userName: displayName })}
@@ -454,7 +427,7 @@
                         showViewProfile={actions.viewProfile}
                         showBan={actions.ban}
                         {friendAction}
-                        extraActions={[...menuMessage, ...menuInvite]}
+                        extraActions={menuInvite}
                     />
                 {/if}
             </div>

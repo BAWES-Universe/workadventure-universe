@@ -3401,7 +3401,7 @@
       "runs": "needs-orbit",
       "runsNote": "needs-orbit",
       "knownGap": false,
-      "hooks": "`[data-testid=friendsList]` FriendsList.svelte:42, `friends-<section>` :57, `friendsUnavailable` :47, `friendsEmpty` :74. Row `friend-<name>` FriendRow.svelte:140, `friend-walk-`/`friend-go-`/`friend-ring-`/`friend-message-`/`friend-more-<name>` :182-217"
+      "hooks": "`[data-testid=friendsList]` FriendsList.svelte:42, `friends-<section>` :57, `friendsUnavailable` :47, `friendsEmpty` :74. Row `friend-<name>` FriendRow.svelte:140, `friend-walk-`/`friend-go-`/`friend-message-`/`friend-more-<name>` :182-217"
     },
     {
       "id": "CH-074",
@@ -3455,13 +3455,13 @@
       "id": "CH-078",
       "area": "Chat",
       "topic": "Ring",
-      "action": "Signed in, friend Bob online: click Ring on his row. Then click Stop.",
-      "expected": "The button shows \"Ringing · 30 s\" counting down, with Stop. Stop ends it. If Bob is Busy/DND the button is greyed \"Busy\". After a ring there is a \"Ring again in N min\" cooldown (10 min).",
+      "action": "Signed in, friend Bob online: open ⋯ on his row and click Invite. Then use the bar at the top to Stop.",
+      "expected": "The bar shows \"Inviting Bob · 30 s\" counting down, with Stop, and his row says \"Inviting · 30 s\". Stop ends it. If Bob is Busy/DND a note says he is busy. After an invite nobody answered: the next works at once, then there is a \"You can invite Bob again in N min\" wait of 1 min (twice), then 5 min; it starts over when he comes over or after 30 minutes.",
       "source": "approved Friends+ring 10-04 (#645)",
       "runs": "needs-orbit",
       "runsNote": "needs-orbit",
       "knownGap": false,
-      "hooks": "`[data-testid=ring-<name>]` User.svelte:354 / RingButton.svelte:75. Message moves into ⋯ for friends (approved mock v2)"
+      "hooks": "Invite is the first item in ⋯ on every row (User.svelte menuInvite, FriendRow.svelte menuItems); Message is the second button on every row"
     },
     {
       "id": "CH-079",
