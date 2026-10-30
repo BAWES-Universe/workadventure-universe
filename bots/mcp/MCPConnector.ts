@@ -196,9 +196,20 @@ interface JsonRpcOutcome {
     data: any;
     /** The request failed and provably never ran on the server (see requestNeverRan) */
     neverRan: boolean;
+    /** It never ran, and for a reason a second try may get past */
+    retryable: boolean;
 }
 
-const NOT_ANSWERED: JsonRpcOutcome = { data: null, neverRan: false };
+/** Sent, or maybe sent, with no answer: the server may have run it */
+const NOT_ANSWERED: JsonRpcOutcome = { data: null, neverRan: false, retryable: false };
+/** Stopped before anything was sent, for a reason a second try would meet again */
+const NOT_SENT: JsonRpcOutcome = { data: null, neverRan: true, retryable: false };
+
+/**
+ * What became of a tool call that brought back no result: never ran (safe to
+ * try again), ran and failed (the server said so), or unknown (it may have run).
+ */
+export type ToolCallOutcome = 'not_sent' | 'failed' | 'uncertain';
 
 /**
  * Execute a JSON-RPC request to an MCP server with timeout and error handling.
@@ -231,7 +242,7 @@ async function sendJsonRpc(
     if (!urlCheck.allowed) {
         console.warn(`[MCPConnector] Invalid server URL for ${method}: ${urlCheck.error}`);
         // Nothing was sent; a name that did not resolve may resolve on a second try
-        return { data: null, neverRan: urlCheck.unresolved === true };
+        return { data: null, neverRan: true, retryable: urlCheck.unresolved === true };
     }
 
     const baseHeaders = buildAuthHeaders(authType, authConfig, extraHeaders);
@@ -343,11 +354,11 @@ async function sendJsonRpc(
             clearTimeout(initWaitTimer);
             if (outcome === 'cancelled') {
                 console.log(`[MCPConnector] Request cancelled for ${method} (during initialize)`);
-                return NOT_ANSWERED;
+                return NOT_SENT;
             }
             if (outcome === 'timeout') {
                 console.warn(`[MCPConnector] Request timed out after ${timeoutMs}ms for ${method} (during initialize)`);
-                return NOT_ANSWERED;
+                return NOT_SENT;
             }
         }
     }
@@ -391,7 +402,7 @@ async function sendJsonRpc(
         });
 
         const parsed = parseMcpResponse(response, requestId);
-        return { data: parsed.data, neverRan: false };
+        return { data: parsed.data, neverRan: false, retryable: false };
     } catch (error: any) {
         if (axios.isCancel(error)) {
             if (signal?.aborted) {
@@ -428,7 +439,8 @@ async function sendJsonRpc(
             if (method !== 'initialize') {
                 mcpSessionInitCache.delete(sessionCacheKey(serverUrl, authType, authConfig, playerUuid));
             }
-            return { data: null, neverRan: requestNeverRan(error, sessionId !== undefined) };
+            const neverRan = requestNeverRan(error, sessionId !== undefined);
+            return { data: null, neverRan, retryable: neverRan };
         } else {
             console.warn(`[MCPConnector] Error on ${method}: ${error.message || error}`);
             Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
@@ -678,7 +690,7 @@ export class MCPConnector {
     ): Promise<any> {
         // Patience covers the whole call, the retry below included
         const deadline = timeoutMs !== undefined ? Date.now() + timeoutMs : undefined;
-        const first = await sendJsonRpc(
+        let attempt = await sendJsonRpc(
             serverUrl,
             'tools/call',
             { name: toolName, arguments: args },
@@ -689,7 +701,7 @@ export class MCPConnector {
             signal,
             timeoutMs
         );
-        let response = first.data;
+        let response = attempt.data;
 
         if (!response) {
             // Send the call again only when it provably never ran (never
@@ -700,8 +712,8 @@ export class MCPConnector {
             // initializes a fresh one. A cancelled turn never retries.
             // With a Patience, the retry only gets the time that is left of it.
             const retryTimeoutMs = deadline !== undefined ? deadline - Date.now() : undefined;
-            if (first.neverRan && !signal?.aborted && (retryTimeoutMs === undefined || retryTimeoutMs > 0)) {
-                response = await jsonRpcRequest(
+            if (attempt.retryable && !signal?.aborted && (retryTimeoutMs === undefined || retryTimeoutMs > 0)) {
+                attempt = await sendJsonRpc(
                 serverUrl,
                 'tools/call',
                 { name: toolName, arguments: args },
@@ -712,23 +724,26 @@ export class MCPConnector {
                 signal,
                 retryTimeoutMs
                 );
+                response = attempt.data;
             }
         }
 
         if (!response) {
+            // A call that went out and got no answer may have run: say so, so nothing takes it as never sent
+            const outcome: ToolCallOutcome = attempt.neverRan ? 'not_sent' : 'uncertain';
             if (signal?.aborted) {
                 // Turn was cancelled while the tool call was in flight. Return
                 // a distinct marker so callers can tell a cancellation apart
                 // from a genuinely unreachable server.
-                return { error: `Tool call cancelled: ${toolName}` };
+                return { error: `Tool call cancelled: ${toolName}`, outcome };
             }
-            return { error: `Tool unavailable: ${toolName} (server not reachable)` };
+            return { error: `Tool unavailable: ${toolName} (server not reachable)`, outcome };
         }
 
         if (response.error) {
             const errMsg = response.error.message || JSON.stringify(response.error);
             console.warn(`[MCPConnector] Tool ${toolName} returned error: ${errMsg}`);
-            return { error: `Tool error: ${errMsg}` };
+            return { error: `Tool error: ${errMsg}`, outcome: 'failed' satisfies ToolCallOutcome };
         }
 
         // A tool that ran but failed answers with isError and its reason as content: an error like the ones above
@@ -740,7 +755,7 @@ export class MCPConnector {
                 .join(' ')
                 .trim();
             console.warn(`[MCPConnector] Tool ${toolName} failed: ${why || 'no reason given'}`);
-            return { error: `Tool error: ${why || `${toolName} failed`}` };
+            return { error: `Tool error: ${why || `${toolName} failed`}`, outcome: 'failed' satisfies ToolCallOutcome };
         }
 
         if (response.result && Array.isArray(response.result.content)) {
@@ -759,7 +774,8 @@ export class MCPConnector {
             return response.result;
         }
 
-        return { error: `Tool ${toolName} returned no content` };
+        // An answer that is neither a result nor an error proves nothing about what the server did
+        return { error: `Tool ${toolName} returned no content`, outcome: 'uncertain' satisfies ToolCallOutcome };
     }
 
     /**

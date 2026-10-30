@@ -523,6 +523,7 @@ describe('MCPConnector', () => {
 
             expect(result).toEqual({
                 error: 'Tool unavailable: get_weather (server not reachable)',
+                outcome: 'uncertain',
             });
         });
 
@@ -588,11 +589,11 @@ describe('MCPConnector', () => {
 
             it('reports a tool error that follows a notice', async () => {
                 const failed = { jsonrpc: '2.0', id: '2', result: { isError: true, content: [{ type: 'text', text: 'No such city' }] } };
-                expect(await call(sse(logNotice, failed))).toEqual({ error: 'Tool error: No such city' });
+                expect(await call(sse(logNotice, failed))).toEqual({ error: 'Tool error: No such city', outcome: 'failed' });
             });
 
             it('still tells a stream with no answer from a result', async () => {
-                expect(await call(sse(logNotice))).toEqual({ error: 'Tool get_weather returned no content' });
+                expect(await call(sse(logNotice))).toEqual({ error: 'Tool get_weather returned no content', outcome: 'uncertain' });
             });
         });
 
@@ -679,7 +680,7 @@ describe('MCPConnector', () => {
             });
             const result = await callTool();
             expect(toolCalls()).toHaveLength(1);
-            expect(result).toEqual({ error: 'Tool unavailable: send_message (server not reachable)' });
+            expect(result).toEqual({ error: 'Tool unavailable: send_message (server not reachable)', outcome: 'uncertain' });
         });
 
         it('sends the call once when the connection drops after it went out', async () => {
@@ -687,7 +688,7 @@ describe('MCPConnector', () => {
                 if (body?.method === 'initialize') return MOCK_INIT_RESPONSE;
                 throw makeNetworkError('ECONNRESET');
             });
-            await callTool();
+            expect(await callTool()).toMatchObject({ outcome: 'uncertain' });
             expect(toolCalls()).toHaveLength(1);
         });
 
@@ -698,7 +699,7 @@ describe('MCPConnector', () => {
                 err.code = 'ERR_CANCELED';
                 throw err;
             });
-            await callTool('');
+            expect(await callTool('')).toMatchObject({ outcome: 'uncertain' });
             expect(toolCalls()).toHaveLength(1);
         });
 
@@ -726,9 +727,28 @@ describe('MCPConnector', () => {
 
         it('does not check again when the server name points to a private address', async () => {
             vi.mocked(lookup).mockResolvedValueOnce([{ address: '10.0.0.5', family: 4 }] as never);
-            await callTool();
+            expect(await callTool()).toMatchObject({ outcome: 'not_sent' });
             expect(vi.mocked(lookup)).toHaveBeenCalledTimes(1);
             expect(mockedAxios.post).not.toHaveBeenCalled();
+        });
+
+        it('reports a call that never connected on either try as not sent, never as maybe run', async () => {
+            mockedAxios.post.mockImplementation(async (_url: string, body: any) => {
+                if (body?.method === 'initialize') return MOCK_INIT_RESPONSE;
+                throw makeNetworkError('ECONNREFUSED');
+            });
+            expect(await callTool()).toMatchObject({ outcome: 'not_sent' });
+            expect(toolCalls()).toHaveLength(2);
+        });
+
+        it('reports a call that never connected, then went out and got a 500, as maybe run', async () => {
+            let calls = 0;
+            mockedAxios.post.mockImplementation(async (_url: string, body: any) => {
+                if (body?.method === 'initialize') return MOCK_INIT_RESPONSE;
+                throw ++calls === 1 ? makeNetworkError('ECONNREFUSED') : makeAxiosError(500);
+            });
+            expect(await callTool()).toMatchObject({ outcome: 'uncertain' });
+            expect(toolCalls()).toHaveLength(2);
         });
 
         it('sends the call again on a fresh session when the server no longer knows ours (404)', async () => {
@@ -751,7 +771,7 @@ describe('MCPConnector', () => {
                 if (body?.method === 'initialize') return MOCK_INIT_RESPONSE;
                 throw makeAxiosError(404);
             });
-            await callTool();
+            expect(await callTool()).toMatchObject({ outcome: 'uncertain' });
             expect(toolCalls()).toHaveLength(1);
         });
     });
@@ -951,7 +971,7 @@ describe('MCPConnector', () => {
             );
 
             // Distinct "cancelled" marker, NOT the unreachable-server error
-            expect(result).toEqual({ error: 'Tool call cancelled: get_weather' });
+            expect(result).toEqual({ error: 'Tool call cancelled: get_weather', outcome: 'uncertain' });
             // Distinct "cancelled" log, NOT the timeout warning
             expect(logSpy).toHaveBeenCalledWith(
                 expect.stringContaining('Request cancelled for tools/call')
@@ -1001,7 +1021,7 @@ describe('MCPConnector', () => {
             const result = await callPromise;
 
             // Returns the cancellation marker promptly — no waiting for init
-            expect(result).toEqual({ error: 'Tool call cancelled: get_weather' });
+            expect(result).toEqual({ error: 'Tool call cancelled: get_weather', outcome: 'not_sent' });
             // The initialize request itself was NOT aborted (spec: MUST NOT be cancelled)
             expect(initSignal?.aborted).toBe(false);
             // Distinct "during initialize" cancellation log, not the timeout warning
@@ -1080,7 +1100,7 @@ describe('MCPConnector', () => {
             await vi.advanceTimersByTimeAsync(14_999);
             expect(result).toBeUndefined();
             await vi.advanceTimersByTimeAsync(1);
-            expect(result).toEqual({ error: 'Tool unavailable: render (server not reachable)' });
+            expect(result).toEqual({ error: 'Tool unavailable: render (server not reachable)', outcome: 'uncertain' });
             expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('timed out after 15000ms for tools/call'));
             warnSpy.mockRestore();
         });
@@ -1153,7 +1173,7 @@ describe('MCPConnector', () => {
                 .then((r) => (result = r));
 
             await vi.advanceTimersByTimeAsync(15_000);
-            expect(result).toEqual({ error: 'Tool unavailable: render (server not reachable)' });
+            expect(result).toEqual({ error: 'Tool unavailable: render (server not reachable)', outcome: 'not_sent' });
             expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('(during initialize)'));
             // Only the initialize went out: no tools/call and no retry
             expect(mockedAxios.post).toHaveBeenCalledTimes(1);
