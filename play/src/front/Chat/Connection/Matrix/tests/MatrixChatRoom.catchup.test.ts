@@ -236,6 +236,34 @@ describe("MatrixChatRoom catching up after a reload or a sleeping tab", () => {
         expect(notify).toHaveBeenCalledTimes(1);
     });
 
+    it("tells about a bot's answer but not its steps line (#1646)", async () => {
+        await roomWithSavedCopy([message()], 1);
+        const fromBot = (id: string, content: Record<string, unknown>) =>
+            ({
+                ...message(300),
+                getId: () => id,
+                getSender: () => "@bot_music:matrix.test",
+                getContent: () => content,
+            } as unknown as MatrixEvent);
+        const steps = {
+            v: 1,
+            state: "working",
+            line: "Using Generate music",
+            startedAt: 1,
+            steps: [{ doing: "Using Generate music", done: "Used Generate music", state: "running", again: false }],
+        };
+
+        emitTimeline(
+            fromBot("$steps", { msgtype: "m.notice", body: "Using Generate music…", "universe.steps": steps })
+        );
+        await settle();
+        expect(notify).not.toHaveBeenCalled();
+
+        emitTimeline(fromBot("$answer", { msgtype: "m.text", body: "Here is your song" }));
+        await settle();
+        expect(notify).toHaveBeenCalledTimes(1);
+    });
+
     it("plays the chat sound for each new message, and notes it for the notification that follows (#1493)", async () => {
         ringing.playSound.mockClear();
         ringing.chatSoundPlayed.mockClear();
