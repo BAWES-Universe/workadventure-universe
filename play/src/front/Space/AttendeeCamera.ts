@@ -25,7 +25,9 @@ export function showCameraToSpeakers(
     cameraOn: Readable<boolean>,
     onShown: () => void
 ): Unsubscriber {
+    stopShowingCameraToSpeakers();
     let shown = false;
+    let stopped = false;
     stageSeesOurCameraStore.set(true);
     const unsubscribe = cameraOn.subscribe((on) => {
         space.showCameraToStreamers(on);
@@ -34,9 +36,25 @@ export function showCameraToSpeakers(
         }
         shown = on;
     });
-    return () => {
+    const stop = () => {
+        if (stopped) {
+            return;
+        }
+        stopped = true;
+        if (stopShowing === stop) {
+            stopShowing = undefined;
+        }
         unsubscribe();
         space.showCameraToStreamers(false);
         stageSeesOurCameraStore.set(false);
     };
+    stopShowing = stop;
+    return stop;
+}
+
+let stopShowing: (() => void) | undefined;
+
+/** Stops showing our camera to the speakers, if it is shown: the scene closes without leaving the Audience. */
+export function stopShowingCameraToSpeakers(): void {
+    stopShowing?.();
 }

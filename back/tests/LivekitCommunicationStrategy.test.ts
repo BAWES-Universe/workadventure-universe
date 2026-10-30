@@ -229,6 +229,16 @@ describe("LivekitCommunicationStrategy media permissions", () => {
         );
     });
 
+    it("leaves the media server alone when an attendee turns their camera on while nobody streams", async () => {
+        const attendee = SpaceUser.fromPartial({ spaceUserId: "room_2", uuid: "uuid-room_2", attendeeCamera: true });
+        const fixture = makeFixture(["room_2"], [attendee]);
+        await fixture.strategy.addUserToNotify(attendee);
+        fixture.strategy.updateUser(attendee);
+        await flush();
+        expect(fixture.roomService.listParticipants).not.toHaveBeenCalled();
+        expect(fixture.roomService.updateParticipant).not.toHaveBeenCalled();
+    });
+
     it("gives an attendee who already shows their camera a camera-only token", async () => {
         const attendee = SpaceUser.fromPartial({ spaceUserId: "room_2", uuid: "uuid-room_2", attendeeCamera: true });
         const fixture = makeFixture([], [attendee]);

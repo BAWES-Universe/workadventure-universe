@@ -143,10 +143,15 @@ export class LivekitCommunicationStrategy implements ICommunicationStrategy {
 
     /**
      * An attendee who shows their camera to the speakers (#1623), or stops, may send their camera only, or nothing
-     * again. The people streaming already send everything.
+     * again. The people streaming already send everything. With nobody streaming there is no media room: the
+     * invitation sent when someone starts streaming carries the right permission.
      */
     updateUser(user: SpaceUser): void {
-        if (this.streamingUsers.has(user.spaceUserId) || !this.receivingUsers.has(user.spaceUserId)) {
+        if (
+            !this.createRoomPromise ||
+            this.streamingUsers.has(user.spaceUserId) ||
+            !this.receivingUsers.has(user.spaceUserId)
+        ) {
             return;
         }
         this.syncPublishPermission(user);
