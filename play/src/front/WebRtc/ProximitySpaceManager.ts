@@ -80,6 +80,21 @@ export class ProximitySpaceManager {
         }
     }
 
+    /** After leaving an Audience's own chat (#1624): a bubble we are still in comes back to the nearby chat, with its text. */
+    public async moveBubblesBackToChat(): Promise<void> {
+        await Promise.all([...this.bubblesBesideChat.keys()].map((spaceName) => this.moveBubbleBackToChat(spaceName)));
+    }
+
+    private async moveBubbleBackToChat(spaceName: string): Promise<void> {
+        const propertiesToSync = this.bubbleProperties.get(spaceName) ?? [];
+        try {
+            await this.leaveBesideChat(spaceName);
+            await this.proximityChatRoom.joinSpace(spaceName, propertiesToSync);
+        } catch (e) {
+            this.reportJoinFailure(e);
+        }
+    }
+
     private reportJoinFailure(e: unknown): void {
         if (e instanceof AbortError) {
             debug("Join space aborted. The user left the space before finalizing the join", e);

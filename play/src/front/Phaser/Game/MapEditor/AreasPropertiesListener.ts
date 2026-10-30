@@ -1480,7 +1480,13 @@ export class AreasPropertiesListener {
                     const proximityRoom = this.scene.proximityChatRoom;
                     if (property.allowTalking === true) {
                         // A bubble we walked in with keeps going here: it moves beside the Audience chat (#1624)
-                        await this.scene.getProximitySpaceManager()?.moveBubbleBesideChat();
+                        const proximitySpaceManager = this.scene.getProximitySpaceManager();
+                        await proximitySpaceManager?.moveBubbleBesideChat();
+                        if (abortSignal.aborted) {
+                            // We stepped out while it moved: the bubble goes back to the nearby chat
+                            await proximitySpaceManager?.moveBubblesBackToChat();
+                            return;
+                        }
                     }
                     proximityRoom.setDisplayName(speakerZoneName);
                     await proximityRoom.joinSpace(
@@ -1520,6 +1526,8 @@ export class AreasPropertiesListener {
                     const proximityRoom = this.scene.proximityChatRoom;
                     proximityRoom.setDisplayName(get(LL).chat.proximity());
                     await proximityRoom.leaveSpace(uniqRoomName, true);
+                    // People who walk out together keep their bubble, now with its text in the nearby chat (#1624)
+                    await this.scene.getProximitySpaceManager()?.moveBubblesBackToChat();
                 } else {
                     await leaveAreaSpaceIfJoined(this.scene.spaceRegistry, uniqRoomName);
                 }
