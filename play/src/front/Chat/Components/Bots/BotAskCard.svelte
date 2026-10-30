@@ -7,6 +7,8 @@
         IconChevronRight,
         IconClock,
         IconEye,
+        IconLock,
+        IconUsers,
         IconX,
     } from "@wa-icons";
 
@@ -27,6 +29,8 @@
     export let position: { at: number; total: number } | undefined = undefined;
     /** A short chat (a phone's half-height sheet in a bubble): one slim bar; Open raises the sheet to the full card. */
     export let compact = false;
+    /** Nearby chat (prototype): where your next message goes while the card waits, with a switch for the other way. */
+    export let replyTo: "bot" | "everyone" | undefined = undefined;
 
     let showAll = false;
 
@@ -139,9 +143,21 @@
             <button type="button" class="ask-small" disabled={!mine} data-testid="botAskReviewAgain">Review again</button>
         </div>
     {/if}
-    <span class="ask-who">
-        <IconEye />Only you see this
-    </span>
+    {#if docked && open && replyTo}
+        <div class="ask-row">
+            <span class="ask-who"
+                >{#if replyTo === "bot"}<IconLock />Your reply stays private{:else}<IconUsers />Your messages go to
+                    everyone{/if}</span
+            >
+            <button type="button" class="ask-switch" data-testid="botAskReplyTo"
+                >{replyTo === "bot" ? "Talk to everyone" : "Reply privately"}</button
+            >
+        </div>
+    {:else}
+        <span class="ask-who">
+            <IconEye />Only you see this
+        </span>
+    {/if}
 </div>
 {/if}
 
@@ -308,6 +324,18 @@
         text-decoration: none;
         cursor: pointer;
         flex: none;
+    }
+    .ask-switch {
+        flex: none;
+        min-height: 44px;
+        margin: -10px -4px -12px 0;
+        padding: 0 4px;
+        border: 0;
+        background: none;
+        font-size: 12.5px;
+        font-weight: 600;
+        color: #c4b5fd;
+        cursor: pointer;
     }
     .ask-warn {
         display: inline-flex;

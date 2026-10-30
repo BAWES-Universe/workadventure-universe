@@ -95,6 +95,9 @@
     /** The chat is short (a phone's half-height sheet in a bubble): the pinned card shows one line of its details and
      * Show all details raises the sheet (prototype). */
     export let askCompact = false;
+    /** Nearby chat while your card waits (prototype): your next message goes only to the bot, or to everyone nearby.
+     * Unset in a direct message, which is private anyway. */
+    export let askReplyTo: "bot" | "everyone" | undefined = undefined;
 
     // Messages show the sender's woka when their chat account has no picture (Matrix users).
     if (!hasContext(WOKA_BY_CHAT_ID_CONTEXT)) {
@@ -426,7 +429,11 @@
             .map((m) => [(m as { ask?: BotAsk }).ask?.id, m.sender?.username ?? $roomName])
     );
     $: shownAsk = askPlacement === "pinned" ? waitingAsks[0] : askForMe;
-    $: botPlaceholder = shownAsk
+    $: botPlaceholder = shownAsk && askReplyTo === "bot"
+        ? `Private reply to ${askSenders.get(shownAsk.id) ?? $roomName}`
+        : shownAsk && askReplyTo === "everyone"
+        ? $LL.chat.enter()
+        : shownAsk
         ? shownAsk.kind === "question"
             ? "Or type your own answer"
             : "Or type something else"
@@ -1247,6 +1254,16 @@
                                 message={entry.message}
                                 runStart={place?.runStart ?? true}
                             />
+                            {#if "privateNote" in entry.message && entry.message.privateNote}
+                                <!-- Sent or answered only between you and the bot, in a chat everyone nearby can read -->
+                                <div
+                                    class="private-note"
+                                    class:mine={entry.message.isMyMessage}
+                                    data-testid="privateNote"
+                                >
+                                    <IconLock />{entry.message.privateNote}
+                                </div>
+                            {/if}
                             {#if "stoppedOnLeave" in entry.message && entry.message.stoppedOnLeave}
                                 <div class="px-4 pb-2 text-xs italic text-white/45" data-testid="proximityStoppedNote">
                                     {$LL.chat.session.stopped()}
@@ -1291,6 +1308,7 @@
                         botName={askSenders.get(waitingAsks[0].id) ?? $roomName}
                         position={{ at: 1, total: waitingAsks.length }}
                         compact={askCompact}
+                        replyTo={askReplyTo}
                     />
                 {:else if askPlacement === "jump" && askForMe}
                     <button type="button" class="ask-jump" data-testid="botAskJump">
@@ -1313,6 +1331,22 @@
 </div>
 
 <style>
+    .private-note {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        padding: 0 16px 8px 52px;
+        font-size: 12px;
+        color: rgb(255 255 255 / 0.5);
+    }
+    .private-note.mine {
+        justify-content: flex-end;
+    }
+    .private-note :global(svg) {
+        width: 14px;
+        height: 14px;
+        flex: none;
+    }
     /* Where a pinned card was asked: one quiet line, so the chat keeps its order. */
     .ask-record {
         display: flex;
