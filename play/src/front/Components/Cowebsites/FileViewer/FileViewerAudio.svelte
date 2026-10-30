@@ -79,7 +79,8 @@
     let failed = false;
     let levels: number[] | undefined;
     let fileSize: number | undefined;
-    let dragging = false;
+    /** While a finger or the mouse drags the dot: where it is, 0 to 1. The song jumps there on release. */
+    let dragAt: number | undefined;
     let width = 0;
 
     $: compact = width > 0 && width < 440;
@@ -91,7 +92,9 @@
             ? $LL.chat.audioFile.from({ name: senderName })
             : $LL.chat.audioFile.untitled());
     $: kind = audioFileKind(name);
-    $: progress = duration ? Math.min(1, current / duration) : 0;
+    $: progress = dragAt ?? (duration ? Math.min(1, current / duration) : 0);
+    // The time follows the dot while it is dragged.
+    $: shownTime = dragAt !== undefined && duration ? dragAt * duration : current;
     $: onDuration?.(duration);
 
     // The chat's songs, newest first, as its Files list shows them. Nothing is downloaded until one is picked.
@@ -270,10 +273,32 @@
         player.playbackRate = SPEEDS[speed];
     }
 
-    function scrubAt(event: PointerEvent): void {
-        if (!duration) return;
+    function fractionAt(event: PointerEvent): number {
         const box = (event.currentTarget as HTMLElement).getBoundingClientRect();
-        seekTo(Math.min(1, Math.max(0, (event.clientX - box.left) / box.width)) * duration);
+        return Math.min(1, Math.max(0, (event.clientX - box.left) / box.width));
+    }
+
+    // The dot follows the pointer at once; the song seeks once, on release, as seeking on every move lags.
+    function startDrag(event: PointerEvent): void {
+        if (!duration) return;
+        if (event.currentTarget instanceof HTMLElement) event.currentTarget.setPointerCapture(event.pointerId);
+        dragAt = fractionAt(event);
+    }
+
+    function moveDrag(event: PointerEvent): void {
+        if (dragAt !== undefined) dragAt = fractionAt(event);
+    }
+
+    function endDrag(): void {
+        if (dragAt === undefined || !duration) return;
+        const at = dragAt * duration;
+        dragAt = undefined;
+        seekTo(at);
+        current = at;
+    }
+
+    function cancelDrag(): void {
+        dragAt = undefined;
     }
 
     function onScrubKey(event: KeyboardEvent): void {
@@ -402,18 +427,20 @@
             aria-valuemin={0}
             aria-valuemax={duration ? Math.round(duration) : 0}
             aria-valuenow={Math.round(current)}
-            on:pointerdown={(event) => {
-                dragging = true;
-                event.currentTarget.setPointerCapture(event.pointerId);
-                scrubAt(event);
-            }}
-            on:pointermove={(event) => dragging && scrubAt(event)}
-            on:pointerup={() => (dragging = false)}
+            class:dragging={dragAt !== undefined}
+            on:pointerdown={startDrag}
+            on:pointermove={moveDrag}
+            on:pointerup={endDrag}
+            on:pointercancel={cancelDrag}
             on:keydown={onScrubKey}
         >
             {#if levels}
                 {#each levels as level, bar (bar)}
-                    <span class:played={bar / SCRUB_BARS < progress} style="height: {Math.round(8 + level * 40)}px" />
+                    <span
+                        class="bar"
+                        class:played={bar / SCRUB_BARS < progress}
+                        style="height: {Math.round(8 + level * 40)}px"
+                    />
                 {/each}
             {:else}
                 <span class="line"><span class="fill" style="width: {progress * 100}%" /></span>
@@ -421,8 +448,8 @@
             <span class="head" style="left: {progress * 100}%" />
         </div>
         <div class="times">
-            <span>{formatDuration(current)}</span>
-            <span>{duration ? `-${formatDuration(Math.max(0, duration - current))}` : "--:--"}</span>
+            <span>{formatDuration(shownTime)}</span>
+            <span>{duration ? `-${formatDuration(Math.max(0, duration - shownTime))}` : "--:--"}</span>
         </div>
     </div>
 
@@ -679,14 +706,15 @@
         outline-offset: 4px;
         border-radius: 8px;
     }
-    .scrub > span:not(.head):not(.line) {
+    /* As in the chat's player: what has played is white. */
+    .scrub .bar {
         flex: none;
         width: 3px;
         border-radius: 9999px;
-        background: rgba(255, 255, 255, 0.22);
+        background: rgba(255, 255, 255, 0.3);
     }
-    .scrub > span.played {
-        background: linear-gradient(180deg, #a78bfa, #8629fc);
+    .scrub .bar.played {
+        background: #fff;
     }
     .scrub .line {
         position: relative;
@@ -699,7 +727,7 @@
         position: absolute;
         inset: 0 auto 0 0;
         border-radius: 9999px;
-        background: linear-gradient(90deg, #8629fc, #4156f6);
+        background: #fff;
     }
     .head {
         position: absolute;
