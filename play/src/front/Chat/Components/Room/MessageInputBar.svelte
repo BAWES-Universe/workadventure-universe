@@ -36,6 +36,7 @@
     import { withoutPreview } from "../../LinkPreview/ChatLinks";
     import { isVoiceNoteFileName, type VoiceNoteDetails } from "../../VoiceNote/VoiceNote";
     import { askForNotifications, replyMoment } from "../../../Notification/Push/NotificationAsk";
+    import { typingExceptWorkingBots, workingBotIds } from "../../Bots/BotTyping";
     import { appendEmoji } from "./AppendEmoji";
     import { withoutBlankEdges } from "./BlankEdges";
     import { canHover } from "./FocusAfterSend";
@@ -46,7 +47,6 @@
     import { uploadToUploader } from "./UploadToUploader";
     import { TypingSignal } from "./TypingSignal";
     import TypingUsers from "./TypingUsers.svelte";
-    import { typingExceptWorkingBots, workingBotIds } from "../../Bots/BotTyping";
     import VoiceNoteComposer from "./VoiceNote/VoiceNoteComposer.svelte";
     import type { DirectPartner } from "./DirectChat/DirectPartnerStore";
     import { IconGif, IconMoodSmile, IconPaperclip, IconSend, IconX } from "@wa-icons";
