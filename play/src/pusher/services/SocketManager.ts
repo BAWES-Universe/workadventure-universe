@@ -55,6 +55,7 @@ import {
     noUndefined,
     ServerToClientMessage,
     SetPlayerDetailsMessage as SetPlayerDetailsMessageTsProto,
+    SpaceUser,
 } from "@workadventure/messages";
 import * as Sentry from "@sentry/node";
 import type { WebSocket } from "uWebSockets.js";
@@ -77,7 +78,7 @@ import { Space } from "../models/Space";
 import { SpaceConnection } from "../models/SpaceConnection";
 import type { UpgradeFailedData } from "../controllers/IoSocketController";
 import { eventProcessor } from "../models/eventProcessorInit";
-import { forgetSpeakInvitation, setMegaphoneSettings } from "../models/MegaphoneRights";
+import { canShowCameraToSpeakersIn, forgetSpeakInvitation, setMegaphoneSettings } from "../models/MegaphoneRights";
 import { areaSpacesToLeave } from "./AreaSpaceEviction";
 import { emitInBatch } from "./IoSocketHelpers";
 import { probeEmbeddableWebsite } from "./EmbeddableWebsiteProbe";
@@ -372,6 +373,7 @@ export class SocketManager implements ZoneEventListener {
                                     );
                                     setMegaphoneSettings(socketData, subMessage.message.megaphoneSettingsMessage);
                                     this.leaveAreaSpacesNoLongerAllowed(client);
+                                    this.stopCamerasNoLongerAllowed(client);
                                 }
                             }
                             break;
@@ -1706,6 +1708,38 @@ export class SocketManager implements ZoneEventListener {
                 );
                 Sentry.captureException(error);
             });
+        }
+    }
+
+    /**
+     * New rules for the room's areas arrived: a player showing their camera to the speakers of a Stage that no longer
+     * sees the audience's cameras (#1623) stops showing it, even if their browser does not stop it.
+     */
+    private stopCamerasNoLongerAllowed(client: Socket): void {
+        const socketData = client.getUserData();
+        for (const spaceName of socketData.spaces) {
+            const space = this.spaces.get(spaceName);
+            const spaceUser = space?.users.get(socketData.spaceUserId);
+            if (
+                !space ||
+                spaceUser?.attendeeCamera !== true ||
+                canShowCameraToSpeakersIn(space.localName, socketData)
+            ) {
+                continue;
+            }
+            try {
+                const updated = space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(client, {
+                    spaceName,
+                    user: SpaceUser.fromPartial({ spaceUserId: spaceUser.spaceUserId, attendeeCamera: false }),
+                    updateMask: ["attendeeCamera"],
+                });
+                if (updated) {
+                    space.forwarder.updateUser(updated.partialSpaceUser, updated.changedFields);
+                }
+            } catch (error) {
+                console.error(`Error while stopping the camera shown to the speakers in ${spaceName}`, error);
+                Sentry.captureException(error);
+            }
         }
     }
 

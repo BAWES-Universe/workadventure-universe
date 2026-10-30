@@ -1164,6 +1164,9 @@ message MegaphoneSettings{
   // The stages this user may listen to but not speak on (the speaker zone is limited to roles this user does not
   // have), by the names the front joins them with. The user may only go live there when a speaker invited them.
   repeated string listenOnlyAreaSpaces = 6;
+  // The stages whose speakers see the audience's cameras (#1623), by the names the front joins them with. Only there
+  // may a player in the Audience show their camera to the speakers.
+  repeated string attendeeCameraAreaSpaces = 7;
 }
 
 message MegaphoneChannel {

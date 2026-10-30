@@ -31,6 +31,8 @@
         shownProperty = property;
         savedName = property.name;
         nameError = null;
+        // The switch shows the copy's setting too (an undo, another editor turning it off)
+        seeAttendees = property.seeAttendees ?? false;
     }
 
     // Two Stages of a room with names that only differ by capitals or spaces read the same to players, and
