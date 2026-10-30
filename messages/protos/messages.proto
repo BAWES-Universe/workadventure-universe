@@ -381,6 +381,16 @@ message ClientToServerMessage {
   }
 }
 
+// The live state of an area setting, shared by the server with everyone in the room and never saved: for now, how
+// many people are inside an area with a "Max people" setting (key "usersInside", value the count). Named as upstream
+// WorkAdventure names it.
+message AreaPropertyVariableMessage {
+  string areaId = 1;
+  string propertyId = 2;
+  string key = 3;
+  string value = 4;
+}
+
 message ReceivedEventMessage {
   string name = 1;
   google.protobuf.Value data = 2;
@@ -1013,6 +1023,7 @@ message SubMessage {
 
     SpaceDestroyedMessage spaceDestroyedMessage = 23;
     InitSpaceUsersMessage initSpaceUsersMessage = 25;
+    AreaPropertyVariableMessage areaPropertyVariableMessage = 31;
   }
 }
 
@@ -1108,6 +1119,8 @@ message RoomJoinedMessage {
   string permissions = 19;
   // What each role key is called, for the badge next to people. Unset when Orbit sent no list.
   RoleCatalogue roleCatalogue = 20;
+  // The live state of the room's area settings when the player arrives (see AreaPropertyVariableMessage)
+  repeated AreaPropertyVariableMessage areaPropertyVariable = 21;
 }
 
 // The roles Orbit named to this player, highest first.
@@ -1623,6 +1636,7 @@ message SubToPusherRoomMessage {
     ReceivedEventMessage receivedEventMessage = 6;
     // Zone-specific messages (all grouped in ZoneMessage)
     ZoneMessage zoneMessage = 7;
+    AreaPropertyVariableMessage areaPropertyVariableMessage = 8;
   }
 }
 

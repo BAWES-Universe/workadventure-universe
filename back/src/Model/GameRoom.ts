@@ -1,10 +1,11 @@
 import path from "path";
 import * as Sentry from "@sentry/node";
-import type { WAMFileFormat } from "@workadventure/map-editor";
+import type { AreaData, WAMFileFormat } from "@workadventure/map-editor";
 import { GameMapProperties, WAMSettingsUtils } from "@workadventure/map-editor";
 import { LocalUrlError } from "@workadventure/map-editor/src/LocalUrlError";
 import { mapFetcher } from "@workadventure/map-editor/src/MapFetcher";
 import type {
+    AreaPropertyVariableMessage,
     EditMapCommandMessage,
     EmoteEventMessage,
     JoinRoomMessage,
@@ -57,6 +58,7 @@ import { bypassesAreaSpaceRights, listenOnlyAreaSpaces, refusedAreaSpaces } from
 import { ModeratorTagFinder } from "../Services/ModeratorTagFinder";
 import { VariableError } from "../Services/VariableError";
 import { VariablesManager } from "../Services/VariablesManager";
+import { AreaOccupancy } from "./AreaOccupancy";
 import type { BrothersFinder } from "./BrothersFinder";
 import { Group } from "./Group";
 import { PositionNotifier } from "./PositionNotifier";
@@ -82,6 +84,15 @@ export class GameRoom implements BrothersFinder {
     private nextUserId = 1;
 
     private roomListeners: Set<RoomSocket> = new Set<RoomSocket>();
+    // How many people are inside each area with a "Max people" setting, shared with everyone in the room
+    private readonly areaOccupancy = new AreaOccupancy((areaPropertyVariableMessage) =>
+        this.dispatchRoomMessage({
+            message: {
+                $case: "areaPropertyVariableMessage",
+                areaPropertyVariableMessage,
+            },
+        })
+    );
     private variableListeners: Map<string, Set<VariableSocket>> = new Map<string, Set<VariableSocket>>();
     // The key is the event name
     private eventListeners: Map<string, Set<EventSocket>> = new Map<string, Set<EventSocket>>();
@@ -174,6 +185,7 @@ export class GameRoom implements BrothersFinder {
         );
         // The areas read to create the room are the first copy to fall back on (see getAreaSpacePolicyFor)
         gameRoom.lastGoodWam = wamFile;
+        gameRoom.areaOccupancy.setAreas(areasOf(wamFile), []);
 
         return gameRoom;
     }
@@ -264,6 +276,7 @@ export class GameRoom implements BrothersFinder {
             this.usersByUuid.set(user.uuid, set);
         }
         set.add(user);
+        this.areaOccupancy.userMoved(user);
         this.updateUserGroup(user);
 
         // Notify admins
@@ -299,6 +312,7 @@ export class GameRoom implements BrothersFinder {
         }
 
         this.users.delete(user.id);
+        this.areaOccupancy.userLeft(user);
 
         const set = this.usersByUuid.get(user.uuid);
         if (set !== undefined) {
@@ -330,7 +344,25 @@ export class GameRoom implements BrothersFinder {
 
     public updatePosition(user: User, userPosition: PointInterface): void {
         user.setPosition(userPosition);
+        this.areaOccupancy.userMoved(user);
         this.updateUserGroup(user);
+    }
+
+    /** The live state of the room's area settings, for a player who arrives (see AreaOccupancy). */
+    public getAreaPropertyVariables(): AreaPropertyVariableMessage[] {
+        return this.areaOccupancy.getVariables();
+    }
+
+    /**
+     * Whether two players may share a bubble: not when one is inside a full room and the other outside it, so nobody
+     * talks into a full room from its edge.
+     */
+    public canMeet(user1: User, user2: User): boolean {
+        return !this.areaOccupancy.separatesFullArea(user1.getPosition(), user2.getPosition());
+    }
+
+    private canJoinGroup(user: User, group: Group): boolean {
+        return group.getUsers().every((member) => this.canMeet(user, member));
     }
 
     updatePlayerDetails(user: User, playerDetailsMessage: SetPlayerDetailsMessage) {
@@ -370,7 +402,8 @@ export class GameRoom implements BrothersFinder {
                         this.groupRadius,
                         this.connectCallback,
                         this.disconnectCallback,
-                        this.positionNotifier
+                        this.positionNotifier,
+                        (candidate, group) => this.canJoinGroup(candidate, group)
                     );
                     this.groups.set(group.getId(), group);
                 }
@@ -454,7 +487,8 @@ export class GameRoom implements BrothersFinder {
                         this.groupRadius,
                         this.connectCallback,
                         this.disconnectCallback,
-                        this.positionNotifier
+                        this.positionNotifier,
+                        (candidate, group) => this.canJoinGroup(candidate, group)
                     );
                     this.groups.set(newGroup.getId(), newGroup);
                 } else {
@@ -522,6 +556,9 @@ export class GameRoom implements BrothersFinder {
             if (currentUser.silent) {
                 return;
             }
+            if (!this.canMeet(user, currentUser)) {
+                return;
+            }
 
             const distance = GameRoom.computeDistance(user, currentUser); // compute distance between peers.
 
@@ -532,7 +569,7 @@ export class GameRoom implements BrothersFinder {
         });
 
         this.groups.forEach((group: Group) => {
-            if (group.isFull() || group.isLocked()) {
+            if (group.isFull() || group.isLocked() || !this.canJoinGroup(user, group)) {
                 return;
             }
             const distance = GameRoom.computeDistanceBetweenPositions(user.getPosition(), group.getPosition());
@@ -1203,6 +1240,7 @@ export class GameRoom implements BrothersFinder {
                             // Who may join which meeting room depends on the areas: read them again and tell the users.
                             this.wamPromise = undefined;
                             void this.sendMegaphoneSettingsToUsers();
+                            void this.refreshAreaOccupancy();
                         }
                         if (editMapCommandMessage.editMapMessage?.message?.$case === "modifyEntityMessage") {
                             // If the area is modified, we need to reset the WAM and the moderator tag finder.
@@ -1365,6 +1403,23 @@ export class GameRoom implements BrothersFinder {
         this.areaPolicyRetryTimer.unref?.();
     }
 
+    private areaOccupancyVersion = 0;
+
+    /** Recounts who is inside the areas with a "Max people" setting, from the room's areas as saved now. */
+    private async refreshAreaOccupancy(): Promise<void> {
+        // Two refreshes can overlap (two area edits in a row): an older read that finishes late is dropped.
+        const version = ++this.areaOccupancyVersion;
+        try {
+            const wam = await this.getWam();
+            if (version !== this.areaOccupancyVersion) {
+                return;
+            }
+            this.areaOccupancy.setAreas(areasOf(wam), this.users.values());
+        } catch (e) {
+            console.error("Could not read the areas to count who is inside the full-room areas", e);
+        }
+    }
+
     /**
      * After the room's broadcast settings or its areas change, every user learns which channels the room now listens
      * to and which they may go live on, and which meeting rooms they may not join (the pusher does not know the
@@ -1406,4 +1461,13 @@ export class GameRoom implements BrothersFinder {
     get wamSettings(): WAMFileFormat["settings"] {
         return this._wamSettings;
     }
+}
+
+/** The areas of a map file. The file is read raw, and some hold their areas by id rather than in a list. */
+function areasOf(wam: WAMFileFormat | undefined): AreaData[] {
+    if (wam === undefined) {
+        return [];
+    }
+    const areas: AreaData[] | Record<string, AreaData> = wam.areas;
+    return Array.isArray(areas) ? areas : Object.values(areas);
 }

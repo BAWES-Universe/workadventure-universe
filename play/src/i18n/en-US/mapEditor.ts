@@ -238,6 +238,11 @@ const mapEditor: BaseTranslation = {
                 "Access rights define who can interact with the area. Users matching one of these tags can enter the area and use objects whithin the area.",
             actionButtonLabel: "Go to private room",
         },
+        maxUsersInAreaPropertyData: {
+            label: "How many people can be inside",
+            placeholder: "No limit",
+            help: "When it's full, people outside see \"Full\" on the room and can't walk in. The Owner and Admins can always come in. Bots don't count.",
+        },
         personalAreaPropertyData: {
             label: "Personal area",
             description:
@@ -635,6 +640,7 @@ const mapEditor: BaseTranslation = {
                 chatOn: "{name} · chat on",
                 hears: "Hears {stage}",
                 onlyTags: "Only: {tags}",
+                upTo: "Up to {count:number} {{person|people}}",
             },
             deleteArea: "Delete area",
         },
@@ -645,6 +651,7 @@ const mapEditor: BaseTranslation = {
             speakerMegaphone: { title: "Stage", text: "Speak to the audience" },
             listenerMegaphone: { title: "Audience", text: "Hear the stage" },
             restrictedRightsPropertyData: { title: "Who can enter", text: "Everyone, or chosen tags" },
+            maxUsersInAreaPropertyData: { title: "Max people", text: "Full rooms stop letting people in" },
             personalAreaPropertyData: { title: "Personal desk", text: "One person can claim it" },
             openWebsite: { title: "Open a website", text: "When someone walks in" },
             openFile: { title: "Open a file", text: "When someone walks in" },

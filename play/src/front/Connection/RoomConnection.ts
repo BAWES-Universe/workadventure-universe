@@ -7,6 +7,7 @@ import type {
     AddSpaceFilterMessage,
     AnswerMessage,
     ApplicationMessage,
+    AreaPropertyVariableMessage,
     AvailabilityStatus,
     CharacterTextureMessage,
     ChatMembersAnswer,
@@ -208,6 +209,8 @@ export class RoomConnection implements RoomConnection {
     public readonly variableMessageStream = this._variableMessageStream.asObservable();
     private readonly _editMapCommandMessageStream = new Subject<EditMapCommandMessage>();
     public readonly editMapCommandMessageStream = this._editMapCommandMessageStream.asObservable();
+    private readonly _areaPropertyVariableMessageStream = new Subject<AreaPropertyVariableMessage>();
+    public readonly areaPropertyVariableMessageStream = this._areaPropertyVariableMessageStream.asObservable();
     private readonly _playerDetailsUpdatedMessageStream = new Subject<PlayerDetailsUpdatedMessageTsProto>();
     public readonly playerDetailsUpdatedMessageStream = this._playerDetailsUpdatedMessageStream.asObservable();
 
@@ -447,6 +450,12 @@ export class RoomConnection implements RoomConnection {
                                         this._initSpaceUsersMessageStream.next(subMessage.initSpaceUsersMessage);
                                         break;
                                     }
+                                    case "areaPropertyVariableMessage": {
+                                        this._areaPropertyVariableMessageStream.next(
+                                            subMessage.areaPropertyVariableMessage
+                                        );
+                                        break;
+                                    }
                                     case "addSpaceUserMessage": {
                                         this._addSpaceUserMessageStream.next(subMessage.addSpaceUserMessage);
                                         break;
@@ -594,6 +603,7 @@ export class RoomConnection implements RoomConnection {
                                 playerVariables,
                                 commandsToApply,
                                 applications: applications,
+                                areaPropertyVariables: roomJoinedMessage.areaPropertyVariable,
                             } as RoomJoinedMessageInterface,
                         });
 
@@ -2066,6 +2076,7 @@ export class RoomConnection implements RoomConnection {
         this._emoteEventMessageStream.complete();
         this._variableMessageStream.complete();
         this._editMapCommandMessageStream.complete();
+        this._areaPropertyVariableMessageStream.complete();
         this._playerDetailsUpdatedMessageStream.complete();
         this._websocketErrorStream.complete();
         this._connectionErrorStream.complete();

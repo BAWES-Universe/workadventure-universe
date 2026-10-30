@@ -233,6 +233,7 @@ export class SocketManager {
                 ...room.getMegaphoneSettingsFor(user.tags, user.permissions),
                 ...(await room.getAreaSpacePolicyFor(user)),
             },
+            areaPropertyVariable: room.getAreaPropertyVariables(),
         };
 
         user.write({

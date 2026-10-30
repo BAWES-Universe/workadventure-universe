@@ -201,6 +201,15 @@ export const LivekitRoomPropertyData = PropertyBase.extend({
     livekitRoomAdminTag: z.string().optional(),
 });
 
+export const MaxUsersInAreaPropertyData = PropertyBase.extend({
+    type: z.literal("maxUsersInAreaPropertyData"),
+    /**
+     * How many people can be inside at once. Empty: no limit. Our editor asks for 1 or more; a map made with
+     * upstream WorkAdventure may hold 0 ("always closed"), which we read as no limit ("Who can enter" closes a room).
+     */
+    maxUsers: z.number().min(0).nullable().optional(),
+});
+
 export const AreaDataProperty = z.discriminatedUnion("type", [
     StartPropertyData,
     ExitPropertyData,
@@ -220,6 +229,7 @@ export const AreaDataProperty = z.discriminatedUnion("type", [
     MatrixRoomPropertyData,
     TooltipPropertyData,
     LivekitRoomPropertyData,
+    MaxUsersInAreaPropertyData,
 ]);
 
 export const AreaDataProperties = z.array(AreaDataProperty);
@@ -446,6 +456,7 @@ export type AreaDescriptionPropertyData = z.infer<typeof AreaDescriptionProperty
 export type RestrictedRightsPropertyData = z.infer<typeof RestrictedRightsPropertyData>;
 export type PersonalAreaPropertyData = z.infer<typeof PersonalAreaPropertyData>;
 export type MatrixRoomPropertyData = z.infer<typeof MatrixRoomPropertyData>;
+export type MaxUsersInAreaPropertyData = z.infer<typeof MaxUsersInAreaPropertyData>;
 export type PersonalAreaAccessClaimMode = z.infer<typeof PersonalAreaAccessClaimMode>;
 export type ExtensionModuleAreaPropertyData = z.infer<typeof ExtensionModuleAreaProperty>;
 export type TooltipPropertyData = z.infer<typeof TooltipPropertyData>;
