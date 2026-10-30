@@ -1403,10 +1403,17 @@ export class GameRoom implements BrothersFinder {
         this.areaPolicyRetryTimer.unref?.();
     }
 
+    private areaOccupancyVersion = 0;
+
     /** Recounts who is inside the areas with a "Max people" setting, from the room's areas as saved now. */
     private async refreshAreaOccupancy(): Promise<void> {
+        // Two refreshes can overlap (two area edits in a row): an older read that finishes late is dropped.
+        const version = ++this.areaOccupancyVersion;
         try {
             const wam = await this.getWam();
+            if (version !== this.areaOccupancyVersion) {
+                return;
+            }
             this.areaOccupancy.setAreas(areasOf(wam), this.users.values());
         } catch (e) {
             console.error("Could not read the areas to count who is inside the full-room areas", e);
