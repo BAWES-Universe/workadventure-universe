@@ -47,11 +47,17 @@ export class CustomEntityCollectionService {
         this.universeWorldPath = universeWorldPath;
     }
 
+    // ENTITIES_FOLDER_PATH starts with "/", so it is joined without one more: the key must be the path the browser
+    // asks for. A "//" in it was merged by the proxy in front of map-storage, so uploads were saved under a key that
+    // no request ever reached (#1636).
+    private scopedPath(basePath: string): string {
+        return `${this.universeWorldPath.replace(/\/+$/, "")}/${basePath.replace(/^\/+/, "")}`;
+    }
+
     private getEntityCollectionFileVirtualPath() {
         const basePath = `${ENTITIES_FOLDER_PATH}/${ENTITY_COLLECTION_FILE}`;
         // Always scope entities per universe/world
-        const scopedPath = `${this.universeWorldPath}/${basePath}`;
-        return mapPathUsingDomainWithPrefix(scopedPath, this.hostname);
+        return mapPathUsingDomainWithPrefix(this.scopedPath(basePath), this.hostname);
     }
 
     private getEntityToUploadVirtualPath(fileName: string) {
@@ -62,8 +68,7 @@ export class CustomEntityCollectionService {
         }
         const basePath = `${ENTITIES_FOLDER_PATH}/${filenameWithoutPotentialPath}`;
         // Always scope entities per universe/world
-        const scopedPath = `${this.universeWorldPath}/${basePath}`;
-        return mapPathUsingDomainWithPrefix(scopedPath, this.hostname);
+        return mapPathUsingDomainWithPrefix(this.scopedPath(basePath), this.hostname);
     }
 
     public async uploadEntity(uploadEntityMessage: UploadEntityMessage) {

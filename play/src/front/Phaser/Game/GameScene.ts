@@ -843,10 +843,12 @@ export class GameScene extends DirtyScene {
             throw new Error(`Invalid WAM path format: expected universe/world/room structure, got: ${wamUrl.pathname}`);
         }
 
-        const universeWorldPath = `${pathParts[startIndex]}/${pathParts[startIndex + 1]}/`;
+        const universeWorldPath = `${pathParts[startIndex]}/${pathParts[startIndex + 1]}`;
 
         // Construct URL with universe/world scope
         // Use room.mapStorageUrl which correctly handles path prefixes for reverse proxy setups
+        // ENTITIES_FOLDER_PATH starts with "/": no "//" here, or the proxy merges it and asks map-storage for another
+        // file than the one it saved (#1636).
         const entityCollectionPath = `${universeWorldPath}${ENTITIES_FOLDER_PATH}/${ENTITY_COLLECTION_FILE}`;
         return new URL(entityCollectionPath, mapStorageUrl.toString()).toString();
     }
