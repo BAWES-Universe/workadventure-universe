@@ -66,6 +66,7 @@ export class UpdateEntityFrontCommand extends UpdateEntityCommand implements Fro
         }
         const { x: oldX, y: oldY } = entity.getOldPosition();
         entity?.updateEntity(config);
+        this.entitiesManager.notifyEntitiesChanged();
         // If the entity is activable, and not in the activatable entities array of the entity manager,
         // we add it to the array
         if (entity.isActivatable() && !this.entitiesManager.getActivatableEntities().includes(entity)) {

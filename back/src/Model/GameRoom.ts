@@ -6,6 +6,8 @@ import { LocalUrlError } from "@workadventure/map-editor/src/LocalUrlError";
 import { mapFetcher } from "@workadventure/map-editor/src/MapFetcher";
 import type {
     AreaPropertyVariableMessage,
+    ClickObjectSoundMessage,
+    ObjectSoundMessage,
     EditMapCommandMessage,
     EmoteEventMessage,
     JoinRoomMessage,
@@ -65,6 +67,7 @@ import { ModeratorTagFinder } from "../Services/ModeratorTagFinder";
 import { VariableError } from "../Services/VariableError";
 import { VariablesManager } from "../Services/VariablesManager";
 import { AreaOccupancy } from "./AreaOccupancy";
+import { ObjectSounds } from "./ObjectSounds";
 import type { BrothersFinder } from "./BrothersFinder";
 import { Group } from "./Group";
 import { PositionNotifier } from "./PositionNotifier";
@@ -96,6 +99,15 @@ export class GameRoom implements BrothersFinder {
             message: {
                 $case: "areaPropertyVariableMessage",
                 areaPropertyVariableMessage,
+            },
+        })
+    );
+    // The objects' clicked sounds that other people hear (#1627)
+    private readonly objectSounds = new ObjectSounds((objectSoundMessage) =>
+        this.dispatchRoomMessage({
+            message: {
+                $case: "objectSoundMessage",
+                objectSoundMessage,
             },
         })
     );
@@ -376,6 +388,16 @@ export class GameRoom implements BrothersFinder {
             return;
         }
         this.areaOccupancy.setLocked(user, message.areaId, message.propertyId, message.value === "true");
+    }
+
+    /** A player clicks an object whose sound other people hear (#1627) */
+    public clickObjectSound(message: ClickObjectSoundMessage): void {
+        this.objectSounds.click(message);
+    }
+
+    /** The objects' clicked sounds still playing, for a player who arrives */
+    public getObjectSounds(): ObjectSoundMessage[] {
+        return this.objectSounds.getMessages();
     }
 
     private canJoinGroup(user: User, group: Group): boolean {

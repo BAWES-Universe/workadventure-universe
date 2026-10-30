@@ -144,6 +144,50 @@
                         },
                         "triggerMessage": {
                           "type": "string"
+                        },
+                        "startsOn": {
+                          "type": "string",
+                          "enum": [
+                            "click",
+                            "range"
+                          ]
+                        },
+                        "heardBy": {
+                          "type": "string",
+                          "enum": [
+                            "clicker",
+                            "range",
+                            "map"
+                          ]
+                        },
+                        "loop": {
+                          "type": "boolean"
+                        },
+                        "fullVolumeWithin": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "heardUpTo": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "clickWait": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "playForAllUsers": {
+                          "type": "boolean"
+                        },
+                        "audibleRadius": {
+                          "anyOf": [
+                            {
+                              "type": "number",
+                              "minimum": 0
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         }
                       },
                       "required": [

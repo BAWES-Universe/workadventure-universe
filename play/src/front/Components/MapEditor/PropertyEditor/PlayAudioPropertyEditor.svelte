@@ -1,15 +1,17 @@
 <script lang="ts">
-    import { createEventDispatcher } from "svelte";
+    import { createEventDispatcher, onDestroy } from "svelte";
     import { get } from "svelte/store";
     import { v4 as uuidv4 } from "uuid";
+    import type { GameObjects, Math as PhaserMath } from "phaser";
     import * as Sentry from "@sentry/svelte";
-    import type { PlayAudioPropertyData } from "@workadventure/map-editor";
-    import { UPLOADED_FILE_FORMATS } from "@workadventure/map-editor";
+    import type { ObjectSoundSettings, PlayAudioPropertyData } from "@workadventure/map-editor";
+    import { objectSoundHasRange, objectSoundSettings, UPLOADED_FILE_FORMATS } from "@workadventure/map-editor";
     import { UploadedFileKind } from "@workadventure/messages";
     import { LL } from "../../../../i18n/i18n-svelte";
     import { GRPC_MAX_MESSAGE_SIZE } from "../../../Enum/EnvironmentVariable";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import { gameSceneStore } from "../../../Stores/GameSceneStore";
+    import { mapEditorSelectedEntityStore } from "../../../Stores/MapEditorStore";
     import { UploadFileFrontCommand } from "../../../Phaser/Game/MapEditor/Commands/File/UploadFileFrontCommand";
     import { playableSoundLink, uploadedSoundLink } from "../../../Phaser/Game/MapEditor/uploadedSoundLink";
     import PropertyEditorBase from "./PropertyEditorBase.svelte";
@@ -38,6 +40,85 @@
     const canUpload = gameManager.getCurrentGameScene()?.connection?.userCanEdit ?? false;
 
     $: volumePercent = Math.round((property.volume ?? 1) * 100);
+
+    // An object's sound (#1627): when it starts, who hears it, whether it loops, and how far it carries
+    const tileSize = gameManager.getCurrentGameScene()?.getGameMapFrontWrapper().getTileDimensions().width ?? 32;
+    $: settings = objectSoundSettings(property, tileSize);
+    let loop = objectSoundSettings(property, tileSize).loop;
+    const startChoices = [
+        {
+            value: "range" as const,
+            title: $LL.mapEditor.properties.playAudio.startsInRange(),
+            description: $LL.mapEditor.properties.playAudio.startsInRangeDescription(),
+        },
+        {
+            value: "click" as const,
+            title: $LL.mapEditor.properties.playAudio.startsOnClick(),
+            description: $LL.mapEditor.properties.playAudio.startsOnClickDescription(),
+        },
+    ];
+    const hearerChoices = [
+        { value: "clicker" as const, title: $LL.mapEditor.properties.playAudio.heardByClicker() },
+        { value: "range" as const, title: $LL.mapEditor.properties.playAudio.heardByRange() },
+        { value: "map" as const, title: $LL.mapEditor.properties.playAudio.heardByMap() },
+    ];
+
+    /**
+     * Writes every choice into the property as the panel shows it, so that a sound saved before #1627 (or made in
+     * upstream WorkAdventure) keeps what it does once someone edits it.
+     */
+    function writeSettings(changes: Partial<ObjectSoundSettings>) {
+        const next = { ...objectSoundSettings(property, tileSize), ...changes };
+        property.startsOn = next.startsOn;
+        property.heardBy = next.heardBy;
+        property.loop = next.loop;
+        property.fullVolumeWithin = next.fullVolumeWithin;
+        property.heardUpTo = Math.max(next.fullVolumeWithin, next.heardUpTo);
+        property.clickWait = next.clickWait;
+        delete property.playForAllUsers;
+        delete property.audibleRadius;
+        loop = next.loop;
+        onValueChange();
+    }
+
+    function setStartsOn(startsOn: ObjectSoundSettings["startsOn"]) {
+        // A fireplace loops; a clicked sound plays once
+        writeSettings({ startsOn, loop: startsOn === "range" });
+    }
+
+    function onNumberChange(field: "fullVolumeWithin" | "heardUpTo" | "clickWait", event: Event) {
+        const input = event.currentTarget as HTMLInputElement;
+        const value = Number(input.value);
+        if (input.value === "" || !Number.isFinite(value) || value < 0) {
+            input.value = String(settings[field]);
+            return;
+        }
+        writeSettings({ [field]: value });
+    }
+
+    // While the panel is open, two circles around the object show "Full volume within" and "Heard up to"
+    let circles: GameObjects.Graphics | undefined;
+    $: drawCircles(isArea ? undefined : settings, $mapEditorSelectedEntityStore?.getCenter());
+
+    function drawCircles(settings: ObjectSoundSettings | undefined, center: PhaserMath.Vector2 | undefined) {
+        const scene = gameManager.getCurrentGameScene();
+        if (!scene || !settings || !center || !objectSoundHasRange(settings)) {
+            circles?.clear();
+            return;
+        }
+        circles ??= scene.add.graphics().setDepth(Number.MAX_SAFE_INTEGER);
+        circles.clear();
+        circles.fillStyle(0x4156f6, 0.08).fillCircle(center.x, center.y, settings.heardUpTo * tileSize);
+        circles.lineStyle(2, 0x4156f6, 0.9).strokeCircle(center.x, center.y, settings.heardUpTo * tileSize);
+        circles.fillStyle(0x8629fc, 0.18).fillCircle(center.x, center.y, settings.fullVolumeWithin * tileSize);
+        circles.lineStyle(2, 0x8629fc, 1).strokeCircle(center.x, center.y, settings.fullVolumeWithin * tileSize);
+        scene.markDirty();
+    }
+
+    onDestroy(() => {
+        circles?.destroy();
+        gameManager.getCurrentGameScene()?.markDirty();
+    });
 
     async function playAudio() {
         if (!property.audioLink) {
@@ -220,6 +301,129 @@
             {/if}
         </div>
 
+        {#if !isArea}
+            <div class="op-field" role="radiogroup" aria-label={$LL.mapEditor.properties.playAudio.whenItStarts()}>
+                <span class="op-label">{$LL.mapEditor.properties.playAudio.whenItStarts()}</span>
+                {#each startChoices as choice (choice.value)}
+                    <button
+                        type="button"
+                        class="u-option op-opt"
+                        class:u-selected={settings.startsOn === choice.value}
+                        role="radio"
+                        aria-checked={settings.startsOn === choice.value}
+                        data-testid="soundStarts-{choice.value}"
+                        on:click={() => setStartsOn(choice.value)}
+                    >
+                        <span class="u-option-text">
+                            <span class="u-option-title block">{choice.title}</span>
+                            <span class="u-option-desc block">{choice.description}</span>
+                        </span>
+                        <span class="u-radio" aria-hidden="true" />
+                    </button>
+                {/each}
+            </div>
+
+            {#if settings.startsOn === "click"}
+                <div class="op-field" role="radiogroup" aria-label={$LL.mapEditor.properties.playAudio.whoHearsIt()}>
+                    <span class="op-label">{$LL.mapEditor.properties.playAudio.whoHearsIt()}</span>
+                    {#each hearerChoices as choice (choice.value)}
+                        <button
+                            type="button"
+                            class="u-option op-opt"
+                            class:u-selected={settings.heardBy === choice.value}
+                            role="radio"
+                            aria-checked={settings.heardBy === choice.value}
+                            data-testid="soundHeardBy-{choice.value}"
+                            on:click={() => writeSettings({ heardBy: choice.value })}
+                        >
+                            <span class="u-option-text"><span class="u-option-title block">{choice.title}</span></span>
+                            <span class="u-radio" aria-hidden="true" />
+                        </button>
+                    {/each}
+                </div>
+            {/if}
+
+            <div class="op-field">
+                <PanelSwitch
+                    id="soundLoop"
+                    label={$LL.mapEditor.properties.playAudio.loopIt()}
+                    bind:value={loop}
+                    onChange={() => writeSettings({ loop })}
+                />
+                <p class="op-hint">
+                    {settings.startsOn === "click"
+                        ? settings.loop
+                            ? $LL.mapEditor.properties.playAudio.loopOnClick()
+                            : $LL.mapEditor.properties.playAudio.onceOnClick()
+                        : settings.loop
+                        ? $LL.mapEditor.properties.playAudio.loopInRange()
+                        : $LL.mapEditor.properties.playAudio.onceInRange()}
+                </p>
+            </div>
+
+            {#if objectSoundHasRange(settings)}
+                <div class="op-field">
+                    <span class="op-label">{$LL.mapEditor.properties.playAudio.distance()}</span>
+                    <div class="op-pair">
+                        <label class="op-num">
+                            <span>{$LL.mapEditor.properties.playAudio.fullVolumeWithin()}</span>
+                            <span class="u-join-field">
+                                <input
+                                    type="number"
+                                    min="0"
+                                    step="0.5"
+                                    data-testid="soundFullVolumeWithin"
+                                    value={settings.fullVolumeWithin}
+                                    on:change={(event) => onNumberChange("fullVolumeWithin", event)}
+                                />
+                                <em>{$LL.mapEditor.properties.playAudio.tiles()}</em>
+                            </span>
+                        </label>
+                        <label class="op-num">
+                            <span>{$LL.mapEditor.properties.playAudio.heardUpTo()}</span>
+                            <span class="u-join-field">
+                                <input
+                                    type="number"
+                                    min="0"
+                                    step="0.5"
+                                    data-testid="soundHeardUpTo"
+                                    value={settings.heardUpTo}
+                                    on:change={(event) => onNumberChange("heardUpTo", event)}
+                                />
+                                <em>{$LL.mapEditor.properties.playAudio.tiles()}</em>
+                            </span>
+                        </label>
+                    </div>
+                    <p class="op-hint">
+                        {$LL.mapEditor.properties.playAudio.distanceHint({
+                            fullVolumeWithin: settings.fullVolumeWithin,
+                            heardUpTo: settings.heardUpTo,
+                        })}
+                    </p>
+                </div>
+            {/if}
+
+            {#if settings.startsOn === "click"}
+                <div class="op-field">
+                    <label class="op-num op-num-wide">
+                        <span>{$LL.mapEditor.properties.playAudio.clickWait()}</span>
+                        <span class="u-join-field">
+                            <input
+                                type="number"
+                                min="0"
+                                step="1"
+                                data-testid="soundClickWait"
+                                value={settings.clickWait}
+                                on:change={(event) => onNumberChange("clickWait", event)}
+                            />
+                            <em>{$LL.mapEditor.properties.playAudio.seconds()}</em>
+                        </span>
+                    </label>
+                    <p class="op-hint">{$LL.mapEditor.properties.playAudio.clickWaitHint()}</p>
+                </div>
+            {/if}
+        {/if}
+
         <div class="op-slider">
             <div class="op-slider-top">
                 <label for="volume">{$LL.mapEditor.properties.playAudio.volumeLabel()}</label>
@@ -240,7 +444,8 @@
             </div>
         </div>
 
-        {#if !isArea}
+        <!-- Nobody clicks a sound that plays in range -->
+        {#if !isArea && settings.startsOn === "click"}
             <PanelSwitch
                 id="advancedOption"
                 strong
@@ -341,6 +546,36 @@
         font-size: 0.75rem;
         line-height: 1.4;
         color: rgba(255, 255, 255, 0.55);
+    }
+    .op-opt {
+        padding: 12px 14px;
+    }
+    .op-pair {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 8px;
+    }
+    .op-num {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        min-width: 0;
+        font-size: 0.8125rem;
+        color: rgba(255, 255, 255, 0.85);
+        em {
+            font-style: normal;
+            font-size: 0.8125rem;
+            color: rgba(255, 255, 255, 0.55);
+        }
+        input {
+            -moz-appearance: textfield;
+            appearance: textfield;
+            min-width: 0;
+            width: 100%;
+        }
+    }
+    .op-num-wide .u-join-field {
+        max-width: 12rem;
     }
     .advanced-option {
         display: none;
