@@ -1514,7 +1514,6 @@ export class AreasPropertiesListener {
 
     private async handleListenerMegaphonePropertyOnLeave(property: ListenerMegaphonePropertyData): Promise<void> {
         setHandsOffHere(property.id, false);
-        setAudienceTalking(property.id, false);
         if (property.speakerZoneName !== undefined) {
             const speakerZoneName = getSpeakerMegaphoneAreaName(
                 this.scene.getGameMap().getGameMapAreas()?.getAreas(),
@@ -1526,8 +1525,6 @@ export class AreasPropertiesListener {
                     const proximityRoom = this.scene.proximityChatRoom;
                     proximityRoom.setDisplayName(get(LL).chat.proximity());
                     await proximityRoom.leaveSpace(uniqRoomName, true);
-                    // People who walk out together keep their bubble, now with its text in the nearby chat (#1624)
-                    await this.scene.getProximitySpaceManager()?.moveBubblesBackToChat();
                 } else {
                     await leaveAreaSpaceIfJoined(this.scene.spaceRegistry, uniqRoomName);
                 }
@@ -1536,6 +1533,10 @@ export class AreasPropertiesListener {
                 listenerWaitingMediaStore.set(undefined);
             }
         }
+        // Only once we no longer listen: turning talking off first would make us a listener for a moment (#1624)
+        setAudienceTalking(property.id, false);
+        // People who walk out together keep their bubble, now with its text in the nearby chat
+        await this.scene.getProximitySpaceManager()?.moveBubblesBackToChat();
     }
 
     private handleExitPropertyOnEnter(url: string): void {

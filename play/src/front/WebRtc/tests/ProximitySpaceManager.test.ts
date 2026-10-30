@@ -114,6 +114,12 @@ describe("ProximitySpaceManager in an Audience (#1624)", { timeout: 60_000 }, ()
         await Promise.resolve();
         expect(chat.joinSpace).not.toHaveBeenCalled();
 
+        // Still in an Audience that lets people talk (the next one): the bubble stays where it is
+        await manager.moveBubblesBackToChat();
+        expect(registry.leaveSpace).not.toHaveBeenCalled();
+
+        const { audienceCanTalkStore } = await import("../../Stores/MediaStore");
+        audienceCanTalkStore.set(false);
         await manager.moveBubblesBackToChat();
         expect(registry.leaveSpace).toHaveBeenCalledWith({ name: "bubble-5" });
         expect(chat.joinSpace).toHaveBeenCalledWith("bubble-5", ["cameraState"]);
@@ -138,6 +144,8 @@ describe("ProximitySpaceManager in an Audience (#1624)", { timeout: 60_000 }, ()
             leaveSpaceRequestMessage.next({ spaceName: "bubble-6" });
             return Promise.resolve();
         });
+        const { audienceCanTalkStore } = await import("../../Stores/MediaStore");
+        audienceCanTalkStore.set(false);
         await manager.moveBubblesBackToChat();
         expect(chat.joinSpace).not.toHaveBeenCalled();
 

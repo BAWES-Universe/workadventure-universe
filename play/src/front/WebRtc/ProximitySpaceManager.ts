@@ -86,6 +86,10 @@ export class ProximitySpaceManager {
 
     /** After leaving an Audience's own chat (#1624): a bubble we are still in comes back to the nearby chat, with its text. */
     public async moveBubblesBackToChat(): Promise<void> {
+        if (get(audienceCanTalkStore)) {
+            // Still in an Audience that lets people talk, next to the one we left
+            return;
+        }
         await Promise.all([...this.bubblesBesideChat.keys()].map((spaceName) => this.moveBubbleBackToChat(spaceName)));
     }
 
