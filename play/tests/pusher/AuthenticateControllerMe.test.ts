@@ -424,6 +424,28 @@ describe("GET /me says whether the name is the account's (#1192)", () => {
         expect(res.body).toEqual(expect.objectContaining({ username: "K", usernameFromAccount: false }));
     });
 
+    it("keeps the account's current name from the first answer when Orbit can't be reached the second time", async () => {
+        verifyJWTToken.mockReturnValue({
+            identifier: "owner",
+            accessToken: "expired-access",
+            refreshToken: "refresh",
+            username: "K",
+        });
+        fetchMemberDataByUuid.mockImplementation((_id: string, accessToken: string | undefined) =>
+            accessToken === "new-access"
+                ? Promise.reject(new Error("Orbit unreachable"))
+                : Promise.resolve({
+                      status: "ok",
+                      userUuid: "owner",
+                      username: "Renamed",
+                      isCharacterTexturesValid: true,
+                      isCompanionTextureValid: true,
+                  })
+        );
+        const res = await callMe({ token: "game-token", playUri });
+        expect(res.body).toEqual(expect.objectContaining({ username: "Renamed", usernameFromAccount: true }));
+    });
+
     it("answers with the account's name from Orbit over a name the provider's user info carries", async () => {
         checkTokenAuth.mockResolvedValue({ username: "provider-name" });
         fetchMemberDataByUuid.mockResolvedValue({
