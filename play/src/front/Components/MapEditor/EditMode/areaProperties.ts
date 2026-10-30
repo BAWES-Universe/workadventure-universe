@@ -20,6 +20,7 @@ import {
     IconFileMusic,
     IconFocus,
     IconLink,
+    IconLock,
     IconLockCog,
     IconMessage,
     IconMicrophone,
@@ -134,6 +135,15 @@ export function areaSettingRows(LL: TranslationFunctions, flags: AreaSettingFlag
             icon: IconUsers,
             testId: "maxUsersInAreaPropertyData",
             available: !flags.maxUsersInAreaPropertyData,
+            opensPage: true,
+        },
+        {
+            key: "lockableAreaPropertyData",
+            title: t.lockableAreaPropertyData.title(),
+            text: t.lockableAreaPropertyData.text(),
+            icon: IconLock,
+            testId: "lockableAreaPropertyData",
+            available: !flags.lockableAreaPropertyData,
             opensPage: true,
         },
         {
@@ -324,6 +334,18 @@ export function summarizeAreaProperty(
         case "maxUsersInAreaPropertyData": {
             return property.maxUsers && property.maxUsers >= 1 ? t.upTo({ count: property.maxUsers }) : fallbackText;
         }
+        case "lockableAreaPropertyData": {
+            const roles = LL.mapEditor.properties.rolePicker;
+            const names: Record<string, string> = {
+                admin: roles.admin(),
+                editor: roles.editor(),
+                member: roles.member(),
+            };
+            const tags = (property.allowedTags ?? []).filter((tag) => tag.trim() !== "");
+            return tags.length > 0
+                ? t.lockOnly({ roles: tags.map((tag) => names[tag] ?? tag).join(", ") })
+                : t.lockAnyone();
+        }
         case "openWebsite": {
             return (property.link ? hostOf(property.link) : undefined) ?? fallbackText;
         }
@@ -486,6 +508,8 @@ export function createAreaProperty(
             return { id, type, readTags: [], writeTags: [] };
         case "maxUsersInAreaPropertyData":
             return { id, type, maxUsers: 6 };
+        case "lockableAreaPropertyData":
+            return { id, type, allowedTags: [] };
         case "personalAreaPropertyData":
             return {
                 id,

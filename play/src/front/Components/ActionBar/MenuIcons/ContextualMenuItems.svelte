@@ -8,9 +8,11 @@
     import { screenSharingAvailableStore } from "../../../Stores/ScreenSharingStore";
     import { isInRemoteConversation } from "../../../Stores/StreamableCollectionStore";
     import { mobileLayoutStore } from "../../../Stores/MobileLayoutStore";
+    import { lockableRoomStore } from "../../../Stores/LockableRoomStore";
     import AppsMenuItem from "./AppsMenuItem.svelte";
     import FollowMenuItem from "./FollowMenuItem.svelte";
     import LockDiscussionMenuItem from "./LockDiscussionMenuItem.svelte";
+    import LockRoomMenuItem from "./LockRoomMenuItem.svelte";
     import MusicMenuItem from "./MusicMenuItem.svelte";
     import HeaderMenuItem from "./HeaderMenuItem.svelte";
     import ScreenSharingMenuItem from "./ScreenSharingMenuItem.svelte";
@@ -22,7 +24,7 @@
     // They switch automatically to the profile menu when the screen is small.
 </script>
 
-{#if inProfileMenu && ($audioManagerVisibilityStore !== "hidden" || $bottomActionBarVisibilityStore)}
+{#if inProfileMenu && ($audioManagerVisibilityStore !== "hidden" || $bottomActionBarVisibilityStore || $lockableRoomStore?.canToggle)}
     <HeaderMenuItem label={$LL.menu.sub.contextualActions()} />
 {/if}
 
@@ -45,6 +47,9 @@
 
     <LockDiscussionMenuItem />
 {/if}
+
+<!-- Inside a lockable room: "Lock room", under the bubble's Lock (#1622). -->
+<LockRoomMenuItem />
 
 <!-- A phone's bar keeps only the chat, the microphone and camera, Orbit and the menu: sharing the screen and picture in
      picture are here, beside Follow and Lock. Held sideways, these items sit in the bar instead of the menu, and so do

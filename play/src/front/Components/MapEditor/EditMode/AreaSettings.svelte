@@ -40,6 +40,7 @@
     import TooltipPropertyButton from "../PropertyEditor/TooltipPropertyButton.svelte";
     import LivekitRoomPropertyEditor from "../PropertyEditor/LivekitRoomPropertyEditor.svelte";
     import HighlightPropertyEditor from "../PropertyEditor/HighlightPropertyEditor.svelte";
+    import LockableAreaPropertyEditor from "../PropertyEditor/LockableAreaPropertyEditor.svelte";
     import MaxUsersInAreaPropertyEditor from "../PropertyEditor/MaxUsersInAreaPropertyEditor.svelte";
     import youtubeSvg from "../../images/applications/icon_youtube.svg";
     import klaxoonSvg from "../../images/applications/icon_klaxoon.svg";
@@ -453,6 +454,12 @@
                     />
                 {:else if property.type === "maxUsersInAreaPropertyData"}
                     <MaxUsersInAreaPropertyEditor
+                        {property}
+                        on:close={() => remove(property.id)}
+                        on:change={() => update(property)}
+                    />
+                {:else if property.type === "lockableAreaPropertyData"}
+                    <LockableAreaPropertyEditor
                         {property}
                         on:close={() => remove(property.id)}
                         on:change={() => update(property)}

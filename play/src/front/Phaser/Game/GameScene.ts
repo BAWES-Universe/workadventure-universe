@@ -222,7 +222,7 @@ import { DarkenOutsideAreaEffect } from "../Components/DarkenOutsideArea/DarkenO
 import { installRoomJoinedStore } from "../../Install/InstallRoomJoined";
 import { releaseSpawnSilence, seedSpawnSilence } from "./SpawnSilence";
 import { GameMapFrontWrapper } from "./GameMap/GameMapFrontWrapper";
-import { AreaUsersInside } from "./GameMap/AreaUsersInside";
+import { AreaLiveState } from "./GameMap/AreaLiveState";
 import { gameManager } from "./GameManager";
 import { Game } from "./Game";
 import { EmoteManager } from "./EmoteManager";
@@ -402,7 +402,7 @@ export class GameScene extends DirtyScene {
     private cleanupDone = false;
     /** The layer that holds the name pill of every player. */
     public usernameDomLayer!: UsernameDomLayer;
-    private areaUsersInside: AreaUsersInside | undefined;
+    private areaLiveState: AreaLiveState | undefined;
     private playersEventDispatcher = new IframeEventDispatcher();
     private playersMovementEventDispatcher = new IframeEventDispatcher();
     private remotePlayersRepository = new RemotePlayersRepository();
@@ -1339,9 +1339,9 @@ export class GameScene extends DirtyScene {
         } else {
             //if the exit points to the current map, we simply teleport the user back to the startLayer
             this.startPositionCalculator.initStartXAndStartY(urlManager.getStartPositionNameFromUrl());
-            // A start point inside a full room puts the player just outside it (#1621).
+            // A start point inside a full or locked room puts the player just outside it.
             const startSpot =
-                this.findSpotOutsideFullRooms(this.startPositionCalculator.startPosition) ??
+                this.findSpotOutsideClosedRooms(this.startPositionCalculator.startPosition) ??
                 this.startPositionCalculator.startPosition;
             this.CurrentPlayer.x = startSpot.x;
             this.CurrentPlayer.y = startSpot.y;
@@ -1428,7 +1428,7 @@ export class GameScene extends DirtyScene {
         this.connection?.closeConnection();
         this.outlineManager?.clear();
         this.gameMapFrontWrapper?.areasManager?.destroy();
-        this.areaUsersInside?.destroy();
+        this.areaLiveState?.destroy();
         this.usernameDomLayer?.destroy();
         this.userInputManager?.destroy();
         this.isLiveStreamingUnsubscriber?.();
@@ -2029,25 +2029,27 @@ export class GameScene extends DirtyScene {
         this.gameMapFrontWrapper.initializeAreaManager(
             userConnectedTags,
             userCanEdit,
-            this.areaUsersInside && {
-                usersInside: this.areaUsersInside,
-                // The Owner and Admins walk into full rooms (#1621).
-                canPassFullRooms: this.connection.hasPermission(Permission.KICK_FROM_ROOM),
+            this.areaLiveState && {
+                liveState: this.areaLiveState,
+                // The Owner and Admins walk into full rooms (#1621) and unlock locked ones from outside (#1622).
+                managesRooms: this.connection.hasPermission(Permission.KICK_FROM_ROOM),
+                isLogged: localUserStore.isLogged(),
+                setLocked: (areaId, propertyId, locked) => this.connection?.emitSetAreaLock(areaId, propertyId, locked),
             }
         );
-        // Arrived (or back after a drop) inside a room that others filled: step just outside it.
-        const spot = this.findSpotOutsideFullRooms(this.CurrentPlayer, true);
+        // Arrived (or back after a drop) inside a room that others filled or locked: step just outside it.
+        const spot = this.findSpotOutsideClosedRooms(this.CurrentPlayer, true);
         if (spot !== undefined && (spot.x !== this.CurrentPlayer.x || spot.y !== this.CurrentPlayer.y)) {
             this.CurrentPlayer.teleportTo(spot.x, spot.y);
         }
     }
 
     /**
-     * Where a player arriving at this point should stand so they are not inside a full room they cannot enter
-     * (#1621): the point itself, or the closest spot outside the room. Undefined when there is no such spot. `joining`
-     * is for a player who has just joined the map at this point (see AreasManager.getFullAreaForArrivalAt).
+     * Where a player arriving at this point should stand so they are not inside a full or locked room they cannot
+     * enter: the point itself, or the closest spot outside the room. Undefined when there is no such spot. `joining`
+     * is for a player who has just joined the map at this point (see AreasManager.getClosedAreaForArrivalAt).
      */
-    private findSpotOutsideFullRooms(
+    private findSpotOutsideClosedRooms(
         position: { x: number; y: number },
         joining = false
     ): { x: number; y: number } | undefined {
@@ -2192,8 +2194,8 @@ export class GameScene extends DirtyScene {
                 this.connection = onConnect.connection;
                 // How many people are inside each room with "Max people" (#1621): listened to from the start, so no
                 // count is missed before the areas are drawn.
-                this.areaUsersInside?.destroy();
-                this.areaUsersInside = new AreaUsersInside(
+                this.areaLiveState?.destroy();
+                this.areaLiveState = new AreaLiveState(
                     onConnect.room.areaPropertyVariables,
                     onConnect.connection.areaPropertyVariableMessageStream
                 );
@@ -3718,11 +3720,11 @@ export class GameScene extends DirtyScene {
         });
 
         iframeListener.registerAnswerer("teleportPlayerTo", (message) => {
-            // A script cannot put the player in a full room either (#1621): the room says it is full instead.
+            // A script cannot put the player in a full or locked room either: the room says so instead.
             const areasManager = this.gameMapFrontWrapper.areasManager;
-            const fullArea = areasManager?.getFullAreaForArrivalAt(message.x, message.y);
-            if (fullArea !== undefined) {
-                areasManager?.getAreaById(fullArea.id)?.showFullMessage();
+            const closedArea = areasManager?.getClosedAreaForArrivalAt(message.x, message.y);
+            if (closedArea !== undefined) {
+                areasManager?.showClosedMessage(closedArea.id);
                 return;
             }
             this.CurrentPlayer.teleportTo(message.x, message.y);
@@ -3918,11 +3920,11 @@ export class GameScene extends DirtyScene {
     ): Promise<{ x: number; y: number; cancelled: boolean }> {
         const request = { position: { ...position }, speed, tryFindingNearestAvailable };
         this.pendingMoveTo = request;
-        // Walking to a spot (or a person) in a full room the player cannot enter (#1621): they walk to the closest
-        // spot outside it, and the room says it is full once they get there.
-        const fullArea = this.gameMapFrontWrapper.areasManager?.getFullAreaForArrivalAt(position.x, position.y);
-        if (fullArea !== undefined) {
-            const spot = this.findSpotOutsideFullRooms(position);
+        // Walking to a spot (or a person) in a full or locked room the player cannot enter: they walk to the closest
+        // spot outside it, and the room says why once they get there.
+        const closedArea = this.gameMapFrontWrapper.areasManager?.getClosedAreaForArrivalAt(position.x, position.y);
+        if (closedArea !== undefined) {
+            const spot = this.findSpotOutsideClosedRooms(position);
             if (spot !== undefined) {
                 request.position = spot;
             }
@@ -3945,12 +3947,12 @@ export class GameScene extends DirtyScene {
             // it steps back to it and faces backwards for a frame (rapid clicks flash the Woka the wrong way).
             if (path.length > 1) path.shift();
             const walk = this.CurrentPlayer.setPathToFollow(path, speed ?? this.CurrentPlayer.walkingSpeed);
-            if (fullArea === undefined) {
+            if (closedArea === undefined) {
                 return walk;
             }
             return walk.then((result) => {
                 if (!result.cancelled) {
-                    this.gameMapFrontWrapper.areasManager?.getAreaById(fullArea.id)?.showFullMessage();
+                    this.gameMapFrontWrapper.areasManager?.showClosedMessage(closedArea.id);
                 }
                 return result;
             });

@@ -1,7 +1,7 @@
 import path from "path";
 import * as Sentry from "@sentry/node";
 import type { AreaData, WAMFileFormat } from "@workadventure/map-editor";
-import { GameMapProperties, WAMSettingsUtils } from "@workadventure/map-editor";
+import { AREA_LOCK_KEY, GameMapProperties, WAMSettingsUtils } from "@workadventure/map-editor";
 import { LocalUrlError } from "@workadventure/map-editor/src/LocalUrlError";
 import { mapFetcher } from "@workadventure/map-editor/src/MapFetcher";
 import type {
@@ -14,6 +14,7 @@ import type {
     MapJitsiData,
     MapThirdPartyData,
     ServerToClientMessage,
+    SetAreaPropertyVariableMessage,
     SetPlayerDetailsMessage,
     SubToPusherRoomMessage,
     MegaphoneSettings,
@@ -354,11 +355,22 @@ export class GameRoom implements BrothersFinder {
     }
 
     /**
-     * Whether two players may share a bubble: not when one is inside a full room and the other outside it, so nobody
-     * talks into a full room from its edge.
+     * Whether two players may share a bubble: not when one is inside a full or locked room and the other outside it,
+     * so nobody talks into it from its edge.
      */
     public canMeet(user1: User, user2: User): boolean {
-        return !this.areaOccupancy.separatesFullArea(user1.getPosition(), user2.getPosition());
+        return !this.areaOccupancy.separatesClosedArea(user1.getPosition(), user2.getPosition());
+    }
+
+    /**
+     * A player asks to change the live state of an area setting: lock or unlock a lockable room (#1622). Who may is
+     * checked by AreaOccupancy; anything else is ignored.
+     */
+    public setAreaPropertyVariable(user: User, message: SetAreaPropertyVariableMessage): void {
+        if (message.key !== AREA_LOCK_KEY || (message.value !== "true" && message.value !== "false")) {
+            return;
+        }
+        this.areaOccupancy.setLocked(user, message.areaId, message.propertyId, message.value === "true");
     }
 
     private canJoinGroup(user: User, group: Group): boolean {

@@ -11,6 +11,8 @@ function lounge(properties: Property[]): AreaData {
 }
 const maxPeople = (maxUsers: number | null, disabled?: boolean): Property =>
     ({ id: "max", type: "maxUsersInAreaPropertyData", maxUsers, disabled } as Property);
+const lockable = (allowedTags: string[] = []): Property =>
+    ({ id: "lock", type: "lockableAreaPropertyData", allowedTags } as Property);
 
 let nextId = 1;
 function player(x: number, y: number, uuid = `user-${nextId}`) {
@@ -19,6 +21,8 @@ function player(x: number, y: number, uuid = `user-${nextId}`) {
         id: nextId++,
         uuid,
         tags: [] as string[],
+        isLogged: true,
+        permissions: 0,
         getPosition: () => position,
         moveTo(newX: number, newY: number) {
             position.x = newX;
@@ -116,12 +120,94 @@ describe("AreaOccupancy", () => {
         const outside = player(50, 120);
         const alsoOutside = player(60, 120);
         counts.userMoved(inside);
-        expect(counts.separatesFullArea(inside.getPosition(), outside.getPosition())).toBe(true);
-        expect(counts.separatesFullArea(outside.getPosition(), alsoOutside.getPosition())).toBe(false);
+        expect(counts.separatesClosedArea(inside.getPosition(), outside.getPosition())).toBe(true);
+        expect(counts.separatesClosedArea(outside.getPosition(), alsoOutside.getPosition())).toBe(false);
 
         // Not full any more: the edge is open again
         inside.moveTo(...OUTSIDE);
         counts.userMoved(inside);
-        expect(counts.separatesFullArea(INSIDE_POSITION, outside.getPosition())).toBe(false);
+        expect(counts.separatesClosedArea(INSIDE_POSITION, outside.getPosition())).toBe(false);
+    });
+
+    describe("a lockable room (#1622)", () => {
+        const lockMessages = (sent: AreaPropertyVariableMessage[]) =>
+            sent.filter((message) => message.key === "lock").map((message) => message.value);
+
+        it("is locked by someone signed in inside it, and opens by itself when the last person leaves", () => {
+            const { counts, sent } = occupancy();
+            counts.setAreas([lounge([lockable()])], []);
+            expect(lockMessages(sent)).toEqual(["false"]);
+
+            const sara = player(...INSIDE);
+            const omar = player(...INSIDE);
+            counts.userMoved(sara);
+            counts.userMoved(omar);
+            expect(counts.setLocked(sara, "lounge", "lock", true)).toBe(true);
+            expect(lockMessages(sent)).toEqual(["false", "true"]);
+
+            sara.moveTo(...OUTSIDE);
+            counts.userMoved(sara);
+            expect(lockMessages(sent)).toEqual(["false", "true"]);
+            counts.userLeft(omar);
+            expect(lockMessages(sent)).toEqual(["false", "true", "false"]);
+        });
+
+        it("cannot be locked from outside, by a guest, by a bot, or without one of the room's tags", () => {
+            const { counts } = occupancy();
+            counts.setAreas([lounge([lockable(["member"])])], []);
+            const outside = { ...player(...OUTSIDE), tags: ["member"] };
+            const guest = { ...player(...INSIDE), tags: ["member"], isLogged: false };
+            const bot = { ...player(...INSIDE), tags: ["member", "bot"] };
+            const visitor = player(...INSIDE);
+            for (const someone of [outside, guest, bot, visitor]) counts.userMoved(someone);
+
+            expect(counts.setLocked(outside, "lounge", "lock", true)).toBe(false);
+            expect(counts.setLocked(guest, "lounge", "lock", true)).toBe(false);
+            expect(counts.setLocked(bot, "lounge", "lock", true)).toBe(false);
+            expect(counts.setLocked(visitor, "lounge", "lock", true)).toBe(false);
+
+            const member = { ...player(...INSIDE), tags: ["member"] };
+            counts.userMoved(member);
+            expect(counts.setLocked(member, "lounge", "wrong-property", true)).toBe(false);
+            expect(counts.setLocked(member, "lounge", "lock", true)).toBe(true);
+        });
+
+        it("lets the Owner and Admins unlock it from outside, but not lock it from there", () => {
+            const { counts } = occupancy();
+            counts.setAreas([lounge([lockable(["member"])])], []);
+            const member = { ...player(...INSIDE), tags: ["member"] };
+            const admin = { ...player(...OUTSIDE), permissions: 16383 };
+            counts.userMoved(member);
+            counts.userMoved(admin);
+
+            expect(counts.setLocked(admin, "lounge", "lock", true)).toBe(false);
+            expect(counts.setLocked(member, "lounge", "lock", true)).toBe(true);
+            expect(counts.setLocked(admin, "lounge", "lock", false)).toBe(true);
+        });
+
+        it("keeps people inside and outside a locked room from meeting across its edge", () => {
+            const { counts } = occupancy();
+            counts.setAreas([lounge([lockable()])], []);
+            const inside = player(...INSIDE);
+            counts.userMoved(inside);
+            expect(counts.separatesClosedArea(INSIDE_POSITION, { x: 50, y: 120 })).toBe(false);
+            counts.setLocked(inside, "lounge", "lock", true);
+            expect(counts.separatesClosedArea(INSIDE_POSITION, { x: 50, y: 120 })).toBe(true);
+        });
+
+        it("stays locked through an edit of its area while someone is inside, and tells a newcomer", () => {
+            const { counts, sent } = occupancy();
+            const lina = player(...INSIDE);
+            counts.setAreas([lounge([lockable(), maxPeople(3)])], [lina]);
+            counts.setLocked(lina, "lounge", "lock", true);
+            const before = sent.length;
+
+            counts.setAreas([{ ...lounge([lockable(), maxPeople(4)]), name: "Big lounge" }], [lina]);
+            expect(sent).toHaveLength(before);
+            expect(counts.getVariables()).toEqual([
+                { areaId: "lounge", propertyId: "max", key: "usersInside", value: "1" },
+                { areaId: "lounge", propertyId: "lock", key: "lock", value: "true" },
+            ]);
+        });
     });
 });

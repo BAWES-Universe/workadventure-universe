@@ -7,13 +7,16 @@ import LL from "../../../i18n/i18n-svelte";
 import { gameManager } from "../Game/GameManager";
 
 /**
- * Why the player cannot walk into an area: "Who can enter" keeps them out, or the room is full (#1621). "Who can
- * enter" wins: a room the player may not enter says so, full or not.
+ * Why the player cannot walk into an area: "Who can enter" keeps them out, the room is locked (#1622) or it is full
+ * (#1621). In that order: a room the player may not enter says so, and a locked room says Locked, full or not.
  */
-export type AreaBlockReason = "noAccess" | "full";
+export type AreaBlockReason = "noAccess" | "locked" | "full";
 
-/** How long the "is full" pill stays over the player after they bump into a full room. */
-const FULL_MESSAGE_DURATION = 3000;
+/** How long the "is full" or "is locked" pill stays over the player after they bump into the room. */
+const CLOSED_MESSAGE_DURATION = 3000;
+/** How long the Owner or an Admin is offered to unlock a locked room they bumped into. */
+const UNLOCK_HINT_DURATION = 6000;
+const UNLOCK_HINT_ID = "area-unlock";
 
 export class Area extends Phaser.GameObjects.Rectangle {
     private areaCollider: Phaser.Physics.Arcade.Collider | undefined = undefined;
@@ -22,6 +25,8 @@ export class Area extends Phaser.GameObjects.Rectangle {
     private highlightTimeOut: undefined | NodeJS.Timeout = undefined;
     private collideTimeOut: undefined | NodeJS.Timeout = undefined;
     private blockReason: AreaBlockReason | undefined;
+    private unlockAction: (() => void) | undefined;
+    private unlockHintCallback: (() => void) | undefined;
 
     constructor(
         public readonly scene: GameScene,
@@ -51,6 +56,14 @@ export class Area extends Phaser.GameObjects.Rectangle {
 
     public getBlockReason(): AreaBlockReason | undefined {
         return this.blockReason;
+    }
+
+    /** What "Press Space to unlock" does, for the Owner and Admins at the edge of a locked room. */
+    public setUnlockAction(unlockAction: (() => void) | undefined): void {
+        this.unlockAction = unlockAction;
+        if (unlockAction === undefined) {
+            this.removeUnlockHint();
+        }
     }
 
     /**
@@ -90,6 +103,7 @@ export class Area extends Phaser.GameObjects.Rectangle {
     }
 
     destroy(fromScene?: boolean) {
+        this.removeUnlockHint();
         super.destroy(fromScene);
 
         if (this.highlightTimeOut !== undefined) {
@@ -119,25 +133,58 @@ export class Area extends Phaser.GameObjects.Rectangle {
     }
 
     /**
-     * The room flashes and a pill over the player says it is full (#1621): when they bump into it, or when a teleport
-     * would have put them inside.
+     * The room flashes and a pill over the player says it is locked or full: when they bump into it, or when a teleport
+     * or "walk to" would have put them inside. The Owner and Admins at a locked room are offered to unlock it.
      */
-    public showFullMessage(): void {
+    public showClosedMessage(reason: "locked" | "full" = this.blockReason === "locked" ? "locked" : "full"): void {
         this.highLightArea();
+        const area = get(LL).area;
         // "The Lounge is full right now": a room named "The Lounge" does not get a second "The".
         const name = this.areaData.name.trim().replace(/^the\s+/i, "");
-        this.scene.CurrentPlayer.playText(
-            "area-full",
-            name !== "" ? get(LL).area.full({ name }) : get(LL).area.fullUnnamed(),
-            FULL_MESSAGE_DURATION
-        );
+        if (reason === "locked" && this.unlockAction !== undefined) {
+            this.showUnlockHint(name !== "" ? area.unlockHint({ name }) : area.unlockHintUnnamed());
+            return;
+        }
+        const text =
+            reason === "locked"
+                ? name !== ""
+                    ? area.locked({ name })
+                    : area.lockedUnnamed()
+                : name !== ""
+                ? area.full({ name })
+                : area.fullUnnamed();
+        this.scene.CurrentPlayer.playText("area-closed", text, CLOSED_MESSAGE_DURATION);
+    }
+
+    private showUnlockHint(text: string): void {
+        this.removeUnlockHint();
+        const callback = () => {
+            this.removeUnlockHint();
+            this.unlockAction?.();
+        };
+        this.unlockHintCallback = callback;
+        this.scene.userInputManager?.addSpaceEventListener(callback);
+        this.scene.CurrentPlayer.playText(UNLOCK_HINT_ID, text, UNLOCK_HINT_DURATION, callback);
+        // The hint goes by itself: Space stops unlocking with it.
+        setTimeout(() => {
+            if (this.unlockHintCallback === callback) this.removeUnlockHint();
+        }, UNLOCK_HINT_DURATION);
+    }
+
+    private removeUnlockHint(): void {
+        if (this.unlockHintCallback === undefined) {
+            return;
+        }
+        this.scene.userInputManager?.removeSpaceEventListener(this.unlockHintCallback);
+        this.unlockHintCallback = undefined;
+        this.scene.CurrentPlayer?.destroyText(UNLOCK_HINT_ID);
     }
 
     private onCollideAction() {
         if (!this.userHasCollideWithArea) {
             this.userHasCollideWithArea = true;
-            if (this.blockReason === "full") {
-                this.showFullMessage();
+            if (this.blockReason === "full" || this.blockReason === "locked") {
+                this.showClosedMessage(this.blockReason);
             } else {
                 this.highLightArea();
                 warningMessageStore.addWarningMessage(get(LL).area.noAccess());
