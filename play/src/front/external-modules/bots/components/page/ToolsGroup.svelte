@@ -108,7 +108,7 @@
 </script>
 
 <PageGroup id="tools" icon={IconTool} title={page.tools.title()} {brief} {open} {onToggle}>
-    <BotMcpServersEditor botId={bot.id} onServers={(loaded) => (servers = loaded)} />
+    <BotMcpServersEditor botId={bot.id} botName={bot.name} onServers={(loaded) => (servers = loaded)} />
     <PageField title={page.tools.patience()} hint={page.tools.patienceHint()}>
         <PageChips
             label={page.tools.patience()}

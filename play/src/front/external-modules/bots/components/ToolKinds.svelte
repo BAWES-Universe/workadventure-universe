@@ -17,6 +17,8 @@
     export let reviewRequired = true;
     /** A server from before kinds existed: it keeps working as it did in text until someone confirms its tools. */
     export let legacy = false;
+    /** The bot's name: everyone who can chat with it can use this server's tools once they are confirmed. */
+    export let botName = "this bot";
 
     $: needsReview = reviewRequired && tools.some((tool) => !tool.reviewedBy);
 
@@ -56,6 +58,11 @@
     <div>
         <div class="tk-t">What its tools do</div>
         <div class="tk-m">Each tool sits under what it does. Tap a tool to move it.</div>
+        {#if !needsReview && !legacy}
+            <div class="tk-m" data-testid="bot-tool-audience">
+                Everyone who can chat with {botName} can use these tools through {serverName}.
+            </div>
+        {/if}
     </div>
     {#if needsReview}
         <div class="tk-review" data-testid="bot-tool-review">
@@ -66,7 +73,8 @@
                     chat with the bot, and voice can't use them. Confirm what each tool does to use the settings below.
                 {:else}
                     Below is what each tool seems to do. Until you confirm it, only people who manage this bot can
-                    use these tools, and every use asks first.
+                    use these tools, and every use asks first. Once you confirm, everyone who can chat with
+                    {botName} can use them through {serverName}.
                 {/if}
             </div>
             <button type="button" class="tk-accept" on:click={acceptAll}>Confirm all tools</button>
