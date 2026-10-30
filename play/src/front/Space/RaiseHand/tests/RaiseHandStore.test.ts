@@ -4,6 +4,7 @@ import { Subject } from "rxjs";
 import type { SpaceInterface, SpaceUserExtended, UpdateSpaceUserEvent } from "../../SpaceInterface";
 import {
     canRaiseHandStore,
+    clearHandsOffHere,
     lowerHand,
     myHandPositionStore,
     myHandRaisedStore,
@@ -86,6 +87,16 @@ describe("raise hand stores", () => {
         setHandsOffHere("audience", false);
         expect(get(canRaiseHandStore)).toBe(false);
         setHandsOffHere("meeting-room", false);
+        expect(get(canRaiseHandStore)).toBe(true);
+        leave();
+    });
+
+    it("brings the hand back in the next map when the map closes inside a place that switched it off", () => {
+        const leave = registerConversationSpace(fakeSpace([]).space);
+        setHandsOffHere("audience", true);
+        expect(get(canRaiseHandStore)).toBe(false);
+        // The scene closes without running the area's leave handler
+        clearHandsOffHere();
         expect(get(canRaiseHandStore)).toBe(true);
         leave();
     });

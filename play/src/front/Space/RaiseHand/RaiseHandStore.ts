@@ -45,6 +45,11 @@ export function setHandsOffHere(propertyId: string, off: boolean): void {
     }
 }
 
+/** Forgets every such place, for a scene that closes: area-leave handlers do not run then. */
+export function clearHandsOffHere(): void {
+    handsOffHereStore.set(new Set());
+}
+
 /** True while we are in a conversation where a hand can be raised, whatever the place we stand in says. */
 const conversationAllowsHandStore: Readable<boolean> = derived(
     conversationSpacesStore,
