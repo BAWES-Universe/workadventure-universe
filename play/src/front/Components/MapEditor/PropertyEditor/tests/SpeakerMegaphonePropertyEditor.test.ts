@@ -143,7 +143,7 @@ describe("the Stage name field", () => {
         expect(seeSwitch()).toBe("false");
     });
 
-    it("turns \"See the audience's cameras\" on and off from its switch", async () => {
+    it('turns "See the audience\'s cameras" on and off from its switch', async () => {
         const input = () => target.querySelector<HTMLInputElement>("input#seeAttendees");
         const seeSwitch = () => target.querySelector('[data-testid="seeAttendees"]')?.getAttribute("aria-checked");
         input()?.click();
