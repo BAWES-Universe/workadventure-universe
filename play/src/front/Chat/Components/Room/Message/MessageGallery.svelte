@@ -428,7 +428,7 @@
 
             <!-- Audio files: the chat's own audio player, each with its title and Download -->
             {#each audioItems as item (item.url)}
-                <MessageAudioFile content={audioContent(item)} />
+                <MessageAudioFile content={audioContent(item)} galleryPosition={allItems.indexOf(item)} />
             {/each}
         </div>
     {/if}

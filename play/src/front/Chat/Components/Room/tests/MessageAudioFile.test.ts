@@ -20,11 +20,12 @@ vi.mock("../../../../../i18n/i18n-svelte", async () => {
     return { default: readable({ chat: { voiceNote, audioFile } }) };
 });
 
-import type { ChatMessageContent } from "../../../Connection/ChatConnection";
+import type { ChatMessage, ChatMessageContent } from "../../../Connection/ChatConnection";
 import MessageAudioFile from "../Message/MessageAudioFile.svelte";
 import { MESSAGE_SENDER_CONTEXT } from "../Message/messageSenderContext";
 import { saveMessageFiles } from "../MessageActions/availableActions";
 import { openSongInPlayer } from "../Message/openSongInPlayer";
+import { sharedItemsOf } from "../Details/SharedItems";
 
 function content(partial: Partial<ChatMessageContent>): ChatMessageContent {
     return { body: "", url: undefined, urls: undefined, filename: undefined, fileNames: undefined, ...partial };
@@ -108,7 +109,12 @@ describe("an audio file in chat", () => {
 
     const visibleText = () => (target.textContent ?? "").replace(/\s+/g, " ").trim();
 
-    async function show(filename: string, extra: Partial<ChatMessageContent> = {}, messageId?: string) {
+    async function show(
+        filename: string,
+        extra: Partial<ChatMessageContent> = {},
+        messageId?: string,
+        galleryPosition?: number
+    ) {
         const holder = document.createElement("div");
         target.appendChild(holder);
         shown.push(
@@ -118,6 +124,7 @@ describe("an audio file in chat", () => {
                     content: readable(
                         content({ url: "blob:https://play.test/" + filename, filename, body: filename, ...extra })
                     ),
+                    galleryPosition,
                 },
                 context: new Map([[MESSAGE_SENDER_CONTEXT, { name: "Imagine [Music]", isMine: false, messageId }]]),
             })
@@ -198,6 +205,31 @@ describe("an audio file in chat", () => {
         });
         expect(pause.mock.contexts).toContain(audio);
         expect(holder.querySelector("[data-testid=audioOpenInPlayer]")?.textContent?.trim()).toBe("Open in player");
+    });
+
+    it("opens a file of a gallery message under the key the chat's Files list it by", async () => {
+        vi.mocked(openSongInPlayer).mockClear();
+        const gallery = {
+            id: "$gallery",
+            type: "gallery",
+            sharedFile: undefined,
+        } as unknown as ChatMessage;
+        const files = [
+            { url: "blob:https://play.test/cover.png", name: "cover.png" },
+            { url: "blob:https://play.test/Desert Drive.mp3", name: "Desert Drive.mp3" },
+        ];
+        const listed = sharedItemsOf(
+            [gallery],
+            () => undefined,
+            () => false,
+            () => files
+        ).files.find((file) => file.name === "Desert Drive.mp3");
+        const holder = await show("Desert Drive.mp3", {}, "$gallery", 1);
+
+        (holder.querySelector("[data-testid=audioOpenInPlayer]") as HTMLButtonElement).click();
+
+        expect(listed?.key).toBeDefined();
+        expect(vi.mocked(openSongInPlayer).mock.calls[0]?.[0].key).toBe(listed?.key);
     });
 
     it("has no player button for a voice note, or for a file that couldn't be fetched", async () => {
