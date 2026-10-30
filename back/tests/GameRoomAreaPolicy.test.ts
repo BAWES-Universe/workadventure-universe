@@ -127,8 +127,14 @@ describe("GameRoom area policy when the room's areas cannot be read", () => {
 
         const editor = await room.getAreaSpacePolicyFor({ ...player, canEdit: true });
         const bot = await room.getAreaSpacePolicyFor({ tags: ["bot"], uuid: "bot-1", canEdit: false });
-        expect(editor).toEqual({ refusedAreaSpaces: [], listenOnlyAreaSpaces: [], areaSpacesUnknown: false });
-        expect(bot).toEqual({ refusedAreaSpaces: [], listenOnlyAreaSpaces: [], areaSpacesUnknown: false });
+        const nothing = {
+            refusedAreaSpaces: [],
+            listenOnlyAreaSpaces: [],
+            attendeeCameraAreaSpaces: [],
+            areaSpacesUnknown: false,
+        };
+        expect(editor).toEqual(nothing);
+        expect(bot).toEqual(nothing);
     });
 
     it("asks again shortly after saying it does not know, and tells the users once it can read the map", async () => {
@@ -148,5 +154,24 @@ describe("GameRoom area policy when the room's areas cannot be read", () => {
         const sent = JSON.stringify(written);
         expect(sent).toContain(board);
         expect(sent).toContain('"areaSpacesUnknown":false');
+    });
+
+    it("tells everyone, editors too, which Stages see the audience's cameras (#1623)", async () => {
+        const wam = wamWith(false);
+        (wam.areas as unknown as { properties: unknown[] }[])[0].properties.push({
+            id: "sp",
+            type: "speakerMegaphone",
+            name: "Keynote",
+            chatEnabled: false,
+            seeAttendees: true,
+        });
+        fetchWam.mockResolvedValue(wam);
+        const room = await makeRoom();
+
+        const keynote = [areaSpaceName("Keynote", ROOM)];
+        expect((await room.getAreaSpacePolicyFor(player)).attendeeCameraAreaSpaces).toEqual(keynote);
+        expect((await room.getAreaSpacePolicyFor({ ...player, canEdit: true })).attendeeCameraAreaSpaces).toEqual(
+            keynote
+        );
     });
 });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AreaData } from "@workadventure/map-editor";
 import { areaSpaceName } from "@workadventure/shared-utils/src/Space/areaSpaceName";
-import { listenOnlyAreaSpaces, refusedAreaSpaces } from "../src/Services/AreaSpaceRights";
+import { attendeeCameraAreaSpaces, listenOnlyAreaSpaces, refusedAreaSpaces } from "../src/Services/AreaSpaceRights";
 
 const ROOM = "http://play.example.com/@/acme/office/lobby";
 
@@ -201,5 +201,27 @@ describe("listenOnlyAreaSpaces", () => {
         expect(listenOnlyAreaSpaces(map, ROOM, { ...player, tags: ["admin"], permissions: 0 })).toEqual([
             room("Keynote"),
         ]);
+    });
+});
+
+describe("attendeeCameraAreaSpaces (#1623)", () => {
+    const seeing = (name: string, extra: Record<string, unknown> = {}): Property =>
+        ({ ...stage(name), id: `sp-see-${name}`, seeAttendees: true, ...extra } as Property);
+
+    it("lists only the Stages that see the audience's cameras", () => {
+        const map = wam(area("keynote", [seeing("Keynote")]), area("panel", [stage("Panel")]));
+        expect(attendeeCameraAreaSpaces(map, ROOM)).toEqual([room("Keynote")]);
+    });
+
+    it("leaves out a Stage that is switched off in the editor, or that has no name yet", () => {
+        const map = wam(
+            area("off", [seeing("Off", { disabled: true })]),
+            area("unnamed", [{ ...seeing("x"), name: undefined } as unknown as Property])
+        );
+        expect(attendeeCameraAreaSpaces(map, ROOM)).toEqual([]);
+    });
+
+    it("lists nothing when the map is not known", () => {
+        expect(attendeeCameraAreaSpaces(undefined, ROOM)).toEqual([]);
     });
 });

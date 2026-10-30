@@ -80,6 +80,32 @@ export function listenOnlyAreaSpaces(
     return [...closedToSpeak].filter((name) => !openToSpeak.has(name));
 }
 
+/**
+ * The stages of a room whose speakers see the audience's cameras ("See the audience's cameras" on, #1623), by the
+ * names the front joins them with. The browser only shows its camera in the Audience of such a Stage; this gives the
+ * server the same rule, so a crafted message cannot show a camera to the speakers of a Stage that has it off.
+ */
+export function attendeeCameraAreaSpaces(wam: WamLike | undefined, roomUrl: string): string[] {
+    if (wam === undefined) {
+        return [];
+    }
+    const areas = Array.isArray(wam.areas) ? wam.areas : Object.values(wam.areas);
+    const names = new Set<string>();
+    for (const area of areas) {
+        for (const property of area.properties) {
+            if (
+                property.type === "speakerMegaphone" &&
+                isAreaPropertyActive(property) &&
+                property.name !== undefined &&
+                property.seeAttendees === true
+            ) {
+                names.add(areaSpaceName(property.name, roomUrl));
+            }
+        }
+    }
+    return [...names];
+}
+
 function canEditMaps(user: { tags: string[]; permissions?: number }): boolean {
     return hasPermission(user.permissions ?? permissionsFrom(undefined, user.tags), Permission.EDIT_MAPS);
 }

@@ -13,7 +13,7 @@ import { SpaceToBackForwarder } from "./SpaceToBackForwarder";
 import type { SpaceToFrontDispatcherInterface } from "./SpaceToFrontDispatcher";
 import { SpaceToFrontDispatcher } from "./SpaceToFrontDispatcher";
 import { Query } from "./SpaceQuery";
-import { canGoLiveIn, forgetSpeakInvitation } from "./MegaphoneRights";
+import { canGoLiveIn, canShowCameraToSpeakersIn, forgetSpeakInvitation } from "./MegaphoneRights";
 import type { SpaceConnectionInterface } from "./SpaceConnection";
 
 export type SpaceUserExtended = {
@@ -373,7 +373,10 @@ export class Space implements SpaceForSpaceConnectionInterface {
                 CLIENT_UPDATABLE_SPACE_USER_FIELDS.has(field) &&
                 (field !== "megaphoneState" ||
                     !updateSpaceUserMessage.user?.megaphoneState ||
-                    canGoLiveIn(this.localName, client.getUserData()))
+                    canGoLiveIn(this.localName, client.getUserData())) &&
+                (field !== "attendeeCamera" ||
+                    !updateSpaceUserMessage.user?.attendeeCamera ||
+                    canShowCameraToSpeakersIn(this.localName, client.getUserData()))
         );
         if (changedFields.length !== updateSpaceUserMessage.updateMask.length) {
             const message = `[Space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage] User ${

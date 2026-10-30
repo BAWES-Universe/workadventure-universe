@@ -12,7 +12,8 @@
     export let property: SpeakerMegaphonePropertyData;
 
     // Off when missing: the speakers only see each other (#1623).
-    let seeAttendees = property.seeAttendees ?? false;
+    let seeAttendees: boolean;
+    $: seeAttendees = property.seeAttendees ?? false;
 
     const dispatch = createEventDispatcher<{
         change: undefined;

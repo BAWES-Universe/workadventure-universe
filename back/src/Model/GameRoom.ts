@@ -55,7 +55,12 @@ import { adminApi } from "../Services/AdminApi";
 import { MapLoadingError } from "../Services/MapLoadingError";
 import { getMapStorageClient } from "../Services/MapStorageClient";
 import { emitError, emitErrorOnRoomSocket } from "../Services/MessageHelpers";
-import { bypassesAreaSpaceRights, listenOnlyAreaSpaces, refusedAreaSpaces } from "../Services/AreaSpaceRights";
+import {
+    attendeeCameraAreaSpaces,
+    bypassesAreaSpaceRights,
+    listenOnlyAreaSpaces,
+    refusedAreaSpaces,
+} from "../Services/AreaSpaceRights";
 import { ModeratorTagFinder } from "../Services/ModeratorTagFinder";
 import { VariableError } from "../Services/VariableError";
 import { VariablesManager } from "../Services/VariablesManager";
@@ -1355,13 +1360,15 @@ export class GameRoom implements BrothersFinder {
             // Filled in from the room's areas by whoever sends it (see getAreaSpacePolicyFor)
             refusedAreaSpaces: [],
             listenOnlyAreaSpaces: [],
+            attendeeCameraAreaSpaces: [],
             areaSpacesUnknown: false,
         };
     }
 
     /**
      * Who may join which meeting room and speak on which stage, for this user (see refusedAreaSpaces and
-     * listenOnlyAreaSpaces). Asked from the room's saved map, which is read again after every area change.
+     * listenOnlyAreaSpaces), and on which stages the audience may show their camera to the speakers
+     * (attendeeCameraAreaSpaces). Asked from the room's saved map, which is read again after every area change.
      *
      * When the map cannot be read, the rules from the last time it could be read keep applying, so a hiccup never
      * turns a closed area into an open one. When it has never been read, nothing is known and the answer says so:
@@ -1369,16 +1376,18 @@ export class GameRoom implements BrothersFinder {
      */
     public async getAreaSpacePolicyFor(
         user: Pick<User, "tags" | "uuid" | "canEdit"> & Partial<Pick<User, "permissions">>
-    ): Promise<{ refusedAreaSpaces: string[]; listenOnlyAreaSpaces: string[]; areaSpacesUnknown: boolean }> {
+    ): Promise<{
+        refusedAreaSpaces: string[];
+        listenOnlyAreaSpaces: string[];
+        attendeeCameraAreaSpaces: string[];
+        areaSpacesUnknown: boolean;
+    }> {
         const compute = (wam: WAMFileFormat | undefined) => ({
             refusedAreaSpaces: refusedAreaSpaces(wam, this._roomUrl, user),
             listenOnlyAreaSpaces: listenOnlyAreaSpaces(wam, this._roomUrl, user),
+            attendeeCameraAreaSpaces: attendeeCameraAreaSpaces(wam, this._roomUrl),
             areaSpacesUnknown: false,
         });
-        if (bypassesAreaSpaceRights(user)) {
-            // Nothing in the map changes what they may do, so a map that cannot be read changes nothing for them
-            return compute(undefined);
-        }
         try {
             const wam = await this.getWam();
             this.areaPolicyRetries = 0;
@@ -1393,8 +1402,18 @@ export class GameRoom implements BrothersFinder {
                 console.warn(`Could not apply the earlier areas of ${this._roomUrl} either`, e);
             }
         }
+        if (bypassesAreaSpaceRights(user)) {
+            // Nothing in the map changes where they may go, so a map that cannot be read changes nothing for them
+            // (only showing a camera on a Stage waits until the map says which Stages allow it)
+            return compute(undefined);
+        }
         this.scheduleAreaPolicyRetry();
-        return { refusedAreaSpaces: [], listenOnlyAreaSpaces: [], areaSpacesUnknown: true };
+        return {
+            refusedAreaSpaces: [],
+            listenOnlyAreaSpaces: [],
+            attendeeCameraAreaSpaces: [],
+            areaSpacesUnknown: true,
+        };
     }
 
     private areaPolicyRetryTimer: ReturnType<typeof setTimeout> | undefined;
