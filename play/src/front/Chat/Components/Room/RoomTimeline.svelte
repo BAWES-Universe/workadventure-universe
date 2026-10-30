@@ -290,6 +290,13 @@
     // to them, before any page is asked of the server. The oldest message drawn, or undefined once all are.
     let drawnFromId: string | undefined;
     let firstDrawDone = false;
+    // Another stay shown: its own newest messages are drawn first, not every one it holds
+    let drawnForStay: string | undefined = undefined;
+    $: if (shownSession?.id !== drawnForStay) {
+        drawnForStay = shownSession?.id;
+        firstDrawDone = false;
+        drawnFromId = undefined;
+    }
     $: entryIds = timelineEntries.map((entry) => entry.message.id);
     $: if (!firstDrawDone && entryIds.length > 0) {
         firstDrawDone = true;

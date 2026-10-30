@@ -30,6 +30,8 @@ const NOTHING_YET: ChatArtifactsState = {
 export class ArtifactsList implements Readable<ChatArtifactsState> {
     private readonly state = writable<ChatArtifactsState>(NOTHING_YET);
     private reading = 0;
+    /** Where the last read started, so a failed one can be asked again. */
+    private lastOffset = 0;
     readonly subscribe = this.state.subscribe;
 
     constructor(private readonly fetchFrom: (offset: number) => Promise<ChatArtifactPage>) {}
@@ -46,8 +48,14 @@ export class ArtifactsList implements Readable<ChatArtifactsState> {
         return this.read(next);
     }
 
+    /** The read that failed, again. */
+    retry(): Promise<void> {
+        return this.read(this.lastOffset);
+    }
+
     private async read(offset: number): Promise<void> {
         const reading = ++this.reading;
+        this.lastOffset = offset;
         this.state.update((state) => ({ ...state, loading: true, failed: false }));
         try {
             const page = await this.fetchFrom(offset);

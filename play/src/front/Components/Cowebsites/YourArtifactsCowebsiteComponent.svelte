@@ -98,11 +98,7 @@
         {:else if $list.failed}
             <div class="flex flex-col items-center gap-2 py-3 text-sm text-white/60" data-testid="yourArtifactsFailed">
                 {$LL.chat.details.artifactsFailed()}
-                <button
-                    type="button"
-                    class="u-menu-row !m-0 w-full justify-center"
-                    on:click={() => ($list.loaded ? more() : list.refresh())}
-                >
+                <button type="button" class="u-menu-row !m-0 w-full justify-center" on:click={() => list.retry()}>
                     {$LL.chat.artifacts.tryAgain()}
                 </button>
             </div>
