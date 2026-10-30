@@ -10,6 +10,9 @@ export interface KindedTool {
     /** The first line of the tool's own description. */
     description: string;
     kind: ToolKind;
-    /** server: the server labels it. read: worked out from its description. you: someone moved it. */
+    /** Where the group came from, always a suggestion: server: the server labels it. read: from its description.
+     * you: someone moved it. */
     from: "server" | "read" | "you";
+    /** Who reviewed the suggestion or moved the tool. Until someone does, the tool needs review. */
+    reviewedBy?: string;
 }

@@ -25,13 +25,18 @@ export interface BotAsk {
     actsAs?: string;
     /** "Asks every time": deletes and sends out. */
     everyTime?: boolean;
+    /** The tool still needs its maker's review: only people who manage the bot get here, and every use asks. */
+    notReviewed?: boolean;
+    /** Where to look when the bot couldn't confirm the outcome ("Linear" and a link). */
+    checkAt?: { label: string; url: string };
     options: BotAskOption[];
     /** The one person who can answer, and their name for everyone else. */
     asker: string;
     askerName: string;
     expiresAt: number;
-    /** Once answered or gone: which option, or typed, or expired. */
-    answer?: { option?: string; typed?: boolean; expired?: boolean };
+    /** Once answered or gone: which option, or typed, or expired. After an option ran: its result line, or that the
+     * outcome couldn't be confirmed. */
+    answer?: { option?: string; typed?: boolean; expired?: boolean; result?: string; unknown?: boolean };
 }
 
 /** The ask a bot's notice carries, or undefined. */

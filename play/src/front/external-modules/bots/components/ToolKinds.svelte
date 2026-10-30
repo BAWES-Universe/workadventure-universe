@@ -1,6 +1,7 @@
 <script lang="ts">
     // What a server's tools do (prototype): each tool in one of four groups, with where that came from, and one choice
-    // per group: runs right away, asks first, or off. A tool can be moved to another group.
+    // per group: runs right away, asks first, or off. A tool can be moved to another group. A group is only ever a
+    // suggestion until someone who manages the bot reviews it.
     import PageChips from "./page/PageChips.svelte";
     import PageSegment from "./page/PageSegment.svelte";
     import type { KindedTool, ToolKind, ToolRun } from "../toolKindsModel";
@@ -10,6 +11,10 @@
     export let runs: Record<ToolKind, ToolRun>;
     /** A tool shown opened, with its group choices. */
     export let openTool: string | null = null;
+    /** Who is looking, for "Reviewed by" once they accept the groups. */
+    export let viewerName = "you";
+
+    $: needsReview = tools.some((tool) => !tool.reviewedBy);
 
     const KINDS: Array<{ kind: ToolKind; title: string }> = [
         { kind: "look", title: "Looks things up" },
@@ -27,13 +32,19 @@
     }
 
     function fromLine(tool: KindedTool): string {
-        if (tool.from === "server") return `${serverName} labels this tool`;
-        if (tool.from === "you") return "Moved here by you";
-        return "Read from what the tool says it does";
+        if (tool.from === "you") return `Moved here by ${tool.reviewedBy ?? viewerName}`;
+        const suggested = tool.from === "server" ? `Suggested by ${serverName}` : "Suggested from its description";
+        return tool.reviewedBy ? `${suggested} · Reviewed by ${tool.reviewedBy}` : suggested;
     }
 
     function move(tool: KindedTool, kind: ToolKind) {
-        tools = tools.map((one) => (one.name === tool.name ? { ...one, kind, from: "you" } : one));
+        tools = tools.map((one) =>
+            one.name === tool.name ? { ...one, kind, from: "you", reviewedBy: viewerName } : one
+        );
+    }
+
+    function acceptAll() {
+        tools = tools.map((one) => (one.reviewedBy ? one : { ...one, reviewedBy: viewerName }));
     }
 </script>
 
@@ -42,6 +53,16 @@
         <div class="tk-t">What its tools do</div>
         <div class="tk-m">Each tool is in the group that matches what it does. Tap a tool to move it.</div>
     </div>
+    {#if needsReview}
+        <div class="tk-review" data-testid="bot-tool-review">
+            <div class="tk-t">Needs review</div>
+            <div class="tk-m">
+                The groups below are suggestions. Until you review them, only people who manage this bot can use these
+                tools, and every use asks first.
+            </div>
+            <button type="button" class="tk-accept" on:click={acceptAll}>Use these groups</button>
+        </div>
+    {/if}
     {#each KINDS as group (group.kind)}
         {@const inGroup = tools.filter((tool) => tool.kind === group.kind)}
         {#if inGroup.length}
@@ -65,7 +86,9 @@
                             >
                                 <span class="tk-name">{tool.title}</span>
                                 <span class="tk-desc">{tool.description}</span>
-                                <span class="tk-from" class:you={tool.from === "you"}>{fromLine(tool)}</span>
+                                <span class="tk-from" class:you={tool.from === "you"} class:new={!tool.reviewedBy}
+                                    >{fromLine(tool)}</span
+                                >
                             </button>
                             {#if opened}
                                 <div class="tk-move">
@@ -151,6 +174,35 @@
     }
     .tk-from.you {
         color: #c4b5fd;
+    }
+    .tk-from.new {
+        color: #fcd34d;
+    }
+    .tk-review {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 12px;
+        border-radius: 12px;
+        background: rgba(252, 211, 77, 0.08);
+        box-shadow: 0 0 0 1px rgba(252, 211, 77, 0.25);
+    }
+    .tk-accept {
+        align-self: flex-start;
+        min-height: 44px;
+        padding: 0 18px;
+        border: 0;
+        border-radius: 999px;
+        background: linear-gradient(90deg, #8629fc, #4156f6);
+        color: #fff;
+        font: inherit;
+        font-size: 14px;
+        font-weight: 700;
+        cursor: pointer;
+    }
+    .tk-accept:focus-visible {
+        outline: 2px solid #a78bfa;
+        outline-offset: 2px;
     }
     .tk-move {
         display: flex;

@@ -1,6 +1,6 @@
 <script lang="ts">
     import type { BotAsk } from "../../Bots/BotAsk";
-    import { IconCheck, IconClock, IconEye } from "@wa-icons";
+    import { IconAlertTriangle, IconCheck, IconClock, IconEye } from "@wa-icons";
 
     /**
      * A bot's card that waits for one person (prototype): an approval before a tool changes, deletes or sends something,
@@ -9,14 +9,18 @@
     export let ask: BotAsk;
     /** Who is looking. Only the person who asked can answer; everyone else sees who it waits for. */
     export let me: string;
-    /** The bot's name, for the line that says nothing was done. */
+    /** The bot's name, for the line when it couldn't confirm what happened. */
     export let botName: string;
+    /** The time now, so the card can say it closes soon. */
+    export let now = Date.now();
 
     let showAll = false;
 
     $: mine = ask.asker === me;
     $: answered = ask.answer?.option ? ask.options.find((option) => option.id === ask.answer?.option) : undefined;
     $: open = !ask.answer;
+    // A minute before it closes, the card says so once and offers more time
+    $: closingSoon = open && ask.expiresAt - now < 60_000;
     $: shownLines = showAll ? ask.lines ?? [] : (ask.lines ?? []).slice(0, 3);
 </script>
 
@@ -24,7 +28,9 @@
     <div class="flex flex-col gap-0.5">
         <b class="ask-title" dir="auto">{ask.title}</b>
         {#if ask.actsAs}
-            <span class="ask-acts" dir="auto">Uses {ask.actsAs}{ask.everyTime ? " · asks every time" : ""}</span>
+            <span class="ask-acts" dir="auto">Uses {ask.actsAs}{ask.everyTime ? " · asks every time" : ""}{ask.notReviewed
+                    ? " · not reviewed yet"
+                    : ""}</span>
         {/if}
     </div>
     {#if ask.lines?.length && open}
@@ -56,16 +62,36 @@
                 </button>
             {/each}
         </div>
-        <span class="ask-who">
-            <IconEye />Only you see this
-        </span>
+        {#if closingSoon}
+            <div class="ask-row">
+                <span class="ask-who"><IconClock />Closes in 1 min</span>
+                <button type="button" class="ask-small" disabled={!mine} data-testid="botAskMoreTime">More time</button>
+            </div>
+        {/if}
     {:else if answered}
         <span class="ask-done" dir="auto"><IconCheck />You picked <b>{answered.label}</b></span>
+        {#if ask.answer?.unknown}
+            <span class="ask-warn" dir="auto"
+                ><IconAlertTriangle />{botName} couldn't confirm it worked. Check {ask.checkAt?.label ?? "it"} before trying
+                again.</span
+            >
+            {#if ask.checkAt}
+                <a class="ask-small" href={ask.checkAt.url} target="_blank" rel="noreferrer">Open {ask.checkAt.label}</a>
+            {/if}
+        {:else if ask.answer?.result}
+            <span class="ask-result" dir="auto">{ask.answer.result}</span>
+        {/if}
     {:else if ask.answer?.typed}
         <span class="ask-who">You typed something else, so nothing was done</span>
     {:else}
-        <span class="ask-who"><IconClock />No answer, so {botName} did nothing</span>
+        <div class="ask-row">
+            <span class="ask-who"><IconClock />No answer, so nothing was done</span>
+            <button type="button" class="ask-small" disabled={!mine} data-testid="botAskReviewAgain">Review again</button>
+        </div>
     {/if}
+    <span class="ask-who">
+        <IconEye />Only you see this
+    </span>
 </div>
 
 <style>
@@ -149,12 +175,48 @@
         opacity: 0.45;
         cursor: default;
     }
+    .ask-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+    }
+    .ask-small {
+        align-self: flex-start;
+        display: inline-flex;
+        align-items: center;
+        min-height: 44px;
+        padding: 0 16px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.06);
+        font-size: 13px;
+        font-weight: 700;
+        color: #fff;
+        text-decoration: none;
+        cursor: pointer;
+        flex: none;
+    }
+    .ask-warn {
+        display: inline-flex;
+        align-items: flex-start;
+        gap: 6px;
+        font-size: 13px;
+        line-height: 18px;
+        color: #fcd34d;
+    }
+    .ask-result {
+        font-size: 13px;
+        line-height: 18px;
+        color: rgba(255, 255, 255, 0.85);
+    }
     .ask-option-detail {
         font-size: 12px;
         font-weight: 400;
         color: rgba(255, 255, 255, 0.62);
     }
     .ask-option:focus-visible,
+    .ask-small:focus-visible,
     .ask-more:focus-visible {
         outline: 2px solid #a78bfa;
         outline-offset: 2px;
@@ -172,6 +234,7 @@
         color: rgba(255, 255, 255, 0.85);
     }
     .ask-who :global(svg),
+    .ask-warn :global(svg),
     .ask-done :global(svg) {
         width: 1.2em;
         height: 1.2em;
