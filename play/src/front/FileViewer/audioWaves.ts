@@ -30,12 +30,23 @@ export function bandsOf(bins: Uint8Array, sampleRate: number): Bands {
     };
 }
 
-/** The bands shown move toward the music's: up at once on a beat, down slowly after it. */
-export function easeBands(shown: Bands, target: Bands): Bands {
+/** The pace the ease below is tuned for: a screen that draws 60 times a second. */
+const EASE_FRAME_SECONDS = 1 / 60;
+
+/** How much of the way to the target one step of `seconds` covers, when a step of 1/60 s covers `perFrame`. */
+function stepOf(perFrame: number, seconds: number): number {
+    return 1 - Math.pow(1 - perFrame, seconds / EASE_FRAME_SECONDS);
+}
+
+/**
+ * The bands shown move toward the music's: up at once on a beat, down slowly after it. `seconds` is the time since the
+ * last step, so a screen that draws 120 times a second, or a slow one, follows the beat at the same pace as one at 60.
+ */
+export function easeBands(shown: Bands, target: Bands, seconds: number = EASE_FRAME_SECONDS): Bands {
     return {
-        bass: shown.bass + (target.bass - shown.bass) * (target.bass > shown.bass ? 0.5 : 0.12),
-        mids: shown.mids + (target.mids - shown.mids) * 0.2,
-        highs: shown.highs + (target.highs - shown.highs) * (target.highs > shown.highs ? 0.6 : 0.15),
+        bass: shown.bass + (target.bass - shown.bass) * stepOf(target.bass > shown.bass ? 0.5 : 0.12, seconds),
+        mids: shown.mids + (target.mids - shown.mids) * stepOf(0.2, seconds),
+        highs: shown.highs + (target.highs - shown.highs) * stepOf(target.highs > shown.highs ? 0.6 : 0.15, seconds),
     };
 }
 

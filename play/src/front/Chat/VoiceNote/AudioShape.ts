@@ -100,7 +100,8 @@ async function decode(url: string): Promise<AudioShape | undefined> {
     let decoded: AudioBuffer;
     try {
         decoded = await decoder.decodeAudioData(bytes);
-    } catch {
+    } catch (error) {
+        console.warn("The browser could not read the shape of an audio file", error);
         return undefined;
     }
     // Peaks per bar over the first channel: enough for a shape, and far lighter than mixing every channel.

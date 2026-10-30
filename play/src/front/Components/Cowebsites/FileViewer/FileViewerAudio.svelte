@@ -245,7 +245,7 @@
             analyser.getByteFrequencyData(bins);
             target = bandsOf(bins, analyser.context.sampleRate);
         }
-        shown = easeBands(shown, target);
+        shown = easeBands(shown, target, elapsed);
         paint();
         // Paused, the ribbons settle and the stage stops drawing until the next play.
         if (!playing && bandsSettled(shown, QUIET_BANDS)) {

@@ -35,6 +35,19 @@ describe("the music stage's waves", () => {
         expect(down.bass).toBeGreaterThan(0.85);
     });
 
+    it("follows a beat at the same pace on a screen that draws 120 times a second as on one at 60", () => {
+        const beat = { bass: 1, mids: 1, highs: 1 };
+        let at60 = QUIET_BANDS;
+        for (let i = 0; i < 30; i++) at60 = easeBands(at60, i < 15 ? beat : QUIET_BANDS, 1 / 60);
+        let at120 = QUIET_BANDS;
+        for (let i = 0; i < 60; i++) at120 = easeBands(at120, i < 30 ? beat : QUIET_BANDS, 1 / 120);
+        expect(at120.bass).toBeCloseTo(at60.bass, 6);
+        expect(at120.mids).toBeCloseTo(at60.mids, 6);
+        expect(at120.highs).toBeCloseTo(at60.highs, 6);
+        // A slow screen's long step covers as much as the short steps it missed.
+        expect(easeBands(QUIET_BANDS, beat, 1 / 30).bass).toBeGreaterThan(easeBands(QUIET_BANDS, beat, 1 / 60).bass);
+    });
+
     it("comes to rest when paused, so the stage can stop drawing", () => {
         let shown = { bass: 1, mids: 1, highs: 1 };
         let frames = 0;
