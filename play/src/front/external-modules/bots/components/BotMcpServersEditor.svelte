@@ -11,8 +11,6 @@
     import { IconChevronDown, IconPlus, IconTool } from "@wa-icons";
 
     export let botId: string;
-    /** The bot's name, for who can use a server's tools once they are confirmed. */
-    export let botName: string | undefined = undefined;
     /** Told the servers after every load, so the Tools group can say what the bot has. */
     export let onServers: ((servers: McpServer[]) => void) | undefined = undefined;
 
@@ -730,7 +728,6 @@
                                 openTool={server.toolKinds.openTool ?? null}
                                 reviewRequired={server.toolKinds.reviewRequired ?? true}
                                 legacy={server.toolKinds.legacy ?? false}
-                                botName={botName ?? "this bot"}
                             />
                         {:else if server.lastTestResult?.success && server.lastTestResult?.toolNames?.length > 0}
                             <div class="mcp-tools" aria-label="Available tools">
