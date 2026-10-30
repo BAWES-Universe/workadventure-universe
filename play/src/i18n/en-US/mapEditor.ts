@@ -670,7 +670,7 @@ const mapEditor: BaseTranslation = {
             deleteArea: "Delete area",
         },
         properties: {
-            livekitRoomProperty: { title: "Video call", text: "Everyone inside talks together" },
+            livekitRoomProperty: { title: "Meeting room", text: "Everyone inside talks together" },
             jitsiRoomProperty: { title: "Jitsi call", text: "A Jitsi meeting on enter" },
             silent: { title: "Quiet zone", text: "No one can talk here" },
             speakerMegaphone: { title: "Stage", text: "Speak to the audience" },

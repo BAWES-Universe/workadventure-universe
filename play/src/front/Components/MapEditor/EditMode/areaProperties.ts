@@ -45,7 +45,7 @@ export interface AreaSettingRow {
     /** False hides the row (a feature that is off, or a setting that cannot go with one already on). */
     available: boolean;
     /** True shows the row greyed out and not tappable: it cannot go with a setting already on (the old editor's
-     *  disabled buttons, e.g. Stage next to a video call). */
+     *  disabled buttons, e.g. Stage next to a meeting room). */
     blocked?: boolean;
     /** True opens the setting's own page right after adding it. */
     opensPage: boolean;
@@ -242,7 +242,7 @@ export function areaSettingRows(LL: TranslationFunctions, flags: AreaSettingFlag
             text: t.jitsiRoomProperty.text(),
             icon: IconUsersGroup,
             testId: "jitsiRoomProperty",
-            // Jitsi is no longer offered: the video call runs on our own calls. The row stays so an area that already
+            // Jitsi is no longer offered: the meeting room runs on our own calls. The row stays so an area that already
             // has one still shows its title, its page and its Remove button.
             available: false,
             opensPage: true,
