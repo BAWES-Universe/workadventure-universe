@@ -33,10 +33,7 @@ jobs:
         working-directory: "play/packages/iframe-api-typings"
 
       - name: Install Protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          version: '3.x'
+        uses: ./.github/actions/install-protoc
 
       - name: "Install dependencies"
         run: npm ci #--workspace=workadventure-play
