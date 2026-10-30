@@ -348,6 +348,20 @@ describe("AreasManager", () => {
             expect(get(lockableRoomStore)).toBeUndefined();
         });
 
+        it("does not say they locked it after a lock they asked for never came and they walked out", async () => {
+            const { manager, player, setLock } = await makeFullRoomManager({
+                player: { x: 48, y: 40 },
+                tags: ["member"],
+                lockTags: ["member"],
+            });
+            manager.onPlayerEnteredArea("lounge");
+            manager.toggleLockableRoom();
+            player.y = 200;
+            manager.onPlayerLeftArea("lounge");
+            setLock(true);
+            expect(player.playText).not.toHaveBeenCalledWith("area-locked-by-me", expect.anything(), expect.anything());
+        });
+
         it("hides Lock room from guests and from people without one of the room's tags", async () => {
             const { get } = await import("svelte/store");
             const guest = await makeFullRoomManager({ player: { x: 48, y: 40 }, isLogged: false });

@@ -143,6 +143,10 @@ export class AreasManager {
         if (this.isFull(areaId)) {
             this.justLeft.add(areaId);
         }
+        // A lock they asked for and never got (refused, or beaten to it) is not theirs once they walk out
+        if (this.lockAskedFor === areaId) {
+            this.lockAskedFor = undefined;
+        }
         this.refreshAreaState(areaId);
         this.refreshLockableRoom();
     }
