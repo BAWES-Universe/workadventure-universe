@@ -189,8 +189,8 @@ test.describe("Map editor @oidc @nomobile @nowebkit", () => {
         const newEntityName = "My Entity";
         await page.getByTestId("name").fill(newEntityName);
         await EntityEditor.applyEntityModifications(page);
-        // Clear entity selection
-        await EntityEditor.clearEntitySelection(page);
+        // "Edit this upload" puts the held object down, so nothing is left to place (#1637)
+        await expect(page.getByTestId("placing-done")).toHaveCount(0);
 
         // Search uploaded entity on both pages
         const uploadedEntityLocator = await EntityEditor.searchEntity(page, newEntityName);
