@@ -73,6 +73,10 @@ export class ProximitySpaceManager {
         const propertiesToSync = this.bubbleProperties.get(spaceName) ?? [];
         try {
             await this.proximityChatRoom.leaveSpace(spaceName);
+            // The bubble may have ended while we left it
+            if (!this.bubbleProperties.has(spaceName)) {
+                return;
+            }
             await this.joinBesideChat(spaceName, propertiesToSync);
         } catch (e) {
             // Losing the bubble must not stop the Audience from joining
@@ -89,6 +93,10 @@ export class ProximitySpaceManager {
         const propertiesToSync = this.bubbleProperties.get(spaceName) ?? [];
         try {
             await this.leaveBesideChat(spaceName);
+            // The bubble may have ended while we left it
+            if (!this.bubbleProperties.has(spaceName)) {
+                return;
+            }
             await this.proximityChatRoom.joinSpace(spaceName, propertiesToSync);
         } catch (e) {
             this.reportJoinFailure(e);

@@ -127,6 +127,33 @@ describe("ProximitySpaceManager in an Audience (#1624)", { timeout: 60_000 }, ()
         manager.destroy();
     });
 
+    it("does not join a bubble again when it ends while it moves", async () => {
+        const { manager, chat, registry, joinSpaceRequestMessage, leaveSpaceRequestMessage } = await setUp(
+            true,
+            "audience-chat"
+        );
+        joinSpaceRequestMessage.next({ spaceName: "bubble-6", propertiesToSync: [] });
+        await Promise.resolve();
+        registry.leaveSpace.mockImplementationOnce(() => {
+            leaveSpaceRequestMessage.next({ spaceName: "bubble-6" });
+            return Promise.resolve();
+        });
+        await manager.moveBubblesBackToChat();
+        expect(chat.joinSpace).not.toHaveBeenCalled();
+
+        // Same when walking in
+        const walkIn = await setUp(false, "bubble-7", "bubble");
+        walkIn.joinSpaceRequestMessage.next({ spaceName: "bubble-7", propertiesToSync: [] });
+        walkIn.chat.leaveSpace.mockImplementationOnce(() => {
+            walkIn.leaveSpaceRequestMessage.next({ spaceName: "bubble-7" });
+            return Promise.resolve();
+        });
+        await walkIn.manager.moveBubbleBesideChat();
+        expect(walkIn.registry.joinSpace).not.toHaveBeenCalled();
+        manager.destroy();
+        walkIn.manager.destroy();
+    });
+
     it("leaves a meeting room's chat where it is", async () => {
         const { manager, chat, registry } = await setUp(true, "meeting-room", "meeting");
         await manager.moveBubbleBesideChat();
