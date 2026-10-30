@@ -149,7 +149,8 @@ export class AreasManager {
 
     /**
      * The full room (#1621) that a player arriving at this point would end up in, if there is one: teleports and start
-     * points must not put them there. A player already inside that room is counted in it, so they still fit.
+     * points must not put them there. A player already inside that room can move anywhere in it, even when it holds
+     * more people than its limit (an Admin walked in, or the limit was lowered).
      */
     public getFullAreaForArrivalAt(x: number, y: number): AreaData | undefined {
         if (this.capacity === undefined || this.capacity.canPassFullRooms) {
@@ -160,9 +161,10 @@ export class AreasManager {
             if (!isPlayerPositionInArea({ x, y }, areaData)) {
                 continue;
             }
-            const alreadyInside =
-                player !== undefined && isPlayerPositionInArea({ x: player.x, y: player.y }, areaData);
-            if (this.isFull(areaData.id, alreadyInside ? 1 : 0)) {
+            if (player !== undefined && isPlayerPositionInArea({ x: player.x, y: player.y }, areaData)) {
+                continue;
+            }
+            if (this.isFull(areaData.id)) {
                 return areaData;
             }
         }
@@ -200,8 +202,8 @@ export class AreasManager {
         return free && toPosition(free.x, free.y);
     }
 
-    /** Whether the room is full, not counting `except` of the people inside (the player, when they are inside). */
-    private isFull(areaId: string, except = 0): boolean {
+    /** Whether the room is full. */
+    private isFull(areaId: string): boolean {
         const areaData = this.gameMapAreas.getArea(areaId);
         if (areaData === undefined || this.capacity === undefined) {
             return false;
@@ -210,7 +212,7 @@ export class AreasManager {
         if (property === undefined) {
             return false;
         }
-        return this.capacity.usersInside.getCount(areaId, property.id) - except >= property.maxUsers;
+        return this.capacity.usersInside.getCount(areaId, property.id) >= property.maxUsers;
     }
 
     /**

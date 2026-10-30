@@ -230,12 +230,13 @@ describe("AreasManager", () => {
             expect(manager.findArrivalSpot(48, 200, grid, { width: 32, height: 32 })).toEqual({ x: 48, y: 200 });
         });
 
-        it("counts a player arriving where they already are: they still fit", async () => {
+        it("lets a player who is inside move anywhere in the room, even when it holds more than its limit", async () => {
             const { manager, setCount } = await makeFullRoomManager({ player: { x: 48, y: 40 } });
             setCount(2);
             expect(manager.getFullAreaForArrivalAt(48, 40)).toBeUndefined();
             setCount(3);
-            expect(manager.getFullAreaForArrivalAt(48, 40)?.id).toBe("lounge");
+            expect(manager.getFullAreaForArrivalAt(48, 40)).toBeUndefined();
+            expect(manager.getFullAreaForArrivalAt(60, 50)).toBeUndefined();
         });
     });
 });
