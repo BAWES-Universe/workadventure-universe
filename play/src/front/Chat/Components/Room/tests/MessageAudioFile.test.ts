@@ -4,6 +4,7 @@ import { readable } from "svelte/store";
 
 vi.mock("../../../VoiceNote/AudioShape", () => ({ readAudioShape: () => Promise.resolve(undefined) }));
 vi.mock("../MessageActions/availableActions", () => ({ saveMessageFiles: vi.fn() }));
+vi.mock("../Message/openSongInPlayer", () => ({ openSongInPlayer: vi.fn() }));
 vi.mock("../../../../../i18n/i18n-svelte", async () => {
     const { readable } = await import("svelte/store");
     const voiceNote = new Proxy({}, { get: () => () => "label" });
@@ -14,6 +15,7 @@ vi.mock("../../../../../i18n/i18n-svelte", async () => {
         loading: () => "Loading…",
         cantPlay: () => "Can't play this file here. Download it instead.",
         cantLoad: () => "Couldn't load this file. Reopen the chat to try again.",
+        openInPlayer: () => "Open in player",
     };
     return { default: readable({ chat: { voiceNote, audioFile } }) };
 });
@@ -22,6 +24,7 @@ import type { ChatMessageContent } from "../../../Connection/ChatConnection";
 import MessageAudioFile from "../Message/MessageAudioFile.svelte";
 import { MESSAGE_SENDER_CONTEXT } from "../Message/messageSenderContext";
 import { saveMessageFiles } from "../MessageActions/availableActions";
+import { openSongInPlayer } from "../Message/openSongInPlayer";
 
 function content(partial: Partial<ChatMessageContent>): ChatMessageContent {
     return { body: "", url: undefined, urls: undefined, filename: undefined, fileNames: undefined, ...partial };
@@ -105,7 +108,7 @@ describe("an audio file in chat", () => {
 
     const visibleText = () => (target.textContent ?? "").replace(/\s+/g, " ").trim();
 
-    async function show(filename: string, extra: Partial<ChatMessageContent> = {}) {
+    async function show(filename: string, extra: Partial<ChatMessageContent> = {}, messageId?: string) {
         const holder = document.createElement("div");
         target.appendChild(holder);
         shown.push(
@@ -116,7 +119,7 @@ describe("an audio file in chat", () => {
                         content({ url: "blob:https://play.test/" + filename, filename, body: filename, ...extra })
                     ),
                 },
-                context: new Map([[MESSAGE_SENDER_CONTEXT, { name: "Imagine [Music]", isMine: false }]]),
+                context: new Map([[MESSAGE_SENDER_CONTEXT, { name: "Imagine [Music]", isMine: false, messageId }]]),
             })
         );
         await tick();
@@ -174,6 +177,53 @@ describe("an audio file in chat", () => {
         expect(holder.querySelector("button[aria-label=Download]")).toBeNull();
         expect((holder.querySelector(".voice-play") as HTMLButtonElement).disabled).toBe(true);
         expect(holder.querySelector("audio")).toBeNull();
+    });
+
+    it("opens in the player from where the card was, and the card stops", async () => {
+        vi.mocked(openSongInPlayer).mockClear();
+        const holder = await show("Desert Drive.mp3", {}, "$song");
+        const audio = holder.querySelector("audio") as HTMLAudioElement;
+        audio.currentTime = 44;
+        pause.mockClear();
+
+        (holder.querySelector("[data-testid=audioOpenInPlayer]") as HTMLButtonElement).click();
+
+        expect(openSongInPlayer).toHaveBeenCalledWith({
+            url: "blob:https://play.test/Desert Drive.mp3",
+            name: "Desert Drive.mp3",
+            senderName: "Imagine [Music]",
+            sentByMe: false,
+            key: "$song",
+            at: 44,
+        });
+        expect(pause.mock.contexts).toContain(audio);
+        expect(holder.querySelector("[data-testid=audioOpenInPlayer]")?.textContent?.trim()).toBe("Open in player");
+    });
+
+    it("has no player button for a voice note, or for a file that couldn't be fetched", async () => {
+        const voice = await show("Voice message", {
+            isVoice: true,
+            voiceDuration: 14,
+            voiceWaveform: [0.2, 0.5],
+        });
+        const missing = await show("Desert Drive.mp3", { url: undefined, mediaFailed: true });
+
+        expect(voice.querySelector("[data-testid=audioOpenInPlayer]")).toBeNull();
+        expect(missing.querySelector("[data-testid=audioOpenInPlayer]")).toBeNull();
+    });
+
+    it("keeps no focus after a click, so the game's keys still walk, but keeps it for the keyboard", async () => {
+        const holder = await show("Desert Drive.mp3");
+        const speed = holder.querySelector(".voice-speed") as HTMLButtonElement;
+
+        speed.focus();
+        speed.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+        expect(document.activeElement).not.toBe(speed);
+
+        // Enter or Space on a focused button clicks it with no count of clicks
+        speed.focus();
+        speed.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 }));
+        expect(document.activeElement).toBe(speed);
     });
 
     it("plays one audio at a time: starting a second pauses the first", async () => {
