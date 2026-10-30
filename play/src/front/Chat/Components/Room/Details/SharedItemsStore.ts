@@ -2,6 +2,9 @@ import { derived, get } from "svelte/store";
 import type { Readable, Unsubscriber } from "svelte/store";
 import type { ChatMessage, ChatRoom } from "../../../Connection/ChatConnection";
 import { getSaveableFiles } from "../MessageActions/messageActions";
+import { ProximityChatRoom } from "../../../Connection/Proximity/ProximityChatRoom";
+import { sessionOfStay } from "../../../Connection/Proximity/ProximitySessions";
+import { selectedProximitySessionStore } from "../../../Stores/ProximitySessionStore";
 import { sharedItemsOf, type SharedItems } from "./SharedItems";
 import { mergeShared } from "./NearbySaved";
 import { nearbySavedFor } from "./NearbySavedStore";
@@ -10,17 +13,34 @@ import { nearbySavedFor } from "./NearbySavedStore";
  * What the chat shared among the messages loaded so far, kept up to date as messages arrive, are edited or deleted.
  * Only text messages are listened to (their links can change with an edit): listening to a picture or file message
  * would download it. A gallery (nearby chat only) carries its links in the open, so reading it downloads nothing.
+ * A direct chat also lists what you and that person shared in proximity chats, kept on your account; a proximity
+ * chat lists only the conversation open in it (#1615).
  */
 export function sharedItemsStore(room: ChatRoom): Readable<SharedItems> {
-    const live = liveSharedItemsStore(room);
-    // The nearby chat forgets what it showed when the tab closes: what was kept on the player's account joins in.
+    const live = liveSharedItemsStore(
+        room instanceof ProximityChatRoom ? conversationMessages(room) : messagesOf(room)
+    );
     const saved = nearbySavedFor(room);
     return saved ? derived([live, saved.items], ([$live, $saved]) => mergeShared($live, $saved)) : live;
 }
 
-function liveSharedItemsStore(room: ChatRoom): Readable<SharedItems> {
-    // The room's list is an array store: derived() would take it for an array of stores.
-    const messages: Readable<readonly ChatMessage[]> = { subscribe: (run) => room.messages.subscribe(run) };
+// The room's list is an array store: derived() would take it for an array of stores.
+function messagesOf(room: ChatRoom): Readable<readonly ChatMessage[]> {
+    return { subscribe: (run) => room.messages.subscribe(run) };
+}
+
+/** The messages of the proximity conversation the chat shows, or all of them when it shows the whole timeline. */
+function conversationMessages(room: ProximityChatRoom): Readable<readonly ChatMessage[]> {
+    const all = messagesOf(room);
+    const sessions = room.sessions;
+    if (!sessions) return all;
+    return derived([all, sessions, selectedProximitySessionStore], ([$all, $sessions, $selected]) => {
+        const session = $selected === undefined ? undefined : sessionOfStay($sessions, $selected);
+        return session ? session.messages : $all;
+    });
+}
+
+function liveSharedItemsStore(messages: Readable<readonly ChatMessage[]>): Readable<SharedItems> {
     return derived(messages, ($messages, set) => {
         const build = () =>
             set(

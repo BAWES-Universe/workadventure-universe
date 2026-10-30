@@ -1,13 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { get, writable } from "svelte/store";
 import type { Writable } from "svelte/store";
-import type { ChatMessage, ChatMessageContent, ChatMessageType } from "../../../../Connection/ChatConnection";
+import type { ChatMessage, ChatMessageContent, ChatMessageType, ChatRoom } from "../../../../Connection/ChatConnection";
 import type { SavedNearbyItem } from "../NearbySaved";
 
 const api = vi.hoisted(() => ({
     canKeep: true,
     saveNearbyShared: vi.fn<(items: SavedNearbyItem[]) => Promise<boolean>>(),
-    getNearbyShared: vi.fn<() => Promise<{ items: SavedNearbyItem[]; next: string | null } | null>>(),
+    getNearbyShared:
+        vi.fn<
+            (
+                cursor?: string,
+                person?: { chatId: string; name?: string }
+            ) => Promise<{ items: SavedNearbyItem[]; next: string | null } | null>
+        >(),
     initialized: [] as (() => void)[],
 }));
 
@@ -21,9 +27,12 @@ vi.mock("../../../../../external-modules/bots/services/BotApiService", () => ({
 }));
 vi.mock("../../../../../Enum/EnvironmentVariable", () => ({ UPLOADER_URL: "https://uploader.example.com" }));
 vi.mock("../../../../Connection/Proximity/ProximityChatRoom", () => ({ ProximityChatRoom: class {} }));
+vi.mock("../../../../../Connection/LocalUserStore", () => ({
+    localUserStore: { getChatId: () => "@khalid:chat.bawes.net" },
+}));
 
 import { keepNearbyShared, nearbySavedFor } from "../NearbySavedStore";
-import type { ProximityChatRoom } from "../../../../Connection/Proximity/ProximityChatRoom";
+import type { ProximityChatParticipant, ProximityChatRoom } from "../../../../Connection/Proximity/ProximityChatRoom";
 
 function message(id: string, type: ChatMessageType, content: Partial<ChatMessageContent>) {
     const store = writable<ChatMessageContent>({
@@ -39,7 +48,7 @@ function message(id: string, type: ChatMessageType, content: Partial<ChatMessage
             id,
             type,
             isMyMessage: false,
-            sender: { username: "Sara" },
+            sender: { username: "Sara", chatId: "@sara:chat.bawes.net" },
             date: new Date("2026-10-26T09:49:00.000Z"),
             content: store,
             isDeleted: writable(false),
@@ -52,10 +61,18 @@ function message(id: string, type: ChatMessageType, content: Partial<ChatMessage
     };
 }
 
-function fakeRoom(): { room: ProximityChatRoom; messages: Writable<ChatMessage[]> } {
+function fakeRoom(): {
+    room: ProximityChatRoom;
+    messages: Writable<ChatMessage[]>;
+    participants: Writable<ProximityChatParticipant[]>;
+} {
     const messages = writable<ChatMessage[]>([]);
-    return { room: { messages } as unknown as ProximityChatRoom, messages };
+    const participants = writable<ProximityChatParticipant[]>([]);
+    return { room: { messages, participants } as unknown as ProximityChatRoom, messages, participants };
 }
+
+const person = (chatId: string | undefined, name: string) =>
+    ({ id: name, name, pictureStore: writable(undefined), bot: false, chatId } as unknown as ProximityChatParticipant);
 
 describe("keeping what the nearby chat shows", () => {
     beforeEach(() => {
@@ -152,6 +169,25 @@ describe("keeping what the nearby chat shows", () => {
         stopNext();
     });
 
+    it("keeps who sent it and who else was there when it came (#1615)", async () => {
+        const { room, messages, participants } = fakeRoom();
+        const stop = keepNearbyShared(room);
+        participants.set([
+            person("@sara:chat.bawes.net", "Sara"),
+            person("@bot_12:chat.bawes.net", "GitHub [StudentHub]"),
+            person(undefined, "Guest"),
+        ]);
+        messages.set([message("img-5", "image", { url: "https://cdn.example.com/d.png", filename: "d.png" }).message]);
+        // Someone walking off before it is sent doesn't change who it was shared with.
+        participants.set([]);
+        await vi.advanceTimersByTimeAsync(3000);
+
+        const [row] = api.saveNearbyShared.mock.calls.flatMap(([items]) => items);
+        expect(row.senderChatId).toBe("@sara:chat.bawes.net");
+        expect(row.withChatIds).toEqual(["@bot_12:chat.bawes.net"]);
+        stop();
+    });
+
     it("tries a batch Orbit didn't keep once more, then lets it go", async () => {
         api.saveNearbyShared.mockResolvedValue(false);
         const { room, messages } = fakeRoom();
@@ -165,23 +201,55 @@ describe("keeping what the nearby chat shows", () => {
 });
 
 describe("reading what was kept", () => {
-    it("asks again the next time the details open when Orbit didn't answer", async () => {
-        const { ProximityChatRoom } = await import("../../../../Connection/Proximity/ProximityChatRoom");
-        const room = new (ProximityChatRoom as unknown as new () => ProximityChatRoom)();
-        const saved = nearbySavedFor(room);
-        expect(saved).toBeDefined();
+    function directRoom(partner: { id: string; name: string }): ChatRoom {
+        return {
+            type: "direct",
+            members: writable([
+                { id: "@khalid:chat.bawes.net", name: writable("Khalid") },
+                { id: partner.id, name: writable(partner.name) },
+            ]),
+        } as unknown as ChatRoom;
+    }
+
+    beforeEach(() => {
         api.canKeep = true;
         api.getNearbyShared.mockReset();
+    });
+
+    it("lists nothing for a proximity chat or a group chat: they list only their own messages", async () => {
+        const { ProximityChatRoom } = await import("../../../../Connection/Proximity/ProximityChatRoom");
+        const nearby = new (ProximityChatRoom as unknown as new () => ProximityChatRoom)();
+        expect(nearbySavedFor(nearby)).toBeUndefined();
+        expect(nearbySavedFor({ type: "multiple" } as unknown as ChatRoom)).toBeUndefined();
+    });
+
+    it("reads what you and the other person of a direct chat shared nearby, by their chat account", async () => {
+        api.getNearbyShared.mockResolvedValue({ items: [], next: null });
+        const saved = nearbySavedFor(directRoom({ id: "@bot_12:chat.bawes.net", name: "GitHub [StudentHub]" }));
+        const stop = saved?.items.subscribe(() => undefined);
+        await vi.waitFor(() =>
+            expect(api.getNearbyShared).toHaveBeenCalledWith(undefined, {
+                chatId: "@bot_12:chat.bawes.net",
+                name: "GitHub [StudentHub]",
+            })
+        );
+        stop?.();
+    });
+
+    it("asks again the next time the profile opens when Orbit didn't answer", async () => {
+        const room = directRoom({ id: "@noura:chat.bawes.net", name: "Noura" });
         api.getNearbyShared.mockResolvedValueOnce(null).mockResolvedValueOnce({ items: [], next: "c1" });
 
-        let stop = saved?.items.subscribe(() => undefined);
+        const first = nearbySavedFor(room);
+        let stop = first?.items.subscribe(() => undefined);
         await vi.waitFor(() => expect(api.getNearbyShared).toHaveBeenCalledTimes(1));
         await Promise.resolve();
         stop?.();
 
-        stop = saved?.items.subscribe(() => undefined);
+        const again = nearbySavedFor(room);
+        stop = again?.items.subscribe(() => undefined);
         await vi.waitFor(() => expect(api.getNearbyShared).toHaveBeenCalledTimes(2));
-        await vi.waitFor(() => expect(saved && get(saved.hasMore)).toBe(true));
+        await vi.waitFor(() => expect(again && get(again.hasMore)).toBe(true));
         stop?.();
     });
 });

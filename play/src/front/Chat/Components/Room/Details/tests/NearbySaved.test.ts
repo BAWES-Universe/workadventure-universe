@@ -3,6 +3,7 @@ import { get, readable } from "svelte/store";
 import type { ChatMessage, ChatMessageType } from "../../../../Connection/ChatConnection";
 import {
     chatFileRef,
+    keptChatId,
     keptKey,
     mergeShared,
     savedItemsOf,
@@ -131,6 +132,49 @@ describe("the rows kept for a nearby chat", () => {
     });
 });
 
+describe("who an item was shared with (#1615)", () => {
+    it("keeps the sender's chat account and the others there, never the sender twice or one Orbit would refuse", () => {
+        const from = {
+            ...message("t2", "proximity"),
+            sender: { username: "Sara", chatId: "@sara:chat.bawes.net" },
+        } as unknown as ChatMessage;
+        const shared: SharedItems = {
+            media: [],
+            files: [],
+            links: [item("t2 https://bawes.net", from, { url: "https://bawes.net" })],
+        };
+        const [row] = savedRowsOf(shared, () => undefined, "You", new Date(), [
+            "@sara:chat.bawes.net",
+            "@bot_12:chat.bawes.net",
+            "@bot_12:chat.bawes.net",
+            "",
+            "not a chat account",
+        ]);
+        expect(row.senderChatId).toBe("@sara:chat.bawes.net");
+        expect(row.withChatIds).toEqual(["@bot_12:chat.bawes.net"]);
+    });
+
+    it("names no sender for your own items", () => {
+        const shared: SharedItems = {
+            media: [],
+            files: [],
+            links: [
+                item("t3 https://bawes.net", message("t3", "proximity", { mine: true }), { url: "https://bawes.net" }),
+            ],
+        };
+        const [row] = savedRowsOf(shared, () => undefined, "You", new Date(), ["@bot_12:chat.bawes.net"]);
+        expect(row).toEqual(
+            expect.objectContaining({ mine: true, senderChatId: null, withChatIds: ["@bot_12:chat.bawes.net"] })
+        );
+    });
+
+    it("takes only a chat account Orbit takes", () => {
+        expect(keptChatId("@bot_12:chat.bawes.net")).toBe("@bot_12:chat.bawes.net");
+        expect(keptChatId("0")).toBeNull();
+        expect(keptChatId(undefined)).toBeNull();
+    });
+});
+
 describe("Orbit's page of kept items", () => {
     const row: SavedNearbyItem = {
         itemKey: "m1",
@@ -150,6 +194,23 @@ describe("Orbit's page of kept items", () => {
         expect(savedNearbyPage({ items: [row, { itemKey: 1 }], next: "c1" })).toEqual({ items: [row], next: "c1" });
         expect(savedNearbyPage({ items: [] })).toEqual({ items: [], next: null });
         expect(savedNearbyPage({ error: "Unauthorized" })).toBeNull();
+    });
+
+    it("turns down a page for one person from an Orbit that can't list by person (#1615)", () => {
+        // An older Orbit ignores the person and answers with every item, whose rows don't name a sender account.
+        expect(savedNearbyPage({ items: [row], next: null }, true)).toBeNull();
+        const named = { ...row, senderChatId: null };
+        expect(savedNearbyPage({ items: [named], next: null }, true)).toEqual({ items: [named], next: null });
+        expect(savedNearbyPage({ items: [], next: null }, true)).toEqual({ items: [], next: null });
+    });
+
+    it("marks kept items as shared in a proximity chat", () => {
+        const shared = savedItemsOf(
+            [row, { ...row, itemKey: "l2", kind: "link", fileId: null, link: "https://bawes.net" }],
+            "https://uploader.example.com"
+        );
+        expect(shared.media[0].nearby).toBe(true);
+        expect(shared.links[0].nearby).toBe(true);
     });
 
     it("opens a kept uploader file through the uploader's lasting link", () => {

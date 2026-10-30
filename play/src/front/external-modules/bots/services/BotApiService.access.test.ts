@@ -205,6 +205,37 @@ describe("an Orbit that does not answer about who may use a bot", () => {
         expect(fetchMock.mock.calls[0][1]?.signal?.aborted).toBe(true);
     });
 
+    it("asks for one person's kept nearby items, and turns down an Orbit that answers with everyone's (#1615)", async () => {
+        const row = {
+            itemKey: "l1",
+            kind: "link",
+            name: "https://bawes.net",
+            link: "https://bawes.net",
+            fileId: null,
+            mimeType: null,
+            size: null,
+            isVideo: false,
+            senderName: "Sara",
+            mine: false,
+            sentAt: "2026-10-29T20:19:00.000Z",
+        };
+        const fetchMock = vi
+            .spyOn(globalThis, "fetch")
+            .mockResolvedValueOnce(json({ items: [{ ...row, senderChatId: "@sara:chat.bawes.net" }], next: null }))
+            .mockResolvedValueOnce(json({ items: [row], next: null }));
+        const api = service(SIGNED_IN);
+        const person = { chatId: "@sara:chat.bawes.net", name: "Sara" };
+
+        await expect(api.getNearbyShared(undefined, person)).resolves.toEqual(
+            expect.objectContaining({ items: [expect.objectContaining({ itemKey: "l1" })] })
+        );
+        expect(fetchMock.mock.calls[0][0] as string).toContain(
+            "/api/me/nearby-shared?with=%40sara%3Achat.bawes.net&name=Sara"
+        );
+        // An older Orbit leaves out the sender's account: it ignored the person.
+        await expect(api.getNearbyShared("c1", person)).resolves.toBeNull();
+    });
+
     const requests: Array<[string, (api: BotApiService) => Promise<unknown>]> = [
         ["a read", (api) => api.getBotPermissions("b1")],
         ["a change", (api) => api.saveBotPermissions("b1", { privateBot: true })],

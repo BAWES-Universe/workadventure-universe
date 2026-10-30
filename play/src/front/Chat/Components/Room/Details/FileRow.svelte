@@ -15,6 +15,8 @@
      * same viewer as its card in the chat; a file the viewer can't read is saved instead. Nothing is downloaded before.
      */
     export let message: ChatMessage;
+    /** Shared in a proximity chat (#1615). */
+    export let nearby = false;
     export let name: string;
     export let size: number | undefined;
     /** For one file of a gallery: its own link, as the message's link is the first file's. */
@@ -110,9 +112,26 @@
         <span class="truncate text-sm text-white/90">{shownName}</span>
         <span class="truncate text-[11px] text-white/45">{details}</span>
     </span>
+    {#if nearby}
+        <span class="where-tag" data-testid="sharedNearbyTag">{$LL.chat.session.proximityTag()}</span>
+    {/if}
 </button>
 
 <style>
+    .where-tag {
+        display: inline-flex;
+        align-items: center;
+        flex-shrink: 0;
+        height: 1.125rem;
+        padding: 0 0.4rem;
+        border-radius: 999px;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        color: #d8ccff;
+        background: rgb(134 41 252 / 0.22);
+        border: 1px solid rgb(167 139 250 / 0.3);
+    }
     .shared-row {
         font-family: inherit;
         background: transparent;

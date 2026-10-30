@@ -709,17 +709,29 @@ export class BotApiService {
     }
 
     /**
-     * One page of what the player's nearby chats shared, newest first (#1424), and the cursor of the older page. Null
-     * when it can't be known: a guest, no Orbit, an older Orbit, or Orbit didn't answer.
+     * One page of what the player's nearby chats shared, newest first (#1424), and the cursor of the older page. With
+     * `person`, only what that person sent the player and what the player sent while they were there (#1615); their
+     * name also finds what they sent before items named their chat account. Null when it can't be known: a guest, no
+     * Orbit, an older Orbit, or Orbit didn't answer.
      */
-    async getNearbyShared(cursor?: string): Promise<{ items: SavedNearbyItem[]; next: string | null } | null> {
+    async getNearbyShared(
+        cursor?: string,
+        person?: { chatId: string; name?: string }
+    ): Promise<{ items: SavedNearbyItem[]; next: string | null } | null> {
         if (!this.canKeepNearbyShared()) return null;
         try {
             return await this.withPermissionsTimeout(async (signal) => {
-                const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
-                const response = await this.fetch(`/api/me/nearby-shared${query}`, { signal });
+                const params = new URLSearchParams();
+                if (cursor) params.set("cursor", cursor);
+                if (person) {
+                    params.set("with", person.chatId);
+                    const name = person.name?.trim().slice(0, 100);
+                    if (name) params.set("name", name);
+                }
+                const query = params.toString();
+                const response = await this.fetch(`/api/me/nearby-shared${query ? `?${query}` : ""}`, { signal });
                 if (!response.ok) return null;
-                return savedNearbyPage(await response.json());
+                return savedNearbyPage(await response.json(), person !== undefined);
             });
         } catch {
             return null;
