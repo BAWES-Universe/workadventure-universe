@@ -13,7 +13,7 @@ function stepsLine(sender: { chatId?: string; spaceUserId?: string }, value: Bot
     return { message: { sender, steps: store } as unknown as ChatMessage, store };
 }
 const text = (sender: { chatId?: string }) =>
-    ({ sender, steps: writable<BotSteps | undefined>(undefined) }) as unknown as ChatMessage;
+    ({ sender, steps: writable<BotSteps | undefined>(undefined) } as unknown as ChatMessage);
 const member = (id: string) => ({ id, name: id, pictureStore: writable(undefined) });
 
 describe("workingBotIds", () => {
