@@ -15,12 +15,15 @@
     import { getMediaCaption } from "../MessageActions/messageActions";
     import { saveMessageFiles } from "../MessageActions/availableActions";
     import { fileKindOf } from "../../../../FileViewer/fileKinds";
+    import { galleryFileKey } from "../Details/SharedItems";
     import { audioFileKind, audioFileTitle } from "./audioFileTitle";
     import { openSongInPlayer } from "./openSongInPlayer";
     import { MESSAGE_SENDER_CONTEXT, type MessageSenderInfo } from "./messageSenderContext";
     import { IconAlertTriangle, IconDownload, IconMusic, IconPauseFilled, IconPlayFilled } from "@wa-icons";
 
     export let content: Readable<ChatMessageContent>;
+    /** Its place among a gallery message's files: the player knows it by that, not by the message alone. */
+    export let galleryPosition: number | undefined = undefined;
 
     const sender = hasContext(MESSAGE_SENDER_CONTEXT)
         ? getContext<MessageSenderInfo>(MESSAGE_SENDER_CONTEXT)
@@ -102,7 +105,10 @@
             name: fileName,
             senderName: sender?.name,
             sentByMe: isMine,
-            key: sender?.messageId,
+            key:
+                sender?.messageId === undefined || galleryPosition === undefined
+                    ? sender?.messageId
+                    : galleryFileKey(sender.messageId, galleryPosition),
             at,
         });
     }
