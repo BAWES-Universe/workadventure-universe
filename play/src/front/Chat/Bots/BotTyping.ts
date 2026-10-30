@@ -8,9 +8,10 @@ import type { BotSteps } from "./BotSteps";
  * typing members go by: the chat ID in a direct message, the space user ID in the nearby chat.
  */
 export function workingBotIds(messages: Readable<readonly ChatMessage[]>): Readable<ReadonlySet<string>> {
+    // In an array: a chat's messages are an array that is also a store, and derived would take it for a list of stores.
     return derived(
-        messages,
-        ($messages, set) => {
+        [messages],
+        ([$messages], set) => {
             // Each bot's newest steps line is the one of the reply it is on now.
             const newest = new Map<string, Readable<BotSteps | undefined>>();
             for (const message of $messages) {

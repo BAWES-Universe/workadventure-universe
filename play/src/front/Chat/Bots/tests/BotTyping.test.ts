@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { get, writable } from "svelte/store";
+import { get, writable, type Readable, type Subscriber } from "svelte/store";
 import type { ChatMessage } from "../../Connection/ChatConnection";
 import type { BotSteps } from "../BotSteps";
 import { typingExceptWorkingBots, workingBotIds } from "../BotTyping";
@@ -16,7 +16,26 @@ const text = (sender: { chatId?: string }) =>
     ({ sender, steps: writable<BotSteps | undefined>(undefined) } as unknown as ChatMessage);
 const member = (id: string) => ({ id, name: id, pictureStore: writable(undefined) });
 
+// A chat's messages: an array that is also a store (SearchableArrayStore).
+class ArrayStore<T> extends Array<T> implements Readable<T[]> {
+    private readonly store = writable<T[]>(this);
+    subscribe(run: Subscriber<T[]>) {
+        return this.store.subscribe(run);
+    }
+    add(...items: T[]) {
+        this.push(...items);
+        this.store.set(this);
+    }
+}
+
 describe("workingBotIds", () => {
+    it("reads a chat's messages that are an array and a store at once", () => {
+        const line = stepsLine({ chatId: BOT }, steps("working"));
+        const messages = new ArrayStore<ChatMessage>();
+        messages.add(text({ chatId: "@sara:matrix.bawes.net" }), line.message);
+        expect(get(workingBotIds(messages)).has(BOT)).toBe(true);
+    });
+
     it("names a bot whose steps line is working, and not once it is done", () => {
         const line = stepsLine({ chatId: BOT }, steps("working"));
         const working = workingBotIds(writable([line.message]));
