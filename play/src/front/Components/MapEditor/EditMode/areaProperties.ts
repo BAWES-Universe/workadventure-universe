@@ -25,6 +25,7 @@ import {
     IconMicrophone,
     IconMicrophoneOff,
     IconTooltip,
+    IconUsers,
     IconUsersGroup,
     IconZoomInArea,
 } from "@wa-icons";
@@ -124,6 +125,15 @@ export function areaSettingRows(LL: TranslationFunctions, flags: AreaSettingFlag
             icon: IconLockCog,
             testId: "restrictedRightsPropertyData",
             available: !hasAccess,
+            opensPage: true,
+        },
+        {
+            key: "maxUsersInAreaPropertyData",
+            title: t.maxUsersInAreaPropertyData.title(),
+            text: t.maxUsersInAreaPropertyData.text(),
+            icon: IconUsers,
+            testId: "maxUsersInAreaPropertyData",
+            available: !flags.maxUsersInAreaPropertyData,
             opensPage: true,
         },
         {
@@ -311,6 +321,9 @@ export function summarizeAreaProperty(
             );
             return tags.length > 0 ? t.onlyTags({ tags: tags.join(", ") }) : fallbackText;
         }
+        case "maxUsersInAreaPropertyData": {
+            return property.maxUsers && property.maxUsers >= 1 ? t.upTo({ count: property.maxUsers }) : fallbackText;
+        }
         case "openWebsite": {
             return (property.link ? hostOf(property.link) : undefined) ?? fallbackText;
         }
@@ -471,6 +484,8 @@ export function createAreaProperty(
             return { id, type, url: "", areaName: "" };
         case "restrictedRightsPropertyData":
             return { id, type, readTags: [], writeTags: [] };
+        case "maxUsersInAreaPropertyData":
+            return { id, type, maxUsers: 6 };
         case "personalAreaPropertyData":
             return {
                 id,

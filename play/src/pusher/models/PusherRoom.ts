@@ -178,6 +178,19 @@ export class PusherRoom {
                             }
                             break;
                         }
+                        case "areaPropertyVariableMessage": {
+                            // The live state of an area setting (how many people are in a room with Max people):
+                            // everyone in the room gets it
+                            for (const listener of this.listeners) {
+                                listener.getUserData().emitInBatch({
+                                    message: {
+                                        $case: "areaPropertyVariableMessage",
+                                        areaPropertyVariableMessage: message.message.areaPropertyVariableMessage,
+                                    },
+                                });
+                            }
+                            break;
+                        }
                         // Zone-specific messages - forward to PositionDispatcher
                         case "zoneMessage": {
                             this.positionNotifier.handleZoneMessage(message.message.zoneMessage);

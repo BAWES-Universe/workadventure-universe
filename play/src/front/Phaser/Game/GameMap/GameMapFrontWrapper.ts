@@ -26,6 +26,7 @@ import type { ITiledPlace } from "../GameMapPropertiesListener";
 import type { GameScene } from "../GameScene";
 import { areaChatRooms, collectAreaChatRoomIds } from "../../../Chat/Stores/AreaPresenceStore";
 import { EntitiesManager } from "./EntitiesManager";
+import type { AreaCapacityOptions } from "./AreasManager";
 import { AreasManager } from "./AreasManager";
 import TilemapLayer = Phaser.Tilemaps.TilemapLayer;
 
@@ -114,6 +115,7 @@ export class GameMapFrontWrapper {
     private leaveDynamicAreaCallbacks = Array<DynamicAreaChangeCallback>();
 
     public areasManager: AreasManager | undefined;
+    private listensToAreaCapacity = false;
 
     /**
      * Firing on map change, containing newest collision grid array
@@ -277,11 +279,33 @@ export class GameMapFrontWrapper {
         this.updateCollisionGrid(this.areasCollisionLayer, false);
     }
 
-    public initializeAreaManager(userConnectedTags: string[], userCanEdit: boolean) {
+    public initializeAreaManager(
+        userConnectedTags: string[],
+        userCanEdit: boolean,
+        capacity?: Omit<AreaCapacityOptions, "onCollidingAreasChanged">
+    ) {
         const gameMapAreas = this.getGameMap().getGameMapAreas();
         // If gameMapAreas is undefined, we are on a public map
         if (gameMapAreas !== undefined) {
-            this.areasManager = new AreasManager(this.scene, gameMapAreas, userConnectedTags, userCanEdit);
+            this.areasManager?.destroy();
+            this.areasManager = new AreasManager(
+                this.scene,
+                gameMapAreas,
+                userConnectedTags,
+                userCanEdit,
+                capacity && { ...capacity, onCollidingAreasChanged: () => this.recomputeAreasCollisionGrid() }
+            );
+            if (!this.listensToAreaCapacity) {
+                // A full room opens for the player once they are inside, and closes behind them when they walk out
+                // (#1621).
+                this.listensToAreaCapacity = true;
+                gameMapAreas.onEnterArea((areas) => {
+                    for (const area of areas) this.areasManager?.onPlayerEnteredArea(area.id);
+                });
+                gameMapAreas.onLeaveArea((areas) => {
+                    for (const area of areas) this.areasManager?.onPlayerLeftArea(area.id);
+                });
+            }
             this.refreshAreaChatRoomIds();
             gameMapAreas.triggerAreasChange(undefined, this.position);
         }

@@ -25,3 +25,4 @@ export * from "./Constants/FileUploadSupportedFormats";
 export * from "./Permissions/EntityPermissions";
 export * from "./Permissions/AreaPermissions";
 export * from "./Utils";
+export * from "./AreaCapacity";
