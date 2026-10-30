@@ -1191,6 +1191,7 @@ export class GameRoom implements BrothersFinder {
                         connectedUserTags: user.tags,
                         userCanEdit: user.canEdit,
                         userUUID: user.uuid,
+                        userName: user.name,
                     },
                     (err: unknown, editMapCommandMessage: EditMapCommandMessage) => {
                         if (err) {

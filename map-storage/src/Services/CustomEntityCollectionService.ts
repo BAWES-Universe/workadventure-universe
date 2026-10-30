@@ -71,6 +71,18 @@ export class CustomEntityCollectionService {
         return mapPathUsingDomainWithPrefix(this.scopedPath(basePath), this.hostname);
     }
 
+    /** One upload's picture as saved, or undefined when there is none with this id. */
+    public async getEntity(id: string): Promise<EntityRawPrefab | undefined> {
+        const entityCollectionFileVirtualPath = this.getEntityCollectionFileVirtualPath();
+        if (!(await fileSystem.exist(entityCollectionFileVirtualPath))) {
+            return undefined;
+        }
+        const customEntityCollection = EntityCollectionRaw.parse(
+            JSON.parse(await fileSystem.readFileAsString(entityCollectionFileVirtualPath))
+        );
+        return customEntityCollection.collection.find((entity) => entity.id === id);
+    }
+
     public async uploadEntity(uploadEntityMessage: UploadEntityMessage) {
         const { imagePath, file } = uploadEntityMessage;
         await fileSystem.writeByteArrayAsFile(this.getEntityToUploadVirtualPath(imagePath), file);

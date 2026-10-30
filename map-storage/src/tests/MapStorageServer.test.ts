@@ -23,6 +23,20 @@ vi.mock("../MapsManager", () => ({
 vi.mock("../EntitiesManager", () => ({ entitiesManager: { executeCommand: executeEntityCommand } }));
 vi.mock("../Modules/HookManager", () => ({ hookManager: {} }));
 
+// The uploads of the world (#1628), by id
+const { uploads } = vi.hoisted(() => ({
+    uploads: new Map<string, { ownerId?: string; ownerName?: string }>(),
+}));
+vi.mock("../Services/CustomEntityCollectionService", () => ({
+    CustomEntityCollectionService: class {
+        getEntity(id: string) {
+            return Promise.resolve(uploads.get(id));
+        }
+    },
+}));
+// The world has no other room
+vi.mock("../fileSystem", () => ({ fileSystem: { listFiles: () => Promise.resolve([]) } }));
+
 import { mapStorageServer } from "../MapStorageServer";
 
 const MAP_URL = "http://localhost/universe/world/room/map.wam";
@@ -55,6 +69,14 @@ function makeGameMap(): GameMap {
         entities: {
             inside: { x: 10, y: 10, prefabRef: { id: "chair", collectionName: "Furniture" }, properties: [] },
             outside: { x: 500, y: 500, prefabRef: { id: "chair", collectionName: "Furniture" }, properties: [] },
+            // Copies of uploads: a lamp at the owner's desk, a sign out in the room
+            lampAtDesk: { x: 20, y: 20, prefabRef: { id: "lamp", collectionName: "custom entities" }, properties: [] },
+            signInRoom: {
+                x: 600,
+                y: 600,
+                prefabRef: { id: "sign", collectionName: "custom entities" },
+                properties: [],
+            },
         },
         entityCollections: [],
     } as unknown as WAMFileFormat;
@@ -65,6 +87,13 @@ function makeGameMap(): GameMap {
 }
 
 function send(message: EditMessage, user: { userUUID: string; userCanEdit: boolean }): Promise<string | undefined> {
+    return sendAndGetMessage(message, user).then((answer) => answer?.$case);
+}
+
+function sendAndGetMessage(
+    message: EditMessage,
+    user: { userUUID: string; userCanEdit: boolean }
+): Promise<EditMessage> {
     return new Promise((resolve) => {
         const request: EditMapCommandWithKeyMessage = {
             mapKey: MAP_URL,
@@ -72,10 +101,11 @@ function send(message: EditMessage, user: { userUUID: string; userCanEdit: boole
             connectedUserTags: [],
             userCanEdit: user.userCanEdit,
             userUUID: user.userUUID,
+            userName: `${user.userUUID} name`,
         };
         mapStorageServer.handleEditMapCommandWithKeyMessage(
             { request } as ServerUnaryCall<EditMapCommandWithKeyMessage, EditMapCommandMessage>,
-            (_err, response) => resolve(response?.editMapMessage?.message?.$case)
+            (_err, response) => resolve(response?.editMapMessage?.message)
         );
     });
 }
@@ -91,6 +121,7 @@ const deleteEntity = (id: string): EditMessage => ({ $case: "deleteEntityMessage
 describe("MapStorageServer edit rights", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        uploads.clear();
         getOrLoadGameMap.mockResolvedValue(makeGameMap());
     });
 
@@ -246,8 +277,85 @@ describe("MapStorageServer edit rights", () => {
                 },
             ],
         ])("refuses %s from a player who can't edit the map, even an area owner", async (_label, message) => {
+            // An upload from before uploaders were recorded
+            uploads.set("asset", {});
             expect(await send(message as never, owner)).toBe("errorCommandMessage");
             expect(executeEntityCommand).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("uploads and their uploader (#1628)", () => {
+        const upload = (id: string, variantOf?: string, ownerId?: string): EditMessage => ({
+            $case: "uploadEntityMessage",
+            uploadEntityMessage: {
+                file: new Uint8Array(),
+                id,
+                name: "Lamp",
+                tags: [],
+                imagePath: `${id}.png`,
+                direction: 0,
+                color: "",
+                variantOf,
+                ownerId,
+            } as never,
+        });
+        const rename = (id: string): EditMessage => ({
+            $case: "modifyCustomEntityMessage",
+            modifyCustomEntityMessage: { id, name: "renamed", tags: [], depthOffset: 0 },
+        });
+        const remove = (id: string): EditMessage => ({
+            $case: "deleteCustomEntityMessage",
+            deleteCustomEntityMessage: { id },
+        });
+
+        it("lets someone with a desk upload, and saves them as the uploader whatever the browser sent", async () => {
+            const answer = await sendAndGetMessage(upload("lamp", undefined, "editor"), owner);
+            expect(answer?.$case).toBe("uploadEntityMessage");
+            const message = answer?.$case === "uploadEntityMessage" ? answer.uploadEntityMessage : undefined;
+            expect(message?.ownerId).toBe("owner");
+            expect(message?.ownerName).toBe("owner name");
+        });
+
+        it("refuses an upload from someone with no place they can edit", async () => {
+            expect(await send(upload("lamp"), player)).toBe("errorCommandMessage");
+            expect(executeEntityCommand).not.toHaveBeenCalled();
+        });
+
+        it("saves an editor as the uploader of their uploads", async () => {
+            const answer = await sendAndGetMessage(upload("sign"), editor);
+            expect(answer?.$case === "uploadEntityMessage" && answer.uploadEntityMessage.ownerId).toBe("editor");
+        });
+
+        it("gives a new side the first picture's uploader, and lets only them or an editor add it", async () => {
+            uploads.set("lamp", { ownerId: "owner", ownerName: "Owner" });
+            uploads.set("sign", { ownerId: "editor", ownerName: "Editor" });
+
+            expect(await send(upload("sign-left", "sign"), owner)).toBe("errorCommandMessage");
+            const answer = await sendAndGetMessage(upload("lamp-left", "lamp"), editor);
+            const message = answer?.$case === "uploadEntityMessage" ? answer.uploadEntityMessage : undefined;
+            expect(message?.ownerId).toBe("owner");
+            expect(message?.ownerName).toBe("Owner");
+            expect(await send(upload("lamp-right", "lamp"), owner)).toBe("uploadEntityMessage");
+        });
+
+        it("lets the uploader rename their upload, and nobody else but editors", async () => {
+            uploads.set("lamp", { ownerId: "owner" });
+            expect(await send(rename("lamp"), owner)).toBe("modifyCustomEntityMessage");
+            expect(await send(rename("lamp"), player)).toBe("errorCommandMessage");
+            expect(await send(rename("lamp"), editor)).toBe("modifyCustomEntityMessage");
+        });
+
+        it("lets the uploader delete their upload while every copy is at their desk", async () => {
+            uploads.set("lamp", { ownerId: "owner" });
+            expect(await send(remove("lamp"), player)).toBe("errorCommandMessage");
+            expect(await send(remove("lamp"), owner)).toBe("deleteCustomEntityMessage");
+        });
+
+        it("leaves an upload with a copy where its uploader can't edit to the editors", async () => {
+            uploads.set("sign", { ownerId: "owner" });
+            expect(await send(remove("sign"), owner)).toBe("errorCommandMessage");
+            expect(executeEntityCommand).not.toHaveBeenCalled();
+            expect(await send(remove("sign"), editor)).toBe("deleteCustomEntityMessage");
         });
     });
 });

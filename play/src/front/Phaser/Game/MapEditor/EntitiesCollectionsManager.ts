@@ -107,6 +107,8 @@ export class EntitiesCollectionsManager {
                                 collisionGrid: entity.collisionGrid,
                                 type: entity.type,
                                 variantOf: entity.variantOf,
+                                ownerId: entity.ownerId,
+                                ownerName: entity.ownerName,
                             });
                             entity.tags.forEach((tag: string) => tagSet.add(tag));
                         });
