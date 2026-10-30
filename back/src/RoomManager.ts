@@ -174,6 +174,10 @@ const roomManager = {
                                 socketManager.handleAskPositionMessage(room, user, message.message.askPositionMessage);
                                 break;
                             }
+                            case "setAreaPropertyVariableMessage": {
+                                room.setAreaPropertyVariable(user, message.message.setAreaPropertyVariableMessage);
+                                break;
+                            }
                             case "publicEvent":
                             case "privateEvent": {
                                 throw new Error("Cannot reach here, this is handled by the space manager");

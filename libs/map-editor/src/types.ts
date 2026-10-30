@@ -210,6 +210,15 @@ export const MaxUsersInAreaPropertyData = PropertyBase.extend({
     maxUsers: z.number().min(0).nullable().optional(),
 });
 
+export const LockableAreaPropertyData = PropertyBase.extend({
+    type: z.literal("lockableAreaPropertyData"),
+    /**
+     * Who can lock the room from inside: people with one of these tags (our roles admin, editor and member, or any
+     * other tag). Empty: anyone signed in who can enter. Whether it is locked lives in the room, not in the map.
+     */
+    allowedTags: z.array(z.string()).optional(),
+});
+
 export const AreaDataProperty = z.discriminatedUnion("type", [
     StartPropertyData,
     ExitPropertyData,
@@ -230,6 +239,7 @@ export const AreaDataProperty = z.discriminatedUnion("type", [
     TooltipPropertyData,
     LivekitRoomPropertyData,
     MaxUsersInAreaPropertyData,
+    LockableAreaPropertyData,
 ]);
 
 export const AreaDataProperties = z.array(AreaDataProperty);
@@ -457,6 +467,7 @@ export type RestrictedRightsPropertyData = z.infer<typeof RestrictedRightsProper
 export type PersonalAreaPropertyData = z.infer<typeof PersonalAreaPropertyData>;
 export type MatrixRoomPropertyData = z.infer<typeof MatrixRoomPropertyData>;
 export type MaxUsersInAreaPropertyData = z.infer<typeof MaxUsersInAreaPropertyData>;
+export type LockableAreaPropertyData = z.infer<typeof LockableAreaPropertyData>;
 export type PersonalAreaAccessClaimMode = z.infer<typeof PersonalAreaAccessClaimMode>;
 export type ExtensionModuleAreaPropertyData = z.infer<typeof ExtensionModuleAreaProperty>;
 export type TooltipPropertyData = z.infer<typeof TooltipPropertyData>;

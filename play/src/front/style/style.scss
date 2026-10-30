@@ -2215,10 +2215,14 @@ button[data-testid="actionBarLogin"]:hover {
     pointer-events: none;
 }
 
-// The "Full · 3/3" pill at the top of a full room (AreaStatusLabel). It sits under the players' names.
+// The "Full · 3/3" or red "Locked" pill at the top of a room (AreaStatusLabel). It sits under the players' names.
 .area-status-label {
     z-index: 0;
     transform-origin: center top;
+
+    &.is-locked {
+        background: rgb(225 72 72 / 0.92);
+    }
 }
 
 .area-status-label-icon {

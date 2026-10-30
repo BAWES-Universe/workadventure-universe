@@ -15,6 +15,11 @@ vi.mock("@workadventure/map-editor", () => ({
         }
     },
     AREA_USERS_INSIDE_KEY: "usersInside",
+    AREA_LOCK_KEY: "lock",
+    getActiveLockableProperty: (area: AreaData) =>
+        area.properties.find((p) => p.type === "lockableAreaPropertyData") as { id: string } | undefined,
+    canTagsLockArea: (property: { allowedTags?: string[] }, tags: string[]) =>
+        (property.allowedTags ?? []).length === 0 || (property.allowedTags ?? []).some((tag) => tags.includes(tag)),
     isAreaPropertyActive: () => true,
     getActiveMaxUsersProperty: (area: AreaData) => {
         const property = area.properties.find((p) => p.type === "maxUsersInAreaPropertyData") as
@@ -42,6 +47,10 @@ vi.mock("../../../Entity/Area", () => ({
         setBlockReason(reason: string | undefined) {
             this.blockReason = reason;
         }
+        setUnlockAction(action: (() => void) | undefined) {
+            this.unlockAction = action;
+        }
+        public unlockAction: (() => void) | undefined;
     },
 }));
 
@@ -67,7 +76,12 @@ vi.mock("../../../../../i18n/i18n-svelte", async () => {
     const { readable } = await import("svelte/store");
     return {
         default: readable({
-            area: { fullLabel: ({ count, max }: { count: number; max: number }) => `Full · ${count}/${max}` },
+            area: {
+                fullLabel: ({ count, max }: { count: number; max: number }) => `Full · ${count}/${max}`,
+                lockedLabel: () => "Locked",
+                youLocked: ({ name }: { name: string }) => `You locked the ${name}`,
+                youLockedUnnamed: () => "You locked this room",
+            },
         }),
     };
 });
@@ -93,8 +107,8 @@ async function makeAreasManager(initialAreas: AreaData[] = []) {
     return new AreasManager(scene as never, gameMapAreas as never, [], false);
 }
 
-// The Lounge: 3 tiles of 32 px wide and high, at the top left of the map, for at most 2 people.
-function lounge(): AreaData {
+// The Lounge: 3 tiles of 32 px wide and high, at the top left of the map, for at most 2 people, and lockable.
+function lounge(lockTags: string[] = []): AreaData {
     return {
         id: "lounge",
         name: "Lounge",
@@ -103,14 +117,26 @@ function lounge(): AreaData {
         width: 96,
         height: 96,
         visible: true,
-        properties: [{ id: "max", type: "maxUsersInAreaPropertyData", maxUsers: 2 }],
+        properties: [
+            { id: "max", type: "maxUsersInAreaPropertyData", maxUsers: 2 },
+            { id: "lock", type: "lockableAreaPropertyData", allowedTags: lockTags },
+        ],
     } as AreaData;
 }
 
-async function makeFullRoomManager(options: { canPassFullRooms?: boolean; player?: { x: number; y: number } } = {}) {
+async function makeFullRoomManager(
+    options: {
+        canPassFullRooms?: boolean;
+        isLogged?: boolean;
+        tags?: string[];
+        lockTags?: string[];
+        player?: { x: number; y: number };
+    } = {}
+) {
     const { AreasManager } = await import("../AreasManager");
-    const { AreaUsersInside } = await import("../AreaUsersInside");
-    const area = lounge();
+    const { AreaLiveState } = await import("../AreaLiveState");
+    const { lockableRoomStore } = await import("../../../../Stores/LockableRoomStore");
+    const area = lounge(options.lockTags);
     const areas = new Map([[area.id, area]]);
     const gameMapAreas = {
         getAreas: () => areas,
@@ -118,19 +144,24 @@ async function makeFullRoomManager(options: { canPassFullRooms?: boolean; player
         isGameMapContainsSpecificAreas: () => false,
         getCollidingAreas: () => [],
     };
-    const player = { x: 48, y: 200, ...options.player };
+    const player = { x: 48, y: 200, playText: vi.fn(), ...options.player };
     const scene = { connection: { getAllTags: () => [] }, CurrentPlayer: player, usernameDomLayer: {} };
     const updates = new Subject<{ areaId: string; propertyId: string; key: string; value: string }>();
-    const usersInside = new AreaUsersInside([], updates);
+    const liveState = new AreaLiveState([], updates);
     const onCollidingAreasChanged = vi.fn();
-    const manager = new AreasManager(scene as never, gameMapAreas as never, [], false, {
-        usersInside,
-        canPassFullRooms: options.canPassFullRooms ?? false,
+    const setLocked = vi.fn();
+    const manager = new AreasManager(scene as never, gameMapAreas as never, options.tags ?? [], false, {
+        liveState,
+        managesRooms: options.canPassFullRooms ?? false,
+        isLogged: options.isLogged ?? true,
+        setLocked,
         onCollidingAreasChanged,
     });
     const setCount = (count: number) =>
         updates.next({ areaId: "lounge", propertyId: "max", key: "usersInside", value: String(count) });
-    return { manager, player, setCount, onCollidingAreasChanged };
+    const setLock = (locked: boolean) =>
+        updates.next({ areaId: "lounge", propertyId: "lock", key: "lock", value: String(locked) });
+    return { manager, player, setCount, setLock, setLocked, onCollidingAreasChanged, lockableRoomStore };
 }
 
 describe("AreasManager", () => {
@@ -204,7 +235,7 @@ describe("AreasManager", () => {
             setCount(5);
             expect(manager.getBlockReason("lounge")).toBeUndefined();
             expect(labels).toEqual([{ text: "Full · 5/2", destroyed: false }]);
-            expect(manager.getFullAreaForArrivalAt(48, 40)).toBeUndefined();
+            expect(manager.getClosedAreaForArrivalAt(48, 40)).toBeUndefined();
         });
 
         it('lets "Who can enter" win over Full', async () => {
@@ -217,8 +248,8 @@ describe("AreasManager", () => {
         it("puts a player arriving in the full room just outside it", async () => {
             const { manager, setCount } = await makeFullRoomManager();
             setCount(2);
-            expect(manager.getFullAreaForArrivalAt(48, 40)?.id).toBe("lounge");
-            expect(manager.getFullAreaForArrivalAt(48, 200)).toBeUndefined();
+            expect(manager.getClosedAreaForArrivalAt(48, 40)?.id).toBe("lounge");
+            expect(manager.getClosedAreaForArrivalAt(48, 200)).toBeUndefined();
 
             // 5 by 5 tiles, nothing in the way but the room, which the grid marks as a wall for this player
             const grid = Array.from({ length: 5 }, (_, y) =>
@@ -226,26 +257,120 @@ describe("AreasManager", () => {
             );
             const spot = manager.findArrivalSpot(48, 40, grid, { width: 32, height: 32 });
             expect(spot).toBeDefined();
-            expect(manager.getFullAreaForArrivalAt(spot?.x ?? 0, spot?.y ?? 0)).toBeUndefined();
+            expect(manager.getClosedAreaForArrivalAt(spot?.x ?? 0, spot?.y ?? 0)).toBeUndefined();
             expect(manager.findArrivalSpot(48, 200, grid, { width: 32, height: 32 })).toEqual({ x: 48, y: 200 });
         });
 
         it("lets a player who is inside move anywhere in the room, even when it holds more than its limit", async () => {
             const { manager, setCount } = await makeFullRoomManager({ player: { x: 48, y: 40 } });
             setCount(2);
-            expect(manager.getFullAreaForArrivalAt(48, 40)).toBeUndefined();
+            expect(manager.getClosedAreaForArrivalAt(48, 40)).toBeUndefined();
             setCount(3);
-            expect(manager.getFullAreaForArrivalAt(48, 40)).toBeUndefined();
-            expect(manager.getFullAreaForArrivalAt(60, 50)).toBeUndefined();
+            expect(manager.getClosedAreaForArrivalAt(48, 40)).toBeUndefined();
+            expect(manager.getClosedAreaForArrivalAt(60, 50)).toBeUndefined();
         });
 
         it("puts a player who joins the map inside a room that is full without them just outside it", async () => {
             const { manager, setCount } = await makeFullRoomManager({ player: { x: 48, y: 40 } });
             // The server counts them in: 2 of 2 is them and one other, so they fit
             setCount(2);
-            expect(manager.getFullAreaForArrivalAt(48, 40, true)).toBeUndefined();
+            expect(manager.getClosedAreaForArrivalAt(48, 40, true)).toBeUndefined();
             setCount(3);
-            expect(manager.getFullAreaForArrivalAt(48, 40, true)?.id).toBe("lounge");
+            expect(manager.getClosedAreaForArrivalAt(48, 40, true)?.id).toBe("lounge");
+        });
+    });
+
+    describe("a lockable room (#1622)", () => {
+        beforeEach(() => {
+            labels.length = 0;
+            accessibleAreaIds.add("lounge");
+        });
+
+        it("stops everyone outside once it is locked, the Owner and Admins too, and says Locked over Full", async () => {
+            const { manager, setCount, setLock } = await makeFullRoomManager({ canPassFullRooms: true });
+            setCount(2);
+            expect(manager.getBlockReason("lounge")).toBeUndefined();
+            expect(labels.at(-1)?.text).toBe("Full · 2/2");
+
+            setLock(true);
+            expect(manager.getBlockReason("lounge")).toBe("locked");
+            expect(labels.at(-1)?.text).toBe("Locked");
+            expect(manager.getClosedAreaForArrivalAt(48, 40)?.id).toBe("lounge");
+
+            setLock(false);
+            expect(manager.getBlockReason("lounge")).toBeUndefined();
+        });
+
+        it("offers the Owner and Admins at the edge to unlock it, and nobody else", async () => {
+            const admin = await makeFullRoomManager({ canPassFullRooms: true });
+            admin.setLock(true);
+            const area = admin.manager.getAreaById("lounge") as unknown as { unlockAction?: () => void };
+            expect(area.unlockAction).toBeDefined();
+            area.unlockAction?.();
+            expect(admin.setLocked).toHaveBeenCalledWith("lounge", "lock", false);
+
+            const member = await makeFullRoomManager();
+            member.setLock(true);
+            expect(
+                (member.manager.getAreaById("lounge") as unknown as { unlockAction?: () => void }).unlockAction
+            ).toBe(undefined);
+        });
+
+        it("shows Lock room to someone inside who may lock it, and tells them once it is locked", async () => {
+            const { manager, player, setLock, setLocked, lockableRoomStore } = await makeFullRoomManager({
+                player: { x: 48, y: 40 },
+                tags: ["member"],
+                lockTags: ["member"],
+            });
+            manager.onPlayerEnteredArea("lounge");
+            const { get } = await import("svelte/store");
+            expect(get(lockableRoomStore)).toEqual({
+                areaId: "lounge",
+                name: "Lounge",
+                locked: false,
+                canToggle: true,
+            });
+            // Inside a locked room: never stopped, but joining the map there puts them outside
+            setLock(true);
+            expect(manager.getBlockReason("lounge")).toBeUndefined();
+            expect(manager.getClosedAreaForArrivalAt(60, 50)).toBeUndefined();
+            expect(manager.getClosedAreaForArrivalAt(48, 40, true)?.id).toBe("lounge");
+            setLock(false);
+
+            manager.toggleLockableRoom();
+            expect(setLocked).toHaveBeenCalledWith("lounge", "lock", true);
+            setLock(true);
+            expect(player.playText).toHaveBeenCalledWith("area-locked-by-me", "You locked the Lounge", 3000);
+            expect(get(lockableRoomStore)?.locked).toBe(true);
+
+            player.y = 200;
+            manager.onPlayerLeftArea("lounge");
+            expect(get(lockableRoomStore)).toBeUndefined();
+        });
+
+        it("does not say they locked it after a lock they asked for never came and they walked out", async () => {
+            const { manager, player, setLock } = await makeFullRoomManager({
+                player: { x: 48, y: 40 },
+                tags: ["member"],
+                lockTags: ["member"],
+            });
+            manager.onPlayerEnteredArea("lounge");
+            manager.toggleLockableRoom();
+            player.y = 200;
+            manager.onPlayerLeftArea("lounge");
+            setLock(true);
+            expect(player.playText).not.toHaveBeenCalledWith("area-locked-by-me", expect.anything(), expect.anything());
+        });
+
+        it("hides Lock room from guests and from people without one of the room's tags", async () => {
+            const { get } = await import("svelte/store");
+            const guest = await makeFullRoomManager({ player: { x: 48, y: 40 }, isLogged: false });
+            guest.manager.onPlayerEnteredArea("lounge");
+            expect(get(guest.lockableRoomStore)?.canToggle).toBe(false);
+
+            const visitor = await makeFullRoomManager({ player: { x: 48, y: 40 }, lockTags: ["member"] });
+            visitor.manager.onPlayerEnteredArea("lounge");
+            expect(get(visitor.lockableRoomStore)?.canToggle).toBe(false);
         });
     });
 });

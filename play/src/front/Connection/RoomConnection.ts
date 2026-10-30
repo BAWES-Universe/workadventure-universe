@@ -3,6 +3,7 @@ import Debug from "debug";
 import * as Sentry from "@sentry/svelte";
 
 import type { AreaData, AtLeast, EntityDimensions, WAMEntityData } from "@workadventure/map-editor";
+import { AREA_LOCK_KEY } from "@workadventure/map-editor";
 import type {
     AddSpaceFilterMessage,
     AnswerMessage,
@@ -1460,6 +1461,21 @@ export class RoomConnection implements RoomConnection {
                     playUri,
                     askType: type,
                     userId,
+                },
+            },
+        });
+    }
+
+    /** Asks the server to lock or unlock a lockable room (#1622). It answers everyone if the player may. */
+    public emitSetAreaLock(areaId: string, propertyId: string, locked: boolean) {
+        this.send({
+            message: {
+                $case: "setAreaPropertyVariableMessage",
+                setAreaPropertyVariableMessage: {
+                    areaId,
+                    propertyId,
+                    key: AREA_LOCK_KEY,
+                    value: locked ? "true" : "false",
                 },
             },
         });

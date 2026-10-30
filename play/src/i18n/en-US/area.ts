@@ -6,6 +6,17 @@ const area: BaseTranslation = {
     full: "The {name} is full right now",
     fullUnnamed: "This room is full right now",
     fullLabel: "Full · {count:number}/{max:number}",
+    // A lockable room that is locked (#1622)
+    locked: "The {name} is locked right now",
+    lockedUnnamed: "This room is locked right now",
+    lockedLabel: "Locked",
+    unlockHint: "Press [SPACE] to unlock the {name}",
+    unlockHintUnnamed: "Press [SPACE] to unlock this room",
+    youLocked: "You locked the {name}",
+    youLockedUnnamed: "You locked this room",
+    lockRoom: "Lock room",
+    unlockRoom: "Unlock room",
+    lockRoomHint: "Nobody else can walk in while it's locked. It unlocks when everyone leaves.",
     personalArea: {
         claimDescription: "This is a personal area. Do you want to make it yours?",
         yourName: "Your name",

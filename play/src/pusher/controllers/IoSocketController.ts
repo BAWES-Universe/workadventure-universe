@@ -1172,7 +1172,8 @@ export class IoSocketController {
                             case "followAbortMessage":
                             case "lockGroupPromptMessage":
                             case "pingMessage":
-                            case "askPositionMessage": {
+                            case "askPositionMessage":
+                            case "setAreaPropertyVariableMessage": {
                                 socketManager.forwardMessageToBack(socket, message.message);
                                 break;
                             }

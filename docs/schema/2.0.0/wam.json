@@ -1085,6 +1085,44 @@
                         "type"
                       ],
                       "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "$ref": "#/definitions/WAMFileFormat/properties/entities/additionalProperties/properties/properties/items/anyOf/0/properties/id"
+                        },
+                        "buttonLabel": {
+                          "$ref": "#/definitions/WAMFileFormat/properties/entities/additionalProperties/properties/properties/items/anyOf/0/properties/buttonLabel"
+                        },
+                        "hideButtonLabel": {
+                          "$ref": "#/definitions/WAMFileFormat/properties/entities/additionalProperties/properties/properties/items/anyOf/0/properties/hideButtonLabel"
+                        },
+                        "resourceUrl": {
+                          "$ref": "#/definitions/WAMFileFormat/properties/entities/additionalProperties/properties/properties/items/anyOf/0/properties/resourceUrl"
+                        },
+                        "serverData": {
+                          "$ref": "#/definitions/WAMFileFormat/properties/entities/additionalProperties/properties/properties/items/anyOf/0/properties/serverData"
+                        },
+                        "disabled": {
+                          "$ref": "#/definitions/WAMFileFormat/properties/entities/additionalProperties/properties/properties/items/anyOf/0/properties/disabled"
+                        },
+                        "type": {
+                          "type": "string",
+                          "const": "lockableAreaPropertyData"
+                        },
+                        "allowedTags": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "type"
+                      ],
+                      "additionalProperties": false
                     }
                   ]
                 }

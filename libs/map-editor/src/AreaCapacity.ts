@@ -1,5 +1,5 @@
 import { MathUtils } from "@workadventure/math-utils";
-import type { AreaData, MaxUsersInAreaPropertyData } from "./types";
+import type { AreaData, LockableAreaPropertyData, MaxUsersInAreaPropertyData } from "./types";
 import { isAreaPropertyActive } from "./Utils";
 
 /**
@@ -7,6 +7,12 @@ import { isAreaPropertyActive } from "./Utils";
  * "Max people" setting (see AreaOccupancy in the back). The value is the count, as a string.
  */
 export const AREA_USERS_INSIDE_KEY = "usersInside";
+
+/**
+ * The name under which the server shares whether a lockable room is locked (#1622), the same as upstream
+ * WorkAdventure. The value is "true" or "false".
+ */
+export const AREA_LOCK_KEY = "lock";
 
 /**
  * How far below a player's position their feet are, in game pixels. A player is inside an area when their feet are,
@@ -41,4 +47,23 @@ export function isPlayerPositionInArea(
     area: Pick<AreaData, "x" | "y" | "width" | "height">
 ): boolean {
     return MathUtils.isOverlappingWithRectangle({ x: position.x, y: position.y + FEET_OFFSET_Y }, area);
+}
+
+/** The area's "Lockable room" setting when it is switched on, or undefined. */
+export function getActiveLockableProperty(area: Pick<AreaData, "properties">): LockableAreaPropertyData | undefined {
+    for (const property of area.properties) {
+        if (property.type === "lockableAreaPropertyData" && isAreaPropertyActive(property)) {
+            return property;
+        }
+    }
+    return undefined;
+}
+
+/**
+ * Whether someone with these tags may lock the room from inside: one of its tags, or anyone when it names none.
+ * Signing in, being inside and the Owner and Admins are checked by the caller.
+ */
+export function canTagsLockArea(property: Pick<LockableAreaPropertyData, "allowedTags">, tags: string[]): boolean {
+    const allowedTags = (property.allowedTags ?? []).filter((tag) => tag.trim() !== "");
+    return allowedTags.length === 0 || allowedTags.some((tag) => tags.includes(tag));
 }
