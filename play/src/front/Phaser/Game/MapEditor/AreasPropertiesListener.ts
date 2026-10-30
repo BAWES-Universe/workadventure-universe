@@ -383,15 +383,18 @@ export class AreasPropertiesListener {
                 break;
             }
             case "listenerMegaphone": {
-                newProperty = newProperty as typeof oldProperty;
-                this.handleListenerMegaphonePropertyOnLeave(oldProperty).catch((e) => {
-                    console.error(e);
-                    Sentry.captureException(e);
-                });
-                this.handleListenerMegaphonePropertyOnEnter(newProperty, newAbortController.signal).catch((e) => {
-                    console.error(e);
-                    Sentry.captureException(e);
-                });
+                const audience = newProperty as typeof oldProperty;
+                // One after the other: leaving the old settings must not undo the new ones (#1624)
+                this.handleListenerMegaphonePropertyOnLeave(oldProperty)
+                    .catch((e) => {
+                        console.error(e);
+                        Sentry.captureException(e);
+                    })
+                    .then(() => this.handleListenerMegaphonePropertyOnEnter(audience, newAbortController.signal))
+                    .catch((e) => {
+                        console.error(e);
+                        Sentry.captureException(e);
+                    });
                 break;
             }
             case "exit": {
