@@ -212,6 +212,20 @@ describe("an audio file in chat", () => {
         expect(missing.querySelector("[data-testid=audioOpenInPlayer]")).toBeNull();
     });
 
+    it("keeps no focus after a click, so the game's keys still walk, but keeps it for the keyboard", async () => {
+        const holder = await show("Desert Drive.mp3");
+        const speed = holder.querySelector(".voice-speed") as HTMLButtonElement;
+
+        speed.focus();
+        speed.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+        expect(document.activeElement).not.toBe(speed);
+
+        // Enter or Space on a focused button clicks it with no count of clicks
+        speed.focus();
+        speed.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 }));
+        expect(document.activeElement).toBe(speed);
+    });
+
     it("plays one audio at a time: starting a second pauses the first", async () => {
         const first = await show("Desert Drive.mp3");
         const second = await show("ambient-loop.mp3");

@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onDestroy, onMount } from "svelte";
+    import { onDestroy, onMount, tick } from "svelte";
     import { readable, type Readable, type Unsubscriber } from "svelte/store";
     import LL, { locale } from "../../../../i18n/i18n-svelte";
     import { formatDuration } from "../../Broadcast/voiceRecorder";
@@ -8,6 +8,7 @@
     import { sharedSender } from "../../../Chat/Components/Room/Details/sharedSender";
     import { audioFileKind, audioFileTitle } from "../../../Chat/Components/Room/Message/audioFileTitle";
     import { formatFileSize } from "../../../FileViewer/fileKinds";
+    import { openHereFloatsStore } from "../../../Stores/CoWebsiteStore";
     import {
         bandsOf,
         bandsSettled,
@@ -53,6 +54,8 @@
     const MAX_SHAPE_BYTES = 10 * 1024 * 1024;
     /** Previous this far into a song goes back to its start, as in music apps. */
     const RESTART_AFTER_SECONDS = 3;
+    /** The list's heading and two and a half songs: less room than this and the whole window scrolls instead. */
+    const QUEUE_MIN_HEIGHT = 176;
     /** A song from the list whose file never comes gives up, so the next tap asks again. */
     const FILE_WAIT_MS = 15000;
 
@@ -84,8 +87,16 @@
     /** While a finger or the mouse drags the dot: where it is, 0 to 1. The song jumps there on release. */
     let dragAt: number | undefined;
     let width = 0;
+    let height = 0;
+    let queue: HTMLDivElement | undefined;
+    let queueList: HTMLDivElement | undefined;
 
     $: compact = width > 0 && width < 440;
+    // The list scrolls on its own, so the player stays in view, when the floating window has room for a few songs
+    // under the player. A short window scrolls as a whole instead of squeezing the list, and so does an upright phone's
+    // sheet, whose lower part the chat's sheet can cover.
+    $: pinned =
+        $openHereFloatsStore && width > 0 && queue !== undefined && height - queue.offsetTop >= QUEUE_MIN_HEIGHT;
     $: title =
         audioFileTitle(name) ??
         (sentByMe
@@ -106,6 +117,18 @@
     $: currentTrack = index >= 0 ? $tracks[index] : undefined;
     // Previous and Next only when the chat has other songs to go to.
     $: hasList = index >= 0 && $tracks.length > 1;
+    // The song playing is in sight in the list when the window opens on it.
+    $: if (pinned && queueList && index >= 0) showCurrent(index).catch((error) => console.warn(error));
+
+    async function showCurrent(at: number): Promise<void> {
+        await tick();
+        const list = queueList;
+        const row = list?.children[at];
+        if (!list || !(row instanceof HTMLElement)) return;
+        const top = row.offsetTop - list.offsetTop;
+        if (top >= list.scrollTop && top + row.offsetHeight <= list.scrollTop + list.clientHeight) return;
+        list.scrollTop = top - (list.clientHeight - row.offsetHeight) / 2;
+    }
 
     let openingKey: string | undefined;
     let stopOpening: (() => void) | undefined;
@@ -392,7 +415,15 @@
 </script>
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
-<div class="audio-player" class:compact bind:clientWidth={width} on:keydown={onKey} data-testid="fileViewerAudio">
+<div
+    class="audio-player"
+    class:compact
+    class:pinned
+    bind:clientWidth={width}
+    bind:clientHeight={height}
+    on:keydown={onKey}
+    data-testid="fileViewerAudio"
+>
     <div class="stage">
         {#if failed}
             <div class="stage-failed">
@@ -574,45 +605,50 @@
     </div>
 
     {#if hasList}
-        <div class="queue">
+        <div class="queue" bind:this={queue}>
             <div class="queue-label">{$LL.chat.audioFile.inThisChat({ count: $tracks.length })}</div>
-            {#each $tracks as track, position (track.key)}
-                {@const isCurrent = position === index}
-                <button
-                    type="button"
-                    class="queue-row"
-                    class:current={isCurrent}
-                    aria-current={isCurrent ? "true" : undefined}
-                    aria-busy={openingKey === track.key}
-                    on:click={() => !isCurrent && openTrack(track)}
-                >
-                    <span class="queue-mark">
-                        {#if isCurrent && playing}
-                            <span class="eq"><i /><i /><i /></span>
-                        {:else}
-                            {position + 1}
-                        {/if}
-                    </span>
-                    <span class="queue-text">
-                        <span class="queue-title">{audioFileTitle(track.name) ?? $LL.chat.audioFile.untitled()}</span>
-                        <span class="queue-sub">
-                            {[
-                                sharedSender(track.message, $LL.chat.details.you()),
-                                track.size !== undefined ? formatFileSize(track.size) : undefined,
-                                sentLabel(track.message.date, $locale),
-                            ]
-                                .filter(Boolean)
-                                .join(" · ")}
+            <div class="queue-list" bind:this={queueList}>
+                {#each $tracks as track, position (track.key)}
+                    {@const isCurrent = position === index}
+                    <button
+                        type="button"
+                        class="queue-row"
+                        class:current={isCurrent}
+                        aria-current={isCurrent ? "true" : undefined}
+                        aria-busy={openingKey === track.key}
+                        on:click={() => !isCurrent && openTrack(track)}
+                    >
+                        <span class="queue-mark">
+                            {#if isCurrent && playing}
+                                <span class="eq"><i /><i /><i /></span>
+                            {:else}
+                                {position + 1}
+                            {/if}
                         </span>
-                    </span>
-                </button>
-            {/each}
+                        <span class="queue-text">
+                            <span class="queue-title"
+                                >{audioFileTitle(track.name) ?? $LL.chat.audioFile.untitled()}</span
+                            >
+                            <span class="queue-sub">
+                                {[
+                                    sharedSender(track.message, $LL.chat.details.you()),
+                                    track.size !== undefined ? formatFileSize(track.size) : undefined,
+                                    sentLabel(track.message.date, $locale),
+                                ]
+                                    .filter(Boolean)
+                                    .join(" · ")}
+                            </span>
+                        </span>
+                    </button>
+                {/each}
+            </div>
         </div>
     {/if}
 </div>
 
 <style>
     .audio-player {
+        position: relative;
         flex: 1;
         min-height: 0;
         overflow-y: auto;
@@ -881,10 +917,36 @@
         background: #fff;
     }
     .queue {
-        display: grid;
-        gap: 2px;
+        display: flex;
+        flex-direction: column;
         padding-top: 4px;
         border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .queue-list {
+        display: grid;
+        align-content: start;
+        gap: 2px;
+    }
+    /* The player stays where it is and only the songs scroll. */
+    .audio-player.pinned {
+        overflow-y: hidden;
+    }
+    .pinned .queue {
+        flex: 1 1 0;
+        min-height: 0;
+        margin-bottom: -28px;
+    }
+    .pinned .queue-list {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        padding-bottom: 28px;
+    }
+    .compact.pinned .queue {
+        margin-bottom: -20px;
+    }
+    .compact.pinned .queue-list {
+        padding-bottom: 20px;
     }
     .queue-label {
         padding: 12px 0 6px;

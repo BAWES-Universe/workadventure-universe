@@ -131,17 +131,26 @@
         else return;
         event.preventDefault();
     }
+    // A click or a tap leaves nothing focused on the card: W, A, S, D still walk and no ring shows when they are pressed.
+    // Keyboard users Tab to the controls and keep their ring.
+    function dropClickFocus(event: MouseEvent) {
+        if (event.detail === 0) return;
+        const focused = document.activeElement;
+        if (focused instanceof HTMLElement && (event.currentTarget as HTMLElement).contains(focused)) focused.blur();
+    }
     onDestroy(() => {
         player?.pause();
     });
 </script>
 
+<!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
 <div
     class="voice-note"
     class:audio-file={!isVoice}
     class:mine={isMine}
     class:with-player={canOpenInPlayer && !failed}
     data-testid={isVoice ? "voiceNote" : "audioFile"}
+    on:click={dropClickFocus}
 >
     <button
         type="button"
