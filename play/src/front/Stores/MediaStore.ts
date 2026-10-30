@@ -33,6 +33,7 @@ import { userMovingStore } from "./GameStore";
 import { hideHelpCameraSettings } from "./HelpSettingsStore";
 import { isLiveStreamingStore } from "./IsStreamingStore";
 import { videoStreamElementsStore } from "./PeerStore";
+import { bubbleMatesStore } from "./CurrentPlayerGroupStore";
 import { phoneMicrophoneCanRest } from "./PhoneMicrophoneRest";
 
 import {
@@ -343,6 +344,16 @@ export const inBbbStore = writable(false);
 export const isSpeakerStore = writable(false);
 export const inLivekitStore = writable(false);
 export const isListenerStore = writable(false);
+/** The Audience we stand in lets people next to each other talk in a bubble (#1624). */
+export const audienceCanTalkStore = writable(false);
+/**
+ * We only listen to a Stage: in an Audience, and not talking in a bubble there. Our camera is not shown and our
+ * microphone reaches no one. In an Audience that lets people talk, a bubble makes us a normal bubble member again.
+ */
+export const listensOnlyStore = derived(
+    [isListenerStore, audienceCanTalkStore, bubbleMatesStore],
+    ([$isListener, $audienceCanTalk, $bubbleMates]) => $isListener && !($audienceCanTalk && $bubbleMates.length > 0)
+);
 export const listenerWaitingMediaStore = writable<string | undefined>(undefined);
 
 export const requestedStatusStore: Writable<RequestedStatus | null> = writable(localUserStore.getRequestedStatus());
@@ -368,6 +379,7 @@ export const availabilityStatusStore = derived(
         requestedStatusStore,
         inLivekitStore,
         isListenerStore,
+        audienceCanTalkStore,
     ],
     ([
         $inJitsiStore,
@@ -379,6 +391,7 @@ export const availabilityStatusStore = derived(
         $requestedStatusStore,
         $inLivekitStore,
         $isListenerStore,
+        $audienceCanTalkStore,
     ]) => {
         // Important: Statuses that should not switch to BUSY
         // must be checked BEFORE privacyShutdownStore to prevent switching to BUSY when privacy is enabled.
@@ -388,7 +401,8 @@ export const availabilityStatusStore = derived(
         if ($isSpeakerStore) return AvailabilityStatus.SPEAKER;
         if ($silentStore) return AvailabilityStatus.SILENT;
         if ($inLivekitStore) return AvailabilityStatus.LIVEKIT;
-        if ($isListenerStore) return AvailabilityStatus.LISTENER;
+        // An Audience that lets people talk keeps us open to bubbles (#1624)
+        if ($isListenerStore && !$audienceCanTalkStore) return AvailabilityStatus.LISTENER;
         if ($requestedStatusStore) return $requestedStatusStore;
         if ($privacyShutdownStore) return AvailabilityStatus.AWAY;
 
@@ -444,7 +458,7 @@ export const mediaStreamConstraintsStore = derived(
         videoStreamElementsStore,
         isLiveStreamingStore,
         isSpeakerStore,
-        isListenerStore,
+        listensOnlyStore,
         inLivekitStore,
         streamingMegaphoneStore,
         displayedMegaphoneScreenStore,
@@ -466,7 +480,7 @@ export const mediaStreamConstraintsStore = derived(
             $videoStreamElementsStore,
             $isLiveStreamingStore,
             $isSpeakerStore,
-            $isListenerStore,
+            $listensOnlyStore,
             $inLivekitStore,
             $streamingMegaphoneStore,
             $displayedMegaphoneScreenStore,
@@ -531,7 +545,7 @@ export const mediaStreamConstraintsStore = derived(
                 peers: $videoStreamElementsStore.length,
                 live: $isLiveStreamingStore,
                 speaker: $isSpeakerStore,
-                listener: $isListenerStore,
+                listener: $listensOnlyStore,
                 inLivekit: $inLivekitStore,
                 megaphone: $streamingMegaphoneStore || $displayedMegaphoneScreenStore,
                 setupScreen: $enableCameraSceneVisibilityStore,

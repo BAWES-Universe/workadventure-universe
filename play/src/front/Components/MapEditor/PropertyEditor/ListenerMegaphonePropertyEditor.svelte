@@ -17,6 +17,9 @@
     // Maps made before the switch have no value for it: raised hands are on there (#1625).
     let raiseHandEnabled: boolean;
     $: raiseHandEnabled = property.raiseHandEnabled ?? true;
+    // Off when missing: the audience only listens (#1624).
+    let allowTalking: boolean;
+    $: allowTalking = property.allowTalking ?? false;
 
     const dispatch = createEventDispatcher<{
         change: undefined;
@@ -113,6 +116,18 @@
             onChange={onValueChange}
         />
         <PanelSwitch
+            id="allowTalking"
+            label={$LL.mapEditor.properties.listenerMegaphone.allowTalking()}
+            bind:value={allowTalking}
+            onChange={() => {
+                property.allowTalking = allowTalking;
+                onValueChange();
+            }}
+        />
+        <p class="talk-help" data-testid="allowTalking-help">
+            {$LL.mapEditor.properties.listenerMegaphone.allowTalkingHelp()}
+        </p>
+        <PanelSwitch
             id="raiseHandEnabled"
             label={$LL.mapEditor.properties.listenerMegaphone.raiseHandEnabled()}
             bind:value={raiseHandEnabled}
@@ -123,3 +138,12 @@
         />
     </span>
 </PropertyEditorBase>
+
+<style>
+    .talk-help {
+        margin: -6px 0 0;
+        font-size: 0.8125rem;
+        line-height: 1.45;
+        color: rgba(255, 255, 255, 0.6);
+    }
+</style>

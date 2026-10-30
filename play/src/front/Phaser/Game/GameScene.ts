@@ -2479,7 +2479,11 @@ export class GameScene extends DirtyScene {
                 this._proximityChatRoomDeferred.resolve(this._proximityChatRoom);
                 // What the nearby chat shows is kept on the player's account, so it is still there after a reload.
                 this.stopKeepingNearbyShared = keepNearbyShared(this._proximityChatRoom);
-                this.proximitySpaceManager = new ProximitySpaceManager(this.connection, this._proximityChatRoom);
+                this.proximitySpaceManager = new ProximitySpaceManager(
+                    this.connection,
+                    this._proximityChatRoom,
+                    this.spaceRegistry
+                );
 
                 this.scriptingVideoManager = new ScriptingVideoManager();
 

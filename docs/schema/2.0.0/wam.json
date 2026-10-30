@@ -770,6 +770,9 @@
                           "type": "boolean",
                           "default": false
                         },
+                        "allowTalking": {
+                          "type": "boolean"
+                        },
                         "raiseHandEnabled": {
                           "type": "boolean"
                         },

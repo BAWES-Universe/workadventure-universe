@@ -147,6 +147,8 @@ export const ListenerMegaphonePropertyData = PropertyBase.extend({
     type: z.literal("listenerMegaphone"),
     speakerZoneName: z.string(),
     chatEnabled: z.boolean().default(false),
+    // Whether people next to each other in the audience may talk in a bubble (#1624). Missing means off, as upstream.
+    allowTalking: z.boolean().optional(),
     // Whether the audience may raise their hand to ask for the floor (#1625). Missing means on, as upstream WorkAdventure.
     raiseHandEnabled: z.boolean().optional(),
     waitingLink: z.string().optional(),

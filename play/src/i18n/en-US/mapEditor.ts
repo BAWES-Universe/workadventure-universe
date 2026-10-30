@@ -139,6 +139,9 @@ const mapEditor: BaseTranslation = {
             waitingSpeaker: "Waiting for speaker 🎤✨",
             actionButtonLabel: "Join audience",
             raiseHandEnabled: "Let people raise their hand",
+            allowTalking: "People can talk to each other",
+            allowTalkingHelp:
+                "Off: everyone here only listens to the Stage. On: people next to each other can chat in a bubble and still hear the Stage.",
         },
         start: {
             label: "Start area",
