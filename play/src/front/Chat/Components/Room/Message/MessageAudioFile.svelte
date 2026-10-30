@@ -14,9 +14,11 @@
     } from "../../../VoiceNote/VoiceNote";
     import { getMediaCaption } from "../MessageActions/messageActions";
     import { saveMessageFiles } from "../MessageActions/availableActions";
+    import { fileKindOf } from "../../../../FileViewer/fileKinds";
     import { audioFileKind, audioFileTitle } from "./audioFileTitle";
+    import { openSongInPlayer } from "./openSongInPlayer";
     import { MESSAGE_SENDER_CONTEXT, type MessageSenderInfo } from "./messageSenderContext";
-    import { IconAlertTriangle, IconDownload, IconPauseFilled, IconPlayFilled } from "@wa-icons";
+    import { IconAlertTriangle, IconDownload, IconMusic, IconPauseFilled, IconPlayFilled } from "@wa-icons";
 
     export let content: Readable<ChatMessageContent>;
 
@@ -53,6 +55,8 @@
         audioFileTitle(fileName) ??
         (sender?.name ? $LL.chat.audioFile.from({ name: sender.name }) : $LL.chat.audioFile.untitled());
     $: kind = audioFileKind(fileName);
+    // An audio file the window can play opens in its player too; a voice note never does (game #1642).
+    $: canOpenInPlayer = !isVoice && fileName !== undefined && fileKindOf(fileName) === "audio";
     // A file that could not be fetched has nothing to play or download; one the browser cannot play can still be saved.
     $: unreachable = !isVoice && $content.mediaFailed === true && !$content.url;
     $: failed = !isVoice && (playerFailed || unreachable);
@@ -88,6 +92,21 @@
         saveMessageFiles([{ url: $content.url, name: fileName ?? "audio" }]).catch((error) => console.error(error));
     }
 
+    function openInPlayer() {
+        if (!$content.url || !fileName) return;
+        // The window carries on from here, so the card stops.
+        const at = player?.currentTime ?? 0;
+        player?.pause();
+        openSongInPlayer({
+            url: $content.url,
+            name: fileName,
+            senderName: sender?.name,
+            sentByMe: isMine,
+            key: sender?.messageId,
+            at,
+        });
+    }
+
     function toggle() {
         if (!player || failed) return;
         if (playing) player.pause();
@@ -121,6 +140,7 @@
     class="voice-note"
     class:audio-file={!isVoice}
     class:mine={isMine}
+    class:with-player={canOpenInPlayer && !failed}
     data-testid={isVoice ? "voiceNote" : "audioFile"}
 >
     <button
@@ -198,6 +218,18 @@
             aria-label={$LL.chat.voiceNote.speed()}
         >
             {SPEEDS[speed]}×
+        </button>
+    {/if}
+    {#if canOpenInPlayer && !failed}
+        <button
+            type="button"
+            class="audio-open-player"
+            on:click={openInPlayer}
+            disabled={!$content.url}
+            data-testid="audioOpenInPlayer"
+        >
+            <IconMusic font-size="16" />
+            {$LL.chat.audioFile.openInPlayer()}
         </button>
     {/if}
     {#if $content.url && !failed}
@@ -323,6 +355,40 @@
             "play title download"
             "play bars speed"
             "play time speed";
+    }
+    /* With "Open in player" along the bottom, the full width of the card. */
+    .voice-note.audio-file.with-player {
+        grid-template-rows: auto auto auto auto;
+        grid-template-areas:
+            "play title download"
+            "play bars speed"
+            "play time speed"
+            "open open open";
+    }
+    .audio-open-player {
+        grid-area: open;
+        margin: 8px -12px -8px -8px;
+        min-height: 44px;
+        padding: 0 12px;
+        border: 0;
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        background: transparent;
+        color: #fff;
+        font-family: inherit;
+        font-size: 13px;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        cursor: pointer;
+    }
+    .audio-open-player:hover:not(:disabled) {
+        background: rgba(255, 255, 255, 0.06);
+    }
+    .audio-open-player:disabled {
+        opacity: 0.5;
+        cursor: default;
     }
     .audio-title {
         grid-area: title;

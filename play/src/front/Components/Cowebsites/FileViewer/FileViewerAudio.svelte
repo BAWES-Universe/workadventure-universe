@@ -77,6 +77,8 @@
     let muted = player.muted;
     let volumeDragging = false;
     let failed = false;
+    // Opened from its chat card: it carries on from where the card was, once the window knows the song's length.
+    let startAt = audio.startAt;
     let levels: number[] | undefined;
     let fileSize: number | undefined;
     /** While a finger or the mouse drags the dot: where it is, 0 to 1. The song jumps there on release. */
@@ -352,7 +354,14 @@
                 duration = Number.isFinite(player.duration) && player.duration > 0 ? player.duration : undefined;
             },
         ],
-        ["loadedmetadata", () => (player.playbackRate = SPEEDS[speed])],
+        [
+            "loadedmetadata",
+            () => {
+                player.playbackRate = SPEEDS[speed];
+                if (startAt) player.currentTime = startAt;
+                startAt = undefined;
+            },
+        ],
     ];
     const handlers = listeners.map(([event, handler]) => {
         const guarded = () => {

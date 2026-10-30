@@ -96,6 +96,7 @@ export interface ChatFileToOpen {
     /** For an audio file: see `FileViewerAudio`. */
     inChat?: FileViewerAudio["inChat"];
     startPlaying?: boolean;
+    startAt?: number;
 }
 
 /**
@@ -135,6 +136,7 @@ export function openChatFileInViewer(file: ChatFileToOpen): void {
                   url: file.url,
                   inChat: file.inChat,
                   startPlaying: file.startPlaying,
+                  startAt: file.startAt,
                   openOther: openChatFileInViewer,
               }
             : undefined,
