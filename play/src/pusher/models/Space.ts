@@ -81,6 +81,10 @@ export interface SpaceInterface {
         changedFields: string[];
         partialSpaceUser: PartialSpaceUser;
     } | null;
+    stopCameraNoLongerAllowed(client: Socket): {
+        changedFields: string[];
+        partialSpaceUser: PartialSpaceUser;
+    } | null;
     cleanup(): void;
 }
 
@@ -417,6 +421,27 @@ export class Space implements SpaceForSpaceConnectionInterface {
             // Only the allowed fields travel on, stamped with the sender's own id.
             partialSpaceUser: { ...updateValues, spaceUserId: spaceUser.spaceUserId },
         };
+    }
+
+    /**
+     * The player stops showing their camera to the speakers (#1623) when this Stage no longer sees the audience's
+     * cameras, even if their browser does not stop it. Read from the player's own copy, which an update changes at
+     * once: the copy of every user only changes when the back sends the update back, so a camera turned on just
+     * before the Stage turned the setting off would still look off there.
+     */
+    public stopCameraNoLongerAllowed(client: Socket): {
+        changedFields: string[];
+        partialSpaceUser: PartialSpaceUser;
+    } | null {
+        const spaceUser = this._localConnectedUserWithSpaceUser.get(client);
+        if (spaceUser?.attendeeCamera !== true || canShowCameraToSpeakersIn(this.localName, client.getUserData())) {
+            return null;
+        }
+        return this.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(client, {
+            spaceName: this.name,
+            user: SpaceUser.fromPartial({ spaceUserId: spaceUser.spaceUserId, attendeeCamera: false }),
+            updateMask: ["attendeeCamera"],
+        });
     }
 
     getPropertiesToSync(): string[] {

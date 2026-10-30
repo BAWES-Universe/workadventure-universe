@@ -26,7 +26,7 @@ describe("showing our camera to a Stage's speakers (#1623)", () => {
         const { showCameraToSpeakers, stopShowingCameraToSpeakers, stageSeesOurCameraStore } = await load();
         const { space, showCameraToStreamers } = fakeSpace();
         const cameraOn = writable(true);
-        const stop = showCameraToSpeakers(space, cameraOn, vi.fn());
+        const stop = showCameraToSpeakers(space, cameraOn, writable(true), vi.fn());
         expect(showCameraToStreamers).toHaveBeenLastCalledWith(true);
         expect(get(stageSeesOurCameraStore)).toBe(true);
 
@@ -47,8 +47,8 @@ describe("showing our camera to a Stage's speakers (#1623)", () => {
         const first = fakeSpace();
         const second = fakeSpace();
         const cameraOn = writable(true);
-        const stopFirst = showCameraToSpeakers(first.space, cameraOn, vi.fn());
-        showCameraToSpeakers(second.space, cameraOn, vi.fn());
+        const stopFirst = showCameraToSpeakers(first.space, cameraOn, writable(true), vi.fn());
+        showCameraToSpeakers(second.space, cameraOn, writable(true), vi.fn());
         expect(first.showCameraToStreamers).toHaveBeenLastCalledWith(false);
         expect(get(stageSeesOurCameraStore)).toBe(true);
 
@@ -60,4 +60,62 @@ describe("showing our camera to a Stage's speakers (#1623)", () => {
         expect(second.showCameraToStreamers).toHaveBeenCalledWith(false);
         expect(get(stageSeesOurCameraStore)).toBe(false);
     });
+
+    it("follows the Stage turning the setting off and on again while we stay in the Audience", async () => {
+        const { showCameraToSpeakers, stageSeesOurCameraStore, attendeeCameraAreaSpacesStore, stageSeesCamerasStore } =
+            await loadWithSpaces();
+        const shows: boolean[] = [];
+        const space = { showCameraToStreamers: (show: boolean) => shows.push(show) } as unknown as SpaceInterface;
+        const told = vi.fn();
+        attendeeCameraAreaSpacesStore.set(new Set(["stage"]));
+
+        const stop = showCameraToSpeakers(space, writable(true), stageSeesCamerasStore("stage"), told);
+        expect(shows).toEqual([true]);
+        expect(told).toHaveBeenCalledTimes(1);
+
+        // The Stage turns it off: our camera stops being shown, and may go to sleep again
+        attendeeCameraAreaSpacesStore.set(new Set(["another-stage"]));
+        expect(shows).toEqual([true, false]);
+        expect(get(stageSeesOurCameraStore)).toBe(false);
+
+        // The Stage turns it back on: our camera, still on, is shown again and we are told
+        attendeeCameraAreaSpacesStore.set(new Set(["stage", "another-stage"]));
+        expect(shows).toEqual([true, false, true]);
+        expect(get(stageSeesOurCameraStore)).toBe(true);
+        expect(told).toHaveBeenCalledTimes(2);
+
+        stop();
+        expect(shows).toEqual([true, false, true, false]);
+    });
+
+    it("does not show it on a Stage that does not see the audience's cameras", async () => {
+        const { showCameraToSpeakers, stageSeesOurCameraStore, attendeeCameraAreaSpacesStore, stageSeesCamerasStore } =
+            await loadWithSpaces();
+        const showCameraToStreamers = vi.fn();
+        const told = vi.fn();
+        attendeeCameraAreaSpacesStore.set(new Set());
+
+        const stop = showCameraToSpeakers(
+            { showCameraToStreamers } as unknown as SpaceInterface,
+            writable(true),
+            stageSeesCamerasStore("stage"),
+            told
+        );
+
+        expect(showCameraToStreamers).not.toHaveBeenCalledWith(true);
+        expect(get(stageSeesOurCameraStore)).toBe(false);
+        expect(told).not.toHaveBeenCalled();
+        stop();
+    });
+
+    async function loadWithSpaces() {
+        const module = await import("../AttendeeCamera");
+        const { stageSeesOurCameraStore } = await import("../../Stores/MediaStore");
+        return {
+            showCameraToSpeakers: module.showCameraToSpeakers,
+            attendeeCameraAreaSpacesStore: module.attendeeCameraAreaSpacesStore,
+            stageSeesCamerasStore: module.stageSeesCamerasStore,
+            stageSeesOurCameraStore,
+        };
+    }
 });

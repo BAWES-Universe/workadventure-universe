@@ -68,7 +68,7 @@ import { botApiService } from "../../external-modules/bots/services/BotApiServic
 import { getBotServerUrl } from "../../external-modules/bots/services/BotServerUrl";
 import { refreshThisDeviceOnce } from "../../Notification/Push/PushDevice";
 import { clearHandsOffHere, myHandRaisedStore, raisedHandsStore } from "../../Space/RaiseHand/RaiseHandStore";
-import { stopShowingCameraToSpeakers } from "../../Space/AttendeeCamera";
+import { attendeeCameraAreaSpacesStore, stopShowingCameraToSpeakers } from "../../Space/AttendeeCamera";
 import { bindPodiumToRaiseHand } from "../../Space/RaiseHand/PodiumStore";
 import { Loader } from "../Components/Loader";
 import { RemotePlayer } from "../Entity/RemotePlayer";
@@ -2595,6 +2595,9 @@ export class GameScene extends DirtyScene {
                     // A meeting room or stage that has just been limited to roles this player does not have: the
                     // server has already taken them out of it, so this side lets go of it too.
                     this.leaveRefusedAreaSpaces(megaphoneSettingsMessage.refusedAreaSpaces);
+                    // The Stages that see the audience's cameras (#1623): the server has already stopped ours where
+                    // a Stage turned it off, and lets it through again where one turned it on.
+                    attendeeCameraAreaSpacesStore.set(new Set(megaphoneSettingsMessage.attendeeCameraAreaSpaces));
                     // Do not disturb: no broadcast reaches this player.
                     if (get(availabilityStatusStore) === AvailabilityStatus.DO_NOT_DISTURB) {
                         return;
