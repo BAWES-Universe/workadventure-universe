@@ -88,15 +88,15 @@
     let dragAt: number | undefined;
     let width = 0;
     let height = 0;
-    let queue: HTMLDivElement | undefined;
-    let queueList: HTMLDivElement | undefined;
+    // Svelte sets these to null when the list goes away (a chat left with one song).
+    let queue: HTMLDivElement | null = null;
+    let queueList: HTMLDivElement | null = null;
 
     $: compact = width > 0 && width < 440;
     // The list scrolls on its own, so the player stays in view, when the floating window has room for a few songs
     // under the player. A short window scrolls as a whole instead of squeezing the list, and so does an upright phone's
     // sheet, whose lower part the chat's sheet can cover.
-    $: pinned =
-        $openHereFloatsStore && width > 0 && queue !== undefined && height - queue.offsetTop >= QUEUE_MIN_HEIGHT;
+    $: pinned = $openHereFloatsStore && width > 0 && queue !== null && height - queue.offsetTop >= QUEUE_MIN_HEIGHT;
     $: title =
         audioFileTitle(name) ??
         (sentByMe
