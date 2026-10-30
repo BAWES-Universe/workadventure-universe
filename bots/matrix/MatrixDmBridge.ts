@@ -4,7 +4,7 @@ import type { MatrixEvent, MatrixEventHandler } from './MatrixAppServiceRouter';
 import { BOT_LOCALPART_PREFIX, botIdFromMatrixId, type MatrixAppServiceConfig } from './MatrixConfig';
 import type { BotConfiguration } from '../server/AdminApiService';
 import type { DmAttachment, DmPerson, DmReply, DmReplyHooks } from '../server/DmReplyService';
-import type { PendingMedia } from '../memory/ConversationMemory';
+import { MAX_OUTGOING_MEDIA_BYTES, type PendingMedia } from '../memory/ConversationMemory';
 import {
     availabilityOf,
     detectLanguage,
@@ -17,6 +17,7 @@ import {
 import { ACCESS_CACHE_TTL_MS } from '../server/BotAccessGate';
 import { BotWokaAvatar } from './BotWokaAvatar';
 import { ARTIFACT_KEY, artifactDirectMessage } from '../ai/ArtifactTools';
+import { STEPS_KEY, type StepsField } from '../ai/ToolSteps';
 
 /** The field of a reply that names the bot's room: the game shows a card under it to go there. */
 export const ROOM_LINK_KEY = 'universe.room_link';
@@ -105,7 +106,6 @@ function attemptsOf(event: MatrixEvent): number {
 const TYPING_DELAY_MS = 800;
 /** Matrix drops "typing" after its timeout (30 s), so a long answer renews it. */
 const TYPING_REFRESH_MS = 20 * 1000;
-const MAX_OUTGOING_MEDIA_BYTES = 50 * 1024 * 1024;
 const ONLY_DIRECT = 'I only take direct messages.';
 
 /**
@@ -567,6 +567,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
         };
         let typingTimer: NodeJS.Timeout | undefined = setTimeout(startTyping, TYPING_DELAY_MS);
         let answered = false;
+        let stepsSent: Promise<void> = Promise.resolve();
+        let stepsEventId: string | undefined;
         const sentAt = event.origin_server_ts ?? Date.now();
         if (!catchUp) this.answeringLive.set(event.room_id, sentAt);
         try {
@@ -580,6 +582,29 @@ export class MatrixDmBridge implements MatrixEventHandler {
                         console.warn(`[MatrixDmBridge] Could not send an interim message in ${event.room_id}:`, error?.message ?? error);
                     }
                     if (typing) startTyping();
+                },
+                onSteps: (field, text) => {
+                    // One notice per reply, updated in place: notices and updates don't notify (#1545). In order, and
+                    // never throwing: a lost steps line must not cost the person the answer.
+                    stepsSent = stepsSent
+                        .then(async () => {
+                            const content = { msgtype: 'm.notice', body: text, [STEPS_KEY]: field };
+                            if (!stepsEventId) {
+                                stepsEventId = await this.client.sendMessage(botUserId, event.room_id, content);
+                                return;
+                            }
+                            await this.client.sendMessage(botUserId, event.room_id, {
+                                msgtype: 'm.notice',
+                                body: `* ${text}`,
+                                'm.new_content': content,
+                                'm.relates_to': { rel_type: 'm.replace', event_id: stepsEventId },
+                            });
+                        })
+                        .catch((error: any) =>
+                            console.warn(`[MatrixDmBridge] Could not show the steps in ${event.room_id}:`, error?.message ?? error)
+                        );
+                    if (typing) startTyping();
+                    return stepsSent;
                 },
             });
             // Answered together with the messages that waited with it (#1159): that one answer was sent for all of them
@@ -621,9 +646,22 @@ export class MatrixDmBridge implements MatrixEventHandler {
                     .catch((error) => console.warn(`[MatrixDmBridge] Could not send an artifact card from bot ${botId}:`, error?.message ?? error));
             }
             for (const item of reply.media ?? []) {
-                await this.sendMedia(botUserId, event.room_id, item).catch((error) =>
-                    console.warn(`[MatrixDmBridge] Could not send media from bot ${botId}:`, error?.message ?? error)
+                const sent = await this.sendMedia(botUserId, event.room_id, item).then(
+                    (copy) => ({ copy }),
+                    (error) => {
+                        console.warn(`[MatrixDmBridge] Could not send media from bot ${botId}:`, error?.message ?? error);
+                        return null;
+                    }
                 );
+                // On the person's list of files once it reached them (#1508); keeping it never stops the reply.
+                // The list keeps our own copy (#1572), so a tool link that expires or is signed cannot lose the file.
+                if (sent) {
+                    try {
+                        reply.mediaSent?.(sent.copy ? { ...item, originalUrl: item.originalUrl ?? item.url, url: sent.copy } : item);
+                    } catch {
+                        // nothing to undo: the file was sent
+                    }
+                }
             }
             answered = true;
         } catch (error: any) {
@@ -883,14 +921,30 @@ export class MatrixDmBridge implements MatrixEventHandler {
             const mimeType = String(content.info?.mimetype ?? file.contentType);
             const url = await this.deps.uploadAttachment(file.data, mimeType, filename);
             if (!url) return { text: caption, attachments: [], failed: true };
-            return { text: caption, attachments: [{ url, mimeType, mediaType }] };
+            const size = Number(content.info?.size);
+            const duration = Number(content.info?.duration);
+            return {
+                text: caption,
+                attachments: [
+                    {
+                        url,
+                        mimeType,
+                        mediaType,
+                        name: filename,
+                        sizeBytes: Number.isFinite(size) && size >= 0 ? size : file.data.length,
+                        // Matrix gives how long audio and video play in milliseconds
+                        lengthSeconds: Number.isFinite(duration) && duration > 0 ? duration / 1000 : null,
+                    },
+                ],
+            };
         } catch (error) {
             console.warn('[MatrixDmBridge] Could not read an attachment:', (error as Error)?.message ?? error);
             return { text: caption, attachments: [], failed: true };
         }
     }
 
-    private async sendMedia(botUserId: string, roomId: string, item: PendingMedia): Promise<void> {
+    /** Sends the file; returns the link of the copy on our uploader that the bot's list keeps, or null when there is none. */
+    private async sendMedia(botUserId: string, roomId: string, item: PendingMedia): Promise<string | null> {
         const { FileParser } = await import('../services/FileParser');
         await FileParser.validateUrl(item.url);
         const response = await axios.get(item.url, {
@@ -901,7 +955,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         });
         const data = Buffer.from(response.data);
         const mimeType = item.mimeType || String(response.headers['content-type'] || 'application/octet-stream');
-        const filename = new URL(item.url).pathname.split('/').pop() || `${item.mediaType}`;
+        const filename = item.name || new URL(item.url).pathname.split('/').pop() || `${item.mediaType}`;
         const mxc = await this.client.uploadMedia(botUserId, data, mimeType, filename);
         const msgtype = { image: 'm.image', audio: 'm.audio', video: 'm.video', file: 'm.file' }[item.mediaType] ?? 'm.file';
         await this.client.sendMessage(botUserId, roomId, {
@@ -911,5 +965,21 @@ export class MatrixDmBridge implements MatrixEventHandler {
             url: mxc,
             info: { mimetype: mimeType, size: data.length },
         });
+        return this.keepCopy(item, data, mimeType, filename);
+    }
+
+    /**
+     * A copy of a sent file on our uploader, the same place nearby chat keeps it. A file already on the uploader, one
+     * sent again from the list and a failed copy keep what they have: the file reached the person, so this never fails the send.
+     */
+    private async keepCopy(item: PendingMedia, data: Buffer, mimeType: string, filename: string): Promise<string | null> {
+        const uploaderUrl = process.env.UPLOADER_URL;
+        if (item.again || !this.deps.uploadAttachment || (uploaderUrl && item.url.startsWith(uploaderUrl))) return null;
+        try {
+            return await this.deps.uploadAttachment(data, mimeType, filename);
+        } catch (error) {
+            console.warn('[MatrixDmBridge] Could not copy a sent file to the uploader:', (error as Error)?.message ?? error);
+            return null;
+        }
     }
 }

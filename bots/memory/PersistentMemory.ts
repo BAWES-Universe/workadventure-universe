@@ -815,6 +815,8 @@ export class PersistentMemory extends ConversationMemory {
             pendingArtifacts: undefined,
             dmRoomId: undefined,
             artifactCalls: undefined,
+            turnMedia: undefined,
+            sentAgain: undefined,
         };
     }
 

@@ -14,7 +14,11 @@ class TestBehavior extends BaseBehavior {
         this.aiService = {
             isRestingLine: () => false,
             generateBotResponseStream: async function* () {
-                yield await Promise.resolve({ reset: true, toolNames: ['get_areas'] });
+                yield await Promise.resolve({
+                    reset: true,
+                    toolNames: ['get_areas'],
+                    toolSteps: [{ id: 'c1', doing: 'Get areas', done: 'Get areas', group: 'tool:get_areas' }],
+                });
                 yield { content: 'Here is a new answer.', done: true };
             },
         } as unknown as NonNullable<typeof this.aiService>;
@@ -45,8 +49,12 @@ class TestBehavior extends BaseBehavior {
     }
 }
 
+/** What the bot sent as its steps line (#1545): the stream messages that carry the field. */
+const stepsSent = (bot: TestBehavior) =>
+    bot.send.mock.calls.filter((call) => call[8] !== undefined).map((call) => ({ text: call[4], isFinal: call[3], field: JSON.parse(call[8]) }));
+
 afterEach(() => vi.unstubAllEnvs());
-describe('per-bot tool bubbles in the shared response path', () => {
+describe('per-bot steps line in the shared response path', () => {
     it.each(['true', 'false'])('two bots in one room remain independent of debug logs (%s)', async (debug) => {
         vi.stubEnv('ENABLE_BOT_DEBUG', debug);
         const on = new TestBehavior();
@@ -56,9 +64,12 @@ describe('per-bot tool bubbles in the shared response path', () => {
         await Promise.all([on.reply('bot-on'), off.reply('bot-off')]);
         expect(on.readSetting).toHaveBeenCalledWith('bot-on', 2000);
         expect(off.readSetting).toHaveBeenCalledWith('bot-off', 2000);
-        expect(on.send).toHaveBeenCalledWith('same-room', expect.any(String), '🔍 get_areas...', false);
-        expect(on.send).toHaveBeenCalledWith('same-room', expect.any(String), '', true, '🔍 get_areas...');
-        expect(off.send.mock.calls.flat().some((value) => String(value).includes('🔍'))).toBe(false);
+        expect(stepsSent(on)).toEqual([
+            { text: 'Get areas…', isFinal: false, field: expect.objectContaining({ state: 'working', line: 'Get areas' }) },
+            { text: 'Get areas', isFinal: true, field: expect.objectContaining({ state: 'done', line: 'Get areas' }) },
+        ]);
+        expect(on.send.mock.calls.flat().some((value) => String(value).includes('🔍'))).toBe(false);
+        expect(stepsSent(off)).toEqual([]);
         expect(off.send).toHaveBeenCalledWith('same-room', expect.any(String), 'Here is a new answer.', false);
     });
     it.each([{}, { showToolCalls: 'true' }, null])(
@@ -67,7 +78,7 @@ describe('per-bot tool bubbles in the shared response path', () => {
             const bot = new TestBehavior({ type: 'idle', showToolCalls: true });
             bot.readSetting.mockResolvedValue({ behaviorConfig });
             await bot.reply('bot');
-            expect(bot.send.mock.calls.flat().some((value) => String(value).includes('🔍'))).toBe(false);
+            expect(stepsSent(bot)).toEqual([]);
         }
     );
     it('reads the switch again when tools are used, including a running bot switched off', async () => {
@@ -79,13 +90,13 @@ describe('per-bot tool bubbles in the shared response path', () => {
         bot.send.mockClear();
         await bot.reply('bot');
         expect(bot.readSetting).toHaveBeenCalledTimes(2);
-        expect(bot.send.mock.calls.flat().some((value) => String(value).includes('🔍'))).toBe(false);
+        expect(stepsSent(bot)).toEqual([]);
     });
     it('a config read failure hides tools and preserves the answer', async () => {
         const bot = new TestBehavior();
         bot.readSetting.mockRejectedValue(new Error('Orbit unavailable'));
         await bot.reply('bot');
-        expect(bot.send.mock.calls.flat().some((value) => String(value).includes('🔍'))).toBe(false);
+        expect(stepsSent(bot)).toEqual([]);
         expect(bot.send).toHaveBeenCalledWith('same-room', expect.any(String), 'Here is a new answer.', false);
     });
     it('does not resume a canceled reply after the settings read', async () => {
@@ -103,7 +114,7 @@ describe('per-bot tool bubbles in the shared response path', () => {
         controller.abort();
         complete({ behaviorConfig: { showToolCalls: true } });
         await reply;
-        expect(bot.send.mock.calls.flat().some((value) => String(value).includes('🔍'))).toBe(false);
+        expect(stepsSent(bot)).toEqual([]);
         expect(bot.send.mock.calls.flat().some((value) => String(value).includes('Here is a new answer.'))).toBe(false);
     });
     it('creates no setting requests or timers while idle', () => {

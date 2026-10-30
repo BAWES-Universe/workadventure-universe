@@ -69,4 +69,17 @@ describe("the pinned messages of a chat", () => {
         await vi.waitFor(() => expect(get(entries).map((entry) => entry.message?.id)).toEqual(["$b"]));
         stop();
     });
+
+    it("fetches an older pinned message once for the chat, not each time its profile opens (#1585)", async () => {
+        const room = roomPinning(["$a"], (id) => Promise.resolve(pinnedMessage(id)));
+        const first = pinnedEntriesStore(room);
+        const stop = first.subscribe(() => undefined);
+        await vi.waitFor(() => expect(get(first)[0].message?.id).toBe("$a"));
+        stop();
+
+        const again = pinnedEntriesStore(room);
+        expect(again).toBe(first);
+        expect(get(again)[0].message?.id).toBe("$a");
+        expect(room.getMessageById).toHaveBeenCalledTimes(1);
+    });
 });

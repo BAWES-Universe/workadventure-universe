@@ -133,6 +133,8 @@ export abstract class EntityRelatedEditorTool extends MapEditorTool {
                 } else {
                     TexturesHelper.loadEntityImage(this.scene, entityPrefab.imagePath, entityPrefab.imagePath)
                         .then(() => {
+                            // Another object was picked while this picture loaded: the hand shows that one.
+                            if (this.entityPrefab !== entityPrefab) return;
                             if (this.entityPrefabPreview) {
                                 this.entityPrefabPreview.setTexture(entityPrefab.imagePath);
                             } else {
@@ -147,6 +149,12 @@ export abstract class EntityRelatedEditorTool extends MapEditorTool {
                         })
                         .catch(() => {
                             console.error("COULD NOT LOAD THE ENTITY PREVIEW TEXTURE");
+                            // The hand must not keep the object picked before, or a click would put down this one
+                            // with no picture at the size of the other.
+                            if (this.entityPrefab !== entityPrefab) return;
+                            this.entityPrefabPreview?.destroy();
+                            this.entityPrefabPreview = undefined;
+                            this.scene.markDirty();
                         });
                 }
                 this.scene.markDirty();

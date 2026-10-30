@@ -19,6 +19,9 @@ const menu: BaseTranslation = {
     visitCard: {
         close: "Close",
         sendMessage: "Send message",
+        passport: "Passport",
+        links: "Links",
+        visits: "{count:number} {{visit|visits}}",
     },
     profile: {
         login: "Sign in",

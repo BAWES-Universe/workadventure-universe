@@ -41,6 +41,8 @@ export interface McpToolDefinition {
 
 interface CachedTools {
     tools: McpToolDefinition[];
+    /** Each tool's readable title from tools/list (MCP `title`, or `annotations.title`), by tool name. */
+    titles: Record<string, string>;
     cachedAt: number;
     serverId: string;
 }
@@ -129,8 +131,11 @@ function buildAuthHeaders(
 
 /**
  * Parse an MCP response, handling both standard JSON and SSE (Streamable HTTP).
+ *
+ * A stream may carry other messages before the answer (log or progress notices), so the answer is the message that
+ * replies to `requestId`; failing that, the first message with a result or an error; failing that, the first one.
  */
-function parseMcpResponse(response: any): any {
+function parseMcpResponse(response: any, requestId?: string): any {
     const contentType = response.headers?.['content-type'] || '';
     const data = response.data;
 
@@ -138,9 +143,10 @@ function parseMcpResponse(response: any): any {
         contentType.includes('text/event-stream') ||
         (typeof data === 'string' && (data.trimStart().startsWith('event:') || data.trimStart().startsWith('data:')))
     ) {
-        const text = typeof data === 'string' ? data : String(data);
-        const messages = text.split('\n\n');
-        for (const msg of messages) {
+        // Streams may end their lines with \r\n; a blank line separates messages either way
+        const text = (typeof data === 'string' ? data : String(data)).replace(/\r\n?/g, '\n');
+        const parsedMessages: any[] = [];
+        for (const msg of text.split('\n\n')) {
             const dataLines: string[] = [];
             for (const line of msg.trim().split('\n')) {
                 if (line.startsWith('data:')) {
@@ -149,12 +155,19 @@ function parseMcpResponse(response: any): any {
             }
             if (dataLines.length > 0) {
                 try {
-                    const parsed = JSON.parse(dataLines.join('\n'));
-                    return { data: parsed, headers: response.headers, status: response.status };
+                    parsedMessages.push(JSON.parse(dataLines.join('\n')));
                 } catch {
                     continue;
                 }
             }
+        }
+        const isAnswer = (m: any) => m && typeof m === 'object' && ('result' in m || 'error' in m);
+        const answer =
+            (requestId !== undefined ? parsedMessages.find((m) => isAnswer(m) && String(m.id) === requestId) : undefined) ??
+            parsedMessages.find(isAnswer) ??
+            parsedMessages[0];
+        if (answer !== undefined) {
+            return { data: answer, headers: response.headers, status: response.status };
         }
         return response; // fallback to raw
     }
@@ -250,7 +263,7 @@ async function jsonRpcRequest(
                             lookup: guardedLookup,
                         }
                     );
-                    const parsed = parseMcpResponse(initResponse);
+                    const parsed = parseMcpResponse(initResponse, 'init');
                     // Per MCP Streamable HTTP spec, session ID is transmitted in the
                     // Mcp-Session-Id HTTP response header, not in the JSON body.
                     // Check header first, then fall back to body for non-spec servers.
@@ -352,9 +365,10 @@ async function jsonRpcRequest(
     const unlinkExternalAbort = linkExternalAbort(signal, controller);
 
     try {
+        const requestId = method === 'tools/list' ? '1' : '2';
         const body: Record<string, any> = {
             jsonrpc: '2.0',
-            id: method === 'tools/list' ? '1' : '2',
+            id: requestId,
             method,
         };
         if (params !== undefined) {
@@ -368,7 +382,7 @@ async function jsonRpcRequest(
             lookup: guardedLookup,
         });
 
-        const parsed = parseMcpResponse(response);
+        const parsed = parseMcpResponse(response, requestId);
         return parsed.data;
     } catch (error: any) {
         if (axios.isCancel(error)) {
@@ -467,6 +481,8 @@ export class MCPConnector {
                 authType: string;
                 authConfig?: string;
                 headers?: Record<string, string>;
+                /** The tool server's own readable name for the tool, when it gave one (shown in the steps line). */
+                title?: string;
             }
         >;
     }> {
@@ -478,6 +494,8 @@ export class MCPConnector {
                 authType: string;
                 authConfig?: string;
                 headers?: Record<string, string>;
+                /** The tool server's own readable name for the tool, when it gave one (shown in the steps line). */
+                title?: string;
             }
         >();
 
@@ -540,7 +558,7 @@ export class MCPConnector {
         const seenToolNames = new Set<string>();
 
         // Helper to push a tool def only if its name is unique
-        function addUniqueTool(tool: McpToolDefinition, server: McpServerConfig) {
+        function addUniqueTool(tool: McpToolDefinition, server: McpServerConfig, title?: string) {
             if (!seenToolNames.has(tool.function.name)) {
                 seenToolNames.add(tool.function.name);
                 allTools.push(tool);
@@ -550,6 +568,7 @@ export class MCPConnector {
                     authType: server.authType,
                     authConfig: server.authConfig,
                     headers: server.headers,
+                    ...(title ? { title } : {}),
                 });
             }
         }
@@ -563,7 +582,7 @@ export class MCPConnector {
 
             if (cached && Date.now() < cached.cachedAt + CACHE_TTL) {
                 for (const tool of cached.tools) {
-                    addUniqueTool(tool, server);
+                    addUniqueTool(tool, server, cached.titles[tool.function.name]);
                 }
                 return;
             }
@@ -589,15 +608,24 @@ export class MCPConnector {
                     })
                 );
 
+                const titles: Record<string, string> = {};
+                for (const tool of response.result.tools) {
+                    const title = tool?.title ?? tool?.annotations?.title;
+                    if (typeof tool?.name === 'string' && typeof title === 'string' && title.trim()) {
+                        titles[tool.name] = title.trim();
+                    }
+                }
+
                 // Cache the result
                 toolListCache.set(cacheKey, {
                     tools: toolDefs,
+                    titles,
                     cachedAt: Date.now(),
                     serverId: server.id,
                 });
 
                 for (const toolDef of toolDefs) {
-                    addUniqueTool(toolDef, server);
+                    addUniqueTool(toolDef, server, titles[toolDef.function.name]);
                 }
             } else {
                 console.warn(
@@ -704,8 +732,28 @@ export class MCPConnector {
             return { error: `Tool error: ${errMsg}` };
         }
 
+        // A tool that ran but failed answers with isError and its reason as content: an error like the ones above
+        if (response.result?.isError === true) {
+            const content: any[] = Array.isArray(response.result.content) ? response.result.content : [];
+            const why = content
+                .filter((item) => item?.type === 'text' && typeof item.text === 'string')
+                .map((item) => item.text)
+                .join(' ')
+                .trim();
+            console.warn(`[MCPConnector] Tool ${toolName} failed: ${why || 'no reason given'}`);
+            return { error: `Tool error: ${why || `${toolName} failed`}` };
+        }
+
         if (response.result && Array.isArray(response.result.content)) {
-            return response.result.content;
+            const content: any[] = response.result.content;
+            // A tool may answer with data only in structuredContent (a server SHOULD also put it in a text item): give
+            // the bot that data as text when no text item carries it (#1566)
+            const structured = response.result.structuredContent;
+            const hasText = content.some((item) => item?.type === 'text' && typeof item.text === 'string' && item.text.trim());
+            if (structured !== undefined && structured !== null && !hasText) {
+                return [...content, { type: 'text', text: typeof structured === 'string' ? structured : JSON.stringify(structured) }];
+            }
+            return content;
         }
 
         if (response.result !== undefined) {

@@ -11,6 +11,7 @@ import {
     modalIframeWindowStore,
     modalVisibilityStore,
 } from "../../Stores/ModalStore";
+import { orbitHoldsHistoryStore } from "../../Stores/OrbitHistoryStore";
 import { gameManager } from "../../Phaser/Game/GameManager";
 import { isUserNameValid, maxUserNameLength } from "../../Connection/LocalUserUtils";
 import type { ModalEvent } from "../../Api/Events/ModalEvent";
@@ -19,6 +20,9 @@ import { blackListManager } from "../../WebRtc/BlackListManager";
 import { ringStore } from "../../Chat/Stores/RingStore";
 import { openDirectChatRoom } from "../../Chat/Utils";
 import { openProfileLinkHere, profileLinksOpeningHere } from "../../Chat/LinkPreview/ProfileLinks";
+import { openArtifactFromCard } from "../../Artifacts/openArtifact";
+import { openYourArtifacts } from "../../Artifacts/openYourArtifacts";
+import { artifactKindOf } from "../../Artifacts/artifactCard";
 import {
     ORBIT_AUTH_VERSION,
     buildAdminLoginUrl,
@@ -35,6 +39,9 @@ import {
     isOrbitInvitePersonMessage,
     isOrbitMessagePersonMessage,
     isOrbitCheckLinksMessage,
+    isOrbitOpenArtifactMessage,
+    isOrbitOpenArtifactsListMessage,
+    isOrbitHistoryMessage,
     isOrbitOpenLinkMessage,
     isOrbitProfileChangedMessage,
     newRoomRevision,
@@ -120,10 +127,16 @@ function cancelPendingTimers() {
  *
  * Opening Orbit adds one entry, so the Back button (Android's, the browser's, a swipe) walks through Orbit's own pages
  * first (they share the tab's history) and then, on this entry, closes Orbit, never leaving the room. Closing Orbit
- * any other way steps back toward the room. Iframe navigations share the browser's history, so an old marker can
- * remain after an iframe closes; every opening has its own ID and older markers are stepped over, never reopened.
+ * any other way walks back over Orbit's pages and this entry (#1556): Orbit says how many steps its pages added
+ * (`orbit-history`), never more than the real number. When the room is the tab's first entry, nothing is before it,
+ * so the walk keeps stepping back until the room shows; otherwise it goes back only as far as Orbit said, so it can
+ * never go past the room. Every opening has its own ID and older markers are stepped over, never reopened.
  */
 let historyEntryId: string | null = null;
+/** Where this opening's entry is in the tab's history. */
+let historyEntryIndex = -1;
+/** How many steps Orbit's pages have added above it this opening, as Orbit last said. */
+let orbitPageSteps = 0;
 
 function isOrbitHistoryState(state: unknown): boolean {
     return !!state && typeof state === "object" && (state as { orbit?: unknown }).orbit === true;
@@ -137,12 +150,67 @@ function isCurrentOrbitHistoryState(state: unknown): boolean {
     );
 }
 
+/** How long the chat waits for a step back over Orbit's history to land before it adds its own steps anyway. */
+const RELEASE_HISTORY_TIMEOUT_MS = 1000;
+let releaseTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** Orbit holds the top of the history (see OrbitHistoryStore): the chat adds no steps for now. */
+function holdHistory(until: "released" | "landed") {
+    if (releaseTimer !== undefined) clearTimeout(releaseTimer);
+    releaseTimer = until === "landed" ? setTimeout(releaseHistory, RELEASE_HISTORY_TIMEOUT_MS) : undefined;
+    orbitHoldsHistoryStore.set(true);
+}
+
+function releaseHistory() {
+    if (releaseTimer !== undefined) clearTimeout(releaseTimer);
+    releaseTimer = undefined;
+    orbitHoldsHistoryStore.set(false);
+}
+
+/**
+ * A step over the pages of a closed Orbit frame shows nothing and fires nothing: the walk waits this long for the room
+ * to show before stepping again.
+ */
+const WALK_STEP_MS = 150;
+/** The walk back over a closed Orbit's steps, while it lasts. */
+let walk: { timer: ReturnType<typeof setTimeout>; stepsLeft: number } | null = null;
+
+function walkBack(delta: number, stepsLeft: number) {
+    holdHistory("released");
+    walk = { stepsLeft, timer: setTimeout(stepAgain, WALK_STEP_MS) };
+    history.go(-delta);
+}
+
+function stepAgain() {
+    if (!walk) return;
+    if (walk.stepsLeft <= 0) {
+        endWalk();
+        return;
+    }
+    walk.stepsLeft -= 1;
+    walk.timer = setTimeout(stepAgain, WALK_STEP_MS);
+    history.back();
+}
+
+function endWalk() {
+    if (!walk) return;
+    clearTimeout(walk.timer);
+    walk = null;
+    releaseHistory();
+}
+
 function pushHistoryEntry() {
     if (historyEntryId !== null) return;
+    // Opened again during a walk back: the walk stops where it is.
+    if (walk) clearTimeout(walk.timer);
+    walk = null;
     try {
         const nextId = crypto.randomUUID();
         history.pushState({ orbit: true, orbitVisit: nextId }, "");
         historyEntryId = nextId;
+        historyEntryIndex = history.length - 1;
+        orbitPageSteps = 0;
+        holdHistory("released");
     } catch (error) {
         console.warn("Could not add Orbit to the history", error);
     }
@@ -151,19 +219,34 @@ function pushHistoryEntry() {
 function dropHistoryEntry() {
     const wasCurrent = isCurrentOrbitHistoryState(history.state);
     historyEntryId = null;
-    if (wasCurrent) history.back();
+    if (!wasCurrent) {
+        releaseHistory();
+        return;
+    }
+    // Orbit's pages can't be more steps above its entry than the history holds.
+    const pages = Math.min(orbitPageSteps, Math.max(0, history.length - 1 - historyEntryIndex));
+    // Held until the room shows, so a chat opened from Orbit (Message) adds its step after the walk, not under it.
+    walkBack(pages + 1, historyEntryIndex === 1 ? history.length : 0);
 }
 
 function handlePopState(event: PopStateEvent) {
     if (adminModalOpen && !isCurrentOrbitHistoryState(event.state)) {
-        // Back, on Orbit's entry: Orbit closes, and the room stays.
+        // Back, on Orbit's entry: Orbit closes, and the room stays. Back took its step, so the history is free.
         historyEntryId = null;
         closeAdminModal();
+        releaseHistory();
     }
     if (!adminModalOpen && isOrbitHistoryState(event.state)) {
         // An entry left behind by an earlier visit (Orbit was open during a room change): step over it.
+        if (walk) clearTimeout(walk.timer);
+        walk = null;
+        holdHistory("landed");
         history.back();
+        return;
     }
+    // A walk back over Orbit's history has reached the room.
+    if (walk) endWalk();
+    else if (historyEntryId === null && releaseTimer !== undefined) releaseHistory();
 }
 
 /** A key or a joystick held when Orbit opens would keep walking: its release never reaches the game. */
@@ -230,9 +313,37 @@ function handleAdminAuthMessage(event: MessageEvent<unknown>) {
                 .catch((error) => console.error("Could not check profile links for Orbit", error));
         return;
     }
+    if (isOrbitHistoryMessage(event.data)) {
+        // Only while this visit's Orbit is open: its number is for walking back when it closes.
+        if (bridge && event.data.roomRevision === bridge.roomRevision && historyEntryId !== null)
+            orbitPageSteps = event.data.step;
+        return;
+    }
     if (isOrbitOpenLinkMessage(event.data)) {
         // The window comes in front, and Orbit stays as it is behind it: its button brings it back.
         if (bridge && event.data.roomRevision === bridge.roomRevision) openProfileLinkHere(event.data.url);
+        return;
+    }
+    if (isOrbitOpenArtifactMessage(event.data)) {
+        // One of yours, from Your artifacts: the window comes in front, as its card opens it, and Orbit stays behind.
+        // The game's server asks Orbit whether this person may open it.
+        const { roomRevision, id, title, kind, artifactVersion, maker } = event.data;
+        if (bridge && roomRevision === bridge.roomRevision)
+            openArtifactFromCard(
+                {
+                    id: id.toLowerCase(),
+                    version: artifactVersion,
+                    title,
+                    kind: artifactKindOf(kind),
+                    maker: maker || undefined,
+                },
+                undefined
+            );
+        return;
+    }
+    if (isOrbitOpenArtifactsListMessage(event.data)) {
+        // Your artifacts, from View all: the window comes in front with the list, and Orbit stays behind.
+        if (bridge && event.data.roomRevision === bridge.roomRevision) openYourArtifacts();
         return;
     }
     if (!isOrbitAuthReadyMessage(event.data)) return;
@@ -709,6 +820,9 @@ const adminExtensionModule: ExtensionModule = {
         closeAdminModal();
         // The room is changing: its history entry stays behind and is stepped over later (see handlePopState).
         historyEntryId = null;
+        if (walk) clearTimeout(walk.timer);
+        walk = null;
+        releaseHistory();
         pendingPlayerName = null;
         bridge = null;
         launcher = null;

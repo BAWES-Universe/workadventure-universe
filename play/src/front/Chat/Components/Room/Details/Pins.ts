@@ -3,6 +3,7 @@ import type { Readable } from "svelte/store";
 import { tick } from "svelte";
 import { hasPins, type ChatMessage, type ChatRoom, type ChatRoomPins } from "../../../Connection/ChatConnection";
 import { selectedRoomStore } from "../../../Stores/SelectRoomStore";
+import { drawEveryHeldMessage } from "../DrawnMessages";
 
 export type PinAction = "pin" | "unpin";
 
@@ -45,11 +46,23 @@ export interface PinnedEntry {
     message: ChatMessage | undefined;
 }
 
+const pinnedEntriesByRoom = new WeakMap<ChatRoom, Readable<PinnedEntry[]>>();
+
 /**
  * The chat's pinned messages, the most recently pinned first. One already loaded is used as it is; an older one is
- * fetched on its own. A deleted one is left out.
+ * fetched on its own, once for the chat rather than each time its profile or details open (#1585). A deleted one is
+ * left out.
  */
 export function pinnedEntriesStore(room: ChatRoom & ChatRoomPins): Readable<PinnedEntry[]> {
+    let entries = pinnedEntriesByRoom.get(room);
+    if (!entries) {
+        entries = makePinnedEntriesStore(room);
+        pinnedEntriesByRoom.set(room, entries);
+    }
+    return entries;
+}
+
+function makePinnedEntriesStore(room: ChatRoom & ChatRoomPins): Readable<PinnedEntry[]> {
     const fetched = writable(new Map<string, ChatMessage | null>());
     const messages: Readable<readonly ChatMessage[]> = { subscribe: (run) => room.messages.subscribe(run) };
     const asking = new Set<string>();
@@ -100,6 +113,8 @@ const MAX_LOADS_TO_FIND = 10;
  */
 export async function jumpToMessage(room: ChatRoom, messageId: string): Promise<boolean> {
     const find = () => document.querySelector(`[data-event-id="${CSS.escape(messageId)}"]`);
+    // Loaded but not drawn yet (a long chat that just opened draws its older messages a little later).
+    if (!find()) await drawEveryHeldMessage();
     let target = find();
     for (let load = 0; !target && load < MAX_LOADS_TO_FIND && get(room.hasPreviousMessage); load++) {
         // eslint-disable-next-line no-await-in-loop

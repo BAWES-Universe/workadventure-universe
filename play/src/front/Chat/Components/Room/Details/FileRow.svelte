@@ -1,12 +1,13 @@
 <script lang="ts">
     import { onDestroy } from "svelte";
-    import type { Unsubscriber } from "svelte/store";
+    import type { Readable, Unsubscriber } from "svelte/store";
     import LL, { locale } from "../../../../../i18n/i18n-svelte";
     import type { ChatMessage } from "../../../Connection/ChatConnection";
     import { badgeOfKind, chatFileOpensInViewer, fileKindOf, formatFileSize } from "../../../../FileViewer/fileKinds";
     import { openChatFileInViewer, openFileViewerKeys } from "../../../../FileViewer/openFileViewer";
     import { saveMessageFiles } from "../MessageActions/availableActions";
-    import { sentLabel } from "./SharedItems";
+    import { audioFileTitle } from "../Message/audioFileTitle";
+    import { sentLabel, type SharedItem } from "./SharedItems";
     import { sharedSender } from "./sharedSender";
 
     /**
@@ -18,6 +19,9 @@
     export let size: number | undefined;
     /** For one file of a gallery: its own link, as the message's link is the first file's. */
     export let src: string | undefined = undefined;
+    /** The chat's songs and this file's key among its Files: a song opened from here lists the others. */
+    export let songs: Readable<SharedItem[]> | undefined = undefined;
+    export let itemKey: string | undefined = undefined;
 
     let url: string | undefined = src;
     let unsubscribe: Unsubscriber | undefined;
@@ -28,6 +32,8 @@
     const FILE_WAIT_MS = 15000;
 
     $: kind = fileKindOf(name);
+    // A song shows the chat player's title: a random name says nothing, and the line under it says who sent it.
+    $: shownName = kind === "audio" ? audioFileTitle(name) ?? $LL.chat.audioFile.untitled() : name;
     $: badge = kind ? badgeOfKind(kind, name) : { color: "#757575", label: "FILE", kindName: "File" };
     $: sender = sharedSender(message, $LL.chat.details.you());
     $: details = [
@@ -41,8 +47,14 @@
     $: isOpen = url !== undefined && $openFileViewerKeys.has(`chat:${url}`);
 
     function openWith(fileUrl: string) {
-        if (chatFileOpensInViewer(name)) {
-            openChatFileInViewer({ url: fileUrl, name, senderName: sender, sentByMe: message.isMyMessage });
+        if (chatFileOpensInViewer(name) || kind === "audio") {
+            openChatFileInViewer({
+                url: fileUrl,
+                name,
+                senderName: sender,
+                sentByMe: message.isMyMessage,
+                inChat: songs && itemKey ? { tracks: songs, key: itemKey } : undefined,
+            });
         } else {
             saveMessageFiles([{ url: fileUrl, name }]).catch((error) => console.error(error));
         }
@@ -95,7 +107,7 @@
         {badge.label}
     </span>
     <span class="flex min-w-0 flex-1 flex-col">
-        <span class="truncate text-sm text-white/90">{name}</span>
+        <span class="truncate text-sm text-white/90">{shownName}</span>
         <span class="truncate text-[11px] text-white/45">{details}</span>
     </span>
 </button>

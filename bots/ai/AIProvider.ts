@@ -5,6 +5,7 @@
  */
 
 import type { AIProviderConfig, AIStreamChunk, AIResponse } from './types';
+import type { ReplySteps } from './replySteps';
 
 /**
  * Abstract interface for AI providers
@@ -45,6 +46,7 @@ export interface AIProvider {
      *                 upstream stream/request is cancelled immediately
      * @param images - Optional image URLs to attach as image_url content blocks
      *                 (only honored when supportsVision(config) is true)
+     * @param steps - Optional steps of this reply so far, sent as chat messages after the user message
      * @returns Async generator yielding stream chunks
      */
     generateStream(
@@ -53,7 +55,8 @@ export interface AIProvider {
         config: AIProviderConfig,
         tools?: any[],
         signal?: AbortSignal,
-        images?: string[]
+        images?: string[],
+        steps?: ReplySteps
     ): AsyncGenerator<AIStreamChunk>;
 
     /**

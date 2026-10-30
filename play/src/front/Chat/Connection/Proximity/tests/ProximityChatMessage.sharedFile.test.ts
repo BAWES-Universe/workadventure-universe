@@ -66,11 +66,16 @@ vi.mock("../../../../WebRtc/AudioStream/ScriptingInputAudioStreamManager", () =>
     };
 });
 
-function nearbyMessage(type: ChatMessageType, url: string | undefined, filename?: string): ProximityChatMessage {
+function nearbyMessage(
+    type: ChatMessageType,
+    url: string | undefined,
+    filename?: string,
+    isVoice?: boolean
+): ProximityChatMessage {
     return new ProximityChatMessage(
         "id",
         { username: "Sara" } as AnyKindOfUser,
-        writable({ body: "", url, urls: undefined, filename, fileNames: undefined }),
+        writable({ body: "", url, urls: undefined, filename, fileNames: undefined, isVoice }),
         new Date(),
         false,
         type
@@ -84,6 +89,15 @@ describe("a nearby message's shared file", () => {
             size: undefined,
             voice: false,
         });
+    });
+
+    it("is marked as a voice note when it is one, as in a direct chat", () => {
+        expect(nearbyMessage("audio", "https://cdn.test/abc.weba", "Voice message.weba", true).sharedFile?.voice).toBe(
+            true
+        );
+        expect(nearbyMessage("audio", "https://cdn.test/abc.mp3", "Interview.mp3", false).sharedFile?.voice).toBe(
+            false
+        );
     });
 
     it("falls back to the link's last part when the sender gave no name", () => {

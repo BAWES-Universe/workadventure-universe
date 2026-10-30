@@ -207,3 +207,13 @@ export type PersonColourOf = (chatId: string | undefined, name: string | undefin
 
 /** Context key under which a direct chat gives its header, profile and messages each person's People colour. */
 export const PERSON_COLOUR_CONTEXT = Symbol("personColour");
+
+/** Each person's People colour, as the chat list, a direct chat and a proximity chat show it. */
+export function createPersonColourOf(merger: Promise<UserProviderMerger> | undefined): Readable<PersonColourOf> {
+    if (!merger) return readable((chatId, name) => personColour(new Map(), chatId, name));
+    return derived(
+        createColourByChatIdStore(merger),
+        ($colourByChatId) => (chatId: string | undefined, name: string | undefined) =>
+            personColour($colourByChatId, chatId, name)
+    );
+}

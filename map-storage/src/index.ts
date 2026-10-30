@@ -9,7 +9,7 @@ import bodyParser from "body-parser";
 import { setErrorHandler } from "@workadventure/shared-utils/src/ErrorHandler";
 import { mapStorageServer } from "./MapStorageServer";
 import { mapsManager } from "./MapsManager";
-import { proxyFiles } from "./FileFetcher/FileFetcher";
+import { noStoreOnError, noStoreWhenNotServed, proxyFiles } from "./FileFetcher/FileFetcher";
 import { UploadController } from "./Upload/UploadController";
 import { fileSystem } from "./fileSystem";
 import { passportStrategies } from "./Services/Authentication";
@@ -151,6 +151,10 @@ if (fs.existsSync("dist-ui")) {
         res.sendFile("index.html", { root: "dist-ui" });
     });
 }
+
+// Nothing above served the request: its "not found" or error is never cached.
+app.use(noStoreWhenNotServed);
+app.use(noStoreOnError);
 
 app.listen(3000, () => {
     console.info(`[${new Date().toISOString()}] Application is running on port 3000`);

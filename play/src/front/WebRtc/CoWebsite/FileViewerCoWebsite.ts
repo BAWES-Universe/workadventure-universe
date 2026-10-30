@@ -1,4 +1,18 @@
+import type { Readable } from "svelte/store";
+import type { SharedItem } from "../../Chat/Components/Room/Details/SharedItems";
+import type { ChatFileToOpen } from "../../FileViewer/openFileViewer";
 import { SimpleCoWebsite } from "./SimpleCoWebsite";
+
+/** A song or other audio file, played in the window from the link chat already holds: nothing is read first. */
+export interface FileViewerAudio {
+    url: string;
+    /** The songs of the chat it was shared in (as its Files list them) and its own key there, for the window's list. */
+    inChat?: { tracks: Readable<SharedItem[]>; key: string };
+    /** Picked from the window's own list of songs: it starts at once. */
+    startPlaying?: boolean;
+    /** Opens another of the chat's songs in its place. */
+    openOther: (file: ChatFileToOpen) => void;
+}
 
 /** Where a file the viewer shows comes from, and what its Download and Open in new tab buttons do. */
 export interface FileViewerSource {
@@ -10,6 +24,8 @@ export interface FileViewerSource {
     senderName?: string;
     /** The file was sent by the person looking at it ("From you"). */
     sentByMe?: boolean;
+    /** Set for an audio file, which the window plays instead of reading. */
+    audio?: FileViewerAudio;
     /** Fetches the file's bytes. Rejects when the file cannot be read. */
     load: (signal: AbortSignal) => Promise<ArrayBuffer>;
     /** Saves the file under its real name. `bytes` is undefined when the file could not be read. */

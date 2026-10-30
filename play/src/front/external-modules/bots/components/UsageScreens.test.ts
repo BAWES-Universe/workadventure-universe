@@ -179,12 +179,82 @@ describe("the bot page's Usage (Orbit #491)", () => {
         expect(onOpenScreen.mock.calls.map((call) => call[0])).toEqual(["people", "ranOn", "limits"]);
     });
 
-    it("is one quiet line for a bot nobody chatted with yet", async () => {
-        mocks.api.getBotUsage.mockResolvedValue(readBotUsage(answer({ hasUsage: false, people: [], ranOn: [] })));
-        await mountGroup();
-        expect(text()).toContain("Usage");
-        expect(byTestId("bot-usage-chart")).toHaveLength(0);
-        expect(byTestId("bot-usage-people")).toHaveLength(0);
+    describe("a bot nobody has chatted with yet (#1563)", () => {
+        const fresh = () =>
+            readBotUsage(
+                answer({
+                    hasUsage: false,
+                    totals: { replies: 0, people: 0, tokens: 0 },
+                    channels: { dm: 0, nearby: 0, notSplit: 0 },
+                    perDay: [
+                        { day: "2026-10-26", dm: 0, nearby: 0, notSplit: 0 },
+                        { day: "2026-10-27", dm: 0, nearby: 0, notSplit: 0 },
+                    ],
+                    people: [],
+                    guests: { count: 0, replies: 0, dm: 0, nearby: 0, notSplit: 0 },
+                    ranOn: [],
+                    limits: { ...answer().limits, ranOut: { universeAi: 0, botLimit: 0 }, askedMaker: 0 },
+                })
+            );
+
+        beforeEach(() => {
+            mocks.api.getBotUsage.mockResolvedValue(fresh());
+        });
+
+        it("opens like any other row, to the same page at zero and a line on what fills in", async () => {
+            const component = new UsageGroup({
+                target,
+                props: { bot, open: false, onToggle: vi.fn(), onOpenScreen: vi.fn() },
+            });
+            destroy = () => component.$destroy();
+            await settle();
+            const head = target.querySelector<HTMLButtonElement>("[data-testid=bot-page-group-usage] button");
+            expect(head?.getAttribute("aria-expanded")).toBe("false");
+            expect(text()).toContain("No one has chatted with Nora yet");
+
+            component.$set({ open: true });
+            await settle();
+            expect(byTestId("bot-usage-fresh")).toHaveLength(1);
+            expect(text()).toContain("Usage fills in once people chat with Nora");
+            expect(byTestId("bot-usage-chart")).toHaveLength(1);
+            expect(text()).toContain("Names show here once people chat");
+            expect(text()).toContain("Shows once Nora replies");
+            expect(text()).toContain("No one ran out of replies");
+            // Every range is zero, so there is nothing to switch
+            expect(byTestId("bot-usage-7d")).toHaveLength(0);
+        });
+
+        it("still opens each row's screen", async () => {
+            const onOpenScreen = await mountGroup();
+            for (const id of ["bot-usage-people", "bot-usage-ran-on", "bot-usage-limits"]) byTestId(id)[0].click();
+            expect(onOpenScreen.mock.calls.map((call) => call[0])).toEqual(["people", "ranOn", "limits"]);
+        });
+
+        it("says who will show on Who uses, without the search", async () => {
+            await mountScreen("people");
+            expect(byTestId("bot-usage-people-fresh")).toHaveLength(1);
+            expect(text()).toContain("No one has chatted with Nora yet.");
+            expect(target.querySelector("input[type=search]")).toBeNull();
+        });
+
+        it("says what will show on What it ran on, and keeps the real limits", async () => {
+            await mountScreen("ranOn");
+            expect(text()).toContain("Once Nora replies, each AI it runs on shows here");
+            destroy();
+            const component = new BotUsageScreen({ target, props: { bot, screen: "limits" } });
+            destroy = () => component.$destroy();
+            await settle();
+            expect(text()).toContain("Each signed-in person gets 30 every 5 hours");
+        });
+
+        it("goes back to the usual page once the bot has usage", async () => {
+            mocks.api.getBotUsage.mockImplementation((_id: string, range: string) =>
+                Promise.resolve(readBotUsage(answer({ range })))
+            );
+            await mountGroup();
+            expect(byTestId("bot-usage-fresh")).toHaveLength(0);
+            expect(byTestId("bot-usage-7d")).toHaveLength(1);
+        });
     });
 
     it("is not there for someone who doesn't manage the bot", async () => {

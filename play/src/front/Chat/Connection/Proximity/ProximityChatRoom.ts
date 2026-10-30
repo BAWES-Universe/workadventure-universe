@@ -37,6 +37,7 @@ import {
 import { selectedRoomStore } from "../../Stores/SelectRoomStore";
 import { isBotUser, mapExtendedSpaceUserToChatUser } from "../../UserProvider/ChatUserMapper";
 import { parseBotReplyLimit, type BotReplyLimit } from "../../Bots/BotReplyLimit";
+import { parseBotSteps, type BotSteps } from "../../Bots/BotSteps";
 import { gameManager } from "../../../Phaser/Game/GameManager";
 import { availabilityStatusStore, requestedCameraState, requestedMicrophoneState } from "../../../Stores/MediaStore";
 import { localUserStore } from "../../../Connection/LocalUserStore";
@@ -58,6 +59,7 @@ import { CharacterLayerManager } from "../../../Phaser/Entity/CharacterLayerMana
 import { BubbleNotification as BasicNotification } from "../../../Notification/BubbleNotification";
 import { formatPeopleNames } from "../../Components/TopRow/TopRowSummary";
 import { composerDraftStore } from "../../Stores/ComposerDraftStore";
+import { isVoiceNoteFileName, type UnsentVoiceNote } from "../../VoiceNote/VoiceNote";
 import { areaChatRooms } from "../../Stores/AreaPresenceStore";
 import { rememberProximityChat } from "../../Stores/SayHiCardStore";
 import {
@@ -97,6 +99,9 @@ export interface ProximityChatParticipant {
     readonly id: string;
     readonly name: string;
     readonly pictureStore: PictureStore;
+    readonly bot: boolean;
+    /** Their chat account, which gives them their colour from People. */
+    readonly chatId?: string;
 }
 
 /**
@@ -122,6 +127,13 @@ export interface ProximityChatMessageOptions {
     react?: (message: ProximityChatMessage, key: string) => void;
     /** A reply limit the person reached on a bot (#1159): the message is the fixed card. */
     replyLimit?: BotReplyLimit;
+    /** A bot's steps line (#1545): the message is that line. */
+    steps?: BotSteps;
+}
+
+/** A steps line still working when this tab leaves stops where it was, so it doesn't spin on (#1545). */
+function stopSteps(message: ProximityChatMessage): void {
+    message.steps?.update((steps) => (steps?.state === "working" ? { ...steps, state: "stopped" } : steps));
 }
 
 function fileNameOfUrl(url: string): string {
@@ -157,6 +169,8 @@ export class ProximityChatMessage implements ChatMessage {
      * Local and in memory only.
      */
     stoppedOnLeave?: boolean;
+    /** Set on a bot's steps line (#1545): drawn as that line, and replaced as the bot's tools run. */
+    steps?: Writable<BotSteps | undefined>;
     /** Set on the fixed card a bot sends one person who reached a reply limit (#1159). Local and in memory only. */
     replyLimit?: BotReplyLimit;
     constructor(
@@ -171,9 +185,11 @@ export class ProximityChatMessage implements ChatMessage {
         this.session = options.session;
         this.notSent = options.notSent;
         this.replyLimit = options.replyLimit;
+        if (options.steps) this.steps = writable(options.steps);
         this.quotedMessage = options.quotedMessage;
         this.isQuotedMessage = options.isQuotedMessage;
-        const isConversation = !options.session && !options.notSent && !options.isQuotedMessage && !options.replyLimit;
+        const isConversation =
+            !options.session && !options.notSent && !options.isQuotedMessage && !options.replyLimit && !options.steps;
         const hasContent = type !== "incoming" && type !== "outcoming";
         this.canReact.set(isConversation && hasContent && options.react !== undefined);
         this.canReply.set(isConversation && hasContent);
@@ -187,7 +203,11 @@ export class ProximityChatMessage implements ChatMessage {
         if (!["image", "video", "file", "audio"].includes(this.type)) return undefined;
         const content = get(this.content);
         if (!content.url) return undefined;
-        return { name: content.filename || fileNameOfUrl(content.url), size: undefined, voice: false };
+        return {
+            name: content.filename || fileNameOfUrl(content.url),
+            size: undefined,
+            voice: content.isVoice === true,
+        };
     }
 
     remove(): void {
@@ -280,6 +300,8 @@ export class ProximityChatRoom implements ChatRoom {
     public readonly unreadBySession: Readable<Map<string, number>> = { subscribe: this._unreadBySession.subscribe };
     // Text left in the composer when a stay ended, by session id. Shown as unsent in that stay, never sent on.
     private readonly _unsentDrafts: Writable<Map<string, string>> = writable(new Map());
+    // Voice notes recorded for a stay that ended before they were sent, by session id. Same life as the drafts.
+    private readonly _unsentVoiceNotes: Writable<Map<string, UnsentVoiceNote>> = writable(new Map());
     /** The timeline split into stays, room messages first, the live one last. */
     public readonly sessions: Readable<ProximitySession<ChatMessage>[]>;
 
@@ -356,9 +378,15 @@ export class ProximityChatRoom implements ChatRoom {
     ) {
         this.typingMembers = writable([]);
         this.sessions = derived(
-            [this.messages, this._spaceJoinedAt, this._unsentDrafts],
-            ([$messages, $spaceJoinedAt, $unsentDrafts]) =>
-                buildProximitySessions(Array.from($messages), $spaceJoinedAt, DEFAULT_CONTINUATION, $unsentDrafts)
+            [this.messages, this._spaceJoinedAt, this._unsentDrafts, this._unsentVoiceNotes],
+            ([$messages, $spaceJoinedAt, $unsentDrafts, $unsentVoiceNotes]) =>
+                buildProximitySessions(
+                    Array.from($messages),
+                    $spaceJoinedAt,
+                    DEFAULT_CONTINUATION,
+                    $unsentDrafts,
+                    $unsentVoiceNotes
+                )
         );
         // The first proximity chat you had is remembered on this device as soon as someone writes in it, whether or not
         // the chat panel is open and before the stay ends: the "Say hi in person" card on the Chats tab never comes back
@@ -381,6 +409,7 @@ export class ProximityChatRoom implements ChatRoom {
             this.messages.push(...stash.messages);
             this._unreadBySession.set(stash.unreadBySession);
             this._unsentDrafts.set(stash.unsentDrafts);
+            this._unsentVoiceNotes.set(stash.unsentVoiceNotes);
             this.refreshUnreadTotals(stash.unreadBySession);
             const last = stash.messages[stash.messages.length - 1];
             if (last?.date) this.lastMessageTimestamp = last.date.getTime();
@@ -455,8 +484,11 @@ export class ProximityChatRoom implements ChatRoom {
             case "avi":
             case "mkv":
                 return "video";
+            // Voice notes recorded in WebM and Ogg are stored as .weba and .oga, so they are not read as video.
             case "mp3":
             case "wav":
+            case "weba":
+            case "oga":
             case "aac":
             case "flac":
             case "m4a":
@@ -508,6 +540,8 @@ export class ProximityChatRoom implements ChatRoom {
             urls: galleryUrls,
             filename: fileName,
             fileNames: fileNames,
+            // The nearby chat carries no flag with a file: a note is told from an audio file by its name.
+            isVoice: messageType === "audio" && isVoiceNoteFileName(fileName),
         };
 
         const spaceUser = this.users?.get(this._spaceUserId);
@@ -749,6 +783,7 @@ export class ProximityChatRoom implements ChatRoom {
             urls: galleryUrls ?? undefined,
             filename: fileName ?? undefined,
             fileNames: fileNames ?? undefined,
+            isVoice: messageType === "audio" && isVoiceNoteFileName(fileName ?? undefined),
         };
 
         const spaceUser = this.users?.get(senderUserId);
@@ -859,6 +894,56 @@ export class ProximityChatRoom implements ChatRoom {
             spaceMessageReaction: { messageId: message.id, reaction: key, add },
         });
     };
+
+    /**
+     * A bot's steps line (#1545): one line the bot replaces while its tools run, then folds into a summary. Only a
+     * bot draws one. It counts nothing as unread and opens nothing: the answer that follows does.
+     */
+    private showBotSteps(
+        senderId: string,
+        responseId: string,
+        json: string,
+        text: string | undefined,
+        isFinal: boolean
+    ) {
+        const spaceUser = this.users?.get(senderId);
+        if (!spaceUser || !isBotUser(spaceUser)) return;
+        let field: unknown;
+        try {
+            field = JSON.parse(json);
+        } catch {
+            return;
+        }
+        const steps = parseBotSteps(field);
+        if (!steps) return;
+        // The plain text, for wherever the chat names a message in words
+        const body = {
+            body: text ?? steps.line,
+            url: undefined,
+            urls: undefined,
+            filename: undefined,
+            fileNames: undefined,
+        };
+        const shown = this.streamMessages.get(responseId);
+        if (shown?.steps) {
+            shown.steps.set(steps);
+            (shown.content as Writable<ChatMessageContent>).set(body);
+        } else if (!shown) {
+            const line = new ProximityChatMessage(
+                uuidv4(),
+                mapExtendedSpaceUserToChatUser(spaceUser),
+                writable(body),
+                new Date(),
+                false,
+                "proximity",
+                { steps }
+            );
+            this.streamMessages.set(responseId, line);
+            this.messages.push(line);
+            this.lastMessageTimestamp = line.date.getTime();
+        }
+        if (isFinal) this.streamMessages.delete(responseId);
+    }
 
     /** The fixed reply limit card, in place of the bot's last one, opening the chat if it is closed. */
     private showReplyLimit(replyLimit: BotReplyLimit, senderSpaceUserId: string): void {
@@ -997,8 +1082,59 @@ export class ProximityChatRoom implements ChatRoom {
             drafts.delete(id);
         }
         if (text === undefined) return undefined;
+        this.followLiveStay(session);
         this._unsentDrafts.set(drafts);
         return text;
+    }
+
+    /**
+     * Taking back what was left unsent can leave an earlier stay with nothing in it, and the live stay then no longer
+     * carries it on: the thread showing that earlier stay moves to the live one, never to an empty ended chat.
+     */
+    private followLiveStay(session: ProximitySession<ChatMessage>): void {
+        const selected = get(selectedProximitySessionStore);
+        if (!session.isLive || this._currentSessionId === undefined || selected === this._currentSessionId) return;
+        if (selected !== undefined && session.stayIds.includes(selected)) {
+            selectedProximitySessionStore.set(this._currentSessionId);
+        }
+    }
+
+    /**
+     * Hands back the voice note left unsent in this session, and forgets it: it goes back in the recorder when you're
+     * back with the same people, or out as a direct message.
+     */
+    public takeUnsentVoiceNote(session: ProximitySession<ChatMessage>): UnsentVoiceNote | undefined {
+        const id = this.unsentVoiceNoteStayId(session);
+        if (id === undefined) return undefined;
+        const notes = new Map(get(this._unsentVoiceNotes));
+        const note = notes.get(id);
+        notes.delete(id);
+        this.followLiveStay(session);
+        this._unsentVoiceNotes.set(notes);
+        return note;
+    }
+
+    /**
+     * The stay that holds the voice note this session shows: the latest one. An earlier stay's note stays kept, and
+     * shows once this one is out.
+     */
+    public unsentVoiceNoteStayId(session: ProximitySession<ChatMessage>): string | undefined {
+        const notes = get(this._unsentVoiceNotes);
+        return [...session.stayIds].reverse().find((stayId) => notes.has(stayId));
+    }
+
+    /** Keeps a voice note recorded for a stay that ended before it was sent, to show it there as unsent. */
+    public keepUnsentVoiceNote(sessionId: string | undefined, note: UnsentVoiceNote): void {
+        if (sessionId === undefined) return;
+        // As for the text: once this room handed its chats to the next map, the note goes along with them.
+        if (this.handedOver) {
+            if (this.handedOver.takenBy) this.handedOver.takenBy.keepUnsentVoiceNote(sessionId, note);
+            else this.handedOver.unsentVoiceNotes.set(sessionId, note);
+            return;
+        }
+        const notes = new Map(get(this._unsentVoiceNotes));
+        notes.set(sessionId, note);
+        this._unsentVoiceNotes.set(notes);
     }
 
     private refreshUnreadTotals(unread: Map<string, number>): void {
@@ -1044,6 +1180,7 @@ export class ProximityChatRoom implements ChatRoom {
             }
             for (const streaming of this.streamMessages.values()) {
                 streaming.stoppedOnLeave = true;
+                stopSteps(streaming);
             }
             const others = this.users
                 ? Array.from(this.users.values()).filter((user) => user.spaceUserId !== this._spaceUserId)
@@ -1068,6 +1205,7 @@ export class ProximityChatRoom implements ChatRoom {
             messages,
             unreadBySession: new Map(get(this._unreadBySession)),
             unsentDrafts,
+            unsentVoiceNotes: new Map(get(this._unsentVoiceNotes)),
             wasSelected: get(selectedRoomStore) === this,
             // Still in a bubble: leaving it on the next map puts back what was open before it, as it would have here.
             chatStateToRestore: get(shouldRestoreChatStateStore)
@@ -1298,7 +1436,13 @@ export class ProximityChatRoom implements ChatRoom {
             this._participants.set(
                 Array.from(users.values())
                     .filter((user) => user.spaceUserId !== this._spaceUserId)
-                    .map((user) => ({ id: user.spaceUserId, name: user.name, pictureStore: user.pictureStore }))
+                    .map((user) => ({
+                        id: user.spaceUserId,
+                        name: user.name,
+                        pictureStore: user.pictureStore,
+                        bot: isBotUser(user),
+                        chatId: user.chatID,
+                    }))
             );
             if (!hasUserInProximityChat && users.size > 1) {
                 let name = "unknown";
@@ -1401,6 +1545,16 @@ export class ProximityChatRoom implements ChatRoom {
                 }
 
                 const stream = event.spaceStreamMessage;
+                if (stream.steps !== undefined) {
+                    this.showBotSteps(
+                        event.sender,
+                        stream.responseId,
+                        stream.steps,
+                        stream.finalContent,
+                        stream.isFinal
+                    );
+                    return;
+                }
                 const existing = this.streamMessages.get(stream.responseId);
 
                 if (stream.reset && existing) {
@@ -1737,6 +1891,7 @@ export class ProximityChatRoom implements ChatRoom {
         // A bot reply still streaming stops where it is: nothing can reach this stay any more.
         for (const streaming of this.streamMessages.values()) {
             streaming.stoppedOnLeave = true;
+            stopSteps(streaming);
         }
 
         // Always one end marker, even when you were alone in a meeting: it closes the stay.

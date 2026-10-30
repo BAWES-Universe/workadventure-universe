@@ -16,6 +16,8 @@ vi.mock("../../../src/front/Stores/SideWindowInFrontStore", async (importOrigina
     ...(await importOriginal<Record<string, unknown>>()),
     bringOpenHereInFront: sheet.bringOpenHereInFront,
 }));
+// A pasted link's card asks Orbit again on the tap; these cards are a bot's, which never do.
+vi.mock("../../../src/front/Artifacts/artifactLinkCard", () => ({ refreshLinkedArtifactCard: vi.fn() }));
 vi.mock("../../../src/i18n/i18n-svelte", () => {
     const deep = (): unknown => new Proxy(() => "", { get: () => deep() });
     return { default: readable(deep()) };

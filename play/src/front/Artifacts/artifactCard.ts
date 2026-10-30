@@ -6,6 +6,11 @@ const KINDS: readonly ArtifactKind[] = ["app", "page", "markdown", "svg"];
 const TITLE_MAX = 120;
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 
+/** The kind Orbit names, or undefined for one this game doesn't know. */
+export function artifactKindOf(value: string | null | undefined): ArtifactKind | undefined {
+    return KINDS.find((kind) => kind === value?.toLowerCase());
+}
+
 /** What a chat shows for one version of an artifact a bot made (live artifacts, game #1422). */
 export interface ArtifactCard {
     id: string;

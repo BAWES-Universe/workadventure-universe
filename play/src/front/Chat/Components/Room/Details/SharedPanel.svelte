@@ -1,12 +1,13 @@
 <script lang="ts">
     import { getContext, hasContext, onDestroy, onMount } from "svelte";
-    import { readable } from "svelte/store";
+    import { derived, readable } from "svelte/store";
     import type { Readable, Unsubscriber } from "svelte/store";
     import LL, { locale } from "../../../../../i18n/i18n-svelte";
     import type { ChatMessage, ChatRoom } from "../../../Connection/ChatConnection";
     import { SHARED_TABS, openSharedItemsStore, type SharedTab } from "../../../Stores/ChatDetailsStore";
     import { NAME_BY_CHAT_ID_CONTEXT, personName } from "../../../Stores/ChatUserWokaStore";
     import Lightbox from "../Message/Lightbox.svelte";
+    import { fileKindOf } from "../../../../FileViewer/fileKinds";
     import SwipeTabs from "./SwipeTabs.svelte";
     import MediaThumb from "./MediaThumb.svelte";
     import LinkRow from "./LinkRow.svelte";
@@ -30,6 +31,8 @@
 
     const direction = document.documentElement.getAttribute("dir") || "ltr";
     const shared = sharedItemsStore(room);
+    // The chat's songs, for the window's list when one of them is opened.
+    const songs = derived(shared, ($shared) => $shared.files.filter((file) => fileKindOf(file.name) === "audio"));
     const hasPreviousMessage = room.hasPreviousMessage;
     // The nearby chat: what was kept on the player's account from before, read a page at a time.
     const saved = nearbySavedFor(room);
@@ -144,7 +147,7 @@
     });
 </script>
 
-<div class="shared-panel absolute inset-0 z-[101] flex flex-col" data-testid="sharedPanel">
+<div class="shared-panel absolute inset-0 z-[101] flex flex-col" data-testid="sharedPanel" data-chat-layer="shared">
     <div class="p-2 flex items-center gap-1 border border-solid border-x-0 border-b border-t-0 border-white/10">
         <button
             type="button"
@@ -205,7 +208,14 @@
                         <h3 class="shared-heading">{sectionLabel(section)}</h3>
                         <div class="shared-group">
                             {#each items as item (item.key)}
-                                <FileRow message={item.message} name={item.name} size={item.size} src={item.src} />
+                                <FileRow
+                                    message={item.message}
+                                    name={item.name}
+                                    size={item.size}
+                                    src={item.src}
+                                    {songs}
+                                    itemKey={item.key}
+                                />
                             {/each}
                         </div>
                     </section>

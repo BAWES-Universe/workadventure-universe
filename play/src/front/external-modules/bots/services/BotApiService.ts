@@ -859,17 +859,49 @@ export class BotApiService {
     }
 
     /**
-     * The room a bot lives in, as the bot server tells someone who may message it (null for anyone else, a bot with no
-     * room, or no answer in time). Read as a room card's link, so it only ever opens on this game.
+     * Someone's profile card as data (bio, links, passport stamps), asked of Orbit with your sign-in so a friends-only
+     * passport shows to their friends (#1585). Null when they have no profile; undefined when signed out, on no answer
+     * in time, or on any error, so a copy already shown stays as it is.
+     */
+    /** Orbit's address (an origin), to tell its profile cards from any other page. */
+    get adminOrigin(): string | null {
+        return this.adminUrl;
+    }
+
+    async getProfileCard(uuid: string): Promise<unknown> {
+        if (!this.adminUrl) return undefined;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const late = new Promise<undefined>((resolve) => {
+            timer = setTimeout(() => resolve(undefined), DM_STATUS_TIMEOUT_MS);
+        });
+        const asking = (async () => {
+            try {
+                const response = await this.fetch(`/api/profile/${encodeURIComponent(uuid)}?embed=true`, {
+                    headers: { Accept: "application/json" },
+                });
+                return (await response.json()) as unknown;
+            } catch (error) {
+                return (error as { status?: number }).status === 404 ? null : undefined;
+            }
+        })();
+        return Promise.race([asking, late]).finally(() => {
+            clearTimeout(timer);
+        });
+    }
+
+    /**
+     * The room a bot lives in, as the bot server tells someone who may message it (null for anyone else or a bot with
+     * no room; undefined on no answer in time or any error). Read as a room card's link, so it only ever opens on this
+     * game.
      */
     async getDmRoom(botId: string): Promise<unknown> {
         if (!this.botServerUrl) return null;
         const stop = new AbortController();
         let timer: ReturnType<typeof setTimeout> | undefined;
-        const late = new Promise<null>((resolve) => {
+        const late = new Promise<undefined>((resolve) => {
             timer = setTimeout(() => {
                 stop.abort();
-                resolve(null);
+                resolve(undefined);
             }, DM_STATUS_TIMEOUT_MS);
         });
         const asking = (async () => {
@@ -881,7 +913,8 @@ export class BotApiService {
                 const data = (await response.json()) as { room?: unknown };
                 return data.room ?? null;
             } catch {
-                return null;
+                // The bot server answers "no room" (or "not for you") with `room: null`: any error is no answer.
+                return undefined;
             }
         })();
         return Promise.race([asking, late]).finally(() => {

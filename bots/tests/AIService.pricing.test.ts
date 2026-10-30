@@ -103,6 +103,32 @@ describe("AIService – what a reply cost", () => {
         expect(sent).toMatchObject({ tokensUsed: 5200, providerId: "deepseek-flash" });
     });
 
+    it("prices the PostHog event's cache writes at the cache-write rate, as the usage call does", async () => {
+        const { captureAiGeneration } = await import("../ai/PostHogClient");
+        vi.setSystemTime(new Date("2026-10-26T05:00:00Z"));
+        const claude = provider({ providerId: "claude-key", type: "anthropic", endpoint: "https://api.anthropic.com/v1", model: "claude-sonnet-4-5", name: "Claude" });
+        const costOf = async (metadata: Record<string, unknown>) => {
+            vi.mocked(captureAiGeneration).mockClear();
+            // Like the registry, tell the config what the call wrote to the cache before its closing chunk
+            const { admin, memory } = buildMocks(claude);
+            mockGenerateStream.mockImplementation(async function* (_p: string, _s: string, _m: string, config: any) {
+                yield { content: "Hi!", done: false };
+                if (metadata.cacheWriteTokens) config.onCacheTokens?.(0, metadata.cacheWriteTokens);
+                yield { content: "", done: true, metadata: { latency: 10, error: false, ...metadata } };
+            });
+            await drain(new AIService(memory, admin, "http://admin.local").generateBotResponseStream("bot-1", 42, "hello", "You are a bot.", "claude-key", "space-1", ""));
+            const sent = admin.trackAIUsage.mock.calls[0][0];
+            const events = vi.mocked(captureAiGeneration).mock.calls.map((args) => args[0] as any);
+            return { sent, event: events[events.length - 1] };
+        };
+        const plain = await costOf({ tokensUsed: 5200, promptTokens: 5000, completionTokens: 200 });
+        const written = await costOf({ tokensUsed: 5200, promptTokens: 5000, completionTokens: 200, cacheWriteTokens: 4000 });
+        expect(written.sent.price.cacheWriteTokens).toBe(4000);
+        expect(written.sent.price.costMicros).toBeGreaterThan(plain.sent.price.costMicros);
+        // The PostHog event carries the same price as the usage call (in dollars)
+        expect(written.event.cost).toBeCloseTo(written.sent.price.costMicros / 1e6, 9);
+    });
+
     it("sends the same reply in DeepSeek's peak hours at twice the price", async () => {
         vi.setSystemTime(new Date("2026-10-26T02:00:00Z"));
         const sent = await priceOf(provider(), cached);
