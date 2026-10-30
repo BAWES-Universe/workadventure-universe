@@ -67,7 +67,7 @@ import { localUserStore } from "../../Connection/LocalUserStore";
 import { botApiService } from "../../external-modules/bots/services/BotApiService";
 import { getBotServerUrl } from "../../external-modules/bots/services/BotServerUrl";
 import { refreshThisDeviceOnce } from "../../Notification/Push/PushDevice";
-import { myHandRaisedStore, raisedHandsStore } from "../../Space/RaiseHand/RaiseHandStore";
+import { clearHandsOffHere, myHandRaisedStore, raisedHandsStore } from "../../Space/RaiseHand/RaiseHandStore";
 import { bindPodiumToRaiseHand } from "../../Space/RaiseHand/PodiumStore";
 import { Loader } from "../Components/Loader";
 import { RemotePlayer } from "../Entity/RemotePlayer";
@@ -1413,6 +1413,8 @@ export class GameScene extends DirtyScene {
         nativeSoundscapeListenerStore.set(undefined);
         // Area-leave handlers do not run when the scene closes: forget the areas the chat top row names.
         clearAreaPresence();
+        // Nor do they bring back the raise hand an Audience or a meeting room switched off (#1625)
+        clearHandsOffHere();
         // Nor does leaving a camera-locking area: end the lock and put the zoom back to what it was before it, or the
         // next scene (a reconnect) starts zoomed in on the old area, with every resize snapping back to it.
         if (waScaleManager.getFocusTarget()) {

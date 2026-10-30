@@ -138,6 +138,7 @@ const mapEditor: BaseTranslation = {
             waitingMedialLinkHelp: "The correct link should be 'https://monlienmedia.com/…'.",
             waitingSpeaker: "Waiting for speaker 🎤✨",
             actionButtonLabel: "Join audience",
+            raiseHandEnabled: "Let people raise their hand",
         },
         start: {
             label: "Start area",
@@ -341,6 +342,7 @@ const mapEditor: BaseTranslation = {
                 startWithAudioMuted: "Start with microphone muted",
                 startWithVideoMuted: "Start with video closed",
                 disableChat: "Disable chat",
+                raiseHandEnabled: "Let people raise their hand",
                 livekitRoomAdminTag: "Moderator tag for the meeting room",
                 cancel: "Cancel",
                 validate: "Validate",

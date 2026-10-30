@@ -49,6 +49,8 @@ export const LivekitRoomConfigData = z
         startWithAudioMuted: z.boolean(),
         startWithVideoMuted: z.boolean(),
         disableChat: z.boolean().optional().default(false),
+        // Whether people in the meeting room may raise their hand (#1625). Missing means on, as upstream WorkAdventure.
+        raiseHandEnabled: z.boolean().optional(),
     })
     .optional();
 
@@ -145,6 +147,8 @@ export const ListenerMegaphonePropertyData = PropertyBase.extend({
     type: z.literal("listenerMegaphone"),
     speakerZoneName: z.string(),
     chatEnabled: z.boolean().default(false),
+    // Whether the audience may raise their hand to ask for the floor (#1625). Missing means on, as upstream WorkAdventure.
+    raiseHandEnabled: z.boolean().optional(),
     waitingLink: z.string().optional(),
 });
 
