@@ -1,4 +1,5 @@
 <script lang="ts">
+    import ToolKinds from "./ToolKinds.svelte";
     import { onMount, onDestroy, afterUpdate } from "svelte";
     import {
         botApiService,
@@ -671,7 +672,14 @@
                 {#if expanded}
                     <div class="mcp-body">
                         <div class="mcp-url" title={server.serverUrl}>{server.serverUrl}</div>
-                        {#if server.lastTestResult?.success && server.lastTestResult?.toolNames?.length > 0}
+                        {#if server.toolKinds}
+                            <ToolKinds
+                                serverName={server.name}
+                                tools={server.toolKinds.tools}
+                                runs={server.toolKinds.runs}
+                                openTool={server.toolKinds.openTool ?? null}
+                            />
+                        {:else if server.lastTestResult?.success && server.lastTestResult?.toolNames?.length > 0}
                             <div class="mcp-tools" aria-label="Available tools">
                                 {#each server.lastTestResult.toolNames as toolName (toolName)}
                                     <span>{toolName}</span>

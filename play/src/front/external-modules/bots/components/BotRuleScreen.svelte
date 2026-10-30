@@ -34,6 +34,10 @@
             ? access.actions.dm()
             : action === "summon"
             ? access.actions.summon()
+            : action === "change"
+            ? "Have it change things"
+            : action === "send"
+            ? "Have it delete or send"
             : access.actions.manage();
     }
 
@@ -44,6 +48,10 @@
             ? access.actions.dmHint()
             : action === "summon"
             ? access.actions.summonHint()
+            : action === "change"
+            ? "Create or edit things with its tools, like a Linear issue or a post"
+            : action === "send"
+            ? "Delete things, or send email and messages outside Universe, with its tools"
             : access.actions.manageHint();
     }
 

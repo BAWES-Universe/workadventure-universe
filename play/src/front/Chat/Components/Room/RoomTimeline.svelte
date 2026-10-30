@@ -33,6 +33,8 @@
     import { nextReplyLimitExpiry, shownReplyLimitIds } from "../../Bots/BotReplyLimit";
     import BotStatusNoteCard from "../Bots/BotStatusNoteCard.svelte";
     import BotReplyLimitCard from "../Bots/BotReplyLimitCard.svelte";
+    import BotAskCard from "../Bots/BotAskCard.svelte";
+    import { waitingForMe, type BotAsk } from "../../Bots/BotAsk";
     import {
         PERSON_COLOUR_CONTEXT,
         NAME_BY_CHAT_ID_CONTEXT,
@@ -400,8 +402,17 @@
         botStatusCache.learn(partnerBotId, lastNoteAvailability, noteWrittenAt);
     }
     $: shownBotState = botHeaderState(botState, lastBotNote?.state);
-    $: botPlaceholder =
-        botState === "resting"
+    // A card waiting for you (prototype): the chat box says typing answers it in your own words
+    $: askForMe = waitingForMe(
+        $messages.map((m) => (m as { ask?: BotAsk }).ask),
+        myChatID,
+        Date.now()
+    );
+    $: botPlaceholder = askForMe
+        ? askForMe.kind === "question"
+            ? "Or type your own answer"
+            : "Or type something else"
+        : botState === "resting"
             ? $LL.chat.botStatus.restingPlaceholder()
             : botState === "unready"
             ? $LL.chat.botStatus.unreadyPlaceholder()
@@ -1195,6 +1206,12 @@
                             {#if shownReplyLimits.has(entry.message.id)}
                                 <BotReplyLimitCard replyLimit={entry.message.replyLimit} />
                             {/if}
+                        {:else if "ask" in entry.message && entry.message.ask}
+                            <BotAskCard
+                                ask={entry.message.ask}
+                                me={myChatID ?? ""}
+                                botName={entry.message.sender?.username ?? $roomName}
+                            />
                         {:else if entry.message.botStatus}
                             <BotStatusNoteCard note={entry.message.botStatus} />
                         {:else}

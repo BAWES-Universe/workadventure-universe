@@ -84,6 +84,26 @@
               })
             : page.tools.modelStops({ model: shortName(stopsAtModel.model), limit: tokensLabel(stopsAtModel.tokens) })
         : null;
+    // Prototype choices, with the recommended ones picked
+    const askDirection = [
+        { value: "rarely", label: "Rarely" },
+        { value: "big", label: "Before bigger jobs" },
+        { value: "never", label: "Never" },
+    ];
+    let direction = "rarely";
+    const batchChoices = [
+        { value: 3, label: "3" },
+        { value: 5, label: "5" },
+        { value: 10, label: "10" },
+        { value: 0, label: "No limit" },
+    ];
+    let batch = 5;
+    const waitChoices = [
+        { value: 5, label: "5 min" },
+        { value: 10, label: "10 min" },
+        { value: 30, label: "30 min" },
+    ];
+    let wait = 10;
     $: stepLimit = limitChips(ceiling?.steps ?? null, STEP_CHOICES, bot.maxSteps, String, page.tools);
 </script>
 
@@ -117,6 +137,19 @@
             value={stepLimit.value}
             onPick={(steps) => onChange({ ...bot, maxSteps: steps || null })}
         />
+    </PageField>
+    <!-- Prototype: when the bot asks before a big job, how long a card waits, and the batch limit -->
+    <PageField
+        title="Asks which way to go"
+        hint="Before a long or costly job that could go very different ways. Otherwise it picks and says what it picked."
+    >
+        <PageChips label="Asks which way to go" options={askDirection} value={direction} onPick={(v) => (direction = v)} />
+    </PageField>
+    <PageField title="Asks before making more than" hint="The same kind of thing, like images or songs, in one reply">
+        <PageChips label="Asks before making more than" options={batchChoices} value={batch} onPick={(v) => (batch = v)} />
+    </PageField>
+    <PageField title="A card waits for an answer" hint="Then it does nothing and says so">
+        <PageChips label="A card waits for an answer" options={waitChoices} value={wait} onPick={(v) => (wait = v)} />
     </PageField>
     <label class="bp-set" for="bot-show-tool-calls-{bot.id}">
         <span class="bp-tx">
