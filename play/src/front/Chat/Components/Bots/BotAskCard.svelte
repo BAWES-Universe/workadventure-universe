@@ -1,10 +1,20 @@
 <script lang="ts">
     import type { BotAsk } from "../../Bots/BotAsk";
-    import { IconAlertTriangle, IconCheck, IconClock, IconEye } from "@wa-icons";
+    import {
+        IconAlertTriangle,
+        IconCheck,
+        IconChevronLeft,
+        IconChevronRight,
+        IconClock,
+        IconEye,
+        IconPencil,
+        IconSend,
+        IconX,
+    } from "@wa-icons";
 
     /**
      * A bot's card that waits for one person (prototype): an approval before a tool changes, deletes or sends something,
-     * or a question before a big job. Options only; typing in the chat box below answers it in your own words.
+     * or a question before a big job. Its own last row takes a typed answer, so the chat box below stays a chat box.
      */
     export let ask: BotAsk;
     /** Who is looking. Only the person who asked can answer; everyone else sees who it waits for. */
@@ -13,6 +23,14 @@
     export let botName: string;
     /** The time now, so the card can say it closes soon. */
     export let now = Date.now();
+    /** Pinned above the message box while it waits, with a close button, instead of sitting in the chat. */
+    export let docked = false;
+    /** The typed-answer row is open. */
+    export let typing = false;
+    /** When more than one card waits for you: which one this is. */
+    export let position: { at: number; total: number } | undefined = undefined;
+    /** What was typed so far (prototype). */
+    export let draft = "";
 
     let showAll = false;
 
@@ -24,13 +42,34 @@
     $: shownLines = showAll ? ask.lines ?? [] : (ask.lines ?? []).slice(0, 3);
 </script>
 
-<div class="ask mx-4 mb-3 flex flex-col" class:answered={!open} data-testid="botAskCard">
-    <div class="flex flex-col gap-0.5">
-        <b class="ask-title" dir="auto">{ask.title}</b>
-        {#if ask.actsAs}
-            <span class="ask-acts" dir="auto">Uses {ask.actsAs}{ask.everyTime ? " · asks every time" : ""}{ask.notReviewed
-                    ? " · not confirmed yet"
-                    : ""}</span>
+<div class="ask mx-4 mb-3 flex flex-col" class:answered={!open} class:docked data-testid="botAskCard">
+    <div class="ask-head">
+        <div class="flex min-w-0 flex-1 flex-col gap-0.5">
+            {#if docked}<span class="ask-from" dir="auto">{botName} needs your answer</span>{/if}
+            <b class="ask-title" dir="auto">{ask.title}</b>
+            {#if ask.actsAs}
+                <span class="ask-acts" dir="auto"
+                    >Uses {ask.actsAs}{ask.everyTime ? " · asks every time" : ""}{ask.notReviewed
+                        ? " · not confirmed yet"
+                        : ""}</span
+                >
+            {/if}
+        </div>
+        {#if docked && position && position.total > 1}
+            <div class="ask-pager">
+                <button type="button" class="ask-icon" aria-label="Previous card" disabled={position.at === 1}
+                    ><IconChevronLeft /></button
+                >
+                <span>{position.at} of {position.total}</span>
+                <button type="button" class="ask-icon" aria-label="Next card" disabled={position.at === position.total}
+                    ><IconChevronRight /></button
+                >
+            </div>
+        {/if}
+        {#if docked}
+            <button type="button" class="ask-icon" aria-label="Close, nothing is done" data-testid="botAskClose"
+                ><IconX /></button
+            >
         {/if}
     </div>
     {#if ask.lines?.length && open}
@@ -61,6 +100,23 @@
                     {#if option.detail}<span class="ask-option-detail">{option.detail}</span>{/if}
                 </button>
             {/each}
+            {#if typing}
+                <div class="ask-type">
+                    <input
+                        class="ask-input"
+                        placeholder={ask.kind === "question" ? "Type your own answer" : `Tell ${botName} what to do instead`}
+                        value={draft}
+                        disabled={!mine}
+                    />
+                    <button type="button" class="ask-send" aria-label="Send" disabled={!mine}><IconSend /></button>
+                </div>
+            {:else}
+                <button type="button" class="ask-option row else" disabled={!mine} data-testid="botAskSomethingElse">
+                    <span class="ask-option-label"
+                        ><IconPencil />{ask.kind === "question" ? "Your own answer" : "Something else"}</span
+                    >
+                </button>
+            {/if}
         </div>
         {#if closingSoon}
             <div class="ask-row">
@@ -83,6 +139,11 @@
         {/if}
     {:else if ask.answer?.typed}
         <span class="ask-who">You typed something else, so nothing was done</span>
+    {:else if ask.answer?.closed}
+        <div class="ask-row">
+            <span class="ask-who"><IconX />You closed it, so nothing was done</span>
+            <button type="button" class="ask-small" disabled={!mine} data-testid="botAskReviewAgain">Review again</button>
+        </div>
     {:else}
         <div class="ask-row">
             <span class="ask-who"><IconClock />No answer, so nothing was done</span>
@@ -104,6 +165,111 @@
         background: linear-gradient(160deg, rgba(31, 28, 47, 0.96), rgba(20, 18, 30, 0.97));
         box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.22), 0 0 24px -12px rgba(134, 41, 252, 0.55);
         overflow-wrap: anywhere;
+    }
+    .ask.docked {
+        margin-bottom: 8px;
+        max-height: 60vh;
+        overflow-y: auto;
+        box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.32), 0 -12px 32px -12px rgba(0, 0, 0, 0.6),
+            0 0 24px -12px rgba(134, 41, 252, 0.55);
+    }
+    .ask-head {
+        display: flex;
+        align-items: flex-start;
+        gap: 4px;
+    }
+    .ask-from {
+        font-size: 12px;
+        font-weight: 600;
+        color: #c4b5fd;
+    }
+    /* Plain icons, no tile behind them; the tap area is still 44px. */
+    .ask-icon {
+        display: grid;
+        place-items: center;
+        flex: none;
+        width: 44px;
+        height: 44px;
+        margin: -10px -10px -10px 0;
+        padding: 0;
+        border: 0;
+        background: none;
+        color: rgba(255, 255, 255, 0.7);
+        cursor: pointer;
+    }
+    .ask-icon:disabled {
+        opacity: 0.3;
+        cursor: default;
+    }
+    .ask-icon :global(svg) {
+        width: 20px;
+        height: 20px;
+    }
+    .ask-pager {
+        display: flex;
+        align-items: center;
+        flex: none;
+        margin-right: 6px;
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.6);
+    }
+    .ask-pager .ask-icon {
+        width: 36px;
+        margin: -10px 0;
+    }
+    .ask-option.else {
+        justify-content: center;
+        min-height: 44px;
+        border-style: dashed;
+        background: none;
+        font-weight: 500;
+        color: rgba(255, 255, 255, 0.75);
+    }
+    .ask-option.else .ask-option-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .ask-option.else :global(svg) {
+        width: 16px;
+        height: 16px;
+    }
+    .ask-type {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        min-height: 44px;
+        padding: 0 4px 0 14px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.5);
+    }
+    .ask-input {
+        flex: 1;
+        min-width: 0;
+        border: 0;
+        background: none;
+        font-size: 14px;
+        color: #fff;
+        outline: none;
+    }
+    .ask-input::placeholder {
+        color: rgba(255, 255, 255, 0.45);
+    }
+    .ask-send {
+        display: grid;
+        place-items: center;
+        flex: none;
+        width: 36px;
+        height: 36px;
+        border: 0;
+        border-radius: 50%;
+        background: linear-gradient(90deg, #8629fc, #4156f6);
+        color: #fff;
+    }
+    .ask-send :global(svg) {
+        width: 18px;
+        height: 18px;
     }
     .ask.answered {
         gap: 6px;

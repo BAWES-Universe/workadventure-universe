@@ -1,7 +1,7 @@
 /**
  * A bot's card that waits for one person (prototype): an approval before a tool changes, deletes or sends something,
  * or a question with a few directions before a big job. It travels in the `universe.ask` field of a notice whose body
- * says the same in plain words, so other chat apps can read it. Typing in the chat box answers it in your own words.
+ * says the same in plain words, so other chat apps can read it. The card's own last row takes a typed answer.
  */
 export type BotAskKind = "approval" | "question";
 
@@ -36,7 +36,7 @@ export interface BotAsk {
     expiresAt: number;
     /** Once answered or gone: which option, or typed, or expired. After an option ran: its result line, or that the
      * outcome couldn't be confirmed. */
-    answer?: { option?: string; typed?: boolean; expired?: boolean; result?: string; unknown?: boolean };
+    answer?: { option?: string; typed?: boolean; expired?: boolean; closed?: boolean; result?: string; unknown?: boolean };
 }
 
 /** The ask a bot's notice carries, or undefined. */
@@ -48,7 +48,12 @@ export function parseBotAsk(value: unknown): BotAsk | undefined {
     return field as unknown as BotAsk;
 }
 
-/** The card still waiting for you: the chat box then says typing answers it. */
+/** The cards still waiting for you, oldest first. */
+export function allWaitingForMe(asks: Array<BotAsk | undefined>, me: string | undefined, now: number): BotAsk[] {
+    return asks.filter((ask): ask is BotAsk => !!ask && !ask.answer && ask.asker === me && ask.expiresAt > now);
+}
+
+/** The newest card still waiting for you. */
 export function waitingForMe(asks: Array<BotAsk | undefined>, me: string | undefined, now: number): BotAsk | undefined {
     for (let i = asks.length - 1; i >= 0; i--) {
         const ask = asks[i];

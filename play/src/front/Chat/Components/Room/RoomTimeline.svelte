@@ -34,7 +34,7 @@
     import BotStatusNoteCard from "../Bots/BotStatusNoteCard.svelte";
     import BotReplyLimitCard from "../Bots/BotReplyLimitCard.svelte";
     import BotAskCard from "../Bots/BotAskCard.svelte";
-    import { waitingForMe, type BotAsk } from "../../Bots/BotAsk";
+    import { allWaitingForMe, waitingForMe, type BotAsk } from "../../Bots/BotAsk";
     import {
         PERSON_COLOUR_CONTEXT,
         NAME_BY_CHAT_ID_CONTEXT,
@@ -86,9 +86,15 @@
     import { DIRECT_PARTNER_CONTEXT, directPartnerStore, type DirectPartner } from "./DirectChat/DirectPartnerStore";
     import { dayLabel, messageRuns, runSenderKey } from "./MessageRuns";
     import { drawnFrom, drawnStart, screenfulCount, onDrawEveryMessage } from "./DrawnMessages";
-    import { IconChevronLeft, IconChevronRight, IconLoader, IconLock, IconMailBox } from "@wa-icons";
+    import { IconArrowUp, IconChevronLeft, IconChevronRight, IconClock, IconLoader, IconLock, IconMailBox } from "@wa-icons";
 
     export let room: ChatRoom;
+    /** Where a waiting card sits (prototype, the option being decided): pinned above the message box, in the chat, or
+     * in the chat with a button that jumps back to it. */
+    export let askPlacement: "pinned" | "inline" | "jump" = "pinned";
+    /** The pinned card's typed-answer row is open, and what is typed so far (prototype). */
+    export let askTyping = false;
+    export let askDraft = "";
 
     // Messages show the sender's woka when their chat account has no picture (Matrix users).
     if (!hasContext(WOKA_BY_CHAT_ID_CONTEXT)) {
@@ -402,17 +408,24 @@
         botStatusCache.learn(partnerBotId, lastNoteAvailability, noteWrittenAt);
     }
     $: shownBotState = botHeaderState(botState, lastBotNote?.state);
-    // A card waiting for you (prototype): the chat box says typing answers it in your own words
+    // Cards waiting for you (prototype). Pinned: the oldest sits above the message box until answered or closed, and the
+    // chat keeps a line where it was asked. The message box stays a plain message box.
     $: askForMe = waitingForMe(
         $messages.map((m) => (m as { ask?: BotAsk }).ask),
         myChatID,
         Date.now()
     );
-    $: botPlaceholder = askForMe
-        ? askForMe.kind === "question"
-            ? "Or type your own answer"
-            : "Or type something else"
-        : botState === "resting"
+    $: waitingAsks = allWaitingForMe(
+        $messages.map((m) => (m as { ask?: BotAsk }).ask),
+        myChatID,
+        Date.now()
+    );
+    $: askSenders = new Map(
+        $messages
+            .filter((m) => (m as { ask?: BotAsk }).ask)
+            .map((m) => [(m as { ask?: BotAsk }).ask?.id, m.sender?.username ?? $roomName])
+    );
+    $: botPlaceholder = botState === "resting"
             ? $LL.chat.botStatus.restingPlaceholder()
             : botState === "unready"
             ? $LL.chat.botStatus.unreadyPlaceholder()
@@ -1206,6 +1219,14 @@
                             {#if shownReplyLimits.has(entry.message.id)}
                                 <BotReplyLimitCard replyLimit={entry.message.replyLimit} />
                             {/if}
+                        {:else if "ask" in entry.message && entry.message.ask && askPlacement === "pinned" && waitingAsks.includes(entry.message.ask)}
+                            <div class="ask-record" data-testid="botAskRecord">
+                                <IconClock />
+                                <span
+                                    >{entry.message.sender?.username ?? $roomName} is waiting for your answer below:
+                                    <b>{entry.message.ask.title}</b></span
+                                >
+                            </div>
                         {:else if "ask" in entry.message && entry.message.ask}
                             <BotAskCard
                                 ask={entry.message.ask}
@@ -1256,6 +1277,21 @@
                     {$LL.chat.botStatus.closed()}
                 </div>
             {:else}
+                {#if askPlacement === "pinned" && waitingAsks.length > 0}
+                    <BotAskCard
+                        docked
+                        ask={waitingAsks[0]}
+                        me={myChatID ?? ""}
+                        botName={askSenders.get(waitingAsks[0].id) ?? $roomName}
+                        position={{ at: 1, total: waitingAsks.length }}
+                        typing={askTyping}
+                        draft={askDraft}
+                    />
+                {:else if askPlacement === "jump" && askForMe}
+                    <button type="button" class="ask-jump" data-testid="botAskJump">
+                        {askSenders.get(askForMe.id) ?? $roomName} is waiting for your answer <IconArrowUp />
+                    </button>
+                {/if}
                 {#key room.id}
                     <MessageInputBar
                         disabled={$shouldRetrySendingEvents}
@@ -1272,6 +1308,46 @@
 </div>
 
 <style>
+    /* Where a pinned card was asked: one quiet line, so the chat keeps its order. */
+    .ask-record {
+        display: flex;
+        align-items: flex-start;
+        gap: 6px;
+        margin: 0 16px 12px;
+        font-size: 12.5px;
+        line-height: 18px;
+        color: rgba(255, 255, 255, 0.6);
+    }
+    .ask-record :global(svg) {
+        flex: none;
+        width: 16px;
+        height: 16px;
+        margin-top: 1px;
+    }
+    .ask-record b {
+        color: rgba(255, 255, 255, 0.85);
+    }
+    .ask-jump {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        align-self: center;
+        min-height: 44px;
+        margin: 0 16px 8px;
+        padding: 0 16px;
+        border: 0;
+        border-radius: 999px;
+        background: linear-gradient(90deg, #8629fc, #4156f6);
+        box-shadow: 0 8px 24px -10px rgba(134, 41, 252, 0.7);
+        font-size: 13px;
+        font-weight: 700;
+        color: #fff;
+    }
+    .ask-jump :global(svg) {
+        width: 16px;
+        height: 16px;
+    }
+
     /* Runs sit close together; a new run gets room for its label. Notices ("With …", joining, leaving) keep their own spacing. */
     li.run-start {
         padding-top: 8px;
