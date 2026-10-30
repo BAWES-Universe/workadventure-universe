@@ -280,6 +280,26 @@ describe("AreasManager", () => {
         });
     });
 
+    it("removes its areas and their pills, and stops following the rooms, once destroyed", async () => {
+        labels.length = 0;
+        accessibleAreaIds.add("lounge");
+        const { manager, setCount, setLock } = await makeFullRoomManager();
+        setCount(2);
+        const lounge = manager.getAreaById("lounge") as unknown as { destroy: () => void };
+        expect(labels.at(-1)?.destroyed).toBe(false);
+
+        manager.destroy();
+
+        expect(lounge.destroy).toHaveBeenCalledTimes(1);
+        expect(manager.getAreaById("lounge")).toBeUndefined();
+        expect(labels.every((label) => label.destroyed)).toBe(true);
+        // A lock that comes in afterwards puts nothing back
+        setLock(true);
+        expect(labels.every((label) => label.destroyed)).toBe(true);
+        manager.destroy();
+        expect(lounge.destroy).toHaveBeenCalledTimes(1);
+    });
+
     describe("a lockable room (#1622)", () => {
         beforeEach(() => {
             labels.length = 0;

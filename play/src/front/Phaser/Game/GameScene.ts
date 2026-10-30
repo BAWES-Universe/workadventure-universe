@@ -3619,6 +3619,9 @@ export class GameScene extends DirtyScene {
                             for (const layer of this.Map.layers) {
                                 layer.tilemapLayer.destroy(false);
                             }
+                            // The full and locked rooms (#1621 #1622) are set up again on the new map, unless the
+                            // scene has not set them up yet: it does it on the new map once it is ready.
+                            const areasWereSetUp = this.gameMapFrontWrapper?.areasManager !== undefined;
                             this.gameMapFrontWrapper?.close();
                             //Create a new GameMap with the changed file
                             this.gameMapFrontWrapper = new GameMapFrontWrapper(
@@ -3636,6 +3639,9 @@ export class GameScene extends DirtyScene {
                             this.createCollisionWithPlayer();
                             //Create new trigger with the new GameMap
                             new GameMapPropertiesListener(this, this.gameMapFrontWrapper).register();
+                            if (areasWereSetUp) {
+                                this.initializeAreaManager();
+                            }
                             resolve(newFirstgid);
                         });
                         this.load.off("loaderror", errorHandler);
