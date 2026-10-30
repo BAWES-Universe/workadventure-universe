@@ -48,8 +48,9 @@ function prefab(id: string) {
     };
 }
 
-// What the service builds from hostname "host" and universe/world path "universe/world".
-const COLLECTION_FILE = "host/universe/world//assets/entities/entities.json";
+// What the service builds from hostname "host" and universe/world path "universe/world": the same path the browser
+// asks for, with no "//" that a proxy would merge (#1636).
+const COLLECTION_FILE = "host/universe/world/assets/entities/entities.json";
 
 function collection(): { id: string; name: string }[] {
     const raw = files.get(COLLECTION_FILE);
@@ -80,5 +81,24 @@ describe("CustomEntityCollectionService", () => {
 
         expect(collection().map((e) => e.id)).toEqual(["c"]);
         expect(collection()[0].name).toBe("renamed");
+    });
+
+    it("saves an upload's picture where the browser asks for it, with no double slash", async () => {
+        files.clear();
+        const upload = {
+            ...prefab("arcade"),
+            imagePath: "0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0-arcade.png",
+            direction: 2, // Down
+            file: new Uint8Array([1]),
+        };
+        // The world path as the map's address gives it, with or without its last slash.
+        await new CustomEntityCollectionService("host", "universe/world").uploadEntity(upload);
+        await new CustomEntityCollectionService("host", "universe/world/").uploadEntity(upload);
+
+        expect(files.has("host/universe/world/assets/entities/0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0-arcade.png")).toBe(
+            true
+        );
+        expect([...files.keys()].some((key) => key.includes("//"))).toBe(false);
+        expect(collection().map((e) => e.id)).toEqual(["arcade", "arcade"]);
     });
 });

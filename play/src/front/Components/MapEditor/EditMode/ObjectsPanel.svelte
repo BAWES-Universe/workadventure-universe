@@ -165,6 +165,10 @@
         editingUpload = false;
     }
     function removeUpload(id: string) {
+        // When the upload was all its category held, the panel goes back to all objects rather than an empty
+        // category that no longer exists (#1636).
+        const left = sections.find((section) => section.tag === category)?.items.filter((variant) => variant.id !== id);
+        if (category && (left === undefined || left.length === 0)) selectCategoryStore.set(undefined);
         for (const picture of picturesOf(id)) {
             mapEditorDeleteCustomEntityEventStore.set({ id: picture });
         }
