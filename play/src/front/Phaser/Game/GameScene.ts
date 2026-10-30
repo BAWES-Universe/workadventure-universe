@@ -2481,7 +2481,11 @@ export class GameScene extends DirtyScene {
                 this._proximityChatRoomDeferred.resolve(this._proximityChatRoom);
                 // What the nearby chat shows is kept on the player's account, so it is still there after a reload.
                 this.stopKeepingNearbyShared = keepNearbyShared(this._proximityChatRoom);
-                this.proximitySpaceManager = new ProximitySpaceManager(this.connection, this._proximityChatRoom);
+                this.proximitySpaceManager = new ProximitySpaceManager(
+                    this.connection,
+                    this._proximityChatRoom,
+                    this.spaceRegistry
+                );
 
                 this.scriptingVideoManager = new ScriptingVideoManager();
 
@@ -4614,6 +4618,11 @@ export class GameScene extends DirtyScene {
             throw new Error("_proximityChatRoom not yet initialized");
         }
         return this._proximityChatRoom;
+    }
+
+    /** What joins the bubbles the server puts us in; undefined until the connection is up. */
+    public getProximitySpaceManager(): ProximitySpaceManager | undefined {
+        return this.proximitySpaceManager;
     }
 
     get userProviderMerger(): Promise<UserProviderMerger> {

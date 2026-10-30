@@ -17,7 +17,7 @@ import { myCameraStore } from "./MyMediaStore";
 import {
     cameraEnergySavingStore,
     displayedMegaphoneScreenStore,
-    isListenerStore,
+    listensOnlyStore,
     localVoiceIndicatorStore,
     localVolumeStore,
     mediaStreamConstraintsStore,
@@ -162,7 +162,7 @@ function createStreamableCollectionStore(): Readable<Map<string, VideoBox>> {
             requestedCameraState,
             windowSize,
             isLiveStreamingStore,
-            isListenerStore,
+            listensOnlyStore,
             displayedMegaphoneScreenStore,
         ],
         (
@@ -178,7 +178,7 @@ function createStreamableCollectionStore(): Readable<Map<string, VideoBox>> {
                 $requestedCameraState,
                 $windowSize,
                 $isLiveStreamingStore,
-                $isListenerStore,
+                $listensOnlyStore,
                 $displayedMegaphoneScreenStore,
             ] /*, set*/
         ) => {
@@ -201,7 +201,7 @@ function createStreamableCollectionStore(): Readable<Map<string, VideoBox>> {
                     shouldAddMyCamera = false;
                 }
 
-                if ($isListenerStore) {
+                if ($listensOnlyStore) {
                     shouldAddMyCamera = false;
                 }
 
@@ -293,16 +293,16 @@ export const isInRemoteConversation = derived(
  * speaker zone, where you only listen. The microphone and camera buttons show it with a violet ring.
  */
 export const isBroadcastingMediaStore = derived(
-    [videoStreamElementsStore, screenShareStreamElementsStore, isLiveStreamingStore, silentStore, isListenerStore],
+    [videoStreamElementsStore, screenShareStreamElementsStore, isLiveStreamingStore, silentStore, listensOnlyStore],
     ([
         $videoStreamElementsStore,
         $screenShareStreamElementsStore,
         $isLiveStreamingStore,
         $silentStore,
-        $isListenerStore,
+        $listensOnlyStore,
     ]) =>
         !$silentStore &&
-        !$isListenerStore &&
+        !$listensOnlyStore &&
         ($isLiveStreamingStore || $videoStreamElementsStore.length > 0 || $screenShareStreamElementsStore.length > 0)
 );
 

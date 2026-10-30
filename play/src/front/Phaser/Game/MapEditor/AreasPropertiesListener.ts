@@ -48,6 +48,7 @@ import {
     inLivekitStore,
     inOpenWebsite,
     isListenerStore,
+    setAudienceTalking,
     isSpeakerStore,
     listenerWaitingMediaStore,
     requestedCameraState,
@@ -382,15 +383,18 @@ export class AreasPropertiesListener {
                 break;
             }
             case "listenerMegaphone": {
-                newProperty = newProperty as typeof oldProperty;
-                this.handleListenerMegaphonePropertyOnLeave(oldProperty).catch((e) => {
-                    console.error(e);
-                    Sentry.captureException(e);
-                });
-                this.handleListenerMegaphonePropertyOnEnter(newProperty, newAbortController.signal).catch((e) => {
-                    console.error(e);
-                    Sentry.captureException(e);
-                });
+                const audience = newProperty as typeof oldProperty;
+                // One after the other: leaving the old settings must not undo the new ones (#1624)
+                this.handleListenerMegaphonePropertyOnLeave(oldProperty)
+                    .catch((e) => {
+                        console.error(e);
+                        Sentry.captureException(e);
+                    })
+                    .then(() => this.handleListenerMegaphonePropertyOnEnter(audience, newAbortController.signal))
+                    .catch((e) => {
+                        console.error(e);
+                        Sentry.captureException(e);
+                    });
                 break;
             }
             case "exit": {
@@ -1463,6 +1467,8 @@ export class AreasPropertiesListener {
     ): Promise<void> {
         // "Let people raise their hand" in the Audience (#1625)
         setHandsOffHere(property.id, property.raiseHandEnabled === false);
+        // "People can talk to each other" (#1624): set before joining, as a bubble can start while the Audience joins
+        setAudienceTalking(property.id, property.allowTalking === true);
         // TODO: change the user's availability status to prevent them from creating a bubble
         if (property.speakerZoneName !== undefined) {
             const speakerZoneName = getSpeakerMegaphoneAreaName(
@@ -1475,6 +1481,16 @@ export class AreasPropertiesListener {
                 let space: SpaceInterface | undefined;
                 if (property.chatEnabled) {
                     const proximityRoom = this.scene.proximityChatRoom;
+                    if (property.allowTalking === true) {
+                        // A bubble we walked in with keeps going here: it moves beside the Audience chat (#1624)
+                        const proximitySpaceManager = this.scene.getProximitySpaceManager();
+                        await proximitySpaceManager?.moveBubbleBesideChat();
+                        if (abortSignal.aborted) {
+                            // We stepped out while it moved: the bubble goes back to the nearby chat
+                            await proximitySpaceManager?.moveBubblesBackToChat();
+                            return;
+                        }
+                    }
                     proximityRoom.setDisplayName(speakerZoneName);
                     await proximityRoom.joinSpace(
                         uniqRoomName,
@@ -1520,6 +1536,10 @@ export class AreasPropertiesListener {
                 listenerWaitingMediaStore.set(undefined);
             }
         }
+        // Only once we no longer listen: turning talking off first would make us a listener for a moment (#1624)
+        setAudienceTalking(property.id, false);
+        // People who walk out together keep their bubble, now with its text in the nearby chat
+        await this.scene.getProximitySpaceManager()?.moveBubblesBackToChat();
     }
 
     private handleExitPropertyOnEnter(url: string): void {
