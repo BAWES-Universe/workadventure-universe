@@ -35,14 +35,7 @@ export class ProximitySpaceManager {
                 const join = this.chatHoldsAnotherSpace()
                     ? this.joinBesideChat(spaceName, propertiesToSync)
                     : this.proximityChatRoom.joinSpace(spaceName, propertiesToSync);
-                join.catch((e) => {
-                    if (e instanceof AbortError) {
-                        debug("Join space aborted. The user left the space before finalizing the join", e);
-                        return;
-                    }
-                    console.error(e);
-                    Sentry.captureException(e);
-                });
+                join.catch((e) => this.reportJoinFailure(e));
             }
         );
 
@@ -78,8 +71,22 @@ export class ProximitySpaceManager {
             return;
         }
         const propertiesToSync = this.bubbleProperties.get(spaceName) ?? [];
-        await this.proximityChatRoom.leaveSpace(spaceName);
-        await this.joinBesideChat(spaceName, propertiesToSync);
+        try {
+            await this.proximityChatRoom.leaveSpace(spaceName);
+            await this.joinBesideChat(spaceName, propertiesToSync);
+        } catch (e) {
+            // Losing the bubble must not stop the Audience from joining
+            this.reportJoinFailure(e);
+        }
+    }
+
+    private reportJoinFailure(e: unknown): void {
+        if (e instanceof AbortError) {
+            debug("Join space aborted. The user left the space before finalizing the join", e);
+            return;
+        }
+        console.error(e);
+        Sentry.captureException(e);
     }
 
     private async joinBesideChat(spaceName: string, propertiesToSync: string[]): Promise<void> {

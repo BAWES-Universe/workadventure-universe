@@ -97,6 +97,14 @@ describe("ProximitySpaceManager in an Audience (#1624)", { timeout: 60_000 }, ()
         manager.destroy();
     });
 
+    it("lets the Audience carry on when the moved bubble is gone before it is joined again", async () => {
+        const { AbortError } = await import("@workadventure/shared-utils/src/Abort/AbortError");
+        const { manager, registry } = await setUp(false, "bubble-4", "bubble");
+        registry.joinSpace.mockImplementationOnce(() => Promise.reject(new AbortError("Left the bubble")));
+        await expect(manager.moveBubbleBesideChat()).resolves.toBeUndefined();
+        manager.destroy();
+    });
+
     it("leaves a meeting room's chat where it is", async () => {
         const { manager, chat, registry } = await setUp(true, "meeting-room", "meeting");
         await manager.moveBubbleBesideChat();
