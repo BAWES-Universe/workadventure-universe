@@ -323,6 +323,15 @@ message UploadEntityMessage {
   optional string ownerName = 12;
 }
 
+// What an uploaded file is for (same numbers as upstream WorkAdventure). Both are stored privately: only a player
+// with the map's access token can read them.
+enum UploadedFileKind {
+  // A file of the "open file" property.
+  Document = 0;
+  // A sound of the "play a sound" property (#1626).
+  Sound = 1;
+}
+
 message UploadFileMessage {
   bytes file = 1;
   string id = 2;
@@ -330,6 +339,7 @@ message UploadFileMessage {
   string propertyId = 4;
   optional string areaId = 5;
   optional string entityId = 6;  
+  UploadedFileKind kind = 7;
 }
 
 message ModifyCustomEntityMessage {

@@ -96,6 +96,7 @@ import { cameraOnStore, showCameraToSpeakers, stageSeesCamerasStore } from "../.
 import { areaChatRooms, areaPresenceStore } from "../../../Chat/Stores/AreaPresenceStore";
 import { resolveMeetingAreaName } from "../../../Chat/Components/TopRow/TopRowSummary";
 import { leaveAreaSpaceIfJoined } from "./leaveAreaSpace";
+import { playableSoundLink } from "./uploadedSoundLink";
 
 // How long "The speakers can see your camera" stays over the player (#1623)
 const ATTENDEE_CAMERA_MESSAGE_DURATION = 3000;
@@ -237,7 +238,9 @@ export class AreasPropertiesListener {
                 break;
             }
             case "playAudio": {
-                this.handlePlayAudioPropertyOnEnter(property);
+                this.handlePlayAudioPropertyOnEnter(property, abortController.signal).catch((error) =>
+                    console.error("Error playing sound:", error)
+                );
                 break;
             }
             case "focusable": {
@@ -347,7 +350,9 @@ export class AreasPropertiesListener {
             }
             case "playAudio": {
                 newProperty = newProperty as typeof oldProperty;
-                this.handlePlayAudioPropertyOnUpdate(newProperty);
+                this.handlePlayAudioPropertyOnUpdate(newProperty, newAbortController.signal).catch((error) =>
+                    console.error("Error playing sound:", error)
+                );
                 break;
             }
             case "focusable": {
@@ -528,9 +533,20 @@ export class AreasPropertiesListener {
         }
     }
 
-    private handlePlayAudioPropertyOnEnter(property: PlayAudioPropertyData): void {
+    private async handlePlayAudioPropertyOnEnter(
+        property: PlayAudioPropertyData,
+        abortSignal: AbortSignal
+    ): Promise<void> {
+        // A "Play a sound" just added has no sound yet
+        if (!property.audioLink) {
+            return;
+        }
+        const link = await this.playableSoundLink(property.audioLink, abortSignal);
+        if (abortSignal.aborted) {
+            return;
+        }
         // playAudioLoop is supposedly deprecated. Should we ignore it?
-        audioManagerFileStore.playAudio(property.audioLink, this.scene.getMapUrl(), property.volume);
+        audioManagerFileStore.playAudio(link, this.scene.getMapUrl(), property.volume);
         audioManagerVisibilityStore.set("visible");
     }
 
@@ -1204,9 +1220,31 @@ export class AreasPropertiesListener {
         audioManagerVisibilityStore.set("hidden");
     }
 
-    private handlePlayAudioPropertyOnUpdate(newProperty: PlayAudioPropertyData): void {
+    private async handlePlayAudioPropertyOnUpdate(
+        newProperty: PlayAudioPropertyData,
+        abortSignal: AbortSignal
+    ): Promise<void> {
         audioManagerFileStore.unloadAudio();
-        audioManagerFileStore.playAudio(newProperty.audioLink, this.scene.getMapUrl(), newProperty.volume);
+        if (!newProperty.audioLink) {
+            audioManagerVisibilityStore.set("hidden");
+            return;
+        }
+        const link = await this.playableSoundLink(newProperty.audioLink, abortSignal);
+        if (abortSignal.aborted) {
+            return;
+        }
+        audioManagerFileStore.playAudio(link, this.scene.getMapUrl(), newProperty.volume);
+        audioManagerVisibilityStore.set("visible");
+    }
+
+    /** An uploaded sound needs the map's access token (#1626). */
+    private playableSoundLink(audioLink: string, abortSignal: AbortSignal): Promise<string> {
+        const connection = this.scene.connection;
+        return playableSoundLink(
+            audioLink,
+            this.scene.room.mapStorageUrl,
+            connection ? () => connection.queryMapStorageJwtToken(abortSignal) : undefined
+        );
     }
 
     private handleJitsiRoomPropertyOnLeave(property: JitsiRoomPropertyData): void {

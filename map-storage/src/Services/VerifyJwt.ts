@@ -3,7 +3,7 @@ import fs from "fs/promises";
 import type { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import z from "zod";
-import type { AreaData } from "@workadventure/map-editor";
+import type { AreaData, AreaDataProperty, EntityDataProperty } from "@workadventure/map-editor";
 import { WAMFileFormat, isAreaPropertyActive } from "@workadventure/map-editor";
 import { fileSystem } from "../fileSystem";
 import { SECRET_KEY } from "../Enum/EnvironmentVariable";
@@ -93,6 +93,13 @@ async function sendHtmlError(res: Response, message: string, statusCode: number 
     }
 }
 
+/** The property links to this uploaded file: an "Open file" document, or a "Play a sound" sound (#1626). */
+function uploadedFileLinkIs(property: AreaDataProperty | EntityDataProperty, url: string): boolean {
+    const link =
+        property.type === "openFile" ? property.link : property.type === "playAudio" ? property.audioLink : undefined;
+    return Boolean(link) && decodeURI(link ?? "") === decodeURI(url);
+}
+
 // Wam File Verification Function
 // Wam is updated every 15 seconds so we need to set a timeout to check the file if we don't find the area or entity
 async function getAndCheckWamFile(mapPath: string, url: string): Promise<AreaData | "entity"> {
@@ -106,12 +113,10 @@ async function getAndCheckWamFile(mapPath: string, url: string): Promise<AreaDat
                 const wamString = await fileSystem.readFileAsString(mapPath);
                 const wam = WAMFileFormat.parse(JSON.parse(wamString));
 
-                const area = wam.areas.find((a) =>
-                    a.properties.some((p) => p.type === "openFile" && decodeURI(p.link ?? "") === decodeURI(url))
-                );
+                const area = wam.areas.find((a) => a.properties.some((p) => uploadedFileLinkIs(p, url)));
 
                 const entity = Object.values(wam.entities).find((e) =>
-                    e.properties?.some((p) => p.type === "openFile" && decodeURI(p.link ?? "") === decodeURI(url))
+                    e.properties?.some((p) => uploadedFileLinkIs(p, url))
                 );
 
                 if (area) {

@@ -23,6 +23,7 @@ import type { ActivatableInterface } from "../Game/ActivatableInterface";
 import { GameScene } from "../Game/GameScene";
 import type { OutlineableInterface } from "../Game/OutlineableInterface";
 import { SpeechDomElement } from "../Entity/SpeechDomElement";
+import { playableSoundLink } from "../Game/MapEditor/uploadedSoundLink";
 import LL from "../../../i18n/i18n-svelte";
 
 export enum EntityEvent {
@@ -433,15 +434,31 @@ export class Entity extends Phaser.GameObjects.Image implements ActivatableInter
                 }
                 case "playAudio": {
                     const audioLink = property.audioLink;
+                    const volume = property.volume;
                     actions.push({
                         actionName: property.buttonLabel ?? "",
                         protected: true,
                         priority: 1,
-                        callback: () => {
-                            this.emit(EntityEvent.PropertyActivated, {
-                                propertyName: GameMapProperties.PLAY_AUDIO,
-                                propertyValue: audioLink,
-                            });
+                        callback: async () => {
+                            const scene = this.scene as GameScene;
+                            const connection = scene.connection;
+                            // An uploaded sound needs the map's access token (#1626)
+                            const link = await playableSoundLink(
+                                audioLink,
+                                scene.room.mapStorageUrl,
+                                connection ? () => connection.queryMapStorageJwtToken() : undefined
+                            );
+                            // The volume goes first: the sound starts as soon as its link is set
+                            this.emit(
+                                EntityEvent.PropertyActivated,
+                                ...(volume !== undefined
+                                    ? [{ propertyName: GameMapProperties.AUDIO_VOLUME, propertyValue: volume }]
+                                    : []),
+                                {
+                                    propertyName: GameMapProperties.PLAY_AUDIO,
+                                    propertyValue: link,
+                                }
+                            );
                             // Fixme: close the menu without impact audio manager and playing
                             //actionsMenuStore.clear();
                         },
