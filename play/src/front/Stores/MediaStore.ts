@@ -346,6 +346,16 @@ export const inLivekitStore = writable(false);
 export const isListenerStore = writable(false);
 /** The Audience we stand in lets people next to each other talk in a bubble (#1624). */
 export const audienceCanTalkStore = writable(false);
+/** Audiences we stand in that let people talk; walking from one into the next, we are briefly in both. */
+const talkingAudiences = new Set<string>();
+export function setAudienceTalking(propertyId: string, allowTalking: boolean): void {
+    if (allowTalking) {
+        talkingAudiences.add(propertyId);
+    } else {
+        talkingAudiences.delete(propertyId);
+    }
+    audienceCanTalkStore.set(talkingAudiences.size > 0);
+}
 /**
  * We only listen to a Stage: in an Audience, and not talking in a bubble there. Our camera is not shown and our
  * microphone reaches no one. In an Audience that lets people talk, a bubble makes us a normal bubble member again.

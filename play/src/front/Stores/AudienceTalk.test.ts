@@ -50,4 +50,18 @@ describe("people in an Audience talking to each other (#1624)", { timeout: 60_00
         expect(get(media.listensOnlyStore)).toBe(false);
         expect(get(media.availabilityStatusStore)).not.toBe(AvailabilityStatus.LISTENER);
     });
+
+    it("keeps talking on when walking from one Audience that lets people talk into the next", async () => {
+        const media = await import("./MediaStore");
+        // Entering the next one comes before leaving the last one
+        media.setAudienceTalking("audience-a", true);
+        media.setAudienceTalking("audience-b", true);
+        media.setAudienceTalking("audience-a", false);
+        expect(get(media.audienceCanTalkStore)).toBe(true);
+
+        media.setAudienceTalking("audience-c", false);
+        expect(get(media.audienceCanTalkStore)).toBe(true);
+        media.setAudienceTalking("audience-b", false);
+        expect(get(media.audienceCanTalkStore)).toBe(false);
+    });
 });

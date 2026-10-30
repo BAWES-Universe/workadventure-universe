@@ -48,7 +48,7 @@ import {
     inLivekitStore,
     inOpenWebsite,
     isListenerStore,
-    audienceCanTalkStore,
+    setAudienceTalking,
     isSpeakerStore,
     listenerWaitingMediaStore,
     requestedCameraState,
@@ -1465,7 +1465,7 @@ export class AreasPropertiesListener {
         // "Let people raise their hand" in the Audience (#1625)
         setHandsOffHere(property.id, property.raiseHandEnabled === false);
         // "People can talk to each other" (#1624): set before joining, as a bubble can start while the Audience joins
-        audienceCanTalkStore.set(property.allowTalking === true);
+        setAudienceTalking(property.id, property.allowTalking === true);
         // TODO: change the user's availability status to prevent them from creating a bubble
         if (property.speakerZoneName !== undefined) {
             const speakerZoneName = getSpeakerMegaphoneAreaName(
@@ -1514,7 +1514,7 @@ export class AreasPropertiesListener {
 
     private async handleListenerMegaphonePropertyOnLeave(property: ListenerMegaphonePropertyData): Promise<void> {
         setHandsOffHere(property.id, false);
-        audienceCanTalkStore.set(false);
+        setAudienceTalking(property.id, false);
         if (property.speakerZoneName !== undefined) {
             const speakerZoneName = getSpeakerMegaphoneAreaName(
                 this.scene.getGameMap().getGameMapAreas()?.getAreas(),
