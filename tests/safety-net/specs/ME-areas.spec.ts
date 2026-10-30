@@ -443,7 +443,7 @@ test("ME-039 Add to this area: the plain rows, apps row and coral Delete", async
     const panel = settings(page);
     await expect(panel).toContainText("Add to this area");
     const titles = [
-        "Video call",
+        "Meeting room",
         "Quiet zone",
         "Stage",
         "Audience",
@@ -552,7 +552,7 @@ test("ME-040 In this area: the setting shows with a switch, off keeps it, on bri
         .toBe(true);
 });
 
-test("ME-041 Video call: room name and more options, Highlight added by itself, Stage and Audience still offered", async ({
+test("ME-041 Meeting room: room name and more options, Highlight added by itself, Stage and Audience still offered", async ({
     page,
 }, testInfo) => {
     const url = await areasOpen(page, testInfo);
@@ -907,7 +907,7 @@ test("ME-055 Jitsi call: no longer offered; an area that already has one keeps i
     await expect(settings(page).getByTestId("jitsiRoomProperty")).toHaveCount(0);
     await page.getByTestId("livekitRoomProperty").click();
     await backToAreaRows(page);
-    await expect(settings(page).getByTestId("jitsiRoomProperty"), "nor next to a video call").toHaveCount(0);
+    await expect(settings(page).getByTestId("jitsiRoomProperty"), "nor next to a meeting room").toHaveCount(0);
 });
 
 test("ME-057 Delete an area from its settings or with the Delete key; Undo brings it back", async ({
