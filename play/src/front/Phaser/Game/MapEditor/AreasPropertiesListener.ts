@@ -18,7 +18,7 @@ import type {
 } from "@workadventure/map-editor";
 import { PersonalAreaAccessClaimMode, isAreaPropertyActive } from "@workadventure/map-editor";
 import * as Sentry from "@sentry/svelte";
-import { getSpeakerMegaphoneAreaName } from "@workadventure/map-editor/src/Utils";
+import { getSpeakerMegaphoneAreaName, getSpeakerMegaphoneProperty } from "@workadventure/map-editor/src/Utils";
 import { Jitsi } from "@workadventure/shared-utils";
 import { areaSpaceName } from "@workadventure/shared-utils/src/Space/areaSpaceName";
 import type { Unsubscriber } from "svelte/store";
@@ -51,6 +51,7 @@ import {
     setAudienceTalking,
     isSpeakerStore,
     listenerWaitingMediaStore,
+    localStreamStore,
     requestedCameraState,
     requestedMicrophoneState,
     silentStore,
@@ -91,9 +92,13 @@ import { selectedRoomStore } from "../../../Chat/Stores/SelectRoomStore";
 import FilePopup from "../../../Components/PopUp/FilePopup.svelte";
 import type { SpaceInterface } from "../../../Space/SpaceInterface";
 import { setHandsOffHere } from "../../../Space/RaiseHand/RaiseHandStore";
+import { cameraOnStore, showCameraToSpeakers } from "../../../Space/AttendeeCamera";
 import { areaChatRooms, areaPresenceStore } from "../../../Chat/Stores/AreaPresenceStore";
 import { resolveMeetingAreaName } from "../../../Chat/Components/TopRow/TopRowSummary";
 import { leaveAreaSpaceIfJoined } from "./leaveAreaSpace";
+
+// How long "The speakers can see your camera" stays over the player (#1623)
+const ATTENDEE_CAMERA_MESSAGE_DURATION = 3000;
 
 export class AreasPropertiesListener {
     private scene: GameScene;
@@ -220,6 +225,8 @@ export class AreasPropertiesListener {
 
     // A map of abortControllers indexed by area property ID that will be triggered when the area if left.
     private abortControllers: Map<string, AbortController> = new Map();
+    // In the Audience of a Stage that sees the audience's cameras (#1623): stops showing our camera to the speakers.
+    private stopShowingCamera: Unsubscriber | undefined;
 
     private addPropertyFilter(property: AreaDataProperty, areaData: AreaData, area?: Area) {
         const abortController = new AbortController();
@@ -1471,10 +1478,11 @@ export class AreasPropertiesListener {
         setAudienceTalking(property.id, property.allowTalking === true);
         // TODO: change the user's availability status to prevent them from creating a bubble
         if (property.speakerZoneName !== undefined) {
-            const speakerZoneName = getSpeakerMegaphoneAreaName(
+            const stage = getSpeakerMegaphoneProperty(
                 this.scene.getGameMap().getGameMapAreas()?.getAreas(),
                 property.speakerZoneName
             );
+            const speakerZoneName = stage?.name;
             if (speakerZoneName) {
                 const uniqRoomName = areaSpaceName(speakerZoneName, this.scene.roomUrl);
                 const spaceRegistry = this.scene.spaceRegistry;
@@ -1511,12 +1519,27 @@ export class AreasPropertiesListener {
                 currentLiveStreamingSpaceStore.set(space);
                 isListenerStore.set(true);
                 listenerWaitingMediaStore.set(property.waitingLink);
+
+                // "See the audience's cameras" on the Stage (#1623): the speakers see us while our camera is on
+                this.stopShowingCamera?.();
+                this.stopShowingCamera = undefined;
+                if (stage?.seeAttendees === true && space && !abortSignal.aborted) {
+                    this.stopShowingCamera = showCameraToSpeakers(space, cameraOnStore(localStreamStore), () =>
+                        this.scene.CurrentPlayer?.playText(
+                            "attendee-camera",
+                            get(LL).area.speakersSeeYourCamera(),
+                            ATTENDEE_CAMERA_MESSAGE_DURATION
+                        )
+                    );
+                }
             }
         }
     }
 
     private async handleListenerMegaphonePropertyOnLeave(property: ListenerMegaphonePropertyData): Promise<void> {
         setHandsOffHere(property.id, false);
+        this.stopShowingCamera?.();
+        this.stopShowingCamera = undefined;
         if (property.speakerZoneName !== undefined) {
             const speakerZoneName = getSpeakerMegaphoneAreaName(
                 this.scene.getGameMap().getGameMapAreas()?.getAreas(),

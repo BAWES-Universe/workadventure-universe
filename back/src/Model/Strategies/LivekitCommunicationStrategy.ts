@@ -2,7 +2,7 @@ import type { SpaceUser } from "@workadventure/messages";
 import * as Sentry from "@sentry/node";
 import type { ICommunicationSpace } from "../Interfaces/ICommunicationSpace";
 import type { ICommunicationStrategy } from "../Interfaces/ICommunicationStrategy";
-import type { LiveKitService } from "../Services/LivekitService";
+import type { LiveKitService, PublishRight } from "../Services/LivekitService";
 
 // A person whose invitation was just sent may take a moment to appear in the media room.
 const PERMISSION_SYNC_ATTEMPTS = 10;
@@ -65,12 +65,11 @@ export class LivekitCommunicationStrategy implements ICommunicationStrategy {
      * read again each time: it may have changed meanwhile. A token made later already carries the right permission.
      */
     private syncPublishPermission(user: SpaceUser, attempt = 1): void {
-        const canPublish = this.streamingUsers.has(user.spaceUserId);
-        if (!canPublish && !this.receivingUsers.has(user.spaceUserId)) {
+        if (!this.streamingUsers.has(user.spaceUserId) && !this.receivingUsers.has(user.spaceUserId)) {
             return;
         }
         this.livekitService
-            .setParticipantCanPublish(this.space.getSpaceName(), user.spaceUserId, canPublish)
+            .setParticipantCanPublish(this.space.getSpaceName(), user.spaceUserId, this.publishRight(user))
             .then((updated) => {
                 if (!updated && attempt < PERMISSION_SYNC_ATTEMPTS) {
                     setTimeout(() => this.syncPublishPermission(user, attempt + 1), PERMISSION_SYNC_DELAY_MS);
@@ -142,7 +141,25 @@ export class LivekitCommunicationStrategy implements ICommunicationStrategy {
         }
     }
 
-    updateUser(user: SpaceUser): void {}
+    /**
+     * An attendee who shows their camera to the speakers (#1623), or stops, may send their camera only, or nothing
+     * again. The people streaming already send everything.
+     */
+    updateUser(user: SpaceUser): void {
+        if (this.streamingUsers.has(user.spaceUserId) || !this.receivingUsers.has(user.spaceUserId)) {
+            return;
+        }
+        this.syncPublishPermission(user);
+    }
+
+    private publishRight(user: SpaceUser): PublishRight {
+        if (this.streamingUsers.has(user.spaceUserId)) {
+            return "everything";
+        }
+        // The space's own copy of the person holds their latest state (the copy kept for watching may be older).
+        const current = this.space.getAllUsers().find((candidate) => candidate.spaceUserId === user.spaceUserId);
+        return (current ?? user).attendeeCamera === true ? "camera" : "nothing";
+    }
 
     initialize(users: ReadonlyMap<string, SpaceUser>, usersToNotify: ReadonlyMap<string, SpaceUser>): void {
         (async () => {
@@ -222,12 +239,9 @@ export class LivekitCommunicationStrategy implements ICommunicationStrategy {
     }
 
     private async sendLivekitInvitationMessage(user: SpaceUser): Promise<void> {
-        // Only the people streaming in this space may send; everybody else gets a listen-only token.
-        const token = await this.livekitService.generateToken(
-            this.space.getSpaceName(),
-            user,
-            this.streamingUsers.has(user.spaceUserId)
-        );
+        // Only the people streaming in this space may send everything; an attendee showing their camera to the
+        // speakers sends only that; everybody else gets a listen-only token.
+        const token = await this.livekitService.generateToken(this.space.getSpaceName(), user, this.publishRight(user));
 
         this.space.dispatchPrivateEvent({
             spaceName: this.space.getSpaceName(),

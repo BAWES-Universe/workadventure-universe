@@ -97,9 +97,19 @@ export interface SpaceInterface {
     readonly isStreamingStore: Readable<boolean>;
 
     /**
-     * In the audience of a live stream: the people with a raised hand. They are not in usersStore (they don't stream).
+     * In the audience of a live stream: the people with a raised hand, and the people showing their camera to the
+     * speakers (#1623). They are not in usersStore (they don't stream).
      */
     readonly audienceHandsStore: Readable<ReadonlyMap<string, SpaceUserExtended>>;
+
+    /**
+     * In the audience of a Stage that sees the audience's cameras (#1623): shows our camera to the people streaming,
+     * or stops. Only the camera is sent, and only to them.
+     */
+    showCameraToStreamers(show: boolean): void;
+
+    /** True while we show our camera to the people streaming (see showCameraToStreamers). */
+    readonly showsCameraToStreamersStore: Readable<boolean>;
 
     /**
      * Use this observer to get a description of new users.

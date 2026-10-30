@@ -28,6 +28,7 @@ vi.mock("livekit-client", async (importOriginal) => {
         public localParticipant = {
             permissions: { canPublish: true },
             publishTrack: vi.fn().mockResolvedValue(undefined),
+            setTrackSubscriptionPermissions: vi.fn(),
             trackPublications: new Map(),
         };
         public prepareConnection = vi.fn().mockResolvedValue(undefined);
@@ -77,7 +78,11 @@ import { LiveKitRoom } from "../../../src/front/Livekit/LiveKitRoom";
 
 type FakeRoom = EventEmitter & {
     state: ConnectionState;
-    localParticipant: { publishTrack: ReturnType<typeof vi.fn>; permissions: { canPublish: boolean } };
+    localParticipant: {
+        publishTrack: ReturnType<typeof vi.fn>;
+        setTrackSubscriptionPermissions: ReturnType<typeof vi.fn>;
+        permissions: { canPublish: boolean };
+    };
     disconnect: ReturnType<typeof vi.fn>;
 };
 
@@ -92,8 +97,13 @@ function cameraStream(trackId: string): LocalStreamStoreValue {
 async function joinedRoom() {
     const localStreamStore: Writable<LocalStreamStoreValue> = writable({ type: "success", stream: undefined });
     const counter = { increment: vi.fn(), decrement: vi.fn() };
+    const isStreamingStore = writable(true);
+    const showsCameraToStreamersStore = writable(false);
+    const usersStore = writable(new Map<string, unknown>());
     const space = {
-        isStreamingStore: writable(true),
+        isStreamingStore,
+        showsCameraToStreamersStore,
+        usersStore,
         getSpaceUserBySpaceUserId: vi.fn(),
         mySpaceUserId: "me",
     } as unknown as SpaceInterface;
@@ -117,7 +127,15 @@ async function joinedRoom() {
     );
     await liveKitRoom.joinRoom();
     const room = fakeRooms[fakeRooms.length - 1] as FakeRoom;
-    return { liveKitRoom, room, localStreamStore, counter };
+    return {
+        liveKitRoom,
+        room,
+        localStreamStore,
+        counter,
+        isStreamingStore,
+        showsCameraToStreamersStore,
+        usersStore,
+    };
 }
 
 async function flush() {
@@ -145,6 +163,29 @@ describe("LiveKitRoom", () => {
         await flush();
 
         expect(room.localParticipant.publishTrack).toHaveBeenCalledTimes(2);
+    });
+
+    it("lets only the speakers receive the camera an attendee shows them (#1623)", async () => {
+        const { room, isStreamingStore, showsCameraToStreamersStore, usersStore } = await joinedRoom();
+        isStreamingStore.set(false);
+        usersStore.set(
+            new Map([
+                ["speaker-2", {}],
+                ["speaker-1", {}],
+            ])
+        );
+        expect(room.localParticipant.setTrackSubscriptionPermissions).not.toHaveBeenCalled();
+
+        showsCameraToStreamersStore.set(true);
+        expect(room.localParticipant.setTrackSubscriptionPermissions).toHaveBeenLastCalledWith(false, [
+            { participantIdentity: "speaker-1", allowAll: true },
+            { participantIdentity: "speaker-2", allowAll: true },
+        ]);
+
+        // Walking out of the Audience: everybody may receive what we send again
+        showsCameraToStreamersStore.set(false);
+        expect(room.localParticipant.setTrackSubscriptionPermissions).toHaveBeenLastCalledWith(true);
+        expect(room.localParticipant.setTrackSubscriptionPermissions).toHaveBeenCalledTimes(2);
     });
 
     it("does not publish while the room is reconnecting, and publishes once it is back", async () => {

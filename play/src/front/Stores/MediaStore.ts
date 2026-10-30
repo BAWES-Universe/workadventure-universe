@@ -305,6 +305,12 @@ export const audioConstraintStore = derived(
 /**
  * A store that contains "true" if the webcam should be stopped for energy efficiency reason - i.e. we are not moving and not in a conversation.
  */
+/**
+ * We stand in the Audience of a Stage that sees the audience's cameras (#1623): the speakers may be watching our
+ * camera, so it does not go to sleep while we stand still, as during a live.
+ */
+export const stageSeesOurCameraStore = writable(false);
+
 export const cameraEnergySavingStore = derived(
     [
         deviceChanged10SecondsAgoStore,
@@ -315,6 +321,7 @@ export const cameraEnergySavingStore = derived(
         devicesNotLoaded,
         isLiveStreamingStore,
         displayedMegaphoneScreenStore,
+        stageSeesOurCameraStore,
     ],
     ([
         $deviceChanged10SecondsAgoStore,
@@ -325,6 +332,7 @@ export const cameraEnergySavingStore = derived(
         $devicesNotLoaded,
         $isLiveStreamingStore,
         $displayedMegaphoneScreenStore,
+        $stageSeesOurCamera,
     ]) => {
         return (
             !$mouseInBottomRight &&
@@ -334,7 +342,8 @@ export const cameraEnergySavingStore = derived(
             !$cameraNoEnergySavingStore &&
             !$devicesNotLoaded &&
             !$isLiveStreamingStore &&
-            !$displayedMegaphoneScreenStore
+            !$displayedMegaphoneScreenStore &&
+            !$stageSeesOurCamera
         );
     }
 );

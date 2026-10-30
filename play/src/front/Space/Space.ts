@@ -92,9 +92,14 @@ export class Space implements SpaceInterface {
 
     private _setUsers: ((value: Map<string, SpaceUserExtended>) => void) | undefined;
     private _users: Map<string, SpaceUserExtended> = new Map<string, SpaceUserExtended>();
-    // In the audience of a live stream: the people with a raised hand, who are listed but neither stream nor count
-    // as users of the space.
+    // In the audience of a live stream: the people with a raised hand, and the people showing their camera to the
+    // speakers (#1623), who are listed but neither stream nor count as users of the space.
     private readonly _audienceHands = new MapStore<string, SpaceUserExtended>();
+    // The people of the audience whose camera we see while we stream (#1623): they have a video box, by space user id.
+    private readonly _shownAttendeesStore = writable<ReadonlySet<string>>(new Set());
+    // We show our camera to the people streaming (#1623).
+    private readonly _showsCameraToStreamersStore = writable(false);
+    public readonly showsCameraToStreamersStore: Readable<boolean> = this._showsCameraToStreamersStore;
     public readonly audienceHandsStore: Readable<ReadonlyMap<string, SpaceUserExtended>> = this._audienceHands;
     private _addUserSubject: Subject<SpaceUserExtended> = new Subject<SpaceUserExtended>();
     private _leftUserSubject: Subject<SpaceUserExtended> = new Subject<SpaceUserExtended>();
@@ -203,11 +208,11 @@ export class Space implements SpaceInterface {
         });
 
         this.videoStreamStore = derived(
-            [this.allVideoStreamStore, this.usersStore],
-            ([videoStreamStore, usersStore]) => {
+            [this.allVideoStreamStore, this.usersStore, this._shownAttendeesStore],
+            ([videoStreamStore, usersStore, shownAttendees]) => {
                 const newVideoStreamStore = new Map<string, VideoBox>();
                 for (const [key, value] of videoStreamStore.entries()) {
-                    if (usersStore.has(key)) {
+                    if (usersStore.has(key) || shownAttendees.has(key)) {
                         newVideoStreamStore.set(key, value);
                     }
                 }
@@ -465,6 +470,7 @@ export class Space implements SpaceInterface {
     async destroy() {
         this._isDestroyed = true;
         this._audienceHands.clear();
+        this._shownAttendeesStore.set(new Set());
 
         this.retryAbortController?.abort();
         if (this.retryTimeout) {
@@ -546,6 +552,7 @@ export class Space implements SpaceInterface {
             const extendSpaceUser = this.extendSpaceUser(user);
             if (this.isAudienceHand(user)) {
                 this._audienceHands.set(user.spaceUserId, extendSpaceUser);
+                this.syncAttendeeBox(extendSpaceUser);
                 continue;
             }
             if (!this._users.has(user.spaceUserId)) {
@@ -593,10 +600,13 @@ export class Space implements SpaceInterface {
 
         if (this.isAudienceHand(user)) {
             this._audienceHands.set(user.spaceUserId, extendSpaceUser);
+            this.syncAttendeeBox(extendSpaceUser);
             return extendSpaceUser;
         }
 
         if (!this._users.has(user.spaceUserId)) {
+            // Shown as an attendee before: from now on a user of the space, with their own video box.
+            this.forgetAttendeeBox(user.spaceUserId);
             if (this.isVideoSpace() && user.spaceUserId !== this._mySpaceUserId) {
                 const streamable = this.spacePeerManager.getVideoForUser(user.spaceUserId);
                 const videoBox = this.getEmptyVideoBox(extendSpaceUser);
@@ -631,6 +641,9 @@ export class Space implements SpaceInterface {
 
     removeUser(spaceUserId: string): void {
         this._audienceHands.delete(spaceUserId);
+        if (this.forgetAttendeeBox(spaceUserId)) {
+            this.allVideoStreamStore.delete(spaceUserId);
+        }
         const user = this._users.get(spaceUserId);
         if (user) {
             this._users.delete(spaceUserId);
@@ -653,8 +666,9 @@ export class Space implements SpaceInterface {
         if (audienceHand) {
             merge(audienceHand, applyFieldMask(newData, updateMask) as unknown as Partial<SpaceUser>);
             if (this.isAudienceHand(audienceHand)) {
-                // Still in the audience: only the row changes.
+                // Still in the audience: only the row changes, and their camera shows or not (#1623).
                 this._audienceHands.set(newData.spaceUserId, audienceHand);
+                this.syncAttendeeBox(audienceHand);
                 return;
             }
             // Invited on stage: from now on a user of the space, with a video. Joined before leaving the audience, so
@@ -676,7 +690,9 @@ export class Space implements SpaceInterface {
         // Back in the audience with a hand still up: listed, without a video.
         if (this.isAudienceHand(userToUpdate)) {
             this.removeUser(userToUpdate.spaceUserId);
-            this._audienceHands.set(userToUpdate.spaceUserId, this.extendSpaceUser(userToUpdate));
+            const audienceUser = this.extendSpaceUser(userToUpdate);
+            this._audienceHands.set(userToUpdate.spaceUserId, audienceUser);
+            this.syncAttendeeBox(audienceUser);
             return;
         }
 
@@ -828,7 +844,10 @@ export class Space implements SpaceInterface {
     }
 
     public getSpaceUserBySpaceUserId(id: string): SpaceUserExtended | undefined {
-        return this._users.get(id);
+        // An attendee whose camera we see (#1623) is known too, so that their camera reaches their video box.
+        return (
+            this._users.get(id) ?? (get(this._shownAttendeesStore).has(id) ? this._audienceHands.get(id) : undefined)
+        );
     }
 
     public getSpaceUserByUuid(uuid: string): SpaceUserExtended | undefined {
@@ -938,6 +957,7 @@ export class Space implements SpaceInterface {
             megaphoneState: true,
         });
         this._isStreamingStore.set(true);
+        this.syncAllAttendeeBoxes();
     }
 
     /**
@@ -952,10 +972,65 @@ export class Space implements SpaceInterface {
             megaphoneState: false,
         });
         this._isStreamingStore.set(false);
+        this.syncAllAttendeeBoxes();
     }
 
     get isStreamingStore(): Readable<boolean> {
         return this._isStreamingStore;
+    }
+
+    public showCameraToStreamers(show: boolean): void {
+        if (get(this._showsCameraToStreamersStore) === show) {
+            return;
+        }
+        this._showsCameraToStreamersStore.set(show);
+        this.emitUpdateUser({ attendeeCamera: show });
+    }
+
+    /**
+     * While we stream on a Stage that sees the audience's cameras (#1623), each attendee showing their camera gets a
+     * video box, like a speaker's. Nobody else sees them.
+     */
+    private syncAttendeeBox(user: SpaceUserExtended): void {
+        const shown = get(this._shownAttendeesStore).has(user.spaceUserId);
+        const show =
+            this.isVideoSpace() &&
+            this.filterType === FilterType.LIVE_STREAMING_USERS &&
+            user.attendeeCamera === true &&
+            get(this._isStreamingStore) &&
+            user.spaceUserId !== this._mySpaceUserId &&
+            !this._users.has(user.spaceUserId);
+        if (show && !shown) {
+            const videoBox = this.getEmptyVideoBox(user);
+            const streamable = this.spacePeerManager.getVideoForUser(user.spaceUserId);
+            if (streamable) {
+                videoBox.streamable.set(streamable);
+            }
+            this.allVideoStreamStore.set(user.spaceUserId, videoBox);
+            this._shownAttendeesStore.update((ids) => new Set(ids).add(user.spaceUserId));
+        } else if (!show && shown) {
+            this.forgetAttendeeBox(user.spaceUserId);
+            this.allVideoStreamStore.delete(user.spaceUserId);
+        }
+    }
+
+    private syncAllAttendeeBoxes(): void {
+        for (const user of this._audienceHands.values()) {
+            this.syncAttendeeBox(user);
+        }
+    }
+
+    /** Stops counting someone as a shown attendee. True when they were one. */
+    private forgetAttendeeBox(spaceUserId: string): boolean {
+        if (!get(this._shownAttendeesStore).has(spaceUserId)) {
+            return false;
+        }
+        this._shownAttendeesStore.update((ids) => {
+            const next = new Set(ids);
+            next.delete(spaceUserId);
+            return next;
+        });
+        return true;
     }
 
     private blockUser(spaceUserId: string): void {

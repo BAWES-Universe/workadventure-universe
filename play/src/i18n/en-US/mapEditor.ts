@@ -124,6 +124,9 @@ const mapEditor: BaseTranslation = {
             actionButtonLabel: "Join podium",
             nameTaken: "A Stage called {name} already exists. Pick a different name.",
             nameEmpty: "Give this Stage a name.",
+            seeAttendees: "See the audience's cameras",
+            seeAttendeesHelp:
+                "Speakers see the people in the audience who have their camera on. They don't hear them. The audience is told.",
         },
         listenerMegaphone: {
             label: "Audience",

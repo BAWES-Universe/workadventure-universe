@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SpaceUser } from "@workadventure/messages";
 import type { EgressClient, RoomServiceClient } from "livekit-server-sdk";
-import { TokenVerifier } from "livekit-server-sdk";
+import { TokenVerifier, TrackSource } from "livekit-server-sdk";
 import { LiveKitService } from "../src/Model/Services/LivekitService";
 import { LivekitCommunicationStrategy } from "../src/Model/Strategies/LivekitCommunicationStrategy";
 import type { ICommunicationSpace } from "../src/Model/Interfaces/ICommunicationSpace";
@@ -31,7 +31,7 @@ async function decode(token: string) {
     return { identity: claims.sub as string, video: claims.video };
 }
 
-function makeFixture(participants: string[] = []): Fixture {
+function makeFixture(participants: string[] = [], spaceUsers: SpaceUser[] = []): Fixture {
     const roomService = {
         listRooms: vi.fn().mockResolvedValue([{ name: "room" }]),
         createRoom: vi.fn().mockResolvedValue(undefined),
@@ -44,7 +44,7 @@ function makeFixture(participants: string[] = []): Fixture {
     };
     const invitations: { receiver: string; token: string }[] = [];
     const space: ICommunicationSpace = {
-        getAllUsers: () => [],
+        getAllUsers: () => spaceUsers,
         getUsersInFilter: () => [],
         getUsersToNotify: () => [],
         dispatchPrivateEvent: (event) => {
@@ -197,5 +197,48 @@ describe("LivekitCommunicationStrategy media permissions", () => {
 
         expect(fixture.roomService.removeParticipant).toHaveBeenCalledTimes(1);
         expect(fixture.roomService.removeParticipant).toHaveBeenCalledWith("room", "room_2");
+    });
+
+    it("lets an attendee who shows their camera send only their camera, and nothing once it is off (#1623)", async () => {
+        const attendee = user("room_2", "B");
+        const spaceUsers = [attendee];
+        const fixture = makeFixture(["room_2"], spaceUsers);
+        await fixture.strategy.addUser(user("room_1", "A"));
+        await fixture.strategy.addUserToNotify(attendee);
+        await flush();
+        expect((await grants(fixture, "room_2")).canPublish).toBe(false);
+
+        spaceUsers[0] = { ...attendee, attendeeCamera: true };
+        fixture.strategy.updateUser(spaceUsers[0]);
+        await flush();
+        expect(fixture.roomService.updateParticipant).toHaveBeenLastCalledWith(
+            "room",
+            "room_2",
+            undefined,
+            expect.objectContaining({ canPublish: true, canPublishSources: [TrackSource.CAMERA] })
+        );
+
+        spaceUsers[0] = { ...attendee, attendeeCamera: false };
+        fixture.strategy.updateUser(spaceUsers[0]);
+        await flush();
+        expect(fixture.roomService.updateParticipant).toHaveBeenLastCalledWith(
+            "room",
+            "room_2",
+            undefined,
+            expect.objectContaining({ canPublish: false, canPublishSources: [] })
+        );
+    });
+
+    it("gives an attendee who already shows their camera a camera-only token", async () => {
+        const attendee = SpaceUser.fromPartial({ spaceUserId: "room_2", uuid: "uuid-room_2", attendeeCamera: true });
+        const fixture = makeFixture([], [attendee]);
+        await fixture.strategy.addUser(user("room_1", "A"));
+        await fixture.strategy.addUserToNotify(user("room_2", "B"));
+        await flush();
+
+        const grant = await grants(fixture, "room_2");
+        expect(grant.canPublish).toBe(true);
+        // The token names its sources by their names.
+        expect(grant.sources).toEqual(["camera"]);
     });
 });

@@ -1842,6 +1842,8 @@ message SpaceUser{
   optional double handRaisedAt = 19;
   // What this user may do in the world, as a decimal number (see permissionsFrom); unset when Orbit sent none.
   optional string permissions = 20;
+  // In the Audience of a Stage that shows the audience's cameras: this person's camera is on and the speakers see it.
+  optional bool attendeeCamera = 21;
 }
 
 /*message PartialSpaceUser{
