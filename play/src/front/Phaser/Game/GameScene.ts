@@ -4618,6 +4618,11 @@ export class GameScene extends DirtyScene {
         return this._proximityChatRoom;
     }
 
+    /** What joins the bubbles the server puts us in; undefined until the connection is up. */
+    public getProximitySpaceManager(): ProximitySpaceManager | undefined {
+        return this.proximitySpaceManager;
+    }
+
     get userProviderMerger(): Promise<UserProviderMerger> {
         return this._userProviderMergerDeferred.promise;
     }

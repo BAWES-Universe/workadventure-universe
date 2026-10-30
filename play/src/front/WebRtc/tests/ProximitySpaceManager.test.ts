@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { Subject } from "rxjs";
+import { readable } from "svelte/store";
 import { FilterType } from "@workadventure/messages";
 
 vi.hoisted(() => {
@@ -11,7 +12,7 @@ vi.hoisted(() => {
 });
 
 describe("ProximitySpaceManager in an Audience (#1624)", { timeout: 60_000 }, () => {
-    async function setUp(audienceCanTalk: boolean, chatSpace: string | undefined) {
+    async function setUp(audienceCanTalk: boolean, chatSpace: string | undefined, chatSpaceKind = "none") {
         const { ProximitySpaceManager } = await import("../ProximitySpaceManager");
         const { audienceCanTalkStore } = await import("../../Stores/MediaStore");
         audienceCanTalkStore.set(audienceCanTalk);
@@ -20,6 +21,7 @@ describe("ProximitySpaceManager in an Audience (#1624)", { timeout: 60_000 }, ()
         const leaveSpaceRequestMessage = new Subject<{ spaceName: string }>();
         const chat = {
             currentSpaceName: chatSpace,
+            spaceKind: readable(chatSpaceKind),
             isJoiningSpace: false,
             joinSpace: vi.fn(() => Promise.resolve()),
             leaveSpace: vi.fn(() => Promise.resolve()),
@@ -65,6 +67,41 @@ describe("ProximitySpaceManager in an Audience (#1624)", { timeout: 60_000 }, ()
         await Promise.resolve();
         expect(chat.leaveSpace).not.toHaveBeenCalled();
         expect(registry.leaveSpace).toHaveBeenCalledWith({ name: "bubble-1" });
+        manager.destroy();
+    });
+
+    it("moves a bubble we walk in with beside the Audience chat, so the Audience does not wait for it to end", async () => {
+        const { manager, chat, registry, joinSpaceRequestMessage, leaveSpaceRequestMessage } = await setUp(
+            false,
+            "bubble-3",
+            "bubble"
+        );
+        joinSpaceRequestMessage.next({ spaceName: "bubble-3", propertiesToSync: ["microphoneState"] });
+        await Promise.resolve();
+
+        await manager.moveBubbleBesideChat();
+        expect(chat.leaveSpace).toHaveBeenCalledWith("bubble-3");
+        expect(registry.joinSpace).toHaveBeenCalledWith(
+            "bubble-3",
+            FilterType.ALL_USERS,
+            ["microphoneState"],
+            expect.any(AbortSignal)
+        );
+
+        // When the bubble ends, it is left where it now is
+        chat.leaveSpace.mockClear();
+        leaveSpaceRequestMessage.next({ spaceName: "bubble-3" });
+        await Promise.resolve();
+        expect(chat.leaveSpace).not.toHaveBeenCalled();
+        expect(registry.leaveSpace).toHaveBeenCalledWith({ name: "bubble-3" });
+        manager.destroy();
+    });
+
+    it("leaves a meeting room's chat where it is", async () => {
+        const { manager, chat, registry } = await setUp(true, "meeting-room", "meeting");
+        await manager.moveBubbleBesideChat();
+        expect(chat.leaveSpace).not.toHaveBeenCalled();
+        expect(registry.joinSpace).not.toHaveBeenCalled();
         manager.destroy();
     });
 

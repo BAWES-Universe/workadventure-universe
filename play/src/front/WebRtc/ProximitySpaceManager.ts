@@ -21,6 +21,8 @@ export class ProximitySpaceManager {
      * with what stops the join while it is not done yet.
      */
     private readonly bubblesBesideChat = new Map<string, AbortController>();
+    /** What each bubble the server asked us to join keeps in sync, by space name, to join it again beside the chat. */
+    private readonly bubbleProperties = new Map<string, string[]>();
 
     public constructor(
         roomConnection: RoomConnection,
@@ -29,6 +31,7 @@ export class ProximitySpaceManager {
     ) {
         this.joinSpaceRequestMessageSubscription = roomConnection.joinSpaceRequestMessage.subscribe(
             ({ spaceName, propertiesToSync }) => {
+                this.bubbleProperties.set(spaceName, propertiesToSync);
                 const join = this.chatHoldsAnotherSpace()
                     ? this.joinBesideChat(spaceName, propertiesToSync)
                     : this.proximityChatRoom.joinSpace(spaceName, propertiesToSync);
@@ -45,6 +48,7 @@ export class ProximitySpaceManager {
 
         this.leaveSpaceRequestMessageSubscription = roomConnection.leaveSpaceRequestMessage.subscribe(
             ({ spaceName }) => {
+                this.bubbleProperties.delete(spaceName);
                 const leave = this.bubblesBesideChat.has(spaceName)
                     ? this.leaveBesideChat(spaceName)
                     : this.proximityChatRoom.leaveSpace(spaceName);
@@ -62,6 +66,20 @@ export class ProximitySpaceManager {
             get(audienceCanTalkStore) &&
             (this.proximityChatRoom.currentSpaceName !== undefined || this.proximityChatRoom.isJoiningSpace)
         );
+    }
+
+    /**
+     * Before an Audience's own chat takes the nearby chat (#1624): a bubble we are already in moves beside it.
+     * Otherwise the Audience waits for that bubble to end, and in an Audience that lets people talk it may never end.
+     */
+    public async moveBubbleBesideChat(): Promise<void> {
+        const spaceName = this.proximityChatRoom.currentSpaceName;
+        if (spaceName === undefined || get(this.proximityChatRoom.spaceKind) !== "bubble") {
+            return;
+        }
+        const propertiesToSync = this.bubbleProperties.get(spaceName) ?? [];
+        await this.proximityChatRoom.leaveSpace(spaceName);
+        await this.joinBesideChat(spaceName, propertiesToSync);
     }
 
     private async joinBesideChat(spaceName: string, propertiesToSync: string[]): Promise<void> {
@@ -84,5 +102,6 @@ export class ProximitySpaceManager {
             abortController.abort(new AbortError("The scene is closing"));
         }
         this.bubblesBesideChat.clear();
+        this.bubbleProperties.clear();
     }
 }

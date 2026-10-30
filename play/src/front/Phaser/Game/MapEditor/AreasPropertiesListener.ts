@@ -1478,6 +1478,10 @@ export class AreasPropertiesListener {
                 let space: SpaceInterface | undefined;
                 if (property.chatEnabled) {
                     const proximityRoom = this.scene.proximityChatRoom;
+                    if (property.allowTalking === true) {
+                        // A bubble we walked in with keeps going here: it moves beside the Audience chat (#1624)
+                        await this.scene.getProximitySpaceManager()?.moveBubbleBesideChat();
+                    }
                     proximityRoom.setDisplayName(speakerZoneName);
                     await proximityRoom.joinSpace(
                         uniqRoomName,
