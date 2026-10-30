@@ -15,7 +15,8 @@
     export let property: ListenerMegaphonePropertyData;
 
     // Maps made before the switch have no value for it: raised hands are on there (#1625).
-    let raiseHandEnabled = property.raiseHandEnabled ?? true;
+    let raiseHandEnabled: boolean;
+    $: raiseHandEnabled = property.raiseHandEnabled ?? true;
 
     const dispatch = createEventDispatcher<{
         change: undefined;
