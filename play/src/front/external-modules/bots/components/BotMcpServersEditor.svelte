@@ -678,6 +678,8 @@
                                 tools={server.toolKinds.tools}
                                 runs={server.toolKinds.runs}
                                 openTool={server.toolKinds.openTool ?? null}
+                                reviewRequired={server.toolKinds.reviewRequired ?? true}
+                                legacy={server.toolKinds.legacy ?? false}
                             />
                         {:else if server.lastTestResult?.success && server.lastTestResult?.toolNames?.length > 0}
                             <div class="mcp-tools" aria-label="Available tools">

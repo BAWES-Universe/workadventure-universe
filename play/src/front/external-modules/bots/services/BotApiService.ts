@@ -1583,6 +1583,8 @@ export interface McpServer {
         tools: import("../toolKindsModel").KindedTool[];
         runs: Record<import("../toolKindsModel").ToolKind, import("../toolKindsModel").ToolRun>;
         openTool?: string;
+        reviewRequired?: boolean;
+        legacy?: boolean;
     };
 }
 

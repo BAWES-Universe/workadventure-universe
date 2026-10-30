@@ -13,8 +13,12 @@
     export let openTool: string | null = null;
     /** Who is looking, for "Reviewed by" once they accept the groups. */
     export let viewerName = "you";
+    /** Whether suggested groups wait for a review (the option being decided; off shows suggestions applying at once). */
+    export let reviewRequired = true;
+    /** A server from before groups existed: it keeps working as it did in text until someone reviews it. */
+    export let legacy = false;
 
-    $: needsReview = tools.some((tool) => !tool.reviewedBy);
+    $: needsReview = reviewRequired && tools.some((tool) => !tool.reviewedBy);
 
     const KINDS: Array<{ kind: ToolKind; title: string }> = [
         { kind: "look", title: "Looks things up" },
@@ -55,10 +59,15 @@
     </div>
     {#if needsReview}
         <div class="tk-review" data-testid="bot-tool-review">
-            <div class="tk-t">Needs review</div>
+            <div class="tk-t">{legacy ? "Not reviewed yet" : "Needs review"}</div>
             <div class="tk-m">
-                The groups below are suggestions. Until you review them, only people who manage this bot can use these
-                tools, and every use asks first.
+                {#if legacy}
+                    This server works as it did before: in text chat its tools run right away for everyone who can
+                    chat with the bot, and voice can't use them. Review the suggested groups below to switch to them.
+                {:else}
+                    The groups below are suggestions. Until you review them, only people who manage this bot can use
+                    these tools, and every use asks first.
+                {/if}
             </div>
             <button type="button" class="tk-accept" on:click={acceptAll}>Use these groups</button>
         </div>
@@ -86,7 +95,7 @@
                             >
                                 <span class="tk-name">{tool.title}</span>
                                 <span class="tk-desc">{tool.description}</span>
-                                <span class="tk-from" class:you={tool.from === "you"} class:new={!tool.reviewedBy}
+                                <span class="tk-from" class:you={tool.from === "you"} class:new={reviewRequired && !tool.reviewedBy}
                                     >{fromLine(tool)}</span
                                 >
                             </button>
