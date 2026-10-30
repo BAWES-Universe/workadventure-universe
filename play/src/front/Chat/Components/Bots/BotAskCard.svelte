@@ -7,14 +7,12 @@
         IconChevronRight,
         IconClock,
         IconEye,
-        IconPencil,
-        IconSend,
         IconX,
     } from "@wa-icons";
 
     /**
      * A bot's card that waits for one person (prototype): an approval before a tool changes, deletes or sends something,
-     * or a question before a big job. Its own last row takes a typed answer, so the chat box below stays a chat box.
+     * or a question before a big job. Options only: what you type or say in the chat while it waits is your answer instead.
      */
     export let ask: BotAsk;
     /** Who is looking. Only the person who asked can answer; everyone else sees who it waits for. */
@@ -25,12 +23,10 @@
     export let now = Date.now();
     /** Pinned above the message box while it waits, with a close button, instead of sitting in the chat. */
     export let docked = false;
-    /** The typed-answer row is open. */
-    export let typing = false;
     /** When more than one card waits for you: which one this is. */
     export let position: { at: number; total: number } | undefined = undefined;
-    /** What was typed so far (prototype). */
-    export let draft = "";
+    /** A short chat (a phone's half-height sheet in a bubble): one slim bar; Open raises the sheet to the full card. */
+    export let compact = false;
 
     let showAll = false;
 
@@ -42,7 +38,17 @@
     $: shownLines = showAll ? ask.lines ?? [] : (ask.lines ?? []).slice(0, 3);
 </script>
 
-<div class="ask mx-4 mb-3 flex flex-col" class:answered={!open} class:docked data-testid="botAskCard">
+{#if compact && docked && open}
+    <div class="ask ask-bar mx-4 flex items-center" data-testid="botAskBar">
+        <div class="flex min-w-0 flex-1 flex-col">
+            <span class="ask-from" dir="auto">{botName} needs your answer</span>
+            <b class="ask-title truncate" dir="auto">{ask.title}</b>
+        </div>
+        {#if position && position.total > 1}<span class="ask-acts flex-none">1 of {position.total}</span>{/if}
+        <button type="button" class="ask-option main ask-open" data-testid="botAskOpen">Open</button>
+    </div>
+{:else}
+<div class="ask mx-4 mb-3 flex flex-col" class:mt-2={!docked} class:answered={!open} class:docked data-testid="botAskCard">
     <div class="ask-head">
         <div class="flex min-w-0 flex-1 flex-col gap-0.5">
             {#if docked}<span class="ask-from" dir="auto">{botName} needs your answer</span>{/if}
@@ -100,23 +106,6 @@
                     {#if option.detail}<span class="ask-option-detail">{option.detail}</span>{/if}
                 </button>
             {/each}
-            {#if typing}
-                <div class="ask-type">
-                    <input
-                        class="ask-input"
-                        placeholder={ask.kind === "question" ? "Type your own answer" : `Tell ${botName} what to do instead`}
-                        value={draft}
-                        disabled={!mine}
-                    />
-                    <button type="button" class="ask-send" aria-label="Send" disabled={!mine}><IconSend /></button>
-                </div>
-            {:else}
-                <button type="button" class="ask-option row else" disabled={!mine} data-testid="botAskSomethingElse">
-                    <span class="ask-option-label"
-                        ><IconPencil />{ask.kind === "question" ? "Your own answer" : "Something else"}</span
-                    >
-                </button>
-            {/if}
         </div>
         {#if closingSoon}
             <div class="ask-row">
@@ -154,6 +143,7 @@
         <IconEye />Only you see this
     </span>
 </div>
+{/if}
 
 <style>
     /* The same ink and soft violet ring as the reply limit card, and never wider than the message box below (mx-4). */
@@ -172,6 +162,16 @@
         overflow-y: auto;
         box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.32), 0 -12px 32px -12px rgba(0, 0, 0, 0.6),
             0 0 24px -12px rgba(134, 41, 252, 0.55);
+    }
+    .ask-bar {
+        gap: 10px;
+        margin-bottom: 8px;
+        padding: 8px 8px 8px 14px;
+        box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.32), 0 0 24px -12px rgba(134, 41, 252, 0.55);
+    }
+    .ask-open {
+        flex: none;
+        min-width: 88px;
     }
     .ask-head {
         display: flex;
@@ -216,60 +216,6 @@
     .ask-pager .ask-icon {
         width: 36px;
         margin: -10px 0;
-    }
-    .ask-option.else {
-        justify-content: center;
-        min-height: 44px;
-        border-style: dashed;
-        background: none;
-        font-weight: 500;
-        color: rgba(255, 255, 255, 0.75);
-    }
-    .ask-option.else .ask-option-label {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-    }
-    .ask-option.else :global(svg) {
-        width: 16px;
-        height: 16px;
-    }
-    .ask-type {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        min-height: 44px;
-        padding: 0 4px 0 14px;
-        border-radius: 999px;
-        background: rgba(255, 255, 255, 0.08);
-        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.5);
-    }
-    .ask-input {
-        flex: 1;
-        min-width: 0;
-        border: 0;
-        background: none;
-        font-size: 14px;
-        color: #fff;
-        outline: none;
-    }
-    .ask-input::placeholder {
-        color: rgba(255, 255, 255, 0.45);
-    }
-    .ask-send {
-        display: grid;
-        place-items: center;
-        flex: none;
-        width: 36px;
-        height: 36px;
-        border: 0;
-        border-radius: 50%;
-        background: linear-gradient(90deg, #8629fc, #4156f6);
-        color: #fff;
-    }
-    .ask-send :global(svg) {
-        width: 18px;
-        height: 18px;
     }
     .ask.answered {
         gap: 6px;

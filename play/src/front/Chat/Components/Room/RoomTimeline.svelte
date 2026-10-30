@@ -92,9 +92,9 @@
     /** Where a waiting card sits (prototype, the option being decided): pinned above the message box, in the chat, or
      * in the chat with a button that jumps back to it. */
     export let askPlacement: "pinned" | "inline" | "jump" = "pinned";
-    /** The pinned card's typed-answer row is open, and what is typed so far (prototype). */
-    export let askTyping = false;
-    export let askDraft = "";
+    /** The chat is short (a phone's half-height sheet in a bubble): the pinned card shows one line of its details and
+     * Show all details raises the sheet (prototype). */
+    export let askCompact = false;
 
     // Messages show the sender's woka when their chat account has no picture (Matrix users).
     if (!hasContext(WOKA_BY_CHAT_ID_CONTEXT)) {
@@ -409,7 +409,7 @@
     }
     $: shownBotState = botHeaderState(botState, lastBotNote?.state);
     // Cards waiting for you (prototype). Pinned: the oldest sits above the message box until answered or closed, and the
-    // chat keeps a line where it was asked. The message box stays a plain message box.
+    // chat keeps a line where it was asked. What you type or say next is your answer to it, so the box says so.
     $: askForMe = waitingForMe(
         $messages.map((m) => (m as { ask?: BotAsk }).ask),
         myChatID,
@@ -425,7 +425,12 @@
             .filter((m) => (m as { ask?: BotAsk }).ask)
             .map((m) => [(m as { ask?: BotAsk }).ask?.id, m.sender?.username ?? $roomName])
     );
-    $: botPlaceholder = botState === "resting"
+    $: shownAsk = askPlacement === "pinned" ? waitingAsks[0] : askForMe;
+    $: botPlaceholder = shownAsk
+        ? shownAsk.kind === "question"
+            ? "Or type your own answer"
+            : "Or type something else"
+        : botState === "resting"
             ? $LL.chat.botStatus.restingPlaceholder()
             : botState === "unready"
             ? $LL.chat.botStatus.unreadyPlaceholder()
@@ -1228,6 +1233,7 @@
                                 >
                             </div>
                         {:else if "ask" in entry.message && entry.message.ask}
+                            <!-- Answered, closed or gone: the card moves into the chat where it was asked -->
                             <BotAskCard
                                 ask={entry.message.ask}
                                 me={myChatID ?? ""}
@@ -1284,8 +1290,7 @@
                         me={myChatID ?? ""}
                         botName={askSenders.get(waitingAsks[0].id) ?? $roomName}
                         position={{ at: 1, total: waitingAsks.length }}
-                        typing={askTyping}
-                        draft={askDraft}
+                        compact={askCompact}
                     />
                 {:else if askPlacement === "jump" && askForMe}
                     <button type="button" class="ask-jump" data-testid="botAskJump">
@@ -1313,7 +1318,7 @@
         display: flex;
         align-items: flex-start;
         gap: 6px;
-        margin: 0 16px 12px;
+        margin: 8px 16px 12px;
         font-size: 12.5px;
         line-height: 18px;
         color: rgba(255, 255, 255, 0.6);
