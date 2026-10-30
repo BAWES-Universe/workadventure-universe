@@ -2027,7 +2027,12 @@ export class GameScene extends DirtyScene {
         }
     }
 
-    private initializeAreaManager() {
+    /**
+     * Sets up the rooms on the map. `arriving`: the player has just joined the room or come back after a drop. A map
+     * rebuilt in place (WA.room.loadTileset) is not an arrival: the player stays where they are, even inside a room
+     * that is full or locked to others.
+     */
+    private initializeAreaManager(arriving = true) {
         if (!this.connection) {
             throw new Error("This should never happen");
         }
@@ -2044,6 +2049,9 @@ export class GameScene extends DirtyScene {
                 setLocked: (areaId, propertyId, locked) => this.connection?.emitSetAreaLock(areaId, propertyId, locked),
             }
         );
+        if (!arriving) {
+            return;
+        }
         // Arrived (or back after a drop) inside a room that others filled or locked: step just outside it.
         const spot = this.findSpotOutsideClosedRooms(this.CurrentPlayer, true);
         if (spot !== undefined && (spot.x !== this.CurrentPlayer.x || spot.y !== this.CurrentPlayer.y)) {
@@ -3640,7 +3648,7 @@ export class GameScene extends DirtyScene {
                             //Create new trigger with the new GameMap
                             new GameMapPropertiesListener(this, this.gameMapFrontWrapper).register();
                             if (areasWereSetUp) {
-                                this.initializeAreaManager();
+                                this.initializeAreaManager(false);
                             }
                             resolve(newFirstgid);
                         });
