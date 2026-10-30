@@ -50,6 +50,14 @@ function makeAxiosError(status: number, data?: any): any {
     return err;
 }
 
+// An axios error raised before any answer came back, with the connection error code
+function makeNetworkError(code: string): any {
+    const err: any = new Error(code);
+    err.code = code;
+    err.isAxiosError = true;
+    return err;
+}
+
 // Make isAxiosError work
 mockedAxios.isAxiosError.mockImplementation((err: any) => err?.isAxiosError === true);
 
@@ -647,6 +655,90 @@ describe('MCPConnector', () => {
 
     // --- Auth injection ---------------------------------------------------
 
+    describe('sending a failed tool call again (#1650)', () => {
+        const URL_ = 'https://act.example.com/mcp';
+        const INIT_WITH_SESSION = { ...MOCK_INIT_RESPONSE, headers: { 'mcp-session-id': 'old-session' } };
+        const toolCalls = () => mockedAxios.post.mock.calls.filter(([, body]: any[]) => body?.method === 'tools/call');
+
+        let warnSpy: ReturnType<typeof vi.spyOn>;
+        beforeEach(() => {
+            mockedAxios.post.mockReset();
+            mockedAxios.isCancel.mockImplementation((err: any) => err?.code === 'ERR_CANCELED');
+            warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        });
+        afterEach(() => warnSpy.mockRestore());
+
+        function callTool(playerUuid = 'p-1') {
+            return MCPConnector.executeToolCall('s', URL_, 'send_message', { to: 'Sara' }, 'none', undefined, undefined, playerUuid);
+        }
+
+        it.each([500, 502, 503])('sends the call once when the server answers %i, as it may have run it', async (status) => {
+            mockedAxios.post.mockImplementation(async (_url: string, body: any) => {
+                if (body?.method === 'initialize') return MOCK_INIT_RESPONSE;
+                throw makeAxiosError(status);
+            });
+            const result = await callTool();
+            expect(toolCalls()).toHaveLength(1);
+            expect(result).toEqual({ error: 'Tool unavailable: send_message (server not reachable)' });
+        });
+
+        it('sends the call once when the connection drops after it went out', async () => {
+            mockedAxios.post.mockImplementation(async (_url: string, body: any) => {
+                if (body?.method === 'initialize') return MOCK_INIT_RESPONSE;
+                throw makeNetworkError('ECONNRESET');
+            });
+            await callTool();
+            expect(toolCalls()).toHaveLength(1);
+        });
+
+        it('sends the call once on a timeout, also for a call with no player', async () => {
+            mockedAxios.post.mockImplementation(async (_url: string, body: any) => {
+                if (body?.method === 'initialize') return MOCK_INIT_RESPONSE;
+                const err: any = new Error('canceled');
+                err.code = 'ERR_CANCELED';
+                throw err;
+            });
+            await callTool('');
+            expect(toolCalls()).toHaveLength(1);
+        });
+
+        it.each(['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN'])('sends the call again when it never connected (%s)', async (code) => {
+            let calls = 0;
+            mockedAxios.post.mockImplementation(async (_url: string, body: any) => {
+                if (body?.method === 'initialize') return MOCK_INIT_RESPONSE;
+                if (++calls === 1) throw makeNetworkError(code);
+                return { data: MOCK_WEATHER_CALL_RESPONSE };
+            });
+            const result = await callTool();
+            expect(toolCalls()).toHaveLength(2);
+            expect(result).toEqual(MOCK_WEATHER_CALL_RESPONSE.result.content);
+        });
+
+        it('sends the call again on a fresh session when the server no longer knows ours (404)', async () => {
+            let inits = 0;
+            mockedAxios.post.mockImplementation(async (_url: string, body: any, config?: any) => {
+                if (body?.method === 'initialize') {
+                    inits++;
+                    return inits === 1 ? INIT_WITH_SESSION : { ...MOCK_INIT_RESPONSE, headers: { 'mcp-session-id': 'new-session' } };
+                }
+                if (config?.headers?.['Mcp-Session-Id'] === 'old-session') throw makeAxiosError(404);
+                return { data: MOCK_WEATHER_CALL_RESPONSE };
+            });
+            const result = await callTool();
+            expect(toolCalls().map(([, , config]: any[]) => config.headers['Mcp-Session-Id'])).toEqual(['old-session', 'new-session']);
+            expect(result).toEqual(MOCK_WEATHER_CALL_RESPONSE.result.content);
+        });
+
+        it('sends the call once on a 404 without a session, as nothing says it did not run', async () => {
+            mockedAxios.post.mockImplementation(async (_url: string, body: any) => {
+                if (body?.method === 'initialize') return MOCK_INIT_RESPONSE;
+                throw makeAxiosError(404);
+            });
+            await callTool();
+            expect(toolCalls()).toHaveLength(1);
+        });
+    });
+
     describe('auth injection', () => {
         it('sends Bearer token for bearer auth type', async () => {
             mockedAxios.post.mockResolvedValue({ data: MOCK_WEATHER_CALL_RESPONSE });
@@ -996,9 +1088,9 @@ describe('MCPConnector', () => {
             const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
             mockedAxios.post
                 .mockResolvedValueOnce(MOCK_INIT_RESPONSE)
-                // The first call fails after 10 s without reaching the server: the session is dropped, so it retries
+                // The first call fails after 10 s without ever connecting, so it retries
                 .mockImplementationOnce(
-                    () => new Promise((_resolve, reject) => setTimeout(() => reject(makeAxiosError(502)), 10_000))
+                    () => new Promise((_resolve, reject) => setTimeout(() => reject(makeNetworkError('ECONNREFUSED')), 10_000))
                 )
                 .mockResolvedValueOnce(MOCK_INIT_RESPONSE)
                 .mockImplementationOnce(hangUntilAborted);

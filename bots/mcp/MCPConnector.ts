@@ -175,6 +175,31 @@ function parseMcpResponse(response: any, requestId?: string): any {
     return response;
 }
 
+// Connection errors raised before a single byte of the request went out
+const NEVER_CONNECTED_CODES = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH']);
+
+/**
+ * Whether a failed request provably never ran on the server, so sending it
+ * again cannot run it twice: the connection was never made, or the server
+ * answered 404 to our session id, which the MCP spec reserves for "session
+ * not found" (the request was not processed). Anything else, a 5xx, a reset
+ * connection or a timeout, may have run.
+ */
+function requestNeverRan(error: any, sentSessionId: boolean): boolean {
+    const status = error?.response?.status;
+    if (status !== undefined) return status === 404 && sentSessionId;
+    return NEVER_CONNECTED_CODES.has(error?.code);
+}
+
+interface JsonRpcOutcome {
+    /** The response, or null on failure */
+    data: any;
+    /** The request failed and provably never ran on the server (see requestNeverRan) */
+    neverRan: boolean;
+}
+
+const NOT_ANSWERED: JsonRpcOutcome = { data: null, neverRan: false };
+
 /**
  * Execute a JSON-RPC request to an MCP server with timeout and error handling.
  * Never throws — returns the response data or null on failure.
@@ -183,7 +208,12 @@ function parseMcpResponse(response: any, requestId?: string): any {
  * initialize this call has to wait for (a bot's "Patience" for tool calls).
  * Without it, the initialize and the request each get REQUEST_TIMEOUT.
  */
-async function jsonRpcRequest(
+async function jsonRpcRequest(...args: Parameters<typeof sendJsonRpc>): Promise<any> {
+    return (await sendJsonRpc(...args)).data;
+}
+
+/** jsonRpcRequest, also telling whether a failed request never ran */
+async function sendJsonRpc(
     serverUrl: string,
     method: string,
     params: Record<string, any> | undefined,
@@ -193,14 +223,14 @@ async function jsonRpcRequest(
     playerUuid?: string,
     signal?: AbortSignal,
     timeoutMs?: number
-): Promise<any> {
+): Promise<JsonRpcOutcome> {
     const deadline = timeoutMs !== undefined ? Date.now() + timeoutMs : undefined;
     const remaining = () => (deadline !== undefined ? Math.max(0, deadline - Date.now()) : REQUEST_TIMEOUT);
     // Checked before every request, DNS included: the name may point somewhere else than when it was saved
     const urlCheck = await checkOutboundUrl(serverUrl);
     if (!urlCheck.allowed) {
         console.warn(`[MCPConnector] Invalid server URL for ${method}: ${urlCheck.error}`);
-        return null;
+        return NOT_ANSWERED;
     }
 
     const baseHeaders = buildAuthHeaders(authType, authConfig, extraHeaders);
@@ -281,21 +311,7 @@ async function jsonRpcRequest(
                         });
                     }
                 } catch {
-                    // Init timed out or failed. Set a cache marker that EXISTS (so
-                    // executeToolCall sees it and skips the retry) but is
-                    // INSTANTLY EXPIRED (so on the next call, jsonRpcRequest's TTL
-                    // check falls through and retries init). Without this marker,
-                    // executeToolCall would see an empty cache and retry —
-                    // re-exposing the double-execution risk.
-                    // initializedAt is set to Date.now() - SESSION_INIT_TTL so the
-                    // check `Date.now() < cachedSession.initializedAt + SESSION_INIT_TTL`
-                    // evaluates to false on the very next call.
-                    if (!skipSessionCache) {
-                        mcpSessionInitCache.set(sessionCacheKey(serverUrl, authType, authConfig, playerUuid), {
-                            sessionId: undefined,
-                            initializedAt: Date.now() - SESSION_INIT_TTL,
-                        });
-                    }
+                    // Init timed out or failed: nothing is cached, so the next call initializes again
                 } finally {
                     clearTimeout(initTimeoutId);
                 }
@@ -326,20 +342,11 @@ async function jsonRpcRequest(
             clearTimeout(initWaitTimer);
             if (outcome === 'cancelled') {
                 console.log(`[MCPConnector] Request cancelled for ${method} (during initialize)`);
-                return null;
+                return NOT_ANSWERED;
             }
             if (outcome === 'timeout') {
                 console.warn(`[MCPConnector] Request timed out after ${timeoutMs}ms for ${method} (during initialize)`);
-                // Mark the session as present-but-expired, as a failed init
-                // does, so executeToolCall doesn't retry and wait all over
-                // again. The detached init overwrites this when it lands.
-                if (!skipSessionCache) {
-                    mcpSessionInitCache.set(sessionCacheKey(serverUrl, authType, authConfig, playerUuid), {
-                        sessionId: undefined,
-                        initializedAt: Date.now() - SESSION_INIT_TTL,
-                    });
-                }
-                return null;
+                return NOT_ANSWERED;
             }
         }
     }
@@ -383,7 +390,7 @@ async function jsonRpcRequest(
         });
 
         const parsed = parseMcpResponse(response, requestId);
-        return parsed.data;
+        return { data: parsed.data, neverRan: false };
     } catch (error: any) {
         if (axios.isCancel(error)) {
             if (signal?.aborted) {
@@ -420,11 +427,12 @@ async function jsonRpcRequest(
             if (method !== 'initialize') {
                 mcpSessionInitCache.delete(sessionCacheKey(serverUrl, authType, authConfig, playerUuid));
             }
+            return { data: null, neverRan: requestNeverRan(error, sessionId !== undefined) };
         } else {
             console.warn(`[MCPConnector] Error on ${method}: ${error.message || error}`);
             Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
         }
-        return null;
+        return NOT_ANSWERED;
     } finally {
         clearTimeout(timeoutId);
         unlinkExternalAbort();
@@ -669,7 +677,7 @@ export class MCPConnector {
     ): Promise<any> {
         // Patience covers the whole call, the retry below included
         const deadline = timeoutMs !== undefined ? Date.now() + timeoutMs : undefined;
-        let response = await jsonRpcRequest(
+        const first = await sendJsonRpc(
             serverUrl,
             'tools/call',
             { name: toolName, arguments: args },
@@ -680,28 +688,18 @@ export class MCPConnector {
             signal,
             timeoutMs
         );
+        let response = first.data;
 
         if (!response) {
-            // jsonRpcRequest deletes the session cache on HTTP/network errors
-            // (server unreachable, ECONNREFUSED, DNS failure, 4xx/5xx) but NOT
-            // on timeouts (axios.isCancel branch — just a warning, no cache
-            // mutation). We use this to distinguish:
-            //   - Cache MISSING → request was NOT delivered → safe to retry
-            //     (transport error, server restart, stale session)
-            //   - Cache PRESENT → timeout → request MAY have been delivered
-            //     → DON'T retry (avoids double-executing non-idempotent tools)
-            // An external abort (turn cancelled) is treated the same as a
-            // timeout: the request MAY have been delivered, so never retry.
-            // The abort signal also short-circuits the retry entirely — no
-            // point re-issuing a call on a cancelled turn.
+            // Send the call again only when it provably never ran (never
+            // connected, or the server dropped our stale session): a server
+            // that answered 5xx, reset the connection or timed out may have
+            // done the work already, and a second send would do it twice.
+            // The failed call dropped the cached session, so the retry
+            // initializes a fresh one. A cancelled turn never retries.
             // With a Patience, the retry only gets the time that is left of it.
-            const cacheKey = sessionCacheKey(serverUrl, authType, authConfig, playerUuid);
             const retryTimeoutMs = deadline !== undefined ? deadline - Date.now() : undefined;
-            if (
-                !signal?.aborted &&
-                !mcpSessionInitCache.has(cacheKey) &&
-                (retryTimeoutMs === undefined || retryTimeoutMs > 0)
-            ) {
+            if (first.neverRan && !signal?.aborted && (retryTimeoutMs === undefined || retryTimeoutMs > 0)) {
                 response = await jsonRpcRequest(
                 serverUrl,
                 'tools/call',
