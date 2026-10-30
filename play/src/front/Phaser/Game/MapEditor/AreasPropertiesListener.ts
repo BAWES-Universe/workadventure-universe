@@ -92,7 +92,7 @@ import { selectedRoomStore } from "../../../Chat/Stores/SelectRoomStore";
 import FilePopup from "../../../Components/PopUp/FilePopup.svelte";
 import type { SpaceInterface } from "../../../Space/SpaceInterface";
 import { setHandsOffHere } from "../../../Space/RaiseHand/RaiseHandStore";
-import { cameraOnStore, showCameraToSpeakers } from "../../../Space/AttendeeCamera";
+import { cameraOnStore, showCameraToSpeakers, stageSeesCamerasStore } from "../../../Space/AttendeeCamera";
 import { areaChatRooms, areaPresenceStore } from "../../../Chat/Stores/AreaPresenceStore";
 import { resolveMeetingAreaName } from "../../../Chat/Components/TopRow/TopRowSummary";
 import { leaveAreaSpaceIfJoined } from "./leaveAreaSpace";
@@ -1520,16 +1520,22 @@ export class AreasPropertiesListener {
                 isListenerStore.set(true);
                 listenerWaitingMediaStore.set(property.waitingLink);
 
-                // "See the audience's cameras" on the Stage (#1623): the speakers see us while our camera is on
+                // "See the audience's cameras" on the Stage (#1623): the speakers see us while our camera is on. The
+                // Stage can turn it off and on while we stay, so this follows the server's word on it, not the map
+                // as it was when we walked in.
                 this.stopShowingCamera?.();
                 this.stopShowingCamera = undefined;
-                if (stage?.seeAttendees === true && space && !abortSignal.aborted) {
-                    this.stopShowingCamera = showCameraToSpeakers(space, cameraOnStore(localStreamStore), () =>
-                        this.scene.CurrentPlayer?.playText(
-                            "attendee-camera",
-                            get(LL).area.speakersSeeYourCamera(),
-                            ATTENDEE_CAMERA_MESSAGE_DURATION
-                        )
+                if (space && !abortSignal.aborted) {
+                    this.stopShowingCamera = showCameraToSpeakers(
+                        space,
+                        cameraOnStore(localStreamStore),
+                        stageSeesCamerasStore(uniqRoomName),
+                        () =>
+                            this.scene.CurrentPlayer?.playText(
+                                "attendee-camera",
+                                get(LL).area.speakersSeeYourCamera(),
+                                ATTENDEE_CAMERA_MESSAGE_DURATION
+                            )
                     );
                 }
             }

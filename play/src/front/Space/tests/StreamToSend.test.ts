@@ -74,7 +74,7 @@ describe("showing our camera to the speakers (#1623)", () => {
         const cameraOn = writable(true);
         const told = vi.fn();
 
-        const stop = showCameraToSpeakers(space, cameraOn, told);
+        const stop = showCameraToSpeakers(space, cameraOn, writable(true), told);
         cameraOn.set(false);
         cameraOn.set(true);
         stop();

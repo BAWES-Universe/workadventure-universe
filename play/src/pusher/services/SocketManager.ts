@@ -55,7 +55,6 @@ import {
     noUndefined,
     ServerToClientMessage,
     SetPlayerDetailsMessage as SetPlayerDetailsMessageTsProto,
-    SpaceUser,
 } from "@workadventure/messages";
 import * as Sentry from "@sentry/node";
 import type { WebSocket } from "uWebSockets.js";
@@ -78,7 +77,7 @@ import { Space } from "../models/Space";
 import { SpaceConnection } from "../models/SpaceConnection";
 import type { UpgradeFailedData } from "../controllers/IoSocketController";
 import { eventProcessor } from "../models/eventProcessorInit";
-import { canShowCameraToSpeakersIn, forgetSpeakInvitation, setMegaphoneSettings } from "../models/MegaphoneRights";
+import { forgetSpeakInvitation, setMegaphoneSettings } from "../models/MegaphoneRights";
 import { areaSpacesToLeave } from "./AreaSpaceEviction";
 import { emitInBatch } from "./IoSocketHelpers";
 import { probeEmbeddableWebsite } from "./EmbeddableWebsiteProbe";
@@ -1719,20 +1718,11 @@ export class SocketManager implements ZoneEventListener {
         const socketData = client.getUserData();
         for (const spaceName of socketData.spaces) {
             const space = this.spaces.get(spaceName);
-            const spaceUser = space?.users.get(socketData.spaceUserId);
-            if (
-                !space ||
-                spaceUser?.attendeeCamera !== true ||
-                canShowCameraToSpeakersIn(space.localName, socketData)
-            ) {
+            if (!space) {
                 continue;
             }
             try {
-                const updated = space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(client, {
-                    spaceName,
-                    user: SpaceUser.fromPartial({ spaceUserId: spaceUser.spaceUserId, attendeeCamera: false }),
-                    updateMask: ["attendeeCamera"],
-                });
+                const updated = space.stopCameraNoLongerAllowed(client);
                 if (updated) {
                     space.forwarder.updateUser(updated.partialSpaceUser, updated.changedFields);
                 }
