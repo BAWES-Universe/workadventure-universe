@@ -6,13 +6,16 @@
     import { LL } from "../../../../i18n/i18n-svelte";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import Select from "../../Input/Select.svelte";
-    import InputSwitch from "../../Input/InputSwitch.svelte";
     import { IconEar } from "../../Icons";
     import Input from "../../Input/Input.svelte";
     import { connectionManager } from "../../../Connection/ConnectionManager";
+    import PanelSwitch from "./PanelSwitch.svelte";
     import PropertyEditorBase from "./PropertyEditorBase.svelte";
 
     export let property: ListenerMegaphonePropertyData;
+
+    // Maps made before the switch have no value for it: raised hands are on there (#1625).
+    let raiseHandEnabled = property.raiseHandEnabled ?? true;
 
     const dispatch = createEventDispatcher<{
         change: undefined;
@@ -102,13 +105,20 @@
                 {$LL.mapEditor.properties.listenerMegaphone.waitingMedialLinkHelp()}
             </p>
         {/if}
-        <div class="value-switch">
-            <InputSwitch
-                id="chatEnabled"
-                label={$LL.mapEditor.properties.chatEnabled()}
-                bind:value={property.chatEnabled}
-                onChange={onValueChange}
-            />
-        </div>
+        <PanelSwitch
+            id="chatEnabled"
+            label={$LL.mapEditor.properties.chatEnabled()}
+            bind:value={property.chatEnabled}
+            onChange={onValueChange}
+        />
+        <PanelSwitch
+            id="raiseHandEnabled"
+            label={$LL.mapEditor.properties.listenerMegaphone.raiseHandEnabled()}
+            bind:value={raiseHandEnabled}
+            onChange={() => {
+                property.raiseHandEnabled = raiseHandEnabled;
+                onValueChange();
+            }}
+        />
     </span>
 </PropertyEditorBase>

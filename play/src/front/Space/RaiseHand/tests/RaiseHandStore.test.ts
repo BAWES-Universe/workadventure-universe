@@ -11,6 +11,7 @@ import {
     raiseHand,
     raisedHandsStore,
     registerConversationSpace,
+    setHandsOffHere,
 } from "../RaiseHandStore";
 
 function user(uuid: string, name: string, handRaisedAt?: number): SpaceUserExtended {
@@ -67,6 +68,26 @@ describe("raise hand stores", () => {
         second();
         expect(get(myHandRaisedStore)).toBe(false);
         expect(get(canRaiseHandStore)).toBe(false);
+    });
+
+    it("hides the hand in an Audience or meeting room that switched raised hands off, and puts ours down", () => {
+        const leave = registerConversationSpace(fakeSpace([]).space);
+        raiseHand();
+        expect(get(myHandRaisedStore)).toBe(true);
+
+        setHandsOffHere("audience", true);
+        expect(get(canRaiseHandStore)).toBe(false);
+        expect(get(myHandRaisedStore)).toBe(false);
+        raiseHand();
+        expect(get(myHandRaisedStore)).toBe(false);
+
+        // Standing in two such places: the hand comes back once we are out of both
+        setHandsOffHere("meeting-room", true);
+        setHandsOffHere("audience", false);
+        expect(get(canRaiseHandStore)).toBe(false);
+        setHandsOffHere("meeting-room", false);
+        expect(get(canRaiseHandStore)).toBe(true);
+        leave();
     });
 
     it("follows hands going up in the conversations, and gives our place in line", () => {

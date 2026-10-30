@@ -89,6 +89,7 @@ import PopUpTab from "../../../Components/PopUp/PopUpTab.svelte";
 import { selectedRoomStore } from "../../../Chat/Stores/SelectRoomStore";
 import FilePopup from "../../../Components/PopUp/FilePopup.svelte";
 import type { SpaceInterface } from "../../../Space/SpaceInterface";
+import { setHandsOffHere } from "../../../Space/RaiseHand/RaiseHandStore";
 import { areaChatRooms, areaPresenceStore } from "../../../Chat/Stores/AreaPresenceStore";
 import { resolveMeetingAreaName } from "../../../Chat/Components/TopRow/TopRowSummary";
 import { leaveAreaSpaceIfJoined } from "./leaveAreaSpace";
@@ -903,6 +904,8 @@ export class AreasPropertiesListener {
         areaName: string | undefined
     ): Promise<void> {
         inLivekitStore.set(true);
+        // "Let people raise their hand" in the meeting room's More Options (#1625)
+        setHandsOffHere(property.id, property.livekitRoomConfig?.raiseHandEnabled === false);
 
         const roomID = property.roomName.trim().length === 0 ? property.id : property.roomName;
 
@@ -1223,6 +1226,7 @@ export class AreasPropertiesListener {
     }
 
     private async handleLivekitRoomPropertyOnLeave(property: LivekitRoomPropertyData): Promise<void> {
+        setHandsOffHere(property.id, false);
         const proximityRoom = this.scene.proximityChatRoom;
         const roomID = property.roomName.trim().length === 0 ? property.id : property.roomName;
         const roomName = areaSpaceName(roomID, this.scene.roomUrl);
@@ -1457,6 +1461,8 @@ export class AreasPropertiesListener {
         property: ListenerMegaphonePropertyData,
         abortSignal: AbortSignal
     ): Promise<void> {
+        // "Let people raise their hand" in the Audience (#1625)
+        setHandsOffHere(property.id, property.raiseHandEnabled === false);
         // TODO: change the user's availability status to prevent them from creating a bubble
         if (property.speakerZoneName !== undefined) {
             const speakerZoneName = getSpeakerMegaphoneAreaName(
@@ -1494,6 +1500,7 @@ export class AreasPropertiesListener {
     }
 
     private async handleListenerMegaphonePropertyOnLeave(property: ListenerMegaphonePropertyData): Promise<void> {
+        setHandsOffHere(property.id, false);
         if (property.speakerZoneName !== undefined) {
             const speakerZoneName = getSpeakerMegaphoneAreaName(
                 this.scene.getGameMap().getGameMapAreas()?.getAreas(),

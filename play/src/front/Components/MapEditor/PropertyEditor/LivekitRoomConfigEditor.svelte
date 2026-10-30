@@ -3,10 +3,10 @@
     import type { LivekitRoomConfigData } from "@workadventure/map-editor";
     import { closeModal } from "svelte-modals";
     import { LL } from "../../../../i18n/i18n-svelte";
-    import InputSwitch from "../../Input/InputSwitch.svelte";
     import Input from "../../Input/Input.svelte";
     import PopUpContainer from "../../PopUp/PopUpContainer.svelte";
     import ButtonClose from "../../Input/ButtonClose.svelte";
+    import PanelSwitch from "./PanelSwitch.svelte";
     export let isOpen: boolean;
     export let onSave: (config: LivekitRoomConfigData & { livekitRoomAdminTag: string }) => void;
 
@@ -19,9 +19,10 @@
         startWithAudioMuted: false,
         startWithVideoMuted: false,
         disableChat: false,
+        raiseHandEnabled: true,
     };
 
-    type LivekitRoomConfigDataKeys = "startWithAudioMuted" | "startWithVideoMuted" | "disableChat";
+    type LivekitRoomConfigDataKeys = "startWithAudioMuted" | "startWithVideoMuted" | "disableChat" | "raiseHandEnabled";
 
     const defaultConfigKeys: LivekitRoomConfigDataKeys[] = Object.keys(defaultConfig).map(
         (key) => key as LivekitRoomConfigDataKeys
@@ -35,6 +36,7 @@
         startWithAudioMuted: false,
         startWithVideoMuted: false,
         disableChat: false,
+        raiseHandEnabled: true,
     };
 
     onMount(() => {
@@ -42,9 +44,11 @@
             startWithAudioMuted: false,
             startWithVideoMuted: false,
             disableChat: false,
+            raiseHandEnabled: true,
         };
         if (config !== undefined) {
-            currentConfig = structuredClone(config);
+            // Maps made before the switch have no value for it: raised hands are on there (#1625).
+            currentConfig = { ...structuredClone(config), raiseHandEnabled: config.raiseHandEnabled ?? true };
         }
     });
 
@@ -85,7 +89,7 @@
                             {#if typeof defaultConfig[configKey] === "string"}
                                 <input id={configKey} type="text" bind:value={currentConfig[configKey]} />
                             {:else if typeof defaultConfig[configKey] === "boolean"}
-                                <InputSwitch
+                                <PanelSwitch
                                     id={configKey}
                                     bind:value={currentConfig[configKey]}
                                     label={$LL.mapEditor.properties.livekitRoomProperty.livekitRoomConfig[configKey]()}
@@ -128,7 +132,12 @@
         .config-element {
             display: flex;
             flex-direction: row;
-            height: 2.5em;
+            min-height: 2.5em;
+            padding-inline: 1rem;
+
+            :global(.ps-row) {
+                flex: 1;
+            }
 
             .config-element-label {
                 padding-left: 1em;
