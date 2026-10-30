@@ -110,7 +110,7 @@ export function openChatFileInViewer(file: ChatFileToOpen): void {
     const existing = get(coWebsites).find(
         (coWebsite) => coWebsite instanceof FileViewerCoWebsite && coWebsite.source.key === key
     );
-    if (existing && !(existing.source.audio && file.startPlaying)) {
+    if (existing && !(existing instanceof FileViewerCoWebsite && existing.source.audio && file.startPlaying)) {
         // Already open: with other panels open, it moves to the end, where the container shows the newest panel.
         if (get(coWebsites).length > 1) {
             coWebsites.remove(existing);
