@@ -122,3 +122,47 @@ describe("Space: raised hands in the audience of a live stream", () => {
         expect(handleUserDeleted).not.toHaveBeenCalled();
     });
 });
+
+describe("Space: attendees showing their camera to the speakers (#1623)", () => {
+    it("lists an attendee who shows their camera, and lets the media side know, without connecting them as a speaker", () => {
+        const listener = SpaceUser.fromPartial({ spaceUserId: "listener_1", uuid: "uuid-1", megaphoneState: false });
+        const { space, watcher, write, handleUserAdded, handleUserUpdated } = setup(listener);
+
+        space.updateUser(watcher, { ...listener, attendeeCamera: true }, ["attendeeCamera"]);
+
+        expect(messageCases(write)).toEqual(["addSpaceUserMessage"]);
+        expect(handleUserAdded).not.toHaveBeenCalled();
+        expect(handleUserUpdated).toHaveBeenCalledTimes(1);
+    });
+
+    it("unlists them when the camera goes off", () => {
+        const listener = SpaceUser.fromPartial({
+            spaceUserId: "listener_1",
+            uuid: "uuid-1",
+            megaphoneState: false,
+            attendeeCamera: true,
+        });
+        const { space, watcher, write, handleUserDeleted, handleUserUpdated } = setup(listener);
+
+        space.updateUser(watcher, { ...listener, attendeeCamera: false }, ["attendeeCamera"]);
+
+        expect(messageCases(write)).toEqual(["removeSpaceUserMessage"]);
+        expect(handleUserDeleted).not.toHaveBeenCalled();
+        expect(handleUserUpdated).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps an attendee with a camera listed while their hand goes down", () => {
+        const listener = SpaceUser.fromPartial({
+            spaceUserId: "listener_1",
+            uuid: "uuid-1",
+            megaphoneState: false,
+            handRaisedAt: 1000,
+            attendeeCamera: true,
+        });
+        const { space, watcher, write } = setup(listener);
+
+        space.updateUser(watcher, { ...listener, handRaisedAt: 0 }, ["handRaisedAt"]);
+
+        expect(messageCases(write)).toEqual(["updateSpaceUserMessage"]);
+    });
+});

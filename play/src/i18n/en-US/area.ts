@@ -17,6 +17,8 @@ const area: BaseTranslation = {
     lockRoom: "Lock room",
     unlockRoom: "Unlock room",
     lockRoomHint: "Nobody else can walk in while it's locked. It unlocks when everyone leaves.",
+    // In the Audience of a Stage that sees the audience's cameras (#1623)
+    speakersSeeYourCamera: "The speakers can see your camera",
     personalArea: {
         claimDescription: "This is a personal area. Do you want to make it yours?",
         yourName: "Your name",

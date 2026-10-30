@@ -180,4 +180,52 @@ test.describe("Map editor @oidc @nomobile @nowebkit", () => {
 
         await page.context().close();
     });
+
+    test("Speakers see the audience's cameras when the Stage lets them (#1623)", async ({ browser, request }) => {
+        await resetWamMaps(request);
+        await using page = await getPage(browser, "Admin1", Map.url("empty"));
+
+        await Menu.openMapEditor(page);
+        await MapEditor.openAreaEditor(page);
+        await AreaEditor.drawArea(page, { x: 1 * 32 * 1.5, y: 2 * 32 * 1.5 }, { x: 9 * 32 * 1.5, y: 4 * 32 * 1.5 });
+        await AreaEditor.addProperty(page, "speakerMegaphone");
+        await AreaEditor.setPodiumNameProperty(page, `${browser.browserType().name()}SeenStage`);
+        await page.getByTestId("seeAttendees").click();
+        await AreaEditor.drawArea(page, { x: 1 * 32 * 1.5, y: 6 * 32 * 1.5 }, { x: 9 * 32 * 1.5, y: 9 * 32 * 1.5 });
+        await AreaEditor.addProperty(page, "listenerMegaphone");
+        await AreaEditor.setMatchingPodiumZoneProperty(page, `${browser.browserType().name()}SeenStage`);
+        await Menu.closeMapEditor(page);
+        await Map.teleportToPosition(page, 4 * 32, 3 * 32);
+        await expect(page.locator("#cameras-container").getByText("You")).toBeVisible();
+
+        // Three people in the Audience, apart from each other, with their camera on: enough for a media room
+        await using alice = await getPage(browser, "Alice", Map.url("empty"));
+        await Map.teleportToPosition(alice, 2 * 32, 7 * 32);
+        await using bob = await getPage(browser, "Bob", Map.url("empty"));
+        await Map.teleportToPosition(bob, 5 * 32, 8 * 32);
+        await using eve = await getPage(browser, "Eve", Map.url("empty"));
+        await Map.teleportToPosition(eve, 8 * 32, 7 * 32);
+
+        // The speaker sees each of them
+        for (const name of ["Alice", "Bob", "Eve"]) {
+            await expect(page.locator("#cameras-container").getByText(name, { exact: true })).toBeVisible({
+                timeout: 30_000,
+            });
+        }
+        // The audience sees the speaker only
+        await expect(alice.locator("#cameras-container").getByText("Admin1")).toBeVisible({ timeout: 30_000 });
+        await expect(alice.locator("#cameras-container").getByText("Bob", { exact: true })).toBeHidden();
+        await expect(alice.locator("#cameras-container").getByText("Eve", { exact: true })).toBeHidden();
+
+        // A camera turned off is not shown any more
+        await Menu.turnOffCamera(alice);
+        await expect(page.locator("#cameras-container").getByText("Alice", { exact: true })).toBeHidden({
+            timeout: 30_000,
+        });
+
+        await eve.context().close();
+        await bob.context().close();
+        await alice.context().close();
+        await page.context().close();
+    });
 });

@@ -28,6 +28,10 @@ vi.mock("../../../../../i18n/i18n-svelte", async () => {
                     namePlaceholder: text("MainStage"),
                     nameTaken: ({ name }: { name: string }) => `A Stage called ${name} already exists.`,
                     nameEmpty: text("Give this Stage a name."),
+                    seeAttendees: text("See the audience's cameras"),
+                    seeAttendeesHelp: text(
+                        "Speakers see the people in the audience who have their camera on. They don't hear them. The audience is told."
+                    ),
                 },
             },
         },

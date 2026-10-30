@@ -39,6 +39,8 @@ export const CLIENT_UPDATABLE_SPACE_USER_FIELDS: ReadonlySet<string> = new Set<k
     "megaphoneState",
     // Raise hand: a player raises and lowers their own hand. The pusher stamps the time itself (see below).
     "handRaisedAt",
+    // In the Audience of a Stage that sees the audience's cameras: a player shows their own camera, or stops (#1623).
+    "attendeeCamera",
 ]);
 
 /**

@@ -14,6 +14,7 @@ import type { Streamable, StreamOriginCategory, WebRtcStreamable } from "../Stor
 import type { SpaceInterface } from "../Space/SpaceInterface";
 import { decrementWebRtcConnectionsCount, incrementWebRtcConnectionsCount } from "../Utils/E2EHooks";
 import { deriveSwitchStore } from "../Stores/InterruptorStore";
+import { streamToSend } from "../Space/StreamToSend";
 import { volumeProximityDiscussionStore } from "../Stores/PeerStore";
 import { getSdpTransform } from "../Components/Video/utils";
 import type { ConstraintMessage, ObtainedMediaStreamConstraints } from "./P2PMessages/ConstraintMessage";
@@ -452,9 +453,11 @@ export class RemotePeer extends Peer implements Streamable {
 
         this.once("finish", this.finishHandler);
 
-        this.localStreamStoreSubscribe = deriveSwitchStore(
-            this.localStreamStore,
-            this.space.isStreamingStore
+        // A camera peer may carry our camera alone, to the speakers of a Stage that sees the audience (#1623).
+        this.localStreamStoreSubscribe = (
+            this.type === "video"
+                ? streamToSend(this.localStreamStore, this.space)
+                : deriveSwitchStore(this.localStreamStore, this.space.isStreamingStore)
         ).subscribe((streamValue) => {
             if (streamValue === undefined) {
                 this.dropPausedAudioTrack();

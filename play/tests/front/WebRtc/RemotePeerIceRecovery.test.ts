@@ -52,6 +52,7 @@ function createPeer(initiator: boolean) {
     const space = {
         getSpaceUserBySpaceUserId: () => ({ name: "Bob", reactiveUser: {} }),
         isStreamingStore: writable(false),
+        showsCameraToStreamersStore: writable(false),
         emitPrivateMessage: vi.fn(),
     } as unknown as SpaceInterface;
     const peer = new RemotePeer(

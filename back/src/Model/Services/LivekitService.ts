@@ -22,6 +22,18 @@ const PUBLISH_SOURCES = [
     TrackSource.SCREEN_SHARE_AUDIO,
 ];
 
+/**
+ * What a person may send in a media room: everything (they stream), only their camera (in the Audience of a Stage
+ * that sees the audience's cameras, #1623), or nothing (they listen).
+ */
+export type PublishRight = "everything" | "camera" | "nothing";
+
+function publishSources(right: PublishRight): TrackSource[] {
+    if (right === "everything") return PUBLISH_SOURCES;
+    if (right === "camera") return [TrackSource.CAMERA];
+    return [];
+}
+
 const defaultRoomServiceClient = (livekitHost: string, livekitApiKey: string, livekitApiSecret: string) =>
     new RoomServiceClient(livekitHost, livekitApiKey, livekitApiSecret);
 const defaultEgressClient = (livekitHost: string, livekitApiKey: string, livekitApiSecret: string) =>
@@ -75,11 +87,11 @@ export class LiveKitService {
     }
 
     /**
-     * @param canPublish Whether this person may send camera, microphone or screen. Only the people streaming in the
-     * space may; everybody else receives. The media server enforces it, so a browser that ignores the app's rules
-     * still cannot publish.
+     * @param publishRight What this person may send. Only the people streaming in the space may send everything; an
+     * attendee showing their camera to the speakers may send their camera only; everybody else receives. The media
+     * server enforces it, so a browser that ignores the app's rules still cannot publish more.
      */
-    async generateToken(roomName: string, user: SpaceUser, canPublish: boolean): Promise<string> {
+    async generateToken(roomName: string, user: SpaceUser, publishRight: PublishRight): Promise<string> {
         const hashedRoomName = this.getHashedRoomName(roomName);
 
         const token = new AccessToken(this.livekitApiKey, this.livekitApiSecret, {
@@ -93,10 +105,10 @@ export class LiveKitService {
 
         token.addGrant({
             room: hashedRoomName,
-            canPublish,
+            canPublish: publishRight !== "nothing",
             canSubscribe: true,
             roomJoin: true,
-            canPublishSources: canPublish ? PUBLISH_SOURCES : [],
+            canPublishSources: publishSources(publishRight),
         });
         return token.toJwt();
     }
@@ -127,7 +139,11 @@ export class LiveKitService {
      * Lets a person already in the media room start or stop sending, without a new token. When they stop, the media
      * server ends the tracks they were sending. Returns false when they are not in the media room (yet).
      */
-    async setParticipantCanPublish(roomName: string, spaceUserId: string, canPublish: boolean): Promise<boolean> {
+    async setParticipantCanPublish(
+        roomName: string,
+        spaceUserId: string,
+        publishRight: PublishRight
+    ): Promise<boolean> {
         const hashedRoomName = this.getHashedRoomName(roomName);
         const identity = this.getParticipantIdentity(spaceUserId);
         try {
@@ -136,9 +152,9 @@ export class LiveKitService {
                 return false;
             }
             await this.roomServiceClient.updateParticipant(hashedRoomName, identity, undefined, {
-                canPublish,
+                canPublish: publishRight !== "nothing",
                 canSubscribe: true,
-                canPublishSources: canPublish ? PUBLISH_SOURCES : [],
+                canPublishSources: publishSources(publishRight),
             });
             return true;
         } catch (error) {
