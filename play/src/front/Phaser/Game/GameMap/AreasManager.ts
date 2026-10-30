@@ -149,10 +149,14 @@ export class AreasManager {
 
     /**
      * The full room (#1621) that a player arriving at this point would end up in, if there is one: teleports and start
-     * points must not put them there. A player already inside that room can move anywhere in it, even when it holds
-     * more people than its limit (an Admin walked in, or the limit was lowered).
+     * points must not put them there.
+     *
+     * @param joining the player has just joined the map where they stand, so the server already counts them in the
+     *   rooms there: they stay only if the room is not full without them. Otherwise the player walks or is moved from
+     *   where they stand, and can go anywhere in a room they are already in, even one holding more people than its
+     *   limit (an Admin walked in, or the limit was lowered).
      */
-    public getFullAreaForArrivalAt(x: number, y: number): AreaData | undefined {
+    public getFullAreaForArrivalAt(x: number, y: number, joining = false): AreaData | undefined {
         if (this.capacity === undefined || this.capacity.canPassFullRooms) {
             return undefined;
         }
@@ -161,10 +165,11 @@ export class AreasManager {
             if (!isPlayerPositionInArea({ x, y }, areaData)) {
                 continue;
             }
-            if (player !== undefined && isPlayerPositionInArea({ x: player.x, y: player.y }, areaData)) {
+            const playerInside = player !== undefined && isPlayerPositionInArea({ x: player.x, y: player.y }, areaData);
+            if (playerInside && !joining) {
                 continue;
             }
-            if (this.isFull(areaData.id)) {
+            if (this.isFull(areaData.id, playerInside ? 1 : 0)) {
                 return areaData;
             }
         }
@@ -173,15 +178,17 @@ export class AreasManager {
 
     /**
      * Where to put a player who would arrive at this point in a full room: the closest spot they can walk to outside
-     * every full room. The point itself when no full room is in the way, undefined if there is no such spot.
+     * every full room. The point itself when no full room is in the way, undefined if there is no such spot. See
+     * getFullAreaForArrivalAt for `joining`.
      */
     public findArrivalSpot(
         x: number,
         y: number,
         grid: number[][],
-        tile: { width: number; height: number }
+        tile: { width: number; height: number },
+        joining = false
     ): { x: number; y: number } | undefined {
-        if (this.getFullAreaForArrivalAt(x, y) === undefined) {
+        if (this.getFullAreaForArrivalAt(x, y, joining) === undefined) {
             return { x, y };
         }
         const toPosition = (tileX: number, tileY: number) => ({
@@ -190,7 +197,7 @@ export class AreasManager {
         });
         const isInFullRoom = (tileX: number, tileY: number) => {
             const position = toPosition(tileX, tileY);
-            return this.getFullAreaForArrivalAt(position.x, position.y) !== undefined;
+            return this.getFullAreaForArrivalAt(position.x, position.y, joining) !== undefined;
         };
         const free = findNearestFreeTile(
             { width: grid[0]?.length ?? 0, height: grid.length },
@@ -202,8 +209,8 @@ export class AreasManager {
         return free && toPosition(free.x, free.y);
     }
 
-    /** Whether the room is full. */
-    private isFull(areaId: string): boolean {
+    /** Whether the room is full, not counting `except` of the people inside (the player, when they are counted in). */
+    private isFull(areaId: string, except = 0): boolean {
         const areaData = this.gameMapAreas.getArea(areaId);
         if (areaData === undefined || this.capacity === undefined) {
             return false;
@@ -212,7 +219,7 @@ export class AreasManager {
         if (property === undefined) {
             return false;
         }
-        return this.capacity.usersInside.getCount(areaId, property.id) >= property.maxUsers;
+        return this.capacity.usersInside.getCount(areaId, property.id) - except >= property.maxUsers;
     }
 
     /**

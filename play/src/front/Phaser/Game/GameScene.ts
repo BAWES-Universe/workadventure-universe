@@ -2036,7 +2036,7 @@ export class GameScene extends DirtyScene {
             }
         );
         // Arrived (or back after a drop) inside a room that others filled: step just outside it.
-        const spot = this.findSpotOutsideFullRooms(this.CurrentPlayer);
+        const spot = this.findSpotOutsideFullRooms(this.CurrentPlayer, true);
         if (spot !== undefined && (spot.x !== this.CurrentPlayer.x || spot.y !== this.CurrentPlayer.y)) {
             this.CurrentPlayer.teleportTo(spot.x, spot.y);
         }
@@ -2044,9 +2044,13 @@ export class GameScene extends DirtyScene {
 
     /**
      * Where a player arriving at this point should stand so they are not inside a full room they cannot enter
-     * (#1621): the point itself, or the closest spot outside the room. Undefined when there is no such spot.
+     * (#1621): the point itself, or the closest spot outside the room. Undefined when there is no such spot. `joining`
+     * is for a player who has just joined the map at this point (see AreasManager.getFullAreaForArrivalAt).
      */
-    private findSpotOutsideFullRooms(position: { x: number; y: number }): { x: number; y: number } | undefined {
+    private findSpotOutsideFullRooms(
+        position: { x: number; y: number },
+        joining = false
+    ): { x: number; y: number } | undefined {
         const areasManager = this.gameMapFrontWrapper.areasManager;
         if (areasManager === undefined) {
             return position;
@@ -2055,7 +2059,8 @@ export class GameScene extends DirtyScene {
             position.x,
             position.y,
             this.gameMapFrontWrapper.getCollisionGrid(),
-            this.gameMapFrontWrapper.getTileDimensions()
+            this.gameMapFrontWrapper.getTileDimensions(),
+            joining
         );
     }
 

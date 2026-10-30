@@ -238,5 +238,14 @@ describe("AreasManager", () => {
             expect(manager.getFullAreaForArrivalAt(48, 40)).toBeUndefined();
             expect(manager.getFullAreaForArrivalAt(60, 50)).toBeUndefined();
         });
+
+        it("puts a player who joins the map inside a room that is full without them just outside it", async () => {
+            const { manager, setCount } = await makeFullRoomManager({ player: { x: 48, y: 40 } });
+            // The server counts them in: 2 of 2 is them and one other, so they fit
+            setCount(2);
+            expect(manager.getFullAreaForArrivalAt(48, 40, true)).toBeUndefined();
+            setCount(3);
+            expect(manager.getFullAreaForArrivalAt(48, 40, true)?.id).toBe("lounge");
+        });
     });
 });
