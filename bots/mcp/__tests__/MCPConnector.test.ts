@@ -714,6 +714,23 @@ describe('MCPConnector', () => {
             expect(result).toEqual(MOCK_WEATHER_CALL_RESPONSE.result.content);
         });
 
+        it('checks again when the server name did not resolve before anything was sent', async () => {
+            vi.mocked(lookup).mockRejectedValueOnce(Object.assign(new Error('getaddrinfo EAI_AGAIN'), { code: 'EAI_AGAIN' }));
+            mockedAxios.post.mockImplementation(async (_url: string, body: any) =>
+                body?.method === 'initialize' ? MOCK_INIT_RESPONSE : { data: MOCK_WEATHER_CALL_RESPONSE }
+            );
+            const result = await callTool();
+            expect(toolCalls()).toHaveLength(1);
+            expect(result).toEqual(MOCK_WEATHER_CALL_RESPONSE.result.content);
+        });
+
+        it('does not check again when the server name points to a private address', async () => {
+            vi.mocked(lookup).mockResolvedValueOnce([{ address: '10.0.0.5', family: 4 }] as never);
+            await callTool();
+            expect(vi.mocked(lookup)).toHaveBeenCalledTimes(1);
+            expect(mockedAxios.post).not.toHaveBeenCalled();
+        });
+
         it('sends the call again on a fresh session when the server no longer knows ours (404)', async () => {
             let inits = 0;
             mockedAxios.post.mockImplementation(async (_url: string, body: any, config?: any) => {

@@ -230,7 +230,8 @@ async function sendJsonRpc(
     const urlCheck = await checkOutboundUrl(serverUrl);
     if (!urlCheck.allowed) {
         console.warn(`[MCPConnector] Invalid server URL for ${method}: ${urlCheck.error}`);
-        return NOT_ANSWERED;
+        // Nothing was sent; a name that did not resolve may resolve on a second try
+        return { data: null, neverRan: urlCheck.unresolved === true };
     }
 
     const baseHeaders = buildAuthHeaders(authType, authConfig, extraHeaders);
