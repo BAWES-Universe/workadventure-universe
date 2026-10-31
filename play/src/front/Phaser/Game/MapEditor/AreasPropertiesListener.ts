@@ -661,7 +661,8 @@ export class AreasPropertiesListener {
                 property.policy,
                 property.width,
                 property.closable,
-                property.hideUrl
+                property.hideUrl,
+                property.hideTitleBar
             );
 
             coWebsiteOpen.coWebsite = coWebsite;
@@ -1373,7 +1374,8 @@ export class AreasPropertiesListener {
                       property.policy,
                       property.width,
                       property.closable,
-                      property.hideUrl
+                      property.hideUrl,
+                      property.type === "openWebsite" ? property.hideTitleBar : undefined
                   );
 
         coWebsiteOpen.coWebsite = coWebsite;

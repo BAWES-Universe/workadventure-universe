@@ -112,6 +112,9 @@ export const OpenWebsitePropertyData = PropertyBase.extend({
     targetEmbedableUrl: z.string().optional(),
     forceNewTab: z.boolean().optional().default(false),
     hideUrl: z.boolean().optional().default(false),
+    // "Hide title bar" (#1682): while the site is the only thing open, it fills the window with no bar above it.
+    // Off when missing.
+    hideTitleBar: z.boolean().optional().default(false),
 });
 
 export const OpenFilePropertyData = PropertyBase.extend({

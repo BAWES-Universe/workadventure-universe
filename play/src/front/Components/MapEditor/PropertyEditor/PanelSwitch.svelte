@@ -8,13 +8,18 @@
     export let label: string;
     export let value = false;
     export let disabled = false;
+    /** An optional line under the label saying what the switch does. */
+    export let help: string | undefined = undefined;
     /** A section's own switch (Advanced Options): the label is bolder */
     export let strong = false;
     export let onChange: () => void = () => {};
 </script>
 
 <label class="ps-row" class:ps-strong={strong} class:ps-disabled={disabled} data-testid="{id}-row">
-    <span class="ps-label">{label}</span>
+    <span class="ps-label">
+        {label}
+        {#if help}<small class="ps-help" data-testid="{id}-help">{help}</small>{/if}
+    </span>
     <input {id} type="checkbox" class="sr-only ps-input" bind:checked={value} on:change={onChange} {disabled} />
     <span class="u-switch ps-switch" aria-checked={value} data-testid={id} />
 </label>
@@ -38,6 +43,13 @@
     }
     .ps-label {
         min-width: 0;
+        display: flex;
+        flex-direction: column;
+    }
+    .ps-help {
+        color: rgba(255, 255, 255, 0.6);
+        font-size: 0.78rem;
+        line-height: 1.4;
     }
     .ps-row.ps-disabled {
         opacity: 0.5;
