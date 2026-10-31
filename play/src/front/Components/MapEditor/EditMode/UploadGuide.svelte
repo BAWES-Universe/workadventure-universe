@@ -86,11 +86,12 @@
             grid = baseCells.map((row) => [...row]);
             return;
         }
+        // A saved line stays exactly as saved. It only follows the squares when it already sits at them.
         const saved = -(editing.depthOffset ?? 0);
-        lineSet = saved === autoLine(grid) ? undefined : saved;
+        lineSet = grid.some((row) => row.includes(1)) && saved === autoLine(grid) ? undefined : saved;
     }
 
-    function readPicture(img: HTMLImageElement, columns: number, rows: number) {
+    function readPicture(img: HTMLImageElement, columns: number, rows: number, retried = false) {
         baseCells = Array(rows)
             .fill(0)
             .map(() => Array(columns).fill(0));
@@ -130,6 +131,18 @@
         } catch {
             // A picture we can't read: its bottom row of squares
             baseCells[rows - 1] = baseCells[rows - 1].map(() => 1);
+            // A saved upload comes from map-storage, which can be another site: the page can't read its pixels unless
+            // it's loaded again for reading. If that fails too, the bottom row stays.
+            if (!retried && !img.src.startsWith("blob:")) {
+                const copy = new Image();
+                copy.crossOrigin = "anonymous";
+                copy.onload = () => {
+                    if (naturalWidth === copy.naturalWidth && naturalHeight === copy.naturalHeight) {
+                        readPicture(copy, columns, rows, true);
+                    }
+                };
+                copy.src = img.src;
+            }
         }
     }
 
