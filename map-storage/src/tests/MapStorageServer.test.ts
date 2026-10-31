@@ -451,6 +451,36 @@ describe("MapStorageServer edit rights", () => {
                 expect(deleteUploadEverywhere).toHaveBeenCalledTimes(1);
             });
 
+            describe("when a copy appears in another room after the first check", () => {
+                // The mock stands for map-storage's delete: once the other rooms are locked it asks the rights again.
+                // Between the first check and that one, someone puts a copy of the lamp out in the room.
+                beforeEach(() => {
+                    deleteUploadEverywhere.mockImplementation(
+                        async ({ checkRights }: { checkRights: () => Promise<void> }) => {
+                            const map = (await getOrLoadGameMap()) as GameMap;
+                            map.getGameMapEntities()?.addEntity("lampInRoom", {
+                                x: 700,
+                                y: 700,
+                                prefabRef: { id: "lamp", collectionName: "custom entities" },
+                                properties: [],
+                            } as never);
+                            await checkRights();
+                            return ["lounge/map.wam"];
+                        }
+                    );
+                });
+
+                it("refuses the uploader, who can't edit where the copy is", async () => {
+                    uploads.set("lamp", { ownerId: "owner" });
+                    expect(await send(removeEverywhere("lamp"), owner)).toBe("errorCommandMessage");
+                });
+
+                it("still lets an editor delete", async () => {
+                    uploads.set("lamp", { ownerId: "owner" });
+                    expect(await send(removeEverywhere("lamp"), editor)).toBe("deleteCustomEntityMessage");
+                });
+            });
+
             it("shows the editor's error and deletes nothing when a room can't be changed", async () => {
                 uploads.set("lamp", { ownerId: "owner" });
                 deleteUploadEverywhere.mockRejectedValue(new Error("Could not write"));

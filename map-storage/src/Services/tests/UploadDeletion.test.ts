@@ -64,6 +64,7 @@ const uploads = {
     },
 };
 const message = { id: "bookcase", wholeUpload: true, pictureIds: [], otherRoomWamUrls: [] };
+const checkRights = vi.fn(() => Promise.resolve());
 const run = () =>
     deleteUploadEverywhere({
         mapKey: OFFICE,
@@ -72,6 +73,7 @@ const run = () =>
         commandId: "command",
         message,
         uploads: uploads as never,
+        checkRights,
     });
 const copiesIn = (key: string) => Object.keys((maps.get(key) as GameMap).getWam()?.entities ?? {});
 
@@ -83,6 +85,8 @@ describe("deleting an upload everywhere (#1690)", () => {
         queued.length = 0;
         collection.failDelete = false;
         collection.deleted.length = 0;
+        checkRights.mockReset();
+        checkRights.mockResolvedValue(undefined);
         maps.set(OFFICE, makeMap({ a: "bookcase", chair: "chair" }));
         maps.set(LOUNGE, makeMap({ b: "bookcase", c: "bookcase-red", d: "chair" }));
         maps.set(ATTIC, makeMap({ e: "chair" }));
@@ -134,6 +138,48 @@ describe("deleting an upload everywhere (#1690)", () => {
         await Promise.all([edit, deleting]);
         expect(order).toEqual(["edit done", "delete done"]);
         expect(copiesIn(LOUNGE)).toEqual(["d"]);
+    });
+
+    it("asks again whether this person may delete once the other rooms are locked, and refuses if a copy appeared where they can't edit", async () => {
+        // The first check passed. While the delete waits for the lock of the attic, an edit there puts a copy down.
+        let finishEdit: () => void = () => undefined;
+        const edit = editionLocks.waitForLock(
+            ATTIC,
+            () =>
+                new Promise<void>((resolve) => {
+                    finishEdit = () => {
+                        (maps.get(ATTIC) as GameMap).getGameMapEntities()?.addEntity("late", {
+                            x: 1,
+                            y: 1,
+                            prefabRef: { id: "bookcase", collectionName: "custom entities" },
+                            properties: [],
+                        });
+                        resolve();
+                    };
+                })
+        );
+        checkRights.mockImplementation(() =>
+            Object.keys((maps.get(ATTIC) as GameMap).getWam()?.entities ?? {}).includes("late")
+                ? Promise.reject(new Error("User uploader is not allowed to delete the object bookcase"))
+                : Promise.resolve()
+        );
+        const deleting = run();
+        const refused = expect(deleting).rejects.toThrow("not allowed to delete");
+        await new Promise<void>((resolve) => {
+            setTimeout(resolve, 20);
+        });
+        expect(checkRights).not.toHaveBeenCalled();
+        finishEdit();
+        await Promise.all([edit, refused]);
+
+        expect(checkRights).toHaveBeenCalledTimes(1);
+        // Nothing was removed or saved anywhere, and the copy that appeared is still there
+        expect(copiesIn(ATTIC).sort()).toEqual(["e", "late"]);
+        expect(copiesIn(OFFICE).sort()).toEqual(["a", "chair"]);
+        expect(copiesIn(LOUNGE).sort()).toEqual(["b", "c", "d"]);
+        expect(saved).toEqual([]);
+        expect(collection.deleted).toEqual([]);
+        expect(queued).toEqual([]);
     });
 
     it("deletes nothing when a room can't be read", async () => {
