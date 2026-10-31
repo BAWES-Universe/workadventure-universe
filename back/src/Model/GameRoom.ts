@@ -1280,7 +1280,7 @@ export class GameRoom implements BrothersFinder {
                             // Map-storage lists the other rooms that lost copies of the upload: the people in them
                             // see the copies go, as when an editor deletes an object in their own room.
                             const deleted = editMapCommandMessage.editMapMessage.message.deleteCustomEntityMessage;
-                            const otherRoomWamUrls = deleted.otherRoomWamUrls;
+                            const otherRoomWamUrls = deleted.wholeUpload ? deleted.otherRoomWamUrls : [];
                             deleted.otherRoomWamUrls = [];
                             for (const otherRoom of findRoomsByWamUrl(otherRoomWamUrls)) {
                                 if (otherRoom === this) continue;

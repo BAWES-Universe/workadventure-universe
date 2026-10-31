@@ -409,6 +409,27 @@ describe("MapStorageServer edit rights", () => {
                 expect(executeEntityCommand).not.toHaveBeenCalled();
             });
 
+            it("drops the room list and picture list a browser sends, so no room is told about a delete that didn't happen", async () => {
+                uploads.set("lamp", { ownerId: "owner" });
+                const crafted = (wholeUpload: boolean): EditMessage => ({
+                    $case: "deleteCustomEntityMessage",
+                    deleteCustomEntityMessage: {
+                        id: "lamp",
+                        wholeUpload,
+                        pictureIds: ["other"],
+                        otherRoomWamUrls: ["http://localhost/universe/world/lounge/map.wam"],
+                    },
+                });
+                const single = await sendAndGetMessage(crafted(false), editor);
+                const message =
+                    single?.$case === "deleteCustomEntityMessage" ? single.deleteCustomEntityMessage : undefined;
+                expect(message?.otherRoomWamUrls).toEqual([]);
+                expect(message?.pictureIds).toEqual([]);
+                // A refused whole-upload delete tells nobody either
+                deleteUploadEverywhere.mockRejectedValue(new Error("Could not write"));
+                expect(await send(crafted(true), editor)).toBe("errorCommandMessage");
+            });
+
             it("keeps the rights as they are: the uploader only while every copy is at their desk", async () => {
                 uploads.set("lamp", { ownerId: "owner" });
                 uploads.set("sign", { ownerId: "owner" });
@@ -446,6 +467,11 @@ describe("MapStorageServer edit rights", () => {
                 uploads.set("lamp", { ownerId: "owner" });
                 expect(await ask("lamp", editor)).toEqual({ rooms: [{ wamUrl: MAP_URL, count: 1 }] });
                 expect(await ask("lamp", player)).toBeUndefined();
+                // The uploader follows the delete rule: not while a copy sits where they can't edit
+                uploads.set("lamp", { ownerId: "owner" });
+                expect(await ask("lamp", owner)).toEqual({ rooms: [{ wamUrl: MAP_URL, count: 1 }] });
+                uploads.set("sign", { ownerId: "owner" });
+                expect(await ask("sign", owner)).toBeUndefined();
             });
         });
 

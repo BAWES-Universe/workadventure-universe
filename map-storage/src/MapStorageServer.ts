@@ -100,6 +100,42 @@ function wamUrlInWorld(sameWorldMapUrl: URL, universeWorldPath: string, pathInWo
     return `${sameWorldMapUrl.href.slice(0, worldStart)}/${universeWorldPath}/${pathInWorld}`;
 }
 
+/**
+ * Whether this person may delete an upload: map editors always; its uploader only while every copy of every picture is
+ * where they can edit (#1628). The counts shown before a delete follow the same rule (#1690).
+ */
+async function mayDeleteUpload(
+    {
+        mapKey,
+        universeWorldPath,
+        uploads,
+        id,
+        pictureIds,
+    }: {
+        mapKey: string;
+        universeWorldPath: string;
+        uploads: CustomEntityCollectionService;
+        id: string;
+        pictureIds: Iterable<string>;
+    },
+    user: { uuid: string; tags: string[]; canEdit: boolean }
+): Promise<boolean> {
+    if (user.canEdit) return true;
+    if (!canManageCustomEntity(await uploads.getEntity(id), user.uuid, user.canEdit)) return false;
+    for (const pictureId of pictureIds) {
+        // eslint-disable-next-line no-await-in-loop
+        const copyOutsideRights = await hasCopyOutsideUserRights(
+            mapKey,
+            universeWorldPath,
+            pictureId,
+            { tags: user.tags, uuid: user.uuid },
+            (key) => mapsManager.getOrLoadGameMap(key)
+        );
+        if (copyOutsideRights) return false;
+    }
+    return true;
+}
+
 const mapStorageServer: MapStorageServer = {
     ping(call: ServerUnaryCall<PingMessage, Empty>, callback: sendUnaryData<PingMessage>): void {
         callback(null, call.request);
@@ -149,16 +185,21 @@ const mapStorageServer: MapStorageServer = {
         callback: sendUnaryData<UploadCopiesAnswer>
     ): void {
         (async () => {
-            const { id, userCanEdit, userUUID } = call.request;
+            const { id, userCanEdit, userUUID, connectedUserTags } = call.request;
             const mapUrl = new URL(call.request.mapKey);
             const mapKey = mapPathUsingDomainWithPrefix(mapUrl.pathname, mapUrl.hostname);
             const universeWorldPath = extractUniverseWorldPath(mapUrl.pathname);
             const uploads = new CustomEntityCollectionService(mapUrl.hostname, universeWorldPath);
-            // Only those who could delete the upload are told where it is placed.
-            if (!userCanEdit && !canManageCustomEntity(await uploads.getEntity(id), userUUID, userCanEdit)) {
+            const pictureIds = (await uploads.getUploadPictures(id)).map((picture) => picture.id);
+            // Only those who could delete the upload, by the very rule the delete follows, are told where it is placed.
+            if (
+                !(await mayDeleteUpload(
+                    { mapKey, universeWorldPath, uploads, id, pictureIds },
+                    { uuid: userUUID, tags: connectedUserTags, canEdit: userCanEdit }
+                ))
+            ) {
                 throw new Error(`User ${userUUID} is not allowed to see where the object ${id} is placed`);
             }
-            const pictureIds = (await uploads.getUploadPictures(id)).map((picture) => picture.id);
             const rooms = await countCopiesByRoom(
                 mapKey,
                 universeWorldPath,
@@ -491,6 +532,10 @@ const mapStorageServer: MapStorageServer = {
                     }
                     case "deleteCustomEntityMessage": {
                         const deleteCustomEntityMessage = editMapMessage.deleteCustomEntityMessage;
+                        // These two are only ever written here, after the delete went through: whatever the browser
+                        // sent in them is dropped, so it can't have other rooms told about a delete that didn't happen.
+                        deleteCustomEntityMessage.pictureIds = [];
+                        deleteCustomEntityMessage.otherRoomWamUrls = [];
                         const uploads = new CustomEntityCollectionService(mapUrl.hostname, universeWorldPath);
                         // The pictures that go: the browser deletes one picture, or a whole upload (#1690).
                         const pictureIds = new Set([deleteCustomEntityMessage.id]);
@@ -502,25 +547,15 @@ const mapStorageServer: MapStorageServer = {
                         // Checked before the command runs: it removes the placed copies from the map first. An
                         // upload's pictures are checked against the copies of every picture of it: either all of them
                         // go, or none.
-                        if (!userCanEdit) {
-                            const upload = await uploads.getEntity(deleteCustomEntityMessage.id);
-                            let copyOutsideRights = false;
-                            for (const pictureId of pictureIds) {
-                                // eslint-disable-next-line no-await-in-loop
-                                copyOutsideRights = await hasCopyOutsideUserRights(
-                                    mapKey,
-                                    universeWorldPath,
-                                    pictureId,
-                                    { tags: connectedUserTags, uuid: userUUID },
-                                    (key) => mapsManager.getOrLoadGameMap(key)
-                                );
-                                if (copyOutsideRights) break;
-                            }
-                            if (!canManageCustomEntity(upload, userUUID, userCanEdit) || copyOutsideRights) {
-                                throw new Error(
-                                    `User ${userUUID} is not allowed to delete the object ${deleteCustomEntityMessage.id} on map ${mapUrl}`
-                                );
-                            }
+                        if (
+                            !(await mayDeleteUpload(
+                                { mapKey, universeWorldPath, uploads, id: deleteCustomEntityMessage.id, pictureIds },
+                                { uuid: userUUID, tags: connectedUserTags, canEdit: userCanEdit }
+                            ))
+                        ) {
+                            throw new Error(
+                                `User ${userUUID} is not allowed to delete the object ${deleteCustomEntityMessage.id} on map ${mapUrl}`
+                            );
                         }
                         if (deleteCustomEntityMessage.wholeUpload) {
                             const otherRooms = await deleteUploadEverywhere({
