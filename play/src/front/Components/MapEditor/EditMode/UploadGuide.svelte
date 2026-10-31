@@ -88,7 +88,10 @@
         }
         // A saved line stays exactly as saved. It only follows the squares when it already sits at them.
         const saved = -(editing.depthOffset ?? 0);
-        lineSet = grid.some((row) => row.includes(1)) && saved === autoLine(grid) ? undefined : saved;
+        lineSet =
+            grid.some((row) => row.includes(1)) && saved === autoLine(grid, naturalHeight, paintedBottom)
+                ? undefined
+                : saved;
     }
 
     function readPicture(img: HTMLImageElement, columns: number, rows: number, retried = false) {
@@ -148,10 +151,11 @@
 
     // Where people start going behind it, measured up from the picture's bottom edge: the front edge of the red squares;
     // with none, the bottom of what's painted.
-    function autoLine(cells: number[][]): number {
+    // The picture's numbers are passed in so the reactive line below updates when a later read finds the painted bottom.
+    function autoLine(cells: number[][], height: number, bottom: number): number {
         const lowest = cells.reduce((low, row, r) => (row.includes(1) ? r : low), -1);
-        if (lowest < 0) return Math.max(0, naturalHeight - paintedBottom);
-        return Math.max(0, naturalHeight - (lowest + 1) * TILE);
+        if (lowest < 0) return Math.max(0, height - bottom);
+        return Math.max(0, height - (lowest + 1) * TILE);
     }
 
     function pick(how: Meet) {
@@ -191,7 +195,7 @@
         1,
         baseCells.reduce((sum, row) => sum + row.filter((cell) => cell === 1).length, 0)
     );
-    $: autoLineNow = naturalHeight > 0 ? autoLine(grid) : 0;
+    $: autoLineNow = naturalHeight > 0 ? autoLine(grid, naturalHeight, paintedBottom) : 0;
     $: lineFromBottom = lineSet ?? autoLineNow;
     $: meet = (
         blocked > 0 ? "bump" : naturalHeight > 0 && lineFromBottom >= naturalHeight ? "over" : "through"
