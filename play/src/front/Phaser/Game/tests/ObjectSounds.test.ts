@@ -48,7 +48,12 @@ function setUp(objects: SoundObject[], initial: ObjectSoundMessage[] = []) {
                 voices.push(voice);
                 return voice;
             },
-            playableLink: (link) => Promise.resolve(link),
+            playableLink: (link) => {
+                if (link.includes("::bad")) {
+                    throw new TypeError("Invalid URL");
+                }
+                return Promise.resolve(link);
+            },
             soundLength: () => Promise.resolve(4),
             emitClick: (message) => clicks.push(message),
             blocked: () => false,
@@ -101,6 +106,20 @@ describe("ObjectSounds (#1627)", () => {
         object.properties = [sound({ startsOn: "click", heardBy: "clicker", loop: false })];
         sounds.refresh();
         expect(voices[0].destroyed).toBe(true);
+    });
+
+    it("gets over a link that can't be read, and plays once the link is fixed", async () => {
+        const object: SoundObject = { id: "statue", x: 100, y: 100, properties: [sound({ audioLink: "::bad" })] };
+        const { sounds, voices, flush } = setUp([object]);
+        expect(() => sounds.click("statue", object.properties[0] as PlayAudioPropertyData)).not.toThrow();
+        await flush();
+        await flush();
+        expect(voices).toHaveLength(0);
+        const fixed = sound({});
+        object.properties.splice(0, 1, fixed);
+        sounds.click("statue", fixed);
+        await flush();
+        expect(voices).toHaveLength(1);
     });
 
     it("plays a range sound once each time someone comes within range", async () => {

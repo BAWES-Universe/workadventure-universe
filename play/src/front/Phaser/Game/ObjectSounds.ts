@@ -342,8 +342,9 @@ export class ObjectSounds {
         };
         this.playing.set(key, playing);
         const requestedAt = this.now();
-        this.dependencies
-            .playableLink(property.audioLink)
+        // A link that can't be read throws at once: it ends here like any other failure, never stuck as pending
+        Promise.resolve()
+            .then(() => this.dependencies.playableLink(property.audioLink))
             .then((url) => {
                 if (this.playing.get(key) !== playing || this.destroyed) {
                     return;
