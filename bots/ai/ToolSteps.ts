@@ -26,11 +26,14 @@ export interface ToolStep {
 export interface ToolStepResult {
     id: string;
     ok: boolean;
+    /** It went out and no answer came back: it may have run (#1692). Shown as "no answer", not as didn't work. */
+    unknown?: boolean;
     /** Why it didn't work, short and without links. */
     note?: string;
 }
 
-export type StepState = 'running' | 'done' | 'failed';
+/** unknown: the call went out and no answer came back, so it may have run (#1692). */
+export type StepState = 'running' | 'done' | 'failed' | 'unknown';
 
 export interface ShownStep {
     doing: string;
@@ -125,7 +128,9 @@ export function resultOf(id: string, result: unknown): ToolStepResult {
         const r = result as Record<string, unknown>;
         if (r.error || r.success === false || r.isError === true) {
             const why = typeof r.error === 'string' ? r.error : typeof r.message === 'string' ? r.message : undefined;
-            return { id, ok: false, note: noteOf(why) };
+            // A tool server call that may have run is not a failure; a cancelled turn stays as it was
+            const unknown = r.outcome === 'uncertain' && r.cancelled !== true;
+            return { id, ok: false, ...(unknown ? { unknown } : {}), note: noteOf(why) };
         }
     }
     return { id, ok: true };
@@ -161,7 +166,7 @@ export class ReplySteps {
         for (const result of results) {
             const step = this.steps.find((s) => s.id === result.id && s.state === 'running');
             if (!step) continue;
-            step.state = result.ok ? 'done' : 'failed';
+            step.state = result.ok ? 'done' : result.unknown ? 'unknown' : 'failed';
             if (result.note) step.note = result.note;
             changed = true;
         }
@@ -203,8 +208,9 @@ export class ReplySteps {
     text(): string {
         const field = this.field();
         const failed = field.steps.filter((s) => s.state === 'failed').length;
+        const unknown = field.steps.filter((s) => s.state === 'unknown').length;
         if (field.state === 'working') return `${field.line}…`;
-        return failed ? `${field.line} · ${failed} didn't work` : field.line;
+        return `${field.line}${failed ? ` · ${failed} didn't work` : ''}${unknown ? ` · ${unknown} no answer` : ''}`;
     }
 
     /** What runs now: the newest running step (the game shows its detail and how many are done beside it). */

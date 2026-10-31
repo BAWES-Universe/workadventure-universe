@@ -32,6 +32,8 @@
     import UploadGuide from "./UploadGuide.svelte";
     import UploadVariants from "./UploadVariants.svelte";
     import { hasCopyHereOutsideViewerRights, uploadOwnerView } from "./uploadOwner";
+    import { describePlacedIn } from "./uploadCopies";
+    import type { PlacedIn } from "./uploadCopies";
     import type { Viewer } from "./uploadOwner";
     import { IconCloudUpload, IconPencil, IconRefresh, IconSearch } from "@wa-icons";
 
@@ -191,17 +193,51 @@
         }
         editingUpload = undefined;
     }
+    /** Where an upload is placed, for the box that confirms deleting it (#1690). */
+    async function loadPlacedIn(id: string): Promise<PlacedIn[]> {
+        const connection = scene?.connection;
+        if (!connection) return [];
+        const [rooms, knownRooms] = await Promise.all([
+            connection.queryUploadCopies(id),
+            // The names people see for the rooms elsewhere in the game. Without them the box falls back to the
+            // room's folder name.
+            connection.queryRoomsFromSameWorld().catch((e: unknown) => {
+                console.error(e);
+                return [];
+            }),
+        ]);
+        return describePlacedIn(rooms, knownRooms, scene?.wamUrlFile);
+    }
+
     function removeUpload(id: string) {
         // When the upload was all its category held, the panel goes back to all objects rather than an empty
         // category that no longer exists (#1636).
         const left = sections.find((section) => section.tag === category)?.items.filter((variant) => variant.id !== id);
         if (category && (left === undefined || left.length === 0)) selectCategoryStore.set(undefined);
-        for (const picture of picturesOf(id)) {
-            mapEditorDeleteCustomEntityEventStore.set({ id: picture });
-        }
+        // The whole upload goes at once, with every copy of it in every room (#1690).
+        mapEditorDeleteCustomEntityEventStore.set({
+            id,
+            wholeUpload: true,
+            pictureIds: picturesOf(id),
+            otherRoomWamUrls: [],
+        });
         editPickedVariantStore.set(undefined);
         mapEditorSelectedEntityPrefabStore.set(undefined);
         editingUpload = undefined;
+    }
+
+    // Someone in another room deleted the upload while its page is open: the panel goes back to Objects (#1690).
+    $: if (variants.length > 0) {
+        const uploadId = editingUpload?.id;
+        if (
+            uploadId !== undefined &&
+            !variants.some((variant) => variant.prefabs.some((prefab) => prefab.id === uploadId))
+        ) {
+            editingUpload = undefined;
+            editingVariants = false;
+            editPickedVariantStore.set(undefined);
+            mapEditorSelectedEntityPrefabStore.set(undefined);
+        }
     }
 
     const unsubscribePrefab = mapEditorSelectedEntityPrefabStore.subscribe((prefab) => {
@@ -231,6 +267,7 @@
     <UploadGuide
         editing={editingUpload}
         {deleteBlocked}
+        loadPlacedIn={() => (editingUpload ? loadPlacedIn(editingUpload.id) : Promise.resolve([]))}
         on:done={() => (editingUpload = undefined)}
         on:remove={({ detail: { id } }) => removeUpload(id)}
         on:save={({ detail }) => saveUploadChanges(detail)}

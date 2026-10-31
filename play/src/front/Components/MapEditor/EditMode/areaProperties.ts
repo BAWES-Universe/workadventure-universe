@@ -55,6 +55,9 @@ export interface AreaSettingFlags {
     [type: string]: boolean;
 }
 
+/** A new "Play a sound" starts at 60 % (#1626 mock); map makers change it with the Volume slider. */
+export const NEW_SOUND_VOLUME = 0.6;
+
 export function flagsOf(properties: AreaDataProperties): AreaSettingFlags {
     const flags: AreaSettingFlags = {};
     for (const property of properties) flags[property.type] = true;
@@ -236,17 +239,6 @@ export function areaSettingRows(LL: TranslationFunctions, flags: AreaSettingFlag
             available: !flags.matrixRoomPropertyData && !!MATRIX_PUBLIC_URI,
             opensPage: true,
         },
-        {
-            key: "jitsiRoomProperty",
-            title: t.jitsiRoomProperty.title(),
-            text: t.jitsiRoomProperty.text(),
-            icon: IconUsersGroup,
-            testId: "jitsiRoomProperty",
-            // Jitsi is no longer offered: the meeting room runs on our own calls. The row stays so an area that already
-            // has one still shows its title, its page and its Remove button.
-            available: false,
-            opensPage: true,
-        },
     ];
 }
 
@@ -353,7 +345,7 @@ export function summarizeAreaProperty(
             return property.name?.trim() || fallbackText;
         }
         case "playAudio": {
-            const file = lastSegmentName(property.audioLink ?? "");
+            const file = property.audioName?.trim() || lastSegmentName(property.audioLink ?? "");
             if (file === "") return fallbackText;
             const volume = property.volume ?? 1;
             return volume !== 1 ? `${file} · ${Math.round(volume * 100)}%` : file;
@@ -432,17 +424,6 @@ export function createAreaProperty(
                 color: "#000000",
                 hideButtonLabel: true,
             };
-        case "jitsiRoomProperty":
-            addHighlightLater();
-            return {
-                id,
-                type,
-                closable: true,
-                jitsiRoomConfig: {},
-                hideButtonLabel: true,
-                roomName: LL.mapEditor.properties.jitsiRoomProperty.label(),
-                trigger: ON_ACTION_TRIGGER_ENTER,
-            };
         case "livekitRoomProperty":
             addHighlightLater();
             return {
@@ -489,7 +470,7 @@ export function createAreaProperty(
             };
         }
         case "playAudio":
-            return { id, type, hideButtonLabel: true, audioLink: "", volume: 1 };
+            return { id, type, hideButtonLabel: true, audioLink: "", volume: NEW_SOUND_VOLUME };
         case "speakerMegaphone": {
             // The first free "MySpeakerZone<n>": two Stages of a room may not share a name.
             const taken = new Set([...speakerZones().values()].map((name) => name.toLowerCase()));

@@ -122,4 +122,26 @@ describe('ToolSteps', () => {
         steps.stop();
         expect(steps.field()).toMatchObject({ state: 'stopped', steps: [{ state: 'failed' }] });
     });
+
+    it('shows a call that may have run as no answer, not as a failure (#1692)', () => {
+        const noAnswer = { error: 'No answer. May have finished', outcome: 'uncertain', hint: 'Do not call this tool again' };
+        const notSent = { error: "Couldn't reach it. Nothing ran", outcome: 'not_sent', hint: 'Trying again is safe' };
+        const cancelled = { error: 'Tool call cancelled: generate_music', outcome: 'uncertain', cancelled: true };
+        expect(resultOf('a', noAnswer)).toEqual({ id: 'a', ok: false, unknown: true, note: 'No answer. May have finished' });
+        expect(resultOf('b', notSent)).toEqual({ id: 'b', ok: false, note: "Couldn't reach it. Nothing ran" });
+        expect(resultOf('c', cancelled)).toEqual({ id: 'c', ok: false, note: 'Tool call cancelled: generate_music' });
+
+        const steps = new ReplySteps();
+        steps.start([
+            describeStep({ id: 'a', name: 'generate_music', arguments: { prompt: 'lofi' } }),
+            describeStep({ id: 'b', name: 'generate_music', arguments: { prompt: 'jazz' } }),
+        ]);
+        steps.finish([resultOf('a', noAnswer), resultOf('b', notSent)]);
+        steps.end();
+        const field = steps.field();
+        expect(field.steps.map((s) => s.state)).toEqual(['unknown', 'failed']);
+        expect(field.steps[0].note).toBe('No answer. May have finished');
+        expect(field.line).toBe('2 steps');
+        expect(steps.text()).toBe("2 steps · 1 didn't work · 1 no answer");
+    });
 });

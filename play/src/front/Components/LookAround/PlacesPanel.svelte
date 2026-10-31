@@ -98,7 +98,6 @@
     const PROPERTY_FILTERS = [
         "highlight",
         "livekitRoomProperty",
-        "jitsiRoomProperty",
         "speakerMegaphone",
         "listenerMegaphone",
         "silent",

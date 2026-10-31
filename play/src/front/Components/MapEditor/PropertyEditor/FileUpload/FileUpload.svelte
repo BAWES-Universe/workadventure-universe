@@ -4,6 +4,7 @@
     import type { OpenFilePropertyData } from "@workadventure/map-editor";
     import { FILE_UPLOAD_SUPPORTED_FORMATS_FRONT } from "@workadventure/map-editor";
     import type { UploadFileMessage } from "@workadventure/messages";
+    import { UploadedFileKind } from "@workadventure/messages";
     import { get } from "svelte/store";
     import * as Sentry from "@sentry/svelte";
     import { GRPC_MAX_MESSAGE_SIZE } from "../../../../Enum/EnvironmentVariable";
@@ -67,6 +68,7 @@
             file: fileAsUint8Array,
             name: selectedFile.name,
             propertyId: property.id,
+            kind: UploadedFileKind.Document,
         };
 
         const roomConnection = gameManager.getCurrentGameScene()?.connection;

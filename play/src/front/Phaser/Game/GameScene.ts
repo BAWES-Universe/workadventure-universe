@@ -95,12 +95,10 @@ import { playersStore } from "../../Stores/PlayersStore";
 import { emoteStore } from "../../Stores/EmoteStore";
 import { wokaMenuStore } from "../../Stores/WokaMenuStore";
 import {
-    jitsiParticipantsCountStore,
     userIsAdminStore,
     userIsEditorStore,
     userCanModerateCallsStore,
     userCanSendMessagesStore,
-    userIsJitsiDominantSpeakerStore,
 } from "../../Stores/GameStore";
 import {
     inviteUserActivated,
@@ -344,8 +342,6 @@ export class GameScene extends DirtyScene {
     private emoteUnsubscriber!: Unsubscriber;
     private localVolumeStoreUnsubscriber: Unsubscriber | undefined;
     private followUsersColorStoreUnsubscriber!: Unsubscriber;
-    private userIsJitsiDominantSpeakerStoreUnsubscriber!: Unsubscriber;
-    private jitsiParticipantsCountStoreUnsubscriber!: Unsubscriber;
     private highlightedEmbedScreenUnsubscriber!: Unsubscriber;
     private embedScreenLayoutStoreUnsubscriber!: Unsubscriber;
     private availabilityStatusStoreUnsubscriber!: Unsubscriber;
@@ -398,8 +394,6 @@ export class GameScene extends DirtyScene {
     private firstCameraUpdateSent = false;
     private currentPlayerGroupId?: number;
     private showVoiceIndicatorChangeMessageSent = false;
-    private jitsiDominantSpeaker = false;
-    private jitsiParticipantsCount = 0;
     private cleanupDone = false;
     /** The layer that holds the name pill of every player. */
     public usernameDomLayer!: UsernameDomLayer;
@@ -1402,7 +1396,7 @@ export class GameScene extends DirtyScene {
         // make sure we restart own medias
         mediaManager.disableMyCamera();
         mediaManager.disableMyMicrophone();
-        // stop playing audio, close any open website, stop any open Jitsi, unsubscribe
+        // stop playing audio, close any open website, unsubscribe
         coWebsiteManager.cleanup(reconnecting);
         // What was closed belongs to this map: Undo is not offered in the next one.
         dismissClosedItems();
@@ -1475,8 +1469,6 @@ export class GameScene extends DirtyScene {
         this.modalVisibilityStoreUnsubscriber?.();
         this.highlightedEmbedScreenUnsubscriber?.();
         this.embedScreenLayoutStoreUnsubscriber?.();
-        this.userIsJitsiDominantSpeakerStoreUnsubscriber?.();
-        this.jitsiParticipantsCountStoreUnsubscriber?.();
         this.availabilityStatusStoreUnsubscriber?.();
         this.mapExplorationStoreUnsubscriber?.();
         this.lastNewMediaDeviceDetectedStoreUnsubscriber?.();
@@ -2776,8 +2768,6 @@ export class GameScene extends DirtyScene {
 
     private subscribeToStores(): void {
         if (
-            this.userIsJitsiDominantSpeakerStoreUnsubscriber != undefined ||
-            this.jitsiParticipantsCountStoreUnsubscriber != undefined ||
             this.availabilityStatusStoreUnsubscriber != undefined ||
             this.emoteUnsubscriber != undefined ||
             this.followUsersColorStoreUnsubscriber != undefined ||
@@ -2787,8 +2777,6 @@ export class GameScene extends DirtyScene {
         ) {
             console.error(
                 "subscribeToStores => Check all subscriber undefined ",
-                this.userIsJitsiDominantSpeakerStoreUnsubscriber,
-                this.jitsiParticipantsCountStoreUnsubscriber,
                 this.availabilityStatusStoreUnsubscriber,
                 this.emoteUnsubscriber,
                 this.followUsersColorStoreUnsubscriber,
@@ -2799,18 +2787,6 @@ export class GameScene extends DirtyScene {
 
             throw new Error("One store is already subscribed.");
         }
-
-        this.userIsJitsiDominantSpeakerStoreUnsubscriber = userIsJitsiDominantSpeakerStore.subscribe(
-            (dominantSpeaker) => {
-                this.jitsiDominantSpeaker = dominantSpeaker;
-                this.tryChangeShowVoiceIndicatorState(this.jitsiDominantSpeaker && this.jitsiParticipantsCount > 1);
-            }
-        );
-
-        this.jitsiParticipantsCountStoreUnsubscriber = jitsiParticipantsCountStore.subscribe((participantsCount) => {
-            this.jitsiParticipantsCount = participantsCount;
-            this.tryChangeShowVoiceIndicatorState(this.jitsiDominantSpeaker && this.jitsiParticipantsCount > 1);
-        });
 
         let previousAvailabilityStatus: AvailabilityStatus | undefined;
         this.availabilityStatusStoreUnsubscriber = availabilityStatusStore.subscribe((availabilityStatus) => {

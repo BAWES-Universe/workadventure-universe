@@ -863,10 +863,10 @@ test("ME-053 @local Focus, Highlight and Show a message act when you walk in", a
         .toBeGreaterThan(16);
 });
 
-test("ME-055 Jitsi call: no longer offered; an area that already has one keeps its page with the room name and its turn off", async ({
+test("ME-055 Jitsi call: not offered; a saved area that has one loses only that setting, and the map file drops it on the next save", async ({
     page,
 }, testInfo) => {
-    // Jitsi is discontinued: "Add to this area" does not list it, so an old Jitsi area comes from the saved map.
+    // Jitsi is no longer supported (#1688): an old Jitsi area can only come from a saved map.
     const url = await wamRoom(testInfo, "empty");
     await addWamAreas(url, [
         {
@@ -885,6 +885,14 @@ test("ME-055 Jitsi call: no longer offered; an area that already has one keeps i
                     jitsiRoomConfig: {},
                     trigger: "onaction",
                 },
+                {
+                    id: "old-highlight-prop",
+                    type: "highlight",
+                    opacity: 0.6,
+                    gradientWidth: 10,
+                    duration: 250,
+                    color: "#000000",
+                },
             ],
         },
     ]);
@@ -893,15 +901,14 @@ test("ME-055 Jitsi call: no longer offered; an area that already has one keeps i
     await pickAreas(page);
     await openAreaFromList(page, testInfo, "Old call");
     await expect(settings(page).getByTestId("jitsiRoomProperty"), "Jitsi call is not offered").toHaveCount(0);
-    const row = settings(page).locator(".em-row.on", { hasText: "Jitsi call" });
-    await expect(row.locator(".em-switch")).toBeChecked();
-    await row.locator(".em-row-main").click();
-    await expect(propertyPage(page).locator("#roomName")).toHaveValue("standup");
-    await propertyPage(page).getByTestId("area-property-remove").click();
+    await expect(settings(page).locator(".em-row.on", { hasText: "Jitsi call" }), "nor shown").toHaveCount(0);
+    const highlight = settings(page).locator(".em-row.on", { hasText: "Highlight" });
+    await expect(highlight.locator(".em-switch"), "the area keeps its other settings").toBeChecked();
+    // Any change saves the area as the game reads it: without the Jitsi setting.
+    await highlight.locator(".em-switch").click();
     await expect
-        .poll(async () => (await areaProps(url, "old-jitsi-area")).some((p) => p.type === "jitsiRoomProperty"))
-        .toBe(false);
-    await expect(settings(page).getByTestId("jitsiRoomProperty")).toHaveCount(0);
+        .poll(async () => (await areaProps(url, "old-jitsi-area")).map((p) => p.type).join(","))
+        .toBe("highlight");
     await backToAreaList(page);
     await newArea(page, testInfo, url, "Call room");
     await expect(settings(page).getByTestId("jitsiRoomProperty")).toHaveCount(0);

@@ -26,6 +26,8 @@ import type {
     MapStorageClearAfterUploadMessage,
     PingMessage,
     UpdateMapToNewestWithKeyMessage,
+    UploadCopiesAnswer,
+    UploadCopiesWithKeyMessage,
 } from "@workadventure/messages";
 import type { Empty } from "@workadventure/messages/src/ts-proto-generated/google/protobuf/empty";
 import type { MapStorageServer } from "@workadventure/messages/src/ts-proto-generated/services";
@@ -34,19 +36,18 @@ import { DeleteCustomEntityMapStorageCommand } from "./Commands/Entity/DeleteCus
 import { ModifyCustomEntityMapStorageCommand } from "./Commands/Entity/ModifyCustomEntityMapStorageCommand";
 import { UploadEntityMapStorageCommand } from "./Commands/Entity/UploadEntityMapStorageCommand";
 import { CustomEntityCollectionService } from "./Services/CustomEntityCollectionService";
-import { hasCopyOutsideUserRights } from "./Services/CustomEntityCopies";
+import { countCopiesByRoom, hasCopyOutsideUserRights } from "./Services/CustomEntityCopies";
+import { deleteUploadEverywhere } from "./Services/UploadDeletion";
 import { entitiesManager } from "./EntitiesManager";
 import { mapsManager } from "./MapsManager";
 import { mapPathUsingDomainWithPrefix } from "./Services/PathMapper";
-import { LockByKey } from "./Services/LockByKey";
+import { editionLocksFor } from "./Services/EditionLocks";
 import { DeleteAreaMapStorageCommand } from "./Commands/Area/DeleteAreaMapStorageCommand";
 import { UpdateAreaMapStorageCommand } from "./Commands/Area/UpdateAreaMapStorageCommand";
 import { DeleteEntityMapStorageCommand } from "./Commands/Entity/DeleteEntityMapStorageCommand";
 import { UploadFileMapStorageCommand } from "./Commands/File/UploadFileMapStorageCommand";
 import { hookManager } from "./Modules/HookManager";
 import { UpdateEntityMapStorageCommand } from "./Commands/Entity/UpdateEntityMapStorageCommand";
-
-const editionLocks = new LockByKey<string>();
 
 /**
  * List of commands that can be executed even if the user does not have edit rights on the map
@@ -89,6 +90,54 @@ function extractUniverseWorldPath(pathname: string): string {
     }
 
     return `${pathParts[startIndex]}/${pathParts[startIndex + 1]}`;
+}
+
+/** The address of a map of the world, from its path inside the world and the address of another map of it. */
+function wamUrlInWorld(sameWorldMapUrl: URL, universeWorldPath: string, pathInWorld: string): string {
+    const worldStart = sameWorldMapUrl.href.indexOf(`/${universeWorldPath}/`);
+    // A room's file name can hold spaces and other characters a web address writes differently: the address is built
+    // the way the web address parser writes it, so it matches the address the room is known by.
+    const escapedPath = pathInWorld
+        .split("/")
+        .map((part) => part.replace(/[%?#]/g, encodeURIComponent))
+        .join("/");
+    return new URL(`${sameWorldMapUrl.href.slice(0, worldStart)}/${universeWorldPath}/${escapedPath}`).href;
+}
+
+/**
+ * Whether this person may delete an upload: map editors always; its uploader only while every copy of every picture is
+ * where they can edit (#1628). The counts shown before a delete follow the same rule (#1690).
+ */
+async function mayDeleteUpload(
+    {
+        mapKey,
+        universeWorldPath,
+        uploads,
+        id,
+        pictureIds,
+    }: {
+        mapKey: string;
+        universeWorldPath: string;
+        uploads: CustomEntityCollectionService;
+        id: string;
+        pictureIds: Iterable<string>;
+    },
+    user: { uuid: string; tags: string[]; canEdit: boolean }
+): Promise<boolean> {
+    if (user.canEdit) return true;
+    if (!canManageCustomEntity(await uploads.getEntity(id), user.uuid, user.canEdit)) return false;
+    for (const pictureId of pictureIds) {
+        // eslint-disable-next-line no-await-in-loop
+        const copyOutsideRights = await hasCopyOutsideUserRights(
+            mapKey,
+            universeWorldPath,
+            pictureId,
+            { tags: user.tags, uuid: user.uuid },
+            (key) => mapsManager.getOrLoadGameMap(key)
+        );
+        if (copyOutsideRights) return false;
+    }
+    return true;
 }
 
 const mapStorageServer: MapStorageServer = {
@@ -135,6 +184,44 @@ const mapStorageServer: MapStorageServer = {
         }
     },
 
+    handleUploadCopiesQuery(
+        call: ServerUnaryCall<UploadCopiesWithKeyMessage, UploadCopiesAnswer>,
+        callback: sendUnaryData<UploadCopiesAnswer>
+    ): void {
+        (async () => {
+            const { id, userCanEdit, userUUID, connectedUserTags } = call.request;
+            const mapUrl = new URL(call.request.mapKey);
+            const mapKey = mapPathUsingDomainWithPrefix(mapUrl.pathname, mapUrl.hostname);
+            const universeWorldPath = extractUniverseWorldPath(mapUrl.pathname);
+            const uploads = new CustomEntityCollectionService(mapUrl.hostname, universeWorldPath);
+            const pictureIds = (await uploads.getUploadPictures(id)).map((picture) => picture.id);
+            // Only those who could delete the upload, by the very rule the delete follows, are told where it is placed.
+            if (
+                !(await mayDeleteUpload(
+                    { mapKey, universeWorldPath, uploads, id, pictureIds },
+                    { uuid: userUUID, tags: connectedUserTags, canEdit: userCanEdit }
+                ))
+            ) {
+                throw new Error(`User ${userUUID} is not allowed to see where the object ${id} is placed`);
+            }
+            const rooms = await countCopiesByRoom(
+                mapKey,
+                universeWorldPath,
+                pictureIds.length > 0 ? pictureIds : [id],
+                (key) => mapsManager.readGameMap(key)
+            );
+            callback(null, {
+                rooms: rooms.map((room) => ({
+                    wamUrl: wamUrlInWorld(mapUrl, universeWorldPath, room.pathInWorld),
+                    count: room.count,
+                })),
+            });
+        })().catch((e: unknown) => {
+            console.error(e);
+            callback({ name: "MapStorageError", message: getMessageFromError(e) }, null);
+        });
+    },
+
     handleEditMapCommandWithKeyMessage(
         call: ServerUnaryCall<EditMapCommandWithKeyMessage, Empty>,
         callback: sendUnaryData<EditMapCommandMessage>
@@ -165,6 +252,10 @@ const mapStorageServer: MapStorageServer = {
                 return;
             }
 
+            const wholeUploadDelete =
+                editMapCommandMessage.editMapMessage.message.$case === "deleteCustomEntityMessage" &&
+                editMapCommandMessage.editMapMessage.message.deleteCustomEntityMessage.wholeUpload;
+            const editionLocks = editionLocksFor(wholeUploadDelete, `${mapUrl.hostname}/${universeWorldPath}`);
             await editionLocks.waitForLock(mapKey, async () => {
                 const editMapCommandMessage = call.request.editMapCommandMessage;
                 if (!editMapCommandMessage || !editMapCommandMessage.editMapMessage?.message) {
@@ -449,35 +540,46 @@ const mapStorageServer: MapStorageServer = {
                     }
                     case "deleteCustomEntityMessage": {
                         const deleteCustomEntityMessage = editMapMessage.deleteCustomEntityMessage;
-                        // Checked before the command runs: it removes the placed copies from the map first. The browser
-                        // deletes an upload one picture at a time, so each picture is checked against the copies of
-                        // every picture of its upload: either all of them go, or none.
-                        if (!userCanEdit) {
-                            const uploads = new CustomEntityCollectionService(mapUrl.hostname, universeWorldPath);
-                            const upload = await uploads.getEntity(deleteCustomEntityMessage.id);
-                            const pictureIds = new Set([
-                                deleteCustomEntityMessage.id,
-                                ...(await uploads.getUploadPictures(deleteCustomEntityMessage.id)).map(
-                                    (picture) => picture.id
-                                ),
-                            ]);
-                            let copyOutsideRights = false;
-                            for (const pictureId of pictureIds) {
-                                // eslint-disable-next-line no-await-in-loop
-                                copyOutsideRights = await hasCopyOutsideUserRights(
-                                    mapKey,
-                                    universeWorldPath,
-                                    pictureId,
-                                    { tags: connectedUserTags, uuid: userUUID },
-                                    (key) => mapsManager.getOrLoadGameMap(key)
-                                );
-                                if (copyOutsideRights) break;
+                        // These two are only ever written here, after the delete went through: whatever the browser
+                        // sent in them is dropped, so it can't have other rooms told about a delete that didn't happen.
+                        deleteCustomEntityMessage.pictureIds = [];
+                        deleteCustomEntityMessage.otherRoomWamUrls = [];
+                        const uploads = new CustomEntityCollectionService(mapUrl.hostname, universeWorldPath);
+                        // The pictures that go: the browser deletes one picture, or a whole upload (#1690).
+                        const pictureIds = new Set([deleteCustomEntityMessage.id]);
+                        if (deleteCustomEntityMessage.wholeUpload || !userCanEdit) {
+                            for (const picture of await uploads.getUploadPictures(deleteCustomEntityMessage.id)) {
+                                pictureIds.add(picture.id);
                             }
-                            if (!canManageCustomEntity(upload, userUUID, userCanEdit) || copyOutsideRights) {
-                                throw new Error(
-                                    `User ${userUUID} is not allowed to delete the object ${deleteCustomEntityMessage.id} on map ${mapUrl}`
-                                );
-                            }
+                        }
+                        // Checked before the command runs: it removes the placed copies from the map first. An
+                        // upload's pictures are checked against the copies of every picture of it: either all of them
+                        // go, or none.
+                        if (
+                            !(await mayDeleteUpload(
+                                { mapKey, universeWorldPath, uploads, id: deleteCustomEntityMessage.id, pictureIds },
+                                { uuid: userUUID, tags: connectedUserTags, canEdit: userCanEdit }
+                            ))
+                        ) {
+                            throw new Error(
+                                `User ${userUUID} is not allowed to delete the object ${deleteCustomEntityMessage.id} on map ${mapUrl}`
+                            );
+                        }
+                        if (deleteCustomEntityMessage.wholeUpload) {
+                            const otherRooms = await deleteUploadEverywhere({
+                                mapKey,
+                                universeWorldPath,
+                                pictureIds: [...pictureIds],
+                                commandId,
+                                message: deleteCustomEntityMessage,
+                                uploads,
+                            });
+                            // Told to the back, so the people in those rooms see the copies go.
+                            deleteCustomEntityMessage.pictureIds = [...pictureIds];
+                            deleteCustomEntityMessage.otherRoomWamUrls = otherRooms.map((room) =>
+                                wamUrlInWorld(mapUrl, universeWorldPath, room)
+                            );
+                            break;
                         }
                         await entitiesManager.executeCommand(
                             new DeleteCustomEntityMapStorageCommand(
