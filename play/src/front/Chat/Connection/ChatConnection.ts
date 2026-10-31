@@ -259,6 +259,11 @@ export type ChatMessageContent = {
     voiceWaveform?: number[];
     /** The file could not be fetched (gone, or the network failed). It is tried again the next time it is shown. */
     mediaFailed?: boolean;
+    /**
+     * What each file of a gallery is, in the order of `url` then `urls`, when its address cannot tell (a file kept by
+     * the chat server has none). Without it the gallery reads the kind from the end of each address.
+     */
+    itemTypes?: Array<"image" | "video" | "audio" | "file">;
 };
 export const historyVisibilityOptions = ["joined", "invited", "world_readable"] as const;
 export type historyVisibility = (typeof historyVisibilityOptions)[number];

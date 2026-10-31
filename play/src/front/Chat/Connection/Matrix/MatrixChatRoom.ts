@@ -52,6 +52,7 @@ import LL from "../../../../i18n/i18n-svelte";
 import { previewLine } from "../../Components/Room/MessageActions/messageActions";
 import { toMatrixWaveform, VOICE_NOTE_NAME, type VoiceNoteDetails } from "../../VoiceNote/VoiceNote";
 import { MatrixChatMessage } from "./MatrixChatMessage";
+import { MediaGroupAssembler } from "./MatrixMediaGroupAssembler";
 import { MatrixChatMessageReaction } from "./MatrixChatMessageReaction";
 import { matrixSecurity } from "./MatrixSecurity";
 import { MatrixChatRoomMember } from "./MatrixChatRoomMember";
@@ -115,6 +116,8 @@ export class MatrixChatRoom
     readonly pinnedMessageIds: Writable<string[]>;
     // Messages read on their own, outside the loaded conversation (an older pin): kept to be told when deleted.
     private readonly detachedMessages = new Map<string, MatrixChatMessage>();
+    /** Files sent together arrive as several messages: they are joined into one gallery. */
+    private readonly mediaGroups = new MediaGroupAssembler((lead, isFresh) => this.showLiveMessage(lead, isFresh));
     // The pinned list this person sent last, until the room's state shows it.
     private pinsAwaitingEcho: string[] | undefined;
     private pinsEchoTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -261,7 +264,7 @@ export class MatrixChatRoom
 
         const result = await Promise.all(decryptMessagesPromises);
         const messages = result.filter((message) => message !== undefined);
-        this.messages.push(...messages);
+        this.messages.push(...this.mediaGroups.joinHistory(messages));
         this.hasPreviousMessage.set(this.timelineWindow.canPaginate(Direction.Backward));
 
         // The first events of a room can all be reactions or deletions: older history holds its latest message,
@@ -424,6 +427,7 @@ export class MatrixChatRoom
                 this.matrixRoom.getLiveTimeline().getTimelineSet()
             );
             this.messages.clear();
+            this.mediaGroups.reset();
             try {
                 await this.initMatrixRoomMessagesAndReactions();
             } catch (error) {
@@ -479,21 +483,26 @@ export class MatrixChatRoom
     private handleNewMessage(event: MatrixEvent, isFresh = true) {
         // The list built again after a gap can already hold it: it is never added twice.
         const eventId = event.getId();
-        const message =
-            (eventId ? this.messages.get(eventId) : undefined) ??
-            new MatrixChatMessage(event, this.matrixRoom, false, this.type === "direct");
-        if (!eventId || !this.messages.has(eventId)) this.messages.push(message);
+        // A file kept inside a gallery is not in the list itself: it comes again as an event already shown.
+        if (eventId && this.mediaGroups.hasJoined(eventId)) return;
+        const existing = eventId ? this.messages.get(eventId) : undefined;
+        const message = existing ?? new MatrixChatMessage(event, this.matrixRoom, false, this.type === "direct");
+        // Files sent together arrive one by one: the gallery is shown once its last file is here.
+        const shown = existing ?? this.mediaGroups.addLive(message, isFresh);
         const senderID = event.getSender();
+        if (!senderID || !get(botsChatIds).includes(senderID)) this.addEventContentInMemory(event);
+        if (shown) this.showLiveMessage(shown, isFresh, !existing, senderID);
+    }
+
+    /** A new message (or a finished gallery) goes in the list, and its sender stops typing and may be notified. */
+    private showLiveMessage(message: MatrixChatMessage, isFresh: boolean, isNew = true, senderID = message.senderId) {
+        if (isNew && !this.messages.has(message.id)) this.messages.push(message);
         // The message has arrived, so its sender is no longer typing it.
         if (senderID)
             get(this.members)
                 .find((member) => member.id === senderID)
                 ?.stoppedTyping();
-        if (senderID) {
-            if (get(botsChatIds).includes(senderID)) {
-                return;
-            }
-        }
+        if (senderID && get(botsChatIds).includes(senderID)) return;
         if (isFresh && senderID !== this.matrixRoom.client.getSafeUserId() && !get(this.areNotificationsMuted)) {
             this.notifyNewMessage(message);
             if (!isAChatRoomIsVisible() && get(selectedRoomStore)?.id !== "proximity") {
@@ -501,8 +510,6 @@ export class MatrixChatRoom
                 navChat.switchToChat();
             }
         }
-
-        this.addEventContentInMemory(event);
     }
 
     private handleNewMessageReaction(event: MatrixEvent, messages: SearchableArrayStore<string, MatrixChatMessage>) {
@@ -671,7 +678,7 @@ export class MatrixChatRoom
             // What was read stays, even when a later request failed: the window has moved past those events.
             this.hasPreviousMessage.set(this.timelineWindow.canPaginate(Direction.Backward));
             const messages = pages.flat();
-            if (messages.length > 0) this.messages.unshift(...messages);
+            if (messages.length > 0) this.messages.unshift(...this.mediaGroups.joinHistory(messages));
         }
     }
 
@@ -993,6 +1000,7 @@ export class MatrixChatRoom
         this.matrixRoom.off(RoomEvent.MyMembership, this.handleMyMembership);
         this.matrixRoom.off(RoomStateEvent.NewMember, this.handleNewMember);
         clearTimeout(this.pinsEchoTimeout);
+        this.mediaGroups?.dispose();
         get(this.members).forEach((member) => {
             member.destroy();
         });
