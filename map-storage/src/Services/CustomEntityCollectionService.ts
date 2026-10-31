@@ -71,6 +71,51 @@ export class CustomEntityCollectionService {
         return mapPathUsingDomainWithPrefix(this.scopedPath(basePath), this.hostname);
     }
 
+    /** Every upload's picture as saved. */
+    private async getEntities(): Promise<EntityRawPrefab[]> {
+        const entityCollectionFileVirtualPath = this.getEntityCollectionFileVirtualPath();
+        if (!(await fileSystem.exist(entityCollectionFileVirtualPath))) {
+            return [];
+        }
+        return EntityCollectionRaw.parse(JSON.parse(await fileSystem.readFileAsString(entityCollectionFileVirtualPath)))
+            .collection;
+    }
+
+    /** One upload's picture as saved, or undefined when there is none with this id. */
+    public async getEntity(id: string): Promise<EntityRawPrefab | undefined> {
+        return (await this.getEntities()).find((entity) => entity.id === id);
+    }
+
+    /**
+     * Every picture of the upload this picture belongs to: its first picture and its other sides and colours. Empty
+     * when there is no picture with this id.
+     */
+    public async getUploadPictures(id: string): Promise<EntityRawPrefab[]> {
+        const entities = await this.getEntities();
+        const picture = entities.find((entity) => entity.id === id);
+        if (!picture) {
+            return [];
+        }
+        const firstPictureId = picture.variantOf ?? picture.id;
+        return entities.filter((entity) => entity.id === firstPictureId || entity.variantOf === firstPictureId);
+    }
+
+    /**
+     * Whether a new picture with this id or this file name would replace one already saved. The browser picks both,
+     * so they are checked before anyone who isn't a map editor uploads (#1628).
+     */
+    public async isTaken(id: string, imagePath: string): Promise<boolean> {
+        const fileName = path.parse(imagePath).base;
+        if (
+            (await this.getEntities()).some(
+                (entity) => entity.id === id || path.parse(entity.imagePath).base === fileName
+            )
+        ) {
+            return true;
+        }
+        return fileSystem.exist(this.getEntityToUploadVirtualPath(imagePath));
+    }
+
     public async uploadEntity(uploadEntityMessage: UploadEntityMessage) {
         const { imagePath, file } = uploadEntityMessage;
         await fileSystem.writeByteArrayAsFile(this.getEntityToUploadVirtualPath(imagePath), file);

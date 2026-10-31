@@ -299,6 +299,12 @@ export const EntityRawPrefab = z.object({
     // Custom uploads only: another side or colour of an upload carries the id of that upload's first picture, so the
     // pictures group into one object (sides to turn between, colours to choose from), as built-in objects do by name.
     variantOf: z.string().optional(),
+    // Custom uploads only (#1628): who uploaded it, written by map-storage from the signed-in person, never from the
+    // browser (same field as upstream WorkAdventure). Another side or colour carries its first picture's uploader.
+    // Missing on uploads from before it was recorded: only map editors can change those.
+    ownerId: z.string().optional(),
+    // That person's name when they uploaded it, to say whose upload it is.
+    ownerName: z.string().optional(),
 });
 
 export const EntityPrefabType = z.union([z.literal("Default"), z.literal("Custom")]);

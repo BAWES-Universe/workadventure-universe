@@ -248,6 +248,8 @@ message EditMapCommandWithKeyMessage {
   repeated string connectedUserTags = 3;
   bool userCanEdit = 4;
   string userUUID = 5;
+  // The person's name, kept on the objects they upload.
+  string userName = 6;
 }
 
 message ModifyAreaMessage {
@@ -315,6 +317,10 @@ message UploadEntityMessage {
   optional int32 depthOffset = 9;
   // Set when this picture is another side or colour of an upload: the id of that upload's first picture.
   optional string variantOf = 10;
+  // Who uploaded it (the first picture's uploader, for another side or colour). Map-storage writes both from the
+  // signed-in person and ignores what the browser sends.
+  optional string ownerId = 11;
+  optional string ownerName = 12;
 }
 
 message UploadFileMessage {

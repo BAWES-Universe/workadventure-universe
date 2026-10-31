@@ -530,7 +530,7 @@ const mapEditor: BaseTranslation = {
             search: "Search objects",
             allCategories: "All categories",
             recentlyUsed: "Recently used",
-            yourUploads: "Your uploads",
+            uploads: "Uploads",
             all: "All",
             none: "Nothing matches",
             addYourOwn: "Add your own",
@@ -549,6 +549,9 @@ const mapEditor: BaseTranslation = {
             settingsSubtitle: "What happens when someone uses it",
             editUpload: "Edit this upload",
             sidesAndColours: "Sides and colours",
+            uploadedByYou: "You uploaded this",
+            uploadedBy: "Uploaded by {name}",
+            onlyUploaderAndEditors: ". Only {name} and map editors can change it.",
         },
         variants: {
             yourUpload: "Your upload",

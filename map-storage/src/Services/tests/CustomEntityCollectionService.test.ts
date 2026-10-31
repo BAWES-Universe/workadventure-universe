@@ -101,4 +101,36 @@ describe("CustomEntityCollectionService", () => {
         expect([...files.keys()].some((key) => key.includes("//"))).toBe(false);
         expect(collection().map((e) => e.id)).toEqual(["arcade", "arcade"]);
     });
+    it("finds every picture of an upload from any of them, and whether a new picture would replace one (#1628)", async () => {
+        files.clear();
+        files.set(
+            COLLECTION_FILE,
+            JSON.stringify({
+                version: "1.0",
+                collectionName: "custom entities",
+                tags: [],
+                collection: [
+                    prefab("lamp"),
+                    { ...prefab("lamp-left"), variantOf: "lamp" },
+                    { ...prefab("lamp-red"), variantOf: "lamp" },
+                    prefab("sign"),
+                ],
+            })
+        );
+        const service = new CustomEntityCollectionService("host", "universe/world");
+
+        const ids = async (id: string) => (await service.getUploadPictures(id)).map((picture) => picture.id).sort();
+        expect(await ids("lamp")).toEqual(["lamp", "lamp-left", "lamp-red"]);
+        expect(await ids("lamp-left")).toEqual(["lamp", "lamp-left", "lamp-red"]);
+        expect(await ids("sign")).toEqual(["sign"]);
+        expect(await ids("missing")).toEqual([]);
+
+        expect(await service.isTaken("sign", "new.png")).toBe(true);
+        expect(await service.isTaken("new", "sign.png")).toBe(true);
+        expect(await service.isTaken("new", "some/folder/sign.png")).toBe(true);
+        expect(await service.isTaken("new", "new.png")).toBe(false);
+        // A file already saved with no picture pointing at it
+        files.set("host/universe/world/assets/entities/orphan.png", "bytes");
+        expect(await service.isTaken("new", "orphan.png")).toBe(true);
+    });
 });
