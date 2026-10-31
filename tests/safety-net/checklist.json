@@ -4116,7 +4116,7 @@
       "area": "Map editor and Look around",
       "topic": "Upload: check",
       "action": "Choose a 64x64 PNG; then a 70x45 PNG; then a .gif or two files at once. Desktop: drag a PNG onto the drop zone.",
-      "expected": "\"Check it\" page: the picture on the tile grid at real size next to your WOKA (\"You, for size\"), line \"64 × 64 px, 2 × 2 tiles. Fits the grid.\" For 70x45: \"This won't line up with the tiles. Try 64 × 64.\" Wrong format / several files: an error under the drop zone. Drop works like choose.",
+      "expected": "\"Check it\" page: the picture on the tile grid at real size with your WOKA walking past it (\"You, walking past it\"), line \"64 × 64 px, 2 × 2 tiles. Fits the grid.\" For 70x45: \"This won't line up with the tiles. Try 64 × 64.\" Wrong format / several files: an error under the drop zone. Drop works like choose.",
       "source": "approved B2p1 frame 9",
       "runs": "yes",
       "runsNote": "yes",
@@ -4127,13 +4127,13 @@
       "id": "ME-028",
       "area": "Map editor and Look around",
       "topic": "Upload: save",
-      "action": "On Check it: set Name, Category \"plants2\", toggle Floats off, tap two grid squares, pick Drawn = On the ground / Custom (slider), press \"Save to my objects\".",
+      "action": "On Check it: set Name, Category \"plants2\". The two floor squares come marked red with \"Bump into it\" picked; pick \"Walk through it\" (squares clear), tap a square (\"Bump into it\" again), move the front and back slider (reset link shows), pick \"Walk over it\", then \"Bump into it\"; press \"Save to my objects\" (#1694).",
       "expected": "Upload goes to map-storage; the panel returns to the picker showing the new object (in \"Your uploads\" and in search). KNOWN FAIL sweep 20 / GPT R2: the panel opens category \"plants2\" empty.",
       "source": "prod + approved B2p1 frame 9",
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": true,
-      "hooks": "`name` UploadGuide.svelte:237, `tags` :245, `floatingObject` :253, `.em-cell` :195, depth `select` :265, range :276, `applyEntityModifications` :285; Cancel button \"Cancel\" :281"
+      "hooks": "`name`, `tags`, `.em-cell`, `meet-bump` / `meet-through` / `meet-over` cards, `front-back` slider and `front-back-line` in UploadGuide.svelte; `applyEntityModifications`; Cancel button \"Cancel\""
     },
     {
       "id": "ME-029",
