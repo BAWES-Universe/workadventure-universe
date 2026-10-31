@@ -1057,7 +1057,7 @@
     .em-danger-zone .em-remove {
         margin: 0 0 4px;
     }
-    /* A setting that cannot go with one already on (Stage next to a video call): shown, greyed, not tappable. */
+    /* A setting that cannot go with one already on (Stage next to a meeting room): shown, greyed, not tappable. */
     button.em-row.em-row-off {
         opacity: 0.45;
         cursor: not-allowed;
