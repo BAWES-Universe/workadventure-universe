@@ -17,10 +17,10 @@ def label_for(pcm16k: np.ndarray) -> dict:
     db = 10 * np.log10((f * f).mean(axis=1) + 1e-12)
     act = db[db > -45]
     m = float(act.mean()) if len(act) else -90.0
-    if m >= -16:
-        return {"label": "excited", "confidence": round(min(1.0, 0.5 + (m + 16) / 10), 3), "source": "stub"}
-    if m <= -28:
-        return {"label": "calm", "confidence": round(min(1.0, 0.5 + (-28 - m) / 10), 3), "source": "stub"}
+    if m >= -19:
+        return {"label": "excited", "confidence": round(min(1.0, 0.5 + (m + 19) / 10), 3), "source": "stub"}
+    if m <= -30:
+        return {"label": "calm", "confidence": round(min(1.0, 0.5 + (-30 - m) / 10), 3), "source": "stub"}
     return {"label": "neutral", "confidence": 0.5, "source": "stub"}
 
 
