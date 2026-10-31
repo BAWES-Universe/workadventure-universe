@@ -40,6 +40,7 @@
         restoreChatAfterFile,
     } from "../../Chat/ChatSheetStore";
     import { CHAT_SHEET_SIZES, type ChatSheetRest } from "../../Chat/ChatSheetSizes";
+    import { titleBarHiddenItemStore } from "../../Stores/TitleBarStore";
     import { clampHeight, getSnapHeights, nearestSnap, nextSnap, sheetFrameStyle } from "../Sheet/BottomSheet";
     import SheetHandle from "../Sheet/SheetHandle.svelte";
     import LL from "../../../i18n/i18n-svelte";
@@ -98,6 +99,9 @@
     // The close closes the window and everything in it, except a page its map says may not be closed. Two or more
     // closed at once can be undone for a few seconds.
     const closeWindow = closeAllOpenItems;
+
+    // The item whose title bar is hidden is alone in the sheet: its close moves up to the handle line.
+    $: handleClose = !floating && $titleBarHiddenItemStore !== undefined && $titleBarHiddenItemStore.isClosable();
 
     // The emote picker, the express tray and a picture shown large close on Esc through their own listeners, which do
     // not mark the key as used. Whether one was open is read before any of them runs, as the one that closes it
@@ -406,14 +410,30 @@
     {/if}
 
     {#if !floating}
-        <SheetHandle
-            {sheetHeight}
-            onDrag={onSheetDrag}
-            onRelease={onSheetRelease}
-            onTap={onSheetTap}
-            label={$LL.cowebsite.sheetHandle()}
-            testId="openHereSheetHandle"
-        />
+        <!-- With the title bar hidden ("Hide title bar"), the row that carries the close is not there: the close sits at
+             the right end of the handle line instead. A page that may not be closed has no close at all. -->
+        <div class="sheet-handle-line" class:with-close={handleClose}>
+            <SheetHandle
+                {sheetHeight}
+                onDrag={onSheetDrag}
+                onRelease={onSheetRelease}
+                onTap={onSheetTap}
+                label={$LL.cowebsite.sheetHandle()}
+                testId="openHereSheetHandle"
+            />
+            {#if handleClose}
+                <button
+                    type="button"
+                    class="sheet-handle-close"
+                    title={$LL.chat.fileViewer.close()}
+                    aria-label={$LL.chat.fileViewer.close()}
+                    data-testid="openHereHandleClose"
+                    on:click={closeWindow}
+                >
+                    <IconX font-size="20" />
+                </button>
+            {/if}
+        </div>
     {/if}
 
     <div bind:this={card} class:open-here-card={floating} class:sheet-card={!floating} id="cowebsites-window">
@@ -524,6 +544,55 @@
             :global(.open-here-row .open-here-action:not(.open-here-close)) {
                 display: none;
             }
+        }
+    }
+
+    // The handle line, with the close at its right end when the title bar is hidden: the same plain 48px icon as the
+    // row's, no box. The line grows from the grabber's 28px to 48px so the tap has its room and the page stays clear.
+    .sheet-handle-line {
+        position: relative;
+        flex: none;
+
+        &.with-close {
+            height: 48px;
+
+            :global(.sheet-handle) {
+                height: 48px;
+                padding-top: 0;
+                align-items: center;
+            }
+        }
+    }
+
+    .sheet-handle-close {
+        position: absolute;
+        top: 0;
+        inset-inline-end: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        box-sizing: border-box;
+        width: 48px;
+        height: 48px;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        border-radius: 16px;
+        background: transparent;
+        color: rgba(255, 255, 255, 0.85);
+        cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+
+        @media (hover: hover) {
+            &:hover {
+                color: #fff;
+                background: rgba(255, 255, 255, 0.1);
+            }
+        }
+
+        &:focus-visible {
+            outline: none;
+            box-shadow: inset 0 0 0 2px #fff;
         }
     }
 

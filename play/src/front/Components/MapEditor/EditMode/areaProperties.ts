@@ -485,6 +485,7 @@ export function createAreaProperty(
                 width: 50,
                 trigger: ON_ACTION_TRIGGER_ENTER,
                 hideUrl: false,
+                hideTitleBar: false,
             };
         }
         case "playAudio":
@@ -570,6 +571,7 @@ export function createAppProperty(app: ApplicationDefinitionInterface): AreaData
         forceNewTab: app.forceNewTab,
         allowAPI: app.allowAPI,
         hideUrl: false,
+        hideTitleBar: false,
     };
 }
 

@@ -76,6 +76,7 @@
             forceNewTab: app.forceNewTab,
             allowAPI: app.allowAPI,
             hideUrl: false,
+            hideTitleBar: false,
         };
         $mapEditorSelectedEntityStore.addProperty(property);
 
@@ -224,6 +225,7 @@
                     policy,
                     width: 50,
                     hideUrl: false,
+                    hideTitleBar: false,
                 };
             case "playAudio":
                 return {

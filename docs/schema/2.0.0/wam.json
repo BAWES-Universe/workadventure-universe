@@ -242,6 +242,10 @@
                         "hideUrl": {
                           "type": "boolean",
                           "default": false
+                        },
+                        "hideTitleBar": {
+                          "type": "boolean",
+                          "default": false
                         }
                       },
                       "required": [

@@ -113,6 +113,9 @@ const mapEditor: BaseTranslation = {
             forcedInNewTab: "Forced in new tab",
             openApplication: "Open application",
             hideUrlLabel: "Hide URL",
+            hideTitleBarLabel: "Hide title bar",
+            hideTitleBarHelp:
+                "When it's the only thing open, the site fills the window. The bar comes back when something else opens.",
             actionButtonLabel: "Open link",
         },
         speakerMegaphone: {

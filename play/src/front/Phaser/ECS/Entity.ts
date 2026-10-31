@@ -416,7 +416,9 @@ export class Entity extends Phaser.GameObjects.Image implements ActivatableInter
                                     property.allowAPI,
                                     property.policy,
                                     property.width,
-                                    property.closable
+                                    property.closable,
+                                    undefined,
+                                    property.hideTitleBar
                                 );
                                 try {
                                     coWebsites.add(coWebsite);
