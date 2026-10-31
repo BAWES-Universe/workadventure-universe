@@ -904,10 +904,24 @@ test("ME-055 Jitsi call: not offered; a saved area that has one loses only that 
     await expect(settings(page).locator(".em-row.on", { hasText: "Jitsi call" }), "nor shown").toHaveCount(0);
     const highlight = settings(page).locator(".em-row.on", { hasText: "Highlight" });
     await expect(highlight.locator(".em-switch"), "the area keeps its other settings").toBeChecked();
-    // Any change saves the area as the game reads it: without the Jitsi setting.
+    // Any change saves the area as the game reads it: without the Jitsi setting. Switching Highlight off and back
+    // on must leave it saved and on.
     await highlight.locator(".em-switch").click();
     await expect
-        .poll(async () => (await areaProps(url, "old-jitsi-area")).map((p) => p.type).join(","))
+        .poll(async () =>
+            (await areaProps(url, "old-jitsi-area")).map((p) => `${p.type}${p.disabled ? ":off" : ""}`).join(",")
+        )
+        .toBe("highlight:off");
+    await highlight.locator(".em-switch").click();
+    await expect(highlight.locator(".em-switch"), "Highlight is on again").toBeChecked();
+    await expect
+        .poll(
+            async () => {
+                const saved = await areaProps(url, "old-jitsi-area");
+                return saved.map((p) => `${p.type}${"disabled" in p ? ":flagged" : ""}`).join(",");
+            },
+            { message: "the saved area has only Highlight, and it is on" }
+        )
         .toBe("highlight");
     await backToAreaList(page);
     await newArea(page, testInfo, url, "Call room");
