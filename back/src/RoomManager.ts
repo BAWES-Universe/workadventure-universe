@@ -179,7 +179,9 @@ const roomManager = {
                                 break;
                             }
                             case "clickObjectSoundMessage": {
-                                room.clickObjectSound(message.message.clickObjectSoundMessage);
+                                room.clickObjectSound(message.message.clickObjectSoundMessage).catch((e) =>
+                                    console.error("Could not play an object's clicked sound", e)
+                                );
                                 break;
                             }
                             case "publicEvent":

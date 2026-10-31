@@ -67,7 +67,7 @@ import { ModeratorTagFinder } from "../Services/ModeratorTagFinder";
 import { VariableError } from "../Services/VariableError";
 import { VariablesManager } from "../Services/VariablesManager";
 import { AreaOccupancy } from "./AreaOccupancy";
-import { ObjectSounds } from "./ObjectSounds";
+import { ObjectSounds, sharedSoundOf } from "./ObjectSounds";
 import type { BrothersFinder } from "./BrothersFinder";
 import { Group } from "./Group";
 import { PositionNotifier } from "./PositionNotifier";
@@ -390,9 +390,23 @@ export class GameRoom implements BrothersFinder {
         this.areaOccupancy.setLocked(user, message.areaId, message.propertyId, message.value === "true");
     }
 
-    /** A player clicks an object whose sound other people hear (#1627) */
-    public clickObjectSound(message: ClickObjectSoundMessage): void {
-        this.objectSounds.click(message);
+    /**
+     * A player clicks an object whose sound other people hear (#1627). The room's saved map must have that sound, and
+     * gives its loop and its wait; the clicker only gives its length.
+     */
+    public async clickObjectSound(message: ClickObjectSoundMessage): Promise<void> {
+        let wam: WAMFileFormat | undefined;
+        try {
+            wam = await this.getWam();
+        } catch (e) {
+            console.warn(`Could not read the objects of ${this._roomUrl} for a clicked sound`, e);
+            wam = this.lastGoodWam;
+        }
+        const sound = sharedSoundOf(wam, message.entityId, message.propertyId);
+        if (!sound) {
+            return;
+        }
+        this.objectSounds.click({ ...message, loop: sound.loop, waitSeconds: sound.waitSeconds });
     }
 
     /** The objects' clicked sounds still playing, for a player who arrives */
@@ -1281,6 +1295,10 @@ export class GameRoom implements BrothersFinder {
                             this.wamPromise = undefined;
                             void this.sendMegaphoneSettingsToUsers();
                             void this.refreshAreaOccupancy();
+                        }
+                        if (editedCase === "createEntityMessage" || editedCase === "deleteEntityMessage") {
+                            // Which objects have a sound other people hear is read from the saved map (#1627)
+                            this.wamPromise = undefined;
                         }
                         if (editMapCommandMessage.editMapMessage?.message?.$case === "modifyEntityMessage") {
                             // If the area is modified, we need to reset the WAM and the moderator tag finder.

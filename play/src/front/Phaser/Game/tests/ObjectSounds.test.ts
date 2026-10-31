@@ -210,7 +210,14 @@ describe("ObjectSounds (#1627)", () => {
             { entityId: "gong", propertyId: "snd", loop: false, durationSeconds: 4, waitSeconds: 30 },
         ]);
         expect(voices).toHaveLength(0);
-        updates.next({ entityId: "gong", propertyId: "snd", playing: true, loop: false, elapsedSeconds: 0 });
+        updates.next({
+            entityId: "gong",
+            propertyId: "snd",
+            playing: true,
+            loop: false,
+            elapsedSeconds: 0,
+            durationSeconds: 4,
+        });
         await flush();
         expect(voices).toHaveLength(1);
         // Everyone on the map hears it at the set volume, wherever they are
@@ -219,8 +226,22 @@ describe("ObjectSounds (#1627)", () => {
 
     it("never plays a sound the map does not have, whatever the server says", async () => {
         const { voices, updates, flush } = setUp([fireplace()]);
-        updates.next({ entityId: "elsewhere", propertyId: "snd", playing: true, loop: true, elapsedSeconds: 0 });
-        updates.next({ entityId: "fireplace", propertyId: "snd", playing: true, loop: true, elapsedSeconds: 0 });
+        updates.next({
+            entityId: "elsewhere",
+            propertyId: "snd",
+            playing: true,
+            loop: true,
+            elapsedSeconds: 0,
+            durationSeconds: 0,
+        });
+        updates.next({
+            entityId: "fireplace",
+            propertyId: "snd",
+            playing: true,
+            loop: true,
+            elapsedSeconds: 0,
+            durationSeconds: 0,
+        });
         await flush();
         expect(voices).toHaveLength(0);
     });
@@ -234,7 +255,14 @@ describe("ObjectSounds (#1627)", () => {
         };
         const { voices, updates, moveTo, flush, wait } = setUp([jukebox]);
         await moveTo(12);
-        updates.next({ entityId: "jukebox", propertyId: "snd", playing: true, loop: true, elapsedSeconds: 0 });
+        updates.next({
+            entityId: "jukebox",
+            propertyId: "snd",
+            playing: true,
+            loop: true,
+            elapsedSeconds: 0,
+            durationSeconds: 0,
+        });
         await flush();
         await moveTo(11);
         expect(voices).toHaveLength(0);
@@ -246,6 +274,35 @@ describe("ObjectSounds (#1627)", () => {
         expect(voices[0].destroyed).toBe(true);
     });
 
+    it("never picks up a shared sound that ended while out of earshot", async () => {
+        const bell: SoundObject = {
+            id: "bell",
+            x: 100,
+            y: 100,
+            properties: [sound({ heardBy: "range", fullVolumeWithin: 2, heardUpTo: 8 })],
+        };
+        const { voices, audible, updates, moveTo, flush, wait } = setUp([bell]);
+        await moveTo(12);
+        updates.next({
+            entityId: "bell",
+            propertyId: "snd",
+            playing: true,
+            loop: false,
+            elapsedSeconds: 0,
+            durationSeconds: 4,
+        });
+        await flush();
+        wait(2000);
+        await moveTo(3);
+        expect(voices).toHaveLength(1);
+        expect(voices[0].sources[0]).toMatchObject({ startAt: 2 });
+        await moveTo(12);
+        wait(3000);
+        await moveTo(3);
+        expect(voices).toHaveLength(1);
+        expect(audible).toEqual([true, false]);
+    });
+
     it("lets someone who arrives hear a playing jukebox from where it is, at their distance", async () => {
         const jukebox: SoundObject = {
             id: "jukebox",
@@ -255,11 +312,27 @@ describe("ObjectSounds (#1627)", () => {
         };
         const { voices, updates, moveTo, flush } = setUp(
             [jukebox],
-            [{ entityId: "jukebox", propertyId: "snd", playing: true, loop: true, elapsedSeconds: 42 }]
+            [
+                {
+                    entityId: "jukebox",
+                    propertyId: "snd",
+                    playing: true,
+                    loop: true,
+                    elapsedSeconds: 42,
+                    durationSeconds: 0,
+                },
+            ]
         );
         await moveTo(1);
         expect(voices[0].sources[0]).toMatchObject({ loop: true, startAt: 42 });
-        updates.next({ entityId: "jukebox", propertyId: "snd", playing: false, loop: true, elapsedSeconds: 0 });
+        updates.next({
+            entityId: "jukebox",
+            propertyId: "snd",
+            playing: false,
+            loop: true,
+            elapsedSeconds: 0,
+            durationSeconds: 0,
+        });
         await flush();
         expect(voices[0].destroyed).toBe(true);
     });

@@ -437,7 +437,8 @@ message ObjectSoundMessage {
   bool playing = 3;
   bool loop = 4;
   // How far into the sound it already is, so that someone who arrives hears it from where it is
-  double elapsedSeconds = 5;
+  double elapsedSeconds = 5;  // How long it lasts (0 when it loops or is unknown), so that a sound that ended out of earshot is not picked up
+  double durationSeconds = 6;
 }
 
 message ReceivedEventMessage {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ObjectSoundMessage } from "@workadventure/messages";
-import { ObjectSounds } from "../src/Model/ObjectSounds";
+import type { WAMFileFormat } from "@workadventure/map-editor";
+import { ObjectSounds, sharedSoundOf } from "../src/Model/ObjectSounds";
 
 function setUp() {
     const sent: ObjectSoundMessage[] = [];
@@ -26,7 +27,14 @@ describe("ObjectSounds (#1627)", () => {
         const { sent, sounds } = setUp();
         sounds.click(click());
         expect(sent).toEqual([
-            { entityId: "gong", propertyId: "sound", playing: true, loop: false, elapsedSeconds: 0 },
+            {
+                entityId: "gong",
+                propertyId: "sound",
+                playing: true,
+                loop: false,
+                elapsedSeconds: 0,
+                durationSeconds: 4,
+            },
         ]);
     });
 
@@ -57,7 +65,14 @@ describe("ObjectSounds (#1627)", () => {
         sounds.click(click({ durationSeconds: 10 }));
         wait(2500);
         expect(sounds.getMessages()).toEqual([
-            { entityId: "gong", propertyId: "sound", playing: true, loop: false, elapsedSeconds: 2.5 },
+            {
+                entityId: "gong",
+                propertyId: "sound",
+                playing: true,
+                loop: false,
+                elapsedSeconds: 2.5,
+                durationSeconds: 10,
+            },
         ]);
         wait(8000);
         expect(sounds.getMessages()).toEqual([]);
@@ -69,5 +84,47 @@ describe("ObjectSounds (#1627)", () => {
         sounds.click(click({ waitSeconds: -1 }));
         sounds.click({ ...click(), entityId: "" });
         expect(sent).toEqual([]);
+    });
+
+    it("forgets sounds whose wait is over, whatever objects were clicked", () => {
+        const { sounds, wait } = setUp();
+        for (let i = 0; i < 50; i++) {
+            sounds.click({ ...click(), entityId: `object-${i}` });
+        }
+        wait(5000);
+        sounds.click(click());
+        expect((sounds as unknown as { sounds: Map<string, unknown> }).sounds.size).toBe(1);
+    });
+});
+
+describe("sharedSoundOf (#1627)", () => {
+    const wam = (properties: unknown[]) =>
+        ({
+            entities: { gong: { x: 0, y: 0, prefabRef: { collectionName: "c", id: "p" }, properties } },
+        } as unknown as WAMFileFormat);
+    const audio = (fields: Record<string, unknown>) => ({
+        id: "sound",
+        type: "playAudio",
+        audioLink: "https://example.com/gong.mp3",
+        ...fields,
+    });
+
+    it("takes the loop and the wait from the saved map, not from the clicker", () => {
+        expect(
+            sharedSoundOf(
+                wam([audio({ startsOn: "click", heardBy: "map", loop: true, clickWait: 9 })]),
+                "gong",
+                "sound"
+            )
+        ).toEqual({ loop: true, waitSeconds: 9 });
+    });
+
+    it("backs no click on an object the map does not have, or whose sound only the clicker hears", () => {
+        const map = wam([audio({ startsOn: "click", heardBy: "map" })]);
+        expect(sharedSoundOf(map, "elsewhere", "sound")).toBeUndefined();
+        expect(sharedSoundOf(map, "gong", "other")).toBeUndefined();
+        expect(sharedSoundOf(wam([audio({ startsOn: "click", heardBy: "clicker" })]), "gong", "sound")).toBeUndefined();
+        expect(sharedSoundOf(wam([audio({ startsOn: "range", heardBy: "map" })]), "gong", "sound")).toBeUndefined();
+        expect(sharedSoundOf(undefined, "gong", "sound")).toBeUndefined();
     });
 });

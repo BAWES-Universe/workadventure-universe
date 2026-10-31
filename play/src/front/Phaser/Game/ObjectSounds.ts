@@ -58,12 +58,16 @@ interface Playing {
     gain: number;
 }
 
-/** A clicked sound that everyone it reaches hears, as the server said: when it started here, and whether it loops */
+/**
+ * A clicked sound that everyone it reaches hears, as the server said: when it started here, whether it loops, and how
+ * long it lasts (0 when it loops or is unknown)
+ */
 interface SharedSound {
     entityId: string;
     propertyId: string;
     loop: boolean;
     startedAt: number;
+    durationMs: number;
 }
 
 const keyOf = (objectId: string, propertyId: string) => `${objectId}/${propertyId}`;
@@ -230,6 +234,7 @@ export class ObjectSounds {
             propertyId: message.propertyId,
             loop: message.loop,
             startedAt: this.now() - message.elapsedSeconds * 1000,
+            durationMs: message.durationSeconds * 1000,
         });
     }
 
@@ -326,6 +331,11 @@ export class ObjectSounds {
         }
         if (playing) {
             this.setGain(playing, gain);
+            return;
+        }
+        // A sound that ended while this player was out of earshot is over: nothing to pick up
+        if (!shared.loop && shared.durationMs > 0 && this.now() >= shared.startedAt + shared.durationMs) {
+            this.shared.delete(key);
             return;
         }
         if (this.dependencies.blocked() || this.dismissed.has(key)) {
