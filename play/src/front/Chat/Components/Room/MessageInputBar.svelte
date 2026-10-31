@@ -36,6 +36,7 @@
     import { withoutPreview } from "../../LinkPreview/ChatLinks";
     import { isVoiceNoteFileName, type VoiceNoteDetails } from "../../VoiceNote/VoiceNote";
     import { askForNotifications, replyMoment } from "../../../Notification/Push/NotificationAsk";
+    import { typingExceptWorkingBots, workingBotIds } from "../../Bots/BotTyping";
     import { appendEmoji } from "./AppendEmoji";
     import { withoutBlankEdges } from "./BlankEdges";
     import { canHover } from "./FocusAfterSend";
@@ -91,8 +92,8 @@
     let files: { id: string; file: File }[] = [];
     let filesPreview: { id: string; size: number; name: string; type: string; url: FileReader["result"] }[] = [];
     // Who else is typing here: shown on the top edge of the field (#1379). Reactive: the nearby chat can be swapped
-    // for a new one with the same id, which keeps this box mounted.
-    $: typingMembers = room.typingMembers;
+    // for a new one with the same id, which keeps this box mounted. A bot whose steps line is working isn't typing.
+    $: typingMembers = typingExceptWorkingBots(room.typingMembers, workingBotIds(room.messages));
     // What the others see while this box is being typed in (#1379).
     function typingSignalFor(forRoom: ChatRoom): TypingSignal {
         return new TypingSignal((typing) => {
