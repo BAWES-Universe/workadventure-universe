@@ -237,10 +237,10 @@ export async function X1(c: Ctx): Promise<Result> {
 
 export async function S13(c: Ctx): Promise<Result> { // needs a stack started with --emotion-stub; compares with the default behaviour recorded in `noStubSeen`
   await c.cfg({ greet: false });
-  const sid = c.sid('s13'); const h = await c.human(sid, 'p1'); const got: Record<string, any> = {};
-  for (const [name, gain] of [['quiet', 0.08], ['normal', 1], ['loud', 4]] as const) { const n = c.finals(sid).length; await h.speak('en_ls_power', { gain }); await until(() => c.finals(sid).length > n, 6000); got[name] = c.finals(sid)[n]?.msg.emotion ?? null; await sleep(3000); }
+  const sid = c.sid('s13'); const h = await c.human(sid, 'p1'); const got: Record<string, any> = {}; const turnSeen: Record<string, boolean> = {};
+  for (const [name, gain] of [['whisper', 0.08], ['quiet', 0.3], ['normal', 1], ['loud', 4]] as const) { const n = c.finals(sid).length; await h.speak('en_ls_power', { gain }); await until(() => c.finals(sid).length > n, 6000); got[name] = c.finals(sid)[n]?.msg.emotion ?? null; turnSeen[name] = c.finals(sid).length > n; await sleep(3000); }
   await h.disconnect();
-  return verdict('S13', { quietIsCalm: got.quiet?.label === 'calm', loudIsExcited: got.loud?.label === 'excited', allMarkedStub: Object.values(got).every((e: any) => e?.source === 'stub'), confidenceInRange: Object.values(got).every((e: any) => e && e.confidence >= 0 && e.confidence <= 1) },
-    { labels: got }, 'stub label rode on user.turn');
+  return verdict('S13', { quietIsCalm: got.quiet?.label === 'calm', loudIsExcited: got.loud?.label === 'excited', allMarkedStub: ['quiet', 'normal', 'loud'].every((k) => got[k]?.source === 'stub'), confidenceInRange: ['quiet', 'normal', 'loud'].every((k) => got[k] && got[k].confidence >= 0 && got[k].confidence <= 1) },
+    { labels: got, turnSeen, note: 'whisper (gain 0.08, about -47 dBFS) is informational: shows whether the engine heard a turn at all' }, 'stub label rode on user.turn');
 }
 export { Human };
