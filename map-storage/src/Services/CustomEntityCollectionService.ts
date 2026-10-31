@@ -169,6 +169,31 @@ export class CustomEntityCollectionService {
     }
 
     /**
+     * Deletes every picture of an upload in one write of the collection file, so the upload is there or gone, never
+     * half there (#1690). The picture files go after the collection no longer lists them: a file that can't be
+     * removed is only left behind, so it is reported and does not undo the delete.
+     */
+    public async deleteEntities(ids: string[]): Promise<void> {
+        const toDelete = new Set(ids);
+        let deleted: EntityRawPrefab[] = [];
+        await this.updateCollection((customEntityCollection) => {
+            deleted = customEntityCollection.collection.filter((customEntity) => toDelete.has(customEntity.id));
+            customEntityCollection.collection = customEntityCollection.collection.filter(
+                (customEntity) => !toDelete.has(customEntity.id)
+            );
+            return true;
+        });
+        for (const picture of deleted) {
+            try {
+                // eslint-disable-next-line no-await-in-loop
+                await fileSystem.deleteFiles(this.getEntityToUploadVirtualPath(picture.imagePath));
+            } catch (e) {
+                console.error(`[${new Date().toISOString()}] Could not remove the file of ${picture.id}`, e);
+            }
+        }
+    }
+
+    /**
      * Reads the collection file, lets `change` edit it in place and writes it back, all under the per-file lock.
      * `change` returns false to leave the file untouched.
      */

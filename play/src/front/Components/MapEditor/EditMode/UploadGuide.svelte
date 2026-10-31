@@ -10,8 +10,11 @@
     import { LL } from "../../../../i18n/i18n-svelte";
     import { mapEditorEntityUploadEventStore, selectCategoryStore } from "../../../Stores/MapEditorStore";
     import { currentPlayerWokaStore } from "../../../Stores/CurrentPlayerWokaStore";
+    import { warningMessageStore } from "../../../Stores/ErrorStore";
     import USelect from "../../UI/USelect.svelte";
     import PanelHeader from "./PanelHeader.svelte";
+    import { deleteStep } from "./uploadCopies";
+    import type { DeleteStep, PlacedIn } from "./uploadCopies";
     import { IconCheck, IconCloudUpload, IconEye, IconInfoCircle, IconRefresh, IconStar, IconTexture } from "@wa-icons";
 
     /** The upload to change; without it the page adds a new one. */
@@ -19,6 +22,10 @@
     // Set when this person may not delete the upload (#1628): why, shown in place of "Delete this upload".
     // The uploader may not delete it while a copy sits where they can't edit: then only map editors can (#1628).
     export let deleteBlocked = false;
+
+    // Where the upload is placed, asked before it is deleted (#1690): when it is placed anywhere, "Delete this upload"
+    // opens a box listing every room and how many copies go.
+    export let loadPlacedIn: (() => Promise<PlacedIn[]>) | undefined = undefined;
 
     const dispatch = createEventDispatcher<{ done: undefined; save: EntityPrefab; remove: { id: string } }>();
     const TILE = 32;
@@ -162,6 +169,35 @@
 
     function cancel() {
         dispatch("done");
+    }
+
+    let checking = false;
+    let confirming: Extract<DeleteStep, { ask: true }> | undefined;
+
+    function askDelete() {
+        if (!editing || checking) return;
+        const id = editing.id;
+        if (!loadPlacedIn) {
+            dispatch("remove", { id });
+            return;
+        }
+        checking = true;
+        loadPlacedIn()
+            .then((placedIn) => {
+                const step = deleteStep(placedIn);
+                if (step.ask) {
+                    confirming = step;
+                } else {
+                    dispatch("remove", { id });
+                }
+            })
+            .catch((e) => {
+                console.error(e);
+                warningMessageStore.addWarningMessage($LL.mapEditor.editNotSaved());
+            })
+            .finally(() => {
+                checking = false;
+            });
     }
 
     onDestroy(() => {
@@ -354,35 +390,68 @@
             </label>
         {/if}
         {#if editing && !deleteBlocked}
-            <button
-                type="button"
-                class="em-delete"
-                data-testid="removeEntity"
-                on:click={() => editing && dispatch("remove", { id: editing.id })}
+            <button type="button" class="em-delete" data-testid="removeEntity" disabled={checking} on:click={askDelete}
                 >{$LL.mapEditor.edit.upload.delete()}</button
             >
         {/if}
     </div>
-    <div class="em-actions">
-        <button type="button" class="em-btn em-btn-q" on:click={cancel}>{$LL.mapEditor.edit.upload.cancel()}</button>
-        {#if editing}
-            <button
-                type="button"
-                class="em-btn u-cta"
-                data-testid="applyEntityModifications"
-                disabled={naturalWidth === 0}
-                on:click={saveChanges}>{$LL.mapEditor.edit.upload.saveChanges()}</button
+    {#if editing && confirming}
+        <div
+            class="em-confirm"
+            role="alertdialog"
+            aria-label={$LL.mapEditor.edit.upload.deleteTitle({ name: editing.name })}
+            data-testid="deleteUploadBox"
+        >
+            <div class="em-confirm-title">{$LL.mapEditor.edit.upload.deleteTitle({ name: editing.name })}</div>
+            <div class="em-m">{$LL.mapEditor.edit.upload.deletePlaced({ count: confirming.total })}</div>
+            <ul class="em-confirm-rooms">
+                {#each confirming.rooms as room, index (index)}
+                    <li data-testid="deleteUploadRoom">
+                        <span>{room.thisRoom ? $LL.mapEditor.edit.upload.deleteThisRoom() : room.name}</span>
+                        <span class="em-confirm-count">{room.count}</span>
+                    </li>
+                {/each}
+            </ul>
+            <div class="em-m">{$LL.mapEditor.edit.upload.deleteWarning()}</div>
+            <div class="em-confirm-actions">
+                <button
+                    type="button"
+                    class="em-btn em-btn-q"
+                    data-testid="keepUpload"
+                    on:click={() => (confirming = undefined)}>{$LL.mapEditor.edit.upload.deleteKeep()}</button
+                >
+                <button
+                    type="button"
+                    class="em-btn u-cta-coral"
+                    data-testid="deleteUploadEverywhere"
+                    on:click={() => editing && dispatch("remove", { id: editing.id })}
+                    >{$LL.mapEditor.edit.upload.deleteAll()}</button
+                >
+            </div>
+        </div>
+    {:else}
+        <div class="em-actions">
+            <button type="button" class="em-btn em-btn-q" on:click={cancel}>{$LL.mapEditor.edit.upload.cancel()}</button
             >
-        {:else}
-            <button
-                type="button"
-                class="em-btn u-cta"
-                data-testid="applyEntityModifications"
-                disabled={naturalWidth === 0}
-                on:click={() => save().catch((e) => console.error(e))}>{$LL.mapEditor.edit.upload.save()}</button
-            >
-        {/if}
-    </div>
+            {#if editing}
+                <button
+                    type="button"
+                    class="em-btn u-cta"
+                    data-testid="applyEntityModifications"
+                    disabled={naturalWidth === 0}
+                    on:click={saveChanges}>{$LL.mapEditor.edit.upload.saveChanges()}</button
+                >
+            {:else}
+                <button
+                    type="button"
+                    class="em-btn u-cta"
+                    data-testid="applyEntityModifications"
+                    disabled={naturalWidth === 0}
+                    on:click={() => save().catch((e) => console.error(e))}>{$LL.mapEditor.edit.upload.save()}</button
+                >
+            {/if}
+        </div>
+    {/if}
 {/if}
 
 <style>
@@ -701,5 +770,49 @@
     }
     .em-btn-q {
         background: rgba(255, 255, 255, 0.08);
+    }
+    .em-confirm {
+        flex: none;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 14px;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.04);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+    }
+    .em-confirm-title {
+        font-size: 15px;
+        font-weight: 600;
+    }
+    /* Many rooms scroll inside the box, so the buttons stay in view: there is no cap on the list. */
+    .em-confirm-rooms {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        max-height: 132px;
+        overflow-y: auto;
+        scrollbar-width: thin;
+    }
+    .em-confirm-rooms li {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        min-height: 44px;
+        font-size: 14px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .em-confirm-count {
+        flex: none;
+        color: rgba(244, 242, 250, 0.64);
+        font-variant-numeric: tabular-nums;
+    }
+    .em-confirm-actions {
+        display: flex;
+        gap: 8px;
+    }
+    .em-confirm-actions .em-btn {
+        height: 44px;
     }
 </style>

@@ -147,7 +147,11 @@ const roomManager = {
                                 break;
                             }
                             case "editMapCommandMessage": {
-                                room.forwardEditMapCommandMessage(user, message.message.editMapCommandMessage);
+                                room.forwardEditMapCommandMessage(
+                                    user,
+                                    message.message.editMapCommandMessage,
+                                    (wamUrls) => socketManager.getLoadedRoomsByWamUrl(wamUrls)
+                                );
                                 break;
                             }
                             case "sendUserMessage": {

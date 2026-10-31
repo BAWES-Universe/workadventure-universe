@@ -11,15 +11,18 @@ vi.hoisted(() => {
     process.env.AUTHENTICATION_TOKEN = "test";
 });
 
-const { executeCommand, executeEntityCommand, getOrLoadGameMap } = vi.hoisted(() => ({
+const { executeCommand, executeEntityCommand, getOrLoadGameMap, deleteUploadEverywhere } = vi.hoisted(() => ({
     executeCommand: vi.fn(),
     executeEntityCommand: vi.fn(),
     getOrLoadGameMap: vi.fn(),
+    deleteUploadEverywhere: vi.fn(),
 }));
 
 vi.mock("../MapsManager", () => ({
-    mapsManager: { executeCommand, getOrLoadGameMap, addCommandToQueue: vi.fn() },
+    mapsManager: { executeCommand, getOrLoadGameMap, readGameMap: getOrLoadGameMap, addCommandToQueue: vi.fn() },
 }));
+// Deleting everywhere is tested on its own (UploadDeletion.test.ts): here only who may ask for it.
+vi.mock("../Services/UploadDeletion", () => ({ deleteUploadEverywhere }));
 vi.mock("../EntitiesManager", () => ({ entitiesManager: { executeCommand: executeEntityCommand } }));
 vi.mock("../Modules/HookManager", () => ({ hookManager: {} }));
 
@@ -320,7 +323,7 @@ describe("MapStorageServer edit rights", () => {
         });
         const remove = (id: string): EditMessage => ({
             $case: "deleteCustomEntityMessage",
-            deleteCustomEntityMessage: { id },
+            deleteCustomEntityMessage: { id, wholeUpload: false, pictureIds: [], otherRoomWamUrls: [] },
         });
 
         it("lets someone with a desk upload, and saves them as the uploader whatever the browser sent", async () => {
@@ -380,6 +383,70 @@ describe("MapStorageServer edit rights", () => {
             expect(await send(remove("lamp"), owner)).toBe("errorCommandMessage");
             expect(await send(remove("sign"), owner)).toBe("errorCommandMessage");
             expect(executeEntityCommand).not.toHaveBeenCalled();
+        });
+
+        describe("deleting an upload everywhere (#1690)", () => {
+            const removeEverywhere = (id: string): EditMessage => ({
+                $case: "deleteCustomEntityMessage",
+                deleteCustomEntityMessage: { id, wholeUpload: true, pictureIds: [], otherRoomWamUrls: [] },
+            });
+
+            beforeEach(() => {
+                deleteUploadEverywhere.mockResolvedValue(["lounge/map.wam"]);
+            });
+
+            it("lets an editor delete every picture and every copy, and tells the back which rooms to tell", async () => {
+                uploads.set("lamp", { ownerId: "owner" });
+                uploads.set("lamp-red", { ownerId: "owner", variantOf: "lamp" });
+                const answer = await sendAndGetMessage(removeEverywhere("lamp"), editor);
+                expect(deleteUploadEverywhere).toHaveBeenCalledWith(
+                    expect.objectContaining({ pictureIds: ["lamp", "lamp-red"], universeWorldPath: "universe/world" })
+                );
+                const message =
+                    answer?.$case === "deleteCustomEntityMessage" ? answer.deleteCustomEntityMessage : undefined;
+                expect(message?.pictureIds).toEqual(["lamp", "lamp-red"]);
+                expect(message?.otherRoomWamUrls).toEqual(["http://localhost/universe/world/lounge/map.wam"]);
+                expect(executeEntityCommand).not.toHaveBeenCalled();
+            });
+
+            it("keeps the rights as they are: the uploader only while every copy is at their desk", async () => {
+                uploads.set("lamp", { ownerId: "owner" });
+                uploads.set("sign", { ownerId: "owner" });
+                expect(await send(removeEverywhere("lamp"), owner)).toBe("deleteCustomEntityMessage");
+                expect(await send(removeEverywhere("lamp"), player)).toBe("errorCommandMessage");
+                expect(await send(removeEverywhere("sign"), owner)).toBe("errorCommandMessage");
+                expect(deleteUploadEverywhere).toHaveBeenCalledTimes(1);
+            });
+
+            it("shows the editor's error and deletes nothing when a room can't be changed", async () => {
+                uploads.set("lamp", { ownerId: "owner" });
+                deleteUploadEverywhere.mockRejectedValue(new Error("Could not write"));
+                expect(await send(removeEverywhere("lamp"), editor)).toBe("errorCommandMessage");
+            });
+        });
+
+        describe("where an upload is placed (#1690)", () => {
+            const ask = (id: string, user: { userUUID: string; userCanEdit: boolean }) =>
+                new Promise<{ rooms: { wamUrl: string; count: number }[] } | undefined>((resolve) => {
+                    mapStorageServer.handleUploadCopiesQuery(
+                        {
+                            request: {
+                                mapKey: MAP_URL,
+                                id,
+                                connectedUserTags: [],
+                                userCanEdit: user.userCanEdit,
+                                userUUID: user.userUUID,
+                            },
+                        } as never,
+                        (_err, answer) => resolve(answer ?? undefined)
+                    );
+                });
+
+            it("counts the copies in this room for an editor, and tells nobody else", async () => {
+                uploads.set("lamp", { ownerId: "owner" });
+                expect(await ask("lamp", editor)).toEqual({ rooms: [{ wamUrl: MAP_URL, count: 1 }] });
+                expect(await ask("lamp", player)).toBeUndefined();
+            });
         });
 
         it("refuses an upload that would replace a saved picture, unless it comes from an editor", async () => {

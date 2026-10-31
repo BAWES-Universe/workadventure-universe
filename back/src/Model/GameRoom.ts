@@ -1174,7 +1174,15 @@ export class GameRoom implements BrothersFinder {
 
     private mapStorageLock: Promise<void> = Promise.resolve();
 
-    forwardEditMapCommandMessage(user: User, message: EditMapCommandMessage) {
+    /**
+     * @param findRoomsByWamUrl Gives the rooms of this back that are one of these map files. Deleting an upload
+     * everywhere (#1690) is also told to the people in the other rooms of the world.
+     */
+    forwardEditMapCommandMessage(
+        user: User,
+        message: EditMapCommandMessage,
+        findRoomsByWamUrl: (wamUrls: string[]) => GameRoom[] = () => []
+    ) {
         this.mapStorageLock = this.mapStorageLock.then(() =>
             new Promise<void>((resolve, reject) => {
                 if (!this._wamUrl) {
@@ -1267,6 +1275,22 @@ export class GameRoom implements BrothersFinder {
                             // IMPROVE ME: We could imagine directly updating the jitsi admin tag in the finder moderator tag and don't have useless reloads or calls to get the WAM file.
                             this.wamPromise = undefined;
                             this.jitsiModeratorTagFinderPromise = undefined;
+                        }
+                        if (editMapCommandMessage.editMapMessage?.message?.$case === "deleteCustomEntityMessage") {
+                            // Map-storage lists the other rooms that lost copies of the upload: the people in them
+                            // see the copies go, as when an editor deletes an object in their own room.
+                            const deleted = editMapCommandMessage.editMapMessage.message.deleteCustomEntityMessage;
+                            const otherRoomWamUrls = deleted.otherRoomWamUrls;
+                            deleted.otherRoomWamUrls = [];
+                            for (const otherRoom of findRoomsByWamUrl(otherRoomWamUrls)) {
+                                if (otherRoom === this) continue;
+                                otherRoom.dispatchRoomMessage({
+                                    message: {
+                                        $case: "editMapCommandMessage",
+                                        editMapCommandMessage,
+                                    },
+                                });
+                            }
                         }
                         this.dispatchRoomMessage({
                             message: {

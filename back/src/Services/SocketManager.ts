@@ -30,6 +30,8 @@ import type {
     SetPlayerDetailsMessage,
     SubToPusherRoomMessage,
     UpdateMapToNewestWithKeyMessage,
+    UploadCopiesAnswer,
+    UploadCopiesQuery,
     UpdateSpaceMetadataMessage,
     UpdateSpaceUserMessage,
     UserMovesMessage,
@@ -680,6 +682,17 @@ export class SocketManager {
                     };
                     break;
                 }
+                case "uploadCopiesQuery": {
+                    answerMessage.answer = {
+                        $case: "uploadCopiesAnswer",
+                        uploadCopiesAnswer: await this.handleUploadCopiesQuery(
+                            gameRoom,
+                            user,
+                            queryMessage.query.uploadCopiesQuery
+                        ),
+                    };
+                    break;
+                }
                 case "sendEventQuery": {
                     // TODO: in the future, if the event system is abused, we can throttle message by user id, here.
                     this.handleSendEventQuery(gameRoom, user, queryMessage.query.sendEventQuery);
@@ -736,6 +749,45 @@ export class SocketManager {
             $case: "answerMessage",
             answerMessage: AnswerMessage.fromPartial(answerMessage),
         });
+    }
+
+    /**
+     * Where an upload is placed, room by room, asked of map-storage with this person's rights: only someone who could
+     * delete the upload is told (#1690).
+     */
+    private handleUploadCopiesQuery(
+        gameRoom: GameRoom,
+        user: User,
+        uploadCopiesQuery: UploadCopiesQuery
+    ): Promise<UploadCopiesAnswer> {
+        const mapKey = gameRoom.wamUrl;
+        if (!mapKey) {
+            return Promise.reject(new Error("WAM file url is undefined. Cannot read the uploads without WAM file."));
+        }
+        return new Promise<UploadCopiesAnswer>((resolve, reject) => {
+            getMapStorageClient().handleUploadCopiesQuery(
+                {
+                    mapKey,
+                    id: uploadCopiesQuery.id,
+                    connectedUserTags: user.tags,
+                    userCanEdit: user.canEdit,
+                    userUUID: user.uuid,
+                },
+                (err: ServiceError | null, answer: UploadCopiesAnswer) => {
+                    if (err) {
+                        reject(asError(err));
+                        return;
+                    }
+                    resolve(answer);
+                }
+            );
+        });
+    }
+
+    /** The rooms this back holds that are one of these map files. */
+    public getLoadedRoomsByWamUrl(wamUrls: string[]): GameRoom[] {
+        const urls = new Set(wamUrls);
+        return [...this.resolvedRooms.values()].filter((room) => room.wamUrl !== undefined && urls.has(room.wamUrl));
     }
 
     public handleAbortQueryMessage(room: GameRoom, user: User, abortQueryMessage: AbortQueryMessage) {

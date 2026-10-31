@@ -624,6 +624,12 @@ const mapEditor: BaseTranslation = {
             save: "Save to my objects",
             saveChanges: "Save",
             delete: "Delete this upload",
+            deleteTitle: "Delete {name} everywhere?",
+            deletePlaced: "It's placed {count:number} {{time|times}}. Every copy goes:",
+            deleteThisRoom: "This room",
+            deleteWarning: "People in those rooms see it disappear. This can't be undone.",
+            deleteKeep: "Keep it",
+            deleteAll: "Delete all",
             cancel: "Cancel",
         },
         areas: {
