@@ -1661,6 +1661,18 @@ export class RoomConnection implements RoomConnection {
         return answer.roomTagsAnswer.tags;
     }
 
+    /** Where an upload is placed: the map files of the rooms holding a copy of it, with how many (#1690). */
+    public async queryUploadCopies(id: string): Promise<{ wamUrl: string; count: number }[]> {
+        const answer = await this.query({
+            $case: "uploadCopiesQuery",
+            uploadCopiesQuery: { id },
+        });
+        if (answer.$case !== "uploadCopiesAnswer") {
+            throw new Error("Unexpected answer");
+        }
+        return answer.uploadCopiesAnswer.rooms;
+    }
+
     public async queryRoomsFromSameWorld(): Promise<RoomShortDescription[]> {
         const answer = await this.query({
             $case: "roomsFromSameWorldQuery",

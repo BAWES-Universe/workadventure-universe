@@ -60,6 +60,19 @@ class MapsManager {
         }
     }
 
+    /**
+     * Writes a map to its file now, rather than at the next save, and throws when that fails. Used when a change has to
+     * reach several maps together (#1690).
+     */
+    public async saveMapNow(mapKey: string): Promise<void> {
+        const gameMap = this.getGameMap(mapKey);
+        if (!gameMap) {
+            throw new Error('Could not find GameMap with key "' + mapKey + '"');
+        }
+        WAMFileFormat.parse(gameMap.getWam());
+        await fileSystem.writeStringAsFile(mapKey, JSON.stringify(gameMap.getWam()));
+    }
+
     public getCommandsNewerThan(mapKey: string, commandId: string | undefined): EditMapCommandMessage[] {
         // shouldn't we just apply every command on this list to the new client?
         const queue = this.loadedMapsCommandsQueue.get(mapKey);
@@ -85,6 +98,19 @@ class MapsManager {
             gameMap = await this.loadWAMToMemory(key);
         }
         return gameMap;
+    }
+
+    /**
+     * The map as edits see it when it is in memory, else read from its file without keeping it: the copy in memory
+     * would go out of date if another map-storage changed the file. For looking, not for changing.
+     */
+    public async readGameMap(key: string): Promise<GameMap> {
+        const loaded = this.getGameMap(key);
+        if (loaded) {
+            return loaded;
+        }
+        const wam = WAMFileFormat.parse(JSON.parse(await fileSystem.readFileAsString(key)));
+        return new GameMap(this.getMockITiledMap(), wam);
     }
 
     public getGameMap(key: string): GameMap | undefined {
