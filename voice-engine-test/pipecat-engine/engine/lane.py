@@ -158,7 +158,7 @@ class Lane:
         self.metrics = None
         self.smart_turn_log: list = []
         self.dropped: list[tuple[float, float]] = []
-        self.last_frame_at = time.monotonic()
+        self.last_frame_at = time.monotonic() + 3.0  # grace while the pipeline starts
         self.conn: SmallWebRTCConnection | None = None
         self.worker: PipelineWorker | None = None
         self.run_task: asyncio.Task | None = None

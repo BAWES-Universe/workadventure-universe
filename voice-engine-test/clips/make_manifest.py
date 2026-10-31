@@ -10,6 +10,7 @@ CLIPS = [
  ("en_ls_experience","en","experience proves this","human, LibriSpeech 2830-3980-0043 (CC BY 4.0)"),
  ("en_ls_halt","en","why should one halt on the way","human, LibriSpeech 4507-16021-0012 (CC BY 4.0)"),
  ("en_ls_power","en","your power is sufficient i said","human, LibriSpeech 8455-210777-0068 (CC BY 4.0)"),
+ ("en_concat3","en","why should one halt on the way your power is sufficient i said experience proves this","derived: speech parts of en_ls_halt, en_ls_power, en_ls_experience joined with 60 ms silence, one continuous utterance (LibriSpeech, CC BY 4.0)"),
  ("ar_egy_demo","ar","أكل بتاعهو بيبقى مميز قوي عرفة إزاي ف والل ه إحنا كلنا كل يوم بنعمل حيلة عشان نسهب الشنطة بتاعته ناخد الأكن ورجع أ","human Egyptian Arabic; transcript is the ASR output printed in ARBML/klaam notebooks/demo.ipynb (approximate)"),
  ("ar_iraqi_1","ar","[label] arabic_jamalaka","SYNTHETIC (TTS) Arabic, CC BY 4.0 hayderkharrufa/iraqi-dialect-tts-corpus; text is a label, true transcript unknown"),
  ("ar_iraqi_2","ar","[label] iraqi_hathallon","SYNTHETIC (TTS) Iraqi Arabic, CC BY 4.0; text is a label, true transcript unknown"),

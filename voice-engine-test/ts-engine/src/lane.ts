@@ -42,6 +42,7 @@ export class Lane {
       else if (s === 'disconnected') { this.discTimer = setTimeout(() => { if (!this.gone && pc.connectionState !== 'connected') void this.bubble.laneGone(this, 'failed'); }, 4000); }
       else if (s === 'connected' && this.discTimer) clearTimeout(this.discTimer);
     });
+    this.lastFrameAt = performance.now();
     return pc.localDescription!.sdp;
   }
 

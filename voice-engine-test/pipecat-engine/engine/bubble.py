@@ -251,6 +251,11 @@ class Bubble:
         while not self.closing:
             await asyncio.sleep(1.0)
             await self.send_status()
+            # a peer that vanished without a clean close is not always signalled: no inbound audio for 3 s = lane lost
+            for ln in list(self.lanes.values()):
+                if not ln.gone and time.monotonic() - ln.last_frame_at > 3.0:
+                    self.engine.counters["lane_watchdog"] = self.engine.counters.get("lane_watchdog", 0) + 1
+                    await self.lane_gone(ln, "failed")
 
     async def close(self):
         if self.closing:

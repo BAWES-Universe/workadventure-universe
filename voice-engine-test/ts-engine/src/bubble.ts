@@ -87,7 +87,7 @@ export class Bubble {
       await this.bridge.connect((m) => void this.onBrain(m));
       this.speaker = new Speaker(this); this.started = true;
       await this.bridge.send('session.start', { bubbleId: this.bubbleId, participants: [{ participantId: pid, lane: idx }], mode: this.defaultMode, engine: { id: this.engine.engineId, kind: 'ts', turnEnd: this.engine.turnEnd } });
-      this.statusTimer = setInterval(() => void this.sendStatus(), 1000);
+      this.statusTimer = setInterval(() => { void this.sendStatus(); this.watchdog(); }, 1000);
     }
     const old = this.lanes.get(pid); const rejoin = !!old; if (old) await old.stop();
     const lane = new Lane(this, pid, idx); if (old) lane.mode = old.mode; if (old?.hint) lane.hint = old.hint;
@@ -104,6 +104,9 @@ export class Bubble {
     void lane.stop();
     if ([...this.lanes.values()].every((l) => l.gone)) this.grace = setTimeout(() => void this.close(), GRACE_MS);
   }
+
+  /** A peer that vanished without a clean close is not always signalled. No inbound audio for 3 s = lane lost. */
+  private watchdog() { for (const l of this.lanes.values()) if (!l.gone && performance.now() - l.lastFrameAt > 3000) { this.engine.counters.lane_watchdog = (this.engine.counters.lane_watchdog ?? 0) + 1; void this.laneGone(l, 'failed'); } }
 
   shouldContinue() {
     if (this.voice !== 'active') return false;

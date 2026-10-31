@@ -42,6 +42,16 @@
    "speechStartMs": 608,
    "speechEndMs": 2176
   },
+  "en_concat3": {
+   "file": "wav/en_concat3.wav",
+   "lang": "en",
+   "durationMs": 5352,
+   "sha256": "01008235f70851c41aaef435de51eb6f8ac759e87828245c40320c71a9902600",
+   "transcript": "why should one halt on the way your power is sufficient i said experience proves this",
+   "note": "derived: speech parts of en_ls_halt, en_ls_power, en_ls_experience joined with 60 ms silence, one continuous utterance (LibriSpeech, CC BY 4.0)",
+   "speechStartMs": 64,
+   "speechEndMs": 5312
+  },
   "ar_egy_demo": {
    "file": "wav/ar_egy_demo.wav",
    "lang": "ar",
