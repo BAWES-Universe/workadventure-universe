@@ -36,6 +36,7 @@ const sound = (fields: Partial<PlayAudioPropertyData>): PlayAudioPropertyData =>
 function setUp(objects: SoundObject[], initial: ObjectSoundMessage[] = []) {
     const voices: FakeVoice[] = [];
     const clicks: ClickObjectSoundMessage[] = [];
+    const links: string[] = [];
     const audible: boolean[] = [];
     const updates = new Subject<ObjectSoundMessage>();
     let now = 0;
@@ -49,6 +50,7 @@ function setUp(objects: SoundObject[], initial: ObjectSoundMessage[] = []) {
                 return voice;
             },
             playableLink: (link) => {
+                links.push(link);
                 if (link.includes("::bad")) {
                     throw new TypeError("Invalid URL");
                 }
@@ -72,7 +74,7 @@ function setUp(objects: SoundObject[], initial: ObjectSoundMessage[] = []) {
         sounds.setListenerPosition(100 + tilesAway * TILE, 100);
         await flush();
     };
-    return { sounds, voices, clicks, audible, updates, flush, moveTo, wait: (ms: number) => (now += ms) };
+    return { sounds, voices, clicks, links, audible, updates, flush, moveTo, wait: (ms: number) => (now += ms) };
 }
 
 const fireplace = (fields: Partial<PlayAudioPropertyData> = {}): SoundObject => ({
@@ -120,6 +122,44 @@ describe("ObjectSounds (#1627)", () => {
         sounds.click("statue", fixed);
         await flush();
         expect(voices).toHaveLength(1);
+    });
+
+    it("tries a range sound's unreadable link once, not at every step, and plays it once it is fixed", async () => {
+        const object = fireplace({ audioLink: "::bad" });
+        const { sounds, voices, links, audible, moveTo, flush } = setUp([object]);
+        await moveTo(2);
+        await flush();
+        await moveTo(1.5);
+        await moveTo(1);
+        expect(links).toEqual(["::bad"]);
+        expect(voices).toHaveLength(0);
+        expect(audible).toEqual([]);
+        object.properties.splice(0, 1, sound({ startsOn: "range", loop: true, fullVolumeWithin: 1, heardUpTo: 5 }));
+        sounds.refresh();
+        await flush();
+        expect(voices).toHaveLength(1);
+    });
+
+    it("starts a playing sound again when a map editor changes it", async () => {
+        const object = fireplace();
+        const { sounds, voices, moveTo, flush } = setUp([object]);
+        await moveTo(0.5);
+        expect(voices[0].volume).toBeCloseTo(0.6);
+        object.properties.splice(
+            0,
+            1,
+            sound({ startsOn: "range", loop: true, fullVolumeWithin: 1, heardUpTo: 5, volume: 0.2 })
+        );
+        sounds.refresh();
+        await flush();
+        expect(voices[0].destroyed).toBe(true);
+        expect(voices[1].volume).toBeCloseTo(0.2);
+        // Loop switched off while it plays, in the map's own copy: it plays once more, as it is now
+        (object.properties[0] as PlayAudioPropertyData).loop = false;
+        sounds.refresh();
+        await flush();
+        expect(voices[1].destroyed).toBe(true);
+        expect(voices[2].sources[0]).toMatchObject({ loop: false });
     });
 
     it("plays a range sound once each time someone comes within range", async () => {

@@ -42,12 +42,16 @@ export interface ObjectSoundsDependencies {
 interface Playing {
     objectId: string;
     property: PlayAudioPropertyData;
+    /** The sound as it was when it started: the map's copy can change in place */
+    started: string;
     settings: ObjectSoundSettings;
     voice?: Voice;
     /** The link played, with its token */
     url?: string;
     /** Waiting for the link with its token */
     pending: boolean;
+    /** Its link can't be played: kept so that moving around doesn't try again, until the sound is changed */
+    failed?: boolean;
     loop: boolean;
     /** The sound follows the listener's distance to the object */
     positional: boolean;
@@ -241,6 +245,12 @@ export class ObjectSounds {
                     continue;
                 }
                 const key = keyOf(object.id, property.id);
+                // A map editor changed the sound while it plays: it starts again as it is now
+                const current = this.playing.get(key);
+                if (current && current.started !== JSON.stringify(property)) {
+                    this.stop(key);
+                    this.inRange.delete(key);
+                }
                 const settings = objectSoundSettings(property, tileSize);
                 const gain = this.gainAt(object, settings, tileSize);
                 const shared = this.shared.get(key);
@@ -339,6 +349,7 @@ export class ObjectSounds {
         const playing: Playing = {
             objectId,
             property,
+            started: JSON.stringify(property),
             settings,
             pending: true,
             loop: options.loop,
@@ -371,9 +382,18 @@ export class ObjectSounds {
             })
             .catch((error) => {
                 console.error("Could not play the object's sound", error);
-                if (this.playing.get(key) === playing) {
-                    this.playing.delete(key);
+                if (this.playing.get(key) !== playing) {
+                    return;
                 }
+                if (settings.startsOn === "click" && settings.heardBy === "clicker") {
+                    // The next click tries again
+                    this.playing.delete(key);
+                    return;
+                }
+                // Range and shared sounds are checked at every step: they wait for a change instead
+                playing.pending = false;
+                playing.failed = true;
+                this.updateAudible();
             });
     }
 
@@ -427,7 +447,12 @@ export class ObjectSounds {
     private updateAudible(): void {
         let audible = false;
         for (const playing of this.playing.values()) {
-            if (!playing.pending && (!playing.positional || playing.gain > 0) && playing.settings.volume > 0) {
+            if (
+                !playing.pending &&
+                !playing.failed &&
+                (!playing.positional || playing.gain > 0) &&
+                playing.settings.volume > 0
+            ) {
                 audible = true;
                 break;
             }
