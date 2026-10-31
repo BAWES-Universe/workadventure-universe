@@ -370,31 +370,6 @@ export class Entity extends Phaser.GameObjects.Image implements ActivatableInter
         for (const property of properties) {
             if (onlyPropertyTypes && !onlyPropertyTypes.includes(property.type)) continue;
             switch (property.type) {
-                //TODO: see if we add livekit here
-                case "jitsiRoomProperty": {
-                    const roomName = property.roomName;
-                    const roomConfig = property.jitsiRoomConfig;
-                    actions.push({
-                        actionName: property.buttonLabel ?? "",
-                        protected: true,
-                        priority: 1,
-                        callback: () => {
-                            this.emit(
-                                EntityEvent.PropertyActivated,
-                                {
-                                    propertyName: GameMapProperties.JITSI_ROOM,
-                                    propertyValue: roomName,
-                                },
-                                {
-                                    propertyName: GameMapProperties.JITSI_CONFIG,
-                                    propertyValue: JSON.stringify(roomConfig),
-                                }
-                            );
-                            actionsMenuStore.clear();
-                        },
-                    });
-                    break;
-                }
                 case "openWebsite": {
                     // TODO add description to the empty interaction
                     if (!property.link) break;

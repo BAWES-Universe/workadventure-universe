@@ -354,58 +354,43 @@ test("OR-086 WAM website areas: cowebsite on enter, Open Website popup on action
     await expect(message).toBeHidden();
 });
 
-async function stubJitsi(page: Page): Promise<void> {
-    await page.context().route(/^https:\/\/jitsi\.invalid\//, (route) =>
-        route.fulfill({
-            status: 200,
-            contentType: "application/javascript",
-            body: "window.JitsiMeetExternalAPI = function () { return { addListener() {}, removeListener() {}, executeCommand() {}, dispose() {}, getIFrame() { return document.createElement('iframe'); } }; };",
-        })
-    );
-}
-
-async function expectJitsiFlow(
-    page: Page,
-    isPhoneProject: boolean,
-    leave: () => Promise<void>,
-    enter: () => Promise<void>
-): Promise<void> {
-    const message = popups(page).getByText(isPhoneProject ? "Tap to enter Jitsi" : "Press Space to enter Jitsi");
+// Jitsi is no longer supported (#1688). A Jitsi zone in the same area as an "Open Website" on action proves the
+// player is inside: the website popup shows, and nothing about Jitsi does.
+async function expectNoJitsi(page: Page, isPhoneProject: boolean, enter: () => Promise<void>): Promise<void> {
     await enter();
-    await expect(message).toBeVisible();
-    await popups(page).getByRole("button", { name: "Enter Jitsi" }).click();
-    await expect(page.getByTestId("tab1")).toContainText("Jitsi");
-    await expect(message).toBeHidden();
-    await leave();
+    await expect(popups(page).getByText(isPhoneProject ? OPEN_WEBSITE_PHONE : OPEN_WEBSITE_DESKTOP)).toBeVisible();
+    await expect(popups(page).getByText(/Jitsi/)).toHaveCount(0);
+    await expect(popups(page).getByRole("button", { name: "Enter Jitsi" })).toHaveCount(0);
     await expect(page.getByTestId("tab1")).toHaveCount(0);
 }
 
-test("OR-087 Jitsi area on action: Enter Jitsi popup opens a Jitsi tab; leaving closes it", async ({
+test("OR-087 Jitsi zone set by a script: no Jitsi popup and no Jitsi tab (Jitsi is no longer supported)", async ({
     page,
 }, testInfo) => {
-    await stubJitsi(page);
+    await fakeOutside(page.context());
     await join(page, tiled(testInfo, "tests/E2E/empty.json"), "Alice");
-    await wa(page, async () => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const WA = (globalThis as any).WA;
-        await WA.onInit();
-        const area = WA.room.area.create({ name: "jitsiZone", x: 160, y: 0, width: 128, height: 96 });
-        area.setProperty("jitsiTrigger", "onaction");
-        area.setProperty("jitsiUrl", "https://jitsi.invalid");
-        area.setProperty("jitsiRoom", "safety-net");
-    });
-    await expectJitsiFlow(
+    await wa(
         page,
-        isPhone(testInfo),
-        () => teleport(page, 48, 144),
-        () => teleport(page, 208, 48)
+        async (link: string) => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const WA = (globalThis as any).WA;
+            await WA.onInit();
+            const area = WA.room.area.create({ name: "jitsiZone", x: 160, y: 0, width: 128, height: 96 });
+            area.setProperty("jitsiTrigger", "onaction");
+            area.setProperty("jitsiUrl", "https://jitsi.invalid");
+            area.setProperty("jitsiRoom", "safety-net");
+            area.setProperty("openWebsiteTrigger", "onaction");
+            area.setProperty("openWebsite", link);
+        },
+        INPUT_PAGE + "?jitsi-zone"
     );
+    await expectNoJitsi(page, isPhone(testInfo), () => teleport(page, 208, 48));
 });
 
-test("OR-088 WAM Jitsi area on action: Enter Jitsi popup opens a Jitsi tab; leaving closes it", async ({
+test("OR-088 WAM area saved with Jitsi: no Jitsi popup and no Jitsi tab; the area's other settings still work", async ({
     page,
 }, testInfo) => {
-    await stubJitsi(page);
+    await fakeOutside(page.context());
     const url = await wamRoom(testInfo, "empty");
     await addWamAreas(url, [
         {
@@ -424,14 +409,17 @@ test("OR-088 WAM Jitsi area on action: Enter Jitsi popup opens a Jitsi tab; leav
                     jitsiUrl: "https://jitsi.invalid",
                     jitsiRoomConfig: {},
                 },
+                {
+                    id: "p2",
+                    type: "openWebsite",
+                    link: INPUT_PAGE + "?jitsi-area",
+                    newTab: false,
+                    closable: true,
+                    trigger: "onaction",
+                },
             ],
         },
     ]);
     await join(page, url, "Alice");
-    await expectJitsiFlow(
-        page,
-        isPhone(testInfo),
-        () => teleport(page, 48, 144),
-        () => teleport(page, 208, 48)
-    );
+    await expectNoJitsi(page, isPhone(testInfo), () => teleport(page, 208, 48));
 });

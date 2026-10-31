@@ -90,7 +90,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         fullscreen: "Vollbild",
         notifications: "Benachrichtigungen",
         chatSounds: "Chat-Sounds",
-        cowebsiteTrigger: "Jedes Mal nachfragen, bevor Webseiten oder Jitsi-Meet-Räume geöffnet werden",
         ignoreFollowRequest: "Folgeanfragen anderer Benutzer ignorieren",
         blockAudio: "Musik und Hintergrund-Geräusche deaktivieren",
         disableAnimations: "Karten-Animationen deaktivieren",

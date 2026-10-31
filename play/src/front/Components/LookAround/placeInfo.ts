@@ -58,7 +58,6 @@ const ICONS: Record<string, ComponentType> = {
     focusable: IconZoomInArea,
     highlight: IconFocus,
     silent: IconMicrophoneOff,
-    jitsiRoomProperty: IconUsersGroup,
     livekitRoomProperty: IconUsersGroup,
     speakerMegaphone: IconMicrophone,
     listenerMegaphone: IconEar,

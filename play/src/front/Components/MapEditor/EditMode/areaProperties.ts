@@ -236,17 +236,6 @@ export function areaSettingRows(LL: TranslationFunctions, flags: AreaSettingFlag
             available: !flags.matrixRoomPropertyData && !!MATRIX_PUBLIC_URI,
             opensPage: true,
         },
-        {
-            key: "jitsiRoomProperty",
-            title: t.jitsiRoomProperty.title(),
-            text: t.jitsiRoomProperty.text(),
-            icon: IconUsersGroup,
-            testId: "jitsiRoomProperty",
-            // Jitsi is no longer offered: the meeting room runs on our own calls. The row stays so an area that already
-            // has one still shows its title, its page and its Remove button.
-            available: false,
-            opensPage: true,
-        },
     ];
 }
 
@@ -431,17 +420,6 @@ export function createAreaProperty(
                 duration: 250,
                 color: "#000000",
                 hideButtonLabel: true,
-            };
-        case "jitsiRoomProperty":
-            addHighlightLater();
-            return {
-                id,
-                type,
-                closable: true,
-                jitsiRoomConfig: {},
-                hideButtonLabel: true,
-                roomName: LL.mapEditor.properties.jitsiRoomProperty.label(),
-                trigger: ON_ACTION_TRIGGER_ENTER,
             };
         case "livekitRoomProperty":
             addHighlightLater();
