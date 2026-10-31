@@ -23,7 +23,7 @@ export function readWav(path: string): Wav {
   return { rate, channels, pcm: new Int16Array(copy.buffer, copy.byteOffset, copy.length >> 1) };
 }
 
-export interface ClipInfo { file: string; lang: string; durationMs: number; sha256: string; transcript: string; note: string }
+export interface ClipInfo { speechStartMs: number; speechEndMs: number; file: string; lang: string; durationMs: number; sha256: string; transcript: string; note: string }
 export const manifest = (): { clips: Record<string, ClipInfo>; botVoice: any } => JSON.parse(readFileSync(ROOT + 'clips/manifest.json', 'utf8'));
 
 /** Linear 16 kHz -> 48 kHz (x3). Good enough for test clips; the engine's own resampler is what we test. */

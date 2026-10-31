@@ -3,6 +3,7 @@
 // (digital silence between clips), like a browser with an open mic.
 import { createHash } from 'node:crypto';
 import { RTCPeerConnection, MediaStreamTrack, RtpPacket, RtpHeader, useOPUS } from 'werift';
+import { stunUrlFor } from '../signaling/server.ts';
 import { ROOT, manifest, readWav, opusPackets, newOpusDecoder, asInt16, rms, now, rng, sleep } from '../common/util.ts';
 
 export const AUDIBLE_RMS = 250;
@@ -22,7 +23,7 @@ const silence = () => (silencePkt ??= opusPackets(new Int16Array(960 / 3 * 3))[0
 
 export interface RxPacket { at: number; seq: number; ts: number; len: number; audible: boolean }
 export interface SpeakOpts { lossPct?: number; gap?: { atMs: number; durMs: number }; hint?: boolean; hintText?: string; seed?: number }
-export interface SpeakResult { clipId: string; startAt: number; endAt: number; sent: number; dropped: number; droppedMs: number }
+export interface SpeakResult { clipId: string; startAt: number; endAt: number; speechStartAt: number; speechEndAt: number; sent: number; dropped: number; droppedMs: number }
 
 // one shared 20 ms scheduler for all humans in the process
 const humans = new Set<Human>(); let tickerRunning = false;
@@ -47,12 +48,12 @@ export class Human {
 
   async connect() {
     this.closed = false; this.rx = []; this.seq = Math.floor(Math.random() * 60000); this.ts = Math.floor(Math.random() * 1e9); this.ssrc = 1000 + Math.floor(Math.random() * 1e6);
-    const pc = (this.pc = new RTCPeerConnection({ codecs: { audio: [useOPUS()], video: [] }, iceUseIpv6: false, iceServers: [] }));
+    const pc = (this.pc = new RTCPeerConnection({ codecs: { audio: [useOPUS()], video: [] }, iceUseIpv6: false, iceServers: [{ urls: stunUrlFor(this.o.signaling) }] }));
     this.track = new MediaStreamTrack({ kind: 'audio' });
     pc.addTransceiver(this.track, { direction: 'sendrecv' });
     pc.onTrack.subscribe((t) => t.onReceiveRtp.subscribe((rtp) => this.onRtp(rtp)));
     const offer = await pc.createOffer(); await pc.setLocalDescription(offer);
-    if (pc.iceGatheringState !== 'complete') await new Promise<void>((ok) => pc.iceGatheringStateChange.subscribe((s) => s === 'complete' && ok()));
+    // werift's setLocalDescription returns once ICE gathering is done (local STUN answers at once, see signaling/server.ts).
     const res = await fetch(`${this.o.signaling}/offer`, { method: 'POST', body: JSON.stringify({ sessionId: this.o.sessionId, bubbleId: this.o.bubbleId ?? this.o.sessionId, participantId: this.o.participantId, sdp: pc.localDescription!.sdp, type: 'offer' }) });
     const ans: any = await res.json(); if (!res.ok || !ans.sdp) throw new Error(`signaling: ${JSON.stringify(ans)}`);
     this.lane = ans.lane;
@@ -84,7 +85,7 @@ export class Human {
       if (c.opts.lossPct && c.rand() * 100 < c.opts.lossPct) drop = true;
       c.idx++; if (drop) { c.res.dropped++; c.res.droppedMs += 20; }
       c.res.sent++;
-      if (c.idx >= c.packets.length) { this.cur = undefined; c.res.endAt = now() + 20; c.res.startAt = c.startAt; setImmediate(() => c.done(c.res)); }
+      if (c.idx >= c.packets.length) { this.cur = undefined; c.res.endAt = now() + 20; c.res.startAt = c.startAt; const ci = manifest().clips[c.clipId] as any; c.res.speechStartAt = c.startAt + ci.speechStartMs; c.res.speechEndAt = c.startAt + ci.speechEndMs; setImmediate(() => c.done(c.res)); }
     } else payload = silence();
     const h = new RtpHeader({ sequenceNumber: this.seq & 0xffff, timestamp: this.ts >>> 0, payloadType: 111, ssrc: this.ssrc, marker });
     this.seq = (this.seq + 1) & 0xffff; this.ts = (this.ts + 960) >>> 0;
@@ -99,7 +100,7 @@ export class Human {
     const clip = loadClip(clipId);
     if (opts.hint !== false) await fetch(`${this.o.signaling}/hint`, { method: 'POST', body: JSON.stringify({ sessionId: this.o.sessionId, participantId: this.o.participantId, clipId, text: opts.hintText }) });
     return new Promise<SpeakResult>((done) => {
-      const res: SpeakResult = { clipId, startAt: 0, endAt: 0, sent: 0, dropped: 0, droppedMs: 0 };
+      const res: SpeakResult = { clipId, startAt: 0, endAt: 0, speechStartAt: 0, speechEndAt: 0, sent: 0, dropped: 0, droppedMs: 0 };
       this.cur = { clipId, packets: clip.packets, idx: 0, startAt: 0, res, done, rand: rng(opts.seed ?? 7), opts };
     });
   }

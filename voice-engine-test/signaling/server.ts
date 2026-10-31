@@ -4,9 +4,30 @@
 //                            POST /hint  {sessionId,participantId,clipId}        (test-only fake STT side channel)
 //                            POST /hangup {sessionId,participantId}
 import http from 'node:http';
+import dgram from 'node:dgram';
 import { WebSocketServer, WebSocket } from 'ws';
 
+/** Minimal STUN binding responder. werift waits ~5 s for its default public STUN server before it reports ICE gathering done
+ *  (the sandbox cannot reach one). A local answer makes gathering take milliseconds. Test infrastructure only. */
+export function startStun(port: number) {
+  const sock = dgram.createSocket('udp4');
+  sock.on('message', (msg, rinfo) => {
+    if (msg.length < 20 || msg.readUInt16BE(0) !== 0x0001) return;
+    const attr = Buffer.alloc(12); attr.writeUInt16BE(0x0020, 0); attr.writeUInt16BE(8, 2); attr[5] = 0x01;
+    attr.writeUInt16BE(rinfo.port ^ 0x2112, 6);
+    const ip = rinfo.address.split('.').map(Number); const cookie = [0x21, 0x12, 0xa4, 0x42];
+    for (let i = 0; i < 4; i++) attr[8 + i] = ip[i] ^ cookie[i];
+    const h = Buffer.alloc(20); h.writeUInt16BE(0x0101, 0); h.writeUInt16BE(12, 2); msg.copy(h, 4, 4, 20);
+    sock.send(Buffer.concat([h, attr]), rinfo.port, rinfo.address);
+  });
+  sock.bind(port, '127.0.0.1');
+  return sock;
+}
+/** Each signaling server on port P runs its STUN responder on P+1000. */
+export const stunUrlFor = (signalingUrl: string) => `stun:127.0.0.1:${Number(new URL(signalingUrl).port) + 1000}`;
+
 export function startSignaling(port = 8700) {
+  const stun = startStun(port + 1000);
   let engine: WebSocket | undefined; let engineHello: any;
   const pending = new Map<string, { ok: (v: any) => void; fail: (e: Error) => void; t: NodeJS.Timeout }>();
   const lanes = new Map<string, Map<string, number>>(); // sessionId -> participantId -> lane
@@ -46,7 +67,7 @@ export function startSignaling(port = 8700) {
     });
   });
   const ready = new Promise<void>((ok) => server.listen(port, '127.0.0.1', ok));
-  return { ready, close: async () => { wss.close(); server.closeAllConnections(); await new Promise((r) => server.close(r as any)); } };
+  return { ready, close: async () => { stun.close(); wss.close(); server.closeAllConnections(); await new Promise((r) => server.close(r as any)); } };
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

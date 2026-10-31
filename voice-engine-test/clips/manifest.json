@@ -8,7 +8,9 @@
    "durationMs": 11000,
    "sha256": "80f71fdab049ca195115a63a738c7aeea50b2e09bc3513f85e627a28dbc5f40e",
    "transcript": "And so, my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
-   "note": "human, US public domain (JFK 1961 inaugural, via openai/whisper tests/jfk.flac)"
+   "note": "human, US public domain (JFK 1961 inaugural, via openai/whisper tests/jfk.flac)",
+   "speechStartMs": 352,
+   "speechEndMs": 10976
   },
   "en_ls_experience": {
    "file": "wav/en_ls_experience.wav",
@@ -16,7 +18,9 @@
    "durationMs": 1975,
    "sha256": "921c8d1a4f2f1da8640ddfc64803772d4dc21664fb5abe6b19d5509218e68a3d",
    "transcript": "experience proves this",
-   "note": "human, LibriSpeech 2830-3980-0043 (CC BY 4.0)"
+   "note": "human, LibriSpeech 2830-3980-0043 (CC BY 4.0)",
+   "speechStartMs": 384,
+   "speechEndMs": 1760
   },
   "en_ls_halt": {
    "file": "wav/en_ls_halt.wav",
@@ -24,7 +28,9 @@
    "durationMs": 2735,
    "sha256": "40cb2cc5976d3d53f1dbb83019237d599e2000a42fb485dabc230831065ed616",
    "transcript": "why should one halt on the way",
-   "note": "human, LibriSpeech 4507-16021-0012 (CC BY 4.0)"
+   "note": "human, LibriSpeech 4507-16021-0012 (CC BY 4.0)",
+   "speechStartMs": 576,
+   "speechEndMs": 2624
   },
   "en_ls_power": {
    "file": "wav/en_ls_power.wav",
@@ -32,7 +38,9 @@
    "durationMs": 2590,
    "sha256": "73ebbd47baf7f5f490e0f013f677b5cc7cfda90dc1b3fe501fbacab9fb1a507c",
    "transcript": "your power is sufficient i said",
-   "note": "human, LibriSpeech 8455-210777-0068 (CC BY 4.0)"
+   "note": "human, LibriSpeech 8455-210777-0068 (CC BY 4.0)",
+   "speechStartMs": 608,
+   "speechEndMs": 2176
   },
   "ar_egy_demo": {
    "file": "wav/ar_egy_demo.wav",
@@ -40,7 +48,9 @@
    "durationMs": 10054,
    "sha256": "ba58e2c7074d1cf648063e95fddceebecd9b11640424d263c93ce08fa8c3de26",
    "transcript": "أكل بتاعهو بيبقى مميز قوي عرفة إزاي ف والل ه إحنا كلنا كل يوم بنعمل حيلة عشان نسهب الشنطة بتاعته ناخد الأكن ورجع أ",
-   "note": "human Egyptian Arabic; transcript is the ASR output printed in ARBML/klaam notebooks/demo.ipynb (approximate)"
+   "note": "human Egyptian Arabic; transcript is the ASR output printed in ARBML/klaam notebooks/demo.ipynb (approximate)",
+   "speechStartMs": 32,
+   "speechEndMs": 10048
   },
   "ar_iraqi_1": {
    "file": "wav/ar_iraqi_1.wav",
@@ -48,7 +58,9 @@
    "durationMs": 5619,
    "sha256": "37b18bfd6f1ea81e836457ae565f3153115ed021dc0e25d4fd4d8d9eca297f6b",
    "transcript": "[label] arabic_jamalaka",
-   "note": "SYNTHETIC (TTS) Arabic, CC BY 4.0 hayderkharrufa/iraqi-dialect-tts-corpus; text is a label, true transcript unknown"
+   "note": "SYNTHETIC (TTS) Arabic, CC BY 4.0 hayderkharrufa/iraqi-dialect-tts-corpus; text is a label, true transcript unknown",
+   "speechStartMs": 64,
+   "speechEndMs": 5600
   },
   "ar_iraqi_2": {
    "file": "wav/ar_iraqi_2.wav",
@@ -56,7 +68,9 @@
    "durationMs": 6420,
    "sha256": "9ad77cd105851efa97969622097b525e81c874bb35b22e013cd3fb37de312962",
    "transcript": "[label] iraqi_hathallon",
-   "note": "SYNTHETIC (TTS) Iraqi Arabic, CC BY 4.0; text is a label, true transcript unknown"
+   "note": "SYNTHETIC (TTS) Iraqi Arabic, CC BY 4.0; text is a label, true transcript unknown",
+   "speechStartMs": 32,
+   "speechEndMs": 6400
   },
   "ar_iraqi_3": {
    "file": "wav/ar_iraqi_3.wav",
@@ -64,7 +78,9 @@
    "durationMs": 4702,
    "sha256": "28ea48b97d5f2c0059b62d0494f3429c78ba58b155931636f600da42b30b2218",
    "transcript": "[label] iraqi_nafha",
-   "note": "SYNTHETIC (TTS) Iraqi Arabic, CC BY 4.0; text is a label, true transcript unknown"
+   "note": "SYNTHETIC (TTS) Iraqi Arabic, CC BY 4.0; text is a label, true transcript unknown",
+   "speechStartMs": 32,
+   "speechEndMs": 4672
   },
   "en_yes": {
    "file": "wav/en_ls_experience.wav",
@@ -72,7 +88,9 @@
    "durationMs": 1975,
    "sha256": "921c8d1a4f2f1da8640ddfc64803772d4dc21664fb5abe6b19d5509218e68a3d",
    "transcript": "yes",
-   "note": "alias of en_ls_experience audio; the fake STT is told it said 'yes' (S5)"
+   "note": "alias of en_ls_experience audio; the fake STT is told it said 'yes' (S5)",
+   "speechStartMs": 384,
+   "speechEndMs": 1760
   }
  },
  "botVoice": {
