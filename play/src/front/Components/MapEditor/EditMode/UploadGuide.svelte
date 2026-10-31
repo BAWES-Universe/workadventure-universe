@@ -10,6 +10,7 @@
     import { LL } from "../../../../i18n/i18n-svelte";
     import { mapEditorEntityUploadEventStore, selectCategoryStore } from "../../../Stores/MapEditorStore";
     import { currentPlayerWokaStore } from "../../../Stores/CurrentPlayerWokaStore";
+    import USelect from "../../UI/USelect.svelte";
     import PanelHeader from "./PanelHeader.svelte";
     import { IconCheck, IconCloudUpload, IconEye, IconInfoCircle, IconRefresh, IconStar, IconTexture } from "@wa-icons";
 
@@ -82,6 +83,16 @@
             depth = "custom";
             depthOffset = saved;
         }
+    }
+
+    $: depthOptions = [
+        { value: "standing", label: $LL.mapEditor.edit.upload.depthStanding() },
+        { value: "ground", label: $LL.mapEditor.edit.upload.depthGround() },
+        { value: "custom", label: $LL.mapEditor.edit.upload.depthCustom() },
+    ];
+
+    function toDepth(value: string): "standing" | "ground" | "custom" {
+        return value === "ground" || value === "custom" ? value : "standing";
     }
 
     function onDrop(event: DragEvent) {
@@ -314,14 +325,17 @@
             </div>
         {/if}
         <div class="em-field em-depth">
-            <label class="em-depth-row">
+            <div class="em-depth-row">
                 <span class="em-t">{$LL.mapEditor.edit.upload.depth()}</span>
-                <select bind:value={depth} data-testid="depth">
-                    <option value="standing">{$LL.mapEditor.edit.upload.depthStanding()}</option>
-                    <option value="ground">{$LL.mapEditor.edit.upload.depthGround()}</option>
-                    <option value="custom">{$LL.mapEditor.edit.upload.depthCustom()}</option>
-                </select>
-            </label>
+                <div class="em-depth-select" data-testid="depth">
+                    <USelect
+                        label={$LL.mapEditor.edit.upload.depth()}
+                        value={depth}
+                        options={depthOptions}
+                        onSelect={(value) => (depth = toDepth(value))}
+                    />
+                </div>
+            </div>
             <span class="em-m"
                 >{depth === "standing"
                     ? $LL.mapEditor.edit.upload.depthStandingText()
@@ -544,18 +558,10 @@
         flex: 1;
         font-weight: 400;
     }
-    .em-depth-row select {
+    .em-depth-select {
         flex: 1;
-        min-width: 0;
-        height: 36px;
-        padding: 0 12px;
-        border: 0;
-        border-radius: 10px;
-        background: rgba(0, 0, 0, 0.25);
-        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.18);
-        font: inherit;
-        color: #fff;
-        outline: none;
+        /* Wide enough on phones for "On the ground" and the check in the open list */
+        min-width: 190px;
     }
     .em-delete {
         align-self: flex-start;
@@ -617,8 +623,7 @@
         flex: 1;
         font-weight: 400;
     }
-    .em-field input[type="text"],
-    .em-field select {
+    .em-field input[type="text"] {
         flex: 1;
         min-width: 0;
         height: 36px;
