@@ -120,10 +120,17 @@ export class AreasManager {
         this.updateMapEditorOptionForSpecificAreas();
     }
 
-    /** Stops listening to the rooms' state and removes their pills. The areas themselves go with the scene. */
+    /**
+     * Stops listening to the rooms' state and removes the areas and their pills: the scene closes, or a map script
+     * rebuilt the map in place (WA.room.loadTileset) and a new manager takes over.
+     */
     public destroy(): void {
         this.liveStateSubscription?.unsubscribe();
         this.liveStateSubscription = undefined;
+        for (const area of this.areas) {
+            area.destroy();
+        }
+        this.areas = [];
         for (const label of this.statusLabels.values()) {
             label.destroy();
         }

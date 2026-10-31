@@ -60,6 +60,10 @@ export type PropertyChangeCallback = (
     allProps: Map<string, string | boolean | number>
 ) => void;
 
+/** The hidden layers where objects and closed rooms stop the player. */
+const ENTITIES_COLLISION_LAYER = "__entitiesCollisionLayer";
+const AREAS_COLLISION_LAYER = "__areasCollisionLayer";
+
 export class GameMapFrontWrapper {
     private scene: GameScene;
     private gameMap: GameMap;
@@ -205,7 +209,7 @@ export class GameMapFrontWrapper {
 
         this.collisionGrid = [];
         // NOTE: We cannot really proceed without it
-        const phaserBlankCollisionsLayer = phaserMap.createBlankLayer("__entitiesCollisionLayer", terrains);
+        const phaserBlankCollisionsLayer = phaserMap.createBlankLayer(ENTITIES_COLLISION_LAYER, terrains);
         if (!phaserBlankCollisionsLayer) {
             throw new Error("Could not create entities collision layer");
         }
@@ -214,7 +218,7 @@ export class GameMapFrontWrapper {
 
         this.phaserLayers.push(this.entitiesCollisionLayer);
 
-        const phaserBlankCollisionsLayer2 = phaserMap.createBlankLayer("__areasCollisionLayer", terrains);
+        const phaserBlankCollisionsLayer2 = phaserMap.createBlankLayer(AREAS_COLLISION_LAYER, terrains);
         if (!phaserBlankCollisionsLayer2) {
             throw new Error("Could not create areas collision layer");
         }
@@ -1470,5 +1474,12 @@ export class GameMapFrontWrapper {
 
     public close() {
         this.entitiesManager.close();
+        // The rooms and their Full and Locked pills belong to this map: a map rebuilt in place makes its own.
+        this.areasManager?.destroy();
+        this.areasManager = undefined;
+        // Its collision layers too: a map rebuilt in place creates them again under the same names, which the tile map
+        // refuses while these are still in it.
+        this.phaserMap.removeLayer(ENTITIES_COLLISION_LAYER);
+        this.phaserMap.removeLayer(AREAS_COLLISION_LAYER);
     }
 }

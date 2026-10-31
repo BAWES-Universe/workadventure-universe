@@ -2027,7 +2027,12 @@ export class GameScene extends DirtyScene {
         }
     }
 
-    private initializeAreaManager() {
+    /**
+     * Sets up the rooms on the map. `arriving`: the player has just joined the room or come back after a drop. A map
+     * rebuilt in place (WA.room.loadTileset) is not an arrival: the player stays where they are, even inside a room
+     * that is full or locked to others.
+     */
+    private initializeAreaManager(arriving = true) {
         if (!this.connection) {
             throw new Error("This should never happen");
         }
@@ -2044,6 +2049,9 @@ export class GameScene extends DirtyScene {
                 setLocked: (areaId, propertyId, locked) => this.connection?.emitSetAreaLock(areaId, propertyId, locked),
             }
         );
+        if (!arriving) {
+            return;
+        }
         // Arrived (or back after a drop) inside a room that others filled or locked: step just outside it.
         const spot = this.findSpotOutsideClosedRooms(this.CurrentPlayer, true);
         if (spot !== undefined && (spot.x !== this.CurrentPlayer.x || spot.y !== this.CurrentPlayer.y)) {
@@ -3619,6 +3627,9 @@ export class GameScene extends DirtyScene {
                             for (const layer of this.Map.layers) {
                                 layer.tilemapLayer.destroy(false);
                             }
+                            // The full and locked rooms (#1621 #1622) are set up again on the new map, unless the
+                            // scene has not set them up yet: it does it on the new map once it is ready.
+                            const areasWereSetUp = this.gameMapFrontWrapper?.areasManager !== undefined;
                             this.gameMapFrontWrapper?.close();
                             //Create a new GameMap with the changed file
                             this.gameMapFrontWrapper = new GameMapFrontWrapper(
@@ -3636,6 +3647,9 @@ export class GameScene extends DirtyScene {
                             this.createCollisionWithPlayer();
                             //Create new trigger with the new GameMap
                             new GameMapPropertiesListener(this, this.gameMapFrontWrapper).register();
+                            if (areasWereSetUp) {
+                                this.initializeAreaManager(false);
+                            }
                             resolve(newFirstgid);
                         });
                         this.load.off("loaderror", errorHandler);
