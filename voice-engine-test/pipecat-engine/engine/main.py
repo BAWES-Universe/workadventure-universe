@@ -160,7 +160,11 @@ def main():
     p.add_argument("--signaling", default="ws://127.0.0.1:8700")
     p.add_argument("--emotion-stub", action="store_true", help="add the loudness-based emotion stub to user.turn")
     p.add_argument("--stats-port", type=int, default=8811)
+    p.add_argument("--vad-min-volume", type=float, default=None, help="documented VADParams.min_volume (pipecat default 0.6); only used for the talk-over latency experiment")
     a = p.parse_args()
+    if a.vad_min_volume is not None:
+        from engine import lane as _lane
+        _lane.VAD_PARAMS["min_volume"] = a.vad_min_volume
     sys.exit(asyncio.run(amain(a)))
 
 

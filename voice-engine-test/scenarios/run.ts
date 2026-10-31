@@ -10,7 +10,7 @@ const out = process.argv[5] ?? `${ROOT}results/scenarios`; mkdirSync(out, { recu
 const base = 8000 + (engine === 'ts' ? 300 : 0) + (turnEnd === 'provider' ? 100 : 0) + 200;
 const results: Result[] = []; const t0 = Date.now();
 async function withStack(emotion: boolean, fn: (c: Ctx, st: Stack) => Promise<void>) {
-  const st = await new Stack({ engine, turnEnd, basePort: base + (emotion ? 50 : 0), emotionStub: emotion }).start(); const c = new Ctx(st);
+  const st = await new Stack({ engine, turnEnd, basePort: base + (emotion ? 50 : 0), emotionStub: emotion, extraArgs: process.env.ENGINE_ARGS ? process.env.ENGINE_ARGS.split(' ') : undefined }).start(); const c = new Ctx(st);
   try { await fn(c, st); } finally {
     const stats = await st.stats().catch(() => null); const viol = await st.tail.get('/violations').catch(() => null);
     results.push({ id: emotion ? 'HARNESS-emotion-stack' : 'HARNESS', status: stats && stats.failures.length === 0 && viol?.count === 0 && st.exited.length === 0 ? 'PASS' : 'FAIL', reason: 'engine failures, bridge schema violations, unexpected process exits', evidence: { failures: stats?.failures, violations: viol?.count, exited: st.exited, counters: stats?.counters } });
