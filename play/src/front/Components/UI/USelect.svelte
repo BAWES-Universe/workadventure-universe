@@ -53,9 +53,15 @@
     function visibleBounds(): { top: number; bottom: number } {
         let top = 0;
         let bottom = window.innerHeight;
-        for (let element = root.parentElement; element; element = element.parentElement) {
+        // The page itself is the window, so the walk stops before <body>; a panel with no height cuts nothing
+        for (
+            let element = root.parentElement;
+            element && element !== document.body && element !== document.documentElement;
+            element = element.parentElement
+        ) {
             if (/(auto|scroll|hidden)/.test(getComputedStyle(element).overflowY)) {
                 const box = element.getBoundingClientRect();
+                if (box.height === 0) continue;
                 top = Math.max(top, box.top);
                 bottom = Math.min(bottom, box.bottom);
             }
