@@ -128,15 +128,6 @@
         let buttonLabel: string;
         let policy: string | undefined;
         switch (type) {
-            case "jitsiRoomProperty":
-                return {
-                    id,
-                    type,
-                    jitsiRoomConfig: {},
-                    closable: true,
-                    roomName: "JITSI ROOM",
-                    buttonLabel: $LL.mapEditor.properties.jitsiRoomProperty.label(),
-                };
             case "livekitRoomProperty":
                 return {
                     id,

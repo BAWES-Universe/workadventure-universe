@@ -48,14 +48,15 @@ export class UpdateAreaCommand extends Command {
 
     /**
      * There are certain properties that can be only used as singletons, for instance the "focusable" property.
-     * or "jitsi" property. If we somehow try to pass properties array which is not valid, we will catch it here.
+     * If we somehow try to pass properties array which is not valid, we will catch it here.
+     * Jitsi is no longer supported (#1688): a Jitsi setting sent by an old page or a script is dropped.
      */
     private validateProperties(data: AreaDataProperties, areaId: string): AreaDataProperties {
+        data = data.filter((property) => property.type !== "jitsiRoomProperty");
         const singleOnly: AreaDataPropertiesKeys[] = [
             "start",
             "focusable",
             "silent",
-            "jitsiRoomProperty",
             "personalAreaPropertyData",
             "restrictedRightsPropertyData",
             "matrixRoomPropertyData",

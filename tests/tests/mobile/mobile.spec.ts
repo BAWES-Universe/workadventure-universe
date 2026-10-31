@@ -1,7 +1,7 @@
 import {expect, test} from '@playwright/test';
 import Menu from "../utils/menu";
 import Map from "../utils/map";
-import {play_url, publicTestMapUrl} from "../utils/urls";
+import {play_url} from "../utils/urls";
 import {getPage} from "../utils/auth";
 import {isMobile} from "../utils/isMobile";
 
@@ -88,28 +88,6 @@ test.describe('Mobile @nowebkit @nodesktop', () => {
 
         await pageJohn.context().close();
         await pageAlice.context().close();
-        await page.context().close();
-    });
-
-    test('Successfully jitsi cowebsite with mobile device', async ({ browser }) => {
-        await using page = await getPage(browser, 'Bob',
-            publicTestMapUrl('tests/CoWebsite/cowebsite_jitsiroom.json', 'mobile'));
-
-        // Move to open a cowebsite
-        await page.locator('#body').press('ArrowDown', { delay: 200 });
-        await page.locator('#body').press('ArrowRight', { delay: 3000 });
-        // Now, let's move player 2 to the speaker zone
-        
-        // On an upright phone the cowebsite is a bottom sheet, with one close for everything open in it
-        await expect(page.getByTestId('openHereSheet')).toBeVisible();
-        await page.locator('[data-testid="openHereSheetClose"]:visible').click();
-
-        // Check that the cowebsite is hidden
-        await expect(page.getByTestId('openHereSheet')).toBeHidden({
-            timeout: 10000
-        });
-
-
         await page.context().close();
     });
 

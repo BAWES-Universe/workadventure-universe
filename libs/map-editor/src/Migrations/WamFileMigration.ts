@@ -42,31 +42,49 @@ class WamFileMigration {
             }
         }
 
-        return WAMFileFormat.parse(wamFileContent);
+        return WAMFileFormat.parse(this.dropJitsi(wamFileContent));
+    }
+
+    /**
+     * Jitsi is no longer supported (game #1688): our meeting rooms and bubbles replace it. An area or an object that
+     * still has a Jitsi setting keeps everything else; only that setting is dropped, so the map loads as before and
+     * the file loses it the next time it is saved. The Jitsi type stays readable in the schema so that code reading a
+     * file without this migration still opens it.
+     */
+    private dropJitsi(fileContent: any): any {
+        if (!fileContent || typeof fileContent !== "object") {
+            return fileContent;
+        }
+        const withoutJitsi = (properties: any): any =>
+            Array.isArray(properties)
+                ? properties.filter((property: any) => property?.type !== "jitsiRoomProperty")
+                : properties;
+
+        const result = { ...fileContent };
+        if (Array.isArray(fileContent.areas)) {
+            result.areas = fileContent.areas.map((area: any) =>
+                area && typeof area === "object" ? { ...area, properties: withoutJitsi(area.properties) } : area
+            );
+        }
+        if (fileContent.entities && typeof fileContent.entities === "object") {
+            result.entities = Object.fromEntries(
+                Object.entries(fileContent.entities as Record<string, unknown>).map(([id, entity]: [string, any]) => [
+                    id,
+                    entity && typeof entity === "object" && "properties" in entity
+                        ? { ...entity, properties: withoutJitsi(entity.properties) }
+                        : entity,
+                ])
+            );
+        }
+        return result;
     }
 
     private migrate_v1_to_v2(fileContent: any): any {
+        // Version 2 moved the Jitsi moderator tag out of the Jitsi config. Jitsi settings are now dropped altogether
+        // (see dropJitsi), so nothing else changes here.
         return {
             ...fileContent,
             version: "2.0.0",
-            areas: fileContent?.areas?.map((area: any) => ({
-                ...area,
-                properties: area.properties?.map((property: any) => {
-                    if (property.type === "jitsiRoomProperty") {
-                        const jitsiRoomAdminTag = property.jitsiRoomConfig?.jitsiRoomAdminTag ?? undefined;
-
-                        delete property.jitsiRoomConfig.jitsiRoomAdminTag;
-
-                        return {
-                            ...property,
-                            jitsiRoomConfig: property.jitsiRoomConfig,
-                            jitsiRoomAdminTag,
-                        };
-                    }
-
-                    return property;
-                }),
-            })),
         };
     }
 
