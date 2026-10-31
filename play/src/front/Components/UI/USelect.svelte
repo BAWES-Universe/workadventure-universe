@@ -34,10 +34,11 @@
 
     async function show() {
         if (disabled || options.length === 0) return;
-        // Opens upward when the list would not fit under the field
+        // Opens upward when the list would not fit under the field, inside the window or the panel that scrolls it
         const rect = head.getBoundingClientRect();
         const listHeight = Math.min(options.length * 46 + 12, 252);
-        upward = rect.bottom + listHeight + 8 > window.innerHeight && rect.top - listHeight - 8 > 0;
+        const bounds = visibleBounds();
+        upward = rect.bottom + listHeight + 8 > bounds.bottom && rect.top - listHeight - 8 > bounds.top;
         open = true;
         await tick();
         focusOption(
@@ -46,6 +47,26 @@
                 options.findIndex((option) => option.value === value)
             )
         );
+    }
+
+    // The part of the screen the list can show in: the window, cut by any scrolling panel the field sits in
+    function visibleBounds(): { top: number; bottom: number } {
+        let top = 0;
+        let bottom = window.innerHeight;
+        // The page itself is the window, so the walk stops before <body>; a panel with no height cuts nothing
+        for (
+            let element = root.parentElement;
+            element && element !== document.body && element !== document.documentElement;
+            element = element.parentElement
+        ) {
+            if (/(auto|scroll|hidden)/.test(getComputedStyle(element).overflowY)) {
+                const box = element.getBoundingClientRect();
+                if (box.height === 0) continue;
+                top = Math.max(top, box.top);
+                bottom = Math.min(bottom, box.bottom);
+            }
+        }
+        return { top, bottom };
     }
 
     function close(refocus = true) {
