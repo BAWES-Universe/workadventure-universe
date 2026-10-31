@@ -72,6 +72,9 @@ interface SharedSound {
 
 const keyOf = (objectId: string, propertyId: string) => `${objectId}/${propertyId}`;
 
+/** What a playing sound was started with. The length the map editor measures afterwards changes nothing heard. */
+const soundSnapshot = (property: PlayAudioPropertyData) => JSON.stringify({ ...property, durationSeconds: undefined });
+
 /**
  * The sounds of the map's objects (#1627). They mix over the room music: a room's music never stops for them. The
  * music controls' volume, mute and Stop cover them too, and "Block audio" silences them.
@@ -204,9 +207,11 @@ export class ObjectSounds {
         if (playing && !playing.loop) {
             return;
         }
+        // The length the map editor measured, else measured here (a sound saved before the length was kept)
         const durationSeconds = settings.loop
             ? 0
-            : await this.dependencies.soundLength(await this.dependencies.playableLink(property.audioLink));
+            : property.durationSeconds ??
+              (await this.dependencies.soundLength(await this.dependencies.playableLink(property.audioLink)));
         if (this.destroyed) {
             return;
         }
@@ -252,7 +257,7 @@ export class ObjectSounds {
                 const key = keyOf(object.id, property.id);
                 // A map editor changed the sound while it plays: it starts again as it is now
                 const current = this.playing.get(key);
-                if (current && current.started !== JSON.stringify(property)) {
+                if (current && current.started !== soundSnapshot(property)) {
                     this.stop(key);
                     this.inRange.delete(key);
                 }
@@ -359,7 +364,7 @@ export class ObjectSounds {
         const playing: Playing = {
             objectId,
             property,
-            started: JSON.stringify(property),
+            started: soundSnapshot(property),
             settings,
             pending: true,
             loop: options.loop,

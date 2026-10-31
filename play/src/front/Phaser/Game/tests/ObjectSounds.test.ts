@@ -224,6 +224,31 @@ describe("ObjectSounds (#1627)", () => {
         expect(voices[0].volume).toBeCloseTo(0.6);
     });
 
+    it("sends the length the map editor measured, without loading the sound to measure it", async () => {
+        const gong: SoundObject = {
+            id: "gong",
+            x: 100,
+            y: 100,
+            properties: [sound({ heardBy: "map", durationSeconds: 7.5 })],
+        };
+        const { sounds, clicks, links, flush } = setUp([gong]);
+        sounds.click("gong", gong.properties[0] as PlayAudioPropertyData);
+        await flush();
+        expect(clicks[0]).toMatchObject({ durationSeconds: 7.5 });
+        expect(links).toEqual([]);
+    });
+
+    it("keeps playing when the map editor's measured length is saved", async () => {
+        const object = fireplace();
+        const { sounds, voices, moveTo, flush } = setUp([object]);
+        await moveTo(0.5);
+        (object.properties[0] as PlayAudioPropertyData).durationSeconds = 30;
+        sounds.refresh();
+        await flush();
+        expect(voices).toHaveLength(1);
+        expect(voices[0].destroyed).toBe(false);
+    });
+
     it("never plays a sound the map does not have, whatever the server says", async () => {
         const { voices, updates, flush } = setUp([fireplace()]);
         updates.next({

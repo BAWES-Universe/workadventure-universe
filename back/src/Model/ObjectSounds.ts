@@ -17,9 +17,10 @@ interface PlayingSound {
  * everyone in the room. A click on a looping sound stops it (a jukebox). A click while a sound plays, or during the
  * wait after it, never restarts it.
  *
- * The room's saved map says which objects have such a sound, and gives its loop and its wait (see sharedSoundOf):
- * a click on anything else is ignored. Only the length comes from the clicker, who has loaded the sound. Every player
- * still checks the object's sound in their own map before playing anything (see ObjectSounds in the front).
+ * The room's saved map says which objects have such a sound, and gives its loop, its wait and its length (see
+ * sharedSoundOf): a click on anything else is ignored. Only for a sound saved before its length was kept does the
+ * length come from the clicker, who has loaded the sound. Every player still checks the object's sound in their own
+ * map before playing anything (see ObjectSounds in the front).
  */
 export class ObjectSounds {
     private sounds = new Map<string, PlayingSound>();
@@ -96,14 +97,14 @@ export class ObjectSounds {
 }
 
 /**
- * The clicked sound other people hear that this object has in the room's saved map, with its loop and its wait, or
- * undefined when it has none: a click the map does not back is ignored.
+ * The clicked sound other people hear that this object has in the room's saved map, with its loop, its wait and its
+ * length when the map editor measured it, or undefined when it has none: a click the map does not back is ignored.
  */
 export function sharedSoundOf(
     wam: WAMFileFormat | undefined,
     entityId: string,
     propertyId: string
-): { loop: boolean; waitSeconds: number } | undefined {
+): { loop: boolean; waitSeconds: number; durationSeconds?: number } | undefined {
     const entity = wam?.entities[entityId];
     const property = entity?.properties?.find((p) => p.type === "playAudio" && p.id === propertyId);
     if (property?.type !== "playAudio" || !property.audioLink) {
@@ -114,7 +115,13 @@ export function sharedSoundOf(
     if (settings.startsOn !== "click" || settings.heardBy === "clicker") {
         return undefined;
     }
-    return { loop: settings.loop, waitSeconds: settings.clickWait };
+    const durationSeconds =
+        property.durationSeconds !== undefined &&
+        Number.isFinite(property.durationSeconds) &&
+        property.durationSeconds > 0
+            ? property.durationSeconds
+            : undefined;
+    return { loop: settings.loop, waitSeconds: settings.clickWait, durationSeconds };
 }
 
 function isLength(seconds: number): boolean {

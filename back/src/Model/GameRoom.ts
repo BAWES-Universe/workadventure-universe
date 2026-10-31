@@ -392,7 +392,7 @@ export class GameRoom implements BrothersFinder {
 
     /**
      * A player clicks an object whose sound other people hear (#1627). The room's saved map must have that sound, and
-     * gives its loop and its wait; the clicker only gives its length.
+     * gives its loop, its wait and its length; the clicker's length counts only when the map has none.
      */
     public async clickObjectSound(message: ClickObjectSoundMessage): Promise<void> {
         let wam: WAMFileFormat | undefined;
@@ -406,7 +406,12 @@ export class GameRoom implements BrothersFinder {
         if (!sound) {
             return;
         }
-        this.objectSounds.click({ ...message, loop: sound.loop, waitSeconds: sound.waitSeconds });
+        this.objectSounds.click({
+            ...message,
+            loop: sound.loop,
+            waitSeconds: sound.waitSeconds,
+            durationSeconds: sound.durationSeconds ?? message.durationSeconds,
+        });
     }
 
     /** The objects' clicked sounds still playing, for a player who arrives */

@@ -11,28 +11,8 @@ import {
 } from "../../Stores/AudioManagerStore";
 import { ObjectSounds } from "./ObjectSounds";
 import { playableSoundLink } from "./MapEditor/uploadedSoundLink";
+import { soundLength } from "./soundLength";
 import type { GameScene } from "./GameScene";
-
-/** How long we wait to learn a sound's length before sending a click without it */
-const SOUND_LENGTH_TIMEOUT_MS = 5000;
-
-function soundLength(url: string): Promise<number> {
-    return new Promise((resolve) => {
-        const audio = new Audio();
-        const done = (seconds: number) => {
-            clearTimeout(timer);
-            audio.onloadedmetadata = null;
-            audio.onerror = null;
-            audio.removeAttribute("src");
-            resolve(Number.isFinite(seconds) && seconds > 0 ? seconds : 0);
-        };
-        const timer = setTimeout(() => done(0), SOUND_LENGTH_TIMEOUT_MS);
-        audio.preload = "metadata";
-        audio.onloadedmetadata = () => done(audio.duration);
-        audio.onerror = () => done(0);
-        audio.src = url;
-    });
-}
 
 /**
  * The objects' sounds of this scene (#1627), wired to the game: the player's position, the music controls, "Block

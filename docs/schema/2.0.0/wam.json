@@ -175,6 +175,10 @@
                           "type": "number",
                           "minimum": 0
                         },
+                        "durationSeconds": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        },
                         "playForAllUsers": {
                           "type": "boolean"
                         },

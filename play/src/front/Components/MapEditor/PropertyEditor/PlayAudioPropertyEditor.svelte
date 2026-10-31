@@ -14,6 +14,7 @@
     import { mapEditorSelectedEntityStore } from "../../../Stores/MapEditorStore";
     import { UploadFileFrontCommand } from "../../../Phaser/Game/MapEditor/Commands/File/UploadFileFrontCommand";
     import { playableSoundLink, uploadedSoundLink } from "../../../Phaser/Game/MapEditor/uploadedSoundLink";
+    import { soundLength } from "../../../Phaser/Game/soundLength";
     import PropertyEditorBase from "./PropertyEditorBase.svelte";
     import PanelSwitch from "./PanelSwitch.svelte";
     import { IconCloudUpload, IconFileMusic, IconPlayerPlayFilled, IconPlayerStopFilled } from "@wa-icons";
@@ -170,12 +171,53 @@
         dispatch("audioLink", property);
     }
 
+    /**
+     * An object's sound keeps its length in the map (#1627), so that the server knows when a sound others hear ends.
+     * It is measured from the sound's own metadata once the sound is set, then saved like any other change.
+     */
+    function measureLength(audioLink: string, source: Promise<string>, cleanUp?: () => void) {
+        if (isArea) {
+            cleanUp?.();
+            return;
+        }
+        delete property.durationSeconds;
+        source
+            .then((url) => soundLength(url))
+            .then((seconds) => {
+                // The sound was changed again meanwhile: that change measures its own
+                if (property.audioLink !== audioLink) {
+                    return;
+                }
+                if (seconds > 0) {
+                    property.durationSeconds = seconds;
+                    onValueChange();
+                }
+            })
+            .catch((error) => console.error("Could not tell how long the sound lasts", error))
+            .finally(() => cleanUp?.());
+    }
+
     function onLinkChange() {
         // A pasted link replaces the uploaded sound, which map-storage then deletes
         if (property.audioName) {
             property.audioName = null;
         }
         stopAudio();
+        if (property.audioLink) {
+            const scene = gameManager.getCurrentGameScene();
+            const connection = scene?.connection;
+            const audioLink = property.audioLink;
+            measureLength(
+                audioLink,
+                Promise.resolve().then(() =>
+                    playableSoundLink(
+                        audioLink,
+                        scene?.room.mapStorageUrl,
+                        connection ? () => connection.queryMapStorageJwtToken() : undefined
+                    )
+                )
+            );
+        }
         onValueChange();
     }
 
@@ -216,6 +258,9 @@
         stopAudio();
         property.audioName = file.name;
         property.audioLink = uploadedSoundLink(mapStorageUrl, file.name, property.id);
+        // Measured from the chosen file itself, before it has reached the map
+        const fileUrl = URL.createObjectURL(file);
+        measureLength(property.audioLink, Promise.resolve(fileUrl), () => URL.revokeObjectURL(fileUrl));
         onValueChange();
     }
 

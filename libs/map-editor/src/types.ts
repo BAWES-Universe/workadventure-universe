@@ -104,6 +104,9 @@ export const PlayAudioPropertyData = PropertyBase.extend({
     heardUpTo: z.number().min(0).optional(),
     // Seconds after a clicked sound ends before it can play again
     clickWait: z.number().min(0).optional(),
+    // How long the sound lasts in seconds, measured by the map editor when the sound is set, so that the server knows
+    // when a clicked sound others hear ends. Unset when it could not be told (or for a sound set before it was kept).
+    durationSeconds: z.number().positive().optional(),
     // Upstream WorkAdventure's fields for a clicked sound others hear (read by objectSoundSettings, so maps made
     // there keep their sound): played for everyone, heard up to this distance in pixels (or anywhere when unset)
     playForAllUsers: z.boolean().optional(),
