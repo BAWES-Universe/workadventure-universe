@@ -77,7 +77,7 @@
  },
  "botVoice": {
   "file": "bot-voice-24k.wav",
-  "sha256": "4ead682ad8ff3e0b94956dda57ac5779fe45f7cb5234e0a0a90a81c4e87df6d1",
+  "sha256": "053e58167192403ad24e6e7b260cccffb2855ec92632afb6ce2db12c24c502ed",
   "format": "s16le mono 24000 Hz wav, 30 s of recorded speech (silero-vad tests/data/test.wav, MIT repo)"
  }
 }

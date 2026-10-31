@@ -12,5 +12,6 @@ conv "$SRC/klaam/samples/demo.wav"            ar_egy_demo
 conv "$SRC/iraqi/arabic_jamalaka.wav"         ar_iraqi_1
 conv "$SRC/iraqi/iraqi_hathallon.wav"         ar_iraqi_2
 conv "$SRC/iraqi/iraqi_nafha.wav"             ar_iraqi_3
-# bot voice: first 30 s of the (MIT, silero-vad) test recording, 24 kHz s16 mono, used by the fake TTS
-ffmpeg -v error -y -t 30 -i "$SRC/silero_test.wav" -ac 1 -ar 24000 -sample_fmt s16 "$(dirname "$OUT")/bot-voice-24k.wav"
+# bot voice: the (MIT, silero-vad) test recording with pauses longer than 120 ms removed, first 30 s, 24 kHz s16 mono.
+# Used only as "recorded speech" by the fake TTS, so pauses inside bot audio cannot be mistaken for "bot stopped".
+ffmpeg -v error -y -i "$SRC/silero_test.wav" -af "silenceremove=start_periods=1:start_threshold=-33dB:stop_periods=-1:stop_duration=0.12:stop_threshold=-33dB" -t 30 -ac 1 -ar 24000 -sample_fmt s16 "$(dirname "$OUT")/bot-voice-24k.wav"
