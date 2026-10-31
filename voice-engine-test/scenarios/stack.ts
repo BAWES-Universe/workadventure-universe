@@ -6,7 +6,7 @@ import { BrainTail } from '../loadgen/tail.ts';
 
 export type EngineKind = 'pipecat' | 'ts';
 export type TurnEnd = 'local' | 'provider';
-export interface StackOpts { engine: EngineKind; turnEnd: TurnEnd; basePort?: number; logDir?: string; brainThinkMs?: number; emotionStub?: boolean; extraArgs?: string[]; env?: Record<string, string> }
+export interface StackOpts { engine: EngineKind; turnEnd: TurnEnd; basePort?: number; logDir?: string; brainThinkMs?: number; procs?: number; emotionStub?: boolean; extraArgs?: string[]; env?: Record<string, string> }
 const CLK = 100; // Linux USER_HZ
 
 export function procTimes(pid: number) {
@@ -16,7 +16,7 @@ export function procTimes(pid: number) {
 }
 
 export class Stack {
-  procs: ChildProcess[] = []; engineProc!: ChildProcess; tail!: BrainTail;
+  procs: ChildProcess[] = []; engineProc!: ChildProcess; engineProcs: ChildProcess[] = []; tail!: BrainTail;
   brainUrl: string; signalingUrl: string; statsUrl: string; exited: string[] = [];
   constructor(public o: StackOpts) {
     const b = o.basePort ?? 8800;
@@ -35,11 +35,15 @@ export class Stack {
     this.launch('brain', 'node', ['--import', 'tsx', `${ROOT}bridge/src/brain.ts`], ROOT, { BRAIN_PORT: String(b), BRAIN_THINK_MS: String(this.o.brainThinkMs ?? 300) });
     this.launch('signaling', 'node', ['--import', 'tsx', `${ROOT}signaling/server.ts`], ROOT, { SIGNALING_PORT: String(b - 100) });
     await this.waitHttp(this.brainUrl); await this.waitHttp(this.signalingUrl);
-    const common = ['--turn-end', this.o.turnEnd, '--brain', `ws://127.0.0.1:${b}`, '--signaling', `ws://127.0.0.1:${b - 100}`, '--stats-port', String(b + 11), ...(this.o.emotionStub ? ['--emotion-stub'] : []), ...(this.o.extraArgs ?? [])];
-    if (this.o.engine === 'pipecat') this.engineProc = this.launch('engine', `${ROOT}pipecat-engine/.venv/bin/python`, ['-m', 'engine.main', ...common], `${ROOT}pipecat-engine`, this.o.env);
-    else this.engineProc = this.launch('engine', 'node', ['--import', 'tsx', `${ROOT}ts-engine/src/main.ts`, ...common], ROOT, this.o.env);
-    await this.waitHttp(this.statsUrl + '/healthz', 60000);
-    for (let i = 0; i < 100; i++) { const j: any = await (await fetch(this.signalingUrl + '/engine-info')).json(); if (j.connected) break; await sleep(100); }
+    const nProcs = this.o.procs ?? 1;
+    for (let i = 0; i < nProcs; i++) {
+      const common = ['--turn-end', this.o.turnEnd, '--brain', `ws://127.0.0.1:${b}`, '--signaling', `ws://127.0.0.1:${b - 100}`, '--stats-port', String(b + 11 + i), ...(this.o.emotionStub ? ['--emotion-stub'] : []), ...(this.o.extraArgs ?? [])];
+      const p = this.o.engine === 'pipecat' ? this.launch(`engine${i}`, `${ROOT}pipecat-engine/.venv/bin/python`, ['-m', 'engine.main', ...common], `${ROOT}pipecat-engine`, this.o.env)
+        : this.launch(`engine${i}`, 'node', ['--import', 'tsx', `${ROOT}ts-engine/src/main.ts`, ...common], ROOT, this.o.env);
+      this.engineProcs.push(p); if (i === 0) this.engineProc = p;
+    }
+    for (let i = 0; i < nProcs; i++) await this.waitHttp(`http://127.0.0.1:${b + 11 + i}/healthz`, 120000);
+    for (let i = 0; i < 300; i++) { const j: any = await (await fetch(this.signalingUrl + '/engine-info')).json(); if ((j.count ?? 0) >= nProcs) break; await sleep(100); }
     void tsx; this.tail = new BrainTail(this.brainUrl).start();
     return this;
   }
@@ -50,6 +54,9 @@ export class Stack {
   }
   stats(reset = false): Promise<any> { return fetch(`${this.statsUrl}/stats${reset ? '?reset=1' : ''}`).then((r) => r.json()); }
   cpu() { return procTimes(this.engineProc.pid!); }
+  /** Stats of every engine process (one entry per process), in start order. */
+  statsAll(reset = false): Promise<any[]> { const b = this.o.basePort ?? 8800; return Promise.all(this.engineProcs.map((_, i) => fetch(`http://127.0.0.1:${b + 11 + i}/stats${reset ? '?reset=1' : ''}`).then((r) => r.json()))); }
+  cpuAll() { return this.engineProcs.map((p) => procTimes(p.pid!)); }
   async stop() {
     this.tail?.stop();
     for (const p of [...this.procs].reverse()) { (p as any)._expected = true; p.kill('SIGTERM'); }

@@ -10,12 +10,13 @@ import { Human } from '../loadgen/human.ts';
 import { ROOT, now, sleep, summarize, manifest } from '../common/util.ts';
 import type { Ev } from '../loadgen/tail.ts';
 
-const { values: v, positionals } = parseArgs({ allowPositionals: true, options: { n: { type: 'string', default: '1,5,10,20' }, reps: { type: 'string', default: '3' }, warmup: { type: 'string', default: '15' }, measure: { type: 'string', default: '60' }, out: { type: 'string', default: `${ROOT}results/load` }, 'port-base': { type: 'string', default: '10000' } } });
+const { values: v, positionals } = parseArgs({ allowPositionals: true, options: { n: { type: 'string', default: '1,5,10,20' }, reps: { type: 'string', default: '3' }, warmup: { type: 'string', default: '15' }, measure: { type: 'string', default: '60' }, out: { type: 'string', default: `${ROOT}results/load` }, 'port-base': { type: 'string', default: '10000' }, procs: { type: 'string', default: '1' }, 'rep-from': { type: 'string', default: '1' }, prefix: { type: 'string', default: 'load' } } });
 const engine = positionals[0] as EngineKind, turnEnd = positionals[1] as TurnEnd;
 const NS = v.n!.split(',').map(Number), REPS = Number(v.reps), WARM = Number(v.warmup) * 1000, MEAS = Number(v.measure) * 1000;
 mkdirSync(v.out!, { recursive: true });
 const tag = `${engine}-${turnEnd}`;
-const RUNS_CSV = `${v.out}/load-runs-${tag}.csv`, CYC_CSV = `${v.out}/load-cycles-${tag}.csv`;
+const PROCS = v.procs!.split(',');
+const RUNS_CSV = `${v.out}/${v.prefix}-runs-${tag}.csv`, CYC_CSV = `${v.out}/${v.prefix}-cycles-${tag}.csv`;
 const LONG_TEXT = 'This is a long answer from the test bot. It keeps talking for quite a while so that a person has plenty of time to talk over it, or for the voice to be stopped.';
 const CLIPS = ['en_ls_experience', 'en_ls_halt', 'en_ls_power'];
 const TALK_OVER_SHARE = 0.15, DUTY = 0.4;
@@ -74,20 +75,30 @@ async function conversation(lane: number, st: Stack, h: Human, sid: string, runI
   }
 }
 
-async function oneRun(n: number, rep: number, runIdx: number) {
-  const runId = `${tag}-N${n}-r${rep}`; const basePort = Number(v['port-base']) + (runIdx % 20) * 30;
+// ---- several engine processes: totals across processes, worst process for loop delay ----
+const aggStats = (a: any[]) => ({
+  failures: a.flatMap((x) => x.failures), lanes: a.flatMap((x) => x.lanes), cpuPctOfOneCore: a.reduce((t, x) => t + x.cpuPctOfOneCore, 0),
+  counters: a.reduce((t: Record<string, number>, x) => { for (const [k, val] of Object.entries(x.counters as Record<string, number>)) t[k] = (t[k] ?? 0) + val; return t; }, {}),
+  loopLagMs: { p50: Math.max(...a.map((x) => x.loopLagMs.p50 ?? 0)), p95: Math.max(...a.map((x) => x.loopLagMs.p95 ?? 0)), p99: Math.max(...a.map((x) => x.loopLagMs.p99 ?? 0)), max: Math.max(...a.map((x) => x.loopLagMs.max ?? 0)) },
+});
+const aggCpu = (a: { cpuSec: number; rssMb: number; threads: number }[]) => ({ cpuSec: a.reduce((t, x) => t + x.cpuSec, 0), rssMb: a.reduce((t, x) => t + x.rssMb, 0), threads: a.reduce((t, x) => t + x.threads, 0) });
+const boxCpu = () => { const f = readFileSync('/proc/stat', 'utf8').split('\n')[0].split(/\s+/).slice(1).map(Number); const idle = f[3] + f[4]; const tot = f.reduce((a, b) => a + b, 0); return { idle, tot }; };
+
+async function oneRun(n: number, rep: number, runIdx: number, procsSpec: string) {
+  const nProcs = procsSpec === 'N' ? n : Math.min(Number(procsSpec), n); const poolLabel = procsSpec === 'N' ? 'PN' : `P${procsSpec}`;
+  const runId = `${tag}-${poolLabel}-N${n}-r${rep}`; const basePort = Number(v['port-base']) + (runIdx % 20) * 30;
   const t00 = Date.now(); const invalid: string[] = [];
   // a slow start of a helper process is retried once on other ports; the failure is written down, never hidden
   let st!: Stack;
   for (let attempt = 0; attempt < 3; attempt++) {
-    const cand = new Stack({ engine, turnEnd, basePort: basePort + attempt * 600, logDir: `${v.out}/logs` });
+    const cand = new Stack({ engine, turnEnd, procs: nProcs, basePort: basePort + attempt * 600, logDir: `${v.out}/logs` });
     try { st = await cand.start(); break; } catch (e: any) { appendFileSync(`${v.out}/load-invalid-${tag}.txt`, `${runId} stack start attempt ${attempt} failed: ${e?.message}\n`); await cand.stop().catch(() => {}); if (attempt === 2) { console.log(`${runId} INVALID (stack would not start)`); return; } }
   }
   await st.tail.post('/config', { greet: false });
   const humans: Human[] = []; const cycles: Cycle[] = []; const errors: string[] = []; const ctl = { stop: false, windowStart: Infinity };
   const lag: { t: number; ms: number }[] = []; let lagStop = false;
   void (async () => { while (!lagStop) { const t = performance.now(); await sleep(20); lag.push({ t: now(), ms: performance.now() - t - 20 }); } })();
-  const rssPeak = { v: 0 }; const rssTimer = setInterval(() => { try { rssPeak.v = Math.max(rssPeak.v, st.cpu().rssMb); } catch { /* process gone */ } }, 1000);
+  const rssPeak = { v: 0 }; const rssTimer = setInterval(() => { try { rssPeak.v = Math.max(rssPeak.v, aggCpu(st.cpuAll()).rssMb); } catch { /* process gone */ } }, 1000);
   const tasks: Promise<void>[] = [];
   const sids: string[] = [];
   let seed = 12345 + runIdx;
@@ -104,12 +115,12 @@ async function oneRun(n: number, rep: number, runIdx: number) {
     const trim = setInterval(() => { const cut = now() - 15000; for (const h of humans) if (h.rx.length > 2000) { let k = 0; while (k < h.rx.length && h.rx[k].at < cut) k++; if (k) h.rx.splice(0, k); } }, 5000);
     await sleep(WARM);
     // ---- measured window ----
-    const sA = await st.stats(true); const pA = st.cpu(); const peers = [st.procs[0], st.procs[1]].map((p) => p.pid!);
+    const sAall = await st.statsAll(true); const sA = aggStats(sAall); const pAall = st.cpuAll(); const pA = aggCpu(pAall); const boxA = boxCpu(); const peers = [st.procs[0], st.procs[1]].map((p) => p.pid!);
     const otherA = peers.map((p) => procTimes(p).cpuSec); const lgA = process.cpuUsage(); const tA = now(); ctl.windowStart = tA; const idxA = cycles.length; lag.length = 0;
     const hA = humans.map((h) => ({ sent: h.sent, sentBytes: h.sentBytes, rx: h.rxCount, rxBytes: h.rxBytes, rxAud: h.rxAudible }));
     const brainEvA = st.tail.all.length; rssPeak.v = pA.rssMb;
     await sleep(MEAS);
-    const sB = await st.stats(false); const pB = st.cpu(); const tB = now(); const lgB = process.cpuUsage(lgA);
+    const sBall = await st.statsAll(false); const sB = aggStats(sBall); const pBall = st.cpuAll(); const pB = aggCpu(pBall); const boxB = boxCpu(); const tB = now(); const lgB = process.cpuUsage(lgA);
     const otherB = peers.map((p) => procTimes(p).cpuSec); const lags = lag.filter((l) => l.t >= tA).map((l) => l.ms).sort((a, b) => a - b);
     const hB = humans.map((h, i) => ({ sent: h.sent - hA[i].sent, sentBytes: h.sentBytes - hA[i].sentBytes, rx: h.rxCount - hA[i].rx, rxBytes: h.rxBytes - hA[i].rxBytes, rxAud: h.rxAudible - hA[i].rxAud }));
     const brainEv = st.tail.all.slice(brainEvA);
@@ -119,7 +130,7 @@ async function oneRun(n: number, rep: number, runIdx: number) {
     const counted = cycles.filter((c) => c.counted && c.startAt + 0 < tB);
     // ---- supervision ----
     const viol = await st.tail.get('/violations').catch(() => null);
-    const stFinal = await st.stats(false).catch(() => null);
+    const stFinal = await st.statsAll(false).then(aggStats).catch(() => null);
     if (errors.length) invalid.push(`conversation errors: ${errors.length} (${errors[0].slice(0, 160)})`);
     if (st.exited.length) invalid.push(`process exited: ${st.exited.join('; ')}`);
     if (sB.failures.length) invalid.push(`engine failures: ${sB.failures.length} (${String(sB.failures[0]).slice(0, 160)})`);
@@ -141,7 +152,7 @@ async function oneRun(n: number, rep: number, runIdx: number) {
     const row = {
       run: runId, engine, turnEnd, n, rep, valid: invalid.length === 0 ? 'VALID' : 'INVALID', invalidReasons: invalid.join(' | '),
       windowS: wall, warmupS: WARM / 1000, connectS: connectMs / 1000,
-      engineCpuPctOfOneCore: (100 * cpuS) / wall, engineCpuPctSelf: sB.cpuPctOfOneCore, cpuPctPerConversation: (100 * cpuS) / wall / n, rssMbStart: pA.rssMb, rssMbEnd: pB.rssMb, rssMbPeak: Math.max(rssPeak.v, pB.rssMb), threadsEnd: pB.threads,
+      engineCpuPctOfOneCore: (100 * cpuS) / wall, engineCpuPctSelf: sB.cpuPctOfOneCore, procs: nProcs, procsSpec, procCpuMaxPct: Math.max(...pBall.map((x, i) => (100 * (x.cpuSec - pAall[i].cpuSec)) / wall)), procCpuMinPct: Math.min(...pBall.map((x, i) => (100 * (x.cpuSec - pAall[i].cpuSec)) / wall)), boxBusyPctOf4Cores: 100 * (1 - (boxB.idle - boxA.idle) / (boxB.tot - boxA.tot)), boxCores: cpus().length, cpuPctPerConversation: (100 * cpuS) / wall / n, rssMbStart: pA.rssMb, rssMbEnd: pB.rssMb, rssMbPeak: Math.max(rssPeak.v, pB.rssMb), threadsEnd: pB.threads,
       loopLagP50Ms: sB.loopLagMs.p50, loopLagP95Ms: sB.loopLagMs.p95, loopLagP99Ms: sB.loopLagMs.p99, loopLagMaxMs: sB.loopLagMs.max,
       loadgenCpuPctOfOneCore: (100 * (lgB.user + lgB.system) / 1e6) / wall, loadgenLagP95Ms: lagP95, brainCpuPct: peerStats.brainCpuPct, signalingCpuPct: peerStats.signalingCpuPct,
       cyclesCounted: counted.length, cyclesTimeout: nTimeouts, cyclesSplitTurn: counted.filter((c) => c.split).length, talkOvers: to.length, talkOversInterrupted: to.filter((c) => c.interrupted).length, talkingDutyPct: (100 * talkMs) / (wall * 1000 * n),
@@ -174,5 +185,5 @@ async function oneRun(n: number, rep: number, runIdx: number) {
 
 console.log(`load: ${tag} N=${NS} reps=${REPS} warmup=${WARM / 1000}s measure=${MEAS / 1000}s cpus=${cpus().length} (${cpus()[0].model})`);
 let idx = 0;
-for (const rep of Array.from({ length: REPS }, (_, i) => i + 1)) for (const n of NS) await oneRun(n, rep, idx++);
+for (const rep of Array.from({ length: REPS }, (_, i) => i + Number(v['rep-from']))) for (const n of NS) for (const ps of PROCS) await oneRun(n, rep, idx++, ps);
 console.log('load done');
