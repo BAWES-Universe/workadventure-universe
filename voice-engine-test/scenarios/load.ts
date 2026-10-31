@@ -59,7 +59,9 @@ async function conversation(lane: number, st: Stack, h: Human, sid: string, runI
         else c.note += 'no-progress-for-interrupted ';
       }
       // the reply to the last turn
-      const say = evs((e) => e.dir === 'out' && e.msg.type === 'bot.say' && e.msg.replyTo === `turn:${fin.msg.turnId}`)[0] ?? (await st.tail.waitFor((e) => e.sessionId === sid && e.dir === 'out' && e.msg.type === 'bot.say' && e.msg.replyTo === `turn:${fin.msg.turnId}`, 4000));
+      // the brain's reply is the first bot.say sent after the last final turn (replyTo is not part of the wire message)
+      const isReply = (e: Ev) => e.dir === 'out' && e.msg.type === 'bot.say' && e.recvAt >= fin.recvAt && e.msg.segmentId !== segId;
+      const say = evs(isReply)[0] ?? (await st.tail.waitFor((e) => e.sessionId === sid && isReply(e), 4000));
       if (!say) { c.timeout = true; c.note += 'no reply say '; out.push(c); continue; }
       c.turnToFirstAudioMs = undefined;
       const sayAt = say.recvAt; const gotAudio = await until(() => !!h.firstAudibleAfter(sayAt - 20), 3000, 20);

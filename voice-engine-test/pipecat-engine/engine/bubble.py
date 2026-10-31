@@ -183,6 +183,8 @@ class Bubble:
         """Local, no round trip to the brain. Stops bot audio on every lane."""
         if not self.speaker or not (self.speaker.speaking or self.speaker.queue):
             return
+        if self.speaker._cancel_cur and not self.speaker.queue:
+            return  # already being stopped (two lane events can ask for the same barge-in)
         t = time.monotonic()
         self.stop_reason = "barge_in"
         self.speaker.stop_current()
