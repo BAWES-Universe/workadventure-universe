@@ -193,10 +193,10 @@
     }
     /* Phones: the Look around card's rule, clear of the zoom column on the right. */
     .object-card.phone {
-        align-self: stretch;
-        width: auto;
-        max-width: none;
-        margin-left: 12px;
+        /* 12px from the left and 68px from the right on a phone held upright. Sized from the screen, not the stack:
+           on a phone turned sideways the stack only wraps its cards, so a long description must not widen it. */
+        width: calc(100vw - 80px);
+        max-width: 420px;
         margin-right: 68px;
     }
     .object-card-head {
