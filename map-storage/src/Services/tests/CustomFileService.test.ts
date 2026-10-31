@@ -113,6 +113,30 @@ describe("CustomFileService.deleteFile", () => {
         expect(deleteFiles).toHaveBeenCalledWith(expect.stringMatching(/private\/sounds\/rain-a1b2c3d4\.mp3$/));
     });
 
+    it("refuses an id or an extension that would leave the folder or is not a file of this kind", async () => {
+        deleteFiles.mockClear();
+        await expect(
+            service.deleteFile({
+                id: "../../other-world/x",
+                type: "playAudio",
+                audioLink: "http://localhost/private/sounds/rain.mp3",
+                audioName: "rain.mp3",
+            })
+        ).rejects.toThrow("Invalid property id");
+        await expect(
+            service.deleteFile({ id: "../x", type: "openFile", link: "http://localhost/f", name: "notes.pdf" } as never)
+        ).rejects.toThrow("Invalid property id");
+        await expect(
+            service.deleteFile({
+                id: "a1b2c3d4",
+                type: "playAudio",
+                audioLink: "http://localhost/private/sounds/rain.sh",
+                audioName: "rain.sh",
+            })
+        ).rejects.toThrow("not a supported format");
+        expect(deleteFiles).not.toHaveBeenCalled();
+    });
+
     it("has nothing to delete for a pasted sound link", async () => {
         await expect(
             service.deleteFile({ id: "a1b2c3d4", type: "playAudio", audioLink: "https://example.com/rain.mp3" })
