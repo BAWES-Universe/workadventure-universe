@@ -23,6 +23,7 @@ class Engine:
     def __init__(self, a):
         self.turn_end = a.turn_end
         self.provider_silence_ms = a.provider_silence_ms
+        self.emotion_stub = a.emotion_stub
         self.brain_url = a.brain
         self.engine_id = f"pipecat-{a.turn_end}-{os.getpid()}"
         self.tts = FakeTTS()
@@ -157,6 +158,7 @@ def main():
     p.add_argument("--provider-silence-ms", type=int, default=500)
     p.add_argument("--brain", default="ws://127.0.0.1:8800")
     p.add_argument("--signaling", default="ws://127.0.0.1:8700")
+    p.add_argument("--emotion-stub", action="store_true", help="add the loudness-based emotion stub to user.turn")
     p.add_argument("--stats-port", type=int, default=8811)
     a = p.parse_args()
     sys.exit(asyncio.run(amain(a)))

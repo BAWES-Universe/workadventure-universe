@@ -28,7 +28,7 @@ Engine to brain:
 | `participant.join` | participantId, lane, rejoin | A human's media is connected. `rejoin:true` if the same participantId came back inside the grace period. |
 | `participant.leave` | participantId, lane, reason: closed, failed, left | The human's media is gone. |
 | `user.speech_started` | lane, participantId, whileBotSpeaking, turnId | Voice activity detection heard the person start. Sent only for lanes whose mode listens to the mic. |
-| `user.turn` | lane, participantId, turnId, text, partial, droppedAudioMs, incomplete, speechMs, endReason, speechStartedAt, turnEndedAt | The person's words. `partial:true` = interim text (same `turnId` will be replaced). `partial:false` = final for this turn. `droppedAudioMs` = audio the engine knows did not arrive. `incomplete:true` on a final turn when `droppedAudioMs > 0`, so the UI can say "some words may be missing". |
+| `user.turn` | lane, participantId, turnId, text, partial, droppedAudioMs, incomplete, speechMs, endReason, speechStartedAt, turnEndedAt | The person's words. `partial:true` = interim text (same `turnId` will be replaced). `partial:false` = final for this turn. `droppedAudioMs` = audio the engine knows did not arrive. `incomplete:true` on a final turn when `droppedAudioMs > 0`, so the UI can say "some words may be missing". Optional `emotion{label, confidence, source}` on final turns when the engine runs its optional emotion step (test stub: `--emotion-stub`, source `"stub"`). |
 | `playback.progress` | segmentId, playedMs, totalMs, finished, interrupted, reason | How much audio of the segment was sent. See "Playback is not hearing". |
 | `engine.status` | engineId, voice: active or stopped, mode, lanes[{participantId, lane, healthy, mode}], counters{} | Every second and on change. Counters: frames, packets, bytes, bot audio generated / completed / cancelled, queue age, etc. |
 | `error` | code, message | Something the brain should log. |
@@ -61,7 +61,7 @@ Chat path to brain (an engine never sends this):
 
 Mode is per lane. `mode.set` without `participantId` sets every lane. Changing mode never reconnects. When a lane stops
 playing audio, the engine stops sending audio to it at once. When a lane stops listening, its VAD, turn and speech state are reset
-and an open turn is finished with `endReason:"mode_change"` only if it already has text, otherwise dropped.
+and an open turn is dropped (no `user.turn` is sent for it).
 
 ## Rules the engine must follow (each has an automated check)
 

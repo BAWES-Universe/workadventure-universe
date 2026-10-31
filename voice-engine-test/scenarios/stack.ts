@@ -6,7 +6,7 @@ import { BrainTail } from '../loadgen/tail.ts';
 
 export type EngineKind = 'pipecat' | 'ts';
 export type TurnEnd = 'local' | 'provider';
-export interface StackOpts { engine: EngineKind; turnEnd: TurnEnd; basePort?: number; logDir?: string; brainThinkMs?: number; env?: Record<string, string> }
+export interface StackOpts { engine: EngineKind; turnEnd: TurnEnd; basePort?: number; logDir?: string; brainThinkMs?: number; emotionStub?: boolean; extraArgs?: string[]; env?: Record<string, string> }
 const CLK = 100; // Linux USER_HZ
 
 export function procTimes(pid: number) {
@@ -35,7 +35,7 @@ export class Stack {
     this.launch('brain', 'node', ['--import', 'tsx', `${ROOT}bridge/src/brain.ts`], ROOT, { BRAIN_PORT: String(b), BRAIN_THINK_MS: String(this.o.brainThinkMs ?? 300) });
     this.launch('signaling', 'node', ['--import', 'tsx', `${ROOT}signaling/server.ts`], ROOT, { SIGNALING_PORT: String(b - 100) });
     await this.waitHttp(this.brainUrl); await this.waitHttp(this.signalingUrl);
-    const common = ['--turn-end', this.o.turnEnd, '--brain', `ws://127.0.0.1:${b}`, '--signaling', `ws://127.0.0.1:${b - 100}`, '--stats-port', String(b + 11)];
+    const common = ['--turn-end', this.o.turnEnd, '--brain', `ws://127.0.0.1:${b}`, '--signaling', `ws://127.0.0.1:${b - 100}`, '--stats-port', String(b + 11), ...(this.o.emotionStub ? ['--emotion-stub'] : []), ...(this.o.extraArgs ?? [])];
     if (this.o.engine === 'pipecat') this.engineProc = this.launch('engine', `${ROOT}pipecat-engine/.venv/bin/python`, ['-m', 'engine.main', ...common], `${ROOT}pipecat-engine`, this.o.env);
     else this.engineProc = this.launch('engine', 'node', ['--import', 'tsx', `${ROOT}ts-engine/src/main.ts`, ...common], ROOT, this.o.env);
     await this.waitHttp(this.statsUrl + '/healthz', 60000);

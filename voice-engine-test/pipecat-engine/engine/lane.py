@@ -34,6 +34,7 @@ from pipecat.turns.user_stop import ExternalUserTurnStopStrategy, TurnAnalyzerUs
 from pipecat.turns.user_turn_processor import UserTurnProcessor
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
+from .emotion_stub import EmotionStub
 from .fakes import FakeSTT
 from .util import FRAME_MS, TTS_RATE, now_ms
 
@@ -136,7 +137,9 @@ class LaneBridge(FrameProcessor):
                     "user.turn", lane=lane.idx, participantId=lane.pid, turnId=lane.turn_id, text=lane.final_text, partial=False,
                     droppedAudioMs=dropped, incomplete=dropped > 0, speechMs=round(now_ms() - lane.speech_started_at), endReason=reason,
                     speechStartedAt=lane.speech_started_at, turnEndedAt=now_ms(),
+                    **({"emotion": lane.emotion} if lane.emotion else {}),
                 )
+                lane.emotion = None
                 self.c["turns_final"] = self.c.get("turns_final", 0) + 1
             lane.final_text = None
         await self.push_frame(frame, direction)
@@ -161,6 +164,7 @@ class Lane:
         self.run_task: asyncio.Task | None = None
         self.bridge_proc: LaneBridge | None = None
         self.gone = False
+        self.emotion: dict | None = None
         self.counters = bubble.engine.counters
 
     def listening(self) -> bool:
@@ -190,6 +194,7 @@ class Lane:
             transport.input(), DropProbe(self, self.counters), vad,
             FakeSTT(self, self.bubble.turn_end, eng.provider_silence_ms, self.counters),
             UserTurnProcessor(user_turn_strategies=make_strategies(self.bubble.turn_end), user_turn_stop_timeout=USER_TURN_STOP_TIMEOUT),
+            *([EmotionStub(self)] if eng.emotion_stub else []),
             self.bridge_proc, transport.output(),
         ]
         self.worker = PipelineWorker(Pipeline(procs), params=PipelineParams(audio_in_sample_rate=16000, audio_out_sample_rate=TTS_RATE), enable_rtvi=False, cancel_on_idle_timeout=False, check_dangling_tasks=False)

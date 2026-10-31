@@ -8,21 +8,22 @@ import { ROOT, manifest, readWav, opusPackets, newOpusDecoder, asInt16, rms, now
 
 export const AUDIBLE_RMS = 250;
 const clipCache = new Map<string, { packets: Buffer[]; durationMs: number }>();
-export function loadClip(id: string) {
-  let c = clipCache.get(id); if (c) return c;
+export function loadClip(id: string, gain = 1) {
+  const key = `${id}@${gain}`; let c = clipCache.get(key); if (c) return c;
   const info = manifest().clips[id]; if (!info) throw new Error(`unknown clip ${id}`);
   const path = ROOT + 'clips/' + info.file;
   const sha = createHash('sha256').update(readFileSyncBuf(path)).digest('hex');
   if (sha !== info.sha256) throw new Error(`clip ${id} checksum mismatch (${sha})`);
-  const w = readWav(path); const packets = opusPackets(w.pcm);
-  c = { packets, durationMs: packets.length * 20 }; clipCache.set(id, c); return c;
+  const w = readWav(path); if (gain !== 1) for (let i = 0; i < w.pcm.length; i++) w.pcm[i] = Math.max(-32768, Math.min(32767, Math.round(w.pcm[i] * gain)));
+  const packets = opusPackets(w.pcm);
+  c = { packets, durationMs: packets.length * 20 }; clipCache.set(key, c); return c;
 }
 import { readFileSync as readFileSyncBuf } from 'node:fs';
 let silencePkt: Buffer | undefined;
 const silence = () => (silencePkt ??= opusPackets(new Int16Array(960 / 3 * 3))[0]);
 
 export interface RxPacket { at: number; seq: number; ts: number; len: number; audible: boolean }
-export interface SpeakOpts { lossPct?: number; gap?: { atMs: number; durMs: number }; hint?: boolean; hintText?: string; seed?: number }
+export interface SpeakOpts { lossPct?: number; gap?: { atMs: number; durMs: number }; hint?: boolean; hintText?: string; seed?: number; gain?: number }
 export interface SpeakResult { clipId: string; startAt: number; endAt: number; speechStartAt: number; speechEndAt: number; sent: number; dropped: number; droppedMs: number }
 
 // one shared 20 ms scheduler for all humans in the process
@@ -97,7 +98,7 @@ export class Human {
   /** Plays a clip. Resolves when the last packet has been sent. `hint` tells the fake STT which clip this is (test-only side channel). */
   async speak(clipId: string, opts: SpeakOpts = {}): Promise<SpeakResult> {
     if (this.cur) throw new Error('already speaking');
-    const clip = loadClip(clipId);
+    const clip = loadClip(clipId, opts.gain ?? 1);
     if (opts.hint !== false) await fetch(`${this.o.signaling}/hint`, { method: 'POST', body: JSON.stringify({ sessionId: this.o.sessionId, participantId: this.o.participantId, clipId, text: opts.hintText }) });
     return new Promise<SpeakResult>((done) => {
       const res: SpeakResult = { clipId, startAt: 0, endAt: 0, speechStartAt: 0, speechEndAt: 0, sent: 0, dropped: 0, droppedMs: 0 };

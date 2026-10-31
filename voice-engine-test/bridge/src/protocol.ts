@@ -15,7 +15,7 @@ export interface SessionStart extends Base { type: 'session.start'; bubbleId: st
 export interface ParticipantJoin extends Base { type: 'participant.join'; participantId: string; lane: number; rejoin?: boolean }
 export interface ParticipantLeave extends Base { type: 'participant.leave'; participantId: string; lane: number; reason: 'closed' | 'failed' | 'left' }
 export interface UserSpeechStarted extends Base { type: 'user.speech_started'; lane: number; participantId: string; whileBotSpeaking: boolean; turnId?: string }
-export interface UserTurn extends Base { type: 'user.turn'; lane: number; participantId: string; turnId: string; text: string; partial: boolean; droppedAudioMs: number; incomplete?: boolean; speechMs?: number; endReason?: EndReason; speechStartedAt?: number; turnEndedAt?: number }
+export interface UserTurn extends Base { type: 'user.turn'; lane: number; participantId: string; turnId: string; text: string; partial: boolean; droppedAudioMs: number; incomplete?: boolean; speechMs?: number; endReason?: EndReason; emotion?: { label: string; confidence: number; source: string }; speechStartedAt?: number; turnEndedAt?: number }
 export interface PlaybackProgress extends Base { type: 'playback.progress'; segmentId: string; playedMs: number; totalMs?: number; finished: boolean; interrupted: boolean; reason?: PlaybackReason }
 export interface EngineStatus extends Base { type: 'engine.status'; engineId: string; voice: 'active' | 'stopped'; mode: Mode; lanes: { participantId: string; lane: number; healthy: boolean; mode: Mode }[]; counters?: Record<string, number> }
 export interface ErrorMsg extends Base { type: 'error'; code: string; message: string }
