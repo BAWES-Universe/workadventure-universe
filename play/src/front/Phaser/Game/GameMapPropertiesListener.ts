@@ -3,10 +3,8 @@ import * as Sentry from "@sentry/svelte";
 import type { ITiledMapLayer, ITiledMapObject } from "@workadventure/tiled-map-type-guard";
 import type { AreaData, AreaDataProperties } from "@workadventure/map-editor";
 import { GameMapProperties } from "@workadventure/map-editor";
-import { Jitsi } from "@workadventure/shared-utils";
 import { getSpeakerMegaphoneAreaName } from "@workadventure/map-editor/src/Utils";
 import { areaSpaceName } from "@workadventure/shared-utils/src/Space/areaSpaceName";
-import { z } from "zod";
 import { registerNativeSoundscapeProperties } from "../../Components/AudioManager/NativeSoundscapeProperties";
 import { scriptUtils } from "../../Api/ScriptUtils";
 import { coWebsites } from "../../Stores/CoWebsiteStore";
@@ -15,17 +13,14 @@ import { ON_ACTION_TRIGGER_BUTTON, ON_ACTION_TRIGGER_ENTER, ON_ICON_TRIGGER_BUTT
 import type { CoWebsite } from "../../WebRtc/CoWebsite/CoWebsite";
 import { SimpleCoWebsite } from "../../WebRtc/CoWebsite/SimpleCoWebsite";
 import { bbbFactory } from "../../WebRtc/BBBFactory";
-import { JITSI_PRIVATE_MODE, JITSI_URL } from "../../Enum/EnvironmentVariable";
-import { JitsiCoWebsite } from "../../WebRtc/CoWebsite/JitsiCoWebsite";
 import { audioManagerFileStore, audioManagerVisibilityStore } from "../../Stores/AudioManagerStore";
 import { iframeListener } from "../../Api/IframeListener";
 import { Room } from "../../Connection/Room";
-import { inBbbStore, inJitsiStore, inOpenWebsite, isSpeakerStore, silentStore } from "../../Stores/MediaStore";
+import { inBbbStore, inOpenWebsite, isSpeakerStore, silentStore } from "../../Stores/MediaStore";
 import { currentLiveStreamingSpaceStore } from "../../Stores/MegaphoneStore";
 import { getTriggerHint } from "../../Utils/TriggerHint";
 import type { Area } from "../Entity/Area";
 import { popupStore } from "../../Stores/PopupStore";
-import PopUpJitsi from "../../Components/PopUp/PopUpJitsi.svelte";
 import PopUpTab from "../../Components/PopUp/PopUpTab.svelte";
 import PopUpCowebsite from "../../Components/PopUp/PopupCowebsite.svelte";
 import { analyticsClient } from "./../../Administration/AnalyticsClient";
@@ -126,178 +121,8 @@ export class GameMapPropertiesListener {
             }
         });
 
-        // Jitsi room
-        this.gameMapFrontWrapper.onPropertyChange(GameMapProperties.JITSI_ROOM, (newValue, oldValue, allProps) => {
-            if (newValue === undefined || newValue !== oldValue) {
-                popupStore.removePopup("jitsi");
-                // TODO: this is the old new way of doing popups
-                /*this.scene.CurrentPlayer.destroyText("jitsi");
-                const callback = this.actionTriggerCallback.get("jitsi");
-                if (callback) {
-                    this.scene.userInputManager.removeSpaceEventListener(callback);
-                    this.actionTriggerCallback.delete("jitsi");
-                }*/
-                /**
-                 * @DEPRECATED - This is the old way to show trigger message
-                layoutManagerActionStore.removeAction("jitsi");
-                */
-                coWebsites.keepOnly((coWebsite) => !(coWebsite instanceof JitsiCoWebsite));
-                inJitsiStore.set(false);
-                if (newValue === undefined) {
-                    return;
-                }
-            }
-            const openJitsiRoomFunction = async () => {
-                const roomName = Jitsi.slugifyJitsiRoomName(
-                    newValue.toString(),
-                    this.scene.roomUrl,
-                    allProps.has(GameMapProperties.JITSI_NO_PREFIX)
-                );
-                const isJitsiUrl = z.string().optional().safeParse(allProps.get(GameMapProperties.JITSI_URL));
-                let jitsiUrl = isJitsiUrl.success ? isJitsiUrl.data : undefined;
-
-                const isJitsiWidth = z
-                    .number()
-                    .min(1)
-                    .max(100)
-                    .default(50)
-                    .optional()
-                    .safeParse(allProps.get(GameMapProperties.JITSI_WIDTH));
-                const jitsiWidth = isJitsiWidth.success ? isJitsiWidth.data : 50;
-
-                let jwt: string | undefined;
-                if (JITSI_PRIVATE_MODE && !jitsiUrl) {
-                    if (!this.scene.connection) {
-                        console.info("Cannot connect to Jitsi. No connection to Pusher server.");
-                        return;
-                    }
-                    const answer = await this.scene.connection.queryJitsiJwtToken(roomName);
-                    jwt = answer.jwt;
-                    jitsiUrl = answer.url;
-                }
-
-                let domain = jitsiUrl || JITSI_URL;
-                if (domain === undefined) {
-                    throw new Error("Missing JITSI_URL environment variable or jitsiUrl parameter in the map.");
-                }
-                if (!domain.startsWith("http")) {
-                    domain = "https://" + domain;
-                }
-
-                inJitsiStore.set(true);
-
-                const isJitsiConfig = z.string().optional().safeParse(allProps.get(GameMapProperties.JITSI_CONFIG));
-                const isJitsiInterfaceConfig = z
-                    .string()
-                    .optional()
-                    .safeParse(allProps.get(GameMapProperties.JITSI_INTERFACE_CONFIG));
-
-                const jitsiConfig = this.safeParseJSONstring(
-                    isJitsiConfig.success ? isJitsiConfig.data : undefined,
-                    GameMapProperties.JITSI_CONFIG
-                );
-
-                const jitsiInterfaceConfig = this.safeParseJSONstring(
-                    isJitsiInterfaceConfig.success ? isJitsiInterfaceConfig.data : undefined,
-                    GameMapProperties.JITSI_INTERFACE_CONFIG
-                );
-
-                const isJitsiClosable = z
-                    .boolean()
-                    .optional()
-                    .safeParse(allProps.get(GameMapProperties.JITSI_CLOSABLE));
-                const jitsiClosable = isJitsiClosable.success ? isJitsiClosable.data : true;
-
-                const isJitsiRoomAdminTag = z.string().safeParse(allProps.get(GameMapProperties.JITSI_ADMIN_ROOM_TAG));
-
-                const jitsiRoomAdminTag = isJitsiRoomAdminTag.success ? isJitsiRoomAdminTag.data : null;
-
-                const coWebsite = new JitsiCoWebsite(
-                    new URL(domain),
-                    jitsiWidth,
-                    jitsiClosable,
-                    roomName,
-                    gameManager.getPlayerName() ?? "unknown",
-                    jwt,
-                    jitsiConfig,
-                    jitsiInterfaceConfig,
-                    jitsiRoomAdminTag
-                );
-
-                coWebsites.add(coWebsite);
-
-                // coWebsiteManager.loadCoWebsite(coWebsite);
-
-                // .catch((err) => {
-                //     console.error(err);
-                // });
-
-                analyticsClient.enteredJitsi(roomName, this.scene.roomUrl);
-
-                popupStore.removePopup("jitsi");
-                // TODO: this is the old new way of doing popups
-                /*this.scene.CurrentPlayer.destroyText("jitsi");
-                const callback = this.actionTriggerCallback.get("jitsi");
-                if (callback) {
-                    this.scene.userInputManager.removeSpaceEventListener(callback);
-                    this.actionTriggerCallback.delete("jitsi");
-                }*/
-                /**
-                 * @DEPRECATED - This is the old way to show trigger message
-                layoutManagerActionStore.removeAction("jitsi");
-                */
-            };
-
-            const jitsiTriggerValue = allProps.get(GameMapProperties.JITSI_TRIGGER);
-            const forceTrigger = localUserStore.getForceCowebsiteTrigger();
-            if (forceTrigger || jitsiTriggerValue === ON_ACTION_TRIGGER_BUTTON) {
-                let message = allProps.get(GameMapProperties.JITSI_TRIGGER_MESSAGE);
-                if (message === undefined) {
-                    message = getTriggerHint("jitsiRoom");
-                }
-
-                popupStore.addPopup(
-                    PopUpJitsi,
-                    {
-                        message: message,
-                        click: () => {
-                            openJitsiRoomFunction().catch((e) => console.error(e));
-                        },
-                        userInputManager: this.scene.userInputManager,
-                    },
-                    "jitsi"
-                );
-                // TODO: this is the old new way of doing popups
-                // Create callback and play text message
-                /*const callback = () => {
-                    openJitsiRoomFunction().catch((e) => console.error(e));
-                    this.scene.CurrentPlayer.destroyText("jitsi");
-                    this.scene.userInputManager.removeSpaceEventListener(callback);
-                    this.actionTriggerCallback.delete("jitsi");
-                };
-                this.scene.CurrentPlayer.playText("jitsi", `${message}`, -1, callback);
-                this.scene.userInputManager?.addSpaceEventListener(callback);
-                this.actionTriggerCallback.set("jitsi", callback);*/
-
-                /**
-                 * @DEPRECATED - This is the old way to show trigger message
-                layoutManagerActionStore.addAction({
-                    uuid: "jitsi",
-                    type: "message",
-                        message: message,
-                        click: () => {
-                            openJitsiRoomFunction().catch((e) => console.error(e));
-                        },
-                        userInputManager: this.scene.userInputManager,
-                    },
-                    "jitsi"
-                );
-                 */
-            } else {
-                openJitsiRoomFunction().catch((e) => console.error(e));
-            }
-        });
-
+        // Jitsi zones (jitsiRoom and the other jitsi* properties, from the map or from a script) are ignored: Jitsi
+        // is no longer supported, our meeting rooms and bubbles replace it (#1688).
         this.gameMapFrontWrapper.onPropertyChange(GameMapProperties.BBB_MEETING, (newValue, oldValue, allProps) => {
             if (newValue === undefined || newValue !== oldValue) {
                 // TODO: this is the old new way of doing popups
@@ -937,14 +762,5 @@ export class GameMapPropertiesListener {
 
     private getIdFromPlace(place: ITiledPlace): string {
         return `${place.name}:${place.type ?? ""}:${place.id ?? 0}`;
-    }
-
-    private safeParseJSONstring(jsonString: string | undefined, propertyName: string) {
-        try {
-            return jsonString ? JSON.parse(jsonString) : {};
-        } catch (e) {
-            console.warn('Invalid JSON found in property "' + propertyName + '" of the map:' + jsonString, e);
-            return {};
-        }
     }
 }

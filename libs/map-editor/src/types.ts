@@ -69,6 +69,8 @@ export const ExitPropertyData = PropertyBase.extend({
     areaName: z.string(),
 });
 
+// Jitsi is no longer supported (#1688). The type stays so that a saved map that still has one can be read; the WAM
+// file migration drops it when a map loads, and nothing in the game acts on it.
 export const JitsiRoomPropertyData = PropertyBase.extend({
     type: z.literal("jitsiRoomProperty"),
     roomName: z.string(),

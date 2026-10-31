@@ -89,7 +89,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         save: "Guardar",
         fullscreen: "Pantalla completa",
         notifications: "Notificacions",
-        cowebsiteTrigger: "Preguntar sempre abans d'obrir llocs web i habitacions Jitsi Meet",
         ignoreFollowRequest: "Ignorar peticions de seguir altres usuaris",
     },
     invite: {

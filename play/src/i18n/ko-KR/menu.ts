@@ -93,7 +93,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         notifications: "알림",
         enablePictureInPicture: "PIP(화면 속 화면) 활성화",
         chatSounds: "채팅 소리",
-        cowebsiteTrigger: "웹사이트 및 Jitsi Meet 방을 열기 전에 항상 물어보기",
         ignoreFollowRequest: "다른 사용자를 따라가는 요청 무시",
         proximityDiscussionVolume: "근접 대화 볼륨",
         blockAudio: "주변 소리 및 음악 차단",

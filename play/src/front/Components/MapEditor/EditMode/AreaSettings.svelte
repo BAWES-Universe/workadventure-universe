@@ -24,7 +24,6 @@
     import type { ExtensionModule, ExtensionModuleAreaProperty } from "../../../ExternalModule/ExtensionModule";
     import { analyticsClient } from "../../../Administration/AnalyticsClient";
     import { connectionManager } from "../../../Connection/ConnectionManager";
-    import JitsiRoomPropertyEditor from "../PropertyEditor/JitsiRoomPropertyEditor.svelte";
     import PlayAudioPropertyEditor from "../PropertyEditor/PlayAudioPropertyEditor.svelte";
     import OpenWebsitePropertyEditor from "../PropertyEditor/OpenWebsitePropertyEditor.svelte";
     import OpenFilePropertyEditor from "../PropertyEditor/OpenFilePropertyEditor.svelte";
@@ -393,13 +392,6 @@
                     />
                 {:else if property.type === "silent"}
                     <SilentPropertyEditor on:close={() => remove(property.id)} on:change={() => update(property)} />
-                {:else if property.type === "jitsiRoomProperty"}
-                    <JitsiRoomPropertyEditor
-                        {property}
-                        isArea={true}
-                        on:close={() => remove(property.id)}
-                        on:change={() => update(property)}
-                    />
                 {:else if property.type === "playAudio"}
                     <PlayAudioPropertyEditor
                         property={{ ...property, hideButtonLabel: true }}
