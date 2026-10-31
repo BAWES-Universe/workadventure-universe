@@ -380,6 +380,9 @@ export class Entity extends Phaser.GameObjects.Image implements ActivatableInter
                         actionName: property.buttonLabel ?? "",
                         protected: true,
                         priority: 1,
+                        propertyType: property.type,
+                        application: property.application,
+                        newTab,
                         callback: () => {
                             if (newTab) {
                                 this.emit(EntityEvent.PropertyActivated, {
@@ -414,6 +417,7 @@ export class Entity extends Phaser.GameObjects.Image implements ActivatableInter
                         actionName: property.buttonLabel ?? "",
                         protected: true,
                         priority: 1,
+                        propertyType: property.type,
                         callback: async () => {
                             const scene = this.scene as GameScene;
                             const connection = scene.connection;
@@ -453,6 +457,8 @@ export class Entity extends Phaser.GameObjects.Image implements ActivatableInter
                         actionName: property.buttonLabel ?? "",
                         protected: true,
                         priority: 1,
+                        propertyType: property.type,
+                        newTab,
                         callback: async () => {
                             const answer = await (this.scene as GameScene).connection?.queryMapStorageJwtToken();
                             const link = property.link + (answer && answer.jwt ? `?token=${answer.jwt}` : "");

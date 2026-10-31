@@ -1131,6 +1131,10 @@ const mapEditor: BaseTranslation = {
         close: "Close",
         youAreHere: "You are here",
     },
+    // The card an object opens when you click it: one row per thing it does.
+    objectCard: {
+        newTab: "new tab",
+    },
     explorer: {
         title: "Look around the map",
         description:
