@@ -133,7 +133,7 @@ async function mayDeleteUpload(
             universeWorldPath,
             pictureId,
             { tags: user.tags, uuid: user.uuid },
-            (key) => mapsManager.getOrLoadGameMap(key)
+            (key) => mapsManager.readGameMap(key)
         );
         if (copyOutsideRights) return false;
     }

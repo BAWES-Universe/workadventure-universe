@@ -43,13 +43,13 @@ export class CustomFileService {
 
     public async deleteFile(property: AreaDataProperty | EntityDataProperty) {
         let name: string | undefined;
-        let folder: string;
+        let format: (typeof UPLOADED_FILE_FORMATS)[keyof typeof UPLOADED_FILE_FORMATS];
         if (property.type === "openFile") {
             name = property.name ?? undefined;
-            folder = UPLOADED_FILE_FORMATS[UploadedFileKind.Document].folder;
+            format = UPLOADED_FILE_FORMATS[UploadedFileKind.Document];
         } else if (property.type === "playAudio") {
             name = property.audioName ?? undefined;
-            folder = UPLOADED_FILE_FORMATS[UploadedFileKind.Sound].folder;
+            format = UPLOADED_FILE_FORMATS[UploadedFileKind.Sound];
         } else {
             throw new Error("Property is not a file");
         }
@@ -60,8 +60,17 @@ export class CustomFileService {
 
         const { name: filename, ext: fileExtension } = path.parse(name);
 
+        // The id and the extension become part of the storage path, so they must not be able to leave the files
+        // folder. Same rules as when the file was uploaded.
+        if (!/^[A-Za-z0-9_-]+$/.test(property.id)) {
+            throw new Error("Invalid property id");
+        }
+        if (!fileExtension.match(format.extensions)) {
+            throw new Error("File extension is not a supported format :" + fileExtension);
+        }
+
         const mapPath = mapPathUsingDomainWithPrefix(
-            `/${folder}/${filename}-${property.id}${fileExtension}`,
+            `/${format.folder}/${filename}-${property.id}${fileExtension}`,
             this.hostname
         );
 
