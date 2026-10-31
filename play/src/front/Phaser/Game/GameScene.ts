@@ -67,7 +67,8 @@ import { localUserStore } from "../../Connection/LocalUserStore";
 import { botApiService } from "../../external-modules/bots/services/BotApiService";
 import { getBotServerUrl } from "../../external-modules/bots/services/BotServerUrl";
 import { refreshThisDeviceOnce } from "../../Notification/Push/PushDevice";
-import { myHandRaisedStore, raisedHandsStore } from "../../Space/RaiseHand/RaiseHandStore";
+import { clearHandsOffHere, myHandRaisedStore, raisedHandsStore } from "../../Space/RaiseHand/RaiseHandStore";
+import { attendeeCameraAreaSpacesStore, stopShowingCameraToSpeakers } from "../../Space/AttendeeCamera";
 import { bindPodiumToRaiseHand } from "../../Space/RaiseHand/PodiumStore";
 import { Loader } from "../Components/Loader";
 import { RemotePlayer } from "../Entity/RemotePlayer";
@@ -222,6 +223,7 @@ import { DarkenOutsideAreaEffect } from "../Components/DarkenOutsideArea/DarkenO
 import { installRoomJoinedStore } from "../../Install/InstallRoomJoined";
 import { releaseSpawnSilence, seedSpawnSilence } from "./SpawnSilence";
 import { GameMapFrontWrapper } from "./GameMap/GameMapFrontWrapper";
+import { AreaLiveState } from "./GameMap/AreaLiveState";
 import { gameManager } from "./GameManager";
 import { Game } from "./Game";
 import { EmoteManager } from "./EmoteManager";
@@ -401,6 +403,7 @@ export class GameScene extends DirtyScene {
     private cleanupDone = false;
     /** The layer that holds the name pill of every player. */
     public usernameDomLayer!: UsernameDomLayer;
+    private areaLiveState: AreaLiveState | undefined;
     private playersEventDispatcher = new IframeEventDispatcher();
     private playersMovementEventDispatcher = new IframeEventDispatcher();
     private remotePlayersRepository = new RemotePlayersRepository();
@@ -841,10 +844,12 @@ export class GameScene extends DirtyScene {
             throw new Error(`Invalid WAM path format: expected universe/world/room structure, got: ${wamUrl.pathname}`);
         }
 
-        const universeWorldPath = `${pathParts[startIndex]}/${pathParts[startIndex + 1]}/`;
+        const universeWorldPath = `${pathParts[startIndex]}/${pathParts[startIndex + 1]}`;
 
         // Construct URL with universe/world scope
         // Use room.mapStorageUrl which correctly handles path prefixes for reverse proxy setups
+        // ENTITIES_FOLDER_PATH starts with "/": no "//" here, or the proxy merges it and asks map-storage for another
+        // file than the one it saved (#1636).
         const entityCollectionPath = `${universeWorldPath}${ENTITIES_FOLDER_PATH}/${ENTITY_COLLECTION_FILE}`;
         return new URL(entityCollectionPath, mapStorageUrl.toString()).toString();
     }
@@ -1337,8 +1342,12 @@ export class GameScene extends DirtyScene {
         } else {
             //if the exit points to the current map, we simply teleport the user back to the startLayer
             this.startPositionCalculator.initStartXAndStartY(urlManager.getStartPositionNameFromUrl());
-            this.CurrentPlayer.x = this.startPositionCalculator.startPosition.x;
-            this.CurrentPlayer.y = this.startPositionCalculator.startPosition.y;
+            // A start point inside a full or locked room puts the player just outside it.
+            const startSpot =
+                this.findSpotOutsideClosedRooms(this.startPositionCalculator.startPosition) ??
+                this.startPositionCalculator.startPosition;
+            this.CurrentPlayer.x = startSpot.x;
+            this.CurrentPlayer.y = startSpot.y;
             this.CurrentPlayer.finishFollowingPath(true);
             // clear properties in case we are moved on the same layer / area in order to trigger them
             this.gameMapFrontWrapper.clearCurrentProperties();
@@ -1407,6 +1416,10 @@ export class GameScene extends DirtyScene {
         nativeSoundscapeListenerStore.set(undefined);
         // Area-leave handlers do not run when the scene closes: forget the areas the chat top row names.
         clearAreaPresence();
+        // Nor do they bring back the raise hand an Audience or a meeting room switched off (#1625)
+        clearHandsOffHere();
+        // Nor do they stop showing our camera to a Stage's speakers (#1623)
+        stopShowingCameraToSpeakers();
         // Nor does leaving a camera-locking area: end the lock and put the zoom back to what it was before it, or the
         // next scene (a reconnect) starts zoomed in on the old area, with every resize snapping back to it.
         if (waScaleManager.getFocusTarget()) {
@@ -1421,6 +1434,8 @@ export class GameScene extends DirtyScene {
         }
         this.connection?.closeConnection();
         this.outlineManager?.clear();
+        this.gameMapFrontWrapper?.areasManager?.destroy();
+        this.areaLiveState?.destroy();
         this.usernameDomLayer?.destroy();
         this.userInputManager?.destroy();
         this.isLiveStreamingUnsubscriber?.();
@@ -2012,13 +2027,58 @@ export class GameScene extends DirtyScene {
         }
     }
 
-    private initializeAreaManager() {
+    /**
+     * Sets up the rooms on the map. `arriving`: the player has just joined the room or come back after a drop. A map
+     * rebuilt in place (WA.room.loadTileset) is not an arrival: the player stays where they are, even inside a room
+     * that is full or locked to others.
+     */
+    private initializeAreaManager(arriving = true) {
         if (!this.connection) {
             throw new Error("This should never happen");
         }
         const userCanEdit = this.connection.userCanEdit;
         const userConnectedTags = this.connection.getAllTags() ?? [];
-        this.gameMapFrontWrapper.initializeAreaManager(userConnectedTags, userCanEdit);
+        this.gameMapFrontWrapper.initializeAreaManager(
+            userConnectedTags,
+            userCanEdit,
+            this.areaLiveState && {
+                liveState: this.areaLiveState,
+                // The Owner and Admins walk into full rooms (#1621) and unlock locked ones from outside (#1622).
+                managesRooms: this.connection.hasPermission(Permission.KICK_FROM_ROOM),
+                isLogged: localUserStore.isLogged(),
+                setLocked: (areaId, propertyId, locked) => this.connection?.emitSetAreaLock(areaId, propertyId, locked),
+            }
+        );
+        if (!arriving) {
+            return;
+        }
+        // Arrived (or back after a drop) inside a room that others filled or locked: step just outside it.
+        const spot = this.findSpotOutsideClosedRooms(this.CurrentPlayer, true);
+        if (spot !== undefined && (spot.x !== this.CurrentPlayer.x || spot.y !== this.CurrentPlayer.y)) {
+            this.CurrentPlayer.teleportTo(spot.x, spot.y);
+        }
+    }
+
+    /**
+     * Where a player arriving at this point should stand so they are not inside a full or locked room they cannot
+     * enter: the point itself, or the closest spot outside the room. Undefined when there is no such spot. `joining`
+     * is for a player who has just joined the map at this point (see AreasManager.getClosedAreaForArrivalAt).
+     */
+    private findSpotOutsideClosedRooms(
+        position: { x: number; y: number },
+        joining = false
+    ): { x: number; y: number } | undefined {
+        const areasManager = this.gameMapFrontWrapper.areasManager;
+        if (areasManager === undefined) {
+            return position;
+        }
+        return areasManager.findArrivalSpot(
+            position.x,
+            position.y,
+            this.gameMapFrontWrapper.getCollisionGrid(),
+            this.gameMapFrontWrapper.getTileDimensions(),
+            joining
+        );
     }
 
     /**
@@ -2147,6 +2207,13 @@ export class GameScene extends DirtyScene {
                     return;
                 }
                 this.connection = onConnect.connection;
+                // How many people are inside each room with "Max people" (#1621): listened to from the start, so no
+                // count is missed before the areas are drawn.
+                this.areaLiveState?.destroy();
+                this.areaLiveState = new AreaLiveState(
+                    onConnect.room.areaPropertyVariables,
+                    onConnect.connection.areaPropertyVariableMessageStream
+                );
                 // A new connection has not checked any chat ID yet.
                 this.chatIdProofSent = undefined;
                 exploreStore.load(this.connection);
@@ -2425,7 +2492,11 @@ export class GameScene extends DirtyScene {
                 this._proximityChatRoomDeferred.resolve(this._proximityChatRoom);
                 // What the nearby chat shows is kept on the player's account, so it is still there after a reload.
                 this.stopKeepingNearbyShared = keepNearbyShared(this._proximityChatRoom);
-                this.proximitySpaceManager = new ProximitySpaceManager(this.connection, this._proximityChatRoom);
+                this.proximitySpaceManager = new ProximitySpaceManager(
+                    this.connection,
+                    this._proximityChatRoom,
+                    this.spaceRegistry
+                );
 
                 this.scriptingVideoManager = new ScriptingVideoManager();
 
@@ -2532,6 +2603,9 @@ export class GameScene extends DirtyScene {
                     // A meeting room or stage that has just been limited to roles this player does not have: the
                     // server has already taken them out of it, so this side lets go of it too.
                     this.leaveRefusedAreaSpaces(megaphoneSettingsMessage.refusedAreaSpaces);
+                    // The Stages that see the audience's cameras (#1623): the server has already stopped ours where
+                    // a Stage turned it off, and lets it through again where one turned it on.
+                    attendeeCameraAreaSpacesStore.set(new Set(megaphoneSettingsMessage.attendeeCameraAreaSpaces));
                     // Do not disturb: no broadcast reaches this player.
                     if (get(availabilityStatusStore) === AvailabilityStatus.DO_NOT_DISTURB) {
                         return;
@@ -3553,6 +3627,9 @@ export class GameScene extends DirtyScene {
                             for (const layer of this.Map.layers) {
                                 layer.tilemapLayer.destroy(false);
                             }
+                            // The full and locked rooms (#1621 #1622) are set up again on the new map, unless the
+                            // scene has not set them up yet: it does it on the new map once it is ready.
+                            const areasWereSetUp = this.gameMapFrontWrapper?.areasManager !== undefined;
                             this.gameMapFrontWrapper?.close();
                             //Create a new GameMap with the changed file
                             this.gameMapFrontWrapper = new GameMapFrontWrapper(
@@ -3570,6 +3647,9 @@ export class GameScene extends DirtyScene {
                             this.createCollisionWithPlayer();
                             //Create new trigger with the new GameMap
                             new GameMapPropertiesListener(this, this.gameMapFrontWrapper).register();
+                            if (areasWereSetUp) {
+                                this.initializeAreaManager(false);
+                            }
                             resolve(newFirstgid);
                         });
                         this.load.off("loaderror", errorHandler);
@@ -3668,6 +3748,13 @@ export class GameScene extends DirtyScene {
         });
 
         iframeListener.registerAnswerer("teleportPlayerTo", (message) => {
+            // A script cannot put the player in a full or locked room either: the room says so instead.
+            const areasManager = this.gameMapFrontWrapper.areasManager;
+            const closedArea = areasManager?.getClosedAreaForArrivalAt(message.x, message.y);
+            if (closedArea !== undefined) {
+                areasManager?.showClosedMessage(closedArea.id);
+                return;
+            }
             this.CurrentPlayer.teleportTo(message.x, message.y);
         });
 
@@ -3861,6 +3948,15 @@ export class GameScene extends DirtyScene {
     ): Promise<{ x: number; y: number; cancelled: boolean }> {
         const request = { position: { ...position }, speed, tryFindingNearestAvailable };
         this.pendingMoveTo = request;
+        // Walking to a spot (or a person) in a full or locked room the player cannot enter: they walk to the closest
+        // spot outside it, and the room says why once they get there.
+        const closedArea = this.gameMapFrontWrapper.areasManager?.getClosedAreaForArrivalAt(position.x, position.y);
+        if (closedArea !== undefined) {
+            const spot = this.findSpotOutsideClosedRooms(position);
+            if (spot !== undefined) {
+                request.position = spot;
+            }
+        }
         try {
             const path = await this.getPathfindingManager().findPathFromGameCoordinates(
                 {
@@ -3878,7 +3974,16 @@ export class GameScene extends DirtyScene {
             // while it was computed. setPathToFollow starts from where the Woka is now: drop the old start, or
             // it steps back to it and faces backwards for a frame (rapid clicks flash the Woka the wrong way).
             if (path.length > 1) path.shift();
-            return this.CurrentPlayer.setPathToFollow(path, speed ?? this.CurrentPlayer.walkingSpeed);
+            const walk = this.CurrentPlayer.setPathToFollow(path, speed ?? this.CurrentPlayer.walkingSpeed);
+            if (closedArea === undefined) {
+                return walk;
+            }
+            return walk.then((result) => {
+                if (!result.cancelled) {
+                    this.gameMapFrontWrapper.areasManager?.showClosedMessage(closedArea.id);
+                }
+                return result;
+            });
         } finally {
             if (this.pendingMoveTo === request) {
                 this.pendingMoveTo = undefined;
@@ -4533,6 +4638,11 @@ export class GameScene extends DirtyScene {
             throw new Error("_proximityChatRoom not yet initialized");
         }
         return this._proximityChatRoom;
+    }
+
+    /** What joins the bubbles the server puts us in; undefined until the connection is up. */
+    public getProximitySpaceManager(): ProximitySpaceManager | undefined {
+        return this.proximitySpaceManager;
     }
 
     get userProviderMerger(): Promise<UserProviderMerger> {

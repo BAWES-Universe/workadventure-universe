@@ -49,6 +49,8 @@ export const LivekitRoomConfigData = z
         startWithAudioMuted: z.boolean(),
         startWithVideoMuted: z.boolean(),
         disableChat: z.boolean().optional().default(false),
+        // Whether people in the meeting room may raise their hand (#1625). Missing means on, as upstream WorkAdventure.
+        raiseHandEnabled: z.boolean().optional(),
     })
     .optional();
 
@@ -139,12 +141,19 @@ export const SpeakerMegaphonePropertyData = PropertyBase.extend({
     type: z.literal("speakerMegaphone"),
     name: z.string(),
     chatEnabled: z.boolean().default(false),
+    // "See the audience's cameras" (#1623): the speakers see the people in the Audience who have their camera on.
+    // Off when missing.
+    seeAttendees: z.boolean().optional(),
 });
 
 export const ListenerMegaphonePropertyData = PropertyBase.extend({
     type: z.literal("listenerMegaphone"),
     speakerZoneName: z.string(),
     chatEnabled: z.boolean().default(false),
+    // Whether people next to each other in the audience may talk in a bubble (#1624). Missing means off, as upstream.
+    allowTalking: z.boolean().optional(),
+    // Whether the audience may raise their hand to ask for the floor (#1625). Missing means on, as upstream WorkAdventure.
+    raiseHandEnabled: z.boolean().optional(),
     waitingLink: z.string().optional(),
 });
 
@@ -201,6 +210,24 @@ export const LivekitRoomPropertyData = PropertyBase.extend({
     livekitRoomAdminTag: z.string().optional(),
 });
 
+export const MaxUsersInAreaPropertyData = PropertyBase.extend({
+    type: z.literal("maxUsersInAreaPropertyData"),
+    /**
+     * How many people can be inside at once. Empty: no limit. Our editor asks for 1 or more; a map made with
+     * upstream WorkAdventure may hold 0 ("always closed"), which we read as no limit ("Who can enter" closes a room).
+     */
+    maxUsers: z.number().min(0).nullable().optional(),
+});
+
+export const LockableAreaPropertyData = PropertyBase.extend({
+    type: z.literal("lockableAreaPropertyData"),
+    /**
+     * Who can lock the room from inside: people with one of these tags (our roles admin, editor and member, or any
+     * other tag). Empty: anyone signed in who can enter. Whether it is locked lives in the room, not in the map.
+     */
+    allowedTags: z.array(z.string()).optional(),
+});
+
 export const AreaDataProperty = z.discriminatedUnion("type", [
     StartPropertyData,
     ExitPropertyData,
@@ -220,6 +247,8 @@ export const AreaDataProperty = z.discriminatedUnion("type", [
     MatrixRoomPropertyData,
     TooltipPropertyData,
     LivekitRoomPropertyData,
+    MaxUsersInAreaPropertyData,
+    LockableAreaPropertyData,
 ]);
 
 export const AreaDataProperties = z.array(AreaDataProperty);
@@ -446,6 +475,8 @@ export type AreaDescriptionPropertyData = z.infer<typeof AreaDescriptionProperty
 export type RestrictedRightsPropertyData = z.infer<typeof RestrictedRightsPropertyData>;
 export type PersonalAreaPropertyData = z.infer<typeof PersonalAreaPropertyData>;
 export type MatrixRoomPropertyData = z.infer<typeof MatrixRoomPropertyData>;
+export type MaxUsersInAreaPropertyData = z.infer<typeof MaxUsersInAreaPropertyData>;
+export type LockableAreaPropertyData = z.infer<typeof LockableAreaPropertyData>;
 export type PersonalAreaAccessClaimMode = z.infer<typeof PersonalAreaAccessClaimMode>;
 export type ExtensionModuleAreaPropertyData = z.infer<typeof ExtensionModuleAreaProperty>;
 export type TooltipPropertyData = z.infer<typeof TooltipPropertyData>;

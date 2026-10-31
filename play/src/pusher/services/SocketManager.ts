@@ -372,6 +372,7 @@ export class SocketManager implements ZoneEventListener {
                                     );
                                     setMegaphoneSettings(socketData, subMessage.message.megaphoneSettingsMessage);
                                     this.leaveAreaSpacesNoLongerAllowed(client);
+                                    this.stopCamerasNoLongerAllowed(client);
                                 }
                             }
                             break;
@@ -1706,6 +1707,29 @@ export class SocketManager implements ZoneEventListener {
                 );
                 Sentry.captureException(error);
             });
+        }
+    }
+
+    /**
+     * New rules for the room's areas arrived: a player showing their camera to the speakers of a Stage that no longer
+     * sees the audience's cameras (#1623) stops showing it, even if their browser does not stop it.
+     */
+    private stopCamerasNoLongerAllowed(client: Socket): void {
+        const socketData = client.getUserData();
+        for (const spaceName of socketData.spaces) {
+            const space = this.spaces.get(spaceName);
+            if (!space) {
+                continue;
+            }
+            try {
+                const updated = space.stopCameraNoLongerAllowed(client);
+                if (updated) {
+                    space.forwarder.updateUser(updated.partialSpaceUser, updated.changedFields);
+                }
+            } catch (error) {
+                console.error(`Error while stopping the camera shown to the speakers in ${spaceName}`, error);
+                Sentry.captureException(error);
+            }
         }
     }
 

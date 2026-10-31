@@ -28,6 +28,10 @@ vi.mock("../../../../../i18n/i18n-svelte", async () => {
                     namePlaceholder: text("MainStage"),
                     nameTaken: ({ name }: { name: string }) => `A Stage called ${name} already exists.`,
                     nameEmpty: text("Give this Stage a name."),
+                    seeAttendees: text("See the audience's cameras"),
+                    seeAttendeesHelp: text(
+                        "Speakers see the people in the audience who have their camera on. They don't hear them. The audience is told."
+                    ),
                 },
             },
         },
@@ -126,5 +130,29 @@ describe("the Stage name field", () => {
         target.querySelector<HTMLInputElement>("input#chatEnabled")?.click();
         await tick();
         expect(input.value).toBe("After Undo");
+    });
+
+    it('shows the saved "See the audience\'s cameras" from a new copy of the property (an undo while the page is open)', async () => {
+        const seeSwitch = () => target.querySelector('[data-testid="seeAttendees"]')?.getAttribute("aria-checked");
+        expect(seeSwitch()).toBe("false");
+        editor?.$set({ property: { ...property, seeAttendees: true } });
+        await tick();
+        expect(seeSwitch()).toBe("true");
+        editor?.$set({ property: { ...property } });
+        await tick();
+        expect(seeSwitch()).toBe("false");
+    });
+
+    it('turns "See the audience\'s cameras" on and off from its switch', async () => {
+        const input = () => target.querySelector<HTMLInputElement>("input#seeAttendees");
+        const seeSwitch = () => target.querySelector('[data-testid="seeAttendees"]')?.getAttribute("aria-checked");
+        input()?.click();
+        await tick();
+        expect(seeSwitch()).toBe("true");
+        expect(changes).toBe(1);
+        input()?.click();
+        await tick();
+        expect(seeSwitch()).toBe("false");
+        expect(changes).toBe(2);
     });
 });

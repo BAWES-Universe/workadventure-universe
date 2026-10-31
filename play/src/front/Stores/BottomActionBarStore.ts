@@ -1,6 +1,6 @@
 import { derived } from "svelte/store";
 import { followStateStore } from "./FollowStore";
-import { isListenerStore, isSpeakerStore, silentStore } from "./MediaStore";
+import { listensOnlyStore, isSpeakerStore, silentStore } from "./MediaStore";
 import { screenSharingAvailableStore } from "./ScreenSharingStore";
 import { videoStreamElementsStore } from "./PeerStore";
 export const bottomActionBarVisibilityStore = derived(
@@ -10,7 +10,7 @@ export const bottomActionBarVisibilityStore = derived(
         silentStore,
         screenSharingAvailableStore,
         isSpeakerStore,
-        isListenerStore,
+        listensOnlyStore,
     ],
     ([
         $videoStreamElementsStore,
@@ -18,11 +18,11 @@ export const bottomActionBarVisibilityStore = derived(
         $silentStore,
         $screenSharingAvailableStore,
         $isSpeakerStore,
-        $isListenerStore,
+        $listensOnlyStore,
     ]) => {
         return (
             ($videoStreamElementsStore.length > 0 &&
-                !$isListenerStore &&
+                !$listensOnlyStore &&
                 (!$silentStore || $followStateStore != "off" || $screenSharingAvailableStore)) ||
             $isSpeakerStore
         );

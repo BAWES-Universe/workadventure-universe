@@ -34,7 +34,7 @@
     // The chat's songs, for the window's list when one of them is opened.
     const songs = derived(shared, ($shared) => $shared.files.filter((file) => fileKindOf(file.name) === "audio"));
     const hasPreviousMessage = room.hasPreviousMessage;
-    // The nearby chat: what was kept on the player's account from before, read a page at a time.
+    // A direct chat: what you and that person shared in proximity chats, kept on your account, a page at a time.
     const saved = nearbySavedFor(room);
     const savedHasMore = saved?.hasMore ?? readable(false);
     const now = new Date();
@@ -101,10 +101,12 @@
         }
     }
 
-    // Past the chat's own messages, the next page of what was kept on the player's account (nearby chat).
+    // Further back in the chat's own messages and in what was kept from proximity chats, together.
     function lookFurtherOnRequest() {
-        const next = !$hasPreviousMessage && $savedHasMore && saved ? saved.loadMore() : lookFurther();
-        next.catch((error) => console.error("Failed to look further back", error));
+        Promise.all([
+            $hasPreviousMessage ? lookFurther() : Promise.resolve(),
+            $savedHasMore && saved ? saved.loadMore() : Promise.resolve(),
+        ]).catch((error) => console.error("Failed to look further back", error));
     }
 
     onMount(() => {
@@ -197,7 +199,7 @@
                         <h3 class="shared-heading">{sectionLabel(section)}</h3>
                         <div class="shared-group">
                             {#each items as item (item.key)}
-                                <LinkRow url={item.url ?? item.name} message={item.message} />
+                                <LinkRow url={item.url ?? item.name} message={item.message} nearby={item.nearby} />
                             {/each}
                         </div>
                     </section>
@@ -215,6 +217,7 @@
                                     src={item.src}
                                     {songs}
                                     itemKey={item.key}
+                                    nearby={item.nearby}
                                 />
                             {/each}
                         </div>

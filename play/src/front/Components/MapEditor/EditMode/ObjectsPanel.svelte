@@ -23,7 +23,6 @@
         editPickedVariantStore,
         editRecentObjectsStore,
     } from "../../../Stores/EditModeStore";
-    import CustomEntityEditionForm from "../EntityEditor/CustomEntityEditionForm/CustomEntityEditionForm.svelte";
     import EntityPropertiesEditor from "../EntityEditor/EntityPropertiesEditor.svelte";
     import USelect from "../../UI/USelect.svelte";
     import PanelHeader from "./PanelHeader.svelte";
@@ -47,7 +46,9 @@
     $: canUpload = ($gameSceneStore ?? gameManager.tryGetCurrentGameScene())?.connection?.userCanEdit ?? false;
 
     let searchTerm = "";
-    let editingUpload = false;
+    // The upload being changed. Its object is put down while the page is open, so the placing bar does not cover the
+    // page's buttons.
+    let editingUpload: EntityPrefab | undefined;
     let editingVariants = false;
 
     $: view = $editObjectsViewStore;
@@ -140,7 +141,7 @@
         mapEditorSelectedEntityStore.set(undefined);
         mapEditorEntityModeStore.set("ADD");
         mapEditorSelectedEntityPrefabStore.set(prefab);
-        editingUpload = false;
+        editingUpload = undefined;
         editingVariants = false;
         if ($mobileLayoutStore) mapEditorVisibilityStore.set(false);
     }
@@ -157,20 +158,30 @@
         return pictures.length > 0 ? pictures : [id];
     }
 
+    function editUpload(prefab: EntityPrefab | undefined) {
+        if (!prefab) return;
+        editingUpload = prefab;
+        mapEditorSelectedEntityPrefabStore.set(undefined);
+    }
+
     function saveUploadChanges(customEntity: EntityPrefab) {
         // Name, category, blocking and depth belong to the whole object, so every picture gets them.
         for (const id of picturesOf(customEntity.id)) {
             mapEditorModifyCustomEntityEventStore.set({ ...customEntity, id });
         }
-        editingUpload = false;
+        editingUpload = undefined;
     }
     function removeUpload(id: string) {
+        // When the upload was all its category held, the panel goes back to all objects rather than an empty
+        // category that no longer exists (#1636).
+        const left = sections.find((section) => section.tag === category)?.items.filter((variant) => variant.id !== id);
+        if (category && (left === undefined || left.length === 0)) selectCategoryStore.set(undefined);
         for (const picture of picturesOf(id)) {
             mapEditorDeleteCustomEntityEventStore.set({ id: picture });
         }
         editPickedVariantStore.set(undefined);
         mapEditorSelectedEntityPrefabStore.set(undefined);
-        editingUpload = false;
+        editingUpload = undefined;
     }
 
     const unsubscribePrefab = mapEditorSelectedEntityPrefabStore.subscribe((prefab) => {
@@ -195,21 +206,14 @@
     </div>
 {:else if editingVariants && picked?.variant.defaultPrefab.type === CUSTOM}
     <UploadVariants variantId={picked.variant.id} color={picked.color} on:done={() => (editingVariants = false)} />
-{:else if editingUpload && picked?.variant.defaultPrefab.type === CUSTOM}
-    <PanelHeader
-        title={picked.variant.defaultPrefab.name}
-        subtitle={$LL.mapEditor.edit.objects.editUpload()}
-        onBack={() => (editingUpload = false)}
-        backLabel={$LL.mapEditor.edit.areas.back()}
+{:else if editingUpload}
+    <!-- The same page the upload was made on, with its saved values (#1637). -->
+    <UploadGuide
+        editing={editingUpload}
+        on:done={() => (editingUpload = undefined)}
+        on:remove={({ detail: { id } }) => removeUpload(id)}
+        on:save={({ detail }) => saveUploadChanges(detail)}
     />
-    <div class="em-scroll em-props">
-        <CustomEntityEditionForm
-            customEntity={picked.variant.defaultPrefab}
-            on:closeForm={() => (editingUpload = false)}
-            on:removeEntity={({ detail: { entityId } }) => removeUpload(entityId)}
-            on:applyEntityModifications={({ detail }) => saveUploadChanges(detail)}
-        />
-    </div>
 {:else}
     <PanelHeader
         title={$LL.mapEditor.edit.objects.title()}
@@ -240,7 +244,12 @@
     {/if}
     {#if picked?.variant.defaultPrefab.type === CUSTOM}
         <div class="em-links">
-            <button type="button" class="em-link" data-testid="editEntity" on:click={() => (editingUpload = true)}>
+            <button
+                type="button"
+                class="em-link"
+                data-testid="editEntity"
+                on:click={() => editUpload(picked?.variant.defaultPrefab)}
+            >
                 <IconPencil font-size="14" />{$LL.mapEditor.edit.objects.editUpload()}
             </button>
             <button

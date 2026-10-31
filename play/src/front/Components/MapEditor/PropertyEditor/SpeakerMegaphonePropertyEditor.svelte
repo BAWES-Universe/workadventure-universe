@@ -5,11 +5,14 @@
     import { LL } from "../../../../i18n/i18n-svelte";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import Input from "../../Input/Input.svelte";
-    import InputSwitch from "../../Input/InputSwitch.svelte";
     import { IconMicrophone } from "../../Icons";
+    import PanelSwitch from "./PanelSwitch.svelte";
     import PropertyEditorBase from "./PropertyEditorBase.svelte";
 
     export let property: SpeakerMegaphonePropertyData;
+
+    // Off when missing: the speakers only see each other (#1623).
+    let seeAttendees = property.seeAttendees ?? false;
 
     const dispatch = createEventDispatcher<{
         change: undefined;
@@ -28,6 +31,8 @@
         shownProperty = property;
         savedName = property.name;
         nameError = null;
+        // The switch shows the copy's setting too (an undo, another editor turning it off)
+        seeAttendees = property.seeAttendees ?? false;
     }
 
     // Two Stages of a room with names that only differ by capitals or spaces read the same to players, and
@@ -67,8 +72,8 @@
         dispatch("change");
     }
 
-    function onChatChange() {
-        // A name that was refused is not saved along with the switch.
+    function onSwitchChange() {
+        // A name that was refused is not saved along with a switch.
         if (nameError !== null) {
             property.name = savedName;
             nameError = null;
@@ -99,13 +104,32 @@
                 onChange={onNameChange}
             />
         </div>
-        <div class="value-switch">
-            <InputSwitch
-                id="chatEnabled"
-                label={$LL.mapEditor.properties.chatEnabled()}
-                bind:value={property.chatEnabled}
-                onChange={onChatChange}
-            />
-        </div>
+        <PanelSwitch
+            id="chatEnabled"
+            label={$LL.mapEditor.properties.chatEnabled()}
+            bind:value={property.chatEnabled}
+            onChange={onSwitchChange}
+        />
+        <PanelSwitch
+            id="seeAttendees"
+            label={$LL.mapEditor.properties.speakerMegaphone.seeAttendees()}
+            bind:value={seeAttendees}
+            onChange={() => {
+                property.seeAttendees = seeAttendees;
+                onSwitchChange();
+            }}
+        />
+        <p class="see-help" data-testid="seeAttendees-help">
+            {$LL.mapEditor.properties.speakerMegaphone.seeAttendeesHelp()}
+        </p>
     </span>
 </PropertyEditorBase>
+
+<style>
+    .see-help {
+        margin: -6px 0 0;
+        font-size: 0.8125rem;
+        line-height: 1.45;
+        color: rgba(255, 255, 255, 0.6);
+    }
+</style>

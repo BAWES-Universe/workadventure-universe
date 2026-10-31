@@ -1,8 +1,10 @@
 <script lang="ts">
     // "Add your own": four short rules before the picture is chosen, then a check of the picture at real size on the
     // tile grid next to your own character, with the same fields as today's upload (name, tags, blocking grid, depth).
+    // "Edit this upload" opens the same check page with the upload's saved values (#1637).
     import { createEventDispatcher, onDestroy } from "svelte";
     import { ENTITY_UPLOAD_SUPPORTED_FORMATS_FRONT } from "@workadventure/map-editor";
+    import type { EntityPrefab } from "@workadventure/map-editor";
     import { CustomEntityDirection } from "@workadventure/messages";
     import { v4 as uuidv4 } from "uuid";
     import { LL } from "../../../../i18n/i18n-svelte";
@@ -11,22 +13,26 @@
     import PanelHeader from "./PanelHeader.svelte";
     import { IconCheck, IconCloudUpload, IconEye, IconInfoCircle, IconRefresh, IconStar, IconTexture } from "@wa-icons";
 
-    const dispatch = createEventDispatcher<{ done: undefined }>();
+    /** The upload to change; without it the page adds a new one. */
+    export let editing: EntityPrefab | undefined = undefined;
+
+    const dispatch = createEventDispatcher<{ done: undefined; save: EntityPrefab; remove: { id: string } }>();
     const TILE = 32;
 
     let file: File | undefined;
-    let imageUrl: string | undefined;
+    let imageUrl: string | undefined = editing?.imagePath;
     let naturalWidth = 0;
     let naturalHeight = 0;
     let error: string | undefined;
     let dropHover = false;
 
-    let name = "";
-    let category = "";
-    let floating = false;
+    let name = editing?.name ?? "";
+    let category = editing?.tags.join(", ") ?? "";
+    let floating = editing ? editing.collisionGrid === undefined : false;
     let depth: "standing" | "ground" | "custom" = "standing";
+    // How far above the picture's bottom edge the line sits: people whose feet are above it walk behind.
     let depthOffset = 0;
-    let grid: number[][] = [];
+    let grid: number[][] = editing?.collisionGrid?.map((row) => [...row]) ?? [];
 
     function isSupported(type: string): boolean {
         return type.trim().length > 0 && ENTITY_UPLOAD_SUPPORTED_FORMATS_FRONT.includes(type);
@@ -59,10 +65,23 @@
         naturalHeight = img.naturalHeight;
         const columns = Math.max(1, Math.ceil(naturalWidth / TILE));
         const rows = Math.max(1, Math.ceil(naturalHeight / TILE));
-        grid = Array(rows)
-            .fill(0)
-            .map(() => Array(columns).fill(0));
-        depthOffset = 0;
+        // An upload being changed keeps its squares when they still fit the picture.
+        if (grid.length !== rows || grid.some((row) => row.length !== columns)) {
+            grid = Array(rows)
+                .fill(0)
+                .map(() => Array(columns).fill(0));
+        }
+        const saved = -(editing?.depthOffset ?? 0);
+        if (!editing || saved === 0) {
+            depth = "standing";
+            depthOffset = 0;
+        } else if (saved === naturalHeight) {
+            depth = "ground";
+            depthOffset = naturalHeight;
+        } else {
+            depth = "custom";
+            depthOffset = saved;
+        }
     }
 
     function onDrop(event: DragEvent) {
@@ -79,19 +98,39 @@
     $: tilesHigh = naturalHeight / TILE;
     $: fits = naturalWidth > 0 && Number.isInteger(tilesWide) && Number.isInteger(tilesHigh);
     $: suggestion = `${Math.max(1, Math.round(tilesWide)) * TILE} × ${Math.max(1, Math.round(tilesHigh)) * TILE}`;
-    // The check box draws the picture at real size, so it is at least 3 tiles high and scrolls when the picture is big.
-    $: boxHeight = Math.max(3 * TILE, Math.min(6 * TILE, Math.ceil(naturalHeight / TILE) * TILE + TILE));
+    // The check box draws the picture at real size with a tile above and below it, so the line people pass behind and
+    // its "In front" label stay in view; it scrolls when the picture is big.
+    $: boxHeight = Math.max(4 * TILE, Math.min(7 * TILE, Math.ceil(naturalHeight / TILE) * TILE + 2 * TILE));
     $: wokaLeft = Math.min(TILE * 1.5 + naturalWidth + TILE, 7 * TILE);
+    $: total = grid.reduce((sum, row) => sum + row.length, 0);
+    $: blocked = grid.reduce((sum, row) => sum + row.filter((cell) => cell === 1).length, 0);
+    // The line people pass behind, measured from the top of the picture.
+    $: lineFromBottom = depth === "standing" ? 0 : depth === "ground" ? naturalHeight : depthOffset;
+    $: lineTop = Math.max(0, naturalHeight - lineFromBottom);
+
+    function tagsOf(text: string): string[] {
+        return text
+            .split(",")
+            .map((tag) => tag.trim())
+            .filter((tag) => tag.length > 0);
+    }
+
+    function saveChanges() {
+        if (!editing) return;
+        dispatch("save", {
+            ...editing,
+            name: name.trim() || editing.name,
+            tags: tagsOf(category),
+            collisionGrid: floating ? undefined : grid,
+            depthOffset: -lineFromBottom,
+        });
+    }
 
     async function save() {
         if (!file) return;
         const buffer = await file.arrayBuffer();
         const id = uuidv4();
-        const tags = category
-            .split(",")
-            .map((tag) => tag.trim())
-            .filter((tag) => tag.length > 0);
-        const offset = depth === "standing" ? 0 : depth === "ground" ? -naturalHeight : -depthOffset;
+        const tags = tagsOf(category);
         mapEditorEntityUploadEventStore.set({
             id,
             file: new Uint8Array(buffer),
@@ -100,7 +139,7 @@
             tags,
             imagePath: `${id}-${file.name}`,
             collisionGrid: floating ? undefined : grid,
-            depthOffset: offset,
+            depthOffset: -lineFromBottom,
             color: "",
         });
         selectCategoryStore.set(tags[0] ?? "Custom");
@@ -116,7 +155,7 @@
     });
 </script>
 
-{#if !file}
+{#if !file && !editing}
     <PanelHeader
         title={$LL.mapEditor.edit.upload.title()}
         subtitle={$LL.mapEditor.edit.upload.subtitle()}
@@ -176,9 +215,9 @@
     </div>
 {:else}
     <PanelHeader
-        title={$LL.mapEditor.edit.upload.checkTitle()}
-        subtitle={$LL.mapEditor.edit.upload.checkSubtitle()}
-        onBack={() => (file = undefined)}
+        title={editing ? editing.name : $LL.mapEditor.edit.upload.checkTitle()}
+        subtitle={editing ? $LL.mapEditor.edit.objects.editUpload() : $LL.mapEditor.edit.upload.checkSubtitle()}
+        onBack={editing ? cancel : () => (file = undefined)}
         backLabel={$LL.mapEditor.edit.areas.back()}
     />
     <div class="em-scroll em-check">
@@ -186,6 +225,13 @@
             <div class="em-gridbox-scroll">
                 <div class="em-pic" class:floating>
                     <img src={imageUrl} alt={name} draggable="false" on:load={onLoad} />
+                    {#if naturalHeight > 0}
+                        <div class="em-line" class:ground={depth === "ground"} style="top: {lineTop}px">
+                            {#if depth !== "ground"}<span class="em-line-up">{$LL.mapEditor.edit.upload.behind()}</span
+                                >{/if}
+                            <span class="em-line-down">{$LL.mapEditor.edit.upload.inFront()}</span>
+                        </div>
+                    {/if}
                     {#if !floating && grid.length > 0}
                         <div class="em-cells" style="grid-template-columns: repeat({grid[0].length}, {TILE}px)">
                             {#each grid as row, r (r)}
@@ -213,9 +259,12 @@
                     />
                 {/if}
             </div>
+            {#if !floating && naturalWidth > 0}
+                <span class="em-hint">{$LL.mapEditor.edit.upload.gridHint()}</span>
+            {/if}
             <span class="em-you">{$LL.mapEditor.edit.upload.youForSize()}</span>
         </div>
-        {#if naturalWidth > 0}
+        {#if naturalWidth > 0 && !editing}
             <div class="em-ok" class:fits class:warn={!fits}>
                 {#if fits}<IconCheck font-size="14" />{:else}<IconInfoCircle font-size="14" />{/if}
                 <span>
@@ -256,36 +305,66 @@
             <div class="em-field">
                 <span class="em-tx">
                     <span class="em-t">{$LL.mapEditor.edit.upload.blocks()}</span>
-                    <span class="em-m">{$LL.mapEditor.edit.upload.blocksText()}</span>
+                    <span class="em-m" data-testid="blocks-count"
+                        >{blocked === 0
+                            ? $LL.mapEditor.edit.upload.blocksNone()
+                            : $LL.mapEditor.edit.upload.blocksCount({ count: blocked, total })}</span
+                    >
                 </span>
             </div>
         {/if}
-        <label class="em-field">
-            <span class="em-t">{$LL.mapEditor.edit.upload.depth()}</span>
-            <select bind:value={depth}>
-                <option value="standing">{$LL.mapEditor.edit.upload.depthStanding()}</option>
-                <option value="ground">{$LL.mapEditor.edit.upload.depthGround()}</option>
-                <option value="custom">{$LL.mapEditor.edit.upload.depthCustom()}</option>
-            </select>
-        </label>
+        <div class="em-field em-depth">
+            <label class="em-depth-row">
+                <span class="em-t">{$LL.mapEditor.edit.upload.depth()}</span>
+                <select bind:value={depth} data-testid="depth">
+                    <option value="standing">{$LL.mapEditor.edit.upload.depthStanding()}</option>
+                    <option value="ground">{$LL.mapEditor.edit.upload.depthGround()}</option>
+                    <option value="custom">{$LL.mapEditor.edit.upload.depthCustom()}</option>
+                </select>
+            </label>
+            <span class="em-m"
+                >{depth === "standing"
+                    ? $LL.mapEditor.edit.upload.depthStandingText()
+                    : depth === "ground"
+                    ? $LL.mapEditor.edit.upload.depthGroundText()
+                    : $LL.mapEditor.edit.upload.depthCustomText()}</span
+            >
+        </div>
         {#if depth === "custom"}
             <label class="em-field">
-                <span class="em-m"
-                    >{$LL.mapEditor.entityEditor.customEntityEditorForm.wokaBelow()} ↔ {$LL.mapEditor.entityEditor.customEntityEditorForm.wokaAbove()}</span
-                >
+                <span class="em-t">{$LL.mapEditor.edit.upload.moveLine()}</span>
                 <input type="range" min="0" max={naturalHeight} bind:value={depthOffset} />
             </label>
+        {/if}
+        {#if editing}
+            <button
+                type="button"
+                class="em-delete"
+                data-testid="removeEntity"
+                on:click={() => editing && dispatch("remove", { id: editing.id })}
+                >{$LL.mapEditor.edit.upload.delete()}</button
+            >
         {/if}
     </div>
     <div class="em-actions">
         <button type="button" class="em-btn em-btn-q" on:click={cancel}>{$LL.mapEditor.edit.upload.cancel()}</button>
-        <button
-            type="button"
-            class="em-btn u-cta"
-            data-testid="applyEntityModifications"
-            disabled={naturalWidth === 0}
-            on:click={() => save().catch((e) => console.error(e))}>{$LL.mapEditor.edit.upload.save()}</button
-        >
+        {#if editing}
+            <button
+                type="button"
+                class="em-btn u-cta"
+                data-testid="applyEntityModifications"
+                disabled={naturalWidth === 0}
+                on:click={saveChanges}>{$LL.mapEditor.edit.upload.saveChanges()}</button
+            >
+        {:else}
+            <button
+                type="button"
+                class="em-btn u-cta"
+                data-testid="applyEntityModifications"
+                disabled={naturalWidth === 0}
+                on:click={() => save().catch((e) => console.error(e))}>{$LL.mapEditor.edit.upload.save()}</button
+            >
+        {/if}
     </div>
 {/if}
 
@@ -404,12 +483,92 @@
     .em-cell {
         margin: 0;
         padding: 0;
-        border: 1px solid rgba(255, 255, 255, 0.25);
+        border: 1px dashed rgba(255, 255, 255, 0.6);
         background: transparent;
         cursor: pointer;
     }
+    @media (hover: hover) {
+        .em-cell:hover {
+            background: rgba(255, 255, 255, 0.16);
+        }
+    }
     .em-cell.on {
-        background: rgba(233, 109, 81, 0.55);
+        border-style: solid;
+        border-color: #f7a48f;
+        background: repeating-linear-gradient(45deg, rgba(233, 109, 81, 0.7) 0 4px, rgba(233, 109, 81, 0.35) 4px 8px);
+    }
+    .em-line {
+        position: absolute;
+        left: -10px;
+        right: -10px;
+        height: 0;
+        border-top: 2px solid #a78bfa;
+        pointer-events: none;
+    }
+    .em-line span {
+        position: absolute;
+        left: calc(100% + 4px);
+        font-size: 10px;
+        line-height: 1;
+        white-space: nowrap;
+        color: #c4b5fd;
+    }
+    .em-line-up {
+        bottom: 3px;
+    }
+    .em-line-down {
+        top: 3px;
+    }
+    .em-hint {
+        position: absolute;
+        left: 8px;
+        top: 8px;
+        padding: 3px 8px;
+        border-radius: 999px;
+        background: rgba(10, 8, 20, 0.7);
+        font-size: 11px;
+        color: #fff;
+        pointer-events: none;
+    }
+    .em-field.em-depth {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 4px;
+    }
+    .em-depth-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    .em-depth-row > .em-t {
+        flex: 1;
+        font-weight: 400;
+    }
+    .em-depth-row select {
+        flex: 1;
+        min-width: 0;
+        height: 36px;
+        padding: 0 12px;
+        border: 0;
+        border-radius: 10px;
+        background: rgba(0, 0, 0, 0.25);
+        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.18);
+        font: inherit;
+        color: #fff;
+        outline: none;
+    }
+    .em-delete {
+        align-self: flex-start;
+        margin: 10px 0 4px;
+        padding: 10px 0;
+        min-height: 44px;
+        border: 0;
+        background: transparent;
+        font: inherit;
+        font-size: 14px;
+        font-weight: 600;
+        color: #f7a48f;
+        cursor: pointer;
     }
     .em-woka {
         position: absolute;

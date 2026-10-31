@@ -1,10 +1,11 @@
 import path from "path";
 import * as Sentry from "@sentry/node";
-import type { WAMFileFormat } from "@workadventure/map-editor";
-import { GameMapProperties, WAMSettingsUtils } from "@workadventure/map-editor";
+import type { AreaData, WAMFileFormat } from "@workadventure/map-editor";
+import { AREA_LOCK_KEY, GameMapProperties, WAMSettingsUtils } from "@workadventure/map-editor";
 import { LocalUrlError } from "@workadventure/map-editor/src/LocalUrlError";
 import { mapFetcher } from "@workadventure/map-editor/src/MapFetcher";
 import type {
+    AreaPropertyVariableMessage,
     EditMapCommandMessage,
     EmoteEventMessage,
     JoinRoomMessage,
@@ -13,6 +14,7 @@ import type {
     MapJitsiData,
     MapThirdPartyData,
     ServerToClientMessage,
+    SetAreaPropertyVariableMessage,
     SetPlayerDetailsMessage,
     SubToPusherRoomMessage,
     MegaphoneSettings,
@@ -53,10 +55,16 @@ import { adminApi } from "../Services/AdminApi";
 import { MapLoadingError } from "../Services/MapLoadingError";
 import { getMapStorageClient } from "../Services/MapStorageClient";
 import { emitError, emitErrorOnRoomSocket } from "../Services/MessageHelpers";
-import { bypassesAreaSpaceRights, listenOnlyAreaSpaces, refusedAreaSpaces } from "../Services/AreaSpaceRights";
+import {
+    attendeeCameraAreaSpaces,
+    bypassesAreaSpaceRights,
+    listenOnlyAreaSpaces,
+    refusedAreaSpaces,
+} from "../Services/AreaSpaceRights";
 import { ModeratorTagFinder } from "../Services/ModeratorTagFinder";
 import { VariableError } from "../Services/VariableError";
 import { VariablesManager } from "../Services/VariablesManager";
+import { AreaOccupancy } from "./AreaOccupancy";
 import type { BrothersFinder } from "./BrothersFinder";
 import { Group } from "./Group";
 import { PositionNotifier } from "./PositionNotifier";
@@ -82,6 +90,15 @@ export class GameRoom implements BrothersFinder {
     private nextUserId = 1;
 
     private roomListeners: Set<RoomSocket> = new Set<RoomSocket>();
+    // How many people are inside each area with a "Max people" setting, shared with everyone in the room
+    private readonly areaOccupancy = new AreaOccupancy((areaPropertyVariableMessage) =>
+        this.dispatchRoomMessage({
+            message: {
+                $case: "areaPropertyVariableMessage",
+                areaPropertyVariableMessage,
+            },
+        })
+    );
     private variableListeners: Map<string, Set<VariableSocket>> = new Map<string, Set<VariableSocket>>();
     // The key is the event name
     private eventListeners: Map<string, Set<EventSocket>> = new Map<string, Set<EventSocket>>();
@@ -174,6 +191,7 @@ export class GameRoom implements BrothersFinder {
         );
         // The areas read to create the room are the first copy to fall back on (see getAreaSpacePolicyFor)
         gameRoom.lastGoodWam = wamFile;
+        gameRoom.areaOccupancy.setAreas(areasOf(wamFile), []);
 
         return gameRoom;
     }
@@ -264,6 +282,7 @@ export class GameRoom implements BrothersFinder {
             this.usersByUuid.set(user.uuid, set);
         }
         set.add(user);
+        this.areaOccupancy.userMoved(user);
         this.updateUserGroup(user);
 
         // Notify admins
@@ -299,6 +318,7 @@ export class GameRoom implements BrothersFinder {
         }
 
         this.users.delete(user.id);
+        this.areaOccupancy.userLeft(user);
 
         const set = this.usersByUuid.get(user.uuid);
         if (set !== undefined) {
@@ -330,7 +350,36 @@ export class GameRoom implements BrothersFinder {
 
     public updatePosition(user: User, userPosition: PointInterface): void {
         user.setPosition(userPosition);
+        this.areaOccupancy.userMoved(user);
         this.updateUserGroup(user);
+    }
+
+    /** The live state of the room's area settings, for a player who arrives (see AreaOccupancy). */
+    public getAreaPropertyVariables(): AreaPropertyVariableMessage[] {
+        return this.areaOccupancy.getVariables();
+    }
+
+    /**
+     * Whether two players may share a bubble: not when one is inside a full or locked room and the other outside it,
+     * so nobody talks into it from its edge.
+     */
+    public canMeet(user1: User, user2: User): boolean {
+        return !this.areaOccupancy.separatesClosedArea(user1.getPosition(), user2.getPosition());
+    }
+
+    /**
+     * A player asks to change the live state of an area setting: lock or unlock a lockable room (#1622). Who may is
+     * checked by AreaOccupancy; anything else is ignored.
+     */
+    public setAreaPropertyVariable(user: User, message: SetAreaPropertyVariableMessage): void {
+        if (message.key !== AREA_LOCK_KEY || (message.value !== "true" && message.value !== "false")) {
+            return;
+        }
+        this.areaOccupancy.setLocked(user, message.areaId, message.propertyId, message.value === "true");
+    }
+
+    private canJoinGroup(user: User, group: Group): boolean {
+        return group.getUsers().every((member) => this.canMeet(user, member));
     }
 
     updatePlayerDetails(user: User, playerDetailsMessage: SetPlayerDetailsMessage) {
@@ -370,7 +419,8 @@ export class GameRoom implements BrothersFinder {
                         this.groupRadius,
                         this.connectCallback,
                         this.disconnectCallback,
-                        this.positionNotifier
+                        this.positionNotifier,
+                        (candidate, group) => this.canJoinGroup(candidate, group)
                     );
                     this.groups.set(group.getId(), group);
                 }
@@ -454,7 +504,8 @@ export class GameRoom implements BrothersFinder {
                         this.groupRadius,
                         this.connectCallback,
                         this.disconnectCallback,
-                        this.positionNotifier
+                        this.positionNotifier,
+                        (candidate, group) => this.canJoinGroup(candidate, group)
                     );
                     this.groups.set(newGroup.getId(), newGroup);
                 } else {
@@ -522,6 +573,9 @@ export class GameRoom implements BrothersFinder {
             if (currentUser.silent) {
                 return;
             }
+            if (!this.canMeet(user, currentUser)) {
+                return;
+            }
 
             const distance = GameRoom.computeDistance(user, currentUser); // compute distance between peers.
 
@@ -532,7 +586,7 @@ export class GameRoom implements BrothersFinder {
         });
 
         this.groups.forEach((group: Group) => {
-            if (group.isFull() || group.isLocked()) {
+            if (group.isFull() || group.isLocked() || !this.canJoinGroup(user, group)) {
                 return;
             }
             const distance = GameRoom.computeDistanceBetweenPositions(user.getPosition(), group.getPosition());
@@ -1203,6 +1257,7 @@ export class GameRoom implements BrothersFinder {
                             // Who may join which meeting room depends on the areas: read them again and tell the users.
                             this.wamPromise = undefined;
                             void this.sendMegaphoneSettingsToUsers();
+                            void this.refreshAreaOccupancy();
                         }
                         if (editMapCommandMessage.editMapMessage?.message?.$case === "modifyEntityMessage") {
                             // If the area is modified, we need to reset the WAM and the moderator tag finder.
@@ -1305,13 +1360,15 @@ export class GameRoom implements BrothersFinder {
             // Filled in from the room's areas by whoever sends it (see getAreaSpacePolicyFor)
             refusedAreaSpaces: [],
             listenOnlyAreaSpaces: [],
+            attendeeCameraAreaSpaces: [],
             areaSpacesUnknown: false,
         };
     }
 
     /**
      * Who may join which meeting room and speak on which stage, for this user (see refusedAreaSpaces and
-     * listenOnlyAreaSpaces). Asked from the room's saved map, which is read again after every area change.
+     * listenOnlyAreaSpaces), and on which stages the audience may show their camera to the speakers
+     * (attendeeCameraAreaSpaces). Asked from the room's saved map, which is read again after every area change.
      *
      * When the map cannot be read, the rules from the last time it could be read keep applying, so a hiccup never
      * turns a closed area into an open one. When it has never been read, nothing is known and the answer says so:
@@ -1319,16 +1376,18 @@ export class GameRoom implements BrothersFinder {
      */
     public async getAreaSpacePolicyFor(
         user: Pick<User, "tags" | "uuid" | "canEdit"> & Partial<Pick<User, "permissions">>
-    ): Promise<{ refusedAreaSpaces: string[]; listenOnlyAreaSpaces: string[]; areaSpacesUnknown: boolean }> {
+    ): Promise<{
+        refusedAreaSpaces: string[];
+        listenOnlyAreaSpaces: string[];
+        attendeeCameraAreaSpaces: string[];
+        areaSpacesUnknown: boolean;
+    }> {
         const compute = (wam: WAMFileFormat | undefined) => ({
             refusedAreaSpaces: refusedAreaSpaces(wam, this._roomUrl, user),
             listenOnlyAreaSpaces: listenOnlyAreaSpaces(wam, this._roomUrl, user),
+            attendeeCameraAreaSpaces: attendeeCameraAreaSpaces(wam, this._roomUrl),
             areaSpacesUnknown: false,
         });
-        if (bypassesAreaSpaceRights(user)) {
-            // Nothing in the map changes what they may do, so a map that cannot be read changes nothing for them
-            return compute(undefined);
-        }
         try {
             const wam = await this.getWam();
             this.areaPolicyRetries = 0;
@@ -1343,8 +1402,18 @@ export class GameRoom implements BrothersFinder {
                 console.warn(`Could not apply the earlier areas of ${this._roomUrl} either`, e);
             }
         }
+        if (bypassesAreaSpaceRights(user)) {
+            // Nothing in the map changes where they may go, so a map that cannot be read changes nothing for them
+            // (only showing a camera on a Stage waits until the map says which Stages allow it)
+            return compute(undefined);
+        }
         this.scheduleAreaPolicyRetry();
-        return { refusedAreaSpaces: [], listenOnlyAreaSpaces: [], areaSpacesUnknown: true };
+        return {
+            refusedAreaSpaces: [],
+            listenOnlyAreaSpaces: [],
+            attendeeCameraAreaSpaces: [],
+            areaSpacesUnknown: true,
+        };
     }
 
     private areaPolicyRetryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1363,6 +1432,23 @@ export class GameRoom implements BrothersFinder {
             void this.sendMegaphoneSettingsToUsers();
         }, delay);
         this.areaPolicyRetryTimer.unref?.();
+    }
+
+    private areaOccupancyVersion = 0;
+
+    /** Recounts who is inside the areas with a "Max people" setting, from the room's areas as saved now. */
+    private async refreshAreaOccupancy(): Promise<void> {
+        // Two refreshes can overlap (two area edits in a row): an older read that finishes late is dropped.
+        const version = ++this.areaOccupancyVersion;
+        try {
+            const wam = await this.getWam();
+            if (version !== this.areaOccupancyVersion) {
+                return;
+            }
+            this.areaOccupancy.setAreas(areasOf(wam), this.users.values());
+        } catch (e) {
+            console.error("Could not read the areas to count who is inside the full-room areas", e);
+        }
     }
 
     /**
@@ -1406,4 +1492,13 @@ export class GameRoom implements BrothersFinder {
     get wamSettings(): WAMFileFormat["settings"] {
         return this._wamSettings;
     }
+}
+
+/** The areas of a map file. The file is read raw, and some hold their areas by id rather than in a list. */
+function areasOf(wam: WAMFileFormat | undefined): AreaData[] {
+    if (wam === undefined) {
+        return [];
+    }
+    const areas: AreaData[] | Record<string, AreaData> = wam.areas;
+    return Array.isArray(areas) ? areas : Object.values(areas);
 }

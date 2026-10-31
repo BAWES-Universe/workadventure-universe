@@ -234,6 +234,18 @@
         }
     }
 
+    // A song has nothing to type or scroll with the keys: after a mouse click on its controls the keys go back to the
+    // game at once (W, A, S, D still walk), and the clicked control keeps no ring. Keyboard users Tab in and keep both.
+    let lastPointer = "";
+
+    function onPanelClick(event: MouseEvent): void {
+        if (kind !== "audio" || lastPointer !== "mouse" || event.detail === 0) return;
+        const focused = document.activeElement;
+        if (!(focused instanceof HTMLElement) || !root.contains(focused)) return;
+        if (focused.matches("input, textarea, select, [contenteditable]")) return;
+        focused.blur();
+    }
+
     // A browser may not say that a focused control left (the search box closing, the menu closing). The panel keeps
     // the focus then, so the game's keys do not stay switched off with nothing focused.
     afterUpdate(() => {
@@ -260,8 +272,8 @@
 
 <svelte:window on:click={onWindowClick} />
 
-<!-- The panel only listens for focus and Escape, to hand the keys back and forth with the game. -->
-<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+<!-- The panel only listens for focus, clicks and Escape, to hand the keys back and forth with the game. -->
+<!-- svelte-ignore a11y-no-noninteractive-element-interactions a11y-click-events-have-key-events -->
 <div
     bind:this={root}
     bind:clientWidth={panelWidth}
@@ -274,6 +286,8 @@
     on:focusin={onFocusIn}
     on:focusout={onFocusOut}
     on:keydown={onKeydown}
+    on:pointerdown|capture={(event) => (lastPointer = event.pointerType)}
+    on:click={onPanelClick}
     data-testid="fileViewer"
 >
     <OpenHereRow name={shownName} line={subtitle}>

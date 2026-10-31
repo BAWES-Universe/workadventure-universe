@@ -8,6 +8,7 @@ interface MegaphoneSettingsLike {
     refusedAreaSpaces?: string[];
     areaSpacesUnknown?: boolean;
     listenOnlyAreaSpaces?: string[];
+    attendeeCameraAreaSpaces?: string[];
 }
 
 /**
@@ -18,7 +19,11 @@ interface MegaphoneSettingsLike {
 export function setMegaphoneSettings(
     socketData: Pick<
         SocketData,
-        "megaphoneChannels" | "refusedAreaSpaces" | "areaSpacePolicyUnknown" | "listenOnlyAreaSpaces"
+        | "megaphoneChannels"
+        | "refusedAreaSpaces"
+        | "areaSpacePolicyUnknown"
+        | "listenOnlyAreaSpaces"
+        | "attendeeCameraAreaSpaces"
     >,
     megaphoneSettings: MegaphoneSettingsLike | undefined
 ): void {
@@ -40,6 +45,20 @@ export function setMegaphoneSettings(
     socketData.listenOnlyAreaSpaces = new Set(
         (megaphoneSettings?.listenOnlyAreaSpaces ?? []).flatMap((name) => [name, slugify(name)])
     );
+    socketData.attendeeCameraAreaSpaces = new Set(
+        (megaphoneSettings?.attendeeCameraAreaSpaces ?? []).flatMap((name) => [name, slugify(name)])
+    );
+}
+
+/**
+ * Whether a player may show their camera to the speakers (attendeeCamera) in this space: only on a Stage that has
+ * "See the audience's cameras" on (#1623). Nobody shows it before the room is joined.
+ */
+export function canShowCameraToSpeakersIn(
+    spaceLocalName: string,
+    socketData: Pick<SocketData, "attendeeCameraAreaSpaces">
+): boolean {
+    return socketData.attendeeCameraAreaSpaces?.has(spaceLocalName) === true;
 }
 
 /** A speaker invited this player to speak on the stage (the space name the front joins it with). */

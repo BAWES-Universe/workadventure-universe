@@ -3,10 +3,12 @@ import Debug from "debug";
 import * as Sentry from "@sentry/svelte";
 
 import type { AreaData, AtLeast, EntityDimensions, WAMEntityData } from "@workadventure/map-editor";
+import { AREA_LOCK_KEY } from "@workadventure/map-editor";
 import type {
     AddSpaceFilterMessage,
     AnswerMessage,
     ApplicationMessage,
+    AreaPropertyVariableMessage,
     AvailabilityStatus,
     CharacterTextureMessage,
     ChatMembersAnswer,
@@ -208,6 +210,8 @@ export class RoomConnection implements RoomConnection {
     public readonly variableMessageStream = this._variableMessageStream.asObservable();
     private readonly _editMapCommandMessageStream = new Subject<EditMapCommandMessage>();
     public readonly editMapCommandMessageStream = this._editMapCommandMessageStream.asObservable();
+    private readonly _areaPropertyVariableMessageStream = new Subject<AreaPropertyVariableMessage>();
+    public readonly areaPropertyVariableMessageStream = this._areaPropertyVariableMessageStream.asObservable();
     private readonly _playerDetailsUpdatedMessageStream = new Subject<PlayerDetailsUpdatedMessageTsProto>();
     public readonly playerDetailsUpdatedMessageStream = this._playerDetailsUpdatedMessageStream.asObservable();
 
@@ -447,6 +451,12 @@ export class RoomConnection implements RoomConnection {
                                         this._initSpaceUsersMessageStream.next(subMessage.initSpaceUsersMessage);
                                         break;
                                     }
+                                    case "areaPropertyVariableMessage": {
+                                        this._areaPropertyVariableMessageStream.next(
+                                            subMessage.areaPropertyVariableMessage
+                                        );
+                                        break;
+                                    }
                                     case "addSpaceUserMessage": {
                                         this._addSpaceUserMessageStream.next(subMessage.addSpaceUserMessage);
                                         break;
@@ -594,6 +604,7 @@ export class RoomConnection implements RoomConnection {
                                 playerVariables,
                                 commandsToApply,
                                 applications: applications,
+                                areaPropertyVariables: roomJoinedMessage.areaPropertyVariable,
                             } as RoomJoinedMessageInterface,
                         });
 
@@ -1455,6 +1466,21 @@ export class RoomConnection implements RoomConnection {
         });
     }
 
+    /** Asks the server to lock or unlock a lockable room (#1622). It answers everyone if the player may. */
+    public emitSetAreaLock(areaId: string, propertyId: string, locked: boolean) {
+        this.send({
+            message: {
+                $case: "setAreaPropertyVariableMessage",
+                setAreaPropertyVariableMessage: {
+                    areaId,
+                    propertyId,
+                    key: AREA_LOCK_KEY,
+                    value: locked ? "true" : "false",
+                },
+            },
+        });
+    }
+
     public emitAddSpaceFilter(filter: AddSpaceFilterMessage) {
         this.send({
             message: {
@@ -2066,6 +2092,7 @@ export class RoomConnection implements RoomConnection {
         this._emoteEventMessageStream.complete();
         this._variableMessageStream.complete();
         this._editMapCommandMessageStream.complete();
+        this._areaPropertyVariableMessageStream.complete();
         this._playerDetailsUpdatedMessageStream.complete();
         this._websocketErrorStream.complete();
         this._connectionErrorStream.complete();

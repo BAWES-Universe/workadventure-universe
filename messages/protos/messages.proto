@@ -378,7 +378,27 @@ message ClientToServerMessage {
     PublicEventFrontToPusher publicEvent = 43;
     PrivateEventFrontToPusher privateEvent = 44;
     LeaveChatRoomAreaMessage leaveChatRoomAreaMessage = 45;
+    SetAreaPropertyVariableMessage setAreaPropertyVariableMessage = 46;
   }
+}
+
+// A player asks to change the live state of an area setting: for now, to lock or unlock a lockable room (key "lock").
+// The server checks who may and answers everyone with an AreaPropertyVariableMessage.
+message SetAreaPropertyVariableMessage {
+  string areaId = 1;
+  string propertyId = 2;
+  string key = 3;
+  string value = 4;
+}
+
+// The live state of an area setting, shared by the server with everyone in the room and never saved: how many people
+// are inside an area with a "Max people" setting (key "usersInside", value the count), and whether a lockable room is
+// locked (key "lock", value "true" or "false"). Named as upstream WorkAdventure names it.
+message AreaPropertyVariableMessage {
+  string areaId = 1;
+  string propertyId = 2;
+  string key = 3;
+  string value = 4;
 }
 
 message ReceivedEventMessage {
@@ -1013,6 +1033,7 @@ message SubMessage {
 
     SpaceDestroyedMessage spaceDestroyedMessage = 23;
     InitSpaceUsersMessage initSpaceUsersMessage = 25;
+    AreaPropertyVariableMessage areaPropertyVariableMessage = 31;
   }
 }
 
@@ -1108,6 +1129,8 @@ message RoomJoinedMessage {
   string permissions = 19;
   // What each role key is called, for the badge next to people. Unset when Orbit sent no list.
   RoleCatalogue roleCatalogue = 20;
+  // The live state of the room's area settings when the player arrives (see AreaPropertyVariableMessage)
+  repeated AreaPropertyVariableMessage areaPropertyVariable = 21;
 }
 
 // The roles Orbit named to this player, highest first.
@@ -1141,6 +1164,9 @@ message MegaphoneSettings{
   // The stages this user may listen to but not speak on (the speaker zone is limited to roles this user does not
   // have), by the names the front joins them with. The user may only go live there when a speaker invited them.
   repeated string listenOnlyAreaSpaces = 6;
+  // The stages whose speakers see the audience's cameras (#1623), by the names the front joins them with. Only there
+  // may a player in the Audience show their camera to the speakers.
+  repeated string attendeeCameraAreaSpaces = 7;
 }
 
 message MegaphoneChannel {
@@ -1606,6 +1632,7 @@ message PusherToBackMessage {
     PingMessage pingMessage = 24;
     PublicEvent publicEvent = 30;
     PrivateEvent privateEvent = 31;
+    SetAreaPropertyVariableMessage setAreaPropertyVariableMessage = 32;
   }
 }
 
@@ -1623,6 +1650,7 @@ message SubToPusherRoomMessage {
     ReceivedEventMessage receivedEventMessage = 6;
     // Zone-specific messages (all grouped in ZoneMessage)
     ZoneMessage zoneMessage = 7;
+    AreaPropertyVariableMessage areaPropertyVariableMessage = 8;
   }
 }
 
@@ -1817,6 +1845,8 @@ message SpaceUser{
   optional double handRaisedAt = 19;
   // What this user may do in the world, as a decimal number (see permissionsFrom); unset when Orbit sent none.
   optional string permissions = 20;
+  // In the Audience of a Stage that shows the audience's cameras: this person's camera is on and the speakers see it.
+  optional bool attendeeCamera = 21;
 }
 
 /*message PartialSpaceUser{

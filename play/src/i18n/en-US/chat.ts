@@ -722,6 +722,7 @@ const chat: BaseTranslation = {
         mute: "Mute",
         unmute: "Unmute",
         inThisChat: "In this chat · {count:number}",
+        openInPlayer: "Open in player",
     },
     loginTokenError: "An error occurred. Please try to reconnect",
     reconnect: "Reconnect",

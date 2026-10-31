@@ -144,6 +144,15 @@ describe("opening a chat file in the viewer", () => {
         expect(opened()[0].source.audio).toBeUndefined();
     });
 
+    it("plays a song that is open already from where its card was, instead of only bringing it back", () => {
+        const song = { url: "blob:http://play/song", name: "Desert Drive.mp3" };
+        openChatFileInViewer(song);
+        openChatFileInViewer({ ...song, startPlaying: true, startAt: 44 });
+
+        expect(opened()).toHaveLength(1);
+        expect(opened()[0].source.audio).toMatchObject({ startPlaying: true, startAt: 44 });
+    });
+
     it("opens a PDF in the browser's own viewer in a new tab with a PDF type", () => {
         const open = vi.spyOn(window, "open").mockReturnValue(null);
         const createObjectURL = vi.fn(() => "blob:http://play/new");

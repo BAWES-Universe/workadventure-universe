@@ -13,7 +13,7 @@ import { SpaceToBackForwarder } from "./SpaceToBackForwarder";
 import type { SpaceToFrontDispatcherInterface } from "./SpaceToFrontDispatcher";
 import { SpaceToFrontDispatcher } from "./SpaceToFrontDispatcher";
 import { Query } from "./SpaceQuery";
-import { canGoLiveIn, forgetSpeakInvitation } from "./MegaphoneRights";
+import { canGoLiveIn, canShowCameraToSpeakersIn, forgetSpeakInvitation } from "./MegaphoneRights";
 import type { SpaceConnectionInterface } from "./SpaceConnection";
 
 export type SpaceUserExtended = {
@@ -39,6 +39,8 @@ export const CLIENT_UPDATABLE_SPACE_USER_FIELDS: ReadonlySet<string> = new Set<k
     "megaphoneState",
     // Raise hand: a player raises and lowers their own hand. The pusher stamps the time itself (see below).
     "handRaisedAt",
+    // In the Audience of a Stage that sees the audience's cameras: a player shows their own camera, or stops (#1623).
+    "attendeeCamera",
 ]);
 
 /**
@@ -76,6 +78,10 @@ export interface SpaceInterface {
         client: Socket,
         updateSpaceUserMessage: UpdateSpaceUserMessage
     ): {
+        changedFields: string[];
+        partialSpaceUser: PartialSpaceUser;
+    } | null;
+    stopCameraNoLongerAllowed(client: Socket): {
         changedFields: string[];
         partialSpaceUser: PartialSpaceUser;
     } | null;
@@ -371,7 +377,10 @@ export class Space implements SpaceForSpaceConnectionInterface {
                 CLIENT_UPDATABLE_SPACE_USER_FIELDS.has(field) &&
                 (field !== "megaphoneState" ||
                     !updateSpaceUserMessage.user?.megaphoneState ||
-                    canGoLiveIn(this.localName, client.getUserData()))
+                    canGoLiveIn(this.localName, client.getUserData())) &&
+                (field !== "attendeeCamera" ||
+                    !updateSpaceUserMessage.user?.attendeeCamera ||
+                    canShowCameraToSpeakersIn(this.localName, client.getUserData()))
         );
         if (changedFields.length !== updateSpaceUserMessage.updateMask.length) {
             const message = `[Space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage] User ${
@@ -412,6 +421,27 @@ export class Space implements SpaceForSpaceConnectionInterface {
             // Only the allowed fields travel on, stamped with the sender's own id.
             partialSpaceUser: { ...updateValues, spaceUserId: spaceUser.spaceUserId },
         };
+    }
+
+    /**
+     * The player stops showing their camera to the speakers (#1623) when this Stage no longer sees the audience's
+     * cameras, even if their browser does not stop it. Read from the player's own copy, which an update changes at
+     * once: the copy of every user only changes when the back sends the update back, so a camera turned on just
+     * before the Stage turned the setting off would still look off there.
+     */
+    public stopCameraNoLongerAllowed(client: Socket): {
+        changedFields: string[];
+        partialSpaceUser: PartialSpaceUser;
+    } | null {
+        const spaceUser = this._localConnectedUserWithSpaceUser.get(client);
+        if (spaceUser?.attendeeCamera !== true || canShowCameraToSpeakersIn(this.localName, client.getUserData())) {
+            return null;
+        }
+        return this.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(client, {
+            spaceName: this.name,
+            user: SpaceUser.fromPartial({ spaceUserId: spaceUser.spaceUserId, attendeeCamera: false }),
+            updateMask: ["attendeeCamera"],
+        });
     }
 
     getPropertiesToSync(): string[] {

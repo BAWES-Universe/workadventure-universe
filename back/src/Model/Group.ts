@@ -34,7 +34,9 @@ export class Group implements Movable, CustomJsonReplacerInterface {
         private groupRadius: number,
         private connectCallback: ConnectCallback,
         private disconnectCallback: DisconnectCallback,
-        private positionNotifier: PositionNotifier
+        private positionNotifier: PositionNotifier,
+        // Whether a nearby player may be pulled into this bubble (GameRoom keeps a full room's edge closed)
+        private canJoin: (user: User, group: Group) => boolean = () => true
     ) {
         this.roomId = roomId;
         this.users = new Set<User>();
@@ -141,6 +143,7 @@ export class Group implements Movable, CustomJsonReplacerInterface {
         for (const user of this.positionNotifier.getAllUsersInSquareAroundZone(this.currentZone)) {
             //  Todo: Merge two groups with a leader
             if (user.silent || user.group || this.isFull()) return; //we ignore users that are already in a group.
+            if (!this.canJoin(user, this)) continue;
             const distance = GameRoom.computeDistanceBetweenPositions(user.getPosition(), this.getPosition());
             if (distance < this.groupRadius) {
                 this.join(user);

@@ -96,11 +96,13 @@ export interface ChatFileToOpen {
     /** For an audio file: see `FileViewerAudio`. */
     inChat?: FileViewerAudio["inChat"];
     startPlaying?: boolean;
+    startAt?: number;
 }
 
 /**
- * Opens a chat file in the window. Calling it again for the file that is open brings that panel back instead. On a
- * phone the chat sheet drops to its lowest height either way, so the file shows above it.
+ * Opens a chat file in the window. Calling it again for the file that is open brings that panel back instead, except
+ * a song asked to play (from its chat card): that one opens afresh, so it plays from where it was asked. On a phone
+ * the chat sheet drops to its lowest height either way, so the file shows above it.
  */
 export function openChatFileInViewer(file: ChatFileToOpen): void {
     const key = `chat:${file.url}`;
@@ -108,7 +110,7 @@ export function openChatFileInViewer(file: ChatFileToOpen): void {
     const existing = get(coWebsites).find(
         (coWebsite) => coWebsite instanceof FileViewerCoWebsite && coWebsite.source.key === key
     );
-    if (existing) {
+    if (existing && !(existing instanceof FileViewerCoWebsite && existing.source.audio && file.startPlaying)) {
         // Already open: with other panels open, it moves to the end, where the container shows the newest panel.
         if (get(coWebsites).length > 1) {
             coWebsites.remove(existing);
@@ -135,6 +137,7 @@ export function openChatFileInViewer(file: ChatFileToOpen): void {
                   url: file.url,
                   inChat: file.inChat,
                   startPlaying: file.startPlaying,
+                  startAt: file.startAt,
                   openOther: openChatFileInViewer,
               }
             : undefined,

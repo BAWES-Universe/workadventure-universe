@@ -207,7 +207,8 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
                     Sentry.captureException(e);
                     console.error(e);
                 });
-            } else if (oldStreaming && newStreaming) {
+            } else if ((oldStreaming && newStreaming) || updateMask.includes("attendeeCamera")) {
+                // An attendee showing their camera to the speakers (#1623) may send it from now on, or not any more.
                 this.communicationManager.handleUserUpdated(user).catch((e) => {
                     Sentry.captureException(e);
                     console.error(e);
@@ -317,12 +318,14 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
 
     /**
      * Who the watchers see: the people who stream, and in the audience of a live stream, the people with a raised
-     * hand, so the speakers know who wants to talk. Only filterOneUser decides who gets connected for media.
+     * hand, so the speakers know who wants to talk, and the people showing their camera to the speakers (#1623).
+     * Only filterOneUser decides who gets connected for media.
      */
     private isListed(user: SpaceUser): boolean {
         return (
             this.filterOneUser(user) ||
-            (this._filterType === FilterType.LIVE_STREAMING_USERS && (user.handRaisedAt ?? 0) > 0)
+            (this._filterType === FilterType.LIVE_STREAMING_USERS &&
+                ((user.handRaisedAt ?? 0) > 0 || user.attendeeCamera === true))
         );
     }
 

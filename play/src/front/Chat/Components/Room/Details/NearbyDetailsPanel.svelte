@@ -2,20 +2,24 @@
     import { getContext, hasContext } from "svelte";
     import { readable } from "svelte/store";
     import type { Readable } from "svelte/store";
-    import LL from "../../../../../i18n/i18n-svelte";
+    import LL, { locale } from "../../../../../i18n/i18n-svelte";
     import type { ProximityChatRoom } from "../../../Connection/Proximity/ProximityChatRoom";
     import { openRoomDetailsIdStore } from "../../../Stores/ChatDetailsStore";
     import TopRowAvatar from "../../TopRow/TopRowAvatar.svelte";
     import { formatPeopleNames, resolveTopRowState } from "../../TopRow/TopRowSummary";
     import { nearbyTitleLines } from "../Thread/nearbyTitle";
     import { PERSON_COLOUR_CONTEXT, type PersonColourOf } from "../../../Stores/ChatUserWokaStore";
+    import { selectedProximitySessionStore } from "../../../Stores/ProximitySessionStore";
+    import { sessionOfStay } from "../../../Connection/Proximity/ProximitySessions";
+    import { endedConversation } from "./NearbyConversation";
+    import { sentLabel } from "./SharedItems";
     import SharedSummary from "./SharedSummary.svelte";
     import ArtifactsSummary from "./ArtifactsSummary.svelte";
     import { IconChevronLeft, IconChevronRight, IconMessageCircle2 } from "@wa-icons";
 
     /**
-     * The proximity chat's details, over the conversation: who is here now and what was shared in it. It has no pins
-     * and no settings. Back returns to the conversation.
+     * The proximity chat's details, over the conversation: who is here now and what was shared in it, or for one that
+     * ended, who you were with (#1615). It has no pins and no settings. Back returns to the conversation.
      */
     export let room: ProximityChatRoom;
 
@@ -23,6 +27,7 @@
     const participants = room.participants;
     const spaceKind = room.spaceKind;
     const spaceName = room.name;
+    const sessions = room.sessions;
 
     // Each woka sits on the person's colour from People, as in the chat list.
     const colourOf: Readable<PersonColourOf> = hasContext(PERSON_COLOUR_CONTEXT)
@@ -37,12 +42,30 @@
         participants: $participants,
         areas: [],
     });
-    $: people = state.kind === "withPeople" ? state.people : [];
+    // The conversation the chat shows, when it is one that ended: its details are about it, not the chat now.
+    $: ended =
+        $selectedProximitySessionStore === undefined
+            ? undefined
+            : endedConversation(sessionOfStay($sessions, $selectedProximitySessionStore), (list) =>
+                  formatPeopleNames(list, { two: $LL.chat.topRow.twoNames, more: $LL.chat.topRow.moreNames })
+              );
+    $: people = ended ? ended.people : state.kind === "withPeople" ? state.people : [];
     $: names = formatPeopleNames(
         people.map((person) => person.name),
         { two: $LL.chat.topRow.twoNames, more: $LL.chat.topRow.moreNames }
     );
-    $: ({ title, subtitle, isLive } = nearbyTitleLines(state, names, $LL));
+    $: ({ title, subtitle, isLive } = ended
+        ? {
+              title: ended.title,
+              subtitle:
+                  (ended.isArea ? $LL.chat.session.meetingTag() : $LL.chat.session.proximityTag()) +
+                  (ended.endedAt
+                      ? $LL.chat.topRow.separator() +
+                        $LL.chat.session.endedAt({ time: sentLabel(new Date(ended.endedAt), $locale) })
+                      : ""),
+              isLive: false,
+          }
+        : nearbyTitleLines(state, names, $LL));
 
     function close() {
         openRoomDetailsIdStore.set(undefined);
@@ -107,7 +130,9 @@
         <SharedSummary {room} note={$LL.chat.details.keptOnAccount()} />
 
         <div class="details-group" data-testid="nearbyDetailsHereNow">
-            <div class="details-heading">{$LL.chat.details.hereNow()} · {people.length}</div>
+            <div class="details-heading">
+                {ended ? $LL.chat.session.youWereWith() : $LL.chat.details.hereNow()} · {people.length}
+            </div>
             {#each people as person (person.id)}
                 <div class="u-menu-row !m-0 cursor-default">
                     <TopRowAvatar

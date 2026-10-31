@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onDestroy, onMount } from "svelte";
+    import { onDestroy, onMount, tick } from "svelte";
     import { readable, type Readable, type Unsubscriber } from "svelte/store";
     import LL, { locale } from "../../../../i18n/i18n-svelte";
     import { formatDuration } from "../../Broadcast/voiceRecorder";
@@ -8,6 +8,7 @@
     import { sharedSender } from "../../../Chat/Components/Room/Details/sharedSender";
     import { audioFileKind, audioFileTitle } from "../../../Chat/Components/Room/Message/audioFileTitle";
     import { formatFileSize } from "../../../FileViewer/fileKinds";
+    import { openHereFloatsStore } from "../../../Stores/CoWebsiteStore";
     import {
         bandsOf,
         bandsSettled,
@@ -53,6 +54,8 @@
     const MAX_SHAPE_BYTES = 10 * 1024 * 1024;
     /** Previous this far into a song goes back to its start, as in music apps. */
     const RESTART_AFTER_SECONDS = 3;
+    /** The list's heading and two and a half songs: less room than this and the whole window scrolls instead. */
+    const QUEUE_MIN_HEIGHT = 176;
     /** A song from the list whose file never comes gives up, so the next tap asks again. */
     const FILE_WAIT_MS = 15000;
 
@@ -77,12 +80,23 @@
     let muted = player.muted;
     let volumeDragging = false;
     let failed = false;
+    // Opened from its chat card: it carries on from where the card was, once the window knows the song's length.
+    let startAt = audio.startAt;
     let levels: number[] | undefined;
     let fileSize: number | undefined;
-    let dragging = false;
+    /** While a finger or the mouse drags the dot: where it is, 0 to 1. The song jumps there on release. */
+    let dragAt: number | undefined;
     let width = 0;
+    let height = 0;
+    // Svelte sets these to null when the list goes away (a chat left with one song).
+    let queue: HTMLDivElement | null = null;
+    let queueList: HTMLDivElement | null = null;
 
     $: compact = width > 0 && width < 440;
+    // The list scrolls on its own, so the player stays in view, when the floating window has room for a few songs
+    // under the player. A short window scrolls as a whole instead of squeezing the list, and so does an upright phone's
+    // sheet, whose lower part the chat's sheet can cover.
+    $: pinned = $openHereFloatsStore && width > 0 && queue !== null && height - queue.offsetTop >= QUEUE_MIN_HEIGHT;
     $: title =
         audioFileTitle(name) ??
         (sentByMe
@@ -91,7 +105,9 @@
             ? $LL.chat.audioFile.from({ name: senderName })
             : $LL.chat.audioFile.untitled());
     $: kind = audioFileKind(name);
-    $: progress = duration ? Math.min(1, current / duration) : 0;
+    $: progress = dragAt ?? (duration ? Math.min(1, current / duration) : 0);
+    // The time follows the dot while it is dragged.
+    $: shownTime = dragAt !== undefined && duration ? dragAt * duration : current;
     $: onDuration?.(duration);
 
     // The chat's songs, newest first, as its Files list shows them. Nothing is downloaded until one is picked.
@@ -101,6 +117,18 @@
     $: currentTrack = index >= 0 ? $tracks[index] : undefined;
     // Previous and Next only when the chat has other songs to go to.
     $: hasList = index >= 0 && $tracks.length > 1;
+    // The song playing is in sight in the list when the window opens on it.
+    $: if (pinned && queueList && index >= 0) showCurrent(index).catch((error) => console.warn(error));
+
+    async function showCurrent(at: number): Promise<void> {
+        await tick();
+        const list = queueList;
+        const row = list?.children[at];
+        if (!list || !(row instanceof HTMLElement)) return;
+        const top = row.offsetTop - list.offsetTop;
+        if (top >= list.scrollTop && top + row.offsetHeight <= list.scrollTop + list.clientHeight) return;
+        list.scrollTop = top - (list.clientHeight - row.offsetHeight) / 2;
+    }
 
     let openingKey: string | undefined;
     let stopOpening: (() => void) | undefined;
@@ -270,10 +298,32 @@
         player.playbackRate = SPEEDS[speed];
     }
 
-    function scrubAt(event: PointerEvent): void {
-        if (!duration) return;
+    function fractionAt(event: PointerEvent): number {
         const box = (event.currentTarget as HTMLElement).getBoundingClientRect();
-        seekTo(Math.min(1, Math.max(0, (event.clientX - box.left) / box.width)) * duration);
+        return Math.min(1, Math.max(0, (event.clientX - box.left) / box.width));
+    }
+
+    // The dot follows the pointer at once; the song seeks once, on release, as seeking on every move lags.
+    function startDrag(event: PointerEvent): void {
+        if (!duration) return;
+        if (event.currentTarget instanceof HTMLElement) event.currentTarget.setPointerCapture(event.pointerId);
+        dragAt = fractionAt(event);
+    }
+
+    function moveDrag(event: PointerEvent): void {
+        if (dragAt !== undefined) dragAt = fractionAt(event);
+    }
+
+    function endDrag(): void {
+        if (dragAt === undefined || !duration) return;
+        const at = dragAt * duration;
+        dragAt = undefined;
+        seekTo(at);
+        current = at;
+    }
+
+    function cancelDrag(): void {
+        dragAt = undefined;
     }
 
     function onScrubKey(event: KeyboardEvent): void {
@@ -327,7 +377,14 @@
                 duration = Number.isFinite(player.duration) && player.duration > 0 ? player.duration : undefined;
             },
         ],
-        ["loadedmetadata", () => (player.playbackRate = SPEEDS[speed])],
+        [
+            "loadedmetadata",
+            () => {
+                player.playbackRate = SPEEDS[speed];
+                if (startAt) player.currentTime = startAt;
+                startAt = undefined;
+            },
+        ],
     ];
     const handlers = listeners.map(([event, handler]) => {
         const guarded = () => {
@@ -358,7 +415,15 @@
 </script>
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
-<div class="audio-player" class:compact bind:clientWidth={width} on:keydown={onKey} data-testid="fileViewerAudio">
+<div
+    class="audio-player"
+    class:compact
+    class:pinned
+    bind:clientWidth={width}
+    bind:clientHeight={height}
+    on:keydown={onKey}
+    data-testid="fileViewerAudio"
+>
     <div class="stage">
         {#if failed}
             <div class="stage-failed">
@@ -402,18 +467,20 @@
             aria-valuemin={0}
             aria-valuemax={duration ? Math.round(duration) : 0}
             aria-valuenow={Math.round(current)}
-            on:pointerdown={(event) => {
-                dragging = true;
-                event.currentTarget.setPointerCapture(event.pointerId);
-                scrubAt(event);
-            }}
-            on:pointermove={(event) => dragging && scrubAt(event)}
-            on:pointerup={() => (dragging = false)}
+            class:dragging={dragAt !== undefined}
+            on:pointerdown={startDrag}
+            on:pointermove={moveDrag}
+            on:pointerup={endDrag}
+            on:pointercancel={cancelDrag}
             on:keydown={onScrubKey}
         >
             {#if levels}
                 {#each levels as level, bar (bar)}
-                    <span class:played={bar / SCRUB_BARS < progress} style="height: {Math.round(8 + level * 40)}px" />
+                    <span
+                        class="bar"
+                        class:played={bar / SCRUB_BARS < progress}
+                        style="height: {Math.round(8 + level * 40)}px"
+                    />
                 {/each}
             {:else}
                 <span class="line"><span class="fill" style="width: {progress * 100}%" /></span>
@@ -421,8 +488,8 @@
             <span class="head" style="left: {progress * 100}%" />
         </div>
         <div class="times">
-            <span>{formatDuration(current)}</span>
-            <span>{duration ? `-${formatDuration(Math.max(0, duration - current))}` : "--:--"}</span>
+            <span>{formatDuration(shownTime)}</span>
+            <span>{duration ? `-${formatDuration(Math.max(0, duration - shownTime))}` : "--:--"}</span>
         </div>
     </div>
 
@@ -538,45 +605,50 @@
     </div>
 
     {#if hasList}
-        <div class="queue">
+        <div class="queue" bind:this={queue}>
             <div class="queue-label">{$LL.chat.audioFile.inThisChat({ count: $tracks.length })}</div>
-            {#each $tracks as track, position (track.key)}
-                {@const isCurrent = position === index}
-                <button
-                    type="button"
-                    class="queue-row"
-                    class:current={isCurrent}
-                    aria-current={isCurrent ? "true" : undefined}
-                    aria-busy={openingKey === track.key}
-                    on:click={() => !isCurrent && openTrack(track)}
-                >
-                    <span class="queue-mark">
-                        {#if isCurrent && playing}
-                            <span class="eq"><i /><i /><i /></span>
-                        {:else}
-                            {position + 1}
-                        {/if}
-                    </span>
-                    <span class="queue-text">
-                        <span class="queue-title">{audioFileTitle(track.name) ?? $LL.chat.audioFile.untitled()}</span>
-                        <span class="queue-sub">
-                            {[
-                                sharedSender(track.message, $LL.chat.details.you()),
-                                track.size !== undefined ? formatFileSize(track.size) : undefined,
-                                sentLabel(track.message.date, $locale),
-                            ]
-                                .filter(Boolean)
-                                .join(" · ")}
+            <div class="queue-list" bind:this={queueList}>
+                {#each $tracks as track, position (track.key)}
+                    {@const isCurrent = position === index}
+                    <button
+                        type="button"
+                        class="queue-row"
+                        class:current={isCurrent}
+                        aria-current={isCurrent ? "true" : undefined}
+                        aria-busy={openingKey === track.key}
+                        on:click={() => !isCurrent && openTrack(track)}
+                    >
+                        <span class="queue-mark">
+                            {#if isCurrent && playing}
+                                <span class="eq"><i /><i /><i /></span>
+                            {:else}
+                                {position + 1}
+                            {/if}
                         </span>
-                    </span>
-                </button>
-            {/each}
+                        <span class="queue-text">
+                            <span class="queue-title"
+                                >{audioFileTitle(track.name) ?? $LL.chat.audioFile.untitled()}</span
+                            >
+                            <span class="queue-sub">
+                                {[
+                                    sharedSender(track.message, $LL.chat.details.you()),
+                                    track.size !== undefined ? formatFileSize(track.size) : undefined,
+                                    sentLabel(track.message.date, $locale),
+                                ]
+                                    .filter(Boolean)
+                                    .join(" · ")}
+                            </span>
+                        </span>
+                    </button>
+                {/each}
+            </div>
         </div>
     {/if}
 </div>
 
 <style>
     .audio-player {
+        position: relative;
         flex: 1;
         min-height: 0;
         overflow-y: auto;
@@ -679,14 +751,15 @@
         outline-offset: 4px;
         border-radius: 8px;
     }
-    .scrub > span:not(.head):not(.line) {
+    /* As in the chat's player: what has played is white. */
+    .scrub .bar {
         flex: none;
         width: 3px;
         border-radius: 9999px;
-        background: rgba(255, 255, 255, 0.22);
+        background: rgba(255, 255, 255, 0.3);
     }
-    .scrub > span.played {
-        background: linear-gradient(180deg, #a78bfa, #8629fc);
+    .scrub .bar.played {
+        background: #fff;
     }
     .scrub .line {
         position: relative;
@@ -699,7 +772,7 @@
         position: absolute;
         inset: 0 auto 0 0;
         border-radius: 9999px;
-        background: linear-gradient(90deg, #8629fc, #4156f6);
+        background: #fff;
     }
     .head {
         position: absolute;
@@ -844,10 +917,36 @@
         background: #fff;
     }
     .queue {
-        display: grid;
-        gap: 2px;
+        display: flex;
+        flex-direction: column;
         padding-top: 4px;
         border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .queue-list {
+        display: grid;
+        align-content: start;
+        gap: 2px;
+    }
+    /* The player stays where it is and only the songs scroll. */
+    .audio-player.pinned {
+        overflow-y: hidden;
+    }
+    .pinned .queue {
+        flex: 1 1 0;
+        min-height: 0;
+        margin-bottom: -28px;
+    }
+    .pinned .queue-list {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        padding-bottom: 28px;
+    }
+    .compact.pinned .queue {
+        margin-bottom: -20px;
+    }
+    .compact.pinned .queue-list {
+        padding-bottom: 20px;
     }
     .queue-label {
         padding: 12px 0 6px;

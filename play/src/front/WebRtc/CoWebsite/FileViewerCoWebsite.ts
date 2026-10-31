@@ -10,6 +10,8 @@ export interface FileViewerAudio {
     inChat?: { tracks: Readable<SharedItem[]>; key: string };
     /** Picked from the window's own list of songs: it starts at once. */
     startPlaying?: boolean;
+    /** Opened from its chat card while it played there: it carries on from that second. */
+    startAt?: number;
     /** Opens another of the chat's songs in its place. */
     openOther: (file: ChatFileToOpen) => void;
 }

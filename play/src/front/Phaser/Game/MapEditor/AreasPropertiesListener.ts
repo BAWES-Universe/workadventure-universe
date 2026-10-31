@@ -18,7 +18,7 @@ import type {
 } from "@workadventure/map-editor";
 import { PersonalAreaAccessClaimMode, isAreaPropertyActive } from "@workadventure/map-editor";
 import * as Sentry from "@sentry/svelte";
-import { getSpeakerMegaphoneAreaName } from "@workadventure/map-editor/src/Utils";
+import { getSpeakerMegaphoneAreaName, getSpeakerMegaphoneProperty } from "@workadventure/map-editor/src/Utils";
 import { Jitsi } from "@workadventure/shared-utils";
 import { areaSpaceName } from "@workadventure/shared-utils/src/Space/areaSpaceName";
 import type { Unsubscriber } from "svelte/store";
@@ -48,8 +48,10 @@ import {
     inLivekitStore,
     inOpenWebsite,
     isListenerStore,
+    setAudienceTalking,
     isSpeakerStore,
     listenerWaitingMediaStore,
+    localStreamStore,
     requestedCameraState,
     requestedMicrophoneState,
     silentStore,
@@ -89,9 +91,14 @@ import PopUpTab from "../../../Components/PopUp/PopUpTab.svelte";
 import { selectedRoomStore } from "../../../Chat/Stores/SelectRoomStore";
 import FilePopup from "../../../Components/PopUp/FilePopup.svelte";
 import type { SpaceInterface } from "../../../Space/SpaceInterface";
+import { setHandsOffHere } from "../../../Space/RaiseHand/RaiseHandStore";
+import { cameraOnStore, showCameraToSpeakers, stageSeesCamerasStore } from "../../../Space/AttendeeCamera";
 import { areaChatRooms, areaPresenceStore } from "../../../Chat/Stores/AreaPresenceStore";
 import { resolveMeetingAreaName } from "../../../Chat/Components/TopRow/TopRowSummary";
 import { leaveAreaSpaceIfJoined } from "./leaveAreaSpace";
+
+// How long "The speakers can see your camera" stays over the player (#1623)
+const ATTENDEE_CAMERA_MESSAGE_DURATION = 3000;
 
 export class AreasPropertiesListener {
     private scene: GameScene;
@@ -218,6 +225,8 @@ export class AreasPropertiesListener {
 
     // A map of abortControllers indexed by area property ID that will be triggered when the area if left.
     private abortControllers: Map<string, AbortController> = new Map();
+    // In the Audience of a Stage that sees the audience's cameras (#1623): stops showing our camera to the speakers.
+    private stopShowingCamera: Unsubscriber | undefined;
 
     private addPropertyFilter(property: AreaDataProperty, areaData: AreaData, area?: Area) {
         const abortController = new AbortController();
@@ -381,15 +390,18 @@ export class AreasPropertiesListener {
                 break;
             }
             case "listenerMegaphone": {
-                newProperty = newProperty as typeof oldProperty;
-                this.handleListenerMegaphonePropertyOnLeave(oldProperty).catch((e) => {
-                    console.error(e);
-                    Sentry.captureException(e);
-                });
-                this.handleListenerMegaphonePropertyOnEnter(newProperty, newAbortController.signal).catch((e) => {
-                    console.error(e);
-                    Sentry.captureException(e);
-                });
+                const audience = newProperty as typeof oldProperty;
+                // One after the other: leaving the old settings must not undo the new ones (#1624)
+                this.handleListenerMegaphonePropertyOnLeave(oldProperty)
+                    .catch((e) => {
+                        console.error(e);
+                        Sentry.captureException(e);
+                    })
+                    .then(() => this.handleListenerMegaphonePropertyOnEnter(audience, newAbortController.signal))
+                    .catch((e) => {
+                        console.error(e);
+                        Sentry.captureException(e);
+                    });
                 break;
             }
             case "exit": {
@@ -903,6 +915,8 @@ export class AreasPropertiesListener {
         areaName: string | undefined
     ): Promise<void> {
         inLivekitStore.set(true);
+        // "Let people raise their hand" in the meeting room's More Options (#1625)
+        setHandsOffHere(property.id, property.livekitRoomConfig?.raiseHandEnabled === false);
 
         const roomID = property.roomName.trim().length === 0 ? property.id : property.roomName;
 
@@ -1223,6 +1237,7 @@ export class AreasPropertiesListener {
     }
 
     private async handleLivekitRoomPropertyOnLeave(property: LivekitRoomPropertyData): Promise<void> {
+        setHandsOffHere(property.id, false);
         const proximityRoom = this.scene.proximityChatRoom;
         const roomID = property.roomName.trim().length === 0 ? property.id : property.roomName;
         const roomName = areaSpaceName(roomID, this.scene.roomUrl);
@@ -1457,18 +1472,33 @@ export class AreasPropertiesListener {
         property: ListenerMegaphonePropertyData,
         abortSignal: AbortSignal
     ): Promise<void> {
+        // "Let people raise their hand" in the Audience (#1625)
+        setHandsOffHere(property.id, property.raiseHandEnabled === false);
+        // "People can talk to each other" (#1624): set before joining, as a bubble can start while the Audience joins
+        setAudienceTalking(property.id, property.allowTalking === true);
         // TODO: change the user's availability status to prevent them from creating a bubble
         if (property.speakerZoneName !== undefined) {
-            const speakerZoneName = getSpeakerMegaphoneAreaName(
+            const stage = getSpeakerMegaphoneProperty(
                 this.scene.getGameMap().getGameMapAreas()?.getAreas(),
                 property.speakerZoneName
             );
+            const speakerZoneName = stage?.name;
             if (speakerZoneName) {
                 const uniqRoomName = areaSpaceName(speakerZoneName, this.scene.roomUrl);
                 const spaceRegistry = this.scene.spaceRegistry;
                 let space: SpaceInterface | undefined;
                 if (property.chatEnabled) {
                     const proximityRoom = this.scene.proximityChatRoom;
+                    if (property.allowTalking === true) {
+                        // A bubble we walked in with keeps going here: it moves beside the Audience chat (#1624)
+                        const proximitySpaceManager = this.scene.getProximitySpaceManager();
+                        await proximitySpaceManager?.moveBubbleBesideChat();
+                        if (abortSignal.aborted) {
+                            // We stepped out while it moved: the bubble goes back to the nearby chat
+                            await proximitySpaceManager?.moveBubblesBackToChat();
+                            return;
+                        }
+                    }
                     proximityRoom.setDisplayName(speakerZoneName);
                     await proximityRoom.joinSpace(
                         uniqRoomName,
@@ -1489,11 +1519,33 @@ export class AreasPropertiesListener {
                 currentLiveStreamingSpaceStore.set(space);
                 isListenerStore.set(true);
                 listenerWaitingMediaStore.set(property.waitingLink);
+
+                // "See the audience's cameras" on the Stage (#1623): the speakers see us while our camera is on. The
+                // Stage can turn it off and on while we stay, so this follows the server's word on it, not the map
+                // as it was when we walked in.
+                this.stopShowingCamera?.();
+                this.stopShowingCamera = undefined;
+                if (space && !abortSignal.aborted) {
+                    this.stopShowingCamera = showCameraToSpeakers(
+                        space,
+                        cameraOnStore(localStreamStore),
+                        stageSeesCamerasStore(uniqRoomName),
+                        () =>
+                            this.scene.CurrentPlayer?.playText(
+                                "attendee-camera",
+                                get(LL).area.speakersSeeYourCamera(),
+                                ATTENDEE_CAMERA_MESSAGE_DURATION
+                            )
+                    );
+                }
             }
         }
     }
 
     private async handleListenerMegaphonePropertyOnLeave(property: ListenerMegaphonePropertyData): Promise<void> {
+        setHandsOffHere(property.id, false);
+        this.stopShowingCamera?.();
+        this.stopShowingCamera = undefined;
         if (property.speakerZoneName !== undefined) {
             const speakerZoneName = getSpeakerMegaphoneAreaName(
                 this.scene.getGameMap().getGameMapAreas()?.getAreas(),
@@ -1513,6 +1565,10 @@ export class AreasPropertiesListener {
                 listenerWaitingMediaStore.set(undefined);
             }
         }
+        // Only once we no longer listen: turning talking off first would make us a listener for a moment (#1624)
+        setAudienceTalking(property.id, false);
+        // People who walk out together keep their bubble, now with its text in the nearby chat
+        await this.scene.getProximitySpaceManager()?.moveBubblesBackToChat();
     }
 
     private handleExitPropertyOnEnter(url: string): void {

@@ -17,6 +17,8 @@ export interface SharedItem {
     isVideo?: boolean;
     /** For one image or file of a gallery, which holds several in one message: its own link. */
     src?: string;
+    /** Shared in a proximity chat, listed in a direct chat beside its own items (#1615). */
+    nearby?: boolean;
 }
 
 const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "avif", "bmp", "svg", "heic", "heif"]);
@@ -36,6 +38,11 @@ function galleryFileKind(url: string, name: string): "image" | "video" | "file" 
 }
 
 export type SharedItems = Record<SharedTab, SharedItem[]>;
+
+/** The key of one file in a gallery message, by its place among the message's files. */
+export function galleryFileKey(messageId: string, position: number): string {
+    return `${messageId} ${position}`;
+}
 
 /**
  * What a chat shared, newest first: images and videos, links, and files. Voice messages stay in the conversation, and
@@ -65,7 +72,7 @@ export function sharedItemsOf(
             // A gallery can mix images with other files: each goes to its own tab.
             filesOf(message).forEach(({ url, name }, position) => {
                 const kind = galleryFileKind(url, name);
-                const key = `${message.id} ${position}`;
+                const key = galleryFileKey(message.id, position);
                 if (kind === "file") {
                     shared.files.push({ key, message, name, src: url });
                 } else {

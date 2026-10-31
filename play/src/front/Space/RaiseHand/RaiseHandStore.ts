@@ -23,8 +23,35 @@ export interface RaisedHand {
 /** The spaces whose raised hands we see, each with whether we can raise ours there (not while on a podium's stage). */
 const conversationSpacesStore = writable<ReadonlyMap<SpaceInterface, Readable<boolean>>>(new Map());
 
-/** True while we are in a conversation where a hand can be raised. */
-export const canRaiseHandStore: Readable<boolean> = derived(
+/**
+ * The places we stand in that switched raised hands off (#1625), by the id of their Audience or meeting room setting.
+ * The hand is hidden there, in the bubbles inside them too.
+ */
+const handsOffHereStore = writable<ReadonlySet<string>>(new Set());
+
+/** Called when we walk into or out of an Audience or a meeting room. Switching hands off puts ours down. */
+export function setHandsOffHere(propertyId: string, off: boolean): void {
+    handsOffHereStore.update((ids) => {
+        const next = new Set(ids);
+        if (off) {
+            next.add(propertyId);
+        } else {
+            next.delete(propertyId);
+        }
+        return next;
+    });
+    if (off) {
+        myHandRaisedStore.set(false);
+    }
+}
+
+/** Forgets every such place, for a scene that closes: area-leave handlers do not run then. */
+export function clearHandsOffHere(): void {
+    handsOffHereStore.set(new Set());
+}
+
+/** True while we are in a conversation where a hand can be raised, whatever the place we stand in says. */
+const conversationAllowsHandStore: Readable<boolean> = derived(
     conversationSpacesStore,
     (spaces, set) => {
         const canRaiseBySpace = new Map<SpaceInterface, boolean>();
@@ -38,6 +65,12 @@ export const canRaiseHandStore: Readable<boolean> = derived(
         return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
     },
     false
+);
+
+/** True while we are in a conversation where a hand can be raised, and not in a place that switched hands off. */
+export const canRaiseHandStore: Readable<boolean> = derived(
+    [conversationAllowsHandStore, handsOffHereStore],
+    ([$allowed, $handsOff]) => $allowed && $handsOff.size === 0
 );
 
 /** Whether we want our hand up. Sent to every conversation we are in. */

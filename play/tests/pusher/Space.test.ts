@@ -810,3 +810,101 @@ describe("Space megaphone right", () => {
         expect(alice.megaphoneState).toBe(false);
     });
 });
+
+describe("Space: showing a camera to the speakers (#1623)", () => {
+    const makeStageSpace = (socketData: Record<string, unknown>) => {
+        const space = new Space(
+            "world.abc123-stage",
+            "abc123-stage",
+            new EventProcessor(),
+            FilterType.LIVE_STREAMING_USERS,
+            vi.fn(),
+            mock<SpaceConnectionInterface>({ getSpaceStreamToBackPromise: vi.fn(), removeSpace: vi.fn() }),
+            "world",
+            [],
+            () => ({} as unknown as SpaceToBackForwarder),
+            () => ({} as unknown as SpaceToFrontDispatcher)
+        );
+        const alice = {
+            ...SpaceUser.fromPartial({ spaceUserId: "alice_1", uuid: "alice-uuid", name: "Alice" }),
+            lowercaseName: "alice",
+        };
+        const userData: Record<string, unknown> = { spaceUserId: "alice_1", ...socketData };
+        const aliceSocket = mock<Socket>({ getUserData: vi.fn().mockReturnValue(userData) });
+        space._localConnectedUserWithSpaceUser.set(aliceSocket, alice);
+        space._localConnectedUser.set("alice_1", aliceSocket);
+        return { space, alice, aliceSocket, userData };
+    };
+
+    const showCamera = (attendeeCamera: boolean) => ({
+        spaceName: "world.abc123-stage",
+        user: SpaceUser.fromPartial({ spaceUserId: "alice_1", attendeeCamera }),
+        updateMask: ["attendeeCamera"],
+    });
+
+    it("refuses it on a Stage that does not see the audience's cameras", () => {
+        const { space, alice, aliceSocket } = makeStageSpace({
+            attendeeCameraAreaSpaces: new Set(["other-stage"]),
+        });
+
+        expect(space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(aliceSocket, showCamera(true))).toBe(
+            null
+        );
+        expect(alice.attendeeCamera).toBeUndefined();
+    });
+
+    it("refuses it before the room's rules are known", () => {
+        const { space, alice, aliceSocket } = makeStageSpace({});
+
+        space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(aliceSocket, showCamera(true));
+
+        expect(alice.attendeeCamera).toBeUndefined();
+    });
+
+    it("lets it through on a Stage that sees the audience's cameras, and always lets it stop", () => {
+        const { space, alice, aliceSocket, userData } = makeStageSpace({
+            attendeeCameraAreaSpaces: new Set(["abc123-stage"]),
+        });
+
+        const shown = space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(aliceSocket, showCamera(true));
+        expect(shown?.changedFields).toEqual(["attendeeCamera"]);
+        expect(alice.attendeeCamera).toBe(true);
+
+        userData.attendeeCameraAreaSpaces = new Set();
+        const stopped = space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(aliceSocket, showCamera(false));
+        expect(stopped?.changedFields).toEqual(["attendeeCamera"]);
+        expect(alice.attendeeCamera).toBe(false);
+    });
+
+    it("stops it when the Stage turns the setting off before the back has sent the camera back", () => {
+        const { space, alice, aliceSocket, userData } = makeStageSpace({
+            attendeeCameraAreaSpaces: new Set(["abc123-stage"]),
+        });
+        space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(aliceSocket, showCamera(true));
+        // The back has not sent the update back yet: the copy of every user does not have it
+        expect(space.users.get("alice_1")).toBeUndefined();
+
+        userData.attendeeCameraAreaSpaces = new Set();
+        const stopped = space.stopCameraNoLongerAllowed(aliceSocket);
+
+        expect(stopped).toEqual({
+            changedFields: ["attendeeCamera"],
+            partialSpaceUser: { attendeeCamera: false, spaceUserId: "alice_1" },
+        });
+        expect(alice.attendeeCamera).toBe(false);
+    });
+
+    it("leaves a camera alone where the Stage still sees it, and a camera that is off", () => {
+        const { space, aliceSocket, userData } = makeStageSpace({
+            attendeeCameraAreaSpaces: new Set(["abc123-stage"]),
+        });
+        expect(space.stopCameraNoLongerAllowed(aliceSocket)).toBe(null);
+
+        space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(aliceSocket, showCamera(true));
+        expect(space.stopCameraNoLongerAllowed(aliceSocket)).toBe(null);
+
+        space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(aliceSocket, showCamera(false));
+        userData.attendeeCameraAreaSpaces = new Set();
+        expect(space.stopCameraNoLongerAllowed(aliceSocket)).toBe(null);
+    });
+});

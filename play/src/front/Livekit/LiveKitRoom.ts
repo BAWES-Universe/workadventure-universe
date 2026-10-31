@@ -12,7 +12,7 @@ import {
     DisconnectReason,
 } from "livekit-client";
 import type { Readable, Unsubscriber } from "svelte/store";
-import { get } from "svelte/store";
+import { derived, get } from "svelte/store";
 import * as Sentry from "@sentry/svelte";
 import type { LocalStreamStoreValue } from "../Stores/MediaStore";
 import { localStreamStore, speakerSelectedStore } from "../Stores/MediaStore";
@@ -22,7 +22,7 @@ import type { StreamableSubjects } from "../Space/SpacePeerManager/SpacePeerMana
 import { SCREEN_SHARE_STARTING_PRIORITY, VIDEO_STARTING_PRIORITY } from "../Stores/StreamableCollectionStore";
 import { decrementLivekitRoomCount, incrementLivekitRoomCount } from "../Utils/E2EHooks";
 import { triggerReorderStore } from "../Stores/OrderedStreamableCollectionStore";
-import { deriveSwitchStore } from "../Stores/InterruptorStore";
+import { streamToSend } from "../Space/StreamToSend";
 import { LiveKitParticipant } from "./LivekitParticipant";
 import type { LiveKitRoomInterface } from "./LiveKitRoomInterface";
 
@@ -321,7 +321,8 @@ export class LiveKitRoom implements LiveKitRoomInterface {
 
     private synchronizeMediaState() {
         this.unsubscribers.push(
-            deriveSwitchStore(this._localStreamStore, this.space.isStreamingStore).subscribe((localStream) => {
+            // Everything while we stream, our camera alone while we show it to the speakers (#1623)
+            streamToSend(this._localStreamStore, this.space).subscribe((localStream) => {
                 this.lastLocalStream = localStream;
                 this.handleCameraTrack(localStream);
                 this.handleMicrophoneTrack(localStream);
@@ -331,6 +332,8 @@ export class LiveKitRoom implements LiveKitRoomInterface {
         this.unsubscribers.push(
             this.screenSharingLocalStreamStore.subscribe((stream) => this.handleScreenShareStream(stream))
         );
+
+        this.unsubscribers.push(this.restrictCameraToStreamers());
 
         this.unsubscribers.push(
             this.speakerDeviceIdStore.subscribe((deviceId) => {
@@ -342,6 +345,39 @@ export class LiveKitRoom implements LiveKitRoomInterface {
                 });
             })
         );
+    }
+
+    /**
+     * An attendee's camera, shown to the speakers of a Stage that sees the audience (#1623), reaches the people
+     * streaming only: the media server refuses it to the rest of the audience. While we stream, everybody may receive
+     * what we send, as before.
+     */
+    private restrictCameraToStreamers(): Unsubscriber {
+        // Everybody may receive what we send until we restrict it.
+        let lastRule = "everybody";
+        return derived(
+            [this.space.isStreamingStore, this.space.showsCameraToStreamersStore, this.space.usersStore],
+            ([$isStreaming, $showsCamera, $users]) =>
+                !$isStreaming && $showsCamera
+                    ? Array.from($users.keys())
+                          .filter((id) => id !== this.space.mySpaceUserId)
+                          .sort()
+                    : undefined
+        ).subscribe((streamers) => {
+            const rule = streamers === undefined ? "everybody" : streamers.join(",");
+            if (rule === lastRule || !this.localParticipant) {
+                return;
+            }
+            lastRule = rule;
+            if (streamers === undefined) {
+                this.localParticipant.setTrackSubscriptionPermissions(true);
+                return;
+            }
+            this.localParticipant.setTrackSubscriptionPermissions(
+                false,
+                streamers.map((participantIdentity) => ({ participantIdentity, allowAll: true }))
+            );
+        });
     }
 
     private handleScreenShareStream(stream: LocalStreamStoreValue): void {

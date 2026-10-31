@@ -13,6 +13,14 @@ export function getSpeakerMegaphoneAreaName(
     areas: Map<string, AreaData> = new Map(),
     areaId: string
 ): string | undefined {
+    return getSpeakerMegaphoneProperty(areas, areaId)?.name;
+}
+
+/** The Stage setting of an area, when the area is an active Stage. */
+export function getSpeakerMegaphoneProperty(
+    areas: Map<string, AreaData> = new Map(),
+    areaId: string
+): SpeakerMegaphonePropertyData | undefined {
     for (const area of areas.values()) {
         const speakerMegaphonePropertyRaw = area.properties.find(
             (property) => property.type === "speakerMegaphone" && isAreaPropertyActive(property)
@@ -20,7 +28,7 @@ export function getSpeakerMegaphoneAreaName(
         if (speakerMegaphonePropertyRaw) {
             const speakerMegaphoneProperty = SpeakerMegaphonePropertyData.safeParse(speakerMegaphonePropertyRaw);
             if (speakerMegaphoneProperty.success && area.id === areaId) {
-                return speakerMegaphoneProperty.data.name;
+                return speakerMegaphoneProperty.data;
             }
         }
     }

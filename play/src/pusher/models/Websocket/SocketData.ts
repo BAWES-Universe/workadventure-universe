@@ -89,6 +89,9 @@ export type SocketData = {
     // The stages of the room this user may listen to but not speak on, by the space name the front joins them with
     // (the back sends it with the broadcast channels), and the ones where a speaker invited them to speak.
     listenOnlyAreaSpaces?: ReadonlySet<string>;
+    // The stages whose speakers see the audience's cameras (#1623): the only spaces where this player may show their
+    // camera to the speakers. Names as the front joins them, sent by the back with the broadcast settings.
+    attendeeCameraAreaSpaces?: ReadonlySet<string>;
     invitedToSpeak?: Set<string>;
     // The abort controllers for each queries received
     queryAbortControllers: Map<number, AbortController>;
