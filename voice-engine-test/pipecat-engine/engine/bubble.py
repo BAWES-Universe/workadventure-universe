@@ -143,8 +143,20 @@ class Bubble:
                 lane.mode = old.mode
             self.lanes[pid] = lane
             answer = await lane.start(sdp)
-            await self.bridge.send("participant.join", participantId=pid, lane=idx, rejoin=rejoin)
+            # participant.join means "the person can hear us": send it once the WebRTC media path is up, not when the answer is made.
+            asyncio.create_task(self._announce_join(lane, pid, idx, rejoin), name=f"join-{pid}")
             return answer
+
+    async def _announce_join(self, lane: Lane, pid: str, idx: int, rejoin: bool):
+        for _ in range(750):  # up to 15 s; after that the lane watchdog deals with it
+            if lane.gone or self.lanes.get(pid) is not lane:
+                return
+            if lane.conn is not None and lane.conn.is_connected():
+                break
+            await asyncio.sleep(0.02)
+        else:
+            return
+        await self.bridge.send("participant.join", participantId=pid, lane=idx, rejoin=rejoin)
 
     async def lane_gone(self, lane: Lane, reason: str):
         if lane.gone or self.closing:

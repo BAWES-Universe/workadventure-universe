@@ -93,8 +93,17 @@ export class Bubble {
     const lane = new Lane(this, pid, idx); if (old) lane.mode = old.mode; if (old?.hint) lane.hint = old.hint;
     this.lanes.set(pid, lane);
     const answer = await lane.start(sdp);
-    await this.bridge.send('participant.join', { participantId: pid, lane: idx, rejoin });
+    // participant.join means "the person can hear us": send it once the WebRTC media path is up, not when the answer is made.
+    void this.announceJoin(lane, pid, idx, rejoin);
     return answer;
+  }
+
+  private async announceJoin(lane: Lane, pid: string, idx: number, rejoin: boolean) {
+    for (let i = 0; i < 750; i++) {
+      if (lane.gone || this.lanes.get(pid) !== lane) return;
+      if (lane.pc?.connectionState === 'connected') { await this.bridge.send('participant.join', { participantId: pid, lane: idx, rejoin }); return; }
+      await sleep(20);
+    }
   }
 
   async laneGone(lane: Lane, reason: string) {

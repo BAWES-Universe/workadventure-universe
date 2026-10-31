@@ -15,7 +15,7 @@ export class Ctx {
   constructor(public st: Stack) {}
   sid(name: string) { return `${name}-${this.st.o.engine}-${this.st.o.turnEnd}-${++this.n}-${Date.now() % 100000}`; }
   async human(sid: string, pid: string) { const h = new Human({ participantId: pid, sessionId: sid, signaling: this.st.signalingUrl }); await h.connect(); return h; }
-  evs(sid: string, pred: (e: Ev) => boolean = () => true) { return this.st.tail.all.filter((e) => e.sessionId === sid && pred(e)); }
+  evs(sid: string, pred: (e: Ev) => boolean = () => true) { return (this.st.tail.bySid.get(sid) ?? []).filter((e) => e.sessionId === sid && pred(e)); }
   inMsgs(sid: string, type: string) { return this.evs(sid, (e) => e.dir === 'in' && e.msg.type === type); }
   finals(sid: string, pid?: string) { return this.evs(sid, (e) => e.dir === 'in' && e.msg.type === 'user.turn' && !e.msg.partial && (!pid || e.msg.participantId === pid)); }
   progress(sid: string, segId: string) { return this.evs(sid, (e) => e.dir === 'in' && e.msg.type === 'playback.progress' && e.msg.segmentId === segId); }
