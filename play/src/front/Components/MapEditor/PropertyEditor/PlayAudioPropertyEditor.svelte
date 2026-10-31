@@ -241,12 +241,12 @@
         onValueChange();
     }
 
+    // While the slider moves the preview follows it; the map saves once, when it is let go, so one drag is one edit
     function onVolumeInput(event: Event) {
         property.volume = Number((event.currentTarget as HTMLInputElement).value) / 100;
         if (HTMLAudioPlayer) {
             HTMLAudioPlayer.volume = property.volume;
         }
-        onValueChange();
     }
 
     async function uploadSound(file: File): Promise<void> {
@@ -505,6 +505,7 @@
                     step={5}
                     value={volumePercent}
                     on:input={onVolumeInput}
+                    on:change={onValueChange}
                 />
             </div>
         </div>
