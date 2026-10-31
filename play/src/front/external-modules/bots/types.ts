@@ -29,6 +29,7 @@ export interface BotData {
         patrolWaypoints?: Array<{ x: number; y: number }>; // For patrol bots
         minTimeBetweenConversations?: number; // For social bots
         showToolCalls?: boolean; // Show a 🔍 bubble when the bot uses an outside (MCP) tool; off when missing
+        vision?: VisionPick | null; // Where its images go (the Vision row); nothing = the owner picked nothing
         [key: string]: unknown;
     };
     chatInstructions?: string;
@@ -48,6 +49,15 @@ export interface BotData {
     updatedBy?: BotUser | null;
     [key: string]: unknown;
 }
+
+/**
+ * Where a bot's images go (the Vision row, #374). The bot's own model still writes every reply; this says what looks at the
+ * images people send: its own model, a model with Vision on one of the maker's keys, or Universe AI.
+ */
+export type VisionPick =
+    | { choice: "this" }
+    | { choice: "universe-ai" }
+    | { choice: "another"; keyId: string; model: string };
 
 /**
  * What the bot page offers under "Runs on" for one bot (Orbit GET /api/me/bot-ai, #374). Nobody is shown the server's
@@ -75,7 +85,12 @@ export interface BotAiOptions {
     current: string | null;
     /** The bot's own model on its key (null: the key's check model, or not on a key). Missing on an older Orbit. */
     currentModel?: string | null;
-    universeAi: { available: boolean; limits?: BotLimitCeiling };
+    universeAi: {
+        available: boolean;
+        model?: string | null;
+        supportsVision?: boolean | null;
+        limits?: BotLimitCeiling;
+    };
     maker: { id: string; name: string | null } | null;
     viewerIsMaker: boolean;
     keys: Array<{
@@ -92,6 +107,9 @@ export interface BotAiOptions {
         ifDown: "universe-ai" | "stop";
         /** The key's check model: what a bot on it replies with until it picks its own. */
         model?: string | null;
+        /** For the Vision row (missing from an older Orbit): whether the key's model sees, and the models with Vision it could look at images with. */
+        supportsVision?: boolean | null;
+        visionModels?: string[];
         /** The longest reply the check model can write, when its provider says (Orbit #673). */
         output?: number | null;
         /** The models the lend here allows (null when the provider's list could not be loaded). Missing on an older Orbit. */
@@ -108,6 +126,9 @@ export interface BotAiOptions {
         mine: boolean;
         status: "working" | "down";
         ifDown: "universe-ai" | "stop";
+        group?: "own-computer" | "hosted" | null;
+        supportsVision?: boolean | null;
+        visionModels?: string[];
         logo?: string | null;
         plainIcon?: "plug" | "chip" | null;
         limits?: BotLimitCeiling;
@@ -115,5 +136,13 @@ export interface BotAiOptions {
         model?: string | null;
         output?: number | null;
     } | null;
+    /** What is saved for the bot's images, and for "Another model" the key picked and why it can't be used now (null = it can). Missing from an older Orbit. */
+    vision?: {
+        saved: VisionPick | null;
+        savedKey: {
+            name: string;
+            problem: "gone" | "not-maker" | "not-lent" | "no-access" | "no-room" | "no-model" | "down" | null;
+        } | null;
+    };
     providers: Array<{ id: string; name: string; type: string; model: string | null; enabled: boolean }> | null;
 }

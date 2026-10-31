@@ -256,13 +256,19 @@ function sameRoomAddress(a: string, b: string): boolean {
 }
 
 /**
- * Whether a bot save puts the bot on a person's own AI key it isn't on yet (a ref starting "key-", #374). Orbit judges that by
- * who is saving (only the key's owner, who made the bot, in a universe the key is lent to), and the admin token is nobody,
- * so such a save goes with the person's own session. Every other save keeps the admin token, as before.
+ * Whether a bot save puts one of the person's own keys to work: a new "Runs on" key (a ref starting "key-"), or a Vision pick of
+ * "Another model" (a key too). Those are judged by who is saving, so they go to Orbit with the person's session; every other
+ * save keeps going with the admin token, as it always has.
  */
-export function putsBotOnPersonalKey(existing: BotConfiguration, updates: Partial<BotConfiguration>): boolean {
+export function changesPersonalKey(existing: BotConfiguration, updates: Partial<BotConfiguration>): boolean {
     const ref = updates.aiProviderRef;
-    return typeof ref === 'string' && ref.startsWith('key-') && ref !== existing.aiProviderRef;
+    if (typeof ref === 'string' && ref.startsWith('key-') && ref !== existing.aiProviderRef) return true;
+    const vision = updates.behaviorConfig?.vision;
+    if (vision && typeof vision === 'object' && vision.choice === 'another') {
+        const before = existing.behaviorConfig?.vision;
+        return !(before && before.choice === 'another' && before.keyId === vision.keyId && before.model === vision.model);
+    }
+    return false;
 }
 
 export class BotAPI {
@@ -1074,11 +1080,13 @@ export class BotAPI {
                     }
                 }
                 
-                const actingSession = putsBotOnPersonalKey(existingConfig, updatesToApply) ? req.sessionToken : undefined;
+                // Orbit only lets a person put their own key on a bot (or pick their own key for its images), and the
+                // admin token is nobody. So when this save changes one of those, it goes with the person's session.
+                const actingSession = changesPersonalKey(existingConfig, updatesToApply) ? req.sessionToken : undefined;
                 try {
                     await this.adminApiService.saveBotConfiguration(finalConfigToSave, actingSession);
                 } catch (error) {
-                    // Orbit said why it refused (a key that isn't theirs or isn't lent here): pass it on instead of a bare 500
+                    // Orbit says why it refused (a key that isn't theirs, a model that can't see images): pass it on, don't hide it
                     if (error instanceof BotConfigRefused) {
                         res.status(400).json({ error: error.message });
                         return;

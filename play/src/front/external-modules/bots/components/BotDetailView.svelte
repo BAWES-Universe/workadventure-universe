@@ -37,6 +37,7 @@
     import PageGroup from "./page/PageGroup.svelte";
     import BehaviorGroup from "./page/BehaviorGroup.svelte";
     import MindGroup from "./page/MindGroup.svelte";
+    import VisionGroup from "./page/VisionGroup.svelte";
     import SayGroup from "./page/SayGroup.svelte";
     import ToolsGroup from "./page/ToolsGroup.svelte";
     import PermissionsGroup from "./page/PermissionsGroup.svelte";
@@ -57,6 +58,12 @@
     let currentBot: BotData | null = null;
     /** What "Runs on" offers this bot, as the Mind group loads it: the Tools group's reply limits come from it */
     let aiOptions: BotAiOptions | null = null;
+    /** The bot `aiOptions` were loaded for: another bot on the panel must not be shown the previous one's answer */
+    let aiOptionsBotId: string | undefined | null = null;
+    $: if (currentBot && currentBot.id !== aiOptionsBotId) {
+        aiOptionsBotId = currentBot.id;
+        aiOptions = null;
+    }
     // A named function, not one written inline: Svelte hands an inline one to the Mind group again each time `aiOptions`
     // changes (#1540)
     function takeAiOptions(loaded: BotAiOptions | null) {
@@ -697,6 +704,13 @@
                 onToggle={toggleGroup}
                 onChange={(next) => apply(next)}
                 onOptions={takeAiOptions}
+            />
+            <VisionGroup
+                bot={currentBot}
+                {aiOptions}
+                open={openGroup === "vision"}
+                onToggle={toggleGroup}
+                onChange={(next) => apply(next)}
             />
             <SayGroup bot={currentBot} open={openGroup === "say"} onToggle={toggleGroup} onChange={apply} />
             <BehaviorGroup

@@ -41,6 +41,7 @@
         type BotEditorMode,
     } from "./stores/BotEditorStore";
     import { routeStops } from "./behaviorModel";
+    import { withoutRefused } from "./visionModel";
     import { newBotRef } from "./mindModel";
     import { aiModelPlan } from "./modelPickerModel";
     import { botDataFromSave } from "./savedBotModel";
@@ -202,6 +203,9 @@
 
             // Only save if config actually changed
             if (currentConfig !== lastSavedBotConfig) {
+                // What is saved for this bot, if its save runs after the page left it
+                const savedConfigOnSchedule = lastSavedBotConfig;
+                const shownBotCountOnScheduleForConfig = shownBotCount;
                 scheduleSave("config", () => {
                     void (async () => {
                         try {
@@ -216,8 +220,36 @@
                             );
                             // Only while the page still shows this bot: the record is the shown bot's
                             if (selectedBot?.id === bot.id) lastSavedBotConfig = currentConfig;
+                            if (refusedSave) {
+                                refusedSave = false;
+                                error = null;
+                            }
                         } catch (e) {
                             console.error("[BotEditor] Failed to auto-save bot:", e);
+
+                            // Orbit refused the save and said why (the Vision pick can't be used): say so, and put the pick back to
+                            // what is really saved, so the refused one isn't sent again with every later save, such as moving the
+                            // bot. Only while the page still shows the refused pick: one made since has its own save coming.
+                            if ((e as Error & { status?: number })?.status === 400) {
+                                error = (e as Error).message;
+                                refusedSave = true;
+                                const currentBot = get(botPreviewsStore).get(bot.id);
+                                const saved =
+                                    shownBotCount === shownBotCountOnScheduleForConfig
+                                        ? lastSavedBotConfig
+                                        : savedConfigOnSchedule;
+                                if (
+                                    currentBot &&
+                                    JSON.stringify(currentBot.behaviorConfig?.vision ?? null) ===
+                                        JSON.stringify(bot.behaviorConfig?.vision ?? null)
+                                ) {
+                                    const reverted = withoutRefused(currentBot, "config", saved);
+                                    // Only when something was really put back: a refusal about something else changes nothing here,
+                                    // so it can't set off a save that is refused again, and again
+                                    if (JSON.stringify(reverted) !== JSON.stringify(currentBot)) upsertBot(reverted);
+                                }
+                                return;
+                            }
 
                             // Check if it's an authentication error - show error for auth issues
                             const isAuthError = (e as Error & { isAuthError?: boolean })?.isAuthError === true;

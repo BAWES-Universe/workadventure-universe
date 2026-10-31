@@ -525,11 +525,18 @@ describe('saving a bot onto one of the person\'s own AI keys (#374)', () => {
         expect(adminApiService.saveBotConfiguration).toHaveBeenCalledWith(expect.objectContaining({ aiProviderRef: 'key-123' }), SESSION);
     });
 
+    it('sends "Another model" for images with their session too', async () => {
+        const vision = { choice: 'another', keyId: 'key-123', model: 'deepseek-v4-flash-vision-exp' };
+        await put({ behaviorConfig: { vision } });
+        expect(adminApiService.saveBotConfiguration).toHaveBeenCalledWith(expect.anything(), SESSION);
+    });
+
     it('keeps every other save on the admin token, as before', async () => {
         await put({ aiProviderRef: 'universe-ai', chatInstructions: 'Be kind' });
         await put({ aiProviderRef: 'deepseek-flash' });
+        await put({ behaviorConfig: { vision: { choice: 'universe-ai' } } });
         await put({ name: 'Grace' });
-        expect(adminApiService.saveBotConfiguration).toHaveBeenCalledTimes(3);
+        expect(adminApiService.saveBotConfiguration).toHaveBeenCalledTimes(4);
         for (const call of adminApiService.saveBotConfiguration.mock.calls) expect(call[1]).toBeUndefined();
     });
 
