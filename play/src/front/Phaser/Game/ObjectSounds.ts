@@ -309,6 +309,11 @@ export class ObjectSounds {
         shared: SharedSound
     ): void {
         const playing = this.playing.get(key);
+        // Out of range, nothing loads or plays. Coming back in range picks the sound up where it has got to.
+        if (gain <= 0) {
+            this.stop(key);
+            return;
+        }
         if (playing) {
             this.setGain(playing, gain);
             return;

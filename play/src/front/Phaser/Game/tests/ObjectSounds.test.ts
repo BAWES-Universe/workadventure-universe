@@ -185,6 +185,27 @@ describe("ObjectSounds (#1627)", () => {
         expect(voices).toHaveLength(0);
     });
 
+    it("loads nothing for a shared sound out of range, and picks it up where it is on coming closer", async () => {
+        const jukebox: SoundObject = {
+            id: "jukebox",
+            x: 100,
+            y: 100,
+            properties: [sound({ heardBy: "range", loop: true, fullVolumeWithin: 2, heardUpTo: 8 })],
+        };
+        const { voices, updates, moveTo, flush, wait } = setUp([jukebox]);
+        await moveTo(12);
+        updates.next({ entityId: "jukebox", propertyId: "snd", playing: true, loop: true, elapsedSeconds: 0 });
+        await flush();
+        await moveTo(11);
+        expect(voices).toHaveLength(0);
+        wait(30000);
+        await moveTo(3);
+        expect(voices).toHaveLength(1);
+        expect(voices[0].sources[0]).toMatchObject({ loop: true, startAt: 30 });
+        await moveTo(10);
+        expect(voices[0].destroyed).toBe(true);
+    });
+
     it("lets someone who arrives hear a playing jukebox from where it is, at their distance", async () => {
         const jukebox: SoundObject = {
             id: "jukebox",
