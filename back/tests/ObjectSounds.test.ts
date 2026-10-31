@@ -116,16 +116,16 @@ describe("sharedSoundOf (#1627)", () => {
                 "gong",
                 "sound"
             )
-        ).toEqual({ loop: true, waitSeconds: 9, durationSeconds: undefined });
+        ).toEqual({ loop: true, waitSeconds: 9, durationSeconds: 0 });
     });
 
-    it("takes the length the map editor measured, and none when the map has none", () => {
+    it("takes the length the map editor measured, and counts it unknown (0) when the map has none", () => {
         const sound = (durationSeconds?: number) =>
             sharedSoundOf(wam([audio({ startsOn: "click", heardBy: "map", durationSeconds })]), "gong", "sound");
         expect(sound(12.5)?.durationSeconds).toBe(12.5);
-        expect(sound(undefined)?.durationSeconds).toBeUndefined();
-        expect(sound(0)?.durationSeconds).toBeUndefined();
-        expect(sound(Number.POSITIVE_INFINITY)?.durationSeconds).toBeUndefined();
+        expect(sound(undefined)?.durationSeconds).toBe(0);
+        expect(sound(0)?.durationSeconds).toBe(0);
+        expect(sound(Number.POSITIVE_INFINITY)?.durationSeconds).toBe(0);
     });
 
     it("backs no click on an object the map does not have, or whose sound only the clicker hears", () => {
