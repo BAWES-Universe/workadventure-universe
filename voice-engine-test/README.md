@@ -48,7 +48,8 @@ For each N it starts a fresh stack, connects N one-to-one conversations (one hum
 waits through the warm-up, then measures for 60 s. The people talk about 40% of the time; about 15% of turns are talk-overs.
 Output: `load-runs-<engine>-<turn-end>.csv` (one row per run), `load-cycles-...csv` (one row per conversation cycle).
 Runs that fail supervision are written as INVALID with the reasons. They are never dropped.
-`scripts/summarize_load.py` builds the mean and spread table.
+`scripts/summarize_load.py DIR` (all columns and counters) and `scripts/load_table.py DIR` (the compact table in the scorecard) build the mean and spread tables.
+`scripts/scorecard_table.py results/scenarios` builds the S1 to S13 tables. The finished scorecard is `results/scorecard.md`.
 
 ## Check that the TypeScript Smart Turn features equal Python's
 
