@@ -16,7 +16,8 @@
     /** The upload to change; without it the page adds a new one. */
     export let editing: EntityPrefab | undefined = undefined;
     // Set when this person may not delete the upload (#1628): why, shown in place of "Delete this upload".
-    export let deleteBlockedNote: string | undefined = undefined;
+    // The uploader may not delete it while a copy sits where they can't edit: then only map editors can (#1628).
+    export let deleteBlocked = false;
 
     const dispatch = createEventDispatcher<{ done: undefined; save: EntityPrefab; remove: { id: string } }>();
     const TILE = 32;
@@ -338,9 +339,7 @@
                 <input type="range" min="0" max={naturalHeight} bind:value={depthOffset} />
             </label>
         {/if}
-        {#if editing && deleteBlockedNote}
-            <p class="em-m em-delete-blocked" data-testid="removeEntity-blocked">{deleteBlockedNote}</p>
-        {:else if editing}
+        {#if editing && !deleteBlocked}
             <button
                 type="button"
                 class="em-delete"
@@ -560,9 +559,6 @@
         font: inherit;
         color: #fff;
         outline: none;
-    }
-    .em-delete-blocked {
-        margin: 10px 0 4px;
     }
     .em-delete {
         align-self: flex-start;

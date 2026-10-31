@@ -60,12 +60,10 @@
             ? uploadOwnerView(picked.variant.defaultPrefab, viewer)
             : undefined;
     // Deleting an upload removes every copy of it, so its uploader may only while every copy is where they can edit.
-    $: deleteBlockedNote =
-        editingUpload &&
-        scene &&
-        hasCopyHereOutsideViewerRights(picturesOf(editingUpload.id), scene.getGameMap(), viewer)
-            ? $LL.mapEditor.edit.objects.deleteBlocked()
-            : undefined;
+    $: deleteBlocked =
+        editingUpload !== undefined &&
+        !!scene &&
+        hasCopyHereOutsideViewerRights(picturesOf(editingUpload.id), scene.getGameMap(), viewer);
 
     let searchTerm = "";
     // The upload being changed. Its object is put down while the page is open, so the placing bar does not cover the
@@ -232,7 +230,7 @@
     <!-- The same page the upload was made on, with its saved values (#1637). -->
     <UploadGuide
         editing={editingUpload}
-        {deleteBlockedNote}
+        {deleteBlocked}
         on:done={() => (editingUpload = undefined)}
         on:remove={({ detail: { id } }) => removeUpload(id)}
         on:save={({ detail }) => saveUploadChanges(detail)}

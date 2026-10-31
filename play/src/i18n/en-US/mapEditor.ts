@@ -549,7 +549,6 @@ const mapEditor: BaseTranslation = {
             uploadedByYou: "You uploaded this",
             uploadedBy: "Uploaded by {name}",
             onlyUploaderAndEditors: ". Only {name} and map editors can change it.",
-            deleteBlocked: "A copy is placed where you can't edit, so only map editors can delete it.",
         },
         variants: {
             yourUpload: "Your upload",
