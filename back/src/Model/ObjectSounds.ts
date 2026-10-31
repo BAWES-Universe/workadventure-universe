@@ -18,9 +18,10 @@ interface PlayingSound {
  * wait after it, never restarts it.
  *
  * The room's saved map says which objects have such a sound, and gives its loop, its wait and its length (see
- * sharedSoundOf): a click on anything else is ignored. Only for a sound saved before its length was kept does the
- * length come from the clicker, who has loaded the sound. Every player still checks the object's sound in their own
- * map before playing anything (see ObjectSounds in the front).
+ * sharedSoundOf): a click on anything else is ignored. A sound whose length the map doesn't have (saved before the
+ * length was kept, or a live stream) counts as unknown: the object stays clickable and the wait counts from the click.
+ * Every player still checks the object's sound in their own map before playing anything (see ObjectSounds in the
+ * front).
  */
 export class ObjectSounds {
     private sounds = new Map<string, PlayingSound>();
@@ -98,13 +99,14 @@ export class ObjectSounds {
 
 /**
  * The clicked sound other people hear that this object has in the room's saved map, with its loop, its wait and its
- * length when the map editor measured it, or undefined when it has none: a click the map does not back is ignored.
+ * length (0 when the map has no length for it). Undefined when the object has no such sound: a click the map does not
+ * back is ignored.
  */
 export function sharedSoundOf(
     wam: WAMFileFormat | undefined,
     entityId: string,
     propertyId: string
-): { loop: boolean; waitSeconds: number; durationSeconds?: number } | undefined {
+): { loop: boolean; waitSeconds: number; durationSeconds: number } | undefined {
     const entity = wam?.entities[entityId];
     const property = entity?.properties?.find((p) => p.type === "playAudio" && p.id === propertyId);
     if (property?.type !== "playAudio" || !property.audioLink) {
@@ -115,12 +117,13 @@ export function sharedSoundOf(
     if (settings.startsOn !== "click" || settings.heardBy === "clicker") {
         return undefined;
     }
+    // 0 when the map has no length for it: unknown
     const durationSeconds =
         property.durationSeconds !== undefined &&
         Number.isFinite(property.durationSeconds) &&
         property.durationSeconds > 0
             ? property.durationSeconds
-            : undefined;
+            : 0;
     return { loop: settings.loop, waitSeconds: settings.clickWait, durationSeconds };
 }
 

@@ -166,6 +166,15 @@
 
     function onValueChange() {
         errorMessage = "";
+        // A sound saved before its length was kept gets it with its next change
+        if (
+            !isArea &&
+            property.audioLink &&
+            property.durationSeconds === undefined &&
+            measuringLink !== property.audioLink
+        ) {
+            measureLinkLength(property.audioLink);
+        }
         dispatch("change");
         // Fixme: this is a hack to force the map editor to update the property
         dispatch("audioLink", property);
@@ -175,11 +184,14 @@
      * An object's sound keeps its length in the map (#1627), so that the server knows when a sound others hear ends.
      * It is measured from the sound's own metadata once the sound is set, then saved like any other change.
      */
+    let measuringLink: string | undefined;
+
     function measureLength(audioLink: string, source: Promise<string>, cleanUp?: () => void) {
         if (isArea) {
             cleanUp?.();
             return;
         }
+        measuringLink = audioLink;
         delete property.durationSeconds;
         source
             .then((url) => soundLength(url))
@@ -194,7 +206,27 @@
                 }
             })
             .catch((error) => console.error("Could not tell how long the sound lasts", error))
-            .finally(() => cleanUp?.());
+            .finally(() => {
+                if (measuringLink === audioLink) {
+                    measuringLink = undefined;
+                }
+                cleanUp?.();
+            });
+    }
+
+    function measureLinkLength(audioLink: string) {
+        const scene = gameManager.getCurrentGameScene();
+        const connection = scene?.connection;
+        measureLength(
+            audioLink,
+            Promise.resolve().then(() =>
+                playableSoundLink(
+                    audioLink,
+                    scene?.room.mapStorageUrl,
+                    connection ? () => connection.queryMapStorageJwtToken() : undefined
+                )
+            )
+        );
     }
 
     function onLinkChange() {
@@ -204,19 +236,7 @@
         }
         stopAudio();
         if (property.audioLink) {
-            const scene = gameManager.getCurrentGameScene();
-            const connection = scene?.connection;
-            const audioLink = property.audioLink;
-            measureLength(
-                audioLink,
-                Promise.resolve().then(() =>
-                    playableSoundLink(
-                        audioLink,
-                        scene?.room.mapStorageUrl,
-                        connection ? () => connection.queryMapStorageJwtToken() : undefined
-                    )
-                )
-            );
+            measureLinkLength(property.audioLink);
         }
         onValueChange();
     }
