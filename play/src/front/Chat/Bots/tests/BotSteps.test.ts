@@ -75,6 +75,35 @@ describe("readBotSteps", () => {
         expect(steps?.steps[0].doing).toHaveLength(200);
     });
 
+    it("reads a call that may have run as no answer (#1692)", () => {
+        const steps = readBotSteps(
+            BOT_CHAT_ID,
+            notice({
+                ...FIELD,
+                state: "done",
+                line: "1 step",
+                steps: [
+                    {
+                        doing: "Using Generate music",
+                        done: "Used Generate music",
+                        state: "unknown",
+                        note: "No answer. May have finished",
+                    },
+                ],
+            })
+        );
+        expect(steps?.steps).toEqual([
+            {
+                doing: "Using Generate music",
+                done: "Used Generate music",
+                detail: undefined,
+                state: "unknown",
+                again: false,
+                note: "No answer. May have finished",
+            },
+        ]);
+    });
+
     it("names the newest running step while working", () => {
         const steps = readBotSteps(BOT_CHAT_ID, notice(FIELD))!;
         expect(currentStep(steps)?.detail).toBe("funk");
