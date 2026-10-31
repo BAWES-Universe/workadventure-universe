@@ -43,7 +43,7 @@ export class Stack {
     void tsx; this.tail = new BrainTail(this.brainUrl).start();
     return this;
   }
-  async waitHttp(url: string, ms = 20000) {
+  async waitHttp(url: string, ms = 60000) {
     const t0 = Date.now();
     while (Date.now() - t0 < ms) { try { await fetch(url); return; } catch { await sleep(150); } }
     throw new Error(`timeout waiting for ${url}`);

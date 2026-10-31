@@ -77,7 +77,12 @@ async function conversation(lane: number, st: Stack, h: Human, sid: string, runI
 async function oneRun(n: number, rep: number, runIdx: number) {
   const runId = `${tag}-N${n}-r${rep}`; const basePort = Number(v['port-base']) + (runIdx % 20) * 30;
   const t00 = Date.now(); const invalid: string[] = [];
-  const st = await new Stack({ engine, turnEnd, basePort, logDir: `${v.out}/logs` }).start();
+  // a slow start of a helper process is retried once on other ports; the failure is written down, never hidden
+  let st!: Stack;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const cand = new Stack({ engine, turnEnd, basePort: basePort + attempt * 600, logDir: `${v.out}/logs` });
+    try { st = await cand.start(); break; } catch (e: any) { appendFileSync(`${v.out}/load-invalid-${tag}.txt`, `${runId} stack start attempt ${attempt} failed: ${e?.message}\n`); await cand.stop().catch(() => {}); if (attempt === 2) { console.log(`${runId} INVALID (stack would not start)`); return; } }
+  }
   await st.tail.post('/config', { greet: false });
   const humans: Human[] = []; const cycles: Cycle[] = []; const errors: string[] = []; const ctl = { stop: false, windowStart: Infinity };
   const lag: { t: number; ms: number }[] = []; let lagStop = false;
