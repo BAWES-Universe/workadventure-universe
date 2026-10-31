@@ -424,6 +424,7 @@ message ClientToServerMessage {
     PrivateEventFrontToPusher privateEvent = 44;
     LeaveChatRoomAreaMessage leaveChatRoomAreaMessage = 45;
     SetAreaPropertyVariableMessage setAreaPropertyVariableMessage = 46;
+    ClickObjectSoundMessage clickObjectSoundMessage = 47;
   }
 }
 
@@ -444,6 +445,29 @@ message AreaPropertyVariableMessage {
   string propertyId = 2;
   string key = 3;
   string value = 4;
+}
+
+// A player clicks an object whose sound other people hear (#1627). The server keeps one playing sound per object
+// and answers everyone with an ObjectSoundMessage. Each player checks the object's sound in their own map before
+// playing it.
+message ClickObjectSoundMessage {
+  string entityId = 1;
+  string propertyId = 2;
+  bool loop = 3;
+  // How long the sound lasts (0 when unknown), and the wait after it before it can play again
+  double durationSeconds = 4;
+  double waitSeconds = 5;
+}
+
+// An object's clicked sound started or stopped for everyone it reaches (#1627)
+message ObjectSoundMessage {
+  string entityId = 1;
+  string propertyId = 2;
+  bool playing = 3;
+  bool loop = 4;
+  // How far into the sound it already is, so that someone who arrives hears it from where it is
+  double elapsedSeconds = 5;  // How long it lasts (0 when it loops or is unknown), so that a sound that ended out of earshot is not picked up
+  double durationSeconds = 6;
 }
 
 message ReceivedEventMessage {
@@ -1081,6 +1105,7 @@ message SubMessage {
     SpaceDestroyedMessage spaceDestroyedMessage = 23;
     InitSpaceUsersMessage initSpaceUsersMessage = 25;
     AreaPropertyVariableMessage areaPropertyVariableMessage = 31;
+    ObjectSoundMessage objectSoundMessage = 32;
   }
 }
 
@@ -1178,6 +1203,8 @@ message RoomJoinedMessage {
   RoleCatalogue roleCatalogue = 20;
   // The live state of the room's area settings when the player arrives (see AreaPropertyVariableMessage)
   repeated AreaPropertyVariableMessage areaPropertyVariable = 21;
+  // The objects' clicked sounds still playing when the player arrives (see ObjectSoundMessage)
+  repeated ObjectSoundMessage objectSounds = 22;
 }
 
 // The roles Orbit named to this player, highest first.
@@ -1680,6 +1707,7 @@ message PusherToBackMessage {
     PublicEvent publicEvent = 30;
     PrivateEvent privateEvent = 31;
     SetAreaPropertyVariableMessage setAreaPropertyVariableMessage = 32;
+    ClickObjectSoundMessage clickObjectSoundMessage = 33;
   }
 }
 
@@ -1698,6 +1726,7 @@ message SubToPusherRoomMessage {
     // Zone-specific messages (all grouped in ZoneMessage)
     ZoneMessage zoneMessage = 7;
     AreaPropertyVariableMessage areaPropertyVariableMessage = 8;
+    ObjectSoundMessage objectSoundMessage = 9;
   }
 }
 

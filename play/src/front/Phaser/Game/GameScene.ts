@@ -219,6 +219,8 @@ import { raceTimeout } from "../../Utils/PromiseUtils";
 import { ConversationBubble } from "../Entity/ConversationBubble";
 import { DarkenOutsideAreaEffect } from "../Components/DarkenOutsideArea/DarkenOutsideAreaEffect";
 import { installRoomJoinedStore } from "../../Install/InstallRoomJoined";
+import { startObjectSounds } from "./objectSoundsForScene";
+import type { ObjectSounds } from "./ObjectSounds";
 import { releaseSpawnSilence, seedSpawnSilence } from "./SpawnSilence";
 import { GameMapFrontWrapper } from "./GameMap/GameMapFrontWrapper";
 import { AreaLiveState } from "./GameMap/AreaLiveState";
@@ -398,6 +400,8 @@ export class GameScene extends DirtyScene {
     /** The layer that holds the name pill of every player. */
     public usernameDomLayer!: UsernameDomLayer;
     private areaLiveState: AreaLiveState | undefined;
+    // The objects' sounds (#1627)
+    private objectSounds: { objectSounds: ObjectSounds; stop: () => void } | undefined;
     private playersEventDispatcher = new IframeEventDispatcher();
     private playersMovementEventDispatcher = new IframeEventDispatcher();
     private remotePlayersRepository = new RemotePlayersRepository();
@@ -1408,6 +1412,8 @@ export class GameScene extends DirtyScene {
 
         audioManagerFileStore.unloadAudio();
         nativeSoundscapeListenerStore.set(undefined);
+        this.objectSounds?.stop();
+        this.objectSounds = undefined;
         // Area-leave handlers do not run when the scene closes: forget the areas the chat top row names.
         clearAreaPresence();
         // Nor do they bring back the raise hand an Audience or a meeting room switched off (#1625)
@@ -1823,6 +1829,11 @@ export class GameScene extends DirtyScene {
 
     public getGameMap(): GameMap {
         return this.gameMapFrontWrapper.getGameMap();
+    }
+
+    /** The objects' sounds (#1627), once connected */
+    public getObjectSounds(): ObjectSounds | undefined {
+        return this.objectSounds?.objectSounds;
     }
 
     public getGameMapFrontWrapper(): GameMapFrontWrapper {
@@ -2500,6 +2511,8 @@ export class GameScene extends DirtyScene {
                 this.CurrentPlayer.on(hasMovedEventName, (event: HasPlayerMovedInterface) => {
                     this.handleCurrentPlayerHasMovedEvent(event);
                 });
+                this.objectSounds?.stop();
+                this.objectSounds = startObjectSounds(this, this.connection, onConnect.room.objectSounds);
 
                 // Set up events manager
                 this.scriptingEventsManager = new ScriptingEventsManager(this.connection);
@@ -4066,6 +4079,7 @@ export class GameScene extends DirtyScene {
     /** Update listener, map properties and nearby interactions for both walking and direct same-map teleports. */
     private handleCurrentPlayerHasMovedEvent(event: HasPlayerMovedInterface): void {
         nativeSoundscapeListenerStore.set({ x: event.x, y: event.y });
+        this.objectSounds?.objectSounds.setListenerPosition(event.x, event.y);
         //listen event to share position of user
         this.pushPlayerPosition(event);
         this.gameMapFrontWrapper.setPosition(event.x, event.y);

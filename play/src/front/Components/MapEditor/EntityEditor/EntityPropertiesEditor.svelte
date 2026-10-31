@@ -3,6 +3,7 @@
     import { onDestroy } from "svelte";
     import type { ApplicationDefinitionInterface } from "@workadventure/messages";
     import { v4 as uuid } from "uuid";
+    import { NEW_OBJECT_SOUND } from "@workadventure/map-editor";
     import { mapEditorSelectedEntityStore } from "../../../Stores/MapEditorStore";
     import { analyticsClient } from "../../../Administration/AnalyticsClient";
     import LL from "../../../../i18n/i18n-svelte";
@@ -226,6 +227,8 @@
                     buttonLabel: $LL.mapEditor.properties.playAudio.label(),
                     audioLink: "",
                     volume: NEW_SOUND_VOLUME,
+                    // A new object sound plays in range, like a fireplace (#1627)
+                    ...NEW_OBJECT_SOUND,
                 };
             default:
                 throw new Error(`Unknown property type ${type}`);

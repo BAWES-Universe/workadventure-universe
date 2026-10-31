@@ -70,6 +70,9 @@ export class EntitiesManager extends Phaser.Events.EventEmitter {
      */
     private pointerOverEntitySubject = new Subject<Entity>();
     private pointerOutEntitySubject = new Subject<Entity>();
+    // An entity was placed, changed or removed: the objects' sounds look again (#1627)
+    private entitiesChangedSubject = new Subject<void>();
+    public readonly entitiesChanged = this.entitiesChangedSubject.asObservable();
 
     constructor(scene: GameScene, gameMapFrontWrapper: GameMapFrontWrapper) {
         super();
@@ -163,6 +166,7 @@ export class EntitiesManager extends Phaser.Events.EventEmitter {
             });
 
         this.scene.markDirty();
+        this.entitiesChangedSubject.next();
         return entity;
     }
 
@@ -187,7 +191,14 @@ export class EntitiesManager extends Phaser.Events.EventEmitter {
         entity.destroy();
         this.scene.markDirty();
 
-        return this.entities.delete(id);
+        const deleted = this.entities.delete(id);
+        this.entitiesChangedSubject.next();
+        return deleted;
+    }
+
+    /** An entity's data changed from outside (a map edit) */
+    public notifyEntitiesChanged(): void {
+        this.entitiesChangedSubject.next();
     }
 
     public deleteEntities(idsToRemove: string[]): boolean {

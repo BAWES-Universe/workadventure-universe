@@ -182,6 +182,12 @@ const roomManager = {
                                 room.setAreaPropertyVariable(user, message.message.setAreaPropertyVariableMessage);
                                 break;
                             }
+                            case "clickObjectSoundMessage": {
+                                room.clickObjectSound(message.message.clickObjectSoundMessage).catch((e) =>
+                                    console.error("Could not play an object's clicked sound", e)
+                                );
+                                break;
+                            }
                             case "publicEvent":
                             case "privateEvent": {
                                 throw new Error("Cannot reach here, this is handled by the space manager");

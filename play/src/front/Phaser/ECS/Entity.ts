@@ -23,7 +23,6 @@ import type { ActivatableInterface } from "../Game/ActivatableInterface";
 import { GameScene } from "../Game/GameScene";
 import type { OutlineableInterface } from "../Game/OutlineableInterface";
 import { SpeechDomElement } from "../Entity/SpeechDomElement";
-import { playableSoundLink } from "../Game/MapEditor/uploadedSoundLink";
 import LL from "../../../i18n/i18n-svelte";
 
 export enum EntityEvent {
@@ -298,6 +297,8 @@ export class Entity extends Phaser.GameObjects.Image implements ActivatableInter
             if (value !== undefined && value !== null) {
                 // If the entity has a description property and it's empty, we don't consider it as a property
                 if (value.type === "entityDescriptionProperties" && value.description === "") continue;
+                // A sound that plays when someone is in range has nothing to click (#1627)
+                if (value.type === "playAudio" && value.startsOn === "range") continue;
                 return true;
             }
         }
@@ -411,39 +412,16 @@ export class Entity extends Phaser.GameObjects.Image implements ActivatableInter
                     break;
                 }
                 case "playAudio": {
-                    const audioLink = property.audioLink;
-                    const volume = property.volume;
+                    // A sound that plays in range starts by itself (see ObjectSounds)
+                    if (property.startsOn === "range") break;
                     actions.push({
                         actionName: property.buttonLabel ?? "",
                         protected: true,
                         priority: 1,
                         propertyType: property.type,
-                        callback: async () => {
-                            const scene = this.scene as GameScene;
-                            const connection = scene.connection;
-                            // An uploaded sound needs the map's access token (#1626)
-                            let link: string;
-                            try {
-                                link = await playableSoundLink(
-                                    audioLink,
-                                    scene.room.mapStorageUrl,
-                                    connection ? () => connection.queryMapStorageJwtToken() : undefined
-                                );
-                            } catch (error) {
-                                console.error("Error playing sound:", error);
-                                return;
-                            }
-                            // The volume goes first: the sound starts as soon as its link is set
-                            this.emit(
-                                EntityEvent.PropertyActivated,
-                                ...(volume !== undefined
-                                    ? [{ propertyName: GameMapProperties.AUDIO_VOLUME, propertyValue: volume }]
-                                    : []),
-                                {
-                                    propertyName: GameMapProperties.PLAY_AUDIO,
-                                    propertyValue: link,
-                                }
-                            );
+                        callback: () => {
+                            // It mixes over the room music instead of replacing it (#1627)
+                            (this.scene as GameScene).getObjectSounds()?.click(this.entityId, property);
                             // Fixme: close the menu without impact audio manager and playing
                             //actionsMenuStore.clear();
                         },

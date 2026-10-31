@@ -92,6 +92,25 @@ export const PlayAudioPropertyData = PropertyBase.extend({
     audioName: z.string().nullable().optional(),
     volume: z.number().default(1).optional(),
     triggerMessage: z.string().optional(),
+    // Objects only (#1627), read with objectSoundSettings. An object sound without them plays on click for the
+    // person who clicked, as before.
+    // When it starts: when someone clicks the object, or when someone is within range of it
+    startsOn: z.enum(["click", "range"]).optional(),
+    // Who hears a clicked sound: only the person who clicked, everyone within range, or everyone on the map
+    heardBy: z.enum(["clicker", "range", "map"]).optional(),
+    loop: z.boolean().optional(),
+    // Distances in tiles: full volume within the first, fading out up to the second, silent past it
+    fullVolumeWithin: z.number().min(0).optional(),
+    heardUpTo: z.number().min(0).optional(),
+    // Seconds after a clicked sound ends before it can play again
+    clickWait: z.number().min(0).optional(),
+    // How long the sound lasts in seconds, measured by the map editor when the sound is set, so that the server knows
+    // when a clicked sound others hear ends. Unset when it could not be told (or for a sound set before it was kept).
+    durationSeconds: z.number().positive().optional(),
+    // Upstream WorkAdventure's fields for a clicked sound others hear (read by objectSoundSettings, so maps made
+    // there keep their sound): played for everyone, heard up to this distance in pixels (or anywhere when unset)
+    playForAllUsers: z.boolean().optional(),
+    audibleRadius: z.number().min(0).nullable().optional(),
 });
 
 export const OpenWebsitePropertyData = PropertyBase.extend({

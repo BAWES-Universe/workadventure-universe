@@ -27,3 +27,4 @@ export * from "./Permissions/AreaPermissions";
 export * from "./Utils";
 export * from "./AreaCapacity";
 export * from "./CustomEntityOwnership";
+export * from "./ObjectSound";

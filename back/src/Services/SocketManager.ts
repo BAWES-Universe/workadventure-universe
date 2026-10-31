@@ -236,6 +236,7 @@ export class SocketManager {
                 ...(await room.getAreaSpacePolicyFor(user)),
             },
             areaPropertyVariable: room.getAreaPropertyVariables(),
+            objectSounds: room.getObjectSounds(),
         };
 
         user.write({
