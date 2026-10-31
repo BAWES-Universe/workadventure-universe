@@ -40,7 +40,7 @@ export class UploadEntityFrontCommand extends UploadEntityCommand implements Fro
 
     getUndoCommand(): DeleteCustomEntityFrontCommand {
         return new DeleteCustomEntityFrontCommand(
-            { id: this.uploadEntityMessage.id },
+            { id: this.uploadEntityMessage.id, wholeUpload: false, pictureIds: [], otherRoomWamUrls: [] },
             gameManager.getCurrentGameScene().getGameMap(),
             this.entitiesManager,
             this.entitiesCollectionManager

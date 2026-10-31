@@ -62,7 +62,7 @@ test("ME-027 Check it: size line for a fitting and an odd picture, errors for a 
     }
     await input.setInputFiles(pngFile("fits.png", 64, 64));
     await expect(panel.locator(".em-title").first()).toHaveText("Check it");
-    await expect(panel).toContainText("You, for size");
+    await expect(panel).toContainText("You, walking past it");
     await expect(panel).toContainText("64 × 64 px, 2 × 2 tiles. Fits the grid.");
     await page.getByTestId("edit-panel-back").click();
     await page.getByTestId("uploadCustomAsset").setInputFiles(pngFile("odd.png", 70, 45));
@@ -88,22 +88,28 @@ test("ME-028 Save to my objects: the upload shows in Your uploads and in search"
     await page.getByTestId("uploadCustomAsset").setInputFiles(pngFile("planter.png", 64, 64, [40, 160, 60, 255]));
     await page.getByTestId("name").fill(name);
     await page.getByTestId("tags").fill("plants2");
-    const floats = page.getByTestId("floatingObject");
-    if (await floats.isChecked()) await floats.click();
-    await expect(floats).not.toBeChecked();
+    // The floor squares come marked red, and the cards read them back (#1694)
     const cells = page.locator(".em-cell");
     await expect(cells).toHaveCount(4);
-    await cells.nth(2).click();
-    await cells.nth(3).click();
     await expect(cells.nth(2)).toHaveAttribute("aria-pressed", "true");
-    // "Drawn" is the game's dropdown: open it, then pick (#1683)
-    const depth = page.getByTestId("depth").getByRole("button");
-    await depth.click();
-    await page.getByRole("option", { name: "On the ground" }).click();
-    await expect(depth).toHaveText(/On the ground/);
-    await depth.click();
-    await page.getByRole("option", { name: "Custom" }).click();
-    await expect(page.locator('input[type="range"]')).toBeVisible();
+    await expect(cells.nth(3)).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByTestId("meet-bump")).toHaveAttribute("aria-checked", "true");
+    await page.getByTestId("meet-through").click();
+    await expect(cells.nth(2)).toHaveAttribute("aria-pressed", "false");
+    await expect(page.getByTestId("meet-through")).toHaveAttribute("aria-checked", "true");
+    await cells.nth(2).click();
+    await expect(page.getByTestId("meet-bump")).toHaveAttribute("aria-checked", "true");
+    // The front and back slider is always there, and moves the line on the picture
+    const slider = page.getByTestId("front-back").locator('input[type="range"]');
+    await expect(page.getByTestId("front-back")).toBeVisible();
+    await slider.fill("40");
+    await expect(page.getByRole("button", { name: "Put the line back at the red squares" })).toBeVisible();
+    await page.getByTestId("meet-over").click();
+    await expect(page.getByTestId("meet-over")).toHaveAttribute("aria-checked", "true");
+    await expect(slider).toHaveValue("64");
+    await page.getByTestId("meet-bump").click();
+    await expect(cells.nth(2)).toHaveAttribute("aria-pressed", "true");
+    await expect(cells.nth(3)).toHaveAttribute("aria-pressed", "true");
     await page.getByTestId("applyEntityModifications").click();
     const panel = page.getByTestId("edit-panel");
     await expect(page.getByTestId("objects-search")).toBeVisible({ timeout: 30_000 });

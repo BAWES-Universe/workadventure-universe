@@ -352,6 +352,35 @@ message ModifyCustomEntityMessage {
 
 message DeleteCustomEntityMessage {
   string id = 1;
+  // Delete the whole upload this picture belongs to, with every placed copy of it in every room of the world (#1690).
+  bool wholeUpload = 2;
+  // Set by map-storage when wholeUpload is true: every picture of the upload, so each browser removes them all.
+  repeated string pictureIds = 3;
+  // Set by map-storage: the map files of the other rooms that lost copies, so the back tells the people in them.
+  repeated string otherRoomWamUrls = 4;
+}
+
+// Asks where the copies of an upload are placed, for the box that confirms deleting it (#1690).
+message UploadCopiesQuery {
+  string id = 1;
+}
+
+message UploadCopiesRoom {
+  // The map file of the room.
+  string wamUrl = 1;
+  uint32 count = 2;
+}
+
+message UploadCopiesAnswer {
+  repeated UploadCopiesRoom rooms = 1;
+}
+
+message UploadCopiesWithKeyMessage {
+  string mapKey = 1;
+  string id = 2;
+  repeated string connectedUserTags = 3;
+  bool userCanEdit = 4;
+  string userUUID = 5;
 }
 
 message ModifyEntityMessage {
@@ -550,6 +579,7 @@ message QueryMessage {
     RingQuery ringQuery = 26;
     RingReplyQuery ringReplyQuery = 27;
     ChatPersonQuery chatPersonQuery = 28;
+    UploadCopiesQuery uploadCopiesQuery = 29;
   }
 }
 
@@ -839,6 +869,7 @@ message AnswerMessage {
     RingAnswer ringAnswer = 24;
     RingReplyAnswer ringReplyAnswer = 25;
     ChatPersonAnswer chatPersonAnswer = 26;
+    UploadCopiesAnswer uploadCopiesAnswer = 27;
   }
 }
 

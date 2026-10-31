@@ -338,9 +338,12 @@ export class EntityEditorTool extends EntityRelatedEditorTool {
                             this.entitiesManager,
                             this.scene.getEntitiesCollectionsManager()
                         );
-                        if (this.scene.connection?.userCanEdit) {
+                        if (this.scene.connection?.userCanEdit && !deleteCustomEntityMessage.wholeUpload) {
                             await this.mapEditorModeManager.executeCommand(command);
                         } else if (this.scene.connection) {
+                            // Deleting a whole upload (#1690) goes through map-storage for everyone: it either
+                            // removes every copy in every room or nothing, so this room only loses the upload once
+                            // map-storage has answered.
                             // An uploader's delete (#1628) waits for map-storage: it may still refuse it because of a
                             // copy in another room, and the room only loses the object once it is really gone.
                             command.emitEvent(this.scene.connection);
