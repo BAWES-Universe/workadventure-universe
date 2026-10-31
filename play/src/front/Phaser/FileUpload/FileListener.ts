@@ -1,5 +1,6 @@
 import { FILE_UPLOAD_SUPPORTED_FORMATS_FRONT } from "@workadventure/map-editor";
 import type { EntityPrefab, OpenFilePropertyData } from "@workadventure/map-editor";
+import { UploadedFileKind } from "@workadventure/messages";
 import { Permission } from "@workadventure/shared-utils/src/Permissions/permissions";
 import { get } from "svelte/store";
 import { v4 as uuidv4 } from "uuid";
@@ -181,6 +182,7 @@ export class FileListener {
             file: new Uint8Array(fileBuffer),
             name: file.name,
             propertyId,
+            kind: UploadedFileKind.Document,
         };
 
         const roomConnection = scene.connection;

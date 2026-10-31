@@ -16,6 +16,7 @@
     import InputSwitch from "../../Input/InputSwitch.svelte";
     import OpenFilePropertyEditor from "../PropertyEditor/OpenFilePropertyEditor.svelte";
     import type { Entity } from "../../../Phaser/ECS/Entity";
+    import { NEW_SOUND_VOLUME } from "../EditMode/areaProperties";
 
     let properties: EntityDataProperties = [];
     let entityName = "";
@@ -233,7 +234,7 @@
                     type,
                     buttonLabel: $LL.mapEditor.properties.playAudio.label(),
                     audioLink: "",
-                    volume: 1,
+                    volume: NEW_SOUND_VOLUME,
                 };
             default:
                 throw new Error(`Unknown property type ${type}`);

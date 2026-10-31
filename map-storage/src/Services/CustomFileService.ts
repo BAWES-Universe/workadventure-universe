@@ -1,7 +1,8 @@
 import path from "path";
-import type { AreaDataProperty } from "@workadventure/map-editor";
-import { fileUploadSupportedFormatForMapStorage } from "@workadventure/map-editor";
+import type { AreaDataProperty, EntityDataProperty } from "@workadventure/map-editor";
+import { getUploadedFileFormat, UPLOADED_FILE_FORMATS } from "@workadventure/map-editor";
 import type { UploadFileMessage } from "@workadventure/messages";
+import { UploadedFileKind } from "@workadventure/messages";
 import { fileSystem } from "../fileSystem";
 import { mapPathUsingDomainWithPrefix } from "./PathMapper";
 
@@ -15,10 +16,14 @@ export class CustomFileService {
     public async uploadFile(uploadFileMessage: UploadFileMessage) {
         const { file } = uploadFileMessage;
         const { name: filename, ext: fileExtension } = path.parse(uploadFileMessage.name);
+        const format = getUploadedFileFormat(uploadFileMessage.kind);
+        if (!format) {
+            throw new Error("Unknown kind of file");
+        }
 
         const errorm = "File extension is not a supported format :" + fileExtension + uploadFileMessage.name;
 
-        if (!fileExtension.match(fileUploadSupportedFormatForMapStorage)) {
+        if (!fileExtension.match(format.extensions)) {
             throw new Error(errorm);
         }
 
@@ -28,7 +33,7 @@ export class CustomFileService {
         }
 
         const mapPath = mapPathUsingDomainWithPrefix(
-            `/private/files/${filename}-${uploadFileMessage.propertyId}${fileExtension}`,
+            `/${format.folder}/${filename}-${uploadFileMessage.propertyId}${fileExtension}`,
             this.hostname
         );
         console.info("Uploading file to: ", mapPath);
@@ -36,19 +41,27 @@ export class CustomFileService {
         return;
     }
 
-    public async deleteFile(property: AreaDataProperty) {
-        if (property.type !== "openFile") {
+    public async deleteFile(property: AreaDataProperty | EntityDataProperty) {
+        let name: string | undefined;
+        let folder: string;
+        if (property.type === "openFile") {
+            name = property.name ?? undefined;
+            folder = UPLOADED_FILE_FORMATS[UploadedFileKind.Document].folder;
+        } else if (property.type === "playAudio") {
+            name = property.audioName ?? undefined;
+            folder = UPLOADED_FILE_FORMATS[UploadedFileKind.Sound].folder;
+        } else {
             throw new Error("Property is not a file");
         }
 
-        if (!property.name) {
+        if (!name) {
             throw new Error("Property is missing name. Can't find file to delete.");
         }
 
-        const { name: filename, ext: fileExtension } = path.parse(property.name);
+        const { name: filename, ext: fileExtension } = path.parse(name);
 
         const mapPath = mapPathUsingDomainWithPrefix(
-            `/private/files/${filename}-${property.id}${fileExtension}`,
+            `/${folder}/${filename}-${property.id}${fileExtension}`,
             this.hostname
         );
 
