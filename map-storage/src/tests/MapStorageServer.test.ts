@@ -25,12 +25,27 @@ vi.mock("../Modules/HookManager", () => ({ hookManager: {} }));
 
 // The uploads of the world (#1628), by id
 const { uploads } = vi.hoisted(() => ({
-    uploads: new Map<string, { ownerId?: string; ownerName?: string }>(),
+    uploads: new Map<string, { ownerId?: string; ownerName?: string; variantOf?: string; imagePath?: string }>(),
 }));
 vi.mock("../Services/CustomEntityCollectionService", () => ({
     CustomEntityCollectionService: class {
         getEntity(id: string) {
             return Promise.resolve(uploads.get(id));
+        }
+        getUploadPictures(id: string) {
+            const picture = uploads.get(id);
+            if (!picture) return Promise.resolve([]);
+            const first = picture.variantOf ?? id;
+            return Promise.resolve(
+                [...uploads.entries()]
+                    .filter(([otherId, other]) => otherId === first || other.variantOf === first)
+                    .map(([otherId]) => ({ id: otherId }))
+            );
+        }
+        isTaken(id: string, imagePath: string) {
+            return Promise.resolve(
+                [...uploads.entries()].some(([otherId, other]) => otherId === id || other.imagePath === imagePath)
+            );
         }
     },
 }));
@@ -285,14 +300,14 @@ describe("MapStorageServer edit rights", () => {
     });
 
     describe("uploads and their uploader (#1628)", () => {
-        const upload = (id: string, variantOf?: string, ownerId?: string): EditMessage => ({
+        const upload = (id: string, variantOf?: string, ownerId?: string, imagePath = `${id}.png`): EditMessage => ({
             $case: "uploadEntityMessage",
             uploadEntityMessage: {
                 file: new Uint8Array(),
                 id,
                 name: "Lamp",
                 tags: [],
-                imagePath: `${id}.png`,
+                imagePath,
                 direction: 0,
                 color: "",
                 variantOf,
@@ -356,6 +371,25 @@ describe("MapStorageServer edit rights", () => {
             expect(await send(remove("sign"), owner)).toBe("errorCommandMessage");
             expect(executeEntityCommand).not.toHaveBeenCalled();
             expect(await send(remove("sign"), editor)).toBe("deleteCustomEntityMessage");
+        });
+
+        it("keeps every picture of an upload when another side has a copy where its uploader can't edit", async () => {
+            // The lamp sits at the desk, but its other side "sign" was put down out in the room
+            uploads.set("lamp", { ownerId: "owner" });
+            uploads.set("sign", { ownerId: "owner", variantOf: "lamp" });
+            expect(await send(remove("lamp"), owner)).toBe("errorCommandMessage");
+            expect(await send(remove("sign"), owner)).toBe("errorCommandMessage");
+            expect(executeEntityCommand).not.toHaveBeenCalled();
+        });
+
+        it("refuses an upload that would replace a saved picture, unless it comes from an editor", async () => {
+            uploads.set("lamp", { ownerId: "editor", imagePath: "lamp.png" });
+            // Same id
+            expect(await send(upload("lamp"), owner)).toBe("errorCommandMessage");
+            // Same file name under a new id
+            expect(await send(upload("new", undefined, undefined, "lamp.png"), owner)).toBe("errorCommandMessage");
+            expect(executeEntityCommand).not.toHaveBeenCalled();
+            expect(await send(upload("lamp"), editor)).toBe("uploadEntityMessage");
         });
     });
 });

@@ -391,11 +391,20 @@ const mapStorageServer: MapStorageServer = {
                         ) {
                             throw new Error(`User ${userUUID} is not allowed to upload an object on map ${mapUrl}`);
                         }
+                        const uploads = new CustomEntityCollectionService(mapUrl.hostname, universeWorldPath);
+                        // The browser picks the id and the file name: someone who isn't a map editor must not replace
+                        // a picture that is already saved, theirs or anyone's.
+                        if (
+                            !userCanEdit &&
+                            (await uploads.isTaken(uploadEntityMessage.id, uploadEntityMessage.imagePath))
+                        ) {
+                            throw new Error(
+                                `User ${userUUID} is not allowed to replace the object ${uploadEntityMessage.id} on map ${mapUrl}`
+                            );
+                        }
                         const isAnotherSide = uploadEntityMessage.variantOf !== undefined;
                         const firstPicture = isAnotherSide
-                            ? await new CustomEntityCollectionService(mapUrl.hostname, universeWorldPath).getEntity(
-                                  uploadEntityMessage.variantOf ?? ""
-                              )
+                            ? await uploads.getEntity(uploadEntityMessage.variantOf ?? "")
                             : undefined;
                         // Adding a side or colour to an upload follows the rule for changing it.
                         if (isAnotherSide && !canManageCustomEntity(firstPicture, userUUID, userCanEdit)) {
@@ -440,22 +449,31 @@ const mapStorageServer: MapStorageServer = {
                     }
                     case "deleteCustomEntityMessage": {
                         const deleteCustomEntityMessage = editMapMessage.deleteCustomEntityMessage;
-                        // Checked before the command runs: it removes the placed copies from the map first.
+                        // Checked before the command runs: it removes the placed copies from the map first. The browser
+                        // deletes an upload one picture at a time, so each picture is checked against the copies of
+                        // every picture of its upload: either all of them go, or none.
                         if (!userCanEdit) {
-                            const upload = await new CustomEntityCollectionService(
-                                mapUrl.hostname,
-                                universeWorldPath
-                            ).getEntity(deleteCustomEntityMessage.id);
-                            if (
-                                !canManageCustomEntity(upload, userUUID, userCanEdit) ||
-                                (await hasCopyOutsideUserRights(
+                            const uploads = new CustomEntityCollectionService(mapUrl.hostname, universeWorldPath);
+                            const upload = await uploads.getEntity(deleteCustomEntityMessage.id);
+                            const pictureIds = new Set([
+                                deleteCustomEntityMessage.id,
+                                ...(await uploads.getUploadPictures(deleteCustomEntityMessage.id)).map(
+                                    (picture) => picture.id
+                                ),
+                            ]);
+                            let copyOutsideRights = false;
+                            for (const pictureId of pictureIds) {
+                                // eslint-disable-next-line no-await-in-loop
+                                copyOutsideRights = await hasCopyOutsideUserRights(
                                     mapKey,
                                     universeWorldPath,
-                                    deleteCustomEntityMessage.id,
+                                    pictureId,
                                     { tags: connectedUserTags, uuid: userUUID },
                                     (key) => mapsManager.getOrLoadGameMap(key)
-                                ))
-                            ) {
+                                );
+                                if (copyOutsideRights) break;
+                            }
+                            if (!canManageCustomEntity(upload, userUUID, userCanEdit) || copyOutsideRights) {
                                 throw new Error(
                                     `User ${userUUID} is not allowed to delete the object ${deleteCustomEntityMessage.id} on map ${mapUrl}`
                                 );
