@@ -42,6 +42,7 @@ interface FakeRoomOptions {
 }
 
 interface FakeFolder {
+    id: string;
     roomList: MapStore<string, MatrixChatRoom>;
     folderList: MapStore<string, FakeFolder>;
 }
@@ -64,7 +65,7 @@ describe("MatrixChatConnection: the chat with one person", () => {
 
     /** Puts a folder (a space) in the top list of folders, or in another folder when given its id. */
     function addFolder(id: string, parent?: string): FakeFolder {
-        const folder: FakeFolder = { roomList: new MapStore(), folderList: new MapStore() };
+        const folder: FakeFolder = { id, roomList: new MapStore(), folderList: new MapStore() };
         folders.set(id, folder);
         const parentFolder = parent ? folders.get(parent) : undefined;
         if (parentFolder) parentFolder.folderList.set(id, folder);
@@ -282,6 +283,38 @@ describe("MatrixChatConnection: the chat with one person", () => {
             connection["repairDirectAccountData"]();
 
             await vi.waitFor(() => expect(directMap).toEqual({ [ALICE]: ["!chat"] }));
+        });
+    });
+
+    describe("a chat asked for by its id (a tapped notification)", () => {
+        it("is the chat the list holds, so it rings once per message", () => {
+            const room = addRoom("!chat");
+
+            expect(connection.getRoomByID("!chat")).toBe(room);
+            expect(connection.getRoomByID("!chat")).toBe(room);
+        });
+
+        it("is the chat a folder inside a folder holds", () => {
+            addFolder("!outer");
+            addFolder("!inner", "!outer");
+            const room = addRoom("!chat", { folder: "!inner" });
+
+            expect(connection.getRoomByID("!chat")).toBe(room);
+        });
+
+        it("is the folder itself when the id is a folder's", () => {
+            addFolder("!outer");
+            const inner = addFolder("!inner", "!outer");
+
+            expect(connection.getRoomByID("!outer")).toBe(connection["roomFolders"].get("!outer"));
+            expect(connection.getRoomByID("!inner")).toBe(inner);
+        });
+
+        it("is made only for a room none of the lists holds", () => {
+            sdkRooms.set("!elsewhere", { roomId: "!elsewhere" });
+
+            expect(connection.getRoomByID("!elsewhere")).toBeDefined();
+            expect(() => connection.getRoomByID("!unknown")).toThrow("Room not found");
         });
     });
 

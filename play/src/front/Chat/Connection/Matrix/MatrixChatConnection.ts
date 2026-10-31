@@ -1538,9 +1538,18 @@ export class MatrixChatConnection implements ChatConnectionInterface {
         return user && user.some((user) => user.id === address);
     }
 
+    /**
+     * The chat or folder this connection already holds for the id. Each one follows its room's new messages and rings
+     * for them, so a second one made for the same room would ring twice for every message from then on (a tapped
+     * notification opened its chat that way). A new one is made only for a room none of the lists holds.
+     */
     getRoomByID(roomId: string): ChatRoom {
         if (!this.client) {
             throw new Error(CLIENT_NOT_INITIALIZED_ERROR_MSG);
+        }
+        const known = this.knownRoomOrFolder(roomId);
+        if (known) {
+            return known;
         }
         const room = this.client.getRoom(roomId);
         if (!room) {
@@ -1548,6 +1557,20 @@ export class MatrixChatConnection implements ChatConnectionInterface {
         }
 
         return new MatrixChatRoom(room);
+    }
+
+    private knownRoomOrFolder(roomId: string): MatrixChatRoom | undefined {
+        const room = this.allRooms().find((candidate) => candidate.id === roomId);
+        if (room) return room;
+        const findFolder = (folders: Iterable<MatrixRoomFolder>): MatrixRoomFolder | undefined => {
+            for (const folder of folders) {
+                if (folder.id === roomId) return folder;
+                const inside = findFolder(folder.folderList.values());
+                if (inside) return inside;
+            }
+            return undefined;
+        };
+        return findFolder(this.roomFolders.values());
     }
 
     private rebuildSpaceHierarchy() {
