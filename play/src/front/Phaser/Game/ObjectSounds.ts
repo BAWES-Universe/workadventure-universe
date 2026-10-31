@@ -250,7 +250,8 @@ export class ObjectSounds {
                 } else if (shared && settings.heardBy !== "clicker") {
                     seen.add(key);
                     this.updateSharedSound(key, object, property, settings, gain, shared);
-                } else if (this.playing.get(key)?.settings.heardBy === "clicker") {
+                } else if (settings.heardBy === "clicker" && this.playing.get(key)?.settings.startsOn === "click") {
+                    // A click the clicker alone hears plays to its end. A range sound switched to click stops.
                     seen.add(key);
                 }
             }

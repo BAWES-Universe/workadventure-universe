@@ -93,6 +93,16 @@ describe("ObjectSounds (#1627)", () => {
         expect(audible).toEqual([true, false]);
     });
 
+    it("stops a range sound when its object is switched to play on click", async () => {
+        const object = fireplace();
+        const { sounds, voices, moveTo } = setUp([object]);
+        await moveTo(2);
+        expect(voices).toHaveLength(1);
+        object.properties = [sound({ startsOn: "click", heardBy: "clicker", loop: false })];
+        sounds.refresh();
+        expect(voices[0].destroyed).toBe(true);
+    });
+
     it("plays a range sound once each time someone comes within range", async () => {
         const { voices, moveTo } = setUp([fireplace({ loop: false })]);
         await moveTo(2);
