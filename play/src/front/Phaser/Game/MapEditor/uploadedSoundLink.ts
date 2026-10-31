@@ -4,13 +4,16 @@ import type { MapStorageJwtAnswer } from "@workadventure/messages";
 
 const SOUNDS_FOLDER = `/${UPLOADED_FILE_FORMATS[UploadedFileKind.Sound].folder}/`;
 
-/** Where an uploaded sound is stored: the map-storage root, like "Open file" uploads (#1626). */
+/**
+ * Where an uploaded sound is stored: the map-storage root, like "Open file" uploads (#1626). The name is encoded, so a
+ * "#", "?" or "%" in it stays part of the file's path.
+ */
 export function uploadedSoundLink(mapStorageUrl: URL, fileName: string, propertyId: string): string {
     const lastDot = fileName.lastIndexOf(".");
     const name = fileName.slice(0, lastDot);
     const ext = fileName.slice(lastDot + 1);
     return new URL(
-        `${SOUNDS_FOLDER.slice(1)}${name}-${propertyId}.${ext}`,
+        `${SOUNDS_FOLDER.slice(1)}${encodeURIComponent(`${name}-${propertyId}.${ext}`)}`,
         `${mapStorageUrl.protocol}//${mapStorageUrl.host}`
     ).toString();
 }

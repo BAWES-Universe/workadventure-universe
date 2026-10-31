@@ -443,11 +443,17 @@ export class Entity extends Phaser.GameObjects.Image implements ActivatableInter
                             const scene = this.scene as GameScene;
                             const connection = scene.connection;
                             // An uploaded sound needs the map's access token (#1626)
-                            const link = await playableSoundLink(
-                                audioLink,
-                                scene.room.mapStorageUrl,
-                                connection ? () => connection.queryMapStorageJwtToken() : undefined
-                            );
+                            let link: string;
+                            try {
+                                link = await playableSoundLink(
+                                    audioLink,
+                                    scene.room.mapStorageUrl,
+                                    connection ? () => connection.queryMapStorageJwtToken() : undefined
+                                );
+                            } catch (error) {
+                                console.error("Error playing sound:", error);
+                                return;
+                            }
                             // The volume goes first: the sound starts as soon as its link is set
                             this.emit(
                                 EntityEvent.PropertyActivated,

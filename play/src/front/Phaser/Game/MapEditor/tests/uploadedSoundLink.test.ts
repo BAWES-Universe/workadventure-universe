@@ -10,6 +10,16 @@ describe("uploaded sound links (#1626)", () => {
         );
     });
 
+    it("keeps a #, ? or % in the file name as part of the path", () => {
+        const link = uploadedSoundLink(mapStorageUrl, "Track #1? 100%.mp3", "a1b2");
+        expect(link).toBe("https://map-storage.example.com/private/sounds/Track%20%231%3F%20100%25-a1b2.mp3");
+        const url = new URL(link);
+        expect(url.hash).toBe("");
+        expect(url.search).toBe("");
+        expect(decodeURIComponent(url.pathname)).toBe("/private/sounds/Track #1? 100%-a1b2.mp3");
+        expect(isUploadedSoundLink(link, mapStorageUrl)).toBe(true);
+    });
+
     it("tells an uploaded sound from a pasted link", () => {
         expect(isUploadedSoundLink("https://map-storage.example.com/private/sounds/rain-a1b2.mp3", mapStorageUrl)).toBe(
             true
