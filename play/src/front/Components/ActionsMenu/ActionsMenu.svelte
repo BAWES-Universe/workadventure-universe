@@ -24,15 +24,7 @@
 
     import type { ActionsMenuAction, ActionsMenuData } from "../../Stores/ActionsMenuStore";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
-    import {
-        IconChevronRight,
-        IconExternalLink,
-        IconFile,
-        IconFileMusic,
-        IconLink,
-        IconUsersGroup,
-        IconX,
-    } from "@wa-icons";
+    import { IconChevronRight, IconExternalLink, IconFile, IconFileMusic, IconLink, IconX } from "@wa-icons";
 
     let actionsMenuData: ActionsMenuData | undefined;
     let sortedActions: ActionsMenuAction[] | undefined;
@@ -78,7 +70,6 @@
         openWebsite: IconLink,
         openFile: IconFile,
         playAudio: IconFileMusic,
-        jitsiRoomProperty: IconUsersGroup,
     };
     const APP_IMAGES: Record<string, string> = {
         youtube: youtubeSvg,
