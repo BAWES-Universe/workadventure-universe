@@ -7,12 +7,10 @@ vi.mock("../../../src/i18n/i18n-svelte", () => ({
                 trigger: {
                     object: () => "Press [SPACE] to interact with it",
                     cowebsite: () => "Press [SPACE] to open the website",
-                    jitsiRoom: () => "Press [SPACE] to enter Jitsi",
                     newTab: () => "Press [SPACE] to open a new tab",
                     mobile: {
                         object: () => "Tap to interact with it",
                         cowebsite: () => "Tap to open the website",
-                        jitsiRoom: () => "Tap to enter Jitsi",
                         newTab: () => "Tap to open a new tab",
                     },
                 },
@@ -38,7 +36,6 @@ describe("getTriggerHint", () => {
         stubDevice(true, 1180);
         expect(getTriggerHint("object")).toBe("Tap to interact with it");
         expect(getTriggerHint("cowebsite")).toBe("Tap to open the website");
-        expect(getTriggerHint("jitsiRoom")).toBe("Tap to enter Jitsi");
         expect(getTriggerHint("newTab")).toBe("Tap to open a new tab");
     });
 

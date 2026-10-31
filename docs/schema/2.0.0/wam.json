@@ -132,6 +132,12 @@
                         "audioLink": {
                           "type": "string"
                         },
+                        "audioName": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
                         "volume": {
                           "type": "number",
                           "default": 1

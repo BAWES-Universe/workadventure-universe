@@ -4116,7 +4116,7 @@
       "area": "Map editor and Look around",
       "topic": "Upload: check",
       "action": "Choose a 64x64 PNG; then a 70x45 PNG; then a .gif or two files at once. Desktop: drag a PNG onto the drop zone.",
-      "expected": "\"Check it\" page: the picture on the tile grid at real size next to your WOKA (\"You, for size\"), line \"64 × 64 px, 2 × 2 tiles. Fits the grid.\" For 70x45: \"This won't line up with the tiles. Try 64 × 64.\" Wrong format / several files: an error under the drop zone. Drop works like choose.",
+      "expected": "\"Check it\" page: the picture on the tile grid at real size with your WOKA walking past it (\"You, walking past it\"), line \"64 × 64 px, 2 × 2 tiles. Fits the grid.\" For 70x45: \"This won't line up with the tiles. Try 64 × 64.\" Wrong format / several files: an error under the drop zone. Drop works like choose.",
       "source": "approved B2p1 frame 9",
       "runs": "yes",
       "runsNote": "yes",
@@ -4127,13 +4127,13 @@
       "id": "ME-028",
       "area": "Map editor and Look around",
       "topic": "Upload: save",
-      "action": "On Check it: set Name, Category \"plants2\", toggle Floats off, tap two grid squares, pick Drawn = On the ground / Custom (slider), press \"Save to my objects\".",
+      "action": "On Check it: set Name, Category \"plants2\". The two floor squares come marked red with \"Bump into it\" picked; pick \"Walk through it\" (squares clear), tap a square (\"Bump into it\" again), move the front and back slider (reset link shows), pick \"Walk over it\", then \"Bump into it\"; press \"Save to my objects\" (#1694).",
       "expected": "Upload goes to map-storage; the panel returns to the picker showing the new object (in \"Your uploads\" and in search). KNOWN FAIL sweep 20 / GPT R2: the panel opens category \"plants2\" empty.",
       "source": "prod + approved B2p1 frame 9",
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": true,
-      "hooks": "`name` UploadGuide.svelte:237, `tags` :245, `floatingObject` :253, `.em-cell` :195, depth `select` :265, range :276, `applyEntityModifications` :285; Cancel button \"Cancel\" :281"
+      "hooks": "`name`, `tags`, `.em-cell`, `meet-bump` / `meet-through` / `meet-over` cards, `front-back` slider and `front-back-line` in UploadGuide.svelte; `applyEntityModifications`; Cancel button \"Cancel\""
     },
     {
       "id": "ME-029",
@@ -4260,12 +4260,12 @@
       "area": "Map editor and Look around",
       "topic": "Area settings: rows",
       "action": "Open an empty area's settings and read \"Add to this area\".",
-      "expected": "Plain rows, white icon + title + one line + plus: Meeting room, Quiet zone, Stage, Audience (when the broadcast-areas flag is on), Who can enter, Personal desk (only with an admin/Orbit), Open a website, Open a file, Play a sound, Exit to a room, Start point, Focus the camera, Highlight, Show a message, Chat room (only with Matrix), any module rows (the portal \"Portal to any room\" sits right under Exit to a room, only when the room has that module), \"Add an app: YouTube, Google Docs…\", and a coral \"Delete area\" alone at the bottom under a line. Jitsi call is not offered any more (Jitsi is discontinued; an area that already has one keeps its page).",
+      "expected": "Plain rows, white icon + title + one line + plus: Meeting room, Quiet zone, Stage, Audience (when the broadcast-areas flag is on), Who can enter, Personal desk (only with an admin/Orbit), Open a website, Open a file, Play a sound, Exit to a room, Start point, Focus the camera, Highlight, Show a message, Chat room (only with Matrix), any module rows (the portal \"Portal to any room\" sits right under Exit to a room, only when the room has that module), \"Add an app: YouTube, Google Docs…\", and a coral \"Delete area\" alone at the bottom under a line. No Jitsi call (Jitsi is no longer supported, game #1688).",
       "source": "approved B2p1 frame 6",
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "AreaSettings.svelte:556-616; rows areaProperties.ts:60-228 (Jitsi `available: false` :225); testids per row (`livekitRoomProperty`, `addSilentProperty`, `speakerMegaphone`, `listenerMegaphone`, `restrictedRightsPropertyData`, `personalAreaPropertyData`, `openWebsite`, `openFile`, `playAudio`, `exitAreaProperty`, `startAreaProperty`, `focusable`, `highlight`, `addTooltipProperty`, `matrixRoomPropertyData`); `area-delete` :618 inside `.em-danger-zone`"
+      "hooks": "AreaSettings.svelte:556-616; rows `areaSettingRows` areaProperties.ts:65-239; testids per row (`livekitRoomProperty`, `addSilentProperty`, `speakerMegaphone`, `listenerMegaphone`, `restrictedRightsPropertyData`, `personalAreaPropertyData`, `openWebsite`, `openFile`, `playAudio`, `exitAreaProperty`, `startAreaProperty`, `focusable`, `highlight`, `addTooltipProperty`, `matrixRoomPropertyData`); `area-delete` :618 inside `.em-danger-zone`"
     },
     {
       "id": "ME-040",
@@ -4451,13 +4451,13 @@
       "id": "ME-055",
       "area": "Map editor and Look around",
       "topic": "Area: Jitsi call",
-      "action": "Look for \"Jitsi call\" in \"Add to this area\" (empty area, and one with a meeting room). Open an area that already has a Jitsi call.",
-      "expected": "Jitsi call is not offered any more (Jitsi is discontinued: dev hides it everywhere). An area that already has one keeps it under \"In this area\": its page shows the room name and \"Remove from area\" removes it. (Runs: the editor part is yes; play not local.)",
-      "source": "prod",
+      "action": "Look for \"Jitsi call\" in \"Add to this area\" (empty area, and one with a meeting room). Open an area saved with a Jitsi call and another setting (e.g. Highlight), then change that other setting.",
+      "expected": "Jitsi call is not offered anywhere (Jitsi is no longer supported, game #1688). An area saved with one shows only its other settings under \"In this area\" (no Jitsi row, no Jitsi page); those settings keep working, and the next save drops Jitsi from the map file.",
+      "source": "game #1688 + approved Jitsi removal mock",
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "`jitsiRoomProperty`; `available: false` areaProperties.ts:225; `#roomName` JitsiRoomPropertyEditor.svelte:73"
+      "hooks": "`WamFileMigration.dropJitsi` (libs/map-editor/src/Migrations/WamFileMigration.ts:49); `UpdateAreaCommand.validateProperties` (:52); no `jitsiRoomProperty` row in `areaSettingRows`"
     },
     {
       "id": "ME-056",
@@ -4740,7 +4740,7 @@
       "area": "Map editor and Look around",
       "topic": "Look around: Places",
       "action": "Open Look around (Places is the panel itself). Type in search; fold and unfold the Areas and Objects groups; open Filter and pick a filter; close with the X.",
-      "expected": "Panel \"Look around\" on the right: search \"Places and objects\", a Filter button (shown when the places of the room use some setting; count badge when one is picked) that lists only the settings in use (meeting room, Jitsi, stage, audience, quiet, website, file, sound, start, exit, focus, desk, who can enter, chat room, + apps), an Areas group (count; rows: name, \"property · people\") and an Objects group (count; rows), each foldable. No People list. The X leaves Look around.",
+      "expected": "Panel \"Look around\" on the right: search \"Places and objects\", a Filter button (shown when the places of the room use some setting; count badge when one is picked) that lists only the settings in use (meeting room, stage, audience, quiet, website, file, sound, start, exit, focus, desk, who can enter, chat room, + apps), an Areas group (count; rows: name, \"property · people\") and an Objects group (count; rows), each foldable. No People list. The X leaves Look around.",
       "source": "approved B2p2 frame 4",
       "runs": "yes",
       "runsNote": "yes",
@@ -6983,13 +6983,13 @@
       "id": "OR-074",
       "area": "Orbit and map scripts",
       "topic": "Tags: Jitsi",
-      "action": "Tiled map with `jitsiRoomAdminTag` (e.g. `maps/tests/jitsi_room_admin_tag.json`): enter with and without that tag.",
-      "expected": "With the tag you join the Jitsi room as moderator; without it as a normal participant.",
-      "source": "prod",
-      "runs": "needs-orbit",
-      "runsNote": "needs-orbit",
+      "action": "Tiled map with `jitsiRoomAdminTag` on a `jitsiRoom` zone: enter with and without that tag.",
+      "expected": "Replaced by game #1688: Jitsi is no longer supported, so the zone and its tag do nothing (see OR-087).",
+      "source": "game #1688",
+      "runs": "replaced",
+      "runsNote": "replaced",
       "knownGap": false,
-      "hooks": "Game `Components/Cowebsites/JistiCowebsiteComponent.svelte:101`."
+      "hooks": "covered by OR-087"
     },
     {
       "id": "OR-075",
@@ -7138,26 +7138,26 @@
     {
       "id": "OR-087",
       "area": "Orbit and map scripts",
-      "topic": "Jitsi area",
-      "action": "Desktop: Tiled `jitsiRoom` area with `jitsiTrigger: onaction` (e.g. `maps/tests/jitsi_config.json`), walk in, press SPACE.",
-      "expected": "Popup \"[SPACE] to enter Jitsi 👀\" (phone \"👆 to enter Jitsi 👀\") with \"Enter Jitsi\"; a \"Jitsi\" cowebsite tab opens with the meeting. Leaving the area closes it. Needs JITSI_URL (or the map's jitsiUrl) and internet for the call itself.",
-      "source": "prod",
+      "topic": "Jitsi zone (ignored)",
+      "action": "Desktop: an area with `jitsiRoom`, `jitsiTrigger: onaction` and also an Open website on action (set by a script, like an old Tiled zone), walk in.",
+      "expected": "No Jitsi popup and no Jitsi tab (Jitsi is no longer supported, game #1688). The zone's other settings still work: the \"Open website\" popup shows as before. Phone the same.",
+      "source": "game #1688 + approved Jitsi removal mock",
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "`GameMapPropertiesListener.ts:136-290`; button \"Enter Jitsi\" `Components/PopUp/PopUpJitsi.svelte:22`; tab name `play/src/i18n/en-US/cowebsite.ts:8`."
+      "hooks": "`GameMapPropertiesListener.ts:125` (Jitsi properties ignored); spec OR-cowebsite.spec.ts `expectNoJitsi`"
     },
     {
       "id": "OR-088",
       "area": "Orbit and map scripts",
-      "topic": "Jitsi area (WAM)",
-      "action": "WAM area with a Jitsi call (no video-call property on the same area), walk in.",
-      "expected": "Same as OR-087. Jitsi is no longer offered in the editor (ME-055); areas that already have one keep working.",
-      "source": "prod",
+      "topic": "Jitsi area (WAM, ignored)",
+      "action": "WAM area saved with a Jitsi call and an Open website on action, walk in.",
+      "expected": "Same as OR-087: no Jitsi popup or tab; the area's Open website still works. The map loads normally.",
+      "source": "game #1688 + approved Jitsi removal mock",
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "`AreasPropertiesListener.ts:753-830`."
+      "hooks": "`WamFileMigration.dropJitsi`; `AreasPropertiesListener.ts:255/360/471` (left-over Jitsi ignored)."
     },
     {
       "id": "OR-089",

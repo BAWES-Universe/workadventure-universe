@@ -1,5 +1,6 @@
 import type { Command } from "@workadventure/map-editor";
 import { GameMap, WAMFileFormat } from "@workadventure/map-editor";
+import { wamFileMigration } from "@workadventure/map-editor/src/Migrations/WamFileMigration";
 import type { EditMapCommandMessage } from "@workadventure/messages";
 import type { ITiledMap } from "@workadventure/tiled-map-type-guard";
 import * as Sentry from "@sentry/node";
@@ -122,7 +123,9 @@ class MapsManager {
 
     public async loadWAMToMemory(key: string): Promise<GameMap> {
         const file = await fileSystem.readFileAsString(key);
-        const wam = WAMFileFormat.parse(JSON.parse(file));
+        // Same reading as the game's: an old setting the game no longer supports (Jitsi, #1688) is dropped here too,
+        // so the next save writes the map without it.
+        const wam = wamFileMigration.migrate(JSON.parse(file));
 
         const gameMap = new GameMap(this.getMockITiledMap(), wam);
         this.loadedMaps.set(key, gameMap);

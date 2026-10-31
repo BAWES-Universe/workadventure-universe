@@ -5,7 +5,6 @@ import type {
     AreaDataProperty,
     FocusablePropertyData,
     TooltipPropertyData,
-    JitsiRoomPropertyData,
     ListenerMegaphonePropertyData,
     MatrixRoomPropertyData,
     OpenFilePropertyData,
@@ -31,7 +30,7 @@ import { iframeListener } from "../../../Api/IframeListener";
 import { scriptUtils } from "../../../Api/ScriptUtils";
 import { localUserStore } from "../../../Connection/LocalUserStore";
 import { Room } from "../../../Connection/Room";
-import { ADMIN_URL, JITSI_PRIVATE_MODE, JITSI_URL } from "../../../Enum/EnvironmentVariable";
+import { ADMIN_URL } from "../../../Enum/EnvironmentVariable";
 import {
     audioManagerFileStore,
     audioManagerVisibilityStore,
@@ -59,7 +58,6 @@ import {
 import { currentLiveStreamingSpaceStore } from "../../../Stores/MegaphoneStore";
 import { notificationPlayingStore } from "../../../Stores/NotificationStore";
 import type { CoWebsite } from "../../../WebRtc/CoWebsite/CoWebsite";
-import { JitsiCoWebsite } from "../../../WebRtc/CoWebsite/JitsiCoWebsite";
 import { SimpleCoWebsite } from "../../../WebRtc/CoWebsite/SimpleCoWebsite";
 import { createMapFileViewer, mapFileOpensInViewer } from "../../../FileViewer/openFileViewer";
 import { coWebsites } from "../../../Stores/CoWebsiteStore";
@@ -86,7 +84,6 @@ import type { ChatRoom, ChatRoomMembershipManagement } from "../../../Chat/Conne
 import { userIsConnected } from "../../../Stores/MenuStore";
 import { popupStore } from "../../../Stores/PopupStore";
 import PopupCowebsite from "../../../Components/PopUp/PopupCowebsite.svelte";
-import JitsiPopup from "../../../Components/PopUp/PopUpJitsi.svelte";
 import PopUpTab from "../../../Components/PopUp/PopUpTab.svelte";
 import { selectedRoomStore } from "../../../Chat/Stores/SelectRoomStore";
 import FilePopup from "../../../Components/PopUp/FilePopup.svelte";
@@ -96,6 +93,7 @@ import { cameraOnStore, showCameraToSpeakers, stageSeesCamerasStore } from "../.
 import { areaChatRooms, areaPresenceStore } from "../../../Chat/Stores/AreaPresenceStore";
 import { resolveMeetingAreaName } from "../../../Chat/Components/TopRow/TopRowSummary";
 import { leaveAreaSpaceIfJoined } from "./leaveAreaSpace";
+import { playableSoundLink } from "./uploadedSoundLink";
 
 // How long "The speakers can see your camera" stays over the player (#1623)
 const ATTENDEE_CAMERA_MESSAGE_DURATION = 3000;
@@ -237,7 +235,9 @@ export class AreasPropertiesListener {
                 break;
             }
             case "playAudio": {
-                this.handlePlayAudioPropertyOnEnter(property);
+                this.handlePlayAudioPropertyOnEnter(property, abortController.signal).catch((error) =>
+                    console.error("Error playing sound:", error)
+                );
                 break;
             }
             case "focusable": {
@@ -255,7 +255,7 @@ export class AreasPropertiesListener {
                 break;
             }
             case "jitsiRoomProperty": {
-                this.handleJitsiRoomPropertyOnEnter(property);
+                // Jitsi is no longer supported (#1688). Maps lose it when they load; anything left is ignored.
                 break;
             }
             case "livekitRoomProperty": {
@@ -347,7 +347,9 @@ export class AreasPropertiesListener {
             }
             case "playAudio": {
                 newProperty = newProperty as typeof oldProperty;
-                this.handlePlayAudioPropertyOnUpdate(newProperty);
+                this.handlePlayAudioPropertyOnUpdate(newProperty, newAbortController.signal).catch((error) =>
+                    console.error("Error playing sound:", error)
+                );
                 break;
             }
             case "focusable": {
@@ -360,9 +362,7 @@ export class AreasPropertiesListener {
                 break;
             }
             case "jitsiRoomProperty": {
-                newProperty = newProperty as typeof oldProperty;
-                this.handleJitsiRoomPropertyOnLeave(oldProperty);
-                this.handleJitsiRoomPropertyOnEnter(newProperty);
+                // Jitsi is no longer supported (#1688). Maps lose it when they load; anything left is ignored.
                 break;
             }
             case "livekitRoomProperty": {
@@ -473,7 +473,7 @@ export class AreasPropertiesListener {
                 break;
             }
             case "jitsiRoomProperty": {
-                this.handleJitsiRoomPropertyOnLeave(property);
+                // Jitsi is no longer supported (#1688). Maps lose it when they load; anything left is ignored.
                 break;
             }
             case "livekitRoomProperty": {
@@ -528,9 +528,20 @@ export class AreasPropertiesListener {
         }
     }
 
-    private handlePlayAudioPropertyOnEnter(property: PlayAudioPropertyData): void {
+    private async handlePlayAudioPropertyOnEnter(
+        property: PlayAudioPropertyData,
+        abortSignal: AbortSignal
+    ): Promise<void> {
+        // A "Play a sound" just added has no sound yet
+        if (!property.audioLink) {
+            return;
+        }
+        const link = await this.playableSoundLink(property.audioLink, abortSignal);
+        if (abortSignal.aborted) {
+            return;
+        }
         // playAudioLoop is supposedly deprecated. Should we ignore it?
-        audioManagerFileStore.playAudio(property.audioLink, this.scene.getMapUrl(), property.volume);
+        audioManagerFileStore.playAudio(link, this.scene.getMapUrl(), property.volume);
         audioManagerVisibilityStore.set("visible");
     }
 
@@ -786,119 +797,6 @@ export class AreasPropertiesListener {
         this.scene.focusFx.setTargetDarkness(property.opacity);
         this.scene.focusFx.setTransitionDuration(property.duration);
         this.scene.focusFx.show();
-    }
-
-    private handleJitsiRoomPropertyOnEnter(property: JitsiRoomPropertyData): void {
-        const openJitsiRoomFunction = async () => {
-            const roomName = Jitsi.slugifyJitsiRoomName(property.roomName, this.scene.roomUrl, property.noPrefix);
-            let jitsiUrl = property.jitsiUrl;
-
-            let jwt: string | undefined;
-            if (JITSI_PRIVATE_MODE && !jitsiUrl) {
-                if (!this.scene.connection) {
-                    console.info("Cannot connect to Jitsi. No connection to Pusher server.");
-                    return;
-                }
-                const answer = await this.scene.connection.queryJitsiJwtToken(roomName);
-                jwt = answer.jwt;
-                jitsiUrl = answer.url;
-            }
-
-            jitsiUrl = jitsiUrl || JITSI_URL;
-            if (jitsiUrl === undefined) {
-                throw new Error("Missing JITSI_URL environment variable or jitsiUrl parameter in the map.");
-            }
-
-            if (!jitsiUrl.startsWith("http://") && !jitsiUrl.startsWith("https://")) {
-                jitsiUrl = `https://${jitsiUrl}`;
-            }
-
-            let parsedUrl: URL;
-            try {
-                parsedUrl = new URL(jitsiUrl);
-            } catch (error) {
-                console.error("Invalid Jitsi URL:", jitsiUrl, error);
-                throw new Error(`Invalid Jitsi URL: ${jitsiUrl}`, { cause: error });
-            }
-
-            inJitsiStore.set(true);
-
-            const coWebsite = new JitsiCoWebsite(
-                parsedUrl,
-                property.width,
-                property.closable,
-                roomName,
-                gameManager.getPlayerName() ?? "unknown",
-                jwt,
-                property.jitsiRoomConfig,
-                undefined,
-                property.jitsiRoomAdminTag ?? null
-            );
-
-            coWebsites.add(coWebsite);
-
-            analyticsClient.enteredJitsi(roomName, this.scene.roomUrl);
-
-            popupStore.removePopup("jitsi");
-            // TODO: this is the code to remove the new design popup before the "new design"
-            /*this.scene.CurrentPlayer.destroyText("jitsi");
-            const callback = this.actionTriggerCallback.get("jitsi");
-            if (callback) {
-                this.scene.userInputManager.removeSpaceEventListener(callback);
-                this.actionTriggerCallback.delete("jitsi");
-            }*/
-            /**
-             * @DEPRECATED - This is the old way to show trigger message
-             layoutManagerActionStore.removeAction("jitsi");
-             */
-        };
-
-        const forceTrigger = localUserStore.getForceCowebsiteTrigger();
-        if (forceTrigger || property.trigger === ON_ACTION_TRIGGER_BUTTON) {
-            let message = property.triggerMessage;
-            if (message === undefined) {
-                message = getTriggerHint("jitsiRoom");
-            }
-
-            popupStore.addPopup(
-                JitsiPopup,
-                {
-                    message: message,
-                    click: () => {
-                        openJitsiRoomFunction().catch((e) => console.error(e));
-                    },
-                    userInputManager: this.scene.userInputManager,
-                },
-                "jitsi"
-            );
-            //TODO: bode below is old "new design" popups before the new design. Choose i we keep it.
-            // Create callback and play text message
-            /*const callback = () => {
-                openJitsiRoomFunction().catch((e) => console.error(e));
-                this.scene.CurrentPlayer.destroyText("jitsi");
-                this.scene.userInputManager.removeSpaceEventListener(callback);
-                this.actionTriggerCallback.delete("jitsi");
-            };
-            this.scene.CurrentPlayer.playText("jitsi", `${message}`, -1, callback);
-            this.scene.userInputManager?.addSpaceEventListener(callback);
-            this.actionTriggerCallback.set("jitsi", callback);*/
-
-            /**
-             * @DEPRECATED - This is the old way to show trigger message
-             layoutManagerActionStore.addAction({
-             uuid: "jitsi",
-             type: "message",
-             message: message,
-             callback: () => {
-             openJitsiRoomFunction().catch((e) => console.error(e));
-             },
-             userInputManager: this.scene.userInputManager,
-             },
-             "jitsi"
-             );*/
-        } else {
-            openJitsiRoomFunction().catch((e) => console.error(e));
-        }
     }
 
     private setMatrixRoomAreaPresence(property: MatrixRoomPropertyData, areaName: string | undefined): void {
@@ -1204,26 +1102,31 @@ export class AreasPropertiesListener {
         audioManagerVisibilityStore.set("hidden");
     }
 
-    private handlePlayAudioPropertyOnUpdate(newProperty: PlayAudioPropertyData): void {
+    private async handlePlayAudioPropertyOnUpdate(
+        newProperty: PlayAudioPropertyData,
+        abortSignal: AbortSignal
+    ): Promise<void> {
         audioManagerFileStore.unloadAudio();
-        audioManagerFileStore.playAudio(newProperty.audioLink, this.scene.getMapUrl(), newProperty.volume);
+        if (!newProperty.audioLink) {
+            audioManagerVisibilityStore.set("hidden");
+            return;
+        }
+        const link = await this.playableSoundLink(newProperty.audioLink, abortSignal);
+        if (abortSignal.aborted) {
+            return;
+        }
+        audioManagerFileStore.playAudio(link, this.scene.getMapUrl(), newProperty.volume);
+        audioManagerVisibilityStore.set("visible");
     }
 
-    private handleJitsiRoomPropertyOnLeave(property: JitsiRoomPropertyData): void {
-        popupStore.removePopup("jitsi");
-        // TODO: this is the code of the new old popups replaced by the new design. TODO: choose if we keep those.
-        /*this.scene.CurrentPlayer.destroyText("jitsi");
-        const callback = this.actionTriggerCallback.get("jitsi");
-        if (callback) {
-            this.scene.userInputManager.removeSpaceEventListener(callback);
-            this.actionTriggerCallback.delete("jitsi");
-        }*/
-        /**
-         * @DEPRECATED - This is the old way to show trigger message
-         layoutManagerActionStore.removeAction("jitsi");
-         */
-        coWebsites.keepOnly((coWebsite) => !(coWebsite instanceof JitsiCoWebsite));
-        inJitsiStore.set(false);
+    /** An uploaded sound needs the map's access token (#1626). */
+    private playableSoundLink(audioLink: string, abortSignal: AbortSignal): Promise<string> {
+        const connection = this.scene.connection;
+        return playableSoundLink(
+            audioLink,
+            this.scene.room.mapStorageUrl,
+            connection ? () => connection.queryMapStorageJwtToken(abortSignal) : undefined
+        );
     }
 
     private handlePersonalAreaPropertyOnLeave(area?: Area): void {

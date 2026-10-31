@@ -90,14 +90,6 @@ class AnalyticsClient {
             .catch((e) => console.error(e));
     }
 
-    enteredJitsi(roomName: string, roomId: string): void {
-        this.posthogPromise
-            ?.then((posthog) => {
-                posthog.capture("wa-entered-jitsi", { roomName, roomId });
-            })
-            .catch((e) => console.error(e));
-    }
-
     enteredMeetingRoom(roomName: string, roomId: string): void {
         this.posthogPromise
             ?.then((posthog) => {

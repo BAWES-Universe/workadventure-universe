@@ -90,7 +90,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         fullscreen: "全画面表示",
         notifications: "通知",
         chatSounds: "チャットサウンド",
-        cowebsiteTrigger: "ウェブサイトや Jitsi ルームを開く前に必ず確認する",
         ignoreFollowRequest: "他のユーザをフォローするリクエストを無視する",
         proximityDiscussionVolume: "近接ディスカッションの音量",
         blockAudio: "環境音と音楽をブロックする",

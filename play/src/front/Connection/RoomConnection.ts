@@ -25,7 +25,6 @@ import type {
     FollowRequestMessage,
     GroupDeleteMessage as GroupDeleteMessageTsProto,
     GroupUpdateMessage as GroupUpdateMessageTsProto,
-    JitsiJwtAnswer,
     JoinBBBMeetingAnswer,
     MegaphoneSettings,
     Member,
@@ -1497,19 +1496,6 @@ export class RoomConnection implements RoomConnection {
                 removeSpaceFilterMessage: filter,
             },
         });
-    }
-
-    public async queryJitsiJwtToken(jitsiRoom: string): Promise<JitsiJwtAnswer> {
-        const answer = await this.query({
-            $case: "jitsiJwtQuery",
-            jitsiJwtQuery: {
-                jitsiRoom,
-            },
-        });
-        if (answer.$case !== "jitsiJwtAnswer") {
-            throw new Error("Unexpected answer");
-        }
-        return answer.jitsiJwtAnswer;
     }
 
     public async queryMapStorageJwtToken(signal?: AbortSignal): Promise<MapStorageJwtAnswer> {

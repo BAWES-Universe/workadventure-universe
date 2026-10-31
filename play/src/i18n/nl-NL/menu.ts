@@ -92,7 +92,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         fullscreen: "Volledig scherm",
         notifications: "Meldingen",
         chatSounds: "Geluiden van chat",
-        cowebsiteTrigger: "Altijd vragen voordat websites en Jitsi Meet-ruimtes worden geopend",
         ignoreFollowRequest: "Negeer verzoeken om andere gebruikers te volgen",
     },
     invite: {

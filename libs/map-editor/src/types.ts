@@ -69,6 +69,8 @@ export const ExitPropertyData = PropertyBase.extend({
     areaName: z.string(),
 });
 
+// Jitsi is no longer supported (#1688). The type stays so that a saved map that still has one can be read; the WAM
+// file migration drops it when a map loads, and nothing in the game acts on it.
 export const JitsiRoomPropertyData = PropertyBase.extend({
     type: z.literal("jitsiRoomProperty"),
     roomName: z.string(),
@@ -85,6 +87,9 @@ export const JitsiRoomPropertyData = PropertyBase.extend({
 export const PlayAudioPropertyData = PropertyBase.extend({
     type: z.literal("playAudio"),
     audioLink: z.string(),
+    // The name of the file uploaded for it (#1626), which audioLink then points to. Empty when audioLink is a link
+    // someone pasted. Same field as upstream WorkAdventure.
+    audioName: z.string().nullable().optional(),
     volume: z.number().default(1).optional(),
     triggerMessage: z.string().optional(),
 });
