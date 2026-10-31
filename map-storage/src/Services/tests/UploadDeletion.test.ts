@@ -72,7 +72,7 @@ const run = () =>
         message,
         uploads: uploads as never,
     });
-const copiesIn = (key: string) => Object.keys((maps.get(key) as GameMap).getWam().entities);
+const copiesIn = (key: string) => Object.keys((maps.get(key) as GameMap).getWam()?.entities ?? {});
 
 describe("deleting an upload everywhere (#1690)", () => {
     beforeEach(() => {
