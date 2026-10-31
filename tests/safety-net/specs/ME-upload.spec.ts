@@ -96,9 +96,13 @@ test("ME-028 Save to my objects: the upload shows in Your uploads and in search"
     await cells.nth(2).click();
     await cells.nth(3).click();
     await expect(cells.nth(2)).toHaveAttribute("aria-pressed", "true");
-    const depth = page.getByTestId("edit-panel").locator("select").last();
-    await depth.selectOption({ label: "On the ground" });
-    await depth.selectOption({ label: "Custom" });
+    // "Drawn" is the game's dropdown: open it, then pick (#1683)
+    const depth = page.getByTestId("depth").getByRole("button");
+    await depth.click();
+    await page.getByRole("option", { name: "On the ground" }).click();
+    await expect(depth).toHaveText(/On the ground/);
+    await depth.click();
+    await page.getByRole("option", { name: "Custom" }).click();
     await expect(page.locator('input[type="range"]')).toBeVisible();
     await page.getByTestId("applyEntityModifications").click();
     const panel = page.getByTestId("edit-panel");
