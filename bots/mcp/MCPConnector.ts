@@ -212,6 +212,19 @@ const NOT_SENT: JsonRpcOutcome = { data: null, neverRan: true, retryable: false 
 export type ToolCallOutcome = 'not_sent' | 'failed' | 'uncertain';
 
 /**
+ * What a call that brought back no result reads as (#1692). The error is the short note the steps line shows under the
+ * call, so it stays under about 30 characters; the hint tells the bot what that means for trying again. Only a call
+ * that provably never reached the server is safe to send again.
+ */
+const NOT_SENT_ERROR = "Couldn't reach it. Nothing ran";
+const NOT_SENT_HINT = 'The call never reached the tool server, so nothing was done. Trying again is safe.';
+const NO_ANSWER_ERROR = 'No answer. May have finished';
+const EMPTY_ANSWER_ERROR = 'Empty answer. May have finished';
+const MAY_HAVE_RUN_HINT =
+    'The call reached the tool server but no answer came back. It may have run. Do not call this tool again in this ' +
+    'reply. Tell the person it may have worked and to check before asking again.';
+
+/**
  * Execute a JSON-RPC request to an MCP server with timeout and error handling.
  * Never throws — returns the response data or null on failure.
  *
@@ -735,9 +748,11 @@ export class MCPConnector {
                 // Turn was cancelled while the tool call was in flight. Return
                 // a distinct marker so callers can tell a cancellation apart
                 // from a genuinely unreachable server.
-                return { error: `Tool call cancelled: ${toolName}`, outcome };
+                return { error: `Tool call cancelled: ${toolName}`, outcome, cancelled: true };
             }
-            return { error: `Tool unavailable: ${toolName} (server not reachable)`, outcome };
+            return outcome === 'not_sent'
+                ? { error: NOT_SENT_ERROR, outcome, hint: NOT_SENT_HINT }
+                : { error: NO_ANSWER_ERROR, outcome, hint: MAY_HAVE_RUN_HINT };
         }
 
         if (response.error) {
@@ -775,7 +790,7 @@ export class MCPConnector {
         }
 
         // An answer that is neither a result nor an error proves nothing about what the server did
-        return { error: `Tool ${toolName} returned no content`, outcome: 'uncertain' satisfies ToolCallOutcome };
+        return { error: EMPTY_ANSWER_ERROR, outcome: 'uncertain' satisfies ToolCallOutcome, hint: MAY_HAVE_RUN_HINT };
     }
 
     /**
