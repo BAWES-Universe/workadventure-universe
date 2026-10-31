@@ -41,15 +41,13 @@ import { deleteUploadEverywhere } from "./Services/UploadDeletion";
 import { entitiesManager } from "./EntitiesManager";
 import { mapsManager } from "./MapsManager";
 import { mapPathUsingDomainWithPrefix } from "./Services/PathMapper";
-import { LockByKey } from "./Services/LockByKey";
+import { editionLocksFor } from "./Services/EditionLocks";
 import { DeleteAreaMapStorageCommand } from "./Commands/Area/DeleteAreaMapStorageCommand";
 import { UpdateAreaMapStorageCommand } from "./Commands/Area/UpdateAreaMapStorageCommand";
 import { DeleteEntityMapStorageCommand } from "./Commands/Entity/DeleteEntityMapStorageCommand";
 import { UploadFileMapStorageCommand } from "./Commands/File/UploadFileMapStorageCommand";
 import { hookManager } from "./Modules/HookManager";
 import { UpdateEntityMapStorageCommand } from "./Commands/Entity/UpdateEntityMapStorageCommand";
-
-const editionLocks = new LockByKey<string>();
 
 /**
  * List of commands that can be executed even if the user does not have edit rights on the map
@@ -97,7 +95,13 @@ function extractUniverseWorldPath(pathname: string): string {
 /** The address of a map of the world, from its path inside the world and the address of another map of it. */
 function wamUrlInWorld(sameWorldMapUrl: URL, universeWorldPath: string, pathInWorld: string): string {
     const worldStart = sameWorldMapUrl.href.indexOf(`/${universeWorldPath}/`);
-    return `${sameWorldMapUrl.href.slice(0, worldStart)}/${universeWorldPath}/${pathInWorld}`;
+    // A room's file name can hold spaces and other characters a web address writes differently: the address is built
+    // the way the web address parser writes it, so it matches the address the room is known by.
+    const escapedPath = pathInWorld
+        .split("/")
+        .map((part) => part.replace(/[%?#]/g, encodeURIComponent))
+        .join("/");
+    return new URL(`${sameWorldMapUrl.href.slice(0, worldStart)}/${universeWorldPath}/${escapedPath}`).href;
 }
 
 /**
@@ -248,6 +252,10 @@ const mapStorageServer: MapStorageServer = {
                 return;
             }
 
+            const wholeUploadDelete =
+                editMapCommandMessage.editMapMessage.message.$case === "deleteCustomEntityMessage" &&
+                editMapCommandMessage.editMapMessage.message.deleteCustomEntityMessage.wholeUpload;
+            const editionLocks = editionLocksFor(wholeUploadDelete, `${mapUrl.hostname}/${universeWorldPath}`);
             await editionLocks.waitForLock(mapKey, async () => {
                 const editMapCommandMessage = call.request.editMapCommandMessage;
                 if (!editMapCommandMessage || !editMapCommandMessage.editMapMessage?.message) {

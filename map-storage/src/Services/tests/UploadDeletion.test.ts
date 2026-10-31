@@ -32,6 +32,7 @@ vi.mock("../../fileSystem", () => ({
 
 import { deleteUploadEverywhere } from "../UploadDeletion";
 import { countCopiesByRoom } from "../CustomEntityCopies";
+import { editionLocks } from "../EditionLocks";
 
 const OFFICE = "host/universe/world/office/map.wam";
 const LOUNGE = "host/universe/world/lounge/map.wam";
@@ -109,6 +110,30 @@ describe("deleting an upload everywhere (#1690)", () => {
         // The people in every other room of the world are told, not only those whose room held a copy
         expect(others.sort()).toEqual(["attic/map.wam", "empty/map.wam", "lounge/map.wam"]);
         expect(queued.map((entry) => entry.key).sort()).toEqual([ATTIC, EMPTY, LOUNGE].sort());
+    });
+
+    it("waits for an edit that is running in another room, and holds that room until it is done", async () => {
+        const order: string[] = [];
+        let finishEdit: () => void = () => undefined;
+        const edit = editionLocks.waitForLock(
+            LOUNGE,
+            () =>
+                new Promise<void>((resolve) => {
+                    finishEdit = () => {
+                        order.push("edit done");
+                        resolve();
+                    };
+                })
+        );
+        const deleting = run().then(() => order.push("delete done"));
+        await new Promise<void>((resolve) => {
+            setTimeout(resolve, 20);
+        });
+        expect(copiesIn(LOUNGE).sort()).toEqual(["b", "c", "d"]);
+        finishEdit();
+        await Promise.all([edit, deleting]);
+        expect(order).toEqual(["edit done", "delete done"]);
+        expect(copiesIn(LOUNGE)).toEqual(["d"]);
     });
 
     it("deletes nothing when a room can't be read", async () => {

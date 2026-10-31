@@ -786,8 +786,19 @@ export class SocketManager {
 
     /** The rooms this back holds that are one of these map files. */
     public getLoadedRoomsByWamUrl(wamUrls: string[]): GameRoom[] {
-        const urls = new Set(wamUrls);
-        return [...this.resolvedRooms.values()].filter((room) => room.wamUrl !== undefined && urls.has(room.wamUrl));
+        // Compared as the web address parser writes them, so a room whose name has a space or another special
+        // character is found however its address was written.
+        const normalize = (url: string): string => {
+            try {
+                return new URL(url).href;
+            } catch {
+                return url;
+            }
+        };
+        const urls = new Set(wamUrls.map(normalize));
+        return [...this.resolvedRooms.values()].filter(
+            (room) => room.wamUrl !== undefined && urls.has(normalize(room.wamUrl))
+        );
     }
 
     public handleAbortQueryMessage(room: GameRoom, user: User, abortQueryMessage: AbortQueryMessage) {

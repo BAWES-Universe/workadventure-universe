@@ -409,6 +409,18 @@ describe("MapStorageServer edit rights", () => {
                 expect(executeEntityCommand).not.toHaveBeenCalled();
             });
 
+            it("writes the other rooms' addresses the way the web writes them, so a room with a space in its name is found", async () => {
+                uploads.set("lamp", { ownerId: "owner" });
+                deleteUploadEverywhere.mockResolvedValue(["my room/map.wam", "100%/map.wam"]);
+                const answer = await sendAndGetMessage(removeEverywhere("lamp"), editor);
+                const message =
+                    answer?.$case === "deleteCustomEntityMessage" ? answer.deleteCustomEntityMessage : undefined;
+                expect(message?.otherRoomWamUrls).toEqual([
+                    "http://localhost/universe/world/my%20room/map.wam",
+                    "http://localhost/universe/world/100%25/map.wam",
+                ]);
+            });
+
             it("drops the room list and picture list a browser sends, so no room is told about a delete that didn't happen", async () => {
                 uploads.set("lamp", { ownerId: "owner" });
                 const crafted = (wholeUpload: boolean): EditMessage => ({
