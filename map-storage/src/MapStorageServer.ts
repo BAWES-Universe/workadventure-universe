@@ -38,6 +38,7 @@ import { UploadEntityMapStorageCommand } from "./Commands/Entity/UploadEntityMap
 import { CustomEntityCollectionService } from "./Services/CustomEntityCollectionService";
 import { countCopiesByRoom, hasCopyOutsideUserRights } from "./Services/CustomEntityCopies";
 import { deleteUploadEverywhere } from "./Services/UploadDeletion";
+import { uploadDeletionNotifier } from "./Services/UploadDeletionNotifier";
 import { entitiesManager } from "./EntitiesManager";
 import { mapsManager } from "./MapsManager";
 import { mapPathUsingDomainWithPrefix } from "./Services/PathMapper";
@@ -540,10 +541,9 @@ const mapStorageServer: MapStorageServer = {
                     }
                     case "deleteCustomEntityMessage": {
                         const deleteCustomEntityMessage = editMapMessage.deleteCustomEntityMessage;
-                        // These two are only ever written here, after the delete went through: whatever the browser
-                        // sent in them is dropped, so it can't have other rooms told about a delete that didn't happen.
+                        // Only ever written here, after the delete went through: whatever the browser sent in it is
+                        // dropped, so it can't have other rooms told about a delete that didn't happen.
                         deleteCustomEntityMessage.pictureIds = [];
-                        deleteCustomEntityMessage.otherRoomWamUrls = [];
                         const uploads = new CustomEntityCollectionService(mapUrl.hostname, universeWorldPath);
                         // The pictures that go: the browser deletes one picture, or a whole upload (#1690).
                         const pictureIds = new Set([deleteCustomEntityMessage.id]);
@@ -586,13 +586,19 @@ const mapStorageServer: MapStorageServer = {
                                 // could still put a copy where this person can't edit.
                                 checkRights: assertMayDeleteUpload,
                             });
-                            // Told to the back, so the people in those rooms see the copies go.
-                            Object.assign(deleteCustomEntityMessage, {
-                                pictureIds: [...pictureIds],
-                                otherRoomWamUrls: otherRooms.map((room) =>
-                                    wamUrlInWorld(mapUrl, universeWorldPath, room)
-                                ),
-                            });
+                            Object.assign(deleteCustomEntityMessage, { pictureIds: [...pictureIds] });
+                            // Told to every back server, so the people in those rooms see the copies go whichever
+                            // back server holds their room (#1722). The delete is done: a failure here only means some
+                            // people see the copies go when they next load.
+                            uploadDeletionNotifier
+                                .tell(
+                                    otherRooms.map((room) => wamUrlInWorld(mapUrl, universeWorldPath, room)),
+                                    editMapCommandMessage
+                                )
+                                .catch((err: unknown) => {
+                                    console.error(`[${new Date().toISOString()}]`, err);
+                                    Sentry.captureException(err);
+                                });
                             break;
                         }
                         await entitiesManager.executeCommand(
