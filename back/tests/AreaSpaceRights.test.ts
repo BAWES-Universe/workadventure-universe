@@ -88,6 +88,18 @@ describe("refusedAreaSpaces", () => {
         expect(refusedAreaSpaces(map, ROOM, { ...player, uuid: "bot-12" })).toEqual([]);
     });
 
+    it("holds a voice bot to the same roles as a player, so it joins only the meeting rooms a player with its roles could", () => {
+        const map = wam(area("a1", [meeting("Board"), onlyStaff]), area("a2", [meeting("Cafe")]));
+        const voiceBot = { ...player, tags: ["bot", "voice-bot"], uuid: "bot-12" };
+        expect(refusedAreaSpaces(map, ROOM, voiceBot)).toEqual([room("Board")]);
+        // A bot that was given the role would be let in like a player with it
+        expect(refusedAreaSpaces(map, ROOM, { ...voiceBot, tags: [...voiceBot.tags, "staff"] })).toEqual([]);
+        // The tag alone makes nobody a voice bot
+        expect(refusedAreaSpaces(map, ROOM, { ...player, tags: ["voice-bot"] })).toEqual([room("Board")]);
+        // Other bots are untouched
+        expect(refusedAreaSpaces(map, ROOM, { ...player, tags: ["bot"], uuid: "bot-13" })).toEqual([]);
+    });
+
     it("refuses a closed stage, and the audience that names it, when no other area carries the name", () => {
         const map = wam(
             area("stage1", [stage("Keynote"), onlyStaff]),

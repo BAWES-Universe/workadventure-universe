@@ -23,6 +23,8 @@ import {
     FollowRequestMessage,
     FollowAbortMessage,
     PrivateSpaceEvent,
+    AvailabilityStatus,
+    SetPlayerDetailsMessage,
 } from '@workadventure/messages';
 import type { PositionInterface, ViewportInterface } from '../../play/src/front/Connection/ConnexionModels';
 import { BotState } from './BotState';
@@ -40,6 +42,7 @@ import * as Sentry from '@sentry/node';
 import { VoiceCalls } from '../voice/VoiceCalls';
 import { WorkerLink } from '../voice/VoiceLink';
 import { VOICE_BOT_TAG } from '../voice/VoiceBotTag';
+import { MeetingPresence, type MeetingArea } from '../voice/MeetingAreas';
 import { voiceWorkerSettings } from '../voice/settings';
 
 // Get the secret key from environment - must match pusher's SECRET_KEY
@@ -104,6 +107,9 @@ export class BotClient {
     private spaces: Map<string, SpaceUser['spaceUserId']> = new Map();
     /** Audio connections with people, for a voice bot only (see isVoiceBot). Null for every other bot. */
     private voice: VoiceCalls | null = null;
+    /** Which meeting room the bot stands in, for a voice bot only (see voice/MeetingAreas.ts). */
+    private meeting: MeetingPresence | null = null;
+    private meetingAreas: { areas: MeetingArea[]; roomUrl: string } = { areas: [], roomUrl: '' };
     private players: Map<number, PlayerInfo> = new Map();
     // Conversation bubbles the bot can see: groupId -> user ids in that bubble
     private bubbles: Map<number, number[]> = new Map();
@@ -323,6 +329,8 @@ export class BotClient {
      * Never throws.
      */
     private async mayChat(spaceName: string, senderId: number, message: object): Promise<boolean> {
+        // A meeting room's chat is not the bot's to answer: there the bot only takes part in the audio
+        if (this.isMeetingSpace(spaceName)) return false;
         const gate = this.accessGate;
         if (!gate || !this.behavior) return true;
         // Someone's first words can arrive just before the game says who they are: asking Orbit now would take a
@@ -553,6 +561,7 @@ export class BotClient {
         const newDirection = this.state.getDirection();
         const newMoving = this.state.isMoving();
         const now = Date.now();
+        if (this.joined) this.meeting?.update(newPosition);
         
         // Calculate position change distance
         const positionChanged = this.lastSentPosition 
@@ -2378,11 +2387,64 @@ export class BotClient {
             },
             (message) => console.warn(`[Bot ${this.config.botId}] ${message}`)
         );
+        this.meeting = new MeetingPresence({
+            join: (spaceName) => this.joinMeetingSpace(spaceName),
+            leave: (spaceName) => this.leaveMeetingSpace(spaceName),
+        });
+        this.meeting.setAreas(this.meetingAreas.areas, this.meetingAreas.roomUrl);
     }
 
     private stopVoice(): void {
         this.voice?.shutdown();
         this.voice = null;
+        this.meeting?.reset();
+        this.meeting = null;
+    }
+
+    /** The meeting rooms of the map (areas with a LiveKit room setting). Only a voice bot ever uses them. */
+    setMeetingAreas(areas: MeetingArea[], roomUrl: string): void {
+        this.meetingAreas = { areas, roomUrl };
+        this.meeting?.setAreas(areas, roomUrl);
+    }
+
+    private isMeetingSpace(spaceName: string): boolean {
+        return this.meeting?.owns(spaceName) === true;
+    }
+
+    /**
+     * The bot stands in a meeting room: it joins the room's space like a player does, so the voice code treats it as
+     * any other space. It takes part in the audio only: the bot's behaviour (its conversations, greetings, chat) is
+     * not told about the room, and the bot shows as being in a meeting, as a player does, so that no bubble forms
+     * around it meanwhile.
+     */
+    private async joinMeetingSpace(spaceName: string): Promise<boolean> {
+        try {
+            const spaceUserId = await this.emitJoinSpace(spaceName, FilterType.ALL_USERS, ['cameraState', 'microphoneState', 'screenShareState']);
+            this.spaces.set(spaceName, spaceUserId);
+            this.emitAddSpaceFilter(spaceName);
+            this.sendSpaceUserUpdate(spaceName, { cameraState: false, microphoneState: false, screenSharingState: false });
+            this.sendAvailability(AvailabilityStatus.LIVEKIT);
+            return true;
+        } catch (error) {
+            console.warn(`[Bot ${this.config.botId}] Could not join meeting room ${spaceName}: ${error instanceof Error ? error.message : error}`);
+            return false;
+        }
+    }
+
+    private async leaveMeetingSpace(spaceName: string): Promise<void> {
+        try {
+            this.emitRemoveSpaceFilter(spaceName);
+            this.voice?.spaceLeft(spaceName);
+            await this.emitLeaveSpace(spaceName);
+        } catch (error) {
+            console.warn(`[Bot ${this.config.botId}] Could not leave meeting room ${spaceName}:`, error);
+        }
+        this.spaces.delete(spaceName);
+        this.sendAvailability(AvailabilityStatus.ONLINE);
+    }
+
+    private sendAvailability(availabilityStatus: AvailabilityStatus): void {
+        this.send({ message: { $case: 'setPlayerDetailsMessage', setPlayerDetailsMessage: SetPlayerDetailsMessage.fromPartial({ availabilityStatus }) } });
     }
 
     /** A private event to one person in a space the bot is in. */
@@ -2660,6 +2722,9 @@ export class BotClient {
                 BotClient.botUserIds.add(this.userId);
                 this.markJoined();
                 this.startVoice();
+                for (const variable of message.roomJoinedMessage.areaPropertyVariable ?? []) {
+                    this.meeting?.setLive(variable.areaId, variable.propertyId, variable.key, variable.value);
+                }
                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                     console.log(`[Bot ${this.config.botId}] ✅ Joined room, userId: ${this.userId}`);
                 }
@@ -2826,7 +2891,7 @@ export class BotClient {
                 this.voice?.spaceUsers(message.initSpaceUsersMessage.spaceName, message.initSpaceUsersMessage.users ?? []);
                 // When bot joins a space, backend sends all existing users with their UUIDs
                 // This ensures we have UUID tracking before any chat messages arrive
-                if (this.behavior && message.initSpaceUsersMessage) {
+                if (this.behavior && message.initSpaceUsersMessage && !this.isMeetingSpace(message.initSpaceUsersMessage.spaceName)) {
                     const spaceName = message.initSpaceUsersMessage.spaceName;
                     const spaceUsers = message.initSpaceUsersMessage.users || [];
                     
@@ -2884,7 +2949,7 @@ export class BotClient {
                 if (message.addSpaceUserMessage.user) this.voice?.spaceUserJoined(message.addSpaceUserMessage.spaceName, message.addSpaceUserMessage.user);
                 // When a user joins a space, we get their SpaceUser info
                 // Extract numeric userId from spaceUserId to avoid name collisions
-                if (this.behavior && message.addSpaceUserMessage) {
+                if (this.behavior && message.addSpaceUserMessage && !this.isMeetingSpace(message.addSpaceUserMessage.spaceName)) {
                     const spaceName = message.addSpaceUserMessage.spaceName;
                     const spaceUser = message.addSpaceUserMessage.user;
                     
@@ -3081,9 +3146,19 @@ export class BotClient {
 
             case 'removeSpaceUserMessage':
                 this.voice?.spaceUserLeft(message.removeSpaceUserMessage.spaceName, message.removeSpaceUserMessage.spaceUserId);
-                if (this.behavior) {
+                if (this.behavior && !this.isMeetingSpace(message.removeSpaceUserMessage.spaceName)) {
                     this.behavior.onSpaceUserLeft(message.removeSpaceUserMessage.spaceName, message.removeSpaceUserMessage.userId);
                 }
+                break;
+
+            case 'areaPropertyVariableMessage':
+                // How many people are inside a room and whether it is locked: a voice bot waits at the door of a closed one
+                this.meeting?.setLive(
+                    message.areaPropertyVariableMessage.areaId,
+                    message.areaPropertyVariableMessage.propertyId,
+                    message.areaPropertyVariableMessage.key,
+                    message.areaPropertyVariableMessage.value
+                );
                 break;
 
             case 'privateEvent':
@@ -3262,9 +3337,10 @@ export class BotClient {
             this.voice?.spaceLeft(request.spaceName);
             await this.emitLeaveSpace(request.spaceName);
             this.spaces.delete(request.spaceName);
-            if (this.behavior) {
+            if (this.behavior && !this.isMeetingSpace(request.spaceName)) {
                 this.behavior.onSpaceLeft(request.spaceName);
             }
+            this.meeting?.spaceLeft(request.spaceName);
         } catch (error) {
             console.error(`[Bot ${this.config.botId}] Error leaving space:`, error);
         }

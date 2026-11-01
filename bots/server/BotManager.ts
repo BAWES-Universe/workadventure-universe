@@ -1307,6 +1307,8 @@ export class BotManager {
             const mapData = await this.mapDataService.getMapData(roomUrl);
             if (mapData && mapData.collisionGrid && mapData.tileDimensions) {
                 client.initializePathfinding(mapData.collisionGrid, mapData.tileDimensions);
+                // Only a voice bot has anything to do with the meeting rooms of the map
+                client.setMeetingAreas(mapData.meetingAreas || [], roomUrl);
                 console.log(`[BotManager] Pathfinding initialized for room ${roomUrl}`);
             } else {
                 console.log(`[BotManager] No collision data available for room ${roomUrl}, pathfinding disabled`);

@@ -123,3 +123,70 @@ describe('BotClient voice', () => {
         expect((links[0] as any).close).toHaveBeenCalled();
     });
 });
+
+describe('BotClient in a meeting room', () => {
+    const areas = [{ id: 'a1', x: 0, y: 0, width: 300, height: 300, roomKey: 'Board' }];
+    type Internals = ReturnType<typeof setup>['internals'] & {
+        meeting: { owns(space: string): boolean } | null;
+        emitJoinSpace: (...args: unknown[]) => Promise<string>;
+        emitLeaveSpace: (...args: unknown[]) => Promise<void>;
+        joinMeetingSpace(space: string): Promise<boolean>;
+        leaveMeetingSpace(space: string): Promise<void>;
+        mayChat(space: string, sender: number, message: object): Promise<boolean>;
+        behavior: unknown;
+    };
+
+    it('keeps no meeting-room code for a text-only bot, even when the map has meeting rooms', () => {
+        const { bot, internals } = setup(false);
+        bot.setMeetingAreas(areas, 'http://play.example.test/room');
+        internals.startVoice();
+        expect((internals as Internals).meeting).toBeNull();
+    });
+
+    it('joins a meeting room\'s space as itself, shows as in a meeting, and leaves it again', async () => {
+        const { bot, internals, send } = setup(true);
+        bot.setMeetingAreas(areas, 'http://play.example.test/room');
+        internals.startVoice();
+        const inner = internals as Internals;
+        const emitJoinSpace = vi.fn().mockResolvedValue('room_9');
+        inner.emitJoinSpace = emitJoinSpace;
+        inner.emitLeaveSpace = vi.fn().mockResolvedValue(undefined);
+
+        expect(await inner.joinMeetingSpace('area__board')).toBe(true);
+        // The same media settings a player's browser joins a meeting with
+        expect(emitJoinSpace).toHaveBeenCalledWith('area__board', expect.anything(), ['cameraState', 'microphoneState', 'screenShareState']);
+        expect(internals.spaces.get('area__board')).toBe('room_9');
+        const statuses = () => send.mock.calls.map(([m]) => m.message).filter((m) => m.$case === 'setPlayerDetailsMessage').map((m) => m.setPlayerDetailsMessage.availabilityStatus);
+        expect(statuses()).toEqual([11]);
+
+        await inner.leaveMeetingSpace('area__board');
+        expect(internals.spaces.has('area__board')).toBe(false);
+        expect(statuses()).toEqual([11, 1]);
+    });
+
+    it('does not join, and says so, when the game refuses', async () => {
+        const { bot, internals } = setup(true);
+        bot.setMeetingAreas(areas, 'http://play.example.test/room');
+        internals.startVoice();
+        const inner = internals as Internals;
+        inner.emitJoinSpace = vi.fn().mockRejectedValue(new Error('this area is limited to other roles'));
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        expect(await inner.joinMeetingSpace('area__board')).toBe(false);
+        expect(internals.spaces.has('area__board')).toBe(false);
+    });
+
+    it('keeps the meeting room away from the bot\'s behaviour and chat: it only takes part in the audio', async () => {
+        const { internals } = setup(true);
+        const inner = internals as Internals;
+        const behavior = { onSpaceUserJoined: vi.fn(), onSpaceUserLeft: vi.fn(), onSpaceLeft: vi.fn() };
+        inner.behavior = behavior;
+        inner.meeting = { owns: (space: string) => space === 'area__board' };
+        const person = { spaceUserId: 'room_3', uuid: 'u3', tags: [], name: 'Sam' };
+        await internals.handleSubMessage({ $case: 'initSpaceUsersMessage', initSpaceUsersMessage: { spaceName: 'area__board', users: [person] } });
+        await internals.handleSubMessage({ $case: 'addSpaceUserMessage', addSpaceUserMessage: { spaceName: 'area__board', user: person } });
+        await internals.handleSubMessage({ $case: 'removeSpaceUserMessage', removeSpaceUserMessage: { spaceName: 'area__board', spaceUserId: 'room_3' } });
+        expect(behavior.onSpaceUserJoined).not.toHaveBeenCalled();
+        expect(behavior.onSpaceUserLeft).not.toHaveBeenCalled();
+        expect(await inner.mayChat('area__board', 3, {})).toBe(false);
+    });
+});
