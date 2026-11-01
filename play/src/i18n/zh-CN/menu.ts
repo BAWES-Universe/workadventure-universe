@@ -89,7 +89,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         save: "保存",
         fullscreen: "全屏",
         notifications: "通知",
-        cowebsiteTrigger: "在打开网页和Jitsi Meet会议前总是询问",
         ignoreFollowRequest: "忽略跟随其他用户的请求",
     },
     invite: {

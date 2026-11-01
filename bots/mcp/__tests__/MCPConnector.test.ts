@@ -50,6 +50,14 @@ function makeAxiosError(status: number, data?: any): any {
     return err;
 }
 
+// An axios error raised before any answer came back, with the connection error code
+function makeNetworkError(code: string): any {
+    const err: any = new Error(code);
+    err.code = code;
+    err.isAxiosError = true;
+    return err;
+}
+
 // Make isAxiosError work
 mockedAxios.isAxiosError.mockImplementation((err: any) => err?.isAxiosError === true);
 
@@ -513,9 +521,7 @@ describe('MCPConnector', () => {
                 'weather-token-abc'
             );
 
-            expect(result).toEqual({
-                error: 'Tool unavailable: get_weather (server not reachable)',
-            });
+            expect(result).toEqual({ error: 'No answer. May have finished', outcome: 'uncertain', hint: expect.stringContaining('Do not call this tool again') });
         });
 
         it('returns error when tool call has an error response', async () => {
@@ -580,11 +586,11 @@ describe('MCPConnector', () => {
 
             it('reports a tool error that follows a notice', async () => {
                 const failed = { jsonrpc: '2.0', id: '2', result: { isError: true, content: [{ type: 'text', text: 'No such city' }] } };
-                expect(await call(sse(logNotice, failed))).toEqual({ error: 'Tool error: No such city' });
+                expect(await call(sse(logNotice, failed))).toEqual({ error: 'Tool error: No such city', outcome: 'failed' });
             });
 
             it('still tells a stream with no answer from a result', async () => {
-                expect(await call(sse(logNotice))).toEqual({ error: 'Tool get_weather returned no content' });
+                expect(await call(sse(logNotice))).toEqual({ error: 'Empty answer. May have finished', outcome: 'uncertain', hint: expect.stringContaining('Do not call this tool again') });
             });
         });
 
@@ -646,6 +652,126 @@ describe('MCPConnector', () => {
     });
 
     // --- Auth injection ---------------------------------------------------
+
+    describe('sending a failed tool call again (#1650)', () => {
+        const URL_ = 'https://act.example.com/mcp';
+        const INIT_WITH_SESSION = { ...MOCK_INIT_RESPONSE, headers: { 'mcp-session-id': 'old-session' } };
+        const toolCalls = () => mockedAxios.post.mock.calls.filter(([, body]: any[]) => body?.method === 'tools/call');
+
+        let warnSpy: ReturnType<typeof vi.spyOn>;
+        beforeEach(() => {
+            mockedAxios.post.mockReset();
+            mockedAxios.isCancel.mockImplementation((err: any) => err?.code === 'ERR_CANCELED');
+            warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        });
+        afterEach(() => warnSpy.mockRestore());
+
+        function callTool(playerUuid = 'p-1') {
+            return MCPConnector.executeToolCall('s', URL_, 'send_message', { to: 'Sara' }, 'none', undefined, undefined, playerUuid);
+        }
+
+        it.each([500, 502, 503])('sends the call once when the server answers %i, as it may have run it', async (status) => {
+            mockedAxios.post.mockImplementation(async (_url: string, body: any) => {
+                if (body?.method === 'initialize') return MOCK_INIT_RESPONSE;
+                throw makeAxiosError(status);
+            });
+            const result = await callTool();
+            expect(toolCalls()).toHaveLength(1);
+            expect(result).toEqual({ error: 'No answer. May have finished', outcome: 'uncertain', hint: expect.stringContaining('Do not call this tool again') });
+        });
+
+        it('sends the call once when the connection drops after it went out', async () => {
+            mockedAxios.post.mockImplementation(async (_url: string, body: any) => {
+                if (body?.method === 'initialize') return MOCK_INIT_RESPONSE;
+                throw makeNetworkError('ECONNRESET');
+            });
+            expect(await callTool()).toMatchObject({ outcome: 'uncertain' });
+            expect(toolCalls()).toHaveLength(1);
+        });
+
+        it('sends the call once on a timeout, also for a call with no player', async () => {
+            mockedAxios.post.mockImplementation(async (_url: string, body: any) => {
+                if (body?.method === 'initialize') return MOCK_INIT_RESPONSE;
+                const err: any = new Error('canceled');
+                err.code = 'ERR_CANCELED';
+                throw err;
+            });
+            expect(await callTool('')).toMatchObject({ outcome: 'uncertain' });
+            expect(toolCalls()).toHaveLength(1);
+        });
+
+        it.each(['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN'])('sends the call again when it never connected (%s)', async (code) => {
+            let calls = 0;
+            mockedAxios.post.mockImplementation(async (_url: string, body: any) => {
+                if (body?.method === 'initialize') return MOCK_INIT_RESPONSE;
+                if (++calls === 1) throw makeNetworkError(code);
+                return { data: MOCK_WEATHER_CALL_RESPONSE };
+            });
+            const result = await callTool();
+            expect(toolCalls()).toHaveLength(2);
+            expect(result).toEqual(MOCK_WEATHER_CALL_RESPONSE.result.content);
+        });
+
+        it('checks again when the server name did not resolve before anything was sent', async () => {
+            vi.mocked(lookup).mockRejectedValueOnce(Object.assign(new Error('getaddrinfo EAI_AGAIN'), { code: 'EAI_AGAIN' }));
+            mockedAxios.post.mockImplementation(async (_url: string, body: any) =>
+                body?.method === 'initialize' ? MOCK_INIT_RESPONSE : { data: MOCK_WEATHER_CALL_RESPONSE }
+            );
+            const result = await callTool();
+            expect(toolCalls()).toHaveLength(1);
+            expect(result).toEqual(MOCK_WEATHER_CALL_RESPONSE.result.content);
+        });
+
+        it('does not check again when the server name points to a private address', async () => {
+            vi.mocked(lookup).mockResolvedValueOnce([{ address: '10.0.0.5', family: 4 }] as never);
+            expect(await callTool()).toMatchObject({ outcome: 'not_sent' });
+            expect(vi.mocked(lookup)).toHaveBeenCalledTimes(1);
+            expect(mockedAxios.post).not.toHaveBeenCalled();
+        });
+
+        it('reports a call that never connected on either try as not sent, never as maybe run', async () => {
+            mockedAxios.post.mockImplementation(async (_url: string, body: any) => {
+                if (body?.method === 'initialize') return MOCK_INIT_RESPONSE;
+                throw makeNetworkError('ECONNREFUSED');
+            });
+            expect(await callTool()).toMatchObject({ outcome: 'not_sent' });
+            expect(toolCalls()).toHaveLength(2);
+        });
+
+        it('reports a call that never connected, then went out and got a 500, as maybe run', async () => {
+            let calls = 0;
+            mockedAxios.post.mockImplementation(async (_url: string, body: any) => {
+                if (body?.method === 'initialize') return MOCK_INIT_RESPONSE;
+                throw ++calls === 1 ? makeNetworkError('ECONNREFUSED') : makeAxiosError(500);
+            });
+            expect(await callTool()).toMatchObject({ outcome: 'uncertain' });
+            expect(toolCalls()).toHaveLength(2);
+        });
+
+        it('sends the call again on a fresh session when the server no longer knows ours (404)', async () => {
+            let inits = 0;
+            mockedAxios.post.mockImplementation(async (_url: string, body: any, config?: any) => {
+                if (body?.method === 'initialize') {
+                    inits++;
+                    return inits === 1 ? INIT_WITH_SESSION : { ...MOCK_INIT_RESPONSE, headers: { 'mcp-session-id': 'new-session' } };
+                }
+                if (config?.headers?.['Mcp-Session-Id'] === 'old-session') throw makeAxiosError(404);
+                return { data: MOCK_WEATHER_CALL_RESPONSE };
+            });
+            const result = await callTool();
+            expect(toolCalls().map(([, , config]: any[]) => config.headers['Mcp-Session-Id'])).toEqual(['old-session', 'new-session']);
+            expect(result).toEqual(MOCK_WEATHER_CALL_RESPONSE.result.content);
+        });
+
+        it('sends the call once on a 404 without a session, as nothing says it did not run', async () => {
+            mockedAxios.post.mockImplementation(async (_url: string, body: any) => {
+                if (body?.method === 'initialize') return MOCK_INIT_RESPONSE;
+                throw makeAxiosError(404);
+            });
+            expect(await callTool()).toMatchObject({ outcome: 'uncertain' });
+            expect(toolCalls()).toHaveLength(1);
+        });
+    });
 
     describe('auth injection', () => {
         it('sends Bearer token for bearer auth type', async () => {
@@ -807,7 +933,7 @@ describe('MCPConnector', () => {
             expect(warnSpy).toHaveBeenCalledWith(
                 expect.stringContaining('timed out after')
             );
-            expect(result.error).toContain('Tool unavailable');
+            expect(result.error).toBe('No answer. May have finished');
 
             warnSpy.mockRestore();
         });
@@ -842,7 +968,7 @@ describe('MCPConnector', () => {
             );
 
             // Distinct "cancelled" marker, NOT the unreachable-server error
-            expect(result).toEqual({ error: 'Tool call cancelled: get_weather' });
+            expect(result).toEqual({ error: 'Tool call cancelled: get_weather', outcome: 'uncertain', cancelled: true });
             // Distinct "cancelled" log, NOT the timeout warning
             expect(logSpy).toHaveBeenCalledWith(
                 expect.stringContaining('Request cancelled for tools/call')
@@ -892,7 +1018,7 @@ describe('MCPConnector', () => {
             const result = await callPromise;
 
             // Returns the cancellation marker promptly — no waiting for init
-            expect(result).toEqual({ error: 'Tool call cancelled: get_weather' });
+            expect(result).toEqual({ error: 'Tool call cancelled: get_weather', outcome: 'not_sent', cancelled: true });
             // The initialize request itself was NOT aborted (spec: MUST NOT be cancelled)
             expect(initSignal?.aborted).toBe(false);
             // Distinct "during initialize" cancellation log, not the timeout warning
@@ -971,7 +1097,7 @@ describe('MCPConnector', () => {
             await vi.advanceTimersByTimeAsync(14_999);
             expect(result).toBeUndefined();
             await vi.advanceTimersByTimeAsync(1);
-            expect(result).toEqual({ error: 'Tool unavailable: render (server not reachable)' });
+            expect(result).toEqual({ error: 'No answer. May have finished', outcome: 'uncertain', hint: expect.stringContaining('Do not call this tool again') });
             expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('timed out after 15000ms for tools/call'));
             warnSpy.mockRestore();
         });
@@ -987,7 +1113,7 @@ describe('MCPConnector', () => {
             await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT + 1_000);
             expect(result).toBeUndefined();
             await vi.advanceTimersByTimeAsync(180_000 - REQUEST_TIMEOUT - 1_000);
-            expect(result?.error).toContain('Tool unavailable');
+            expect(result?.error).toBe('No answer. May have finished');
             warnSpy.mockRestore();
         });
 
@@ -996,9 +1122,9 @@ describe('MCPConnector', () => {
             const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
             mockedAxios.post
                 .mockResolvedValueOnce(MOCK_INIT_RESPONSE)
-                // The first call fails after 10 s without reaching the server: the session is dropped, so it retries
+                // The first call fails after 10 s without ever connecting, so it retries
                 .mockImplementationOnce(
-                    () => new Promise((_resolve, reject) => setTimeout(() => reject(makeAxiosError(502)), 10_000))
+                    () => new Promise((_resolve, reject) => setTimeout(() => reject(makeNetworkError('ECONNREFUSED')), 10_000))
                 )
                 .mockResolvedValueOnce(MOCK_INIT_RESPONSE)
                 .mockImplementationOnce(hangUntilAborted);
@@ -1010,7 +1136,7 @@ describe('MCPConnector', () => {
             await vi.advanceTimersByTimeAsync(14_999);
             expect(result).toBeUndefined();
             await vi.advanceTimersByTimeAsync(1);
-            expect(result?.error).toContain('Tool unavailable');
+            expect(result?.error).toBe('No answer. May have finished');
             expect(mockedAxios.post).toHaveBeenCalledTimes(4);
             warnSpy.mockRestore();
             errorSpy.mockRestore();
@@ -1027,7 +1153,7 @@ describe('MCPConnector', () => {
             await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT - 1);
             expect(result).toBeUndefined();
             await vi.advanceTimersByTimeAsync(1);
-            expect(result?.error).toContain('Tool unavailable');
+            expect(result?.error).toBe('No answer. May have finished');
             warnSpy.mockRestore();
         });
 
@@ -1044,7 +1170,7 @@ describe('MCPConnector', () => {
                 .then((r) => (result = r));
 
             await vi.advanceTimersByTimeAsync(15_000);
-            expect(result).toEqual({ error: 'Tool unavailable: render (server not reachable)' });
+            expect(result).toEqual({ error: "Couldn't reach it. Nothing ran", outcome: 'not_sent', hint: expect.stringContaining('Trying again is safe') });
             expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('(during initialize)'));
             // Only the initialize went out: no tools/call and no retry
             expect(mockedAxios.post).toHaveBeenCalledTimes(1);

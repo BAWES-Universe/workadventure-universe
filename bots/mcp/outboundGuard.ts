@@ -77,21 +77,26 @@ export function isAllowedServerUrl(url: string): boolean {
 
 /**
  * The URL check, then every address its hostname resolves to (an IP literal resolves to itself). Resolves to
- * `{ allowed: false, error }` rather than throwing.
+ * `{ allowed: false, error }` rather than throwing; `unresolved` marks a name that did not resolve, which may pass on
+ * a later try.
  */
-export async function checkOutboundUrl(url: string): Promise<{ allowed: boolean; error?: string }> {
+export async function checkOutboundUrl(url: string): Promise<{ allowed: boolean; error?: string; unresolved?: boolean }> {
     if (!isAllowedServerUrl(url)) {
         return { allowed: false, error: 'URL points to an internal or private address' };
     }
     try {
         const hostname = new URL(url).hostname.toLowerCase().replace(/^\[|\]$/g, '');
         const addresses = await lookup(hostname, { all: true });
-        if (addresses.length === 0) return { allowed: false, error: 'Hostname did not resolve' };
+        if (addresses.length === 0) return { allowed: false, error: 'Hostname did not resolve', unresolved: true };
         const blocked = addresses.find((address) => !isAllowedIp(address.address));
         if (blocked) return { allowed: false, error: `Hostname resolves to an internal or private address (${blocked.address})` };
         return { allowed: true };
     } catch (error: unknown) {
-        return { allowed: false, error: `DNS resolution failed: ${error instanceof Error ? error.message : 'Unknown error'}` };
+        return {
+            allowed: false,
+            error: `DNS resolution failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            unresolved: true,
+        };
     }
 }
 

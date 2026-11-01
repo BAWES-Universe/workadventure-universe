@@ -3,27 +3,30 @@
  * to prevent async issues
  */
 export class LockByKey<T> {
+    // The last caller in line for each key. Every new caller waits for the one before it, so callers run one at a time,
+    // in the order they asked.
     private locks = new Map<T, Promise<void>>();
 
     public async waitForLock(key: T, callback: () => Promise<void>): Promise<void> {
-        let lockPromise = this.locks.get(key);
+        const previous = this.locks.get(key);
 
-        try {
-            if (lockPromise) {
-                await lockPromise;
+        const run = (async () => {
+            try {
+                if (previous) {
+                    await previous;
+                }
+            } catch {
+                /* The caller before failed: that is theirs to deal with, not ours. */
             }
-        } catch {
-            /* empty */
-        }
+            await callback();
+        })();
 
-        lockPromise = callback();
-
-        this.locks.set(key, lockPromise);
+        this.locks.set(key, run);
 
         try {
-            await lockPromise;
+            await run;
         } finally {
-            if (this.locks.get(key) === lockPromise) {
+            if (this.locks.get(key) === run) {
                 this.locks.delete(key);
             }
         }

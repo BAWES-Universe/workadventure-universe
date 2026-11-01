@@ -5,7 +5,6 @@ const companion: DeepPartial<Translation["cowebsite"]> = {
     open: "Ouvrir",
     close: "Fermer",
     bigBlueButton: "BigBlueButton",
-    jitsi: "Jitsi",
 };
 
 export default companion;

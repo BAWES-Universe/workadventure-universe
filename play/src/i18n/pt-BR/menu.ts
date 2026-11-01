@@ -93,7 +93,6 @@ const menu: BaseTranslation = {
         notifications: "Notificações",
         enablePictureInPicture: "Habilitar picture-in-picture",
         chatSounds: "Sons do chat",
-        cowebsiteTrigger: "Sempre pergunte antes de abrir sites e salas do Jitsi Meet",
         ignoreFollowRequest: "Ignorar solicitações para seguir outros usuários",
         proximityDiscussionVolume: "Volume de discussão de proximidade",
         blockAudio: "Bloquear sons ambiente e música",

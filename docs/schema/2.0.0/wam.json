@@ -132,12 +132,66 @@
                         "audioLink": {
                           "type": "string"
                         },
+                        "audioName": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
                         "volume": {
                           "type": "number",
                           "default": 1
                         },
                         "triggerMessage": {
                           "type": "string"
+                        },
+                        "startsOn": {
+                          "type": "string",
+                          "enum": [
+                            "click",
+                            "range"
+                          ]
+                        },
+                        "heardBy": {
+                          "type": "string",
+                          "enum": [
+                            "clicker",
+                            "range",
+                            "map"
+                          ]
+                        },
+                        "loop": {
+                          "type": "boolean"
+                        },
+                        "fullVolumeWithin": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "heardUpTo": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "clickWait": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "durationSeconds": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        },
+                        "playForAllUsers": {
+                          "type": "boolean"
+                        },
+                        "audibleRadius": {
+                          "anyOf": [
+                            {
+                              "type": "number",
+                              "minimum": 0
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -240,6 +294,10 @@
                           "default": false
                         },
                         "hideUrl": {
+                          "type": "boolean",
+                          "default": false
+                        },
+                        "hideTitleBar": {
                           "type": "boolean",
                           "default": false
                         }
