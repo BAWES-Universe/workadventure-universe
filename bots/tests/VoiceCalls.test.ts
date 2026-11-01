@@ -5,7 +5,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { PrivateEventPusherToFront } from '@workadventure/messages';
 import { VoiceCalls, parseSignal, type GameSide, type LinkHandlers } from '../voice/VoiceCalls';
-import type { FromWorker, ToWorker } from '../voice/protocol';
+import type { FromWorker, ToWorker, VoiceDraft } from '../voice/protocol';
 import type { VoiceLink } from '../voice/VoiceLink';
 
 const SPACE = 'proximity-1';
@@ -15,7 +15,7 @@ const CANDIDATE = JSON.stringify({ type: 'candidate', candidate: { candidate: 'c
 
 function setup(options: { up?: boolean } = {}) {
     const sent: ToWorker[] = [];
-    const game = { signals: [] as [string, string][], disconnects: [] as string[], starts: [] as string[] };
+    const game = { signals: [] as [string, string][], disconnects: [] as string[], starts: [] as string[], drafts: [] as [string, VoiceDraft][] };
     let up = options.up ?? true;
     let handlers!: LinkHandlers;
     const link: VoiceLink = {
@@ -32,6 +32,7 @@ function setup(options: { up?: boolean } = {}) {
         sendSignal: (_space, to, signal) => game.signals.push([to, signal]),
         sendDisconnect: (_space, to) => game.disconnects.push(to),
         sendStart: (_space, to) => game.starts.push(to),
+        sendDraft: (_space, to, draft) => game.drafts.push([to, draft]),
     };
     const calls = new VoiceCalls('bot-1', gameSide, (h) => ((handlers = h), link));
     const livekit = (kind: 'invite' | 'leave', extra: { sender?: string; receiver?: string; token?: string; serverUrl?: string; space?: string } = {}): PrivateEventPusherToFront => {
@@ -408,5 +409,113 @@ describe('VoiceCalls: the worker comes back', () => {
         t.sent.length = 0;
         t.workerUp();
         expect(t.sent).toEqual([]);
+    });
+});
+
+describe('VoiceCalls: what a person says to the bot', () => {
+    /** A person in a bubble with a connection: the session id and the epoch the worker will name them by. */
+    function talking(options: { room?: boolean } = {}) {
+        const t = setup();
+        t.calls.spaceUsers(SPACE, [t.person('room_7'), t.person('room_8')]);
+        if (options.room) t.calls.handlePrivateEvent(t.livekit('invite'));
+        else t.calls.handlePrivateEvent(t.event('start', 'room_7'));
+        const sessionId = (t.sent[0] as { sessionId: string }).sessionId;
+        const epoch = options.room ? 1 : 1;
+        const say = (m: object) => t.fromWorker({ sessionId, participantId: 'room_7', epoch, turnId: '1-1', ...m });
+        return { ...t, sessionId, epoch, say };
+    }
+
+    it('shows each person their own words as they come, to them only', () => {
+        const t = talking();
+        t.say({ type: 'user.speech_started' });
+        t.say({ type: 'user.partial', text: 'Actually which' });
+        t.say({ type: 'user.partial', text: 'Actually which of them' });
+        expect(t.game.drafts).toEqual([
+            ['room_7', { turnId: '1-1', state: 'live', text: 'Actually which' }],
+            ['room_7', { turnId: '1-1', state: 'live', text: 'Actually which of them' }],
+        ]);
+    });
+
+    it('hands a finished stretch of speech back to the person to send as their own line, and takes it once', () => {
+        const t = talking();
+        t.say({ type: 'user.turn', outcome: 'final', text: 'Actually which of them replied this week', audioMs: 1800 });
+        expect(t.game.drafts).toEqual([['room_7', { turnId: '1-1', state: 'final', text: 'Actually which of them replied this week' }]]);
+        expect(t.calls.acceptSpoken(SPACE, 'room_7', '1-1', 'Actually which of them replied this week')).toBe('new');
+        expect(t.calls.acceptSpoken(SPACE, 'room_7', '1-1', 'Actually which of them replied this week')).toBe('duplicate');
+    });
+
+    it('takes a line as spoken only when the bot heard those words from that person', () => {
+        const t = talking();
+        t.say({ type: 'user.turn', outcome: 'final', text: 'hello there', audioMs: 900 });
+        // Another person, another turn, other words: an ordinary line
+        expect(t.calls.acceptSpoken(SPACE, 'room_8', '1-1', 'hello there')).toBe('unknown');
+        expect(t.calls.acceptSpoken(SPACE, 'room_7', '1-2', 'hello there')).toBe('unknown');
+        expect(t.calls.acceptSpoken(SPACE, 'room_7', '1-1', 'something else')).toBe('unknown');
+        expect(t.calls.acceptSpoken('elsewhere', 'room_7', '1-1', 'hello there')).toBe('unknown');
+        expect(t.calls.acceptSpoken(SPACE, 'room_7', '1-1', ' hello there ')).toBe('new');
+    });
+
+    it('offers back words that did not all come through, and never as a line to send by itself', () => {
+        const t = talking();
+        t.say({ type: 'user.turn', outcome: 'lost', reason: 'cap', text: 'one two three', audioMs: 180000 });
+        expect(t.game.drafts).toEqual([['room_7', { turnId: '1-1', state: 'lost', text: 'one two three', reason: 'cap' }]]);
+        // Their own Send of these words is still their line, and still taken once
+        expect(t.calls.acceptSpoken(SPACE, 'room_7', '1-1', 'one two three')).toBe('new');
+    });
+
+    it('clears what was on screen when there is nothing to keep', () => {
+        const t = talking();
+        t.say({ type: 'user.turn', outcome: 'cleared', audioMs: 300 });
+        expect(t.game.drafts).toEqual([['room_7', { turnId: '1-1', state: 'cleared', text: '' }]]);
+    });
+
+    it('does not send a finished stretch from a path the bot has since replaced: its words are only offered back', () => {
+        const t = talking();
+        t.calls.handlePrivateEvent(t.event('start', 'room_7'));
+        t.say({ type: 'user.turn', outcome: 'final', text: 'late words', audioMs: 900 });
+        expect(t.game.drafts).toEqual([['room_7', { turnId: '1-1', state: 'lost', text: 'late words', reason: 'path' }]]);
+        // Late partials of the old path are dropped
+        t.say({ type: 'user.partial', text: 'late' });
+        expect(t.game.drafts).toHaveLength(1);
+    });
+
+    it('drops what it is told about a person who is not in the bubble, or about a session it does not know', () => {
+        const t = talking();
+        t.fromWorker({ type: 'user.partial', sessionId: t.sessionId, participantId: 'room_99', epoch: 1, turnId: '1-1', text: 'hi' });
+        t.fromWorker({ type: 'user.partial', sessionId: 'other', participantId: 'room_7', epoch: 1, turnId: '1-1', text: 'hi' });
+        t.calls.spaceUserLeft(SPACE, 'room_7');
+        t.say({ type: 'user.partial', text: 'hi' });
+        expect(t.game.drafts).toEqual([]);
+    });
+
+    it('shows words heard through the LiveKit room the same way', () => {
+        const t = talking({ room: true });
+        t.say({ type: 'user.partial', text: 'in the meeting' });
+        t.say({ type: 'user.turn', outcome: 'final', text: 'in the meeting room', audioMs: 900 });
+        expect(t.game.drafts.map(([to, d]) => [to, d.state])).toEqual([['room_7', 'live'], ['room_7', 'final']]);
+    });
+
+    it('gives words back to whoever was mid-sentence when the worker goes away', () => {
+        const t = talking();
+        t.say({ type: 'user.partial', text: 'Actually which of them' });
+        t.workerDown();
+        expect(t.game.drafts.at(-1)).toEqual(['room_7', { turnId: '1-1', state: 'lost', text: 'Actually which of them', reason: 'path' }]);
+        expect(t.calls.acceptSpoken(SPACE, 'room_7', '1-1', 'Actually which of them')).toBe('new');
+    });
+
+    it('does not offer back a finished sentence when the worker goes away afterwards', () => {
+        const t = talking();
+        t.say({ type: 'user.partial', text: 'Actually' });
+        t.say({ type: 'user.turn', outcome: 'final', text: 'Actually', audioMs: 400 });
+        const shown = t.game.drafts.length;
+        t.workerDown();
+        expect(t.game.drafts).toHaveLength(shown);
+    });
+
+    it('forgets what it heard when the bot leaves the space', () => {
+        const t = talking();
+        t.say({ type: 'user.turn', outcome: 'final', text: 'hello', audioMs: 400 });
+        t.calls.spaceLeft(SPACE);
+        expect(t.calls.acceptSpoken(SPACE, 'room_7', '1-1', 'hello')).toBe('unknown');
     });
 });

@@ -2379,6 +2379,18 @@ export class BotClient {
                         $case: 'webRtcStartMessage',
                         webRtcStartMessage: { userId: this.spaces.get(spaceName) ?? '', initiator: true },
                     }),
+                sendDraft: (spaceName, receiverUserId, draft) =>
+                    this.sendPrivateEvent(spaceName, receiverUserId, {
+                        $case: 'botVoiceDraft',
+                        botVoiceDraft: {
+                            botId: this.config.botId,
+                            botName: this.config.name,
+                            turnId: draft.turnId,
+                            state: draft.state,
+                            text: draft.text,
+                            reason: draft.reason ?? '',
+                        },
+                    }),
             },
             (handlers) => {
                 const link = new WorkerLink({ url: settings.url, botId: this.config.botId, secret: settings.secret, ...handlers });
@@ -3094,6 +3106,13 @@ export class BotClient {
                         if (!this.behavior) {
                             console.warn(`[Bot ${this.config.botId}] Behavior is null, cannot handle chat message`);
                             break;
+                        }
+                        // A line made from what someone said to a voice bot is for that bot alone: any other bot in
+                        // the bubble (text-only, or another voice bot) shows it but does not take it for a new
+                        // request, and the bot it is for answers it once, however many times it arrives
+                        if (spaceMessage.spoken) {
+                            if (spaceMessage.spoken.botId !== this.config.botId) break;
+                            if (this.voice?.acceptSpoken(spaceName, senderUserId, spaceMessage.spoken.turnId, spaceMessage.message) === 'duplicate') break;
                         }
                         // Before anything is done with the message (links looked up, files read, the AI asked)
                         if (!(await this.mayChat(spaceName, senderId, message))) {

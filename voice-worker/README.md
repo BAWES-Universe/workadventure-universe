@@ -23,7 +23,7 @@ Known limit: the bot's voice in a LiveKit room is one track that everyone in the
 it back from one listener (a media-server token cannot limit what a participant subscribes to, so it is the worker
 that limits what the bot subscribes to).
 
-Recognition (#1664) plugs into `InputSink` (`src/transport.ts`); speaking (#1665) replaces `FakeSpeech`.
+Recognition (#1664) plugs into `InputSink` (`src/transport.ts`) through `src/recognition.ts` and a swappable recognizer (`src/recognizer.ts`); only a scripted fake is wired, so nothing is recognised in a running worker until a provider is added. Speaking (#1665) replaces `FakeSpeech`.
 
 ## Run
 
@@ -56,6 +56,7 @@ npm test
 | `VOICE_WORKER_SECRET` | none | Bearer token the bot server must present. Set it whenever the port is reachable by others. |
 | `VOICE_MAX_LANES` | `200` | Audio connections alive at once. Over it, new ones are refused. |
 | `VOICE_MAX_SESSIONS_PER_BOT` | `64` | Bubbles one bot may have open. |
+| `VOICE_MAX_UTTERANCE_SECONDS` | `180` | The longest stretch of one person's speech taken, in seconds of audio. Past it the words are offered back to them, never sent. |
 | `VOICE_ICE_SERVERS` | Google STUN | JSON list of STUN/TURN servers, like the game's. |
 | `VOICE_ICE_PORT_RANGE` | any | `40000-40100`: the UDP ports to open on the host. |
 | `VOICE_PUBLIC_IP` | none | Public address(es) of the host when it is behind a NAT. |

@@ -1417,6 +1417,7 @@ message PrivateSpaceEvent {
     UnblockUserMessage unblockUserMessage = 21;
     LowerHandPrivateMessage lowerHand = 22;
     BotReplyLimitMessage botReplyLimit = 23;
+    BotVoiceDraftMessage botVoiceDraft = 24;
     // From 30: upstream WorkAdventure uses the numbers right after ours.
     InviteToSpeakPrivateMessage inviteToSpeak = 30;
     DeclineToSpeakPrivateMessage declineToSpeak = 31;
@@ -1438,6 +1439,19 @@ message BotReplyLimitMessage {
   string who = 3;       // "guest" | "member" | "maker": which button the card shows
   string botId = 4;
   string botName = 5;
+}
+
+/**
+ * A voice bot tells one person what it is hearing them say (#1664): the game draws it above their message box, for
+ * them only. Only a bot may send it (the pusher refuses anyone else), and only about itself.
+ */
+message BotVoiceDraftMessage {
+  string botId = 1;
+  string botName = 2;
+  string turnId = 3;    // one stretch of speech; the words of a later one never replace an earlier one
+  string state = 4;     // "live" (words so far) | "final" (finished: the person's game sends it) | "lost" (words that didn't come through) | "cleared"
+  string text = 5;
+  string reason = 6;    // "lost" only: "cap" | "gap" | "path" | "stopped" | "provider"
 }
 
 message SwitchMessage {
@@ -1474,6 +1488,16 @@ message SpaceMessage {
   repeated string fileNames = 9;    // Original filenames for ALL files (gallery) in order
   optional string id = 10;          // Chosen by the sender, the same for everyone, so reactions and replies can point at it
   optional SpaceMessageQuote replyTo = 11; // The message this one replies to
+  optional SpaceMessageSpoken spoken = 12; // Set on the line made from a person's own speech to a voice bot
+}
+
+/**
+ * Where a spoken line came from (#1664). Carried on the line everyone sees, so a bot that did not hear it (a text-only
+ * bot in the same bubble) does not take it for a new request: only the bot it is for answers, and only once per turn.
+ */
+message SpaceMessageSpoken {
+  string botId = 1;   // the voice bot that heard it, and the only one that answers it
+  string turnId = 2;
 }
 
 /**

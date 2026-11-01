@@ -18,6 +18,7 @@ import {
     VideoFrame,
     VideoSource,
 } from '@livekit/rtc-node';
+import { FakeEars } from '../src/recognizer.ts';
 import type { InputFrame } from '../src/transport.ts';
 import { FakeHuman, type Rig, privateEvent, sleep, startRig, waitFor } from './harness.ts';
 
@@ -222,6 +223,32 @@ describe.skipIf(!serverUp)('a voice bot in a LiveKit bubble', () => {
         await sleep(600);
         expect(alice.loudFrom(r.game.botId)).toBe(before);
         expect(r.worker.counters.get('room_frames_out')).toBe(0);
+    });
+
+    it('shows a person the words it hears from their microphone in the room, to them only, and offers them back if the room is lost mid-sentence', async () => {
+        const ears = new FakeEars(['in the meeting room which of them replied', 'and then the room went away']);
+        const r = await startRig({ recognizer: ears.factory });
+        rigs.push(r);
+        const roomName = r.game.spaceName;
+        await person('room_alice').join(roomName);
+        const bob = await person('room_bob').join(roomName);
+        await bob.publishAudio(TrackSource.SOURCE_MICROPHONE, 330);
+        r.calls.spaceUsers(r.game.spaceName, [roster('room_alice'), roster('room_bob')]);
+        await invite(r, roomName);
+        await waitFor('the bot to be in the room', () => roomUp(r));
+
+        // Bob talks; alice is silent. Only bob gets words, and only bob is shown them
+        await waitFor('bob\'s words', () => r.game.drafts.some(([to, d]) => to === 'room_bob' && d.state === 'live'));
+        expect(r.game.drafts.every(([to]) => to === 'room_bob')).toBe(true);
+        await sleep(300);
+        // The room goes away mid-sentence: what was heard is offered back, nothing is sent
+        leave(r);
+        await waitFor('the words to be offered back', () => r.game.drafts.some(([, d]) => d.state === 'lost'));
+        const lost = r.game.drafts.find(([, d]) => d.state === 'lost')!;
+        expect(lost[0]).toBe('room_bob');
+        expect(lost[1].reason).toBe('path');
+        expect(r.game.drafts.some(([, d]) => d.state === 'final')).toBe(false);
+        expect(r.violations).toEqual([]);
     });
 
     it('keeps one audio path while the bubble moves from peer-to-peer to LiveKit and back', async () => {

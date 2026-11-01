@@ -4,6 +4,7 @@ export { default as IconX } from "~icons/tabler/x";
 export { default as IconPaperclip } from "~icons/tabler/paperclip";
 export { default as IconCornerDownRight } from "~icons/tabler/corner-down-right";
 export { default as IconAlertTriangle } from "~icons/tabler/alert-triangle";
+export { default as IconAlertCircle } from "~icons/tabler/alert-circle";
 export { default as IconHelpCircle } from "~icons/tabler/help-circle";
 export { default as IconShieldLockFilled } from "~icons/tabler/shield-lock-filled";
 export { default as IconLoader } from "~icons/tabler/loader";
