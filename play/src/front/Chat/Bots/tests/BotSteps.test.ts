@@ -108,6 +108,9 @@ describe("readBotSteps", () => {
         const steps = readBotSteps(BOT_CHAT_ID, notice(FIELD))!;
         expect(currentStep(steps)?.detail).toBe("funk");
         expect(currentStep({ ...steps, steps: [] })).toBeUndefined();
+        // Every call finished: nothing runs, so no finished call's detail shows under "Writing the answer" (#1723)
+        const finished = { ...steps, steps: steps.steps.map((step) => ({ ...step, state: "done" as const })) };
+        expect(currentStep(finished)).toBeUndefined();
     });
 
     it("shows the clock in minutes and seconds", () => {
