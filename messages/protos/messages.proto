@@ -686,6 +686,8 @@ message FriendRequest {
   string sharedWorld = 3;
   // ISO date the request was sent.
   string at = 4;
+  // Their chat ID, so the game can show their Woka; empty when unknown.
+  string chatId = 5;
 }
 
 message BlockedPerson {

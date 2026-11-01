@@ -1501,12 +1501,14 @@ export class SocketManager implements ZoneEventListener {
                     incoming: list.incoming.map((request) => ({
                         uuid: request.uuid,
                         name: request.name ?? "",
+                        chatId: request.chatId ?? "",
                         sharedWorld: request.sharedWorld ?? "",
                         at: request.requestedAt,
                     })),
                     outgoing: list.outgoing.map((request) => ({
                         uuid: request.uuid,
                         name: request.name ?? "",
+                        chatId: request.chatId ?? "",
                         sharedWorld: "",
                         at: request.sentAt,
                     })),

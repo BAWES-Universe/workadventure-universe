@@ -1,5 +1,6 @@
 <script lang="ts">
     import { createEventDispatcher } from "svelte";
+    import type { Readable } from "svelte/store";
     import { AvailabilityStatus } from "@workadventure/messages";
     import { LL } from "../../../../i18n/i18n-svelte";
     import { getColorHexOfStatus } from "../../../Utils/AvailabilityStatus";
@@ -12,6 +13,8 @@
      * push this room's people down. Tapping a face (or All) opens them in the Friends view.
      */
     export let faces: PlacedFriend[];
+    /** Their woka and its background, as their row in Friends shows it. */
+    export let lookOf: (uuid: string) => { picture?: Readable<string | undefined>; color?: string } = () => ({});
     /** Faces shown before "+N All". */
     export let limit = 8;
 
@@ -55,7 +58,7 @@
                         on:click={() => dispatch("open", entry.friend.uuid)}
                     >
                         <span class="relative">
-                            <FriendAvatar size="face" />
+                            <FriendAvatar size="face" {...lookOf(entry.friend.uuid)} />
                             <span
                                 class="absolute -bottom-0.5 -end-0.5 h-3 w-3 rounded-full border-2 border-solid border-[#14121E]"
                                 style="background:{getColorHexOfStatus(entry.status)}"
