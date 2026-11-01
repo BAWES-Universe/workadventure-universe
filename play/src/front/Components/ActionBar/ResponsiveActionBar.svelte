@@ -7,6 +7,7 @@
     import { barInViewStore } from "../../Stores/BarInViewStore";
     import { modalFullScreenStore, modalIframeStore, modalVisibilityStore } from "../../Stores/ModalStore";
     import { openedMenuStore } from "../../Stores/MenuStore";
+    import { mobileLayoutStore } from "../../Stores/MobileLayoutStore";
 
     const logger = debug("responsive-action-bar");
 
@@ -28,6 +29,12 @@
     let centerDivWidth: number;
     let leftDivWidth: number;
     let leftToCenterWidth: number;
+    let rightContentWidth: number;
+    // Room the right-hand buttons could still take, in either mode: what the bar has left once the left buttons, the
+    // centre buttons and the right buttons are laid out (negative while they overflow). The bar uses it to give a
+    // button back its room (#1734).
+    export let freeWidth = 0;
+    $: freeWidth = actionBarWidth - leftDivWidth - centerDivWidth - rightContentWidth;
 
     $: if (centerPlusRightDiv)
         centerPlusRightDiv.style.minWidth = `${
@@ -60,6 +67,23 @@
 
     $: if (leftToCenterWidth === 0) {
         switchToShrunkMode();
+    }
+
+    // Desktop bar: back to "wide" (centred) once everything fits centred again, also when no button had to go into the
+    // menu on the way (Explore shortening its name can avoid that, #1734). The 4px keep rounding from flipping it back.
+    $: if (
+        mode === "shrunk" &&
+        !$mobileLayoutStore &&
+        actionBarWidth -
+            leftDivWidth -
+            Math.max(
+                Math.min(actionBarWidth * 0.5 + centerDivWidth * 0.5, actionBarWidth - leftDivWidth),
+                centerDivWidth + rightContentWidth
+            ) >=
+            4
+    ) {
+        logger("Switching back to wide mode: everything fits centred");
+        mode = "wide";
     }
 
     let fullMenuVisible: boolean;
@@ -130,7 +154,11 @@
                     class:flex-1={mode === "shrunk"}
                     bind:this={rightDiv}
                 >
-                    <div class="flex flew-row flex-none h-full" bind:this={rightDivContent}>
+                    <div
+                        class="flex flew-row flex-none h-full"
+                        bind:this={rightDivContent}
+                        bind:offsetWidth={rightContentWidth}
+                    >
                         <slot name="right" />
                     </div>
                 </div>

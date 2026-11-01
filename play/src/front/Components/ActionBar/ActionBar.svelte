@@ -1,5 +1,6 @@
 <script lang="ts">
     import { get } from "svelte/store";
+    import { onDestroy } from "svelte";
     import type { SvelteComponentTyped } from "svelte";
     import { silentStore } from "../../Stores/MediaStore";
 
@@ -12,7 +13,7 @@
         proximityMeetingStore,
     } from "../../Stores/MyMediaStore";
     import type { RightMenuItem } from "../../Stores/MenuStore";
-    import { closeMenuOfHiddenBarItem, rightActionBarMenuItems } from "../../Stores/MenuStore";
+    import { closeMenuOfHiddenBarItem, exploreShortLabelStore, rightActionBarMenuItems } from "../../Stores/MenuStore";
     import { IconChevronUp } from "../Icons";
     import { LL } from "../../../i18n/i18n-svelte";
     import { hideActionBarStoreBecauseOfChatBar } from "../../Chat/ChatSidebarWidthStore";
@@ -57,9 +58,103 @@
 
     let firstVisibleItemIndex = 0;
 
+    // Desktop bar short of room (#1734). Before a button has to move into the menu, Explore drops the universe's name;
+    // a button in the menu leaves no gap (VisibilityChecker's collapse); and as soon as there is room again, the button
+    // comes back first, then Explore's full name. FIT_MARGIN keeps a button from coming back at a width where it
+    // would go straight back into the menu.
+    const FIT_MARGIN = 16;
+    let freeWidth = 0;
+    const itemWidths: Record<string, number> = {};
+    let foldedIds = new Set<string>();
+    let comingBack: string | undefined = undefined;
+    let comingBackTimer: ReturnType<typeof setTimeout> | undefined = undefined;
+    // Explore's width with its full name and with "Explore" alone, each read while it showed.
+    const exploreWidths: { long?: number; short?: number } = {};
+
+    $: desktopBar = !$mobileLayoutStore;
+    $: recordExploreWidth(itemWidths["explore"]);
+    function recordExploreWidth(width: number | undefined) {
+        if (!width) return;
+        if ($exploreShortLabelStore) exploreWidths.short = width;
+        else exploreWidths.long = width;
+    }
+
+    $: fitBar(freeWidth, foldedIds, $rightActionBarMenuItems, desktopBar);
+    // Shortening happens at once; giving room back waits until the bar has settled for GROW_DELAY ms, so the widths
+    // read while buttons are still appearing (entering a meeting room) don't flip Explore's name back and forth.
+    const GROW_DELAY = 150;
+    let growTimer: ReturnType<typeof setTimeout> | undefined = undefined;
+    function fitBar(
+        free: number,
+        folded: Set<string>,
+        items: RightMenuItem<SvelteComponentTyped>[],
+        desktop: boolean,
+        settled = false
+    ) {
+        if (!desktop) {
+            exploreShortLabelStore.set(false);
+            return;
+        }
+        // Short of room: Explore shortens first. (Only buttons still in the list count: one that left the bar while
+        // in the menu, Orbit for instance, is not waiting for room.)
+        const anyInMenu = items.some((item) => folded.has(item.id));
+        if ((anyInMenu || free < 0) && !get(exploreShortLabelStore)) exploreShortLabelStore.set(true);
+
+        const grow = nextGrowth(free, folded, items);
+        if (grow === undefined) {
+            clearTimeout(growTimer);
+            growTimer = undefined;
+        } else if (settled) {
+            grow();
+        } else if (growTimer === undefined) {
+            growTimer = setTimeout(() => {
+                growTimer = undefined;
+                fitBar(freeWidth, foldedIds, get(rightActionBarMenuItems), desktopBar, true);
+            }, GROW_DELAY);
+        }
+    }
+
+    function nextGrowth(
+        free: number,
+        folded: Set<string>,
+        items: RightMenuItem<SvelteComponentTyped>[]
+    ): (() => void) | undefined {
+        if (comingBack !== undefined) return undefined;
+        // The button in the menu nearest the bar comes back first, once its whole width fits.
+        const nextBack = [...items].reverse().find((item) => folded.has(item.id));
+        if (nextBack !== undefined) {
+            return free >= (itemWidths[nextBack.id] ?? Infinity) + FIT_MARGIN
+                ? () => bringBack(nextBack.id)
+                : undefined;
+        }
+        // Nothing in the menu: Explore gets its full name back once that fits too.
+        if (!get(exploreShortLabelStore)) return undefined;
+        const current = itemWidths["explore"] ?? 0;
+        const extra = (exploreWidths.long ?? current) - (exploreWidths.short ?? current);
+        return free >= extra + FIT_MARGIN ? () => exploreShortLabelStore.set(false) : undefined;
+    }
+
+    // Takes the button's room back for a moment; the observer then confirms it fits and shows it.
+    function bringBack(id: string) {
+        comingBack = id;
+        clearTimeout(comingBackTimer);
+        comingBackTimer = setTimeout(() => {
+            if (comingBack === id) comingBack = undefined;
+        }, 400);
+    }
+
+    onDestroy(() => {
+        clearTimeout(comingBackTimer);
+        clearTimeout(growTimer);
+    });
+
     function onMenuItemVisibilityChange(isVisible: boolean, button: RightMenuItem<SvelteComponentTyped>) {
         button.fallsInBurgerMenuStore.set(!isVisible);
         if (!isVisible) closeMenuOfHiddenBarItem(button.id);
+        if (isVisible) foldedIds.delete(button.id);
+        else foldedIds.add(button.id);
+        foldedIds = foldedIds;
+        if (isVisible && comingBack === button.id) comingBack = undefined;
 
         // Let's recompute the first visible item index
         for (let i = 0; i < $rightActionBarMenuItems.length; i++) {
@@ -72,7 +167,7 @@
 </script>
 
 {#if !$hideActionBarStoreBecauseOfChatBar}
-    <ResponsiveActionBar bind:rightDiv bind:actionBarWidth>
+    <ResponsiveActionBar bind:rightDiv bind:actionBarWidth bind:freeWidth>
         <div slot="left" class="justify-start flex-none">
             {#if swapped}
                 <ProfileMenu />
@@ -173,6 +268,8 @@
                         <VisibilityChecker
                             parent={rightDiv}
                             onVisibilityChange={(visibility) => onMenuItemVisibilityChange(visibility, button)}
+                            collapse={desktopBar && comingBack !== button.id}
+                            bind:width={itemWidths[button.id]}
                         >
                             <svelte:component
                                 this={button.component}
