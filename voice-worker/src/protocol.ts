@@ -56,8 +56,21 @@ export interface EngineStatus extends Base {
     counters?: Record<string, number>;
 }
 export interface RoomState extends Base { type: 'room.state'; epoch: number; state: 'connected' | 'closed' | 'failed' }
+/** A person started speaking to the bot. */
+export interface UserSpeechStarted extends Base { type: 'user.speech_started'; participantId: string; epoch: number; turnId: string }
+/** All the words heard so far in the stretch of speech, replacing the last. For that person's eyes only. */
+export interface UserPartial extends Base { type: 'user.partial'; participantId: string; epoch: number; turnId: string; text: string }
+export type LostReason = 'cap' | 'gap' | 'path' | 'stopped' | 'provider';
+/**
+ * How a stretch of speech ended. `final`: every word came through, so it becomes the person's own chat line.
+ * `lost`: the words (so far) did not all come through, so they are only offered back, never sent. `cleared`: nothing to keep.
+ */
+export interface UserTurn extends Base {
+    type: 'user.turn'; participantId: string; epoch: number; turnId: string; outcome: 'final' | 'lost' | 'cleared'; text?: string; reason?: LostReason; audioMs: number;
+}
 export interface ErrorMsg extends Base { type: 'error'; code: string; message: string; participantId?: string; epoch?: number }
 
 export type BotToWorker = SessionOpen | LaneOpen | LaneSignalIn | LaneClose | ModeSet | BotSay | BotRetract | VoiceStop | SessionEnd | RoomJoin | RoomLeave | RoomPeople;
-export type WorkerToBot = SessionStart | ParticipantJoin | ParticipantLeave | LaneSignalOut | PlaybackProgress | EngineStatus | RoomState | ErrorMsg;
+export type WorkerToBot =
+    | SessionStart | ParticipantJoin | ParticipantLeave | LaneSignalOut | PlaybackProgress | EngineStatus | RoomState | UserSpeechStarted | UserPartial | UserTurn | ErrorMsg;
 

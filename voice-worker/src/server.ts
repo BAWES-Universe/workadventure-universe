@@ -9,6 +9,7 @@ import { Counters } from './counters.ts';
 import { FakeSpeech } from './fakeSpeech.ts';
 import type { IceConfig } from './lane.ts';
 import type { BotToWorker } from './protocol.ts';
+import type { RecognizerFactory } from './recognizer.ts';
 import type { RoomTransport } from './roomTransport.ts';
 import { type OutgoingMessage, Session } from './session.ts';
 import type { InputSink } from './transport.ts';
@@ -24,8 +25,12 @@ export interface WorkerOptions {
     /** Bubbles one bot server connection may have open at once. */
     maxSessionsPerConnection: number;
     ice: IceConfig;
-    /** Receives permitted microphone audio. Recognition plugs in here; by default it only gets counted. */
+    /** Receives permitted microphone audio (a tap on all of it, for tests and measuring). */
     input?: InputSink;
+    /** Turns permitted microphone audio into words (a provider's adapter, or FakeEars). Without one the audio is only counted. */
+    recognizer?: RecognizerFactory;
+    /** The longest stretch of one person's speech taken, in seconds of audio. Past it their words are offered back, never sent. Default 180. */
+    maxUtteranceSeconds?: number;
     engineId?: string;
 }
 
@@ -38,6 +43,7 @@ function parseRequestUrl(raw: string | undefined): URL | null {
     }
 }
 
+export const DEFAULT_MAX_UTTERANCE_SECONDS = 180;
 const MAX_MESSAGE_BYTES = 128 * 1024;
 const PING_INTERVAL_MS = 10000;
 /** A bot server that stops reading this far behind is cut off. */
@@ -97,6 +103,8 @@ export class VoiceWorker {
             counters: this.counters,
             ice: this.options.ice,
             input: this.options.input ?? (() => undefined),
+            recognizer: this.options.recognizer,
+            maxUtteranceMs: (this.options.maxUtteranceSeconds ?? DEFAULT_MAX_UTTERANCE_SECONDS) * 1000,
             speech: this.speech,
             laneCount: () => this.laneCount(),
             maxLanes: this.options.maxLanes,

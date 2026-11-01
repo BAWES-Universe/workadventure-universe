@@ -195,6 +195,7 @@ describe("Nearby chat voice notes", () => {
             undefined,
             "Voice message.m4a",
             undefined,
+            undefined,
             { duration: 4.2, waveform: [0.1, 0.5, 1, 0.3] }
         );
 
@@ -218,6 +219,7 @@ describe("Nearby chat voice notes", () => {
             "audio/mpeg",
             undefined,
             "Interview.mp3",
+            undefined,
             undefined,
             { duration: 4, waveform: [1] }
         );

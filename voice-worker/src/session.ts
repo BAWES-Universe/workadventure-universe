@@ -7,6 +7,9 @@ import type { Counters } from './counters.ts';
 import { FakeSpeech } from './fakeSpeech.ts';
 import { Lane, type IceConfig } from './lane.ts';
 import type { LeaveReason, Mode, Signal, WorkerToBot } from './protocol.ts';
+import { modeListens } from './protocol.ts';
+import { Recognition } from './recognition.ts';
+import type { RecognizerFactory } from './recognizer.ts';
 import { RoomTransport } from './roomTransport.ts';
 import { Speaker } from './speaker.ts';
 import type { InputSink } from './transport.ts';
@@ -23,6 +26,10 @@ export interface SessionHost {
     counters: Counters;
     ice: IceConfig;
     input: InputSink;
+    /** Turns people's speech into words. Without one, audio is only counted. */
+    recognizer?: RecognizerFactory;
+    /** The longest stretch of speech taken, in audio milliseconds. */
+    maxUtteranceMs: number;
     speech: FakeSpeech;
     /** Lanes alive in the whole worker, to enforce the limit. */
     laneCount(): number;
@@ -38,10 +45,23 @@ export class Session {
     private newestRoom = 0;
     private readonly timers = new Map<Lane, NodeJS.Timeout>();
     private readonly speaker: Speaker;
+    /** Where a person's permitted audio goes: through recognition when there is a recognizer, else straight to the tap. */
+    private readonly input: InputSink;
+    private readonly recognition?: Recognition;
     private readonly statusTimer: NodeJS.Timeout;
     private closing = false;
 
     constructor(readonly id: string, readonly bubbleId: string, readonly botId: string, private readonly host: SessionHost, public defaultMode: Mode = 'talk') {
+        this.recognition = host.recognizer
+            ? new Recognition({
+                  factory: host.recognizer,
+                  maxUtteranceMs: host.maxUtteranceMs,
+                  counters: host.counters,
+                  send: (message) => host.send(message),
+                  next: host.input,
+              })
+            : undefined;
+        this.input = this.recognition ? this.recognition.sink : host.input;
         this.speaker = new Speaker({
             counters: host.counters,
             speech: host.speech,
@@ -79,7 +99,7 @@ export class Session {
             {
                 counters: c,
                 ice: this.host.ice,
-                input: this.host.input,
+                input: this.input,
                 sendSignal: (l, signal) => this.currentLane(l) && this.host.send({ type: 'lane.signal', participantId: l.participantId, epoch: l.epoch, signal }),
                 onConnected: (l) => {
                     if (!this.currentLane(l)) return;
@@ -135,6 +155,8 @@ export class Session {
         // gone is set first: from here on nothing more is heard from or sent to this path
         lane.gone = true;
         if (current) this.lanes.delete(lane.participantId);
+        // What they were saying is offered back to them (they left on purpose: dropped)
+        this.recognition?.interrupt(lane.participantId, lane.epoch, reason === 'left' ? 'cleared' : 'lost');
         this.host.counters.inc('lanes_closed');
         if (announce && current && !this.closing) {
             this.host.send({ type: 'participant.leave', participantId: lane.participantId, epoch: lane.epoch, reason });
@@ -161,7 +183,7 @@ export class Session {
         for (const lane of [...this.lanes.values()]) await this.dropLane(lane, 'superseded', true);
         const room = new RoomTransport(epoch, serverUrl, token, {
             counters: c,
-            input: this.host.input,
+            input: this.input,
             voiceActive: () => this.voice === 'active',
             onConnected: (r) => {
                 if (this.room !== r) return;
@@ -193,6 +215,9 @@ export class Session {
             return;
         }
         this.room.setPeople(people);
+        // Someone no longer named, or not in a mode that listens, is no longer heard: their unfinished words go nowhere
+        const heard = new Set(people.filter((person) => modeListens(person.mode)).map((person) => person.participantId));
+        this.recognition?.forget((participantId) => heard.has(participantId) || this.lanes.has(participantId));
     }
 
     private async dropRoom(room: RoomTransport, state: 'closed' | 'failed', announce: boolean): Promise<void> {
@@ -200,6 +225,7 @@ export class Session {
         const current = this.room === room;
         room.gone = true;
         if (current) this.room = undefined;
+        this.recognition?.interruptEpoch(room.epoch, 'lost');
         this.host.counters.inc('rooms_closed');
         if (announce && current && !this.closing) this.host.send({ type: 'room.state', epoch: room.epoch, state });
         await room.stop();
@@ -215,6 +241,8 @@ export class Session {
             if (lane) lane.mode = mode;
         }
         this.room?.setMode(mode, participantId);
+        // Not listening any more: what they had said so far goes nowhere
+        if (!modeListens(mode)) this.recognition?.forget((id) => (participantId ? id !== participantId : false));
         this.sendStatus();
     }
 
@@ -229,6 +257,8 @@ export class Session {
     stopVoice(): void {
         this.voice = 'stopped';
         this.speaker.stopAll('voice_stop');
+        // Mid-sentence when the voice ran out: the words so far are offered back, so nothing said is lost
+        this.recognition?.interruptAll('lost', 'stopped');
         this.room?.refresh();
         this.sendStatus();
     }
@@ -250,6 +280,7 @@ export class Session {
         if (this.closing) return;
         this.closing = true;
         clearInterval(this.statusTimer);
+        this.recognition?.dispose();
         await this.speaker.shutdown();
         const room = this.room;
         this.room = undefined;

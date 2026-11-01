@@ -96,4 +96,36 @@ describe("eventProcessorInit", () => {
             ).toThrow("A bot can only send its own reply limit card");
         });
     });
+    describe("botVoiceDraft", () => {
+        const draft = {
+            $case: "botVoiceDraft" as const,
+            botVoiceDraft: {
+                botId: "b-1",
+                botName: "Nora",
+                turnId: "3-1",
+                state: "live",
+                text: "Actually which",
+                reason: "",
+            },
+        };
+        const person = spaceUser("room_7", []);
+
+        it("passes on a bot's own words", () => {
+            expect(
+                eventProcessor.processPrivateEvent(draft, spaceUser("room_12", ["bot"], undefined, "bot-b-1"), person)
+            ).toEqual(draft);
+        });
+
+        it("refuses words from a player, so nobody can put words on someone else's screen", () => {
+            expect(() =>
+                eventProcessor.processPrivateEvent(draft, spaceUser("room_9", ["member"], undefined, "u-9"), person)
+            ).toThrow("Only a bot can send what it hears");
+        });
+
+        it("refuses words a bot sends as another bot", () => {
+            expect(() =>
+                eventProcessor.processPrivateEvent(draft, spaceUser("room_12", ["bot"], undefined, "bot-b-2"), person)
+            ).toThrow("A bot can only send what it hears itself");
+        });
+    });
 });

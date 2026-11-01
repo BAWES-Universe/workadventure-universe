@@ -108,3 +108,18 @@ eventProcessor.registerPrivateEventProcessor("botReplyLimit", (event, sender) =>
     }
     return event;
 });
+
+// What a voice bot hears a person say (#1664) is for that person only: only a bot may send it, and only about itself.
+eventProcessor.registerPrivateEventProcessor("botVoiceDraft", (event, sender) => {
+    if (event.$case !== "botVoiceDraft") {
+        throw new Error("Invalid event type");
+    }
+    const uuid = sender?.uuid ?? "";
+    if (!sender || !(sender.tags.includes("bot") || uuid.startsWith("bot-"))) {
+        throw new Error("Only a bot can send what it hears");
+    }
+    if (uuid.startsWith("bot-") && event.botVoiceDraft.botId !== uuid.slice("bot-".length)) {
+        throw new Error("A bot can only send what it hears itself");
+    }
+    return event;
+});

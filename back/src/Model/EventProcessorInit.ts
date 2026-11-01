@@ -28,6 +28,7 @@ eventProcessor.registerPublicEventProcessor("spaceMessage", (event, senderId, us
             fileNames: event.spaceMessage.fileNames,
             id: event.spaceMessage.id,
             replyTo: event.spaceMessage.replyTo,
+            spoken: event.spaceMessage.spoken,
             voiceDurationMs: event.spaceMessage.voiceDurationMs,
             voiceWaveform: event.spaceMessage.voiceWaveform ?? [],
         },

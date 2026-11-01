@@ -4,9 +4,10 @@ import { MediaStreamTrack, RTCPeerConnection, RtpHeader, RtpPacket, useOPUS, use
 import { Decoder, Encoder } from '@evan/opus';
 import { VoiceCalls, type GameSide } from '../../bots/voice/VoiceCalls.ts';
 import { WorkerLink } from '../../bots/voice/VoiceLink.ts';
-import type { FromWorker, ToWorker } from '../../bots/voice/protocol.ts';
+import type { FromWorker, ToWorker, VoiceDraft } from '../../bots/voice/protocol.ts';
 import { checkMessage } from '../src/validate.ts';
 import { VoiceWorker } from '../src/server.ts';
+import type { RecognizerFactory } from '../src/recognizer.ts';
 import type { InputSink } from '../src/transport.ts';
 
 export const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -173,6 +174,12 @@ export class FakeGame implements GameSide {
     }
 
     starts: string[] = [];
+    /** What the bot showed each person of what it heard them say, in order. */
+    drafts: [string, VoiceDraft][] = [];
+
+    sendDraft(_space: string, receiverUserId: string, draft: VoiceDraft): void {
+        this.drafts.push([receiverUserId, draft]);
+    }
 
     sendStart(_space: string, receiverUserId: string): void {
         this.starts.push(receiverUserId);
@@ -189,7 +196,7 @@ export function privateEvent(game: FakeGame, senderId: string, event: { $case: s
     } as never;
 }
 
-export async function startRig(options: { secret?: string; maxLanes?: number; input?: InputSink } = {}): Promise<Rig> {
+export async function startRig(options: { secret?: string; maxLanes?: number; input?: InputSink; recognizer?: RecognizerFactory; maxUtteranceSeconds?: number } = {}): Promise<Rig> {
     const worker = new VoiceWorker({
         port: 0,
         host: '127.0.0.1',
@@ -198,6 +205,8 @@ export async function startRig(options: { secret?: string; maxLanes?: number; in
         maxSessionsPerConnection: 8,
         ice: { iceServers: [] },
         input: options.input,
+        recognizer: options.recognizer,
+        maxUtteranceSeconds: options.maxUtteranceSeconds,
     });
     const workerPort = await worker.listen();
     const game = new FakeGame();

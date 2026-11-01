@@ -2,7 +2,16 @@ import { AvailabilityStatus } from "@workadventure/messages";
 import type { Friend, FriendSession } from "@workadventure/messages";
 import { describe, expect, it } from "vitest";
 import type { WorldSighting } from "./Friends";
-import { chatIdsToAsk, groupFriends, otherWorldFaces, placeFriends, relativeTime, savedLook, worldOf } from "./Friends";
+import {
+    chatIdsToAsk,
+    groupFriends,
+    otherWorldFaces,
+    placeFriends,
+    profileTakesFirstSpot,
+    relativeTime,
+    savedLook,
+    worldOf,
+} from "./Friends";
 
 const HERE = "https://play.test/@/bawes/hub/lobby";
 const SAME_WORLD = "https://play.test/@/bawes/hub/cafe";
@@ -117,6 +126,15 @@ describe("relativeTime", () => {
         expect(relativeTime("2026-10-03T12:00:00Z", now, "en")).toBe("yesterday");
         expect(relativeTime("", now, "en")).toBe("");
         expect(relativeTime("not a date", now, "en")).toBe("");
+    });
+});
+
+describe("profileTakesFirstSpot", () => {
+    it("puts View profile first only on rows with neither Walk to nor Go", () => {
+        expect(profileTakesFirstSpot(true, false, false)).toBe(true);
+        expect(profileTakesFirstSpot(true, true, false)).toBe(false);
+        expect(profileTakesFirstSpot(true, false, true)).toBe(false);
+        expect(profileTakesFirstSpot(false, false, false)).toBe(false);
     });
 });
 

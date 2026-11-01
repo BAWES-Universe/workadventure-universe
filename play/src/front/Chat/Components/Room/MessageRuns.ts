@@ -16,6 +16,8 @@ export interface RunItem {
     senderKey: string | undefined;
     /** A reply starts a new run, so the quote never sits under someone else's label. */
     isReply: boolean;
+    /** A line made from speech starts a new run, so its mic mark (beside the time on the label) is always there. */
+    spoken?: boolean;
 }
 
 export interface RunPlace {
@@ -51,6 +53,7 @@ export function messageRuns(items: RunItem[]): Map<string, RunPlace> {
             previous.senderKey !== item.senderKey ||
             dayStart ||
             item.isReply ||
+            item.spoken === true ||
             !item.date ||
             !previous.date ||
             item.date.getTime() - previous.date.getTime() >= RUN_GAP_MS;

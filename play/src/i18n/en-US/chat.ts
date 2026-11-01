@@ -868,6 +868,14 @@ const chat: BaseTranslation = {
         useMyKey: "Use my AI key",
         onlyYou: "Only you see this",
     },
+    voiceDraft: {
+        onlyYou: "Only you see this",
+        lost: "Some of your words didn't come through. Nothing was sent.",
+        edit: "Edit",
+        send: "Send",
+        discard: "Discard",
+        said: "Said out loud",
+    },
     artifacts: {
         kindApp: "Mini app",
         kindPage: "Page",

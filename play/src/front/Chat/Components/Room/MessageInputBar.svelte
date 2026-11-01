@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onDestroy, onMount } from "svelte";
+    import { onDestroy, onMount, tick } from "svelte";
     import { slide } from "svelte/transition";
     import { v4 as uuid } from "uuid";
     import * as Sentry from "@sentry/svelte";
@@ -39,6 +39,7 @@
     import { typingExceptWorkingBots, workingBotIds } from "../../Bots/BotTyping";
     import { appendEmoji } from "./AppendEmoji";
     import { withoutBlankEdges } from "./BlankEdges";
+    import { withWordsAdded } from "./ComposerWords";
     import { canHover } from "./FocusAfterSend";
     import MessageInput from "./MessageInput.svelte";
     import ReplyPreview from "./MessageActions/ReplyPreview.svelte";
@@ -706,6 +707,13 @@
         emoteMenuStore.closeEmoteMenu();
     }
 
+    /** Words the person chose to edit (a voice bot's draft, #1664): into the box, after anything already typed, ready to change and send. */
+    export async function putText(words: string) {
+        message = withWordsAdded(message, words);
+        await tick();
+        focusMessageInputAtEnd();
+    }
+
     export function handleFiles(event: CustomEvent<FileList>) {
         const incoming = [...event.detail];
 
@@ -886,6 +894,7 @@
                         uploaded.type,
                         undefined,
                         uploaded.name,
+                        undefined,
                         undefined,
                         details
                     );
