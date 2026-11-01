@@ -196,8 +196,12 @@
     $: boxHeight = Math.max(4 * TILE, Math.min(7 * TILE, Math.ceil(naturalHeight / TILE) * TILE + 2 * TILE));
     $: blocked = grid.reduce((sum, row) => sum + row.filter((cell) => cell === 1).length, 0);
     // No red squares saves like the old "Floats" switch: no grid at all (placing it snaps differently with a grid).
-    // An older upload saved with an empty grid keeps it.
-    $: floating = blocked === 0 && (editing === undefined || editing.collisionGrid === undefined);
+    // An older upload saved with an empty grid keeps it; one whose red squares were all taken off saves no grid.
+    $: floating =
+        blocked === 0 &&
+        (editing === undefined ||
+            editing.collisionGrid === undefined ||
+            editing.collisionGrid.some((row) => row.includes(1)));
     $: baseCount = Math.max(
         1,
         baseCells.reduce((sum, row) => sum + row.filter((cell) => cell === 1).length, 0)
@@ -239,6 +243,7 @@
 
     function saveChanges() {
         if (!editing) return;
+        closed = true;
         dispatch("save", {
             ...editing,
             name: name.trim() || editing.name,
@@ -269,9 +274,12 @@
     }
 
     function cancel() {
+        closed = true;
         dispatch("done");
     }
 
+    // Set once the guide is left (Cancel, Save, or closed): a lookup that answers later then does nothing
+    let closed = false;
     let checking = false;
     let confirming: Extract<DeleteStep, { ask: true }> | undefined;
 
@@ -285,6 +293,7 @@
         checking = true;
         loadPlacedIn()
             .then((placedIn) => {
+                if (closed) return;
                 const step = deleteStep(placedIn);
                 if (step.ask) {
                     confirming = step;
@@ -294,6 +303,7 @@
             })
             .catch((e) => {
                 console.error(e);
+                if (closed) return;
                 warningMessageStore.addWarningMessage($LL.mapEditor.editNotSaved());
             })
             .finally(() => {
@@ -302,6 +312,7 @@
     }
 
     onDestroy(() => {
+        closed = true;
         if (imageUrl) URL.revokeObjectURL(imageUrl);
     });
 </script>
@@ -483,6 +494,7 @@
                             variant="secondary"
                             buttonShape="square"
                             wrapperMargins={false}
+                            ariaLabel={$LL.mapEditor.edit.upload.lineTitle()}
                         />
                     </div>
                     <span class="em-m">{$LL.mapEditor.edit.upload.lineTop()}</span>

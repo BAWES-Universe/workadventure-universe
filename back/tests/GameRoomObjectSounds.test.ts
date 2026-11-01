@@ -1,12 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mapFetcher } from "@workadventure/map-editor/src/MapFetcher";
 import type { WAMFileFormat } from "@workadventure/map-editor";
+import type { EditMapCommandMessage } from "@workadventure/messages";
 import { GameRoom } from "../src/Model/GameRoom";
+import type { User, UserSocket } from "../src/Model/User";
+
+// map-storage saves every edit it is sent
+vi.mock("../src/Services/MapStorageClient", () => ({
+    getMapStorageClient: () => ({
+        handleEditMapCommandWithKeyMessage: (
+            request: { editMapCommandMessage: EditMapCommandMessage },
+            callback: (err: Error | null, answer: EditMapCommandMessage) => void
+        ) => callback(null, request.editMapCommandMessage),
+    }),
+}));
 
 const ROOM = "https://play.example.test/@/acme/office/lobby";
 const WAM_URL = "https://maps.example.test/acme/office/lobby/map.wam";
 
-const gong = (durationSeconds?: number) => ({
+const gong = (durationSeconds?: number, loop = false) => ({
     x: 0,
     y: 0,
     prefabRef: { collectionName: "c", id: "p" },
@@ -17,20 +29,36 @@ const gong = (durationSeconds?: number) => ({
             audioLink: "https://example.com/gong.mp3",
             startsOn: "click",
             heardBy: "map",
-            loop: false,
+            loop,
             ...(durationSeconds === undefined ? {} : { durationSeconds }),
         },
     ],
 });
+
+/** The room's saved map, as map-storage serves it now */
+let savedEntities: Record<string, ReturnType<typeof gong>>;
 
 function wam(): WAMFileFormat {
     return {
         version: "1.0.0",
         mapUrl: "./map.tmj",
         areas: [],
-        entities: { measured: gong(12), old: gong() },
+        entities: { ...savedEntities },
         entityCollections: [],
     } as unknown as WAMFileFormat;
+}
+
+const editor = {
+    tags: [],
+    canEdit: true,
+    uuid: "editor",
+    socket: { write: vi.fn() } as unknown as UserSocket,
+} as unknown as User;
+
+/** An editor's edit, saved and then sent to the room */
+async function edit(room: GameRoom, message: NonNullable<EditMapCommandMessage["editMapMessage"]>["message"]) {
+    room.forwardEditMapCommandMessage(editor, { id: "edit", editMapMessage: { message } });
+    await (room as unknown as { mapStorageLock: Promise<void> }).mapStorageLock;
 }
 
 async function makeRoom() {
@@ -67,7 +95,8 @@ describe("GameRoom object sounds (#1627)", () => {
             editable: false,
             mapUrl: undefined,
         });
-        vi.spyOn(mapFetcher, "fetchWamFile").mockResolvedValue(wam());
+        savedEntities = { measured: gong(12), old: gong(), jukebox: gong(30, true) };
+        vi.spyOn(mapFetcher, "fetchWamFile").mockImplementation(() => Promise.resolve(wam()));
     });
 
     afterEach(() => {
@@ -77,7 +106,7 @@ describe("GameRoom object sounds (#1627)", () => {
     it("plays a sound for its saved length, whatever length the clicker claims", async () => {
         const room = await makeRoom();
         await room.clickObjectSound(forgedClick("measured"));
-        expect(room.getObjectSounds()).toEqual([
+        expect(await room.getObjectSounds()).toEqual([
             expect.objectContaining({ entityId: "measured", loop: false, durationSeconds: 12 }),
         ]);
     });
@@ -92,6 +121,53 @@ describe("GameRoom object sounds (#1627)", () => {
             expect.objectContaining({ entityId: "old", loop: false, durationSeconds: 0, waitSeconds: 0 })
         );
         // Nobody who arrives is told about a sound whose end is unknown
-        expect(room.getObjectSounds()).toEqual([]);
+        expect(await room.getObjectSounds()).toEqual([]);
+    });
+
+    it("forgets a looping sound when its object is deleted", async () => {
+        const room = await makeRoom();
+        await room.clickObjectSound(forgedClick("jukebox"));
+        expect(await room.getObjectSounds()).toEqual([expect.objectContaining({ entityId: "jukebox", loop: true })]);
+
+        delete savedEntities.jukebox;
+        await edit(room, { $case: "deleteEntityMessage", deleteEntityMessage: { id: "jukebox" } });
+
+        expect(await room.getObjectSounds()).toEqual([]);
+        // Forgotten, not only left out: nothing is remembered for it any more
+        const remembered = (room as unknown as { objectSounds: { getMessages: () => unknown[] } }).objectSounds;
+        expect(remembered.getMessages()).toEqual([]);
+    });
+
+    it("plays a click once Loop is switched off, instead of reading it as stopping the loop", async () => {
+        const room = await makeRoom();
+        await room.clickObjectSound(forgedClick("jukebox"));
+
+        savedEntities.jukebox = gong(30, false);
+        await edit(room, {
+            $case: "modifyEntityMessage",
+            modifyEntityMessage: { id: "jukebox", properties: savedEntities.jukebox.properties },
+        } as never);
+        // Someone who arrives now isn't told the loop still plays
+        expect(await room.getObjectSounds()).toEqual([]);
+
+        await room.clickObjectSound(forgedClick("jukebox"));
+        expect(await room.getObjectSounds()).toEqual([
+            expect.objectContaining({ entityId: "jukebox", playing: true, loop: false, durationSeconds: 30 }),
+        ]);
+    });
+
+    it("tells nobody who arrives about a loop whose upload was deleted", async () => {
+        const room = await makeRoom();
+        await room.clickObjectSound(forgedClick("jukebox"));
+        expect(await room.getObjectSounds()).toHaveLength(1);
+
+        // Deleting the upload takes every placed copy of it off the map
+        delete savedEntities.jukebox;
+        await edit(room, {
+            $case: "deleteCustomEntityMessage",
+            deleteCustomEntityMessage: { id: "p", wholeUpload: true, pictureIds: [], otherRoomWamUrls: [] },
+        });
+
+        expect(await room.getObjectSounds()).toEqual([]);
     });
 });
