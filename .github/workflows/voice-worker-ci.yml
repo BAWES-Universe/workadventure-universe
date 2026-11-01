@@ -1,0 +1,88 @@
+# The voice worker's typecheck and tests (#1756). Its own workflow so that it runs only when the worker, the bot
+# server's voice code it drives, or the message types it reads change, and so that no other PR waits on it.
+
+name: "Continuous Integration Voice Worker"
+
+on:
+  push:
+    branches:
+      - master
+      - develop
+      - universe-develop
+    paths:
+      - "voice-worker/**"
+      - "bots/voice/**"
+      - "bots/server/AdminApiService.ts"
+      - "bots/ai/encryption.ts"
+      - "bots/package.json"
+      - "libs/messages/**"
+      - "messages/protos/**"
+      - ".github/workflows/voice-worker-ci.yml"
+  pull_request:
+    paths:
+      - "voice-worker/**"
+      - "bots/voice/**"
+      - "bots/server/AdminApiService.ts"
+      - "bots/ai/encryption.ts"
+      - "bots/package.json"
+      - "libs/messages/**"
+      - "messages/protos/**"
+      - ".github/workflows/voice-worker-ci.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  continuous-integration-voice-worker:
+    name: "Continuous Integration Voice Worker"
+
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 20
+
+    steps:
+      - name: "Checkout"
+        uses: "actions/checkout@v5"
+
+      - name: "Setup NodeJS"
+        uses: actions/setup-node@v3
+        with:
+          node-version: 22
+          cache: "npm"
+          cache-dependency-path: |
+            package-lock.json
+            voice-worker/package-lock.json
+
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          version: '3.x'
+
+      # The worker's tests drive the bot server's voice code (bots/voice), so the bots packages are needed too
+      - name: "Install bots dependencies"
+        run: npm ci --workspace=@workadventure/bots
+
+      - name: "Install messages dependencies"
+        run: npm ci
+        working-directory: "messages"
+
+      - name: "Build proto messages"
+        run: npm run ts-proto
+        working-directory: "messages"
+
+      - name: "Install dependencies"
+        run: npm ci
+        working-directory: "voice-worker"
+
+      - name: "Typecheck"
+        run: npm run typecheck
+        working-directory: "voice-worker"
+
+      # The LiveKit tests (test/livekit.test.ts) skip themselves here: no livekit-server runs in this job yet (#1758)
+      - name: "Vitest"
+        run: npm test
+        working-directory: "voice-worker"
