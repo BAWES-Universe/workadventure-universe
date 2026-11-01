@@ -8,6 +8,7 @@ import axios, { type AxiosResponse } from 'axios';
 import * as Sentry from '@sentry/node';
 import { parseForgetNotice, type MemoryForgetHandler } from '../memory/ForgetNotice';
 import type { WokaList } from '../matrix/wokaPicture';
+import type { VoiceActiveAnswer, VoiceCredentialsAnswer, VoiceHealthReport, VoiceLimits } from '../voice/VoiceSettings';
 
 // Optional Sentry integration (uncomment if @sentry/node is installed)
 // import * as Sentry from '@sentry/node';
@@ -820,6 +821,67 @@ export class AdminApiService {
         } catch (error) {
             const msg = (axios.isAxiosError(error) && error.response?.data?.message) || (error as Error)?.message || 'Unknown error';
             console.error(`[AdminApiService] Error reporting AI health: ${msg}`);
+        }
+    }
+
+    // ---- Voice (Orbit #740, game #1746) ----------------------------------------------------------------------
+    // These throw when Orbit cannot be asked, and the voice code answers in text then. An error here never carries the
+    // key: a credentials answer holds only the encrypted key, and nothing from the request or the answer is put in a message.
+
+    private voiceHeaders(): { Authorization: string } {
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!this.isConfigured() || !botServiceToken) throw new Error('Orbit is not set up for voice');
+        return { Authorization: `Bearer ${botServiceToken}` };
+    }
+
+    /** What a voice bot speaks with now. Null when Orbit does not know the bot. */
+    async getVoiceActive(botId: string, timeoutMs: number): Promise<VoiceActiveAnswer | null> {
+        try {
+            const response: AxiosResponse<VoiceActiveAnswer> = await axios.get(resolveAdminApiEndpoint(this.adminApiUrl, `api/bots/${encodeURIComponent(botId)}/voice/active`), {
+                headers: { ...this.voiceHeaders(), 'Cache-Control': 'no-store' },
+                timeout: timeoutMs,
+            });
+            return response.data;
+        } catch (error) {
+            if (axios.isAxiosError(error) && error.response?.status === 404) return null;
+            throw error;
+        }
+    }
+
+    /** One voice provider for one bot, the key still encrypted. Null when the bot may not use it (404, or 400). */
+    async getVoiceCredentials(providerId: string, botId: string, timeoutMs: number): Promise<VoiceCredentialsAnswer | null> {
+        try {
+            const response: AxiosResponse<VoiceCredentialsAnswer> = await axios.get(
+                resolveAdminApiEndpoint(this.adminApiUrl, `api/voice/providers/${encodeURIComponent(providerId)}/credentials`),
+                { headers: { ...this.voiceHeaders(), 'Cache-Control': 'no-store' }, params: { botId }, timeout: timeoutMs }
+            );
+            return response.data;
+        } catch (error) {
+            const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+            if (status === 404 || status === 400) return null;
+            throw error;
+        }
+    }
+
+    /** The server's voice limits (GET /api/voice/limits). */
+    async getVoiceLimits(timeoutMs: number): Promise<Partial<VoiceLimits> | null> {
+        const response: AxiosResponse<{ limits?: Partial<VoiceLimits> }> = await axios.get(resolveAdminApiEndpoint(this.adminApiUrl, 'api/voice/limits'), {
+            headers: { ...this.voiceHeaders(), 'Cache-Control': 'no-store' },
+            timeout: timeoutMs,
+        });
+        return response.data?.limits ?? null;
+    }
+
+    /** How a call to a voice provider went. A provider of the server's own has no health to keep: Orbit answers 404, which is fine. */
+    async reportVoiceHealth(providerId: string, report: VoiceHealthReport, timeoutMs: number): Promise<void> {
+        try {
+            await axios.post(resolveAdminApiEndpoint(this.adminApiUrl, `api/voice/providers/${encodeURIComponent(providerId)}/health`), report, {
+                headers: this.voiceHeaders(),
+                timeout: timeoutMs,
+            });
+        } catch (error) {
+            if (axios.isAxiosError(error) && error.response?.status === 404) return;
+            throw error;
         }
     }
 
