@@ -6,11 +6,27 @@
     let divElement: HTMLElement;
 
     export let isVisible = true;
+    // Desktop bar (#1734): a button that moved into the menu gives its room back, so it leaves no empty gap (its box
+    // is pulled back over the space before it). While collapsed it only comes back when the bar says so (collapse turns
+    // false), so folded buttons return one at a time, nearest first, and only when the room is really there. The
+    // width is read by the bar too.
+    export let collapse = false;
+    export let width = 0;
+    // Read with a ResizeObserver (bind:borderBoxSize): bind:offsetWidth would make this box position: relative and
+    // put an iframe in it, which changes what the bar's menus are placed against.
+    let boxSize: ResizeObserverSize[] | undefined = undefined;
+    $: width = boxSize?.[0]?.inlineSize ?? 0;
+
+    let observer: IntersectionObserver | undefined = undefined;
 
     onMount(() => {
-        const observer = new IntersectionObserver(
+        observer = new IntersectionObserver(
             (entries) => {
                 entries.forEach((entry) => {
+                    // The whole bar is hidden (no size, e.g. a video in full screen): nothing moved, so every button
+                    // keeps its place and none goes into the menu, and they are all there again when the bar shows.
+                    if (entry.rootBounds !== null && entry.rootBounds.width === 0) return;
+                    if (entry.isIntersecting && !isVisible && collapse) return;
                     isVisible = entry.isIntersecting;
                     onVisibilityChange(isVisible);
                 });
@@ -24,12 +40,28 @@
         observer.observe(divElement);
 
         return () => {
-            observer.disconnect();
+            observer?.disconnect();
         };
     });
+
+    // The bar lets this button back: observe afresh, so the observer reports where the button now stands even if its
+    // box was already inside the bar while it was collapsed.
+    $: if (!collapse) reobserve();
+    function reobserve() {
+        if (!observer || !divElement) return;
+        observer.unobserve(divElement);
+        observer.observe(divElement);
+    }
 </script>
 
-<div class="group/visibilitychecker" class:visible={isVisible} class:invisible={!isVisible} bind:this={divElement}>
+<div
+    class="group/visibilitychecker"
+    class:visible={isVisible}
+    class:invisible={!isVisible}
+    style:margin-inline-start={collapse && !isVisible ? `-${width}px` : undefined}
+    bind:this={divElement}
+    bind:borderBoxSize={boxSize}
+>
     <slot />
 </div>
 
