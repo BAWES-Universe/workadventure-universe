@@ -55,6 +55,16 @@ describe("the shape of a note", () => {
         expect(waveformOf([], 3)).toEqual([0.08, 0.08, 0.08]);
     });
 
+    it("keeps a silent note at the floor when drawn with another number of bars, not as a row of full bars", () => {
+        const silent = waveformOf([0, 0, 0, 0, 0, 0], 6);
+        expect(resampleWaveform(silent, 30).every((bar) => bar === 0.08)).toBe(true);
+        expect(toMatrixWaveform(silent).every((level) => level < 100)).toBe(true);
+    });
+
+    it("keeps a note's shape when drawn with fewer bars", () => {
+        expect(resampleWaveform([0.2, 0.4, 0.6, 1], 2)).toEqual([0.4, 1]);
+    });
+
     it("can be drawn with more bars than levels", () => {
         const bars = resampleWaveform([0.5, 1], 6);
         expect(bars).toHaveLength(6);

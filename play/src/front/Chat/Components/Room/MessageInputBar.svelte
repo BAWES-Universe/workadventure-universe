@@ -885,7 +885,9 @@
                         "file",
                         uploaded.type,
                         undefined,
-                        uploaded.name
+                        uploaded.name,
+                        undefined,
+                        details
                     );
                 }
             } else if (destination.room instanceof MatrixChatRoom) {

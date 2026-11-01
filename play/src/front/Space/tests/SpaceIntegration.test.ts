@@ -477,6 +477,7 @@ describe("", () => {
                         characterTextures: [],
                         galleryUrls: [],
                         fileNames: [],
+                        voiceWaveform: [],
                     },
                 },
             },

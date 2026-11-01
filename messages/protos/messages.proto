@@ -1463,6 +1463,8 @@ message SpaceMessage {
   repeated string fileNames = 9;    // Original filenames for ALL files (gallery) in order
   optional string id = 10;          // Chosen by the sender, the same for everyone, so reactions and replies can point at it
   optional SpaceMessageQuote replyTo = 11; // The message this one replies to
+  optional uint32 voiceDurationMs = 12; // A voice note's length, measured by its sender
+  repeated uint32 voiceWaveform = 13;   // A voice note's shape, 0 to 1024 per point (as Matrix writes it)
 }
 
 /**
