@@ -23,6 +23,9 @@
         observer = new IntersectionObserver(
             (entries) => {
                 entries.forEach((entry) => {
+                    // The whole bar is hidden (no size, e.g. a video in full screen): nothing moved, so every button
+                    // keeps its place and none goes into the menu, and they are all there again when the bar shows.
+                    if (entry.rootBounds !== null && entry.rootBounds.width === 0) return;
                     if (entry.isIntersecting && !isVisible && collapse) return;
                     isVisible = entry.isIntersecting;
                     onVisibilityChange(isVisible);

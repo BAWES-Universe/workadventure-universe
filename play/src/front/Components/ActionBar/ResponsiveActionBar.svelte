@@ -37,7 +37,8 @@
     // centre buttons and the right buttons are laid out (negative while they overflow). The bar uses it to give a
     // button back its room (#1734).
     export let freeWidth = 0;
-    $: freeWidth = actionBarWidth - leftDivWidth - centerDivWidth - rightContentWidth;
+    // Not while the bar is hidden (its right side, which always holds the name button, has no size then).
+    $: if (rightContentWidth > 0) freeWidth = actionBarWidth - leftDivWidth - centerDivWidth - rightContentWidth;
 
     $: if (centerPlusRightDiv)
         centerPlusRightDiv.style.minWidth = `${
