@@ -555,16 +555,25 @@ const mapStorageServer: MapStorageServer = {
                         // Checked before the command runs: it removes the placed copies from the map first. An
                         // upload's pictures are checked against the copies of every picture of it: either all of them
                         // go, or none.
-                        if (
-                            !(await mayDeleteUpload(
-                                { mapKey, universeWorldPath, uploads, id: deleteCustomEntityMessage.id, pictureIds },
-                                { uuid: userUUID, tags: connectedUserTags, canEdit: userCanEdit }
-                            ))
-                        ) {
-                            throw new Error(
-                                `User ${userUUID} is not allowed to delete the object ${deleteCustomEntityMessage.id} on map ${mapUrl}`
-                            );
-                        }
+                        const assertMayDeleteUpload = async (): Promise<void> => {
+                            if (
+                                !(await mayDeleteUpload(
+                                    {
+                                        mapKey,
+                                        universeWorldPath,
+                                        uploads,
+                                        id: deleteCustomEntityMessage.id,
+                                        pictureIds,
+                                    },
+                                    { uuid: userUUID, tags: connectedUserTags, canEdit: userCanEdit }
+                                ))
+                            ) {
+                                throw new Error(
+                                    `User ${userUUID} is not allowed to delete the object ${deleteCustomEntityMessage.id} on map ${mapUrl}`
+                                );
+                            }
+                        };
+                        await assertMayDeleteUpload();
                         if (deleteCustomEntityMessage.wholeUpload) {
                             const otherRooms = await deleteUploadEverywhere({
                                 mapKey,
@@ -573,12 +582,17 @@ const mapStorageServer: MapStorageServer = {
                                 commandId,
                                 message: deleteCustomEntityMessage,
                                 uploads,
+                                // Asked again once the other rooms are locked: until then, an edit in another room
+                                // could still put a copy where this person can't edit.
+                                checkRights: assertMayDeleteUpload,
                             });
                             // Told to the back, so the people in those rooms see the copies go.
-                            deleteCustomEntityMessage.pictureIds = [...pictureIds];
-                            deleteCustomEntityMessage.otherRoomWamUrls = otherRooms.map((room) =>
-                                wamUrlInWorld(mapUrl, universeWorldPath, room)
-                            );
+                            Object.assign(deleteCustomEntityMessage, {
+                                pictureIds: [...pictureIds],
+                                otherRoomWamUrls: otherRooms.map((room) =>
+                                    wamUrlInWorld(mapUrl, universeWorldPath, room)
+                                ),
+                            });
                             break;
                         }
                         await entitiesManager.executeCommand(

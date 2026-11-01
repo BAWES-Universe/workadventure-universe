@@ -18,6 +18,7 @@ export async function deleteUploadEverywhere({
     commandId,
     message,
     uploads,
+    checkRights,
 }: {
     mapKey: string;
     universeWorldPath: string;
@@ -25,6 +26,8 @@ export async function deleteUploadEverywhere({
     commandId: string;
     message: DeleteCustomEntityMessage;
     uploads: CustomEntityCollectionService;
+    /** Throws if this person may not delete the upload. Asked once every room is locked, before anything changes. */
+    checkRights: () => Promise<void>;
 }): Promise<string[]> {
     // The room the delete comes from is already locked by the edit; the other rooms of the world are locked here, so no
     // other edit changes them while their copies are taken out and saved.
@@ -32,6 +35,9 @@ export async function deleteUploadEverywhere({
     return withEditionLocks(
         [...mapKeys.keys()].filter((key) => key !== mapKey),
         async () => {
+            // The rights were checked before the locks were taken; an edit in another room may have put a copy
+            // somewhere this person can't edit since. Nothing has changed yet, so a refusal leaves every room as it is.
+            await checkRights();
             const { removed, pathsInWorld } = await removeCopiesEverywhere(
                 mapKey,
                 universeWorldPath,
