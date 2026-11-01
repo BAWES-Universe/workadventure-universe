@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { optionsFromEnv } from '../src/config.ts';
 import { Down3, Up2 } from '../src/dsp.ts';
+import { Secret } from '../src/connectors.ts';
 import { FakeSpeech } from '../src/fakeSpeech.ts';
 import { checkMessage } from '../src/validate.ts';
 
@@ -39,6 +40,21 @@ describe('fake speech', () => {
         expect(speech.durationMs('a')).toBe(400);
         expect(speech.durationMs('x'.repeat(100)) % 20).toBe(0);
         expect(speech.durationMs('x'.repeat(100))).toBeGreaterThan(speech.durationMs('x'.repeat(20)));
+    });
+
+    it('hands the same audio over in pieces through the connector interface, and stops when told to', async () => {
+        const settings = { adapter: 'fake', model: 'm', voiceId: 'v', key: new Secret('') };
+        const pieces: Int16Array[] = [];
+        for await (const piece of speech.speak({ text: 'x'.repeat(100), settings, signal: new AbortController().signal })) pieces.push(piece);
+        expect(pieces.length).toBeGreaterThan(1);
+        const whole = speech.synth('x'.repeat(100));
+        expect(pieces.reduce((n, p) => n + p.length, 0)).toBe(whole.length);
+        expect(Array.from(pieces[1].subarray(0, 8))).toEqual(Array.from(whole.subarray(pieces[0].length, pieces[0].length + 8)));
+        const stopped = new AbortController();
+        stopped.abort();
+        const none: Int16Array[] = [];
+        for await (const piece of speech.speak({ text: 'x'.repeat(100), settings, signal: stopped.signal })) none.push(piece);
+        expect(none).toHaveLength(0);
     });
 
     it('is audible, and differs from one sentence to the next', () => {
@@ -92,6 +108,28 @@ describe('bridge messages', () => {
         expect(checkMessage('fromBot', { ...base, type: 'nope' })).not.toBeNull();
     });
 
+    it('accepts the providers a bubble names, all optional, and refuses a partial or odd one', () => {
+        const ears = { adapter: 'soniox', model: 'stt-rt', key: 'k' };
+        const voice = { adapter: 'elevenlabs', model: 'flash', voiceId: 'v1', key: 'k', endpoint: 'https://api.example', region: 'eu', language: 'en' };
+        expect(checkMessage('fromBot', { ...base, type: 'session.open', bubbleId: 'b', botId: 'x', recognition: ears, speech: voice, expression: 'natural' })).toBeNull();
+        expect(checkMessage('fromBot', { ...base, type: 'session.open', bubbleId: 'b', botId: 'x', speech: voice })).toBeNull();
+        expect(checkMessage('fromBot', { ...base, type: 'session.open', bubbleId: 'b', botId: 'x', recognition: { ...ears, key: undefined } })).not.toBeNull();
+        expect(checkMessage('fromBot', { ...base, type: 'session.open', bubbleId: 'b', botId: 'x', speech: { ...voice, voiceId: undefined } })).not.toBeNull();
+        expect(checkMessage('fromBot', { ...base, type: 'session.open', bubbleId: 'b', botId: 'x', speech: { ...voice, adapter: 'ElevenLabs' } })).not.toBeNull();
+        expect(checkMessage('fromBot', { ...base, type: 'session.open', bubbleId: 'b', botId: 'x', speech: { ...voice, endpoint: 'file:///etc/passwd' } })).not.toBeNull();
+        expect(checkMessage('fromBot', { ...base, type: 'session.open', bubbleId: 'b', botId: 'x', expression: 'shouting' })).not.toBeNull();
+    });
+
+    it('accepts provider reports from the worker only, with a status only when there was one', () => {
+        expect(checkMessage('fromWorker', { ...base, type: 'provider.ok', part: 'speech', adapter: 'cartesia' })).toBeNull();
+        expect(checkMessage('fromWorker', { ...base, type: 'provider.failed', part: 'recognition', adapter: 'soniox' })).toBeNull();
+        expect(checkMessage('fromWorker', { ...base, type: 'provider.failed', part: 'speech', adapter: 'deepgram', status: 401, rejected: true })).toBeNull();
+        expect(checkMessage('fromWorker', { ...base, type: 'provider.failed', part: 'speech', adapter: 'deepgram', status: 'bad' })).not.toBeNull();
+        expect(checkMessage('fromWorker', { ...base, type: 'provider.failed', part: 'voice', adapter: 'deepgram' })).not.toBeNull();
+        expect(checkMessage('fromBot', { ...base, type: 'provider.ok', part: 'speech', adapter: 'cartesia' })).not.toBeNull();
+        expect(checkMessage('fromWorker', { ...base, type: 'playback.progress', segmentId: 's', playedMs: 0, finished: true, interrupted: true, reason: 'provider' })).toBeNull();
+    });
+
     it('does not let the bot server send what only the worker sends, or the other way round', () => {
         expect(checkMessage('fromBot', { ...base, type: 'participant.join', participantId: 'p', epoch: 1 })).not.toBeNull();
         expect(checkMessage('fromWorker', { ...base, type: 'lane.open', participantId: 'p', epoch: 1 })).not.toBeNull();
@@ -104,6 +142,11 @@ describe('settings', () => {
         const options = optionsFromEnv({});
         expect(options).toMatchObject({ port: 8830, host: '127.0.0.1', maxLanes: 200, maxUtteranceSeconds: 180 });
         expect(options.secret).toBeUndefined();
+    });
+
+    it('read how long a speech provider may stay silent, with a default', () => {
+        expect(optionsFromEnv({}).speechTimeoutSeconds).toBe(15);
+        expect(optionsFromEnv({ VOICE_SPEECH_TIMEOUT_SECONDS: '4' }).speechTimeoutSeconds).toBe(4);
     });
 
     it('read the port, limits, secret and network settings from the environment', () => {

@@ -6,8 +6,8 @@ A separate service that gives a voice bot an audio-only connection with each per
 What it does today (issue #1663, transport only):
 
 * one `werift` peer connection per person, Opus both ways, video and screen refused in the answer;
-* bot speech is a generated tone (`src/fakeSpeech.ts`), the microphone is decoded, resampled to 16 kHz and counted
-  (`frames_heard`, `heard_ms`) and handed to an `InputSink`; no speech provider, no keys;
+* bot speech is a generated tone (`src/fakeSpeech.ts`) unless the bubble names a speech provider (see Providers); the microphone
+  is decoded, resampled to 16 kHz and counted (`frames_heard`, `heard_ms`) and handed to an `InputSink`;
 * one current connection per person: a newer epoch replaces the older one, anything still addressed to the old one
   is dropped (`stale_dropped`);
 * in a LiveKit bubble, one `@livekit/rtc-node` participant per bot session (`src/roomTransport.ts`) behind the same
@@ -23,7 +23,37 @@ Known limit: the bot's voice in a LiveKit room is one track that everyone in the
 it back from one listener (a media-server token cannot limit what a participant subscribes to, so it is the worker
 that limits what the bot subscribes to).
 
-Recognition (#1664) plugs into `InputSink` (`src/transport.ts`) through `src/recognition.ts` and a swappable recognizer (`src/recognizer.ts`); only a scripted fake is wired, so nothing is recognised in a running worker until a provider is added. Speaking (#1665) replaces `FakeSpeech`.
+Recognition (#1664) plugs into `InputSink` (`src/transport.ts`) through `src/recognition.ts` and a recognizer (`src/recognizer.ts`) made per bubble.
+
+### Providers (#1747)
+
+A bubble names its own hearing and speaking provider in `session.open` (`recognition`, `speech`, `expression`; see
+`PROTOCOL.md`, Providers). The worker looks each adapter name up in a registry (`src/connectors.ts`), so two bubbles can
+use two different providers at once. Only the test engine is built in: `FakeSpeech` (registered as `fake`, and what a bubble
+that names nothing gets) and the scripted `FakeEars` for tests. No real provider is wired yet; each one is a later change.
+
+To add a provider, write one file that implements a connector and register it by its lowercase adapter name:
+
+```ts
+// src/connectors/elevenlabs.ts (example)
+export const elevenlabs: SpeechConnector = {
+    // Yield 24 kHz mono s16 audio in chunks, as the provider produces it. Throw ProviderError(message, httpStatus?) on failure.
+    async *speak({ text, settings, lang, expression, signal }) { /* fetch with settings.key.reveal(), pass `signal`, yield chunks */ },
+};
+// registry.registerSpeech('elevenlabs', elevenlabs);
+```
+
+A `RecognitionConnector` has `listen(settings, events)` and returns a `Recognizer` (push 16 kHz audio, `finish()`, `close()`), answering
+through `events.partial`, `events.final` and `events.failed(text, { status })`.
+
+What the worker does around a connector, so it does not have to:
+
+* speech is played as it arrives (the first chunk plays at once), barge-in, the reply's `maxMs` and `VOICE_MAX_REPLY_SECONDS` still
+  apply, and the provider call is aborted through `signal` when the reply is cut;
+* an unknown adapter, a throw, a dropped stream or a provider that goes quiet ends that turn in text with reason `provider`;
+* each call's outcome goes back to the bot server as `provider.ok` / `provider.failed` (`part`, `adapter`, the HTTP `status` when
+  there was one, `rejected: true` when the key itself was refused), for it to forward to Orbit's health endpoint;
+* the key arrives as a `Secret` and is never logged, counted, or sent anywhere.
 
 ## Run
 
@@ -58,6 +88,7 @@ npm test
 | `VOICE_MAX_SESSIONS_PER_BOT` | `64` | Bubbles one bot may have open. |
 | `VOICE_MAX_UTTERANCE_SECONDS` | `180` | The longest stretch of one person's speech taken, in seconds of audio. Past it the words are offered back to them, never sent. |
 | `VOICE_MAX_REPLY_SECONDS` | `60` | The longest one spoken reply plays, whatever the bot server asks (it asks for its own, up to this). |
+| `VOICE_SPEECH_TIMEOUT_SECONDS` | `15` | The longest a speech provider may go without sending the next piece of a reply's audio before the call counts as failed. |
 | `VOICE_BARGE_IN_MS` | `100` | Speech this long, from a person the bot hears, stops the bot's voice. A click or a cough is shorter. |
 | `VOICE_ICE_SERVERS` | Google STUN | JSON list of STUN/TURN servers, like the game's. |
 | `VOICE_ICE_PORT_RANGE` | any | `40000-40100`: the UDP ports to open on the host. |
