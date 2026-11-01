@@ -69,7 +69,13 @@ import { CharacterLayerManager } from "../../../Phaser/Entity/CharacterLayerMana
 import { BubbleNotification as BasicNotification } from "../../../Notification/BubbleNotification";
 import { formatPeopleNames } from "../../Components/TopRow/TopRowSummary";
 import { composerDraftStore } from "../../Stores/ComposerDraftStore";
-import { isVoiceNoteFileName, type UnsentVoiceNote } from "../../VoiceNote/VoiceNote";
+import {
+    isVoiceNoteFileName,
+    voiceNoteFromWire,
+    voiceNoteToWire,
+    type UnsentVoiceNote,
+    type VoiceNoteDetails,
+} from "../../VoiceNote/VoiceNote";
 import { areaChatRooms } from "../../Stores/AreaPresenceStore";
 import { rememberProximityChat } from "../../Stores/SayHiCardStore";
 import {
@@ -542,7 +548,8 @@ export class ProximityChatRoom implements ChatRoom {
         galleryUrls?: string[],
         fileName?: string,
         fileNames?: string[],
-        spoken?: SpokenLine
+        spoken?: SpokenLine,
+        voice?: VoiceNoteDetails
     ): void {
         // A line the person sends while a voice bot is still hearing them wins: what they were saying stays a draft
         if (broadcast && !spoken) this.voiceDrafts.update(afterTypedSend);
@@ -569,6 +576,11 @@ export class ProximityChatRoom implements ChatRoom {
             messageType = "gallery";
         }
 
+        // The nearby chat carries no flag with a file: a note is told from an audio file by its name.
+        const isVoice = messageType === "audio" && isVoiceNoteFileName(fileName);
+        // A note's length and shape go with it, and the sender's own bubble shows them as the others will.
+        const voiceOnWire = isVoice && voice ? voiceNoteToWire(voice) : undefined;
+
         // Create content message
         const newChatMessageContent = {
             body: message,
@@ -576,8 +588,8 @@ export class ProximityChatRoom implements ChatRoom {
             urls: galleryUrls,
             filename: fileName,
             fileNames: fileNames,
-            // The nearby chat carries no flag with a file: a note is told from an audio file by its name.
-            isVoice: messageType === "audio" && isVoiceNoteFileName(fileName),
+            isVoice,
+            ...(voiceOnWire ? voiceNoteFromWire(voiceOnWire.voiceDurationMs, voiceOnWire.voiceWaveform) : {}),
         };
 
         const spaceUser = this.users?.get(this._spaceUserId);
@@ -623,6 +635,8 @@ export class ProximityChatRoom implements ChatRoom {
                     replyTo: quotedMessage ? buildQuote(quotedMessage, get(quotedMessage.content)) : undefined,
                     // Which voice bot heard it and which stretch of speech it was, so no other bot takes it for a new request
                     spoken: spoken ? { botId: spoken.botId, turnId: spoken.turnId } : undefined,
+                    voiceDurationMs: voiceOnWire?.voiceDurationMs,
+                    voiceWaveform: voiceOnWire?.voiceWaveform ?? [],
                 },
             });
         }
@@ -776,7 +790,9 @@ export class ProximityChatRoom implements ChatRoom {
         fileNames?: string[] | null,
         sharedId?: string | null,
         replyTo?: SpaceMessageQuote | null,
-        spoken?: boolean
+        spoken?: boolean,
+        voiceDurationMs?: number | null,
+        voiceWaveform?: number[] | null
     ): void {
         // Ignore messages from the current user
         if (senderUserId === this._spaceUserId) {
@@ -815,6 +831,8 @@ export class ProximityChatRoom implements ChatRoom {
             messageType = "gallery";
         }
 
+        const isVoice = messageType === "audio" && isVoiceNoteFileName(fileName ?? undefined);
+
         // Create content message
         const newChatMessageContent = {
             body: message,
@@ -822,7 +840,9 @@ export class ProximityChatRoom implements ChatRoom {
             urls: galleryUrls ?? undefined,
             filename: fileName ?? undefined,
             fileNames: fileNames ?? undefined,
-            isVoice: messageType === "audio" && isVoiceNoteFileName(fileName ?? undefined),
+            isVoice,
+            // The length and shape its sender measured; a note without them is read from its file.
+            ...(isVoice ? voiceNoteFromWire(voiceDurationMs, voiceWaveform) : {}),
         };
 
         const spaceUser = this.users?.get(senderUserId);
@@ -1366,6 +1386,7 @@ export class ProximityChatRoom implements ChatRoom {
                     characterTextures: [],
                     galleryUrls: [],
                     fileNames: [],
+                    voiceWaveform: [],
                 },
             });
         }
@@ -1596,7 +1617,9 @@ export class ProximityChatRoom implements ChatRoom {
                 event.spaceMessage.fileNames,
                 event.spaceMessage.id,
                 event.spaceMessage.replyTo,
-                event.spaceMessage.spoken !== undefined
+                event.spaceMessage.spoken !== undefined,
+                event.spaceMessage.voiceDurationMs,
+                event.spaceMessage.voiceWaveform
             );
             // if the proximity chat is not open, open it to see the message
             openChat("bubble");

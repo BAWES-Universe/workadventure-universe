@@ -158,6 +158,27 @@ export function relativeTime(iso: string | undefined, now: number, locale: strin
     return format.format(Math.round(seconds / (86400 * 365)), "year");
 }
 
+/**
+ * "today", "yesterday", "3 days ago": counted in calendar days, in the player's language. Orbit records when someone
+ * entered a room, not when they left, so hours could be wrong by a whole visit; days are not. Empty for a missing or
+ * unreadable date.
+ */
+export function lastSeenDay(iso: string | undefined, now: number, locale: string): string {
+    if (!iso) return "";
+    const time = Date.parse(iso);
+    if (Number.isNaN(time)) return "";
+    const dayNumber = (t: number) => {
+        const d = new Date(t);
+        return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86_400_000;
+    };
+    // A clock a little ahead of ours cannot make someone seen tomorrow.
+    const days = Math.min(0, dayNumber(time) - dayNumber(now));
+    const format = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
+    if (days > -30) return format.format(days, "day");
+    if (days > -365) return format.format(Math.round(days / 30), "month");
+    return format.format(Math.round(days / 365), "year");
+}
+
 /** Someone People lists from the friends list (a friend, or either side of a request). */
 export interface ListedPerson {
     uuid: string;

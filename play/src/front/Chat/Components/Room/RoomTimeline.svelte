@@ -1024,6 +1024,7 @@
                             partner={$directPartner}
                             bot={partnerBotId !== undefined}
                             botState={shownBotState}
+                            botDotState={botState}
                             on:openProfile={() => openProfileRoomIdStore.set(room.id)}
                         />
                     {:else}

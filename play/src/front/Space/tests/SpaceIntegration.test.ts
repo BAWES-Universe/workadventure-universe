@@ -477,6 +477,7 @@ describe("", () => {
                         characterTextures: [],
                         galleryUrls: [],
                         fileNames: [],
+                        voiceWaveform: [],
                     },
                 },
             },
@@ -494,6 +495,7 @@ describe("", () => {
                 characterTextures: [],
                 galleryUrls: [],
                 fileNames: [],
+                voiceWaveform: [],
             },
         });
 
