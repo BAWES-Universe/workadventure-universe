@@ -2431,6 +2431,17 @@ export class BotClient {
                             reason: draft.reason ?? '',
                         },
                     }),
+                sendStatus: (spaceName, receiverUserId, status) =>
+                    this.sendPrivateEvent(spaceName, receiverUserId, {
+                        $case: 'botVoiceStatus',
+                        botVoiceStatus: {
+                            botId: this.config.botId,
+                            botName: this.config.name,
+                            state: status,
+                            // No setting for how long a bot keeps listening without its name exists yet: 0 says so
+                            followUpSeconds: 0,
+                        },
+                    }),
             },
             (handlers) => {
                 const link = new WorkerLink({ url: settings.url, botId: this.config.botId, secret: settings.secret, ...handlers });

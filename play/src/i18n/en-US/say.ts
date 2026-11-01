@@ -70,6 +70,35 @@ const say: BaseTranslation = {
             longPress: "Long-press",
         },
     },
+    /** The Voice button above Raise hand, and its menu: how you talk with voice bots (#1666). */
+    voice: {
+        label: {
+            talk: "Voice with {bot}: talk and listen",
+            speakAndRead: "Voice with {bot}: speak and read",
+            typeAndListen: "Voice with {bot}: type and listen",
+            textOnly: "Voice with {bot}: text only",
+            paused: "Voice with {bot}: voice paused",
+            connecting: "Voice with {bot}: connecting",
+            tapToHear: "Voice with {bot}: tap to hear",
+        },
+        menuLabel: "Voice with {bot}",
+        inBubble: "In your bubble",
+        inBubbleWith: "In your bubble · {count:number} people",
+        inMeeting: "In this meeting",
+        statusConnecting: "Connecting",
+        statusPaused: "Voice paused",
+        statusTapToHear: "Tap to hear",
+        statusMicOff: "Your mic is off, so it can't hear you",
+        attention: "With others here, use its name when you talk or type to it, like “{bot}, what do you think?”",
+        attentionFollowUp:
+            "After it answers, you have {seconds:number} seconds to keep going without the name. Done sooner? Just tell it, like “Stop” or “We're done”.",
+        howYouTalk: "How you talk with bots",
+        talk: { name: "Talk and listen", hint: "Bots hear you when your mic is on" },
+        speakAndRead: { name: "Speak and read", hint: "Bots hear you, you read their words" },
+        typeAndListen: { name: "Type and listen", hint: "You type, you hear them" },
+        textOnly: { name: "Text only", hint: "No bot voice for you, chat as usual" },
+        micUnchanged: "Your microphone with people doesn't change.",
+    },
     tooltip: {
         description: {
             say: "Displays a chat bubble above your character. Visible to everyone on the map, it remains displayed for 5 seconds.",

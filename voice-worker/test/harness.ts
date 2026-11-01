@@ -4,7 +4,7 @@ import { MediaStreamTrack, RTCPeerConnection, RtpHeader, RtpPacket, useOPUS, use
 import { Decoder, Encoder } from '@evan/opus';
 import { VoiceCalls, type GameSide } from '../../bots/voice/VoiceCalls.ts';
 import { WorkerLink } from '../../bots/voice/VoiceLink.ts';
-import type { FromWorker, ToWorker, VoiceDraft } from '../../bots/voice/protocol.ts';
+import type { FromWorker, ToWorker, VoiceDraft, VoiceStatus } from '../../bots/voice/protocol.ts';
 import { checkMessage } from '../src/validate.ts';
 import { VoiceWorker } from '../src/server.ts';
 import type { RecognizerFactory } from '../src/recognizer.ts';
@@ -183,6 +183,13 @@ export class FakeGame implements GameSide {
 
     sendStart(_space: string, receiverUserId: string): void {
         this.starts.push(receiverUserId);
+    }
+
+    /** Where the bot said its voice stood to each person, in order. */
+    statuses: [string, VoiceStatus][] = [];
+
+    sendStatus(_space: string, receiverUserId: string, status: VoiceStatus): void {
+        this.statuses.push([receiverUserId, status]);
     }
 }
 

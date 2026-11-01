@@ -128,4 +128,45 @@ describe("eventProcessorInit", () => {
             ).toThrow("A bot can only send what it hears itself");
         });
     });
+    describe("botVoiceStatus", () => {
+        const status = {
+            $case: "botVoiceStatus" as const,
+            botVoiceStatus: { botId: "b-1", botName: "Nora", state: "on", followUpSeconds: 0 },
+        };
+        const person = spaceUser("room_7", []);
+
+        it("passes on a bot's own status", () => {
+            expect(
+                eventProcessor.processPrivateEvent(status, spaceUser("room_12", ["bot"], undefined, "bot-b-1"), person)
+            ).toEqual(status);
+        });
+
+        it("refuses a status from a player, so nobody can fake a bot's voice", () => {
+            expect(() =>
+                eventProcessor.processPrivateEvent(status, spaceUser("room_9", ["member"], undefined, "u-9"), person)
+            ).toThrow("Only a bot can send its voice status");
+        });
+
+        it("refuses a status a bot sends as another bot", () => {
+            expect(() =>
+                eventProcessor.processPrivateEvent(status, spaceUser("room_12", ["bot"], undefined, "bot-b-2"), person)
+            ).toThrow("A bot can only send its own voice status");
+        });
+    });
+    describe("voiceModeChoice", () => {
+        const choice = { $case: "voiceModeChoice" as const, voiceModeChoice: { mode: "type_and_listen" } };
+        const sender = spaceUser("room_7", []);
+
+        it("passes on a choice sent to a bot", () => {
+            expect(
+                eventProcessor.processPrivateEvent(choice, sender, spaceUser("room_12", ["bot"], undefined, "bot-b-1"))
+            ).toEqual(choice);
+        });
+
+        it("refuses a choice sent to a player", () => {
+            expect(() =>
+                eventProcessor.processPrivateEvent(choice, sender, spaceUser("room_9", ["member"], undefined, "u-9"))
+            ).toThrow("A voice mode can only be sent to a bot");
+        });
+    });
 });

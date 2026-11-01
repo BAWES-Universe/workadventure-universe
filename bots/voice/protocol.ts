@@ -4,6 +4,8 @@
  */
 
 export type VoiceMode = 'off' | 'listen_only' | 'talk' | 'type_and_listen' | 'speak_and_read';
+/** Where one person's audio with the bot stands, as the bot tells them (the game draws its Voice button from it). */
+export type VoiceStatus = 'connecting' | 'on' | 'paused';
 export type LeaveReason = 'closed' | 'failed' | 'left' | 'superseded' | 'timeout';
 
 /** What a person's browser sends while setting up a call (simple-peer signals). */

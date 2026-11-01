@@ -101,6 +101,39 @@ describe('a voice bot and a person in a peer-to-peer bubble', () => {
         expect(r.violations).toEqual([]);
     });
 
+    it('follows what a person chooses: type and listen takes no microphone even when it is on, speak and read plays nothing, and back again', async () => {
+        const r = await rig();
+        const alice = human('alice');
+        await connectBot(r, alice);
+        await waitFor('the audio connection', () => joined(r, 'alice'));
+        expect(r.game.statuses).toEqual([['alice', 'connecting'], ['alice', 'on']]);
+        alice.startMic();
+        await waitFor('microphone audio', () => r.worker.counters.get('frames_heard') >= 10);
+        const choose = (mode: string) =>
+            r.calls.handlePrivateEvent(privateEvent(r.game, 'alice', { $case: 'voiceModeChoice', voiceModeChoice: { mode } }));
+
+        choose('type_and_listen');
+        await sleep(100);
+        const heard = r.worker.counters.get('frames_heard');
+        await sleep(400);
+        expect(r.worker.counters.get('frames_heard')).toBe(heard);
+        // It still plays the bot to them
+        const before = alice.audioPackets;
+        r.calls.say(r.game.spaceName, 'seg-2', 'you type, you hear me');
+        await waitFor('bot audio', () => alice.audioPackets > before + 10);
+
+        choose('speak_and_read');
+        await sleep(100);
+        const quiet = alice.audioPackets;
+        r.calls.say(r.game.spaceName, 'seg-3', 'nobody should hear this');
+        await waitFor('the segment to be done', () => r.fromWorker.filter((m) => m.type === 'playback.progress' && m.finished).length >= 2);
+        expect(alice.audioPackets - quiet).toBeLessThanOrEqual(2);
+        // Their microphone is taken again
+        const resumed = r.worker.counters.get('frames_heard');
+        await waitFor('microphone audio again', () => r.worker.counters.get('frames_heard') > resumed + 10);
+        expect(r.violations).toEqual([]);
+    });
+
     it('lets a person with no microphone hear the bot: the offer has no audio line, so they are asked to add one', async () => {
         const frames: InputFrame[] = [];
         const r = await rig({ input: (f) => frames.push(f) });

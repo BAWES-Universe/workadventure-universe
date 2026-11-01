@@ -123,3 +123,31 @@ eventProcessor.registerPrivateEventProcessor("botVoiceDraft", (event, sender) =>
     }
     return event;
 });
+
+// Where a voice bot's audio with one person stands (#1666) is for that person only: only a bot may send it, and only
+// about itself.
+eventProcessor.registerPrivateEventProcessor("botVoiceStatus", (event, sender) => {
+    if (event.$case !== "botVoiceStatus") {
+        throw new Error("Invalid event type");
+    }
+    const uuid = sender?.uuid ?? "";
+    if (!sender || !(sender.tags.includes("bot") || uuid.startsWith("bot-"))) {
+        throw new Error("Only a bot can send its voice status");
+    }
+    if (uuid.startsWith("bot-") && event.botVoiceStatus.botId !== uuid.slice("bot-".length)) {
+        throw new Error("A bot can only send its own voice status");
+    }
+    return event;
+});
+
+// How a person wants to talk with bots (#1666) goes to a bot and to nobody else.
+eventProcessor.registerPrivateEventProcessor("voiceModeChoice", (event, _sender, receiver) => {
+    if (event.$case !== "voiceModeChoice") {
+        throw new Error("Invalid event type");
+    }
+    const uuid = receiver?.uuid ?? "";
+    if (!receiver || !(receiver.tags.includes("bot") || uuid.startsWith("bot-"))) {
+        throw new Error("A voice mode can only be sent to a bot");
+    }
+    return event;
+});

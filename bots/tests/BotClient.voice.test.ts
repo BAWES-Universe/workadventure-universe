@@ -86,6 +86,52 @@ describe('BotClient voice', () => {
         await internals.handleSubMessage(startEvent);
         expect((links[0] as any).send).toHaveBeenCalledWith(expect.objectContaining({ type: 'session.open' }));
         expect((links[0] as any).send).toHaveBeenCalledWith(expect.objectContaining({ type: 'lane.open', participantId: 'room_3', epoch: 1 }));
+        // The only thing the game is told: where the audio stands, for that person alone (#1666)
+        expect(send.mock.calls.map(([m]) => m.message.privateEvent.spaceEvent.event.$case)).toEqual(['botVoiceStatus']);
+    });
+
+    it('tells a person its voice is connecting, naming itself, and takes their mode choice to the worker', async () => {
+        const { internals, send } = setup(true);
+        internals.startVoice();
+        await internals.handleSubMessage(startEvent);
+        expect(send).toHaveBeenCalledWith({
+            message: {
+                $case: 'privateEvent',
+                privateEvent: {
+                    spaceName: 'space-1',
+                    receiverUserId: 'room_3',
+                    spaceEvent: { event: { $case: 'botVoiceStatus', botVoiceStatus: { botId: 'abc', botName: 'Echo', state: 'connecting', followUpSeconds: 0 } } },
+                },
+            },
+        });
+        const choice = (mode: string, tags: string[] = []) => ({
+            $case: 'privateEvent',
+            privateEvent: {
+                spaceName: 'space-1',
+                receiverUserId: 'room_9',
+                sender: { spaceUserId: 'room_3', uuid: 'u3', tags, name: 'Sam' },
+                spaceEvent: { event: { $case: 'voiceModeChoice', voiceModeChoice: { mode } } },
+            },
+        });
+        await internals.handleSubMessage(choice('type_and_listen'));
+        await internals.handleSubMessage(choice('off', ['bot']));
+        expect((links[0] as any).send).toHaveBeenCalledWith(expect.objectContaining({ type: 'mode.set', mode: 'type_and_listen', participantId: 'room_3' }));
+        expect((links[0] as any).send).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'mode.set', mode: 'off' }));
+    });
+
+    it('answers a mode choice with nothing for a text-only bot', async () => {
+        const { internals, send } = setup(false);
+        internals.startVoice();
+        await internals.handleSubMessage({
+            $case: 'privateEvent',
+            privateEvent: {
+                spaceName: 'space-1',
+                receiverUserId: 'room_9',
+                sender: { spaceUserId: 'room_3', uuid: 'u3', tags: [], name: 'Sam' },
+                spaceEvent: { event: { $case: 'voiceModeChoice', voiceModeChoice: { mode: 'off' } } },
+            },
+        });
+        expect(links).toEqual([]);
         expect(send).not.toHaveBeenCalled();
     });
 

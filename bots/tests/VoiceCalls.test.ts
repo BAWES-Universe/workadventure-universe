@@ -5,7 +5,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { PrivateEventPusherToFront } from '@workadventure/messages';
 import { VoiceCalls, parseSignal, type GameSide, type LinkHandlers } from '../voice/VoiceCalls';
-import type { FromWorker, ToWorker, VoiceDraft } from '../voice/protocol';
+import type { FromWorker, ToWorker, VoiceDraft, VoiceStatus } from '../voice/protocol';
 import type { VoiceLink } from '../voice/VoiceLink';
 
 const SPACE = 'proximity-1';
@@ -15,7 +15,7 @@ const CANDIDATE = JSON.stringify({ type: 'candidate', candidate: { candidate: 'c
 
 function setup(options: { up?: boolean } = {}) {
     const sent: ToWorker[] = [];
-    const game = { signals: [] as [string, string][], disconnects: [] as string[], starts: [] as string[], drafts: [] as [string, VoiceDraft][] };
+    const game = { signals: [] as [string, string][], disconnects: [] as string[], starts: [] as string[], drafts: [] as [string, VoiceDraft][], statuses: [] as [string, VoiceStatus][] };
     let up = options.up ?? true;
     let handlers!: LinkHandlers;
     const link: VoiceLink = {
@@ -33,6 +33,7 @@ function setup(options: { up?: boolean } = {}) {
         sendDisconnect: (_space, to) => game.disconnects.push(to),
         sendStart: (_space, to) => game.starts.push(to),
         sendDraft: (_space, to, draft) => game.drafts.push([to, draft]),
+        sendStatus: (_space, to, status) => game.statuses.push([to, status]),
     };
     const calls = new VoiceCalls('bot-1', gameSide, (h) => ((handlers = h), link));
     const livekit = (kind: 'invite' | 'leave', extra: { sender?: string; receiver?: string; token?: string; serverUrl?: string; space?: string } = {}): PrivateEventPusherToFront => {
@@ -47,6 +48,13 @@ function setup(options: { up?: boolean } = {}) {
             spaceEvent: { event: inner },
         } as unknown as PrivateEventPusherToFront;
     };
+    const mode = (mode: string, sender = 'room_7', extra: { sender?: object; receiver?: string; space?: string } = {}): PrivateEventPusherToFront =>
+        ({
+            spaceName: extra.space ?? SPACE,
+            receiverUserId: extra.receiver ?? BOT,
+            sender: { spaceUserId: sender, uuid: `uuid-${sender}`, tags: [], name: 'p', ...extra.sender },
+            spaceEvent: { event: { $case: 'voiceModeChoice', voiceModeChoice: { mode } } },
+        } as unknown as PrivateEventPusherToFront);
     const person = (id: string, extra: object = {}) => ({ spaceUserId: id, uuid: `uuid-${id}`, tags: [], name: id, ...extra } as never);
     const event = (kind: 'start' | 'signal' | 'disconnect', sender = 'room_7', extra: { signal?: string; sender?: object; receiver?: string; space?: string; startUserId?: string } = {}): PrivateEventPusherToFront => {
         const inner =
@@ -63,7 +71,7 @@ function setup(options: { up?: boolean } = {}) {
         } as unknown as PrivateEventPusherToFront;
     };
     return {
-        calls, sent, game, event, livekit, person,
+        calls, sent, game, event, livekit, person, mode,
         fromWorker: (m: object) => handlers.onMessage(m as FromWorker),
         workerDown: () => { up = false; handlers.onDown(); },
         workerUp: () => { up = true; handlers.onUp(); },
@@ -517,5 +525,135 @@ describe('VoiceCalls: what a person says to the bot', () => {
         t.say({ type: 'user.turn', outcome: 'final', text: 'hello', audioMs: 400 });
         t.calls.spaceLeft(SPACE);
         expect(t.calls.acceptSpoken(SPACE, 'room_7', '1-1', 'hello')).toBe('unknown');
+    });
+});
+
+describe('VoiceCalls: how a person chooses to talk with bots (#1666)', () => {
+    const modes = (sent: ToWorker[]) => sent.filter((m) => m.type === 'mode.set') as Extract<ToWorker, { type: 'mode.set' }>[];
+
+    it('sets the mode of that person alone, for each of the four modes', () => {
+        const t = setup();
+        t.calls.handlePrivateEvent(t.event('start', 'room_7'));
+        const sessionId = (t.sent[0] as { sessionId: string }).sessionId;
+        for (const choice of ['speak_and_read', 'type_and_listen', 'off', 'talk']) t.calls.handlePrivateEvent(t.mode(choice));
+        expect(modes(t.sent)).toEqual(
+            ['speak_and_read', 'type_and_listen', 'off', 'talk'].map((mode) => ({ type: 'mode.set', sessionId, mode, participantId: 'room_7' }))
+        );
+    });
+
+    it('takes a choice only from a person talking to this bot in a space it is in', () => {
+        const t = setup();
+        t.calls.handlePrivateEvent(t.event('start', 'room_7'));
+        t.calls.handlePrivateEvent(t.mode('off', 'room_3', { sender: { tags: ['bot'] } }));
+        t.calls.handlePrivateEvent(t.mode('off', 'room_4', { sender: { uuid: 'bot-abc' } }));
+        t.calls.handlePrivateEvent(t.mode('off', BOT));
+        t.calls.handlePrivateEvent(t.mode('off', 'room_7', { receiver: 'room_8' }));
+        t.calls.handlePrivateEvent(t.mode('off', 'room_7', { space: 'somewhere-else' }));
+        expect(modes(t.sent)).toEqual([]);
+        expect(t.calls.stats.rejectedFromGame).toBe(5);
+    });
+
+    it('refuses a mode that is not one of the four, such as one that only the bot may use', () => {
+        const t = setup();
+        t.calls.handlePrivateEvent(t.event('start', 'room_7'));
+        for (const choice of ['listen_only', 'loud', '', 'TALK']) t.calls.handlePrivateEvent(t.mode(choice));
+        expect(modes(t.sent)).toEqual([]);
+        expect(t.calls.stats.rejectedFromGame).toBe(4);
+    });
+
+    it('keeps a choice made before the connection opens, and uses it for the connection', () => {
+        const t = setup();
+        t.calls.handlePrivateEvent(t.mode('type_and_listen'));
+        expect(modes(t.sent)).toEqual([]);
+        t.calls.handlePrivateEvent(t.event('start', 'room_7'));
+        expect(lanes(t.sent)[0]).toMatchObject({ participantId: 'room_7', mode: 'type_and_listen' });
+    });
+
+    it('gives each person their own mode, and the default to someone who chose none', () => {
+        const t = setup();
+        t.calls.handlePrivateEvent(t.mode('off', 'room_7'));
+        t.calls.handlePrivateEvent(t.event('start', 'room_7'));
+        t.calls.handlePrivateEvent(t.event('start', 'room_8'));
+        expect(lanes(t.sent).map((l) => [l.participantId, l.mode])).toEqual([['room_7', 'off'], ['room_8', 'talk']]);
+    });
+
+    it('names each person\'s mode to the worker in a LiveKit room, and keeps it as people come and go', () => {
+        const t = setup();
+        t.calls.spaceUsers(SPACE, [t.person('room_7'), t.person('room_8')]);
+        t.calls.handlePrivateEvent(t.livekit('invite'));
+        t.calls.handlePrivateEvent(t.mode('type_and_listen', 'room_7'));
+        t.calls.spaceUserJoined(SPACE, t.person('room_6'));
+        const last = t.sent.filter((m) => m.type === 'room.people').at(-1) as Extract<ToWorker, { type: 'room.people' }>;
+        expect(Object.fromEntries(last.people.map((p) => [p.participantId, p.mode]))).toEqual({ room_7: 'type_and_listen', room_8: 'talk', room_6: 'talk' });
+    });
+
+    it('forgets a person\'s choice when they leave', () => {
+        const t = setup();
+        t.calls.spaceUsers(SPACE, [t.person('room_7')]);
+        t.calls.handlePrivateEvent(t.mode('off', 'room_7'));
+        t.calls.spaceUserLeft(SPACE, 'room_7');
+        t.calls.handlePrivateEvent(t.event('start', 'room_7'));
+        expect(lanes(t.sent)[0].mode).toBe('talk');
+    });
+});
+
+describe('VoiceCalls: telling a person where their audio stands (#1666)', () => {
+    it('says connecting when a connection starts, on when it is up, and nothing twice', () => {
+        const t = setup();
+        t.calls.handlePrivateEvent(t.event('start', 'room_7'));
+        const sessionId = (t.sent[0] as { sessionId: string }).sessionId;
+        t.fromWorker({ type: 'participant.join', sessionId, participantId: 'room_7', epoch: 1 });
+        t.fromWorker({ type: 'participant.join', sessionId, participantId: 'room_7', epoch: 1 });
+        expect(t.game.statuses).toEqual([['room_7', 'connecting'], ['room_7', 'on']]);
+    });
+
+    it('says paused when the worker is not there, or lets go of the connection', () => {
+        const t = setup({ up: false });
+        t.calls.handlePrivateEvent(t.event('start', 'room_7'));
+        expect(t.game.statuses).toEqual([['room_7', 'paused']]);
+        t.setUp(true);
+        t.calls.handlePrivateEvent(t.event('start', 'room_8'));
+        const sessionId = (t.sent[0] as { sessionId: string }).sessionId;
+        t.fromWorker({ type: 'participant.leave', sessionId, participantId: 'room_8', epoch: 1, reason: 'failed' });
+        expect(t.game.statuses.slice(1)).toEqual([['room_8', 'connecting'], ['room_8', 'paused']]);
+    });
+
+    it('says paused to everyone when the worker goes away, and connecting again when it is back', () => {
+        const t = setup();
+        t.calls.spaceUsers(SPACE, [t.person('room_7')]);
+        t.calls.handlePrivateEvent(t.event('start', 'room_7'));
+        t.workerDown();
+        t.workerUp();
+        expect(t.game.statuses.map(([, s]) => s)).toEqual(['connecting', 'paused', 'connecting']);
+    });
+
+    it('does not tell a person who ended the connection themselves', () => {
+        const t = setup();
+        t.calls.handlePrivateEvent(t.event('start', 'room_7'));
+        t.calls.handlePrivateEvent(t.event('disconnect', 'room_7'));
+        expect(t.game.statuses).toEqual([['room_7', 'connecting']]);
+    });
+
+    it('tells everyone about a LiveKit room: connecting, on when joined, paused when it ends, and a late arrival where it stands', () => {
+        const t = setup();
+        t.calls.spaceUsers(SPACE, [t.person('room_7'), t.person('room_8')]);
+        t.calls.handlePrivateEvent(t.livekit('invite'));
+        const room = t.sent.find((m) => m.type === 'room.join') as Extract<ToWorker, { type: 'room.join' }>;
+        expect(t.game.statuses).toEqual([['room_7', 'connecting'], ['room_8', 'connecting']]);
+        t.fromWorker({ type: 'room.state', sessionId: room.sessionId, epoch: room.epoch, state: 'connected' });
+        t.calls.spaceUserJoined(SPACE, t.person('room_6'));
+        t.fromWorker({ type: 'room.state', sessionId: room.sessionId, epoch: room.epoch, state: 'failed' });
+        expect(t.game.statuses.slice(2)).toEqual([
+            ['room_7', 'on'], ['room_8', 'on'],
+            ['room_6', 'on'],
+            ['room_7', 'paused'], ['room_8', 'paused'], ['room_6', 'paused'],
+        ]);
+    });
+
+    it('does not tell a bot', () => {
+        const t = setup();
+        t.calls.spaceUsers(SPACE, [t.person('room_5', { tags: ['bot'] })]);
+        t.calls.handlePrivateEvent(t.livekit('invite'));
+        expect(t.game.statuses).toEqual([]);
     });
 });

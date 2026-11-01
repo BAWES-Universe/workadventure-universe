@@ -10,7 +10,7 @@
  * Every refusal here ends the same way: the person's browser is told to disconnect, and the bot stays text-only.
  */
 import type { PrivateEventPusherToFront, SpaceUser } from '@workadventure/messages';
-import type { FromWorker, ToWorker, VoiceDraft, VoiceMode, VoiceSignal } from './protocol';
+import type { FromWorker, ToWorker, VoiceDraft, VoiceMode, VoiceSignal, VoiceStatus } from './protocol';
 import type { VoiceLink } from './VoiceLink';
 
 /** What the relay needs from the bot's connection to the game. */
@@ -23,6 +23,8 @@ export interface GameSide {
     sendStart(spaceName: string, receiverUserId: string): void;
     /** Shows one person, and only them, what the bot hears them say (see handleSpeech). */
     sendDraft(spaceName: string, receiverUserId: string, draft: VoiceDraft): void;
+    /** Tells one person where their audio with the bot stands (see VoiceStatus): the game draws its Voice button from it. */
+    sendStatus(spaceName: string, receiverUserId: string, status: VoiceStatus): void;
 }
 
 interface Call {
@@ -61,6 +63,9 @@ const MAX_URL_CHARS = 2048;
 const MAX_PEOPLE = 500;
 /** Spoken lines remembered, so each is taken once and only if the bot heard it. Oldest first out. */
 const MAX_SPOKEN = 200;
+/** The modes a person may choose for themselves (#1666): talk and listen, speak and read, type and listen, text only. */
+const PERSON_MODES: readonly VoiceMode[] = ['talk', 'speak_and_read', 'type_and_listen', 'off'];
+const DEFAULT_PERSON_MODE: VoiceMode = 'talk';
 
 export interface LinkHandlers {
     onMessage(message: FromWorker): void;
@@ -103,6 +108,10 @@ export class VoiceCalls {
     private readonly lastSpeechAt = new Map<string, number>();
     /** Called when someone's audio is connected (a call or the room): what was waiting for an audience can be said. */
     onAudience?: (spaceName: string) => void;
+    /** What each person's mode is, as they chose it. Missing: the default. Kept so a choice made before the audio connects still applies. */
+    private readonly modes = new Map<string, VoiceMode>();
+    /** The last status each person was told, so only a change is sent. */
+    private readonly told = new Map<string, VoiceStatus>();
     /** Called when a reply's voice stopped part-way because someone spoke over it. */
     onStopped?: (spaceName: string, segmentId: string) => void;
     private epoch = 0;
@@ -142,6 +151,9 @@ export class VoiceCalls {
                 break;
             case 'webRtcDisconnectMessage':
                 if (this.fromAPerson(event, sender)) this.end(event.spaceName, sender!.spaceUserId, 'left');
+                break;
+            case 'voiceModeChoice':
+                if (this.fromAPerson(event, sender)) this.personChoseMode(event.spaceName, sender!, inner.voiceModeChoice.mode);
                 break;
             case 'livekitInvitationMessage':
                 if (this.fromMyself(event)) this.joinRoom(event.spaceName, inner.livekitInvitationMessage.serverUrl, inner.livekitInvitationMessage.token);
@@ -197,12 +209,47 @@ export class VoiceCalls {
         // A newer connection replaces the one before it: the worker closes the old path when it opens the new one
         const call: Call = { spaceName, sessionId: bubble.sessionId, participantId: person.spaceUserId, epoch };
         this.calls.set(key, call);
-        if (!this.link.send({ type: 'lane.open', sessionId: bubble.sessionId, participantId: person.spaceUserId, epoch, mode: 'talk' })) {
+        if (!this.link.send({ type: 'lane.open', sessionId: bubble.sessionId, participantId: person.spaceUserId, epoch, mode: this.modeOf(spaceName, person.spaceUserId) })) {
             this.calls.delete(key);
             this.refuse(spaceName, person.spaceUserId);
             return;
         }
         this.stats.started++;
+        this.tell(spaceName, person.spaceUserId, 'connecting');
+    }
+
+    /**
+     * A person chose how they talk with bots. Only a person in this bot's space may (see fromAPerson), and only one
+     * of the four modes: anything else is refused. It is kept for their later connections and sent to the worker for
+     * the one they have now. Type and listen, and text only, mean the worker takes nothing from their microphone.
+     */
+    private personChoseMode(spaceName: string, person: SpaceUser, mode: string): void {
+        if (!(PERSON_MODES as readonly string[]).includes(mode)) {
+            this.stats.rejectedFromGame++;
+            return;
+        }
+        const key = callKey(spaceName, person.spaceUserId);
+        this.modes.set(key, mode as VoiceMode);
+        this.setMode(spaceName, mode as VoiceMode, person.spaceUserId);
+        // In a LiveKit room the worker is told by the list of people, which carries each person's mode
+        const room = this.rooms.get(spaceName);
+        if (room) this.sendPeople(room);
+    }
+
+    private modeOf(spaceName: string, personId: string): VoiceMode {
+        return this.modes.get(callKey(spaceName, personId)) ?? DEFAULT_PERSON_MODE;
+    }
+
+    /** Tells one person where their audio stands, once per change. */
+    private tell(spaceName: string, personId: string, status: VoiceStatus): void {
+        const key = callKey(spaceName, personId);
+        if (this.told.get(key) === status) return;
+        this.told.set(key, status);
+        this.game.sendStatus(spaceName, personId, status);
+    }
+
+    private tellEveryone(spaceName: string, status: VoiceStatus): void {
+        for (const personId of this.roster.get(spaceName)?.keys() ?? []) this.tell(spaceName, personId, status);
     }
 
     private signalFromPerson(spaceName: string, person: SpaceUser, raw: string): void {
@@ -239,6 +286,8 @@ export class VoiceCalls {
         for (const key of this.spoken.keys()) if (key.startsWith(`${spaceName}\n`)) this.spoken.delete(key);
         for (const [key, live] of this.live) if (live.spaceName === spaceName) this.live.delete(key);
         for (const key of this.joined.keys()) if (key.startsWith(`${spaceName}\n`)) this.joined.delete(key);
+        for (const key of this.modes.keys()) if (key.startsWith(`${spaceName}\n`)) this.modes.delete(key);
+        for (const key of this.told.keys()) if (key.startsWith(`${spaceName}\n`)) this.told.delete(key);
         this.talking.delete(spaceName);
         this.lastSpeechAt.delete(spaceName);
     }
@@ -256,6 +305,7 @@ export class VoiceCalls {
         const bubble = this.bubbleFor(spaceName);
         if (!bubble) {
             this.log(`voice: no LiveKit audio in ${spaceName} (worker not available)`);
+            this.tellEveryone(spaceName, 'paused');
             return;
         }
         // Everything older is replaced by the room: the worker closes the connections with people, and so does this side
@@ -264,11 +314,13 @@ export class VoiceCalls {
         const room: Room = { spaceName, sessionId: bubble.sessionId, epoch: ++this.epoch };
         if (!this.link.send({ type: 'room.join', sessionId: room.sessionId, epoch: room.epoch, serverUrl, token })) {
             this.log(`voice: no LiveKit audio in ${spaceName} (worker not available)`);
+            this.tellEveryone(spaceName, 'paused');
             return;
         }
         this.rooms.set(spaceName, room);
         this.stats.roomsJoined++;
         this.sendPeople(room);
+        this.tellEveryone(spaceName, 'connecting');
     }
 
     private leaveRoom(spaceName: string): void {
@@ -277,11 +329,12 @@ export class VoiceCalls {
         if (!room) return;
         this.rooms.delete(spaceName);
         this.link.send({ type: 'room.leave', sessionId: room.sessionId, epoch: room.epoch });
+        this.tellEveryone(spaceName, 'paused');
     }
 
     /** Tells the worker whose microphone it may take from the room: the people in the bubble, never a bot. */
     private sendPeople(room: Room): void {
-        const people = [...(this.roster.get(room.spaceName)?.keys() ?? [])].slice(0, MAX_PEOPLE).map((participantId) => ({ participantId, mode: 'talk' as const }));
+        const people = [...(this.roster.get(room.spaceName)?.keys() ?? [])].slice(0, MAX_PEOPLE).map((participantId) => ({ participantId, mode: this.modeOf(room.spaceName, participantId) }));
         this.link.send({ type: 'room.people', sessionId: room.sessionId, epoch: room.epoch, people });
     }
 
@@ -304,6 +357,9 @@ export class VoiceCalls {
         if (!people) this.roster.set(spaceName, (people = new Map()));
         people.set(user.spaceUserId, user);
         this.rosterChanged(spaceName);
+        // Someone who arrives while the bot is in the room is told where its audio stands
+        const room = this.rooms.get(spaceName);
+        if (room) this.tell(spaceName, user.spaceUserId, room.connected ? 'on' : 'connecting');
     }
 
     spaceUserLeft(spaceName: string, spaceUserId: string): void {
@@ -311,6 +367,8 @@ export class VoiceCalls {
         this.joined.delete(callKey(spaceName, spaceUserId));
         this.lost.delete(callKey(spaceName, spaceUserId));
         this.live.delete(callKey(spaceName, spaceUserId));
+        this.modes.delete(callKey(spaceName, spaceUserId));
+        this.told.delete(callKey(spaceName, spaceUserId));
         if (this.roster.get(spaceName)?.delete(spaceUserId)) this.rosterChanged(spaceName);
     }
 
@@ -333,6 +391,7 @@ export class VoiceCalls {
         this.stats.refusedStart++;
         this.log(`voice: no audio connection for ${personId} (worker not available)`);
         this.game.sendDisconnect(spaceName, personId);
+        this.tell(spaceName, personId, 'paused');
     }
 
     /** Ends a call the worker can no longer carry, and tells the person's browser so it does not wait for it. */
@@ -342,6 +401,7 @@ export class VoiceCalls {
             this.link.send({ type: 'lane.close', sessionId: call.sessionId, participantId: call.participantId, epoch: call.epoch, reason: 'failed' });
         }
         this.game.sendDisconnect(call.spaceName, call.participantId);
+        this.tell(call.spaceName, call.participantId, 'paused');
     }
 
     // ---- from the worker ----
@@ -358,6 +418,7 @@ export class VoiceCalls {
             } else if (message.type === 'participant.join') {
                 this.stats.connected++;
                 this.joined.set(callKey(call.spaceName, call.participantId), call.epoch);
+                this.tell(call.spaceName, call.participantId, 'on');
                 this.onAudience?.(call.spaceName);
             } else if (message.type === 'participant.leave') {
                 this.drop(call, false);
@@ -369,12 +430,14 @@ export class VoiceCalls {
             } else if (message.state === 'connected') {
                 this.stats.roomsConnected++;
                 room.connected = true;
+                this.tellEveryone(room.spaceName, 'on');
                 this.onAudience?.(room.spaceName);
             } else {
                 // The worker lost the bot's LiveKit connection, or never made it: the bot stays text-only until the game invites it again
                 this.rooms.delete(room.spaceName);
                 this.invitations.delete(room.spaceName);
                 this.log(`voice: LiveKit audio in ${room.spaceName} ended (${message.state})`);
+                this.tellEveryone(room.spaceName, 'paused');
             }
         } else if (message.type === 'user.speech_started' || message.type === 'user.partial' || message.type === 'user.turn') {
             this.handleSpeech(message);
@@ -484,6 +547,7 @@ export class VoiceCalls {
                 this.rooms.delete(room.spaceName);
                 this.invitations.delete(room.spaceName);
                 this.log(`voice: no LiveKit audio in ${room.spaceName} (worker is full)`);
+                this.tellEveryone(room.spaceName, 'paused');
             } else if (!room) {
                 this.stats.staleFromWorker++;
             }
@@ -507,6 +571,7 @@ export class VoiceCalls {
             if (room?.sessionId === sessionId) {
                 this.rooms.delete(spaceName);
                 this.invitations.delete(spaceName);
+                this.tellEveryone(spaceName, 'paused');
             }
         }
     }
@@ -534,7 +599,9 @@ export class VoiceCalls {
         for (const call of [...this.calls.values()]) {
             this.lost.set(callKey(call.spaceName, call.participantId), { spaceName: call.spaceName, personId: call.participantId });
             this.game.sendDisconnect(call.spaceName, call.participantId);
+            this.tell(call.spaceName, call.participantId, 'paused');
         }
+        for (const spaceName of [...this.rooms.keys()]) this.tellEveryone(spaceName, 'paused');
         this.calls.clear();
         this.bubbles.clear();
         this.joined.clear();
@@ -616,6 +683,8 @@ export class VoiceCalls {
         this.joined.clear();
         this.talking.clear();
         this.lastSpeechAt.clear();
+        this.modes.clear();
+        this.told.clear();
         this.link.close();
     }
 

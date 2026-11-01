@@ -83,6 +83,7 @@
     import ExpressButton from "./ActionBar/Express/ExpressButton.svelte";
     import ExplorerMenu from "./ActionsMenu/ExplorerMenu.svelte";
     import RaiseHandButton from "./ActionBar/RaiseHand/RaiseHandButton.svelte";
+    import VoiceButton from "./ActionBar/Voice/VoiceButton.svelte";
 
     const handleFocusInEvent = (event: FocusEvent) => {
         if (
@@ -302,6 +303,8 @@
                         class="absolute bottom-2 right-1 md:right-2 xl:right-4 flex flex-col items-end gap-2 pointer-events-none"
                     >
                         <ExplorerMenu />
+                        <!-- Only while a bot with voice on is in the bubble or meeting (#1666) -->
+                        <VoiceButton />
                         <RaiseHandButton />
                         <ExpressButton />
                     </div>
