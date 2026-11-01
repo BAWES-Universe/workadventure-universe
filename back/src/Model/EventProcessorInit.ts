@@ -29,7 +29,7 @@ eventProcessor.registerPublicEventProcessor("spaceMessage", (event, senderId, us
             id: event.spaceMessage.id,
             replyTo: event.spaceMessage.replyTo,
             voiceDurationMs: event.spaceMessage.voiceDurationMs,
-            voiceWaveform: event.spaceMessage.voiceWaveform,
+            voiceWaveform: event.spaceMessage.voiceWaveform ?? [],
         },
     };
 });
