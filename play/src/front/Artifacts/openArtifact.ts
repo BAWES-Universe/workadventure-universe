@@ -30,7 +30,8 @@ export function openArtifactFromCard(card: ArtifactCard, chat: ArtifactChat | un
 /**
  * Opens an artifact's latest version in the window from its share link, as an object on the map links to it (game
  * #1737). Nothing is asked first: the window asks the game's server, and when this person may not open it, the window
- * says so. The title shows until the window knows the artifact's own.
+ * says so. The title shows until the window knows the artifact's own. When its window is already open, it comes back to
+ * the front as it is.
  */
 export function openArtifactFromLink(id: string, title: string): void {
     openArtifact(id, undefined, { title, kind: undefined, makerName: undefined }, undefined);
@@ -45,7 +46,8 @@ function openArtifact(
     lowerChatSheet();
     const existing = openArtifactWindow(id);
     if (existing) {
-        existing.version.set(version);
+        // From a link no version is named: the open window comes back as it is, at the version it shows
+        if (version !== undefined) existing.version.set(version);
         if (chat) existing.chat = chat;
         // With other panels open, it moves to the end, where the container shows the newest panel.
         if (get(coWebsites).length > 1) {

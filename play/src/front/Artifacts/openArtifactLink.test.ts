@@ -68,6 +68,14 @@ describe("an object's link to an artifact (#1737)", () => {
         expect(mocks.bringOpenHereInFront).toHaveBeenCalledTimes(1);
     });
 
+    it("leaves the version an open window shows as it is", () => {
+        openArtifactLink(LINK, "View Artifact");
+        const window = get(coWebsites)[0] as unknown as ArtifactCoWebsite;
+        window.version.set(2);
+        openArtifactLink(LINK, "View Artifact");
+        expect(get(window.version)).toBe(2);
+    });
+
     it("leaves every other link alone, look-alikes included", () => {
         expect(openArtifactLink("https://example.com/page", "x")).toBe(false);
         expect(openArtifactLink(`https://orbit.example.evil.com/a/${ID}`, "x")).toBe(false);
