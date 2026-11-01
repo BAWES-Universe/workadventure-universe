@@ -9,6 +9,8 @@ import { requestedStatusFactory } from "../Rules/StatusRules/StatusFactory/Reque
 import { INITIAL_SIDEBAR_WIDTH } from "../Stores/ChatStore";
 import { isAndroid, isIOS } from "../WebRtc/DeviceUtils";
 import type { InstallCardRecord } from "../Install/InstallApp";
+import type { VoiceChoice } from "../Chat/Bots/VoiceMode";
+import { DEFAULT_VOICE_CHOICE, VOICE_CHOICES } from "../Chat/Bots/VoiceMode";
 import type { LocalUser } from "./LocalUser";
 import { areCharacterTexturesValid, isUserNameValid } from "./LocalUserUtils";
 
@@ -72,6 +74,7 @@ const lookAroundHintSeenKey = "lookAroundHintSeen";
 const editHintSeenKey = "editHintSeen";
 const recentEditObjectsKey = "recentEditObjects";
 const bubbleSound = "bubbleSound";
+const voiceChoiceKey = "voiceChoice";
 const knownMediaDevices = "knownMediaDevices";
 // The old flag "the card was shown once": only read to move it to the record (installCard).
 const installCardSeenKey = "installCardSeen";
@@ -1144,6 +1147,19 @@ class LocalUserStore {
 
     setBubbleSound(value: "ding" | "wobble"): void {
         localStorage.setItem(bubbleSound, value);
+    }
+
+    /**
+     * How this person talks with voice bots (#1666): one choice for every voice bot. It is the voice worker's mode
+     * for "off" and the three others by name; anything else saved is read as the default, talk and listen.
+     */
+    setVoiceChoice(value: VoiceChoice): void {
+        localStorage.setItem(voiceChoiceKey, value);
+    }
+
+    getVoiceChoice(): VoiceChoice {
+        const value = localStorage.getItem(voiceChoiceKey);
+        return VOICE_CHOICES.find((choice) => choice === value) ?? DEFAULT_VOICE_CHOICE;
     }
 
     getBubbleSound(): "ding" | "wobble" {

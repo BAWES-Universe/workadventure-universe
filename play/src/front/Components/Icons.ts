@@ -166,6 +166,7 @@ export { default as IconArrowsMove } from "~icons/tabler/arrows-move";
 export { default as IconMouse } from "~icons/tabler/mouse";
 export { default as IconAdjustmentsHorizontal } from "~icons/tabler/adjustments-horizontal";
 export { default as IconKeyboard } from "~icons/tabler/keyboard";
+export { default as IconAlignLeft } from "~icons/tabler/align-left";
 export { default as IconEyeOff } from "~icons/tabler/eye-off";
 export { default as IconHandStop } from "~icons/tabler/hand-stop";
 export { default as IconMoodPlus } from "~icons/tabler/mood-plus";

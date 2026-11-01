@@ -1418,6 +1418,8 @@ message PrivateSpaceEvent {
     LowerHandPrivateMessage lowerHand = 22;
     BotReplyLimitMessage botReplyLimit = 23;
     BotVoiceDraftMessage botVoiceDraft = 24;
+    BotVoiceStatusMessage botVoiceStatus = 25;
+    VoiceModeChoiceMessage voiceModeChoice = 26;
     // From 30: upstream WorkAdventure uses the numbers right after ours.
     InviteToSpeakPrivateMessage inviteToSpeak = 30;
     DeclineToSpeakPrivateMessage declineToSpeak = 31;
@@ -1452,6 +1454,25 @@ message BotVoiceDraftMessage {
   string state = 4;     // "live" (words so far) | "final" (finished: the person's game sends it) | "lost" (words that didn't come through) | "cleared"
   string text = 5;
   string reason = 6;    // "lost" only: "cap" | "gap" | "path" | "stopped" | "provider"
+}
+
+/**
+ * A voice bot tells one person where their audio with it stands (#1666): the game draws the Voice button from it.
+ * Only a bot may send it (the pusher refuses anyone else), and only about itself.
+ */
+message BotVoiceStatusMessage {
+  string botId = 1;
+  string botName = 2;
+  string state = 3;            // "connecting" | "on" | "paused" (the bot says voice is unavailable)
+  int32 followUpSeconds = 4;   // how long the bot keeps listening after it answers without its name; 0: the bot sends none
+}
+
+/**
+ * A person tells a voice bot how they want to talk with bots (#1666). Only a bot may be the receiver (the pusher
+ * refuses it otherwise). The values are the voice worker's modes (bots/voice/protocol.ts).
+ */
+message VoiceModeChoiceMessage {
+  string mode = 1;             // "talk" | "speak_and_read" | "type_and_listen" | "off" (text only)
 }
 
 message SwitchMessage {
