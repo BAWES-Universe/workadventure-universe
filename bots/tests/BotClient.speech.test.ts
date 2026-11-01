@@ -110,7 +110,7 @@ describe('a voice bot says the words it writes', () => {
         t.worker({ type: 'participant.join' });
         const table = 'Here is the week:\n| Day | Done |\n| --- | --- |\n| Mon | 3 |';
         t.bot.sendStreamMessage(SPACE, 'bot-voice-1-player-3-aaa', '', true, table);
-        expect(says().map((s) => s.text)).toEqual(['Here is the week: The table is in the chat.']);
+        expect(says().map((s) => s.text)).toEqual(["Here is the week: I've put the table in the chat."]);
         expect(streamed(t.send).at(-1)![2]).toBe(table);
     });
 

@@ -6,12 +6,12 @@
 
 /** What is said where something stays in the chat, and where the rest of a long reply does. */
 export const SPOKEN_PHRASES = {
-    table: 'The table is in the chat.',
-    code: 'The code is in the chat.',
-    link: 'The link is in the chat.',
+    table: "I've put the table in the chat.",
+    code: "I've put the code in the chat.",
+    link: "I've put the link in the chat.",
     /** A web address in the middle of a sentence: the sentence goes on around it. */
     linkInSentence: 'the link in the chat',
-    rest: 'The rest is in the chat.',
+    rest: "I've put the rest in the chat.",
 };
 
 const FENCE = /```[\s\S]*?(?:```|$)/g;
