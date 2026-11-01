@@ -356,8 +356,17 @@ message DeleteCustomEntityMessage {
   bool wholeUpload = 2;
   // Set by map-storage when wholeUpload is true: every picture of the upload, so each browser removes them all.
   repeated string pictureIds = 3;
-  // Set by map-storage: the map files of the other rooms that lost copies, so the back tells the people in them.
-  repeated string otherRoomWamUrls = 4;
+  // Was the map files of the other rooms that lost copies: map-storage now tells every back server (#1722).
+  reserved 4;
+}
+
+// Map-storage tells every back server that an upload was deleted with all its copies in the other rooms of a world, so
+// each back tells the people in the matching rooms it holds (#1722).
+message UploadDeletedMessage {
+  // The map files of the other rooms of the world, as the rooms are known by.
+  repeated string wamUrls = 1;
+  // The delete as the people in those rooms receive it.
+  EditMapCommandMessage command = 2;
 }
 
 // Asks where the copies of an upload are placed, for the box that confirms deleting it (#1690).
@@ -686,6 +695,8 @@ message FriendRequest {
   string sharedWorld = 3;
   // ISO date the request was sent.
   string at = 4;
+  // Their chat ID, so the game can show their Woka; empty when unknown.
+  string chatId = 5;
 }
 
 message BlockedPerson {

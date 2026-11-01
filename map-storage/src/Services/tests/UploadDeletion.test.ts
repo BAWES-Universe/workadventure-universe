@@ -63,7 +63,7 @@ const uploads = {
         return Promise.resolve();
     },
 };
-const message = { id: "bookcase", wholeUpload: true, pictureIds: [], otherRoomWamUrls: [] };
+const message = { id: "bookcase", wholeUpload: true, pictureIds: [] };
 const checkRights = vi.fn(() => Promise.resolve());
 const run = () =>
     deleteUploadEverywhere({

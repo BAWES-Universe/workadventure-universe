@@ -1224,15 +1224,7 @@ export class GameRoom implements BrothersFinder {
 
     private mapStorageLock: Promise<void> = Promise.resolve();
 
-    /**
-     * @param findRoomsByWamUrl Gives the rooms of this back that are one of these map files. Deleting an upload
-     * everywhere (#1690) is also told to the people in the other rooms of the world.
-     */
-    forwardEditMapCommandMessage(
-        user: User,
-        message: EditMapCommandMessage,
-        findRoomsByWamUrl: (wamUrls: string[]) => GameRoom[] = () => []
-    ) {
+    forwardEditMapCommandMessage(user: User, message: EditMapCommandMessage) {
         this.mapStorageLock = this.mapStorageLock.then(() =>
             new Promise<void>((resolve, reject) => {
                 if (!this._wamUrl) {
@@ -1337,24 +1329,10 @@ export class GameRoom implements BrothersFinder {
                             this.jitsiModeratorTagFinderPromise = undefined;
                         }
                         if (editMapCommandMessage.editMapMessage?.message?.$case === "deleteCustomEntityMessage") {
-                            // Map-storage lists the other rooms that lost copies of the upload: the people in them
-                            // see the copies go, as when an editor deletes an object in their own room.
-                            const deleted = editMapCommandMessage.editMapMessage.message.deleteCustomEntityMessage;
-                            const otherRoomWamUrls = deleted.wholeUpload ? deleted.otherRoomWamUrls : [];
-                            deleted.otherRoomWamUrls = [];
                             // The copies are gone from the saved maps: read them again, so their sounds count as gone
-                            // too (#1627)
+                            // too (#1627). The people in the other rooms of the world are told by map-storage, through
+                            // every back server (#1722).
                             this.wamPromise = undefined;
-                            for (const otherRoom of findRoomsByWamUrl(otherRoomWamUrls)) {
-                                if (otherRoom === this) continue;
-                                otherRoom.wamPromise = undefined;
-                                otherRoom.dispatchRoomMessage({
-                                    message: {
-                                        $case: "editMapCommandMessage",
-                                        editMapCommandMessage,
-                                    },
-                                });
-                            }
                         }
                         this.dispatchRoomMessage({
                             message: {
@@ -1370,6 +1348,21 @@ export class GameRoom implements BrothersFinder {
                 emitError(user.socket, error.message);
             })
         );
+    }
+
+    /**
+     * An upload was deleted from another room of the world, with every copy of it (#1690): the people in this room see
+     * its copies go, as when an editor deletes an object in their own room.
+     */
+    public receiveUploadDeletion(command: EditMapCommandMessage): void {
+        // The copies are gone from the saved map: read it again, so their sounds count as gone too (#1627)
+        this.wamPromise = undefined;
+        this.dispatchRoomMessage({
+            message: {
+                $case: "editMapCommandMessage",
+                editMapCommandMessage: command,
+            },
+        });
     }
 
     public dispatchEvent(name: string, data: unknown, senderId: number | "RoomApi", targetUserIds: number[]): void {

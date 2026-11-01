@@ -6,7 +6,9 @@
 <script lang="ts">
     import { onDestroy, onMount, tick } from "svelte";
     import { get } from "svelte/store";
+    import type { Readable } from "svelte/store";
     import type { AvailabilityStatus } from "@workadventure/messages";
+    import type { PictureStore } from "../../../Stores/PictureStore";
     import { localUserStore } from "../../../Connection/LocalUserStore";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import type { ChatUser } from "../../Connection/ChatConnection";
@@ -15,6 +17,8 @@
     import type { UserProviderMerger } from "../../UserProviderMerger/UserProviderMerger";
     import InviteFooter from "../InviteFooter.svelte";
     import { peopleCardReturn } from "../../Stores/PeopleCardReturnStore";
+    import { createColourByChatIdStore, createWokaByChatIdStore, personColour } from "../../Stores/ChatUserWokaStore";
+    import { currentChatPeople, requestChatPerson } from "../../Stores/ChatPeopleLookup";
     import { fold } from "../../../Utils/foldTransition";
     import {
         friendsEnabledStore,
@@ -34,7 +38,7 @@
     import FriendFaces from "./FriendFaces.svelte";
     import UniverseSearch from "./UniverseSearch.svelte";
     import type { WorldSighting } from "./Friends";
-    import { otherWorldFaces, placeFriends } from "./Friends";
+    import { chatIdsToAsk, otherWorldFaces, placeFriends, savedLook } from "./Friends";
     import { friendNoticeStore } from "./FriendActions";
     import { IconChevronDown, IconMapPin } from "@wa-icons";
 
@@ -232,10 +236,42 @@
     );
     $: faces = otherWorldFaces(placedFriends);
 
-    function lookOf(uuid: string) {
-        const person = worldSightings.get(uuid)?.person;
-        return person ? { picture: person.primary.pictureStore, color: person.primary.color ?? undefined } : {};
+    // Friends and requests the world isn't showing right now (offline, or in another world) keep their woka: the one
+    // the world's member list saved, else the one Orbit draws for them, the same picture their direct chat shows. Its
+    // background is from their name, as the game picks it online.
+    const wokaByChatId = createWokaByChatIdStore(Promise.resolve(userProviderMerger), currentChatPeople()?.store);
+    const colourByChatId = createColourByChatIdStore(Promise.resolve(userProviderMerger));
+    $: friendsByUuid = new Map(
+        [...(friendsList?.friends ?? []), ...(friendsList?.incoming ?? []), ...(friendsList?.outgoing ?? [])].map(
+            (person) => [person.uuid, person]
+        )
+    );
+    type Look = { picture?: Readable<string | undefined>; color?: string };
+    function looks(
+        sightings: typeof worldSightings,
+        listed: typeof friendsByUuid,
+        wokas: Map<string, PictureStore>,
+        colours: Map<string, string>
+    ): (uuid: string) => Look {
+        return (uuid) => {
+            const person = sightings.get(uuid)?.person;
+            if (person) return { picture: person.primary.pictureStore, color: person.primary.color ?? undefined };
+            return savedLook(listed.get(uuid), wokas, (chatId, name) => personColour(colours, chatId, name));
+        };
     }
+    $: lookOf = looks(worldSightings, friendsByUuid, $wokaByChatId, $colourByChatId);
+    // Asked once per person while People is open, only for those shown: the Friends or Requests view, or the faces.
+    const askedChatIds = new Set<string>();
+    $: for (const chatId of chatIdsToAsk(
+        view === "friends"
+            ? placedFriends.map((entry) => entry.friend)
+            : view === "requests"
+            ? [...(friendsList?.incoming ?? []), ...(friendsList?.outgoing ?? [])]
+            : faces.map((entry) => entry.friend),
+        (uuid) => worldSightings.has(uuid),
+        askedChatIds
+    ))
+        requestChatPerson(chatId);
 
     let highlightUuid: string | undefined;
     let highlightTimer: ReturnType<typeof setTimeout> | undefined;
@@ -294,7 +330,7 @@
             />
         {:else}
             {#if !isSearching}
-                <FriendFaces {faces} on:open={(event) => openFriend(event.detail)} />
+                <FriendFaces {faces} {lookOf} on:open={(event) => openFriend(event.detail)} />
             {/if}
             {#if hereAll.length > 0 && (!isSearching || hereShown.length > 0)}
                 <section class="flex flex-col" data-testid="peopleHere">
