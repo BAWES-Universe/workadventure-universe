@@ -97,6 +97,14 @@ export function placeFriends(
     });
 }
 
+/**
+ * View profile gets the first button spot (and leaves ⋯) on rows that have neither Walk to nor Go, so Message stays
+ * in the same place on every row. Rows with Walk to or Go keep it in ⋯.
+ */
+export function profileTakesFirstSpot(canViewProfile: boolean, canWalk: boolean, canGo: boolean): boolean {
+    return canViewProfile && !canWalk && !canGo;
+}
+
 export function byName(a: { name: string }, b: { name: string }): number {
     return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
 }
@@ -148,4 +156,45 @@ export function relativeTime(iso: string | undefined, now: number, locale: strin
     if (abs < 86400 * 30) return format.format(Math.round(seconds / 86400), "day");
     if (abs < 86400 * 365) return format.format(Math.round(seconds / (86400 * 30)), "month");
     return format.format(Math.round(seconds / (86400 * 365)), "year");
+}
+
+/** Someone People lists from the friends list (a friend, or either side of a request). */
+export interface ListedPerson {
+    uuid: string;
+    name: string;
+    chatId: string;
+}
+
+/**
+ * The woka and its background for someone the world isn't showing right now: their saved woka by chat ID (the world's
+ * member list, else Orbit's), on the colour the game gives their name. Nothing for someone not listed.
+ */
+export function savedLook<P>(
+    person: ListedPerson | undefined,
+    wokaByChatId: ReadonlyMap<string, P>,
+    colourOf: (chatId: string | undefined, name: string) => string | undefined
+): { picture?: P; color?: string } {
+    if (!person) return {};
+    return {
+        picture: person.chatId ? wokaByChatId.get(person.chatId) : undefined,
+        color: colourOf(person.chatId || undefined, person.name),
+    };
+}
+
+/**
+ * The chat IDs to ask Orbit about among the people shown: not in this world (the world already draws them), with a
+ * chat ID, and not asked yet. Marks them as asked.
+ */
+export function chatIdsToAsk(
+    people: readonly ListedPerson[],
+    inWorld: (uuid: string) => boolean,
+    asked: Set<string>
+): string[] {
+    const ask: string[] = [];
+    for (const person of people) {
+        if (!person.chatId || asked.has(person.chatId) || inWorld(person.uuid)) continue;
+        asked.add(person.chatId);
+        ask.push(person.chatId);
+    }
+    return ask;
 }

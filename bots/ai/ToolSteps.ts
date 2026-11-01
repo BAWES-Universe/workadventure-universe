@@ -58,6 +58,8 @@ export interface StepsField {
 }
 
 const DETAIL_MAX = 60;
+/** A tool server's own title is shown whole (the game wraps it); this only stops a runaway one. */
+const TITLE_MAX = 150;
 const NOTE_MAX = 80;
 /** Arguments worth showing, in order: what the call is about. */
 const DETAIL_KEYS = ['prompt', 'query', 'q', 'search', 'url', 'title', 'topic', 'text', 'description', 'name'];
@@ -84,6 +86,9 @@ const OWN_GROUPS: Record<string, (count: number) => string> = {
     change_artifact: (n) => (n === 1 ? 'Changed an artifact' : `Changed an artifact ${n} times`),
 };
 
+/** The line once every call has finished and the answer is being written. */
+export const WRITING_LINE = 'Writing the answer';
+
 /** What a tool with no usable name reads as. */
 const NO_NAME = 'Use a tool';
 
@@ -101,7 +106,7 @@ export function describeStep(call: { id: string; name: string; arguments?: unkno
     const args = parseArgs(call.arguments);
     const own = OWN_STEPS[call.name];
     if (own && !title) return { id: call.id, ...own(args) };
-    const words = oneLine(title) ?? tidyName(call.name);
+    const words = oneLine(title, TITLE_MAX) ?? tidyName(call.name);
     const named = words !== NO_NAME;
     return {
         id: call.id,
@@ -213,10 +218,14 @@ export class ReplySteps {
         return `${field.line}${failed ? ` · ${failed} didn't work` : ''}${unknown ? ` · ${unknown} no answer` : ''}`;
     }
 
-    /** What runs now: the newest running step (the game shows its detail and how many are done beside it). */
+    /**
+     * What runs now: the newest running step (the game shows its detail and how many are done beside it). Once every
+     * call has finished, the bot is writing its answer, so the line stops saying "Using".
+     */
     private liveLine(): string {
-        const now = this.steps.filter((s) => s.state === 'running').at(-1) ?? this.steps.at(-1);
-        return now?.doing ?? '';
+        const running = this.steps.filter((s) => s.state === 'running').at(-1);
+        if (running) return running.doing;
+        return this.steps.length ? WRITING_LINE : '';
     }
 }
 

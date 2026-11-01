@@ -80,7 +80,6 @@ export async function deleteUploadEverywhere({
                                 ...message,
                                 wholeUpload: true,
                                 pictureIds,
-                                otherRoomWamUrls: [],
                             },
                         },
                     },

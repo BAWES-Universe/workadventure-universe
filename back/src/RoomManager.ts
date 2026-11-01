@@ -147,11 +147,7 @@ const roomManager = {
                                 break;
                             }
                             case "editMapCommandMessage": {
-                                room.forwardEditMapCommandMessage(
-                                    user,
-                                    message.message.editMapCommandMessage,
-                                    (wamUrls) => socketManager.getLoadedRoomsByWamUrl(wamUrls)
-                                );
+                                room.forwardEditMapCommandMessage(user, message.message.editMapCommandMessage);
                                 break;
                             }
                             case "sendUserMessage": {
@@ -615,6 +611,19 @@ const roomManager = {
                     });
             }
         );
+    },
+    handleMapStorageUploadDeleted(call, callback) {
+        /**
+         * Map-storage sends this to every back server (#1722): the rooms of a world can sit on different back servers,
+         * and each one tells the people in the matching rooms it holds.
+         */
+        const { wamUrls, command } = call.request;
+        if (command) {
+            for (const room of socketManager.getLoadedRoomsByWamUrl(wamUrls)) {
+                room.receiveUploadDeletion(command);
+            }
+        }
+        callback(null);
     },
     /** Dispatch an event to all users in the room */
     dispatchEvent(call, callback) {

@@ -219,7 +219,6 @@
             id,
             wholeUpload: true,
             pictureIds: picturesOf(id),
-            otherRoomWamUrls: [],
         });
         editPickedVariantStore.set(undefined);
         mapEditorSelectedEntityPrefabStore.set(undefined);

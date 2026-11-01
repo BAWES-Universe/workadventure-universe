@@ -165,7 +165,7 @@ describe("GameRoom object sounds (#1627)", () => {
         delete savedEntities.jukebox;
         await edit(room, {
             $case: "deleteCustomEntityMessage",
-            deleteCustomEntityMessage: { id: "p", wholeUpload: true, pictureIds: [], otherRoomWamUrls: [] },
+            deleteCustomEntityMessage: { id: "p", wholeUpload: true, pictureIds: [] },
         });
 
         expect(await room.getObjectSounds()).toEqual([]);
