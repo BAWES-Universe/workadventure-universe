@@ -139,7 +139,7 @@
                 <IconWalk font-size="18" />
                 {$LL.mapEditor.lookAround.walkThere()}
             </button>
-            {#if place instanceof Entity && place.getProperties().some((p) => DOES_SOMETHING.includes(p.type))}
+            {#if place instanceof Entity && place.hasClickAction()}
                 <button type="button" class="place-card-do" data-testid="look-around-do" on:click={doIt}>
                     {place.actionButtonLabel}
                 </button>
