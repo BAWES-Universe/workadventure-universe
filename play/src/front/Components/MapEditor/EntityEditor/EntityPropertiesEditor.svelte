@@ -413,6 +413,7 @@
                         {:else if property.type === "openWebsite"}
                             <OpenWebsitePropertyEditor
                                 {property}
+                                siblings={properties}
                                 triggerOptionActivated={false}
                                 on:close={() => {
                                     onDeleteProperty(property.id);

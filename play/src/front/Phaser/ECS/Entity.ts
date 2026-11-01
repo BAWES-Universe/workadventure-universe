@@ -26,7 +26,7 @@ import type { OutlineableInterface } from "../Game/OutlineableInterface";
 import { SpeechDomElement } from "../Entity/SpeechDomElement";
 import LL from "../../../i18n/i18n-svelte";
 import { getTriggerHint } from "../../Utils/TriggerHint";
-import { getObjectNearHint } from "../../Utils/ObjectHint";
+import { getObjectNearHint, isClickSetting } from "../../Utils/ObjectHint";
 
 export enum EntityEvent {
     Moved = "EntityEvent:Moved",
@@ -364,16 +364,7 @@ export class Entity extends Phaser.GameObjects.Image implements ActivatableInter
     }
 
     private isClickAction(property: EntityDataProperty): boolean {
-        switch (property.type) {
-            case "openWebsite":
-            case "openFile":
-                return Boolean(property.link);
-            case "playAudio":
-                // A sound that plays when someone is in range starts by itself (see ObjectSounds)
-                return property.startsOn !== "range";
-            default:
-                return false;
-        }
+        return isClickSetting(property);
     }
 
     /** What a click does on this object, one action per link, file or sound set to play on click, in the card's order. */
@@ -386,12 +377,7 @@ export class Entity extends Phaser.GameObjects.Image implements ActivatableInter
      * does one thing and that has a Button Label, else "Press [SPACE] to interact with it" (#1740).
      */
     public getNearHint(): string {
-        return getObjectNearHint(
-            this.entityData.properties,
-            this.getClickActions().map((action) => action.actionName),
-            get(LL).trigger.spaceKeyboard(),
-            getTriggerHint("object")
-        );
+        return getObjectNearHint(this.entityData.properties, get(LL).trigger.spaceKeyboard(), getTriggerHint("object"));
     }
 
     /** Does what this object does when you use it: opens its link or file, plays its sound. Only the given kinds. */

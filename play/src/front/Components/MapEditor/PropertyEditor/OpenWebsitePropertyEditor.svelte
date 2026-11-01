@@ -40,6 +40,7 @@
     } from "../../../WebRtc/LayoutManager";
     import USelect from "../../UI/USelect.svelte";
     import { artifactIdOfLink } from "../../../Artifacts/artifactLinkCard";
+    import { getObjectNearHint, type HintSetting } from "../../../Utils/ObjectHint";
     import PropertyEditorBase from "./PropertyEditorBase.svelte";
     import PanelSwitch from "./PanelSwitch.svelte";
     import PolicyChips from "./PolicyChips.svelte";
@@ -50,6 +51,8 @@
     export let triggerOptionActivated = true;
     export let icon = "resources/icons/icon_link.png";
     export let isArea = false;
+    /** All of the object's settings (this one included), so the Toast Message preview follows the same rule as the game. */
+    export let siblings: HintSetting[] = [];
 
     let optionAdvancedActivated = shouldDisplayAdvancedOption();
 
@@ -558,12 +561,17 @@
         closePicker();
     });
 
-    // The empty Toast Message box previews what the object shows when you walk near: its Button Label after the key
-    // chip when it has one, else the usual hint (#1740). Objects only; an area has no Button Label hint.
-    $: triggerPlaceholder =
-        !isArea && property.buttonLabel?.trim()
-            ? `${$LL.trigger.spaceKeyboard()} ${property.buttonLabel.trim()}`
-            : $LL.trigger.object();
+    // The empty Toast Message box previews what the object shows when you walk near, worked out by the same rule as
+    // the game from all of the object's settings: its Button Label after the key chip when a click does one thing and
+    // it has one, else the usual hint (#1740). Objects only; an area has no Button Label hint.
+    $: triggerPlaceholder = isArea
+        ? $LL.trigger.object()
+        : getObjectNearHint(
+              siblings.length > 0 ? siblings : [property],
+              $LL.trigger.spaceKeyboard(),
+              $LL.trigger.object(),
+              false
+          );
 </script>
 
 <PropertyEditorBase
