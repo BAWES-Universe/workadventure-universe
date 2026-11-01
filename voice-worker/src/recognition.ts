@@ -10,6 +10,7 @@
 //
 // Audio is held only as long as the recognizer needs it: a short run of quiet before the first word (so it is not
 // clipped), then the stretch itself, passed straight on. None of it is stored.
+import type { ProviderReporter } from './connectors.ts';
 import type { Counters } from './counters.ts';
 import type { Recognizer, RecognizerFactory } from './recognizer.ts';
 import type { OutgoingMessage } from './session.ts';
@@ -43,6 +44,8 @@ export interface RecognitionOptions {
     idleMs?: number;
     counters: Counters;
     send(message: OutgoingMessage): void;
+    /** Told how each stretch went at the provider: answered, or gave up. Absent for the built-in test engine. */
+    provider?: ProviderReporter;
     /** Where the audio goes on to besides recognition (the worker-wide tap). */
     next?: InputSink;
 }
@@ -218,13 +221,15 @@ export class Recognition {
             },
             final: (text) => {
                 if (turn.over || this.disposed) return;
+                this.options.provider?.ok();
                 const words = clip(text) || turn.text;
                 // A hole in the audio: the words are not trusted to be all there, so they are only offered back
                 if (turn.gapMs >= GAP_LOSS_MS && words) this.finishAs(person, turn, participantId, 'lost', 'gap', words);
                 else this.finishAs(person, turn, participantId, words ? 'final' : 'cleared', undefined, words);
             },
-            failed: (text) => {
+            failed: (text, failure) => {
                 if (turn.over || this.disposed) return;
+                this.options.provider?.failed(failure?.status);
                 const stillTalking = person.speaking === turn;
                 this.finishAs(person, turn, participantId, 'lost', 'provider', clip(text) || turn.text);
                 // Still talking: the rest is not taken as a new stretch until they pause

@@ -8,6 +8,27 @@
     "ts": { "type": "number" },
     "epoch": { "type": "integer", "minimum": 1, "description": "Set by the bot server each time it starts a connection with a person. Everything about that connection carries it; anything with an older epoch is stale and dropped." },
     "mode": { "enum": ["off", "listen_only", "talk", "type_and_listen", "speak_and_read"] },
+    "adapter": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$", "description": "The lowercase adapter name Orbit stores, such as soniox, elevenlabs, deepgram or cartesia. A name the worker has no connector for ends that bubble's voice calls in text." },
+    "providerSettings": {
+      "type": "object",
+      "properties": {
+        "adapter": { "$ref": "#/$defs/adapter" },
+        "model": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "key": { "type": "string", "minLength": 1, "maxLength": 4096, "description": "The provider's API key. Used for the provider call only: never logged, counted, stored or sent back." },
+        "endpoint": { "type": "string", "pattern": "^(https?|wss?)://", "maxLength": 2048 },
+        "region": { "type": "string", "maxLength": 64 },
+        "language": { "type": "string", "maxLength": 16 }
+      }
+    },
+    "recognitionConfig": {
+      "allOf": [{ "$ref": "#/$defs/providerSettings" }, { "type": "object", "required": ["adapter", "model", "key"] }]
+    },
+    "speechConfig": {
+      "allOf": [{ "$ref": "#/$defs/providerSettings" }, { "type": "object", "required": ["adapter", "model", "voiceId", "key"],
+        "properties": { "voiceId": { "type": "string", "minLength": 1, "maxLength": 256 } } }]
+    },
+    "expression": { "enum": ["restrained", "natural", "expressive"] },
+    "providerPart": { "enum": ["recognition", "speech"] },
     "leaveReason": { "enum": ["closed", "failed", "left", "superseded", "timeout"] },
     "signal": {
       "oneOf": [
@@ -27,9 +48,10 @@
       "properties": { "type": { "type": "string" }, "sessionId": { "$ref": "#/$defs/id" }, "ts": { "$ref": "#/$defs/ts" } }
     },
     "session.open": {
-      "title": "bot server -> worker: a bot is in a bubble and may get audio connections",
+      "title": "bot server -> worker: a bot is in a bubble and may get audio connections. `recognition` and `speech` name the providers this bubble hears and speaks with (all optional: without them the built-in test engine is used).",
       "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "bubbleId", "botId"],
-        "properties": { "type": { "const": "session.open" }, "bubbleId": { "$ref": "#/$defs/id" }, "botId": { "$ref": "#/$defs/id" } } }]
+        "properties": { "type": { "const": "session.open" }, "bubbleId": { "$ref": "#/$defs/id" }, "botId": { "$ref": "#/$defs/id" },
+          "recognition": { "$ref": "#/$defs/recognitionConfig" }, "speech": { "$ref": "#/$defs/speechConfig" }, "expression": { "$ref": "#/$defs/expression" } } }]
     },
     "lane.open": {
       "title": "bot server -> worker: a person's browser started a connection with the bot",
@@ -92,7 +114,7 @@
         "properties": { "type": { "const": "playback.progress" }, "segmentId": { "$ref": "#/$defs/id" },
           "playedMs": { "type": "number", "minimum": 0 }, "totalMs": { "type": "number", "minimum": 0 },
           "finished": { "type": "boolean" }, "interrupted": { "type": "boolean" },
-          "reason": { "enum": ["completed", "voice_stop", "retract", "mode", "lane_loss", "rejected", "barge_in", "limit"] } } }]
+          "reason": { "enum": ["completed", "voice_stop", "retract", "mode", "lane_loss", "rejected", "barge_in", "limit", "provider"] } } }]
     },
     "engine.status": {
       "title": "worker -> bot server: periodic and on change",
@@ -142,6 +164,17 @@
         "properties": { "type": { "const": "user.turn" }, "participantId": { "$ref": "#/$defs/id" }, "epoch": { "$ref": "#/$defs/epoch" }, "turnId": { "$ref": "#/$defs/id" },
           "outcome": { "enum": ["final", "lost", "cleared"] }, "text": { "type": "string", "maxLength": 8000 },
           "reason": { "enum": ["cap", "gap", "path", "stopped", "provider"] }, "audioMs": { "type": "number", "minimum": 0 } } }]
+    },
+    "provider.ok": {
+      "title": "worker -> bot server: a provider call worked. Speech: once per spoken reply. Recognition: once per stretch of speech the provider answered.",
+      "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "part", "adapter"],
+        "properties": { "type": { "const": "provider.ok" }, "part": { "$ref": "#/$defs/providerPart" }, "adapter": { "$ref": "#/$defs/adapter" } } }]
+    },
+    "provider.failed": {
+      "title": "worker -> bot server: a provider call failed. `status` is the provider's HTTP status when it answered with one (left out for a timeout, a dropped connection or an unknown adapter). `rejected` is true when the provider refused the key itself (401 or 403). Never carries the key.",
+      "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "part", "adapter"],
+        "properties": { "type": { "const": "provider.failed" }, "part": { "$ref": "#/$defs/providerPart" }, "adapter": { "$ref": "#/$defs/adapter" },
+          "status": { "type": "integer", "minimum": 100, "maximum": 599 }, "rejected": { "const": true } } }]
     },
     "error": {
       "title": "worker -> bot server: something the bot server should log or act on",
