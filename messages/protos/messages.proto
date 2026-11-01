@@ -1545,6 +1545,7 @@ message SpaceStreamMessage {
   optional string errorMessage = 6; // Error description when isError=true
   bool reset = 7;              // Clear any existing buffer for this responseId (used on regeneration)
   optional string steps = 8;   // A bot's steps line (#1545): its universe.steps field as JSON; the message is drawn as that line
+  optional bool stoppedBySpeech = 9; // A voice bot's voice stopped part-way through responseId because someone spoke over it (#1665): the message is marked, nothing else changes
 }
 
 message PrivateEvent {

@@ -19,7 +19,7 @@ export type ToWorker =
     | { type: 'lane.signal'; sessionId: string; participantId: string; epoch: number; signal: VoiceSignal }
     | { type: 'lane.close'; sessionId: string; participantId: string; epoch: number; reason?: LeaveReason }
     | { type: 'mode.set'; sessionId: string; mode: VoiceMode; participantId?: string }
-    | { type: 'bot.say'; sessionId: string; segmentId: string; text: string; committed: true; lang?: string }
+    | { type: 'bot.say'; sessionId: string; segmentId: string; text: string; committed: true; lang?: string; maxMs?: number }
     | { type: 'bot.retract'; sessionId: string; segmentId: string }
     | { type: 'voice.stop'; sessionId: string; reason: 'allowance_ended' | 'other' }
     | { type: 'session.end'; sessionId: string }

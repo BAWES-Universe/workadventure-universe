@@ -875,6 +875,7 @@ const chat: BaseTranslation = {
         send: "Send",
         discard: "Discard",
         said: "Said out loud",
+        stopped: "Stopped when you spoke",
     },
     artifacts: {
         kindApp: "Mini app",

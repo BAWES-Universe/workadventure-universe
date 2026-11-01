@@ -60,6 +60,7 @@
     import { isTouchScreen, SETTLE_CHECKS_MS } from "../../../Utils/ViewportGuard";
     import { ARTIFACT_CHAT_CONTEXT, type ArtifactChatOf } from "../../../Artifacts/artifactChatContext";
     import Message from "./Message.svelte";
+    import StoppedBySpeechNote from "./StoppedBySpeechNote.svelte";
     import {
         firstShowingIndex,
         keyboardClosed,
@@ -1222,6 +1223,9 @@
                                 message={entry.message}
                                 runStart={place?.runStart ?? true}
                             />
+                            {#if entry.message.stoppedBySpeech}
+                                <StoppedBySpeechNote stopped={entry.message.stoppedBySpeech} />
+                            {/if}
                             {#if "stoppedOnLeave" in entry.message && entry.message.stoppedOnLeave}
                                 <div class="px-4 pb-2 text-xs italic text-white/45" data-testid="proximityStoppedNote">
                                     {$LL.chat.session.stopped()}

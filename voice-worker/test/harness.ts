@@ -196,7 +196,7 @@ export function privateEvent(game: FakeGame, senderId: string, event: { $case: s
     } as never;
 }
 
-export async function startRig(options: { secret?: string; maxLanes?: number; input?: InputSink; recognizer?: RecognizerFactory; maxUtteranceSeconds?: number } = {}): Promise<Rig> {
+export async function startRig(options: { secret?: string; maxLanes?: number; input?: InputSink; recognizer?: RecognizerFactory; maxUtteranceSeconds?: number; maxReplySeconds?: number } = {}): Promise<Rig> {
     const worker = new VoiceWorker({
         port: 0,
         host: '127.0.0.1',
@@ -207,6 +207,7 @@ export async function startRig(options: { secret?: string; maxLanes?: number; in
         input: options.input,
         recognizer: options.recognizer,
         maxUtteranceSeconds: options.maxUtteranceSeconds,
+        maxReplySeconds: options.maxReplySeconds,
     });
     const workerPort = await worker.listen();
     const game = new FakeGame();

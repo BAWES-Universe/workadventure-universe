@@ -43,7 +43,8 @@ import { VoiceCalls } from '../voice/VoiceCalls';
 import { WorkerLink } from '../voice/VoiceLink';
 import { VOICE_BOT_TAG } from '../voice/VoiceBotTag';
 import { MeetingPresence, type MeetingArea } from '../voice/MeetingAreas';
-import { voiceWorkerSettings } from '../voice/settings';
+import { voiceReplyLimits, voiceWorkerSettings } from '../voice/settings';
+import { BotSpeech } from '../voice/BotSpeech';
 
 // Get the secret key from environment - must match pusher's SECRET_KEY
 const SECRET_KEY = process.env.SECRET_KEY || 'default-secret-key';
@@ -107,6 +108,8 @@ export class BotClient {
     private spaces: Map<string, SpaceUser['spaceUserId']> = new Map();
     /** Audio connections with people, for a voice bot only (see isVoiceBot). Null for every other bot. */
     private voice: VoiceCalls | null = null;
+    /** What a voice bot says out loud of the replies it writes (see voice/BotSpeech.ts). Null for every other bot. */
+    private speech: BotSpeech | null = null;
     /** Which meeting room the bot stands in, for a voice bot only (see voice/MeetingAreas.ts). */
     private meeting: MeetingPresence | null = null;
     private meetingAreas: { areas: MeetingArea[]; roomUrl: string } = { areas: [], roomUrl: '' };
@@ -1404,6 +1407,7 @@ export class BotClient {
 
         try {
             this.voice?.spaceLeft(spaceName);
+            this.speech?.spaceLeft(spaceName);
             await this.emitLeaveSpace(spaceName);
             this.spaces.delete(spaceName);
             if (this.behavior) {
@@ -2074,6 +2078,42 @@ export class BotClient {
                 },
             },
         });
+        // A voice bot says what it has written once it is final: after the chat has it, and never the steps line or an error
+        if (this.speech && steps === undefined && !isError) {
+            if (isFinal) {
+                if (finalContent) this.speech.final(spaceName, responseId, finalContent);
+            } else if (token) {
+                this.speech.begin(responseId);
+            }
+        }
+    }
+
+    /** Says a voice bot's reply was cut off by someone speaking: the message in everyone's chat is marked (#1665). */
+    private sendSpeechStopped(spaceName: string, responseId: string): void {
+        this.send({
+            message: {
+                $case: 'publicEvent',
+                publicEvent: {
+                    spaceName,
+                    spaceEvent: {
+                        event: {
+                            $case: 'spaceStreamMessage',
+                            spaceStreamMessage: { responseId, token: '', isFinal: true, isError: false, reset: false, stoppedBySpeech: true },
+                        },
+                    },
+                },
+            },
+        });
+    }
+
+    /** A tool round or a retry of this person's reply is under way: what finishes meanwhile is not spoken (see BotSpeech). */
+    holdSpeech(spaceName: string, playerId: number): void {
+        this.speech?.hold(spaceName, playerId);
+    }
+
+    /** This person's reply has been checked: what finishes next may be spoken. */
+    releaseSpeech(spaceName: string, playerId: number): void {
+        this.speech?.release(spaceName, playerId);
     }
 
     /**
@@ -2399,6 +2439,12 @@ export class BotClient {
             },
             (message) => console.warn(`[Bot ${this.config.botId}] ${message}`)
         );
+        this.speech = new BotSpeech(this.voice, voiceReplyLimits());
+        this.voice.onAudience = (spaceName) => this.speech?.audience(spaceName);
+        this.voice.onStopped = (spaceName, segmentId) => {
+            const responseId = this.speech?.stopped(spaceName, segmentId);
+            if (responseId) this.sendSpeechStopped(spaceName, responseId);
+        };
         this.meeting = new MeetingPresence({
             join: (spaceName) => this.joinMeetingSpace(spaceName),
             leave: (spaceName) => this.leaveMeetingSpace(spaceName),
@@ -2409,6 +2455,7 @@ export class BotClient {
     private stopVoice(): void {
         this.voice?.shutdown();
         this.voice = null;
+        this.speech = null;
         this.meeting?.reset();
         this.meeting = null;
     }
@@ -2447,6 +2494,7 @@ export class BotClient {
         try {
             this.emitRemoveSpaceFilter(spaceName);
             this.voice?.spaceLeft(spaceName);
+            this.speech?.spaceLeft(spaceName);
             await this.emitLeaveSpace(spaceName);
         } catch (error) {
             console.warn(`[Bot ${this.config.botId}] Could not leave meeting room ${spaceName}:`, error);
@@ -3354,6 +3402,7 @@ export class BotClient {
             this.emitRemoveSpaceFilter(request.spaceName);
             
             this.voice?.spaceLeft(request.spaceName);
+            this.speech?.spaceLeft(request.spaceName);
             await this.emitLeaveSpace(request.spaceName);
             this.spaces.delete(request.spaceName);
             if (this.behavior && !this.isMeetingSpace(request.spaceName)) {
