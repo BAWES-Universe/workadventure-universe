@@ -403,6 +403,8 @@ const mapEditor: BaseTranslation = {
         deleteButton: "Delete",
         testInteractionButton: "Test Interaction",
         buttonLabel: "Button Label",
+        buttonLabelHelp:
+            "The words on this object's button in Look around and on its card, and over the object when you walk near if Toast Message is empty.",
         editInstructions: "Click an entity to modify its properties.",
         selectObject: "Click on an object to select it",
         objectName: "Object Name",

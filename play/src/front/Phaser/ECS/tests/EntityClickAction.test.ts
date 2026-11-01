@@ -20,10 +20,12 @@ vi.mock("../../../FileViewer/openFileViewer", () => ({
 }));
 vi.mock("../../../Stores/CoWebsiteStore", () => ({ coWebsites: {} }));
 vi.mock("../../../Artifacts/openArtifactLink", () => ({ openArtifactLink: () => false }));
+vi.mock("../../../Utils/TriggerHint", () => ({ getTriggerHint: () => "Press [SPACE] to interact with it" }));
 vi.mock("../../../../i18n/i18n-svelte", async () => {
     const { readable } = await import("svelte/store");
     return {
         default: readable({
+            trigger: { spaceKeyboard: () => "[SPACE]", object: () => "Press [SPACE] to interact with it" },
             mapEditor: {
                 explorer: { details: { moveToEntity: () => "Walk there" } },
                 properties: {
@@ -65,5 +67,33 @@ describe("Look around's button on an object (#1739)", () => {
         const jukebox = objectWith([clickSound]);
         expect(jukebox.hasClickAction()).toBe(true);
         expect(jukebox.actionButtonLabel).toBe("Play music");
+    });
+});
+
+describe("The hint over an object when you walk near it (#1740)", () => {
+    const labelled = { ...link, buttonLabel: "Open the menu" };
+
+    it("names a single click action after its Button Label", () => {
+        expect(objectWith([labelled]).getNearHint()).toBe("[SPACE] Open the menu");
+    });
+
+    it("lets a Toast Message win", () => {
+        expect(objectWith([{ ...labelled, triggerMessage: "Hello!" }]).getNearHint()).toBe("Hello!");
+    });
+
+    it("stays the usual hint with two click actions", () => {
+        const sound = { ...clickSound, buttonLabel: "Play" };
+        expect(objectWith([labelled, sound]).getNearHint()).toBe("Press [SPACE] to interact with it");
+    });
+
+    it("stays the usual hint with an empty label", () => {
+        expect(objectWith([{ ...link, buttonLabel: "" }]).getNearHint()).toBe("Press [SPACE] to interact with it");
+        expect(objectWith([link]).getNearHint()).toBe("Press [SPACE] to interact with it");
+    });
+
+    it("does not count a sound that plays in range", () => {
+        const sound = { ...rangeSound, buttonLabel: "Play" };
+        expect(objectWith([sound]).getNearHint()).toBe("Press [SPACE] to interact with it");
+        expect(objectWith([sound, labelled]).getNearHint()).toBe("[SPACE] Open the menu");
     });
 });

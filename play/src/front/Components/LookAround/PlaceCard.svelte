@@ -1,7 +1,8 @@
 <script lang="ts">
     // The card of the place you tapped while looking around: its name, what it is, "Walk there", and for an object
-    // that opens a link, a file or a sound, a button that does it right here. The X of the sheet leaves Look around,
-    // so the card has no second Back.
+    // that opens a link, a file or a sound, a button that does it right here, named with the object's Button Label.
+    // An object that does two or more things on a click lists them as the object card does, one row each (#1740).
+    // The X of the sheet leaves Look around, so the card has no second Back.
     import { onDestroy } from "svelte";
     import { fly } from "svelte/transition";
     import { LL } from "../../../i18n/i18n-svelte";
@@ -15,8 +16,10 @@
     import { mobileLayoutStore } from "../../Stores/MobileLayoutStore";
     import { leaveExploreTheRoom } from "../../Phaser/Game/MapEditor/ExploreTheRoom";
     import type { ExplorerTool } from "../../Phaser/Game/MapEditor/Tools/ExplorerTool";
+    import type { ActionsMenuAction } from "../../Stores/ActionsMenuStore";
+    import ActionRows from "../ActionsMenu/ActionRows.svelte";
     import { getPlaceIcon, getPlaceName, getPlacePropertyLabel, type Place } from "./placeInfo";
-    import { IconX, IconWalk } from "@wa-icons";
+    import { IconX, IconWalk, IconExternalLink } from "@wa-icons";
 
     export let peopleInside = 0;
 
@@ -92,7 +95,22 @@
         leaveExploreTheRoom();
     }
 
+    // One row of the object's card was tapped: run only that one, then leave Look around.
+    async function doAction(action: ActionsMenuAction) {
+        try {
+            await action.callback();
+        } catch (error) {
+            console.error("Error during executing an action of the object: " + error);
+        }
+        mapExplorationObjectSelectedStore.set(undefined);
+        leaveExploreTheRoom();
+    }
+
     $: place = $mapExplorationObjectSelectedStore;
+    // What a click on the object does. One thing: the button below "Walk there" is named after it. Two or more: rows.
+    $: clickActions = place instanceof Entity ? place.getClickActions() : [];
+    $: singleAction = clickActions.length === 1 ? clickActions[0] : undefined;
+    $: doLabel = place instanceof Entity ? singleAction?.actionName.trim() || place.actionButtonLabel : "";
     $: name = place ? getPlaceName(place, $LL) : "";
     $: propertyLabel = place ? getPlacePropertyLabel(place, $LL) : undefined;
     $: subtitle = (() => {
@@ -139,12 +157,16 @@
                 <IconWalk font-size="18" />
                 {$LL.mapEditor.lookAround.walkThere()}
             </button>
-            {#if place instanceof Entity && place.hasClickAction()}
+            {#if place instanceof Entity && singleAction}
                 <button type="button" class="place-card-do" data-testid="look-around-do" on:click={doIt}>
-                    {place.actionButtonLabel}
+                    <span class="place-card-do-label">{doLabel}</span>
+                    {#if singleAction.newTab}<IconExternalLink font-size="18" class="flex-none" />{/if}
                 </button>
             {/if}
         </div>
+        {#if clickActions.length > 1}
+            <ActionRows actions={clickActions} onSelect={doAction} />
+        {/if}
     </div>
 {/if}
 
@@ -199,7 +221,13 @@
         margin-top: 0;
     }
     .place-card-do {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
         flex: 1;
+        min-width: 0;
+        padding: 0 14px;
         height: 44px;
         border: 0;
         border-radius: 999px;
@@ -210,6 +238,12 @@
         font-size: 15px;
         font-weight: 600;
         cursor: pointer;
+    }
+    .place-card-do-label {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
     }
     .place-card-desc {
         margin: 10px 2px 0;
