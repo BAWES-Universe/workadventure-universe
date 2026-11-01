@@ -87,6 +87,27 @@ describe('ToolSteps', () => {
         expect(summaryOf([step('tool:x', 'Search', 'failed'), step('tool:y', 'Fetch', 'failed')])).toBe('2 steps');
     });
 
+    it("shows a tool server's own title whole, with no \"…\" where there is room (#1723)", () => {
+        const title = 'Hugging Face Hub: Find, use and view models, datasets, spaces and papers';
+        expect(title.length).toBeGreaterThan(60);
+        expect(describeStep({ id: 'a', name: 'hf_fs' }, title)).toMatchObject({ doing: `Using ${title}`, done: `Used ${title}` });
+        // Only a runaway title is stopped, well past anything a person reads as a name
+        const runaway = describeStep({ id: 'a', name: 'x' }, 'w'.repeat(400));
+        expect(Array.from(runaway.done).length).toBeLessThan(200);
+    });
+
+    it('says it is writing the answer once every call has finished, not "Using" (#1723)', () => {
+        const steps = new ReplySteps(1000);
+        steps.start([describeStep({ id: 'a', name: 'generate_music', arguments: { prompt: 'funk' } }), describeStep({ id: 'b', name: 'generate_music', arguments: { prompt: 'jazz' } })]);
+        steps.finish([{ id: 'a', ok: true }]);
+        expect(steps.field().line).toBe('Using Generate music');
+        steps.finish([{ id: 'b', ok: true }]);
+        expect(steps.field()).toMatchObject({ state: 'working', line: 'Writing the answer' });
+        expect(steps.text()).toBe('Writing the answer…');
+        // Before any call there is no line to write
+        expect(new ReplySteps(1).field().line).toBe('');
+    });
+
     it('follows a reply: live while it works, a summary once it answers', () => {
         const steps = new ReplySteps(1000);
         steps.start([

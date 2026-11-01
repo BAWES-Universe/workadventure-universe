@@ -75,9 +75,19 @@ export function parseBotSteps(value: unknown): BotSteps | undefined {
     };
 }
 
-/** The step the line names while it works: the newest that still runs. */
+/** What a step shows under its words: why it didn't work or may have run, else what it was about. */
+export function stepMore(step: BotStep): string | undefined {
+    if ((step.state === "failed" || step.state === "unknown") && step.note) return step.note;
+    return step.detail;
+}
+
+/**
+ * The step the line names while it works: the newest that still runs. Once every call has finished there is none (the
+ * line says the answer is being written, and the finished calls are listed under it), so no finished call's detail
+ * is shown under it (#1723).
+ */
 export function currentStep(steps: BotSteps): BotStep | undefined {
-    return [...steps.steps].reverse().find((step) => step.state === "running") ?? steps.steps.at(-1);
+    return [...steps.steps].reverse().find((step) => step.state === "running");
 }
 
 /** "1:05" for 65 seconds, "12:03" for longer; the clock beside a working line. */
