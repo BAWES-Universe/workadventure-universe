@@ -17,6 +17,27 @@ describe("Verify Rules Transition", () => {
         { actualStatus: AvailabilityStatus.BUSY, futureStatus: AvailabilityStatus.DO_NOT_DISTURB, result: true },
         { actualStatus: AvailabilityStatus.BUSY, futureStatus: AvailabilityStatus.JITSI, result: true },
         { actualStatus: AvailabilityStatus.JITSI, futureStatus: AvailabilityStatus.BUSY, result: true },
+        // Silent zones, speaker zones and refusing proximity meetings outrank a requested status.
+        { actualStatus: AvailabilityStatus.BUSY, futureStatus: AvailabilityStatus.SILENT, result: true },
+        { actualStatus: AvailabilityStatus.SILENT, futureStatus: AvailabilityStatus.BUSY, result: true },
+        { actualStatus: AvailabilityStatus.DO_NOT_DISTURB, futureStatus: AvailabilityStatus.SILENT, result: true },
+        { actualStatus: AvailabilityStatus.SILENT, futureStatus: AvailabilityStatus.DO_NOT_DISTURB, result: true },
+        { actualStatus: AvailabilityStatus.BACK_IN_A_MOMENT, futureStatus: AvailabilityStatus.SILENT, result: true },
+        { actualStatus: AvailabilityStatus.SILENT, futureStatus: AvailabilityStatus.BACK_IN_A_MOMENT, result: true },
+        { actualStatus: AvailabilityStatus.BUSY, futureStatus: AvailabilityStatus.SPEAKER, result: true },
+        { actualStatus: AvailabilityStatus.SPEAKER, futureStatus: AvailabilityStatus.BUSY, result: true },
+        {
+            actualStatus: AvailabilityStatus.BUSY,
+            futureStatus: AvailabilityStatus.DENY_PROXIMITY_MEETING,
+            result: true,
+        },
+        {
+            actualStatus: AvailabilityStatus.DENY_PROXIMITY_MEETING,
+            futureStatus: AvailabilityStatus.BUSY,
+            result: true,
+        },
+        { actualStatus: AvailabilityStatus.BUSY, futureStatus: AvailabilityStatus.AWAY, result: false },
+        { actualStatus: AvailabilityStatus.AWAY, futureStatus: AvailabilityStatus.BUSY, result: false },
     ])(
         "change status $actualStatus to status $futureStatus to be $result  ",
         ({
@@ -135,6 +156,30 @@ describe("Status Rules", () => {
             expect(mockTo).toHaveBeenCalledOnce();
 
             expect(result).toBe(actualStatus);
+        });
+        it("should name both statuses in the InvalidStatusTransitionError message", () => {
+            const statusChanger = new StatusChanger(
+                StatusRules,
+                { createStrategy: (status: AvailabilityStatus) => new BasicStatusStrategy(status) },
+                new BasicStatusStrategy(AvailabilityStatus.BUSY, [], [])
+            );
+
+            expect(() => statusChanger.changeStatusTo(AvailabilityStatus.AWAY)).toThrow(
+                "Cannot change status from BUSY to AWAY"
+            );
+        });
+        it("should follow a requested status into a silent zone and back with the real rules", () => {
+            const statusChanger = new StatusChanger(
+                StatusRules,
+                { createStrategy: (status: AvailabilityStatus) => new BasicStatusStrategy(status) },
+                new BasicStatusStrategy(AvailabilityStatus.BUSY, [], [])
+            );
+
+            statusChanger.changeStatusTo(AvailabilityStatus.SILENT);
+            expect(statusChanger.getActualStatus()).toBe(AvailabilityStatus.SILENT);
+
+            statusChanger.changeStatusTo(AvailabilityStatus.BUSY);
+            expect(statusChanger.getActualStatus()).toBe(AvailabilityStatus.BUSY);
         });
         it("should apply rules of new status and delete rules of old status when you change status and statusVerificator return true", () => {
             //Arrange
