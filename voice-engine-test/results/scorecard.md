@@ -11,6 +11,14 @@ Two engines, one bridge protocol, fake speech-to-text, fake text-to-speech, fake
 
 **These are sandbox numbers.** The sandbox is 4 cores of `Intel Xeon @ 2.10GHz`, shared by the engine, the load generator, the fake brain and the signaling server. The numbers say how the two engines compare here. They are not server capacity. Speech-to-text, text-to-speech and the brain are fakes, so real latency will be higher.
 
+## Top 5 observations (revised after the fair load round)
+
+1. **With process pools, B holds the same load as A; B is just much heavier.** B in one process collapsed at N=10 to 20. In a pool of 4 it runs N=20 in both modes. At N=20, total CPU: A-local 130% vs B-local 325%; A-provider 77% vs B-provider 279%. Memory: A-local 1.06 GB vs B-local 1.8 GB; provider is equal (about 0.9 GB). The earlier "B cannot scale" claim was wrong; it was a single-process artifact.
+2. **B's talk-over stop is slower: about 355 to 415 ms vs A's 185 to 200 ms, at every pool size.** About 120 ms is slower speech-start detection (Pipecat's smoothed volume gate on the first soft frames), about 50 ms is a longer output tail. `min_volume` 0.0 helps in some runs, not reliably. Both are inside a one-second target.
+3. **A's weak spots.** It is code we own: turn logic, resamplers, bit-exact Smart Turn features (proven: 0 diff over 46 cases), an approximate volume gate, one thread per process. A-local needs a pool of 4 at N=20 (single process: loop delay 121 ms, stop p95 940 ms). A-local failed S11 on one borderline Arabic clip (audio-path sensitivity of Smart Turn, same model and features).
+4. **B's weak spots.** One bot, one caller, so a multi-person bubble needed about 270 lines of glue (S8 passes). aiortc has no loss concealment and over-reports dropped audio (640 ms injected, 2580 reported). A cold first connection took 1.2 s. Twenty Python processes do not fit on this 4-core box with the load generator (box 94% busy). B-local costs about 50 MB per lane for its Smart Turn session.
+5. **Customizability and risk.** Both took minutes to add the emotion stub, both with an automated test. A: you own all 708 lines and the audio plumbing; no upstream. B: 942 lines of glue on top of an actively changing framework with ready adapters for Ultravox, Soniox, Cartesia and Gradium (all present in 1.15.0), but a fork carries merge cost. Arabic data is thin (1 real clip, 3 synthetic) and STT/TTS/brain are fakes, so Arabic quality and real latency are NOT measured. No dev runner is used and the stats server binds 127.0.0.1.
+
 ## 1. Scenario scorecard (S1 to S13)
 
 PASS means an automated check with named conditions passed. The same checks fail when the behaviour is wrong (each scenario returns the list of checks in its evidence). Evidence for every cell is in `results/scenarios/<engine>-<turn-end>.json` (`ts-*` = A, `pipecat-*` = B), under the scenario id.
@@ -139,7 +147,9 @@ Things the PASS cells do not say:
 * **Quiet speech.** B-local does not hear a very quiet voice at all (gain 0.08, about -47 dBFS; no turn is produced) because Pipecat's Silero setup has a volume gate (`min_volume 0.6`). A-local does hear it (my volume gate is a plain -50 dBFS RMS check, see deviations). In provider mode both engines heard the whisper. Measured in S13 as an info row.
 * **Cold start (B).** After a cold disk cache the first lane in a fresh Pipecat process took about 1.2 s to connect (A: about 0.1 s). The greeting started before the audio path was up, so 1.3 s of it was never heard, while `playback.progress` said it was all played. I fixed it for both engines by sending `participant.join` only once the media path is connected. This is a reminder that "played" means "sent", not "heard". The bridge never claims words were heard.
 
-## 2. Load numbers
+## 2. Load numbers: single process (first round)
+
+In this first round each engine ran as ONE process for all conversations. This is not how Pipecat is meant to be run. Section 2b is the fair round with process pools. Read section 2b first for any decision.
 
 How it was measured:
 
@@ -177,13 +187,106 @@ What the load numbers say:
 * **A scales better in this sandbox, by a wide margin.** Per talker, CPU: A-local 5 to 10% of a core, A-provider 3 to 7%; B-local 17 to 26%, B-provider 13 to 19%.
 * **B-local at N=5 uses 119% CPU; A-local 32%.** Smart Turn inference per lane and Python overhead are the main cost in B. Provider mode saves about 20% of a core at N=5 in B and about 13 points in A.
 * **N=10:** A is fine (turn and talk-over latency unchanged; loop delay p95 63 ms in local mode). **B is already degraded**: end of speech to turn p50 is 2.6 s (local) and 1.2 s (provider), talk-over stop p50 is 2.7 s and 1.0 s. B's runs are VALID (nothing broke) but the latency is not usable.
-* **N=20:** A-provider is fine (63% CPU, 3.5 ms loop delay). A-local is at its limit: 105% CPU, loop delay p95 118 ms, end of speech to turn p50 561 ms, talk-over stop p95 940 ms. Still correct, still no lost lane, but it is one busy JavaScript thread. **B fails at N=20 in both modes (6 of 6 runs INVALID).** Pipecat logs show `SmallWebRTCOutputTransport ... timed out after 10.0s writing audio` and aioice STUN timeouts, and the engine ends with no healthy lanes. The 4 cores were not full (at N=20 the B engine used about 0.8 of a core and the load generator 0.15), so the limit looks like one process: the Python GIL in B, one JavaScript main thread in A. I did not prove that with a profiler. Both would scale by running several processes. The comparison that matters is how many talkers one process holds: here A needs a fifth to a third of B's CPU per talker.
+* **N=20:** A-provider is fine (63% CPU, 3.5 ms loop delay). A-local is at its limit: 105% CPU, loop delay p95 118 ms, end of speech to turn p50 561 ms, talk-over stop p95 940 ms. Still correct, still no lost lane, but it is one busy JavaScript thread. **B (one process) fails at N=20 in both modes (6 of 6 runs INVALID).** Pipecat logs show `SmallWebRTCOutputTransport ... timed out after 10.0s writing audio` and aioice STUN timeouts, and the engine ends with no healthy lanes. The 4 cores were not full (at N=20 the B engine used about 0.8 of a core and the load generator 0.15), so the limit looks like one process: the Python GIL in B, one JavaScript main thread in A. Section 2b confirms it: with several processes B holds N=20.
 * **Memory:** B-local grows by about 50 MB per lane (a Smart Turn model session per lane) to 729 MB at N=10; B-provider 267 MB; A about 4 MB per lane (one shared model session, per-lane state), 323 MB at N=20.
 * **Packets:** B sends a continuous stream of silence to every lane (3000 packets per 60 s per peer) while A sends audio only while the bot talks (about 900). B is simpler for the browser's jitter buffer. A saves bandwidth. See the counters in `load-summary.md`.
 * **No stale audio** in any valid A run and any valid B run at N=1 and 5 (0 ms). At N=10 in B (overloaded) there was stale audio (local: 253 ms total, provider: 120 ms total).
 * **Completed vs cancelled bot output** is in the counters table in `results/load/load-summary.md` (`segCompleted`, `segCancelled`, `ttsPlayedMs`, `ttsCancelledMs`) next to frames, packets and bytes. Example, A-local N=5, 60 s: 57 segments started, 49 completed, 7 cancelled by talk-over.
 * The load generator itself used 6 to 17% of one core and had loop delay p95 around 1 ms, so it was not the bottleneck.
 * Port 10080 was busy in the sandbox for run 7 of every config. The runner retried on other ports (logged in `load-invalid-*.txt`). It is not an engine problem.
+
+## 2b. Fair load round: process pools
+
+Why: Pipecat is meant to run one process per conversation (or a bounded pool). Section 2 ran all conversations in one Python process, which is unfair to B. A is one JavaScript thread, so it got the same treatment.
+
+How:
+
+* The signaling server (it plays the coordinator) now accepts several engine processes. A new conversation goes to the process that has the fewest conversations, so conversations are spread evenly. All later messages for that conversation go to the same process.
+* B: (a) one process per conversation, (b) a pool of 2, (c) a pool of 4. A: a pool of 2 and a pool of 4. N = 5, 10, 20. Both turn-end conditions. 3 repeats of 60 s after a 15 s warm-up. The same validity rules as before. Rows labelled "single process (1)" are the earlier round, unchanged.
+* Total CPU and total RSS are summed over all engine processes (100% = one core). Loop delay is the worst process (the highest p95 of the 3 repeats and processes). "Busiest process CPU" is the highest CPU of any one process. "Whole box busy" is all processes on the machine (engine, load generator, fake brain, signaling) as a share of the 4 cores.
+* Raw data: `results/load-pool/load-pool-runs-*.csv` (one row per run, with `procs`, `procCpuMaxPct`, `boxBusyPctOf4Cores`), `load-pool-cycles-*.csv`, `pool-table.md`.
+
+| Config | N | processes | valid/runs | total CPU % (all processes) | total RSS MB (peak) | worst process loop delay p95 ms | end of speech to turn p50 ms | talk-over stop p50 / p95 ms | busiest process CPU % | load generator CPU % | whole box busy % of 4 cores |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| A-local | 5 | single process (1) | 3/3 | 32 (±1) | 275 (±9) | 2.1 | 289 (±7) | 190 (±7) / 239 (±34) | (one process) | 8 (±0) | (not recorded) |
+| A-local | 5 | pool of 2 | 3/3 | 38 (±2) | 492 (±4) | 1.1 | 281 (±5) | 182 (±4) / 208 (±3) | 22 (±1) | 10 (±1) | 13 (±1) |
+| A-local | 5 | pool of 4 | 3/3 | 45 (±1) | 980 (±29) | 1.0 | 281 (±3) | 181 (±3) / 201 (±4) | 16 (±1) | 9 (±0) | 17 (±3) |
+| A-local | 10 | single process (1) | 3/3 | 60 (±1) | 287 (±2) | 68.7 | 312 (±10) | 193 (±7) / 273 (±43) | (one process) | 11 (±0) | (not recorded) |
+| A-local | 10 | pool of 2 | 3/3 | 66 (±2) | 531 (±15) | 2.2 | 292 (±8) | 187 (±3) / 279 (±8) | 33 (±1) | 12 (±0) | 23 (±2) |
+| A-local | 10 | pool of 4 | 3/3 | 75 (±1) | 1039 (±24) | 1.3 | 293 (±4) | 188 (±5) / 227 (±11) | 22 (±0) | 11 (±0) | 24 (±2) |
+| A-local | 20 | single process (1) | 3/3 | 105 (±1) | 323 (±1) | 120.9 | 561 (±29) | 375 (±69) / 940 (±58) | (one process) | 15 (±0) | (not recorded) |
+| A-local | 20 | pool of 2 | 3/3 | 119 (±2) | 564 (±3) | 67.2 | 322 (±10) | 201 (±3) / 401 (±32) | 60 (±1) | 17 (±0) | 37 (±1) |
+| A-local | 20 | pool of 4 | 3/3 | 130 (±5) | 1055 (±16) | 4.7 | 295 (±11) | 190 (±5) / 293 (±21) | 33 (±1) | 17 (±1) | 38 (±2) |
+| B-local | 5 | single process (1) | 3/3 | 119 (±3) | 450 (±0) | 5.6 | 363 (±10) | 365 (±11) / 444 (±80) | (one process) | 11 (±0) | (not recorded) |
+| B-local | 5 | pool of 2 | 3/3 | 120 (±5) | 604 (±0) | 1.9 | 341 (±5) | 368 (±9) / 400 (±11) | 73 (±3) | 12 (±0) | 35 (±1) |
+| B-local | 5 | pool of 4 | 3/3 | 119 (±2) | 915 (±1) | 1.5 | 332 (±3) | 359 (±4) / 382 (±6) | 46 (±0) | 12 (±0) | 37 (±1) |
+| B-local | 5 | one per conversation (5) | 3/3 | 118 (±2) | 1066 (±0) | 1.6 | 335 (±5) | 358 (±14) / 384 (±4) | 24 (±0) | 13 (±0) | 34 (±1) |
+| B-local | 10 | single process (1) | 3/3 | 170 (±3) | 729 (±4) | 47.2 | 2644 (±734) | 2720 (±735) / 3134 (±612) | (one process) | 13 (±1) | (not recorded) |
+| B-local | 10 | pool of 2 | 3/3 | 220 (±4) | 900 (±0) | 13.1 | 419 (±11) | 385 (±8) / 470 (±50) | 111 (±2) | 17 (±1) | 61 (±1) |
+| B-local | 10 | pool of 4 | 3/3 | 212 (±4) | 1209 (±1) | 4.4 | 392 (±5) | 353 (±5) / 392 (±8) | 64 (±1) | 17 (±0) | 59 (±1) |
+| B-local | 10 | one per conversation (10) | 3/3 | 214 (±4) | 2138 (±2) | 2.6 | 386 (±4) | 360 (±2) / 395 (±3) | 22 (±0) | 18 (±0) | 61 (±2) |
+| B-local | 20 | single process (1) | 0/3 INVALID | | | | | | | | |
+| B-local | 20 | pool of 2 | 0/3 INVALID | | | | | | | | |
+| B-local | 20 | pool of 4 | 3/3 | 325 (±2) | 1803 (±2) | 27.2 | 533 (±17) | 413 (±4) / 559 (±4) | 82 (±0) | 24 (±0) | 89 (±1) |
+| B-local | 20 | one per conversation (20) | 0/3 INVALID | | | | | | | | |
+| A-provider | 5 | single process (1) | 3/3 | 19 (±1) | 242 (±15) | 1.0 | 427 (±1) | 181 (±1) / 204 (±4) | (one process) | 8 (±0) | (not recorded) |
+| A-provider | 5 | pool of 2 | 3/3 | 24 (±2) | 428 (±36) | 1.0 | 421 (±3) | 187 (±5) / 201 (±1) | 14 (±1) | 10 (±1) | 13 (±2) |
+| A-provider | 5 | pool of 4 | 3/3 | 30 (±1) | 722 (±10) | 1.0 | 424 (±2) | 188 (±3) / 206 (±2) | 10 (±0) | 9 (±0) | 10 (±2) |
+| A-provider | 10 | single process (1) | 3/3 | 33 (±2) | 252 (±2) | 1.1 | 428 (±1) | 177 (±3) / 210 (±5) | (one process) | 11 (±0) | (not recorded) |
+| A-provider | 10 | pool of 2 | 3/3 | 41 (±2) | 470 (±19) | 1.1 | 427 (±0) | 186 (±3) / 210 (±1) | 21 (±1) | 12 (±1) | 17 (±1) |
+| A-provider | 10 | pool of 4 | 3/3 | 48 (±5) | 846 (±19) | 1.1 | 426 (±0) | 183 (±1) / 203 (±8) | 14 (±1) | 11 (±1) | 16 (±5) |
+| A-provider | 20 | single process (1) | 3/3 | 63 (±1) | 287 (±4) | 3.6 | 430 (±0) | 187 (±1) / 206 (±3) | (one process) | 17 (±0) | (not recorded) |
+| A-provider | 20 | pool of 2 | 3/3 | 70 (±2) | 500 (±6) | 1.8 | 428 (±1) | 188 (±2) / 207 (±2) | 35 (±1) | 18 (±1) | 24 (±0) |
+| A-provider | 20 | pool of 4 | 3/3 | 77 (±2) | 942 (±14) | 1.1 | 427 (±0) | 181 (±1) / 207 (±5) | 20 (±1) | 17 (±1) | 23 (±2) |
+| B-provider | 5 | single process (1) | 3/3 | 97 (±3) | 209 (±0) | 3.4 | 571 (±2) | 357 (±6) / 393 (±12) | (one process) | 12 (±1) | (not recorded) |
+| B-provider | 5 | pool of 2 | 3/3 | 89 (±5) | 360 (±0) | 1.3 | 560 (±5) | 356 (±3) / 377 (±3) | 54 (±3) | 12 (±1) | 25 (±3) |
+| B-provider | 5 | pool of 4 | 3/3 | 90 (±2) | 663 (±0) | 1.2 | 561 (±1) | 367 (±4) / 381 (±1) | 35 (±1) | 12 (±0) | 27 (±2) |
+| B-provider | 5 | one per conversation (5) | 3/3 | 91 (±3) | 814 (±0) | 1.3 | 561 (±1) | 364 (±6) / 382 (±6) | 18 (±1) | 13 (±0) | 28 (±3) |
+| B-provider | 10 | single process (1) | 3/3 | 133 (±1) | 267 (±0) | 33.5 | 1176 (±476) | 1011 (±420) / 1347 (±636) | (one process) | 14 (±0) | (not recorded) |
+| B-provider | 10 | pool of 2 | 3/3 | 171 (±4) | 419 (±0) | 6.2 | 569 (±1) | 374 (±3) / 430 (±44) | 86 (±3) | 17 (±0) | 49 (±2) |
+| B-provider | 10 | pool of 4 | 3/3 | 163 (±6) | 721 (±0) | 1.9 | 564 (±1) | 357 (±4) / 390 (±9) | 50 (±2) | 18 (±1) | 48 (±1) |
+| B-provider | 10 | one per conversation (10) | 3/3 | 170 (±5) | 1628 (±1) | 2.0 | 563 (±0) | 358 (±5) / 385 (±11) | 17 (±0) | 18 (±0) | 49 (±1) |
+| B-provider | 20 | single process (1) | 0/3 INVALID | | | | | | | | |
+| B-provider | 20 | pool of 2 | 0/3 INVALID | | | | | | | | |
+| B-provider | 20 | pool of 4 | 3/3 | 279 (±2) | 838 (±0) | 12.9 | 589 (±3) | 390 (±4) / 472 (±8) | 70 (±1) | 25 (±0) | 78 (±1) |
+| B-provider | 20 | one per conversation (20) | 3/3 | 309 (±6) | 3259 (±1) | 5.8 | 570 (±1) | 375 (±5) / 426 (±7) | 16 (±0) | 23 (±0) | 85 (±2) |
+
+INVALID cells (numbers shown for information only, never used above). Reasons are in the CSV `invalidReasons` column.
+
+| Config | N | processes | runs | total CPU % | total RSS MB | worst process loop delay p95 ms | end of speech to turn p50 ms | talk-over stop p50 ms | timeouts / cycles | load generator loop delay p95 ms | box busy % of 4 cores | why INVALID |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| B-local | 20 | single process (1) | 3 | 82 (±4) | 1335 (±1) | 66.6 | 1676 (±689) | 1299 (±0) | 395 / 428 | 1 (±0) | (not recorded) | 20 lane(s) with fewer than 4 completed cycles in the window; engine reports 0 lanes, expected 20; turn/reply timeouts 129/142 > 5%; turn/reply timeouts 133/142 > 5%; turn/reply timeouts 133/144 > 5% |
+| B-local | 20 | pool of 2 | 3 | 250 (±1) | 1471 (±5) | 61.2 | 2813 (±375) | 761 (±419) | 129 / 414 | 2 (±0) | 69 (±0) | 1 lane(s) with fewer than 4 completed cycles in the window; 2 lane(s) with fewer than 4 completed cycles in the window; turn/reply timeouts 42/137 > 5%; turn/reply timeouts 43/138 > 5%; turn/reply timeouts 44/139 > 5% |
+| B-local | 20 | one per conversation (20) | 3 | 347 (±5) | 4287 (±3) | 10.8 | 593 (±24) | 381 (±10) | 0 / 573 | 43 (±11) | 94 (±1) | load generator overloaded |
+| B-provider | 20 | single process (1) | 3 | 67 (±7) | 398 (±1) | 53.1 | 1044 (±1205) | 736 (±200) | 405 / 438 | 1 (±0) | (not recorded) | 19 lane(s) with fewer than 4 completed cycles in the window; 20 lane(s) with fewer than 4 completed cycles in the window; engine reports 0 lanes, expected 20; engine reports 1 lanes, expected 20; turn/reply timeouts 132/144 > 5%; turn/reply timeouts 136/150 > 5%; turn/reply timeouts 137/144 > 5% |
+| B-provider | 20 | pool of 2 | 3 | 219 (±1) | 542 (±2) | 45.3 | 3756 (±138) | 3016 (±164) | 89 / 411 | 1 (±0) | 61 (±0) | turn/reply timeouts 25/133 > 5%; turn/reply timeouts 31/138 > 5%; turn/reply timeouts 33/140 > 5% |
+
+How to read it:
+
+* **Single process was the limit for B.** B-local N=10 went from end-of-speech-to-turn p50 2.6 s (one process) to 0.39 s (pool of 4) and talk-over stop p50 from 2.7 s to 0.35 s. B-provider N=10 the same (1.2 s to 0.56 s). B now holds N=20 in a pool of 4 (both turn-end modes) and with one process per conversation in provider mode.
+* **Where the box became the limit (not the engine).** B-local with one process per conversation at N=20 is INVALID only because the whole box was 94% busy and the load generator's own loop delay reached 43 ms (the rule is 30 ms). The engine looked fine there (0 of 573 cycles timed out, end of speech to turn 593 ms, stop 381 ms). 20 Python processes plus the load generator do not fit on 4 cores. B at N=20 in a pool of 4 used 78 to 89% of the box. A never used more than 38% of the box.
+* **A pool of 2 is too few for B at N=20.** Each of the 2 processes had 10 conversations, loop delay p95 45 to 61 ms, 22 to 31% of cycles timed out (INVALID in 6 of 6 runs). That matches the N=10 single-process result: a Python process holds about 5 to 10 conversations here.
+* **A also gains from a pool.** A-local N=20: single process 105% CPU, loop delay p95 121 ms, end of speech to turn 561 ms, stop p95 940 ms. Pool of 4: 130% CPU, loop delay 4.7 ms, 295 ms, stop p95 293 ms. A-provider was already fine in one process. Pools cost A about 20 to 60% more total CPU and 3 to 4 times the memory (every process loads its own ONNX sessions, about 235 MB each).
+* **Cost per talker with pools (best valid pool of each engine).** N=20 local: A 130% total CPU, 1.06 GB; B 325% total CPU, 1.8 GB (A uses about 40% of B's CPU). N=20 provider: A 77% CPU, 0.94 GB; B 279% CPU, 0.84 GB (A uses about 28% of B's CPU; memory is equal because B-provider has no per-lane Smart Turn session). N=10 local: A 75% vs B 212%.
+* **Latency.** Pools do not change the talk-over gap: A stops in about 185 to 200 ms, B in about 355 to 415 ms at every pool size. End of speech to turn: A about 280 to 320 ms vs B about 330 to 420 ms in local mode (A-local pool of 4 N=20 295 ms, B-local 533 ms).
+* **Process-per-conversation vs pool of 4 for B:** no latency gain at N=5 and N=10 (equal within noise), 2x the memory at N=10 and 4x at N=20 provider. A bounded pool of 4 is the better choice on 4 cores.
+* The per-run INVALID causes are in `load-invalid-*.txt` and the CSV `invalidReasons` column. Every INVALID cell is listed in the second table above. None was hidden.
+* Load generator CPU was 8 to 25% of one core. Its own loop delay p95 stayed under 30 ms in every valid run.
+
+## 2c. Why B's talk-over stop is slower than A's (short check)
+
+Per trial times, p50, local turn-end, 8 trials per row (`scenarios/probe_barge.ts`, `results/barge-probe/README.txt`):
+
+| | person's speech starts, engine sees it | cut reported to the brain | last bot audio heard |
+|---|---|---|---|
+| A | 194 ms | 203 ms | 184 ms |
+| B (Pipecat defaults) | 316 ms | 330 ms | 357 ms |
+| B with `VADParams.min_volume` 0.0 (documented setting) | 275 ms | 282 ms | 217 ms |
+
+* The transport and jitter buffer add no measurable delay: a temporary probe showed the first loud audio frame reaches the pipeline 94 ms after the nominal start, the same offset the clip has for A. No output-buffer problem was found. The audio tail after the cut is about 50 ms longer in B.
+* The main cost is detecting speech start. Both engines use the same Silero settings (6 windows of 32 ms to confirm). B's VAD also has a smoothed volume gate (`min_volume` 0.6, exponential smoothing 0.2) that makes the first soft frames not count, so the confirmation starts later.
+* Setting `min_volume` to 0.0 moved the stop to 217 ms in the probe, close to A. But the real S2 scenario (10 trials) with the same setting gave p50/p95 of 218/337, 337/358 and 338/340 ms in three runs (local) and 238/357 (provider); the default gives 337/377 and 358/398. So the setting sometimes helps and sometimes does not. It is not a clean fix and it lets quieter noise count as speech, so I left the default in place for all results. The remainder looks like how Silero's confidence behaves on aiortc-decoded audio versus my decoder (a start-window restart costs about 120 ms). I did not go further and did not touch Pipecat internals.
+* The flag `--vad-min-volume` on the B engine exists for this test only.
 
 ## 3. Size, lines of code, dependencies
 
@@ -297,7 +400,7 @@ For all four: the engines already have a place for them (the fake STT and fake T
 * Loss is injected as dropped RTP packets (random 10% and a 1 s gap). Real networks also reorder, delay and burst.
 * The load generator uses digital silence between clips (no room noise).
 * A: volume gate approximated (section 4). One thread. No hardening beyond what the scenarios exercise.
-* B: S1 timing is sensitive to a cold start (section 1). B's behaviour above N=5 in this sandbox is poor and I did not tune it (no profiling, no multi-process split, no thread settings). It might improve with `OMP_NUM_THREADS`, a shared model session or several processes. I did not try.
+* B: S1 timing is sensitive to a cold start (section 1). B in one process is poor above N=5; section 2b shows that process pools fix it. I did not tune thread settings or share model sessions.
 * The scenarios S1 to S13 ran once per config (the S2 line has 10 trials). S2, S4, S6 and S8 for B were re-run after a counter-only fix. S13 was re-run for all four after the threshold change.
 * The first commits say `Claude Opus 5.5` in the co-author line (as instructed in the task); later commits use the line from the session reminder.
 
