@@ -395,13 +395,7 @@ export class GameRoom implements BrothersFinder {
      * gives its loop, its wait and its length. Nothing the clicker sends about the sound is used.
      */
     public async clickObjectSound(message: ClickObjectSoundMessage): Promise<void> {
-        let wam: WAMFileFormat | undefined;
-        try {
-            wam = await this.getWam();
-        } catch (e) {
-            console.warn(`Could not read the objects of ${this._roomUrl} for a clicked sound`, e);
-            wam = this.lastGoodWam;
-        }
+        const wam = await this.wamForObjectSounds();
         const sound = sharedSoundOf(wam, message.entityId, message.propertyId);
         if (!sound) {
             return;
@@ -415,9 +409,23 @@ export class GameRoom implements BrothersFinder {
         });
     }
 
-    /** The objects' clicked sounds still playing, for a player who arrives */
-    public getObjectSounds(): ObjectSoundMessage[] {
-        return this.objectSounds.getMessages();
+    /**
+     * The objects' clicked sounds still playing, for a player who arrives. A sound whose object was deleted, or that
+     * the saved map no longer has as it was clicked, is left out.
+     */
+    public async getObjectSounds(): Promise<ObjectSoundMessage[]> {
+        const wam = await this.wamForObjectSounds();
+        return this.objectSounds.getMessages((entityId, propertyId) => sharedSoundOf(wam, entityId, propertyId));
+    }
+
+    /** The saved map the objects' sounds are read from, or the last copy read when it can't be read now */
+    private async wamForObjectSounds(): Promise<WAMFileFormat | undefined> {
+        try {
+            return await this.getWam();
+        } catch (e) {
+            console.warn(`Could not read the objects of ${this._roomUrl} for their sounds`, e);
+            return this.lastGoodWam;
+        }
     }
 
     private canJoinGroup(user: User, group: Group): boolean {
@@ -1314,6 +1322,12 @@ export class GameRoom implements BrothersFinder {
                             // Which objects have a sound other people hear is read from the saved map (#1627)
                             this.wamPromise = undefined;
                         }
+                        if (editMapCommandMessage.editMapMessage?.message?.$case === "deleteEntityMessage") {
+                            // A deleted object's sound is no longer playing
+                            this.objectSounds.forget(
+                                editMapCommandMessage.editMapMessage.message.deleteEntityMessage.id
+                            );
+                        }
                         if (editMapCommandMessage.editMapMessage?.message?.$case === "modifyEntityMessage") {
                             // If the area is modified, we need to reset the WAM and the moderator tag finder.
                             // So that the next call to getModeratorTagForJitsiRoom will reload the map and the WAM.
@@ -1328,8 +1342,12 @@ export class GameRoom implements BrothersFinder {
                             const deleted = editMapCommandMessage.editMapMessage.message.deleteCustomEntityMessage;
                             const otherRoomWamUrls = deleted.wholeUpload ? deleted.otherRoomWamUrls : [];
                             deleted.otherRoomWamUrls = [];
+                            // The copies are gone from the saved maps: read them again, so their sounds count as gone
+                            // too (#1627)
+                            this.wamPromise = undefined;
                             for (const otherRoom of findRoomsByWamUrl(otherRoomWamUrls)) {
                                 if (otherRoom === this) continue;
+                                otherRoom.wamPromise = undefined;
                                 otherRoom.dispatchRoomMessage({
                                     message: {
                                         $case: "editMapCommandMessage",

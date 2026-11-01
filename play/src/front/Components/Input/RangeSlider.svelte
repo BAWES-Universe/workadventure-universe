@@ -14,6 +14,8 @@
     export let valueFormatter: (v: number) => string = (v) => v.toString();
     // Control wrapper margins - if false, no margins are applied (useful in flex contexts)
     export let wrapperMargins = true;
+    // The slider's name for screen readers, when no label is shown
+    export let ariaLabel: string | undefined = undefined;
 
     let uniqueId = id || `input-${Math.random().toString(36).substring(2, 9)} `;
 </script>
@@ -64,6 +66,7 @@
             {min}
             {max}
             {step}
+            aria-label={ariaLabel}
             bind:value
             on:input={() => onChange(value)}
         />

@@ -162,8 +162,8 @@ describe("friendsStore", () => {
 describe("relationshipsOf", () => {
     it("reads each person's standing from the list", () => {
         const answer = list(["Sara"]);
-        answer.incoming = [{ uuid: "uuid-in", name: "In", sharedWorld: "", at: "" }];
-        answer.outgoing = [{ uuid: "uuid-out", name: "Out", sharedWorld: "", at: "" }];
+        answer.incoming = [{ uuid: "uuid-in", name: "In", chatId: "", sharedWorld: "", at: "" }];
+        answer.outgoing = [{ uuid: "uuid-out", name: "Out", chatId: "", sharedWorld: "", at: "" }];
         answer.blocked = [{ uuid: "uuid-b", name: "B" }];
         expect(Object.fromEntries(relationshipsOf(answer))).toEqual({
             "uuid-Sara": "friends",

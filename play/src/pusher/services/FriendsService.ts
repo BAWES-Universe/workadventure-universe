@@ -41,6 +41,8 @@ export const OrbitFriendsList = z.object({
         z.object({
             uuid: z.string(),
             name: z.string().nullable(),
+            // Missing from an Orbit that does not send it yet.
+            chatId: z.string().nullable().optional(),
             sharedWorld: z.string().nullable(),
             requestedAt: z.string(),
         })
@@ -49,6 +51,7 @@ export const OrbitFriendsList = z.object({
         z.object({
             uuid: z.string(),
             name: z.string().nullable(),
+            chatId: z.string().nullable().optional(),
             sentAt: z.string(),
         })
     ),
