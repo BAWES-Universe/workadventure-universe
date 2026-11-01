@@ -1646,7 +1646,8 @@ describe('DmReplyService history', () => {
         expect(onInterimMessage.mock.calls).toEqual([["I'll make it."]]);
         expect(shown.map(([field, text]) => [field.state, text])).toEqual([
             ['working', 'Make a song…'],
-            ['working', 'Make a song…'],
+            // Both calls ended, so the bot is writing its answer (#1723)
+            ['working', 'Writing the answer…'],
             ['done', "Make a song · 1 didn't work"],
         ]);
         expect(shown[0][0].steps.map((s: any) => s.state)).toEqual(['running', 'running']);
