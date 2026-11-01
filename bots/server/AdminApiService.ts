@@ -14,7 +14,7 @@ import type { VoiceActiveAnswer, VoiceCredentialsAnswer, VoiceHealthReport, Voic
 // import * as Sentry from '@sentry/node';
 
 // Helper to safely capture exceptions (works with or without Sentry)
-const captureException = (error: Error) => {
+const captureException = (error: unknown) => {
     // Uncomment if Sentry is configured:
     // Sentry.captureException(error);
     console.error('AdminApiService error:', error);
