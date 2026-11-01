@@ -29,7 +29,10 @@
     let centerDivWidth: number;
     let leftDivWidth: number;
     let leftToCenterWidth: number;
-    let rightContentWidth: number;
+    // Read with a ResizeObserver (bind:borderBoxSize), not bind:offsetWidth: that would make this box position:
+    // relative, and the name menu, placed inside it, would then be cut off by the right bar's overflow.
+    let rightContentBox: ResizeObserverSize[] | undefined = undefined;
+    $: rightContentWidth = rightContentBox?.[0]?.inlineSize ?? 0;
     // Room the right-hand buttons could still take, in either mode: what the bar has left once the left buttons, the
     // centre buttons and the right buttons are laid out (negative while they overflow). The bar uses it to give a
     // button back its room (#1734).
@@ -157,7 +160,7 @@
                     <div
                         class="flex flew-row flex-none h-full"
                         bind:this={rightDivContent}
-                        bind:offsetWidth={rightContentWidth}
+                        bind:borderBoxSize={rightContentBox}
                     >
                         <slot name="right" />
                     </div>

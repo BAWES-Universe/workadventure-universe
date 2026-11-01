@@ -12,6 +12,10 @@
     // width is read by the bar too.
     export let collapse = false;
     export let width = 0;
+    // Read with a ResizeObserver (bind:borderBoxSize): bind:offsetWidth would make this box position: relative and
+    // put an iframe in it, which changes what the bar's menus are placed against.
+    let boxSize: ResizeObserverSize[] | undefined = undefined;
+    $: width = boxSize?.[0]?.inlineSize ?? 0;
 
     let observer: IntersectionObserver | undefined = undefined;
 
@@ -53,7 +57,7 @@
     class:invisible={!isVisible}
     style:margin-inline-start={collapse && !isVisible ? `-${width}px` : undefined}
     bind:this={divElement}
-    bind:offsetWidth={width}
+    bind:borderBoxSize={boxSize}
 >
     <slot />
 </div>
