@@ -60,11 +60,13 @@ vi.mock("matrix-js-sdk", async (importOriginal) => {
     return { ...actual, TimelineWindow: FakeTimelineWindow };
 });
 
+/** Whether a chat room is on screen, and the chat panel's switch to it. */
+const chatPanel = vi.hoisted(() => ({ roomVisible: true, switchToChat: vi.fn() }));
 vi.mock("../../../Stores/ChatStore", async () => {
     const { writable } = await import("svelte/store");
     return {
-        isAChatRoomIsVisible: () => true,
-        navChat: writable("chat"),
+        isAChatRoomIsVisible: () => chatPanel.roomVisible,
+        navChat: { ...writable("chat"), switchToChat: chatPanel.switchToChat },
         selectedChatMessageToReply: writable(null),
         botsChatIds: writable([]),
     };
@@ -106,6 +108,8 @@ vi.mock("../MatrixChatMessage", () => ({
 }));
 vi.mock("../MatrixChatMessageReaction", () => ({ MatrixChatMessageReaction: class {} }));
 
+import { get } from "svelte/store";
+import { selectedRoomStore } from "../../../Stores/SelectRoomStore";
 import { MatrixChatRoom } from "../MatrixChatRoom";
 
 let nextId = 0;
@@ -197,6 +201,8 @@ describe("MatrixChatRoom catching up after a reload or a sleeping tab", () => {
         timeline.paginateError = undefined;
         timeline.handlers.clear();
         notify = vi.fn();
+        chatPanel.roomVisible = true;
+        chatPanel.switchToChat.mockClear();
         vi.spyOn(console, "error").mockImplementation(() => {});
     });
 
@@ -262,6 +268,38 @@ describe("MatrixChatRoom catching up after a reload or a sleeping tab", () => {
         emitTimeline(fromBot("$answer", { msgtype: "m.text", body: "Here is your song" }));
         await settle();
         expect(notify).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not open the chat on a bot's steps line, only on its answer", async () => {
+        chatPanel.roomVisible = false;
+        selectedRoomStore.set(undefined);
+        const room = await roomWithSavedCopy([message()], 1);
+        const fromBot = (id: string, content: Record<string, unknown>) =>
+            ({
+                ...message(300),
+                getId: () => id,
+                getSender: () => "@bot_music:matrix.test",
+                getContent: () => content,
+            } as unknown as MatrixEvent);
+        const steps = {
+            v: 1,
+            state: "working",
+            line: "Using Generate music",
+            startedAt: 1,
+            steps: [{ doing: "Using Generate music", done: "Used Generate music", state: "running", again: false }],
+        };
+
+        emitTimeline(
+            fromBot("$steps", { msgtype: "m.notice", body: "Using Generate music…", "universe.steps": steps })
+        );
+        await settle();
+        expect(get(selectedRoomStore)).toBeUndefined();
+        expect(chatPanel.switchToChat).not.toHaveBeenCalled();
+
+        emitTimeline(fromBot("$answer", { msgtype: "m.text", body: "Here is your song" }));
+        await settle();
+        expect(get(selectedRoomStore)).toBe(room);
+        expect(chatPanel.switchToChat).toHaveBeenCalledTimes(1);
     });
 
     it("plays the chat sound for each new message, and notes it for the notification that follows (#1493)", async () => {

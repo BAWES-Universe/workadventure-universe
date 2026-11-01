@@ -496,11 +496,14 @@ export class MatrixChatRoom
             }
         }
         if (isFresh && senderID !== this.matrixRoom.client.getSafeUserId() && !get(this.areNotificationsMuted)) {
-            // A bot's steps line ("Using Generate music…") is not a message to be told about: its answer follows (#1646)
-            if (!readBotSteps(senderID, event.getContent())) this.notifyNewMessage(message);
-            if (!isAChatRoomIsVisible() && get(selectedRoomStore)?.id !== "proximity") {
-                selectedRoomStore.set(this);
-                navChat.switchToChat();
+            // A bot's steps line ("Using Generate music…") is not a message to be told about, nor one to open the chat
+            // on: its answer follows (#1646)
+            if (!readBotSteps(senderID, event.getContent())) {
+                this.notifyNewMessage(message);
+                if (!isAChatRoomIsVisible() && get(selectedRoomStore)?.id !== "proximity") {
+                    selectedRoomStore.set(this);
+                    navChat.switchToChat();
+                }
             }
         }
 
