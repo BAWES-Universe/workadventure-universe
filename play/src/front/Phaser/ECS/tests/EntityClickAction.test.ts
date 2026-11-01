@@ -19,6 +19,7 @@ vi.mock("../../../FileViewer/openFileViewer", () => ({
     mapFileOpensInViewer: vi.fn(),
 }));
 vi.mock("../../../Stores/CoWebsiteStore", () => ({ coWebsites: {} }));
+vi.mock("../../../Artifacts/openArtifactLink", () => ({ openArtifactLink: () => false }));
 vi.mock("../../../../i18n/i18n-svelte", async () => {
     const { readable } = await import("svelte/store");
     return {
