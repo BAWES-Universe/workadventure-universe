@@ -177,8 +177,14 @@
         --voice-btn: 64px;
         position: relative;
         min-height: 0;
-        /* Held 8px off Raise hand beyond the column's gap, as Raise hand is held off Express. */
+        /* Closed, no padding either: a 0fr row can't shrink below it, which would leave 8px and move the column. */
+        padding-bottom: 0;
+        transition: padding-bottom 280ms cubic-bezier(0.2, 0, 0, 1) 140ms;
+    }
+    /* Shown, held 8px off Raise hand beyond the column's gap, as Raise hand is held off Express. */
+    .shown .voice-wrap {
         padding-bottom: 8px;
+        transition-delay: 0s;
     }
     @media (min-width: 640px) and (max-width: 1279.98px) {
         .voice-wrap {
