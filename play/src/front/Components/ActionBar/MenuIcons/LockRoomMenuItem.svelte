@@ -18,8 +18,6 @@
         on:click={toggle}
         classList="group/btn-lock-room"
         label={$lockableRoomStore.locked ? $LL.area.unlockRoom() : $LL.area.lockRoom()}
-        tooltipTitle={$lockableRoomStore.locked ? $LL.area.unlockRoom() : $LL.area.lockRoom()}
-        tooltipDesc={$LL.area.lockRoomHint()}
         state={$lockableRoomStore.locked ? "forbidden" : "normal"}
         dataTestId="lock-room-button"
     >

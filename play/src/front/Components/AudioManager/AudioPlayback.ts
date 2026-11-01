@@ -7,6 +7,11 @@ export interface AudioSource {
     loop: boolean;
     /** Explicit opt-in only; ignored by the unchanged legacy playback implementation. */
     soundscape?: Emitter;
+    /**
+     * Where to start, in seconds: someone who arrives while an object's sound plays for everyone hears it from where
+     * it is (#1627). A looping sound wraps around.
+     */
+    startAt?: number;
 }
 
 export interface AudioControls {
@@ -199,6 +204,19 @@ export class AudioPlayback {
         this.applyVolumes();
         media.src = source.url;
         media.load();
+        const startAt = source.startAt;
+        if (startAt !== undefined && startAt > 0) {
+            media.addEventListener(
+                "loadedmetadata",
+                () => {
+                    if (this.current !== slot) return;
+                    const duration = media.duration;
+                    media.currentTime =
+                        source.loop && Number.isFinite(duration) && duration > 0 ? startAt % duration : startAt;
+                },
+                { once: true }
+            );
+        }
         this.playCurrent();
     }
 

@@ -9,6 +9,8 @@ import type {
     AnswerMessage,
     ApplicationMessage,
     AreaPropertyVariableMessage,
+    ClickObjectSoundMessage,
+    ObjectSoundMessage,
     AvailabilityStatus,
     CharacterTextureMessage,
     ChatMembersAnswer,
@@ -25,7 +27,6 @@ import type {
     FollowRequestMessage,
     GroupDeleteMessage as GroupDeleteMessageTsProto,
     GroupUpdateMessage as GroupUpdateMessageTsProto,
-    JitsiJwtAnswer,
     JoinBBBMeetingAnswer,
     MegaphoneSettings,
     Member,
@@ -212,6 +213,8 @@ export class RoomConnection implements RoomConnection {
     public readonly editMapCommandMessageStream = this._editMapCommandMessageStream.asObservable();
     private readonly _areaPropertyVariableMessageStream = new Subject<AreaPropertyVariableMessage>();
     public readonly areaPropertyVariableMessageStream = this._areaPropertyVariableMessageStream.asObservable();
+    private readonly _objectSoundMessageStream = new Subject<ObjectSoundMessage>();
+    public readonly objectSoundMessageStream = this._objectSoundMessageStream.asObservable();
     private readonly _playerDetailsUpdatedMessageStream = new Subject<PlayerDetailsUpdatedMessageTsProto>();
     public readonly playerDetailsUpdatedMessageStream = this._playerDetailsUpdatedMessageStream.asObservable();
 
@@ -457,6 +460,10 @@ export class RoomConnection implements RoomConnection {
                                         );
                                         break;
                                     }
+                                    case "objectSoundMessage": {
+                                        this._objectSoundMessageStream.next(subMessage.objectSoundMessage);
+                                        break;
+                                    }
                                     case "addSpaceUserMessage": {
                                         this._addSpaceUserMessageStream.next(subMessage.addSpaceUserMessage);
                                         break;
@@ -605,6 +612,7 @@ export class RoomConnection implements RoomConnection {
                                 commandsToApply,
                                 applications: applications,
                                 areaPropertyVariables: roomJoinedMessage.areaPropertyVariable,
+                                objectSounds: roomJoinedMessage.objectSounds,
                             } as RoomJoinedMessageInterface,
                         });
 
@@ -1481,6 +1489,16 @@ export class RoomConnection implements RoomConnection {
         });
     }
 
+    /** Clicks an object whose sound other people hear (#1627). The server answers everyone if it starts or stops. */
+    public emitClickObjectSound(message: ClickObjectSoundMessage) {
+        this.send({
+            message: {
+                $case: "clickObjectSoundMessage",
+                clickObjectSoundMessage: message,
+            },
+        });
+    }
+
     public emitAddSpaceFilter(filter: AddSpaceFilterMessage) {
         this.send({
             message: {
@@ -1497,19 +1515,6 @@ export class RoomConnection implements RoomConnection {
                 removeSpaceFilterMessage: filter,
             },
         });
-    }
-
-    public async queryJitsiJwtToken(jitsiRoom: string): Promise<JitsiJwtAnswer> {
-        const answer = await this.query({
-            $case: "jitsiJwtQuery",
-            jitsiJwtQuery: {
-                jitsiRoom,
-            },
-        });
-        if (answer.$case !== "jitsiJwtAnswer") {
-            throw new Error("Unexpected answer");
-        }
-        return answer.jitsiJwtAnswer;
     }
 
     public async queryMapStorageJwtToken(signal?: AbortSignal): Promise<MapStorageJwtAnswer> {
@@ -1673,6 +1678,18 @@ export class RoomConnection implements RoomConnection {
             throw new Error("Unexpected answer");
         }
         return answer.roomTagsAnswer.tags;
+    }
+
+    /** Where an upload is placed: the map files of the rooms holding a copy of it, with how many (#1690). */
+    public async queryUploadCopies(id: string): Promise<{ wamUrl: string; count: number }[]> {
+        const answer = await this.query({
+            $case: "uploadCopiesQuery",
+            uploadCopiesQuery: { id },
+        });
+        if (answer.$case !== "uploadCopiesAnswer") {
+            throw new Error("Unexpected answer");
+        }
+        return answer.uploadCopiesAnswer.rooms;
     }
 
     public async queryRoomsFromSameWorld(): Promise<RoomShortDescription[]> {
@@ -2093,6 +2110,7 @@ export class RoomConnection implements RoomConnection {
         this._variableMessageStream.complete();
         this._editMapCommandMessageStream.complete();
         this._areaPropertyVariableMessageStream.complete();
+        this._objectSoundMessageStream.complete();
         this._playerDetailsUpdatedMessageStream.complete();
         this._websocketErrorStream.complete();
         this._connectionErrorStream.complete();

@@ -58,7 +58,6 @@ const ICONS: Record<string, ComponentType> = {
     focusable: IconZoomInArea,
     highlight: IconFocus,
     silent: IconMicrophoneOff,
-    jitsiRoomProperty: IconUsersGroup,
     livekitRoomProperty: IconUsersGroup,
     speakerMegaphone: IconMicrophone,
     listenerMegaphone: IconEar,
@@ -94,7 +93,7 @@ export function getPlaceName(place: Place, ll: TranslationFunctions): string {
 }
 
 /**
- * What a setting is called, in the words the editor uses for it ("Video call", "Quiet zone", "Highlight"...), so Look
+ * What a setting is called, in the words the editor uses for it ("Meeting room", "Quiet zone", "Highlight"...), so Look
  * around and the editor say the same. An app of "Open a website" keeps its own name (YouTube...).
  */
 export function getSettingTitle(type: string, ll: TranslationFunctions, application?: string): string | undefined {
@@ -114,7 +113,7 @@ export function getSettingTitle(type: string, ll: TranslationFunctions, applicat
     return undefined;
 }
 
-/** What the main property is called in the user's language ("Video call", "Exit to a room"...), if it has a name. */
+/** What the main property is called in the user's language ("Meeting room", "Exit to a room"...), if it has a name. */
 export function getPlacePropertyLabel(place: Place, ll: TranslationFunctions): string | undefined {
     const property = getPlaceMainProperty(place);
     if (!property) return undefined;

@@ -11,7 +11,6 @@
     import excalidrawSvg from "../../images/applications/icon_excalidraw.svg";
     import cardsPng from "../../images/applications/icon_cards.svg";
     import tldrawsJpeg from "../../images/applications/icon_tldraw.jpeg";
-    import jitsiPng from "../../images/jitsi.png";
     import LL from "../../../../i18n/i18n-svelte";
     import { connectionManager } from "../../../Connection/ConnectionManager";
     import { extensionModuleStore } from "../../../Stores/GameSceneStore";
@@ -123,33 +122,6 @@
         }}
         testId="addSilentProperty"
     />
-{/if}
-{#if property === "jitsiRoomProperty"}
-    {#if $mapEditorRestrictedPropertiesStore.includes("jitsiRoomProperty")}
-        <AddPropertyButton
-            headerText={$LL.mapEditor.properties.jitsiRoomProperty.label()}
-            descriptionText={$LL.mapEditor.properties.jitsiRoomProperty.disabled()}
-            img={jitsiPng}
-            style={`z-index: 260;${isActive ? "background-color: #4156f6;cursor:not-allowed;" : ""}`}
-            on:click={(event) => {
-                dispatch("click", event);
-            }}
-            disabled={true}
-            testId="jitsiRoomProperty"
-        />
-    {:else}
-        <AddPropertyButton
-            headerText={$LL.mapEditor.properties.jitsiRoomProperty.label()}
-            descriptionText={$LL.mapEditor.properties.jitsiRoomProperty.description()}
-            img={jitsiPng}
-            style={`z-index: 260;${isActive ? "background-color: #4156f6;" : ""}`}
-            on:click={(event) => {
-                dispatch("click", event);
-            }}
-            {disabled}
-            testId="jitsiRoomProperty"
-        />
-    {/if}
 {/if}
 {#if property === "speakerMegaphone"}
     {#if $mapEditorRestrictedPropertiesStore.includes("speakerMegaphone")}

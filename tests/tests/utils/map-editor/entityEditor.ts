@@ -11,7 +11,9 @@ class EntityEditor {
     }
 
     // Wait for the entity to be displayed
-    await expect(page.getByTestId("entity-item").nth(nb)).toHaveCount(1, { timeout: 30000 });
+    await expect(page.getByTestId("entity-item").nth(nb)).toHaveCount(1, {
+      timeout: 30000,
+    });
     // Click on the entity to select it
     await page.getByTestId("entity-item").nth(nb).click();
 
@@ -110,9 +112,11 @@ class EntityEditor {
 
   async setEntitySearcheable(page: Page, value: boolean) {
     await this.openSettings(page);
-    await expect(page.getByTestId('searchable')).toBeVisible();
-    await page.getByTestId('searchable').click();
-    await page.locator(".map-editor .sidebar input#searchable").setChecked(value);
+    await expect(page.getByTestId("searchable")).toBeVisible();
+    await page.getByTestId("searchable").click();
+    await page
+      .locator(".map-editor .sidebar input#searchable")
+      .setChecked(value);
   }
 
   // "Add your own" opens the upload guide, which holds the file input.
@@ -127,8 +131,13 @@ class EntityEditor {
     await this.openUploadGuide(page);
     await page
       .getByTestId("uploadCustomAsset")
-      .setInputFiles(path.join(__dirname, `../../assets/${this.getTestAssetFile()}`));
-    await page.getByTestId("floatingObject").click();
+      .setInputFiles(
+        path.join(__dirname, `../../assets/${this.getTestAssetFile()}`)
+      );
+    // No red squares: people walk through it, saved like the old "Floats" switch (#1694). The floor squares are
+    // marked once the picture loads, so wait for them first.
+    await expect(page.locator(".em-cell").first()).toBeVisible();
+    await page.getByTestId("meet-through").click();
     await this.applyEntityModifications(page);
   }
 
@@ -136,8 +145,16 @@ class EntityEditor {
     await this.openUploadGuide(page);
     await page
       .getByTestId("uploadCustomAsset")
-      .setInputFiles(path.join(__dirname, `../../assets/${this.getTestAssetFileWithOddSize()}`));
-    await page.getByTestId("floatingObject").click();
+      .setInputFiles(
+        path.join(
+          __dirname,
+          `../../assets/${this.getTestAssetFileWithOddSize()}`
+        )
+      );
+    // No red squares: people walk through it, saved like the old "Floats" switch (#1694). The floor squares are
+    // marked once the picture loads, so wait for them first.
+    await expect(page.locator(".em-cell").first()).toBeVisible();
+    await page.getByTestId("meet-through").click();
     await this.applyEntityModifications(page);
   }
 
@@ -151,16 +168,20 @@ class EntityEditor {
     // TODO: find a way to be sure upload succeeded
     // eslint-disable-next-line playwright/no-wait-for-timeout
     await page.waitForTimeout(1000);
-    if(await page.getByTestId('entityImageLoader').isVisible({timeout: 2000})){
+    if (
+      await page.getByTestId("entityImageLoader").isVisible({ timeout: 2000 })
+    ) {
       // Check loader end
-      await expect(page.getByTestId('entityImageLoader')).toHaveCount(0, { timeout: 30000 });
+      await expect(page.getByTestId("entityImageLoader")).toHaveCount(0, {
+        timeout: 30000,
+      });
     }
     // Verify that there is no error message
     await expect(page.getByTestId("entityImageError")).toHaveCount(0);
     // Verify that the image uploaded is displayed in the list
-    if(await page.getByTestId('clearCurrentSelection').isVisible()){
+    if (await page.getByTestId("clearCurrentSelection").isVisible()) {
       // Back to the main list
-      await page.getByTestId('clearCurrentSelection').click();
+      await page.getByTestId("clearCurrentSelection").click();
     }
   }
 
@@ -170,22 +191,28 @@ class EntityEditor {
 
   async setOpenLinkProperty(page: Page, link: string) {
     await this.openSettings(page);
-    await page.locator(".map-editor .sidebar .properties-container input#tabLink").fill(link);
+    await page
+      .locator(".map-editor .sidebar .properties-container input#tabLink")
+      .fill(link);
   }
 
   async setOpenFileProperty(page: Page) {
     await this.openSettings(page);
     const fileChooserPromise = page.waitForEvent("filechooser");
-    await page.locator(".map-editor .sidebar .properties-container span#chooseUpload").click();
+    await page
+      .locator(".map-editor .sidebar .properties-container span#chooseUpload")
+      .click();
     const fileChooser = await fileChooserPromise;
-    await fileChooser.setFiles(path.join(__dirname, `../../assets/ipsum-lorem.pdf`));
+    await fileChooser.setFiles(
+      path.join(__dirname, `../../assets/ipsum-lorem.pdf`)
+    );
   }
 
-  getTestAssetFile(){
+  getTestAssetFile() {
     return `${this.getTestAssetName()}.png`;
   }
 
-  getTestAssetFileWithOddSize(){
+  getTestAssetFileWithOddSize() {
     return `${this.getTestAssetName()}OddSize.png`;
   }
 

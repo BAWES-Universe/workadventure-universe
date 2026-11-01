@@ -134,8 +134,9 @@ new UploadController(app, fileSystem, mapListService);
 new ValidatorController(app);
 new PingController(app);
 
+// Uploaded documents and sounds (#1626) are read only with the map's access token
 app.get(
-    "/private/files/{*splat}",
+    ["/private/files/{*splat}", "/private/sounds/{*splat}"],
     (req, res, next) => {
         Promise.resolve(verifyJWT(req, res, next)).catch(next);
     },

@@ -31,14 +31,21 @@ export interface FriendsRingsDependencies<S extends RingsSocket> {
     newId?: () => string;
     /** How long the friend's card rings. */
     ringMs?: number;
-    /** How long a caller waits before ringing the same friend again after a ring that was not accepted. */
-    cooldownMs?: number;
+    /**
+     * How long a caller waits before ringing the same friend again, by how many of their rings that friend has not
+     * accepted in a row: the first entry after the first, the second after the second, and the last one from then on.
+     */
+    waitsMs?: number[];
+    /** After this long without a ring from the caller to that friend, the count of unaccepted rings starts over. */
+    forgetAfterMs?: number;
     /** How long after an accept the caller is told when their friend walks in. */
     arrivalWatchMs?: number;
 }
 
 const DEFAULT_RING_MS = 30 * 1000;
-const DEFAULT_COOLDOWN_MS = 10 * 60 * 1000;
+// The second invite works at once, the third and fourth each wait a minute, and from then on it is five minutes.
+const DEFAULT_WAITS_MS = [0, 60 * 1000, 60 * 1000, 5 * 60 * 1000];
+const DEFAULT_FORGET_AFTER_MS = 30 * 60 * 1000;
 const DEFAULT_ARRIVAL_WATCH_MS = 3 * 60 * 1000;
 
 // Someone set to one of these is not disturbed by an invite.
@@ -56,6 +63,12 @@ interface Ring<S> {
     timer: ReturnType<typeof setTimeout>;
 }
 
+interface Cooldown {
+    until: number;
+    unanswered: number;
+    lastAt: number;
+}
+
 interface ArrivalWatch<S> {
     ringId: string;
     callerSocket: S;
@@ -69,7 +82,8 @@ interface ArrivalWatch<S> {
  *
  * In memory, like FriendsPresence: a single pusher sees every connected player. A user rings one friend at a
  * time and is rung by one friend at a time. A ring that ends without being accepted holds the caller back from
- * ringing the same friend again for a while, so a ring cannot be used to pester.
+ * ringing the same friend again, for longer each time (see DEFAULT_WAITS_MS) until the friend comes over or a while
+ * passes, so a ring cannot be used to pester.
  */
 export class FriendsRings<S extends RingsSocket> {
     private readonly rings = new Map<string, Ring<S>>();
@@ -77,21 +91,23 @@ export class FriendsRings<S extends RingsSocket> {
     private readonly ringByCaller = new Map<string, Ring<S>>();
     // targetUuid => the ring they are getting
     private readonly ringByTarget = new Map<string, Ring<S>>();
-    // "caller target" => when the caller may ring that target again
-    private readonly cooldowns = new Map<string, number>();
+    // "caller target" => when the caller may ring that target again, and how many rings in a row were not accepted
+    private readonly cooldowns = new Map<string, Cooldown>();
     private readonly arrivals = new Map<string, ArrivalWatch<S>>();
 
     private readonly now: () => number;
     private readonly newId: () => string;
     private readonly ringMs: number;
-    private readonly cooldownMs: number;
+    private readonly waitsMs: number[];
+    private readonly forgetAfterMs: number;
     private readonly arrivalWatchMs: number;
 
     constructor(private readonly deps: FriendsRingsDependencies<S>) {
         this.now = deps.now ?? Date.now;
         this.newId = deps.newId ?? (() => crypto.randomUUID());
         this.ringMs = deps.ringMs ?? DEFAULT_RING_MS;
-        this.cooldownMs = deps.cooldownMs ?? DEFAULT_COOLDOWN_MS;
+        this.waitsMs = deps.waitsMs?.length ? deps.waitsMs : DEFAULT_WAITS_MS;
+        this.forgetAfterMs = deps.forgetAfterMs ?? DEFAULT_FORGET_AFTER_MS;
         this.arrivalWatchMs = deps.arrivalWatchMs ?? DEFAULT_ARRIVAL_WATCH_MS;
     }
 
@@ -187,6 +203,8 @@ export class FriendsRings<S extends RingsSocket> {
             this.finish(ring);
             this.sendToTarget(ring, "answered", socket);
             this.sendResult(ring, "accepted");
+            // They came: the count of rings they did not answer starts over.
+            this.cooldowns.delete(cooldownKey(ring.callerUuid, ring.targetUuid));
             this.watchArrival(ring);
             // Where the caller is now, which is where the friend should go.
             return { ok: true, playUri: ring.callerSocket.getUserData().roomId, callerUuid: ring.callerUuid };
@@ -330,7 +348,7 @@ export class FriendsRings<S extends RingsSocket> {
         if (this.ringByCaller.has(callerUuid)) {
             return refusal("already_ringing");
         }
-        const until = this.cooldowns.get(cooldownKey(callerUuid, targetUuid));
+        const until = this.cooldowns.get(cooldownKey(callerUuid, targetUuid))?.until;
         const now = this.now();
         if (until !== undefined && until > now) {
             return { outcome: "too_soon", ringId: "", retryAfterSeconds: Math.ceil((until - now) / 1000) };
@@ -352,13 +370,16 @@ export class FriendsRings<S extends RingsSocket> {
 
     private startCooldown(ring: Ring<S>): void {
         const now = this.now();
-        // Pruned whenever one is set, so the map only holds the running ones.
-        for (const [key, until] of this.cooldowns) {
-            if (until <= now) {
+        // Pruned whenever one is set, so the map only holds callers who rang lately.
+        for (const [key, cooldown] of this.cooldowns) {
+            if (now - cooldown.lastAt >= this.forgetAfterMs) {
                 this.cooldowns.delete(key);
             }
         }
-        this.cooldowns.set(cooldownKey(ring.callerUuid, ring.targetUuid), now + this.cooldownMs);
+        const key = cooldownKey(ring.callerUuid, ring.targetUuid);
+        const unanswered = (this.cooldowns.get(key)?.unanswered ?? 0) + 1;
+        const wait = this.waitsMs[Math.min(unanswered, this.waitsMs.length) - 1];
+        this.cooldowns.set(key, { until: now + wait, unanswered, lastAt: now });
     }
 
     private watchArrival(ring: Ring<S>): void {

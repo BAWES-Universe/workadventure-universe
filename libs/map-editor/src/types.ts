@@ -69,6 +69,8 @@ export const ExitPropertyData = PropertyBase.extend({
     areaName: z.string(),
 });
 
+// Jitsi is no longer supported (#1688). The type stays so that a saved map that still has one can be read; the WAM
+// file migration drops it when a map loads, and nothing in the game acts on it.
 export const JitsiRoomPropertyData = PropertyBase.extend({
     type: z.literal("jitsiRoomProperty"),
     roomName: z.string(),
@@ -85,8 +87,30 @@ export const JitsiRoomPropertyData = PropertyBase.extend({
 export const PlayAudioPropertyData = PropertyBase.extend({
     type: z.literal("playAudio"),
     audioLink: z.string(),
+    // The name of the file uploaded for it (#1626), which audioLink then points to. Empty when audioLink is a link
+    // someone pasted. Same field as upstream WorkAdventure.
+    audioName: z.string().nullable().optional(),
     volume: z.number().default(1).optional(),
     triggerMessage: z.string().optional(),
+    // Objects only (#1627), read with objectSoundSettings. An object sound without them plays on click for the
+    // person who clicked, as before.
+    // When it starts: when someone clicks the object, or when someone is within range of it
+    startsOn: z.enum(["click", "range"]).optional(),
+    // Who hears a clicked sound: only the person who clicked, everyone within range, or everyone on the map
+    heardBy: z.enum(["clicker", "range", "map"]).optional(),
+    loop: z.boolean().optional(),
+    // Distances in tiles: full volume within the first, fading out up to the second, silent past it
+    fullVolumeWithin: z.number().min(0).optional(),
+    heardUpTo: z.number().min(0).optional(),
+    // Seconds after a clicked sound ends before it can play again
+    clickWait: z.number().min(0).optional(),
+    // How long the sound lasts in seconds, measured by the map editor when the sound is set, so that the server knows
+    // when a clicked sound others hear ends. Unset when it could not be told (or for a sound set before it was kept).
+    durationSeconds: z.number().positive().optional(),
+    // Upstream WorkAdventure's fields for a clicked sound others hear (read by objectSoundSettings, so maps made
+    // there keep their sound): played for everyone, heard up to this distance in pixels (or anywhere when unset)
+    playForAllUsers: z.boolean().optional(),
+    audibleRadius: z.number().min(0).nullable().optional(),
 });
 
 export const OpenWebsitePropertyData = PropertyBase.extend({
@@ -112,6 +136,9 @@ export const OpenWebsitePropertyData = PropertyBase.extend({
     targetEmbedableUrl: z.string().optional(),
     forceNewTab: z.boolean().optional().default(false),
     hideUrl: z.boolean().optional().default(false),
+    // "Hide title bar" (#1682): while the site is the only thing open, it fills the window with no bar above it.
+    // Off when missing.
+    hideTitleBar: z.boolean().optional().default(false),
 });
 
 export const OpenFilePropertyData = PropertyBase.extend({
@@ -296,6 +323,12 @@ export const EntityRawPrefab = z.object({
     // Custom uploads only: another side or colour of an upload carries the id of that upload's first picture, so the
     // pictures group into one object (sides to turn between, colours to choose from), as built-in objects do by name.
     variantOf: z.string().optional(),
+    // Custom uploads only (#1628): who uploaded it, written by map-storage from the signed-in person, never from the
+    // browser (same field as upstream WorkAdventure). Another side or colour carries its first picture's uploader.
+    // Missing on uploads from before it was recorded: only map editors can change those.
+    ownerId: z.string().optional(),
+    // That person's name when they uploaded it, to say whose upload it is.
+    ownerName: z.string().optional(),
 });
 
 export const EntityPrefabType = z.union([z.literal("Default"), z.literal("Custom")]);

@@ -14,10 +14,6 @@ export const userIsEditorStore = writable(false); // Edit maps
 export const userCanModerateCallsStore = writable(false); // Moderate calls
 export const userCanSendMessagesStore = writable(false); // Send messages and voice notes
 
-export const userIsJitsiDominantSpeakerStore = writable(false);
-
-export const jitsiParticipantsCountStore = writable(0);
-
 export const limitMapStore = writable(false);
 
 export const bannerStore = writable<BannerEvent | null>(null);

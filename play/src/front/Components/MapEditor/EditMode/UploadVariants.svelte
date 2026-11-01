@@ -200,7 +200,12 @@
             return;
         }
         note = undefined;
-        mapEditorDeleteCustomEntityEventStore.set({ id: prefab.id });
+        mapEditorDeleteCustomEntityEventStore.set({
+            id: prefab.id,
+            wholeUpload: false,
+            pictureIds: [],
+            otherRoomWamUrls: [],
+        });
         if ($mapEditorSelectedEntityPrefabStore?.id === prefab.id) mapEditorSelectedEntityPrefabStore.set(first);
     }
 

@@ -21,7 +21,7 @@ describe('MCPConnector.executeToolCall', () => {
             answer({ isError: true, content: [{ type: 'text', text: 'daily limit reached' }] })
         );
         const result = await MCPConnector.executeToolCall('s1', 'https://music.test/mcp', 'generate_music', {}, 'none', undefined, undefined, 'p1');
-        expect(result).toEqual({ error: 'Tool error: daily limit reached' });
+        expect(result).toEqual({ error: 'Tool error: daily limit reached', outcome: 'failed' });
     });
 
     it('returns a run that worked as its content, as before', async () => {

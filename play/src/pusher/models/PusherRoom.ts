@@ -191,6 +191,18 @@ export class PusherRoom {
                             }
                             break;
                         }
+                        case "objectSoundMessage": {
+                            // An object's clicked sound started or stopped (#1627): everyone in the room gets it
+                            for (const listener of this.listeners) {
+                                listener.getUserData().emitInBatch({
+                                    message: {
+                                        $case: "objectSoundMessage",
+                                        objectSoundMessage: message.message.objectSoundMessage,
+                                    },
+                                });
+                            }
+                            break;
+                        }
                         // Zone-specific messages - forward to PositionDispatcher
                         case "zoneMessage": {
                             this.positionNotifier.handleZoneMessage(message.message.zoneMessage);

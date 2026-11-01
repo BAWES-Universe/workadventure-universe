@@ -2,14 +2,12 @@
     import { afterUpdate, onDestroy, onMount, setContext } from "svelte";
     import { get, writable, type Unsubscriber } from "svelte/store";
     import { activeCoWebsiteStore, coWebsites, fullScreenCowebsite } from "../../Stores/CoWebsiteStore";
-    import JitsiCowebsiteComponent from "../Cowebsites/JistiCowebsiteComponent.svelte";
     import SimpleCowebsiteComponent from "../Cowebsites/SimpleCowebsiteComponent.svelte";
     import ArtifactCowebsiteComponent from "../Cowebsites/ArtifactCowebsiteComponent.svelte";
     import { ArtifactCoWebsite } from "../../WebRtc/CoWebsite/ArtifactCoWebsite";
     import { YourArtifactsCoWebsite } from "../../WebRtc/CoWebsite/YourArtifactsCoWebsite";
     import YourArtifactsCowebsiteComponent from "../Cowebsites/YourArtifactsCowebsiteComponent.svelte";
     import FileViewerCowebsiteComponent from "../Cowebsites/FileViewerCowebsiteComponent.svelte";
-    import { JitsiCoWebsite } from "../../WebRtc/CoWebsite/JitsiCoWebsite";
     import { SimpleCoWebsite } from "../../WebRtc/CoWebsite/SimpleCoWebsite";
     import { FileViewerCoWebsite } from "../../WebRtc/CoWebsite/FileViewerCoWebsite";
     import { BBBCoWebsite } from "../../WebRtc/CoWebsite/BBBCoWebsite";
@@ -398,9 +396,7 @@
 
         <div class="flex-1 min-h-0">
             {#each $coWebsites as coWebsite (coWebsite.getId())}
-                {#if coWebsite instanceof JitsiCoWebsite}
-                    <JitsiCowebsiteComponent actualCowebsite={coWebsite} visible={coWebsite === activeCowebsite} />
-                {:else if coWebsite instanceof BBBCoWebsite}
+                {#if coWebsite instanceof BBBCoWebsite}
                     <BigBlueButtonCowebsiteComponent
                         actualCowebsite={coWebsite}
                         visible={coWebsite === activeCowebsite}

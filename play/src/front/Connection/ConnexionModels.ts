@@ -2,6 +2,7 @@ import type { SignalData } from "@workadventure/simple-peer";
 import type {
     ApplicationDefinitionInterface,
     AreaPropertyVariableMessage,
+    ObjectSoundMessage,
     AvailabilityStatus,
     EditMapCommandMessage,
     PositionMessage,
@@ -84,6 +85,8 @@ export interface RoomJoinedMessageInterface {
     applications?: Array<ApplicationDefinitionInterface> | undefined;
     // The live state of the room's area settings (how many people are in each room with Max people)
     areaPropertyVariables: AreaPropertyVariableMessage[];
+    /** The objects' clicked sounds still playing when we arrive (#1627) */
+    objectSounds: ObjectSoundMessage[];
 }
 
 export interface PlayGlobalMessageInterface {
