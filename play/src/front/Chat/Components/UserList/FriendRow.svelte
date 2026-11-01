@@ -20,7 +20,7 @@
     import FriendAvatar from "./FriendAvatar.svelte";
     import FriendMenuButton from "./FriendMenuButton.svelte";
     import type { PlacedFriend } from "./Friends";
-    import { isOnline, relativeTime } from "./Friends";
+    import { isOnline, lastSeenDay } from "./Friends";
     import { statusLabel } from "./PersonStatus";
     import { goToPersonRoom, walkToPerson } from "./PersonNavigation";
     import { runFriendAction } from "./FriendActions";
@@ -82,7 +82,7 @@
         }
         if (!online) {
             if (presenceUnavailable) return $LL.chat.friends.statusUnavailable();
-            const when = relativeTime(friend.lastSeenAt || undefined, Date.now(), $locale);
+            const when = lastSeenDay(friend.lastSeenAt || undefined, Date.now(), $locale);
             return when ? $LL.chat.friends.lastSeen({ when }) : $LL.chat.friends.offline();
         }
         const status = entry.status === AvailabilityStatus.ONLINE ? "" : statusLabel(entry.status, $LL);

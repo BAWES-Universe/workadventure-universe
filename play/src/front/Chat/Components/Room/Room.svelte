@@ -29,8 +29,11 @@
     import { formatTypingLine } from "../TopRow/TopRowSummary";
     import { formatRowTime, formatUnreadCount, normalizeTimestamp, toPlainText } from "../OneList/OneListOrder";
     import { minuteClock } from "../OneList/MinuteClock";
-    import { previewLine } from "./MessageActions/messageActions";
+    import StatusDot from "../Status/StatusDot.svelte";
+    import { chatStatusStore } from "../Status/ChatStatusStore";
+    import { statusDotColour } from "../Status/ChatStatus";
     import RoomMenu from "./RoomMenu/RoomMenu.svelte";
+    import { previewLine } from "./MessageActions/messageActions";
     import { IconBellOff } from "@wa-icons";
 
     export let room: ChatRoom & ChatRoomMembershipManagement & ChatRoomModeration & ChatRoomNotificationControl;
@@ -58,6 +61,9 @@
     $: partnerId = room.type === "direct" ? $members.find((member) => member.id !== myChatId)?.id : undefined;
     // Someone outside the world is asked of Orbit (once), for their Woka and the name they go by.
     $: requestChatPerson(partnerId);
+    // The dot on a direct chat's woka: the same status the chat header and People show for them.
+    const partnerStatus = room.type === "direct" ? chatStatusStore(room) : undefined;
+    $: statusDot = $partnerStatus ? statusDotColour($partnerStatus, $LL) : undefined;
     $: partnerWoka = partnerId ? personPicture($wokaByChatId, partnerId, room.pictureStore) : undefined;
     // A direct chat is titled with the name the other person goes by in Universe, else the chat room's name.
     $: title = room.type === "direct" ? personName($nameByChatId, partnerId, $roomName) : $roomName;
@@ -141,12 +147,15 @@
                 size="lg"
                 ring={false}
             />
+            {#if statusDot}
+                <StatusDot color={statusDot} />
+            {/if}
         {:else}
             <Avatar pictureStore={room.pictureStore} fallbackName={$roomName} size="lg" />
         {/if}
 
         {#if $isEncrypted}
-            <EncryptionBadge />
+            <EncryptionBadge atTop={!!statusDot} />
         {/if}
     </div>
     <div class="m-0 flex min-w-0 flex-1 flex-col text-start">
