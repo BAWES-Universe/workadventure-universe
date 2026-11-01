@@ -113,11 +113,7 @@
         <div class="head-text">
             <span class="head-name" dir="auto">{bot.name}</span>
             <span class="head-status" data-testid="voice-menu-status"
-                ><span
-                    class="dot"
-                    class:warn={bot.state !== "on" || soundBlocked || micOff}
-                    aria-hidden="true"
-                />{status}</span
+                ><span class="dot" aria-hidden="true" />{status}</span
             >
         </div>
     </div>
@@ -223,9 +219,6 @@
         height: 8px;
         border-radius: 9999px;
         background: #3ddc84;
-    }
-    .dot.warn {
-        background: #f5c451;
     }
     /* The attention line, in a soft panel with a chat icon. */
     .attention {

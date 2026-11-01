@@ -133,7 +133,7 @@
                 >
             {/if}
             {#if state === "connecting"}
-                <span class="ring" aria-hidden="true" data-testid="voice-connecting" />
+                <span class="voice-ring" aria-hidden="true" data-testid="voice-connecting" />
             {:else if mark}
                 <span class="mark" class:amber={state === "tap_to_hear"} aria-hidden="true">
                     <svelte:component this={mark} />
@@ -237,8 +237,8 @@
         bottom: 4px;
         display: grid;
         place-items: center;
-        width: calc(var(--voice-btn) * 0.36);
-        height: calc(var(--voice-btn) * 0.36);
+        width: calc(var(--voice-btn) * 0.3);
+        height: calc(var(--voice-btn) * 0.3);
         border-radius: 9999px;
         background: #0a0814;
         box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.28);
@@ -250,7 +250,7 @@
         box-shadow: 0 0 0 1px rgba(245, 196, 81, 0.5);
     }
     /* Connecting: a ring that spins around the woka. */
-    .ring {
+    .voice-ring {
         position: absolute;
         inset: 6px;
         border-radius: 9999px;
@@ -309,7 +309,7 @@
             transition: none;
         }
         /* A still ring says the same thing: it is on its way. */
-        .ring {
+        .voice-ring {
             animation: none;
         }
     }
