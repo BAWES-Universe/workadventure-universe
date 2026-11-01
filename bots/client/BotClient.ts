@@ -2365,6 +2365,11 @@ export class BotClient {
                         $case: 'webRtcDisconnectMessage',
                         webRtcDisconnectMessage: { userId: this.spaces.get(spaceName) ?? '' },
                     }),
+                sendStart: (spaceName, receiverUserId) =>
+                    this.sendPrivateEvent(spaceName, receiverUserId, {
+                        $case: 'webRtcStartMessage',
+                        webRtcStartMessage: { userId: this.spaces.get(spaceName) ?? '', initiator: true },
+                    }),
             },
             (handlers) => {
                 const link = new WorkerLink({ url: settings.url, botId: this.config.botId, secret: settings.secret, ...handlers });
@@ -2818,6 +2823,7 @@ export class BotClient {
                 break;
 
             case 'initSpaceUsersMessage':
+                this.voice?.spaceUsers(message.initSpaceUsersMessage.spaceName, message.initSpaceUsersMessage.users ?? []);
                 // When bot joins a space, backend sends all existing users with their UUIDs
                 // This ensures we have UUID tracking before any chat messages arrive
                 if (this.behavior && message.initSpaceUsersMessage) {
@@ -2875,6 +2881,7 @@ export class BotClient {
                 break;
 
             case 'addSpaceUserMessage':
+                if (message.addSpaceUserMessage.user) this.voice?.spaceUserJoined(message.addSpaceUserMessage.spaceName, message.addSpaceUserMessage.user);
                 // When a user joins a space, we get their SpaceUser info
                 // Extract numeric userId from spaceUserId to avoid name collisions
                 if (this.behavior && message.addSpaceUserMessage) {
@@ -3073,6 +3080,7 @@ export class BotClient {
                 break;
 
             case 'removeSpaceUserMessage':
+                this.voice?.spaceUserLeft(message.removeSpaceUserMessage.spaceName, message.removeSpaceUserMessage.spaceUserId);
                 if (this.behavior) {
                     this.behavior.onSpaceUserLeft(message.removeSpaceUserMessage.spaceName, message.removeSpaceUserMessage.userId);
                 }

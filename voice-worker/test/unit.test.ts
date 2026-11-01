@@ -60,6 +60,20 @@ describe('bridge messages', () => {
         expect(checkMessage('fromBot', { ...base, type: 'bot.say', segmentId: 'g', text: 'hello', committed: true })).toBeNull();
     });
 
+    it('accepts the LiveKit messages, and refuses ones that are not a room address, a token, or a list of people', () => {
+        expect(checkMessage('fromBot', { ...base, type: 'room.join', epoch: 3, serverUrl: 'wss://livekit.example', token: 'jwt' })).toBeNull();
+        expect(checkMessage('fromBot', { ...base, type: 'room.leave', epoch: 3 })).toBeNull();
+        expect(checkMessage('fromBot', { ...base, type: 'room.people', epoch: 3, people: [{ participantId: 'p', mode: 'talk' }] })).toBeNull();
+        expect(checkMessage('fromWorker', { ...base, type: 'room.state', epoch: 3, state: 'connected' })).toBeNull();
+        expect(checkMessage('fromWorker', { ...base, type: 'engine.status', engineId: 'e', voice: 'active', mode: 'talk', lanes: [], room: { epoch: 3, connected: true } })).toBeNull();
+        expect(checkMessage('fromBot', { ...base, type: 'room.join', epoch: 3, serverUrl: 'http://livekit.example', token: 'jwt' })).not.toBeNull();
+        expect(checkMessage('fromBot', { ...base, type: 'room.join', epoch: 3, serverUrl: 'wss://livekit.example', token: '' })).not.toBeNull();
+        expect(checkMessage('fromBot', { ...base, type: 'room.join', serverUrl: 'wss://livekit.example', token: 'jwt' })).not.toBeNull();
+        expect(checkMessage('fromBot', { ...base, type: 'room.people', epoch: 3, people: [{ participantId: 'p', mode: 'shout' }] })).not.toBeNull();
+        expect(checkMessage('fromBot', { ...base, type: 'room.state', epoch: 3, state: 'connected' })).not.toBeNull();
+        expect(checkMessage('fromWorker', { ...base, type: 'room.join', epoch: 3, serverUrl: 'wss://x', token: 't' })).not.toBeNull();
+    });
+
     it('refuses what breaks the contract', () => {
         expect(checkMessage('fromBot', { ...base, type: 'lane.open', participantId: 'p' })).not.toBeNull(); // no epoch
         expect(checkMessage('fromBot', { ...base, type: 'lane.open', participantId: 'p', epoch: 0 })).not.toBeNull();

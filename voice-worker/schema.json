@@ -96,7 +96,31 @@
         "properties": { "type": { "const": "engine.status" }, "engineId": { "type": "string" }, "voice": { "enum": ["active", "stopped"] }, "mode": { "$ref": "#/$defs/mode" },
           "lanes": { "type": "array", "items": { "type": "object", "required": ["participantId", "epoch", "healthy", "mode"],
             "properties": { "participantId": { "type": "string" }, "epoch": { "type": "integer" }, "healthy": { "type": "boolean" }, "mode": { "$ref": "#/$defs/mode" } } } },
+          "room": { "type": "object", "required": ["epoch", "connected"], "properties": { "epoch": { "type": "integer" }, "connected": { "type": "boolean" } } },
           "counters": { "type": "object", "additionalProperties": { "type": "number" } } } }]
+    },
+    "room.join": {
+      "title": "bot server -> worker: the bubble moved to LiveKit. Join its room as the bot, with the token the game made for the bot.",
+      "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "epoch", "serverUrl", "token"],
+        "properties": { "type": { "const": "room.join" }, "epoch": { "$ref": "#/$defs/epoch" },
+          "serverUrl": { "type": "string", "pattern": "^wss?://", "maxLength": 2048 }, "token": { "type": "string", "minLength": 1, "maxLength": 8192 } } }]
+    },
+    "room.leave": {
+      "title": "bot server -> worker: the bubble left LiveKit",
+      "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "epoch"],
+        "properties": { "type": { "const": "room.leave" }, "epoch": { "$ref": "#/$defs/epoch" } } }]
+    },
+    "room.people": {
+      "title": "bot server -> worker: the people in the bubble the bot may hear. Their microphone is the only thing it subscribes to. Replaces the earlier list.",
+      "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "epoch", "people"],
+        "properties": { "type": { "const": "room.people" }, "epoch": { "$ref": "#/$defs/epoch" },
+          "people": { "type": "array", "maxItems": 500, "items": { "type": "object", "required": ["participantId", "mode"],
+            "properties": { "participantId": { "$ref": "#/$defs/id" }, "mode": { "$ref": "#/$defs/mode" } } } } } }]
+    },
+    "room.state": {
+      "title": "worker -> bot server: where the bot's LiveKit connection stands",
+      "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "epoch", "state"],
+        "properties": { "type": { "const": "room.state" }, "epoch": { "$ref": "#/$defs/epoch" }, "state": { "enum": ["connected", "closed", "failed"] } } }]
     },
     "error": {
       "title": "worker -> bot server: something the bot server should log or act on",

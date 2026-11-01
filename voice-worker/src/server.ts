@@ -9,6 +9,7 @@ import { Counters } from './counters.ts';
 import { FakeSpeech } from './fakeSpeech.ts';
 import type { IceConfig } from './lane.ts';
 import type { BotToWorker } from './protocol.ts';
+import type { RoomTransport } from './roomTransport.ts';
 import { type OutgoingMessage, Session } from './session.ts';
 import type { InputSink } from './transport.ts';
 import { checkMessage } from './validate.ts';
@@ -79,6 +80,11 @@ export class VoiceWorker {
         let n = 0;
         for (const c of this.connections) n += c.laneCount();
         return n;
+    }
+
+    /** What every bot's LiveKit participant is subscribed to right now (for tests: it must only ever be permitted microphones). */
+    roomSubscriptions(): ReturnType<RoomTransport['subscriptions']> {
+        return [...this.connections].flatMap((c) => c.roomSubscriptions());
     }
 
     stats(): Record<string, unknown> {
@@ -166,8 +172,12 @@ class BridgeConnection {
 
     laneCount(): number {
         let n = 0;
-        for (const s of this.sessions.values()) n += s.lanes.size;
+        for (const s of this.sessions.values()) n += s.lanes.size + (s.room ? 1 : 0);
         return n;
+    }
+
+    roomSubscriptions(): ReturnType<RoomTransport['subscriptions']> {
+        return [...this.sessions.values()].flatMap((s) => s.room?.subscriptions() ?? []);
     }
 
     ping(): void {
@@ -253,6 +263,15 @@ class BridgeConnection {
                 break;
             case 'lane.close':
                 await session.closeLane(msg.participantId, msg.epoch, msg.reason);
+                break;
+            case 'room.join':
+                await session.joinRoom(msg.epoch, msg.serverUrl, msg.token);
+                break;
+            case 'room.leave':
+                await session.leaveRoom(msg.epoch);
+                break;
+            case 'room.people':
+                session.setRoomPeople(msg.epoch, msg.people);
                 break;
             case 'mode.set':
                 session.setMode(msg.mode, msg.participantId);

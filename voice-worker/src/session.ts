@@ -1,10 +1,13 @@
-// A session = one bot in one bubble, with one lane per person. The bot server decides who gets a connection and when
-// (it follows the game's own transport rules); the session only carries it out, and keeps exactly one current path per
-// person: a newer epoch replaces the old lane, and anything still addressed to the old epoch is dropped.
+// A session = one bot in one bubble. Audio travels one of two ways, never both: a lane per person (peer-to-peer), or
+// one LiveKit room for the whole bubble. The bot server decides who gets which and when (it follows the game's own
+// transport rules); the session only carries it out. Every path has an epoch from one counter, and the newest wins:
+// a newer lane replaces the old lane, the room replaces every older lane, a lane replaces an older room, and anything
+// still addressed to an older epoch is dropped.
 import type { Counters } from './counters.ts';
 import { FakeSpeech } from './fakeSpeech.ts';
 import { Lane, type IceConfig } from './lane.ts';
 import type { LeaveReason, Mode, Signal, WorkerToBot } from './protocol.ts';
+import { RoomTransport } from './roomTransport.ts';
 import { Speaker } from './speaker.ts';
 import type { InputSink } from './transport.ts';
 
@@ -30,7 +33,9 @@ export interface SessionHost {
 export class Session {
     voice: 'active' | 'stopped' = 'active';
     readonly lanes = new Map<string, Lane>();
+    room?: RoomTransport;
     private readonly newest = new Map<string, number>();
+    private newestRoom = 0;
     private readonly timers = new Map<Lane, NodeJS.Timeout>();
     private readonly speaker: Speaker;
     private readonly statusTimer: NodeJS.Timeout;
@@ -40,7 +45,7 @@ export class Session {
         this.speaker = new Speaker({
             counters: host.counters,
             speech: host.speech,
-            targets: () => [...this.lanes.values()],
+            targets: () => (this.room ? [...this.lanes.values(), this.room] : [...this.lanes.values()]),
             active: () => this.voice === 'active',
             progress: (message) => host.send({ type: 'playback.progress', ...message }),
         });
@@ -51,11 +56,13 @@ export class Session {
     /** Starts a connection with a person. A newer epoch replaces the one before it; an older or equal one is refused. */
     async openLane(participantId: string, epoch: number, mode: Mode = this.defaultMode): Promise<void> {
         const c = this.host.counters;
-        if (epoch <= (this.newest.get(participantId) ?? 0)) {
+        if (epoch <= Math.max(this.newest.get(participantId) ?? 0, this.newestRoom)) {
             c.inc('stale_dropped');
             this.host.send({ type: 'error', code: 'stale_epoch', message: 'lane.open with an old epoch', participantId, epoch });
             return;
         }
+        // The bubble is back on peer-to-peer: the room goes first, so only one path carries audio
+        if (this.room) await this.dropRoom(this.room, 'closed', true);
         const old = this.lanes.get(participantId);
         if (!old && this.host.laneCount() >= this.host.maxLanes) {
             c.inc('lanes_refused');
@@ -136,6 +143,69 @@ export class Session {
         if (!this.closing) this.sendStatus();
     }
 
+    /** Joins the bubble's LiveKit room and drops every older lane: the room is the one path from here on. */
+    async joinRoom(epoch: number, serverUrl: string, token: string): Promise<void> {
+        const c = this.host.counters;
+        if (epoch <= Math.max(this.newestRoom, ...this.newest.values())) {
+            c.inc('stale_dropped');
+            this.host.send({ type: 'error', code: 'stale_epoch', message: 'room.join with an old epoch', epoch });
+            return;
+        }
+        if (!this.room && this.lanes.size === 0 && this.host.laneCount() >= this.host.maxLanes) {
+            c.inc('lanes_refused');
+            this.host.send({ type: 'error', code: 'at_capacity', message: 'too many audio connections', epoch });
+            return;
+        }
+        this.newestRoom = epoch;
+        if (this.room) await this.dropRoom(this.room, 'closed', false);
+        for (const lane of [...this.lanes.values()]) await this.dropLane(lane, 'superseded', true);
+        const room = new RoomTransport(epoch, serverUrl, token, {
+            counters: c,
+            input: this.host.input,
+            voiceActive: () => this.voice === 'active',
+            onConnected: (r) => {
+                if (this.room !== r) return;
+                c.inc('rooms_connected');
+                this.host.send({ type: 'room.state', epoch: r.epoch, state: 'connected' });
+                this.sendStatus();
+            },
+            onGone: (r, state) => void this.dropRoom(r, state, true),
+        });
+        this.room = room;
+        c.inc('rooms_opened');
+        // Connecting takes a while; the session keeps handling messages meanwhile
+        void room.start().catch(() => void this.dropRoom(room, 'failed', true));
+    }
+
+    async leaveRoom(epoch: number): Promise<void> {
+        if (!this.room || this.room.epoch !== epoch) {
+            this.host.counters.inc('stale_dropped');
+            this.host.send({ type: 'error', code: 'stale_epoch', message: 'no current room for that epoch', epoch });
+            return;
+        }
+        await this.dropRoom(this.room, 'closed', true);
+    }
+
+    setRoomPeople(epoch: number, people: { participantId: string; mode: Mode }[]): void {
+        if (!this.room || this.room.epoch !== epoch) {
+            this.host.counters.inc('stale_dropped');
+            this.host.send({ type: 'error', code: 'stale_epoch', message: 'no current room for that epoch', epoch });
+            return;
+        }
+        this.room.setPeople(people);
+    }
+
+    private async dropRoom(room: RoomTransport, state: 'closed' | 'failed', announce: boolean): Promise<void> {
+        if (room.gone) return;
+        const current = this.room === room;
+        room.gone = true;
+        if (current) this.room = undefined;
+        this.host.counters.inc('rooms_closed');
+        if (announce && current && !this.closing) this.host.send({ type: 'room.state', epoch: room.epoch, state });
+        await room.stop();
+        if (!this.closing) this.sendStatus();
+    }
+
     setMode(mode: Mode, participantId?: string): void {
         if (!participantId) {
             this.defaultMode = mode;
@@ -144,6 +214,7 @@ export class Session {
             const lane = this.lanes.get(participantId);
             if (lane) lane.mode = mode;
         }
+        this.room?.setMode(mode, participantId);
         this.sendStatus();
     }
 
@@ -158,6 +229,7 @@ export class Session {
     stopVoice(): void {
         this.voice = 'stopped';
         this.speaker.stopAll('voice_stop');
+        this.room?.refresh();
         this.sendStatus();
     }
 
@@ -169,6 +241,7 @@ export class Session {
             voice: this.voice,
             mode: this.defaultMode,
             lanes: [...this.lanes.values()].filter((l) => !l.gone).map((l) => ({ participantId: l.participantId, epoch: l.epoch, healthy: l.healthy(), mode: l.mode })),
+            ...(this.room && !this.room.gone ? { room: { epoch: this.room.epoch, connected: this.room.connected } } : {}),
             counters: this.host.counters.snapshot(),
         });
     }
@@ -178,9 +251,12 @@ export class Session {
         this.closing = true;
         clearInterval(this.statusTimer);
         await this.speaker.shutdown();
+        const room = this.room;
+        this.room = undefined;
+        if (room) room.gone = true;
         const lanes = [...this.lanes.values()];
         this.lanes.clear();
         for (const lane of lanes) this.clearTimer(lane);
-        await Promise.allSettled(lanes.map((lane) => ((lane.gone = true), lane.stop())));
+        await Promise.allSettled([...lanes.map((lane) => ((lane.gone = true), lane.stop())), ...(room ? [room.stop()] : [])]);
     }
 }

@@ -2,8 +2,10 @@
  * Relays a voice bot's audio connections between the game and the voice worker.
  *
  * The game opens them: its transport rules (back/src/Model/Strategies) decide who may connect, and tell the bot with
- * a start, signals and a disconnect, the same as for a person. The bot server only passes them on, with an epoch that
- * numbers each connection with a person so late messages from an older one can be told apart and dropped.
+ * a start, signals and a disconnect, the same as for a person. When the game moves the bubble to LiveKit it tells the
+ * bot with an invitation (a token for the bot's own identity) and later a disconnect. The bot server only passes this
+ * on, with one epoch counter that numbers every path (a connection with a person, or the room) so late messages from
+ * an older path can be told apart and dropped: the newest path is the only one that carries audio.
  *
  * Every refusal here ends the same way: the person's browser is told to disconnect, and the bot stays text-only.
  */
@@ -17,6 +19,8 @@ export interface GameSide {
     botSpaceUserId(spaceName: string): string | undefined;
     sendSignal(spaceName: string, receiverUserId: string, signal: string): void;
     sendDisconnect(spaceName: string, receiverUserId: string): void;
+    /** Asks a person to make a new offer to the bot, as the game does when it starts a connection. */
+    sendStart(spaceName: string, receiverUserId: string): void;
 }
 
 interface Call {
@@ -31,12 +35,31 @@ interface Bubble {
     spaceName: string;
 }
 
+/** The bot's LiveKit participant in a bubble, as the worker holds it. */
+interface Room {
+    spaceName: string;
+    sessionId: string;
+    epoch: number;
+}
+
+/** What the game gave the bot to join a bubble's LiveKit room. Kept while the game says the bubble is there. */
+interface Invitation {
+    serverUrl: string;
+    token: string;
+}
+
 /** Setup data bigger than this is not a real offer or candidate. */
 const MAX_SIGNAL_CHARS = 60000;
 const MAX_ID_CHARS = 128;
+const MAX_TOKEN_CHARS = 8192;
+const MAX_URL_CHARS = 2048;
+/** The most people the worker is told about in one room. */
+const MAX_PEOPLE = 500;
 
 export interface LinkHandlers {
     onMessage(message: FromWorker): void;
+    /** The socket to the worker is open (again). */
+    onUp(): void;
     onDown(): void;
 }
 
@@ -46,12 +69,20 @@ export interface VoiceCallStats {
     rejectedFromGame: number;
     staleFromWorker: number;
     connected: number;
+    roomsJoined: number;
+    roomsConnected: number;
 }
 
 export class VoiceCalls {
-    readonly stats: VoiceCallStats = { started: 0, refusedStart: 0, rejectedFromGame: 0, staleFromWorker: 0, connected: 0 };
+    readonly stats: VoiceCallStats = { started: 0, refusedStart: 0, rejectedFromGame: 0, staleFromWorker: 0, connected: 0, roomsJoined: 0, roomsConnected: 0 };
     private readonly bubbles = new Map<string, Bubble>();
     private readonly calls = new Map<string, Call>();
+    private readonly rooms = new Map<string, Room>();
+    private readonly invitations = new Map<string, Invitation>();
+    /** The people in each bubble the bot may hear: everyone but bots. Kept up to date by the bot's space events. */
+    private readonly roster = new Map<string, Map<string, SpaceUser>>();
+    /** Connections the worker lost by going away; asked for again when it is back. */
+    private readonly lost = new Map<string, { spaceName: string; personId: string }>();
     private epoch = 0;
     private bubbleSeq = 0;
 
@@ -66,6 +97,7 @@ export class VoiceCalls {
     ) {
         this.link = openLink({
             onMessage: (message) => this.handleWorkerMessage(message),
+            onUp: () => this.linkUp(),
             onDown: () => this.linkDown(),
         });
     }
@@ -89,8 +121,26 @@ export class VoiceCalls {
             case 'webRtcDisconnectMessage':
                 if (this.fromAPerson(event, sender)) this.end(event.spaceName, sender!.spaceUserId, 'left');
                 break;
+            case 'livekitInvitationMessage':
+                if (this.fromMyself(event)) this.joinRoom(event.spaceName, inner.livekitInvitationMessage.serverUrl, inner.livekitInvitationMessage.token);
+                break;
+            case 'livekitDisconnectMessage':
+                if (this.fromMyself(event)) this.leaveRoom(event.spaceName);
+                break;
             // Screen-sharing connections are not audio connections with the bot: never answered
         }
+    }
+
+    /**
+     * The game sends a LiveKit invitation or disconnect as a private event from the invited user to itself, so only
+     * an event the bot appears to send to itself is one. A person cannot make the game say that: the sender is set by
+     * the game server, not the message.
+     */
+    private fromMyself(event: PrivateEventPusherToFront): boolean {
+        const me = this.game.botSpaceUserId(event.spaceName);
+        const ok = me !== undefined && event.receiverUserId === me && event.sender?.spaceUserId === me;
+        if (!ok) this.stats.rejectedFromGame++;
+        return ok;
     }
 
     /**
@@ -118,6 +168,10 @@ export class VoiceCalls {
         }
         const epoch = ++this.epoch;
         const key = callKey(spaceName, person.spaceUserId);
+        // The bubble is on peer-to-peer again: the worker closes the room when this newer path opens
+        this.rooms.delete(spaceName);
+        this.invitations.delete(spaceName);
+        this.lost.delete(key);
         // A newer connection replaces the one before it: the worker closes the old path when it opens the new one
         const call: Call = { spaceName, sessionId: bubble.sessionId, participantId: person.spaceUserId, epoch };
         this.calls.set(key, call);
@@ -156,6 +210,82 @@ export class VoiceCalls {
             this.bubbles.delete(spaceName);
             this.link.send({ type: 'session.end', sessionId: bubble.sessionId });
         }
+        this.rooms.delete(spaceName);
+        this.invitations.delete(spaceName);
+        this.roster.delete(spaceName);
+        for (const [key, lost] of this.lost) if (lost.spaceName === spaceName) this.lost.delete(key);
+    }
+
+    // ---- LiveKit ----
+
+    /** The game moved the bubble to LiveKit: the bot joins the room with its own token, and the room replaces every call. */
+    private joinRoom(spaceName: string, serverUrl: string, token: string): void {
+        if (!/^wss?:\/\//.test(serverUrl) || serverUrl.length > MAX_URL_CHARS || token.length === 0 || token.length > MAX_TOKEN_CHARS) {
+            this.stats.rejectedFromGame++;
+            return;
+        }
+        // Remembered even if the worker is away, so the bot can join when it is back
+        this.invitations.set(spaceName, { serverUrl, token });
+        const bubble = this.bubbleFor(spaceName);
+        if (!bubble) {
+            this.log(`voice: no LiveKit audio in ${spaceName} (worker not available)`);
+            return;
+        }
+        // Everything older is replaced by the room: the worker closes the connections with people, and so does this side
+        for (const call of [...this.calls.values()]) if (call.spaceName === spaceName) this.calls.delete(callKey(spaceName, call.participantId));
+        for (const [key, lost] of this.lost) if (lost.spaceName === spaceName) this.lost.delete(key);
+        const room: Room = { spaceName, sessionId: bubble.sessionId, epoch: ++this.epoch };
+        if (!this.link.send({ type: 'room.join', sessionId: room.sessionId, epoch: room.epoch, serverUrl, token })) {
+            this.log(`voice: no LiveKit audio in ${spaceName} (worker not available)`);
+            return;
+        }
+        this.rooms.set(spaceName, room);
+        this.stats.roomsJoined++;
+        this.sendPeople(room);
+    }
+
+    private leaveRoom(spaceName: string): void {
+        this.invitations.delete(spaceName);
+        const room = this.rooms.get(spaceName);
+        if (!room) return;
+        this.rooms.delete(spaceName);
+        this.link.send({ type: 'room.leave', sessionId: room.sessionId, epoch: room.epoch });
+    }
+
+    /** Tells the worker whose microphone it may take from the room: the people in the bubble, never a bot. */
+    private sendPeople(room: Room): void {
+        const people = [...(this.roster.get(room.spaceName)?.keys() ?? [])].slice(0, MAX_PEOPLE).map((participantId) => ({ participantId, mode: 'talk' as const }));
+        this.link.send({ type: 'room.people', sessionId: room.sessionId, epoch: room.epoch, people });
+    }
+
+    private rosterChanged(spaceName: string): void {
+        const room = this.rooms.get(spaceName);
+        if (room) this.sendPeople(room);
+    }
+
+    /** Everyone in a space the bot is in (all of them, replacing what was known). */
+    spaceUsers(spaceName: string, users: readonly SpaceUser[]): void {
+        const people = new Map<string, SpaceUser>();
+        for (const user of users) if (this.isPerson(spaceName, user)) people.set(user.spaceUserId, user);
+        this.roster.set(spaceName, people);
+        this.rosterChanged(spaceName);
+    }
+
+    spaceUserJoined(spaceName: string, user: SpaceUser): void {
+        if (!this.isPerson(spaceName, user)) return;
+        let people = this.roster.get(spaceName);
+        if (!people) this.roster.set(spaceName, (people = new Map()));
+        people.set(user.spaceUserId, user);
+        this.rosterChanged(spaceName);
+    }
+
+    spaceUserLeft(spaceName: string, spaceUserId: string): void {
+        this.lost.delete(callKey(spaceName, spaceUserId));
+        if (this.roster.get(spaceName)?.delete(spaceUserId)) this.rosterChanged(spaceName);
+    }
+
+    private isPerson(spaceName: string, user: SpaceUser): boolean {
+        return user.spaceUserId.length > 0 && user.spaceUserId.length <= MAX_ID_CHARS && !isBotUser(user) && user.spaceUserId !== this.game.botSpaceUserId(spaceName);
     }
 
     private bubbleFor(spaceName: string): Bubble | undefined {
@@ -200,12 +330,66 @@ export class VoiceCalls {
             } else if (message.type === 'participant.leave') {
                 this.drop(call, false);
             }
-        } else if (message.type === 'error' && message.participantId !== undefined && message.epoch !== undefined) {
+        } else if (message.type === 'room.state') {
+            const room = this.currentRoom(message.sessionId, message.epoch);
+            if (!room) {
+                this.stats.staleFromWorker++;
+            } else if (message.state === 'connected') {
+                this.stats.roomsConnected++;
+            } else {
+                // The worker lost the bot's LiveKit connection, or never made it: the bot stays text-only until the game invites it again
+                this.rooms.delete(room.spaceName);
+                this.invitations.delete(room.spaceName);
+                this.log(`voice: LiveKit audio in ${room.spaceName} ended (${message.state})`);
+            }
+        } else if (message.type === 'error') {
+            this.handleWorkerError(message);
+        }
+    }
+
+    private handleWorkerError(message: Extract<FromWorker, { type: 'error' }>): void {
+        if (message.participantId !== undefined && message.epoch !== undefined) {
             // The worker refused this connection (for example, no room for it): the bot stays text-only
             const call = this.currentCall(message.sessionId, message.participantId, message.epoch);
             if (call && message.code === 'at_capacity') this.drop(call, false);
             else if (!call) this.stats.staleFromWorker++;
+        } else if (message.epoch !== undefined) {
+            // About the room (no person is named)
+            const room = this.currentRoom(message.sessionId, message.epoch);
+            if (room && message.code === 'at_capacity') {
+                this.rooms.delete(room.spaceName);
+                this.invitations.delete(room.spaceName);
+                this.log(`voice: no LiveKit audio in ${room.spaceName} (worker is full)`);
+            } else if (!room) {
+                this.stats.staleFromWorker++;
+            }
+        } else if (message.code === 'at_capacity' || message.code === 'no_session') {
+            // About the whole bubble: the worker has no such session (it was refused, or it forgot it)
+            this.evictBubble(message.sessionId);
         }
+    }
+
+    /**
+     * Forgets a bubble the worker does not hold, so the next start opens a new one instead of reusing a dead one.
+     * Whoever was waiting on it is told to disconnect and stays text-only.
+     */
+    private evictBubble(sessionId: string): void {
+        for (const [spaceName, bubble] of this.bubbles) {
+            if (bubble.sessionId !== sessionId) continue;
+            this.bubbles.delete(spaceName);
+            this.log(`voice: no audio session for ${spaceName} (worker refused it)`);
+            for (const call of [...this.calls.values()]) if (call.sessionId === sessionId) this.drop(call, false);
+            const room = this.rooms.get(spaceName);
+            if (room?.sessionId === sessionId) {
+                this.rooms.delete(spaceName);
+                this.invitations.delete(spaceName);
+            }
+        }
+    }
+
+    private currentRoom(sessionId: string, epoch: number): Room | undefined {
+        for (const room of this.rooms.values()) if (room.sessionId === sessionId) return room.epoch === epoch ? room : undefined;
+        return undefined;
     }
 
     private currentCall(sessionId: string, participantId: string, epoch: number): Call | undefined {
@@ -217,9 +401,33 @@ export class VoiceCalls {
 
     /** The worker went away: it holds none of this any more. People are told, so nobody waits on a silent call. */
     linkDown(): void {
-        for (const call of [...this.calls.values()]) this.game.sendDisconnect(call.spaceName, call.participantId);
+        for (const call of [...this.calls.values()]) {
+            this.lost.set(callKey(call.spaceName, call.participantId), { spaceName: call.spaceName, personId: call.participantId });
+            this.game.sendDisconnect(call.spaceName, call.participantId);
+        }
         this.calls.clear();
         this.bubbles.clear();
+        // The invitations stay: they are the game's, and still say where the bubble is
+        this.rooms.clear();
+    }
+
+    /**
+     * The worker is back (or reached for the first time). It holds nothing from before, so what the game still says
+     * should exist is built again: the people who were connected are asked for a new offer, and a bubble that is on
+     * LiveKit gets the bot back in its room. Anyone who is gone by now is simply not asked.
+     */
+    linkUp(): void {
+        const lost = [...this.lost.values()];
+        this.lost.clear();
+        for (const { spaceName, personId } of lost) {
+            const person = this.roster.get(spaceName)?.get(personId);
+            if (!person || this.invitations.has(spaceName) || this.game.botSpaceUserId(spaceName) === undefined) continue;
+            this.start(spaceName, person);
+            if (this.calls.has(callKey(spaceName, personId))) this.game.sendStart(spaceName, personId);
+        }
+        for (const [spaceName, invitation] of [...this.invitations]) {
+            if (!this.rooms.has(spaceName) && this.game.botSpaceUserId(spaceName) !== undefined) this.joinRoom(spaceName, invitation.serverUrl, invitation.token);
+        }
     }
 
     // ---- for what comes next (recognition, speaking): the controls of a bubble's audio ----
@@ -240,6 +448,10 @@ export class VoiceCalls {
         for (const bubble of this.bubbles.values()) this.link.send({ type: 'session.end', sessionId: bubble.sessionId });
         this.calls.clear();
         this.bubbles.clear();
+        this.rooms.clear();
+        this.invitations.clear();
+        this.roster.clear();
+        this.lost.clear();
         this.link.close();
     }
 

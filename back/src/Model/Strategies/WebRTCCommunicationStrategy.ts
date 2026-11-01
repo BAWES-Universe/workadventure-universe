@@ -2,16 +2,9 @@ import type { SpaceUser } from "@workadventure/messages";
 import * as Sentry from "@sentry/node";
 import type { ICommunicationStrategy } from "../Interfaces/ICommunicationStrategy";
 import type { ICommunicationSpace } from "../Interfaces/ICommunicationSpace";
+import { isBot, isVoiceBot } from "./VoiceBot";
 
-/**
- * Tag a voice bot carries next to "bot" (its token is signed by the bot server). Keep in sync with
- * bots/voice/VoiceBotTag.ts.
- */
-export const VOICE_BOT_TAG = "voice-bot";
-
-// Bots are identified by tag, or by the uuid prefix their token gives them.
-const isBot = (user: SpaceUser): boolean => user.tags?.includes("bot") || user.uuid?.startsWith("bot-") || false;
-const isVoiceBot = (user: SpaceUser): boolean => isBot(user) && (user.tags?.includes(VOICE_BOT_TAG) ?? false);
+export { VOICE_BOT_TAG } from "./VoiceBot";
 
 class ConnectionManager {
     private connections: Map<string, Set<string>> = new Map();

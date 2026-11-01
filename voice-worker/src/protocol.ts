@@ -32,6 +32,11 @@ export interface BotSay extends Base { type: 'bot.say'; segmentId: string; text:
 export interface BotRetract extends Base { type: 'bot.retract'; segmentId: string }
 export interface VoiceStop extends Base { type: 'voice.stop'; reason: 'allowance_ended' | 'other' }
 export interface SessionEnd extends Base { type: 'session.end' }
+/** The bubble moved to LiveKit: join its room with the bot's own scoped token. */
+export interface RoomJoin extends Base { type: 'room.join'; epoch: number; serverUrl: string; token: string }
+export interface RoomLeave extends Base { type: 'room.leave'; epoch: number }
+/** The people in the bubble whose microphone the bot may subscribe to, and how each is handled. Replaces the earlier list. */
+export interface RoomPeople extends Base { type: 'room.people'; epoch: number; people: { participantId: string; mode: Mode }[] }
 
 // worker -> bot server
 export interface SessionStart extends Base { type: 'session.start'; bubbleId: string; mode: Mode; engine: { id: string; kind: 'ts' } }
@@ -44,10 +49,13 @@ export interface PlaybackProgress extends Base {
 export interface EngineStatus extends Base {
     type: 'engine.status'; engineId: string; voice: 'active' | 'stopped'; mode: Mode;
     lanes: { participantId: string; epoch: number; healthy: boolean; mode: Mode }[];
+    /** Present while the bot is in the bubble's LiveKit room. */
+    room?: { epoch: number; connected: boolean };
     counters?: Record<string, number>;
 }
+export interface RoomState extends Base { type: 'room.state'; epoch: number; state: 'connected' | 'closed' | 'failed' }
 export interface ErrorMsg extends Base { type: 'error'; code: string; message: string; participantId?: string; epoch?: number }
 
-export type BotToWorker = SessionOpen | LaneOpen | LaneSignalIn | LaneClose | ModeSet | BotSay | BotRetract | VoiceStop | SessionEnd;
-export type WorkerToBot = SessionStart | ParticipantJoin | ParticipantLeave | LaneSignalOut | PlaybackProgress | EngineStatus | ErrorMsg;
+export type BotToWorker = SessionOpen | LaneOpen | LaneSignalIn | LaneClose | ModeSet | BotSay | BotRetract | VoiceStop | SessionEnd | RoomJoin | RoomLeave | RoomPeople;
+export type WorkerToBot = SessionStart | ParticipantJoin | ParticipantLeave | LaneSignalOut | PlaybackProgress | EngineStatus | RoomState | ErrorMsg;
 

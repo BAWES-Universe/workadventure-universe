@@ -159,6 +159,12 @@ export class FakeGame implements GameSide {
     sendDisconnect(_space: string, receiverUserId: string): void {
         this.disconnects.push(receiverUserId);
     }
+
+    starts: string[] = [];
+
+    sendStart(_space: string, receiverUserId: string): void {
+        this.starts.push(receiverUserId);
+    }
 }
 
 /** A private event as the bot receives it from the game. */
@@ -201,6 +207,7 @@ export async function startRig(options: { secret?: string; maxLanes?: number; in
                     if (problem) violations.push(`from worker: ${problem}`);
                     handlers.onMessage(message);
                 },
+                onUp: handlers.onUp,
                 onDown: handlers.onDown,
             });
             const send = link.send.bind(link);

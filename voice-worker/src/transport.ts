@@ -12,14 +12,23 @@ export interface InputFrame {
 }
 export type InputSink = (frame: InputFrame) => void;
 
-/** One listener of the bot's audio. */
+/** One 20 ms frame of the bot's voice. Each transport takes the form it needs. */
+export interface OutputFrame {
+    /** 24 kHz mono. */
+    pcm24k: Int16Array;
+    /** The same frame as one Opus packet, encoded once however many listeners ask. */
+    opus(): Buffer;
+}
+
+/** One path the bot's audio goes out on: a person's peer connection, or the bot's LiveKit participant for the whole room. */
 export interface OutputTarget {
     readonly participantId: string;
     readonly epoch: number;
-    /** True only while this is the one current path for the person and its mode plays audio. */
+    /** True only while this is the one current path and its listeners' modes play audio. */
     plays(): boolean;
-    /** Sends one 20 ms Opus packet. */
-    sendOpus(payload: Buffer): void;
+    sendFrame(frame: OutputFrame): void;
+    /** Drops audio already handed over but not yet played (a stop must not leave a tail). */
+    clear?(): void;
 }
 
 export interface ModeHolder {

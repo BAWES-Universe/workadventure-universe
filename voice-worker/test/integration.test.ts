@@ -2,11 +2,13 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import net from 'node:net';
 import WebSocket from 'ws';
+import { VoiceWorker } from '../src/server.ts';
 import type { InputFrame } from '../src/transport.ts';
 import { FakeHuman, type Rig, connectPeople, privateEvent, sleep, startRig, waitFor } from './harness.ts';
 
 const rigs: Rig[] = [];
 const humans: FakeHuman[] = [];
+const restarted: VoiceWorker[] = [];
 
 async function rig(options: Parameters<typeof startRig>[0] = {}): Promise<Rig> {
     const r = await startRig(options);
@@ -33,6 +35,7 @@ const joined = (r: Rig, id: string) => r.fromWorker.some((m) => m.type === 'part
 
 afterEach(async () => {
     for (const h of humans.splice(0)) await h.close().catch(() => undefined);
+    for (const w of restarted.splice(0)) await w.close().catch(() => undefined);
     for (const r of rigs.splice(0)) {
         r.calls.shutdown();
         await r.worker.close().catch(() => undefined);
@@ -174,6 +177,63 @@ describe('a voice bot and a person in a peer-to-peer bubble', () => {
         expect(r.game.disconnects).toContain('carol');
         expect(r.calls.stats.refusedStart).toBeGreaterThanOrEqual(1);
     });
+
+    it('asks the people in the bubble for new offers when the worker comes back, and carries audio again', async () => {
+        const r = await rig();
+        const alice = human('alice');
+        r.calls.spaceUsers(r.game.spaceName, [{ spaceUserId: 'alice', uuid: 'uuid-alice', tags: [], name: 'alice' } as never]);
+        await connectBot(r, alice);
+        await waitFor('the audio connection', () => joined(r, 'alice'));
+
+        // The worker restarts on the same address; the bot server reconnects by itself
+        await r.worker.close();
+        await waitFor('the bot to give up its call', () => r.game.disconnects.includes('alice'));
+        const back = new VoiceWorker({ port: r.workerPort, host: '127.0.0.1', maxLanes: 50, maxSessionsPerConnection: 8, ice: { iceServers: [] } });
+        restarted.push(back);
+        await back.listen();
+        await waitFor('the person to be asked for a new offer', () => r.game.starts.includes('alice'), 15000);
+
+        // The person answers the way the game's start makes them: a new offer on a new connection
+        const again = human('alice');
+        r.game.humans.set('alice', again);
+        for (const signal of await again.offer()) {
+            r.calls.handlePrivateEvent(privateEvent(r.game, 'alice', { $case: 'webRtcSignal', webRtcSignal: { signal } }));
+        }
+        await waitFor('the new audio connection', () => back.counters.get('lanes_connected') === 1);
+        r.calls.say(r.game.spaceName, 'after-restart', 'the bot can talk again after the worker came back');
+        await waitFor('bot audio again', () => again.loudFrames >= 20);
+        expect(back.laneCount()).toBe(1);
+    });
+});
+
+describe('the newest path wins, whichever kind it is', () => {
+    it('refuses a room older than a connection it would replace, and a connection older than the room', async () => {
+        const r = await rig();
+        const link = r.link();
+        const sessionId = 'epochs';
+        const errors = () => r.fromWorker.filter((m) => m.type === 'error' && m.code === 'stale_epoch').length;
+        link.send({ type: 'session.open', sessionId, bubbleId: 'b', botId: 'bot1' });
+        link.send({ type: 'lane.open', sessionId, participantId: 'alice', epoch: 5 });
+        await waitFor('the lane', () => r.worker.laneCount() === 1);
+
+        // A room numbered before the lane is stale: the lane stays
+        link.send({ type: 'room.join', sessionId, epoch: 3, serverUrl: 'ws://127.0.0.1:1', token: 'jwt' });
+        await waitFor('the stale room to be refused', () => errors() === 1);
+        expect(r.worker.laneCount()).toBe(1);
+
+        // A newer room replaces the lane at once, even before it has connected (here it never will: nothing listens there)
+        link.send({ type: 'room.join', sessionId, epoch: 6, serverUrl: 'ws://127.0.0.1:1', token: 'jwt' });
+        await waitFor('the lane to be replaced', () => r.fromWorker.some((m) => m.type === 'participant.leave' && m.reason === 'superseded'));
+        await waitFor('the room to fail', () => r.fromWorker.some((m) => m.type === 'room.state' && m.epoch === 6 && m.state === 'failed'), 20000);
+
+        // A connection numbered before the room is stale, a newer one is taken
+        link.send({ type: 'lane.open', sessionId, participantId: 'alice', epoch: 6 });
+        await waitFor('the old connection to be refused', () => errors() === 2);
+        expect(r.worker.laneCount()).toBe(0);
+        link.send({ type: 'lane.open', sessionId, participantId: 'alice', epoch: 7 });
+        await waitFor('the newer connection', () => r.worker.laneCount() === 1);
+        expect(r.violations).toEqual([]);
+    }, 30000);
 });
 
 describe('the bridge', () => {

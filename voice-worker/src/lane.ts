@@ -9,7 +9,7 @@ import { asInt16, newOpusDecoder } from './opus.ts';
 import { FRAME_MS } from './audioFormat.ts';
 import type { Counters } from './counters.ts';
 import { type LeaveReason, type Mode, type Signal, modeListens, modePlays } from './protocol.ts';
-import type { InputSink, OutputTarget } from './transport.ts';
+import type { InputSink, OutputFrame, OutputTarget } from './transport.ts';
 
 export interface IceConfig {
     iceServers?: { urls: string; username?: string; credential?: string }[];
@@ -223,8 +223,9 @@ export class Lane implements OutputTarget {
     // ---- outbound ----
 
     /** Writes one 20 ms Opus packet. A new talk spurt gets a marker bit and a timestamp that follows wall time. */
-    sendOpus(payload: Buffer): void {
+    sendFrame(frame: OutputFrame): void {
         if (!this.plays()) return;
+        const payload = frame.opus();
         const now = performance.now();
         if (this.lastTx === 0 || now - this.lastTx > 60) {
             this.txMarker = true;

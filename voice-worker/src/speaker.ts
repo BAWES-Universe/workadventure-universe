@@ -7,7 +7,7 @@ import { newOpusEncoder } from './opus.ts';
 import type { Counters } from './counters.ts';
 import type { PlaybackProgress, PlaybackReason } from './protocol.ts';
 import type { FakeSpeech } from './fakeSpeech.ts';
-import type { OutputTarget } from './transport.ts';
+import type { OutputFrame, OutputTarget } from './transport.ts';
 
 /** Segments waiting behind the current one. More than this are refused. */
 export const MAX_QUEUED_SEGMENTS = 16;
@@ -66,12 +66,14 @@ export class Speaker {
             this.host.progress({ segmentId: id, playedMs: 0, totalMs: 0, finished: true, interrupted: true, reason: 'retract' });
         } else if (this.current?.id === id) {
             this.cancel = 'retract';
+            for (const target of this.host.targets()) target.clear?.();
         }
     }
 
     /** Stops what is playing and drops what is queued. */
     stopAll(reason: PlaybackReason): void {
         if (this.current) this.cancel = reason;
+        for (const target of this.host.targets()) target.clear?.();
         for (const segment of this.queue.splice(0)) {
             this.host.progress({ segmentId: segment.id, playedMs: 0, totalMs: 0, finished: true, interrupted: true, reason });
         }
@@ -109,8 +111,10 @@ export class Speaker {
                 }
                 const listeners = this.host.targets().filter((t) => t.plays());
                 if (listeners.length) {
-                    const payload = Buffer.from(this.encoder.encode(up.process(pcm.subarray(offset, offset + speech.frameSamples))));
-                    for (const listener of listeners) listener.sendOpus(payload);
+                    const pcm24k = pcm.subarray(offset, offset + speech.frameSamples);
+                    let opus: Buffer | undefined;
+                    const out: OutputFrame = { pcm24k, opus: () => (opus ??= Buffer.from(this.encoder.encode(up.process(pcm24k)))) };
+                    for (const listener of listeners) listener.sendFrame(out);
                     segment.playedMs += FRAME_MS;
                 } else {
                     segment.deliveredAll = false;

@@ -20,7 +20,10 @@ export type ToWorker =
     | { type: 'bot.say'; sessionId: string; segmentId: string; text: string; committed: true; lang?: string }
     | { type: 'bot.retract'; sessionId: string; segmentId: string }
     | { type: 'voice.stop'; sessionId: string; reason: 'allowance_ended' | 'other' }
-    | { type: 'session.end'; sessionId: string };
+    | { type: 'session.end'; sessionId: string }
+    | { type: 'room.join'; sessionId: string; epoch: number; serverUrl: string; token: string }
+    | { type: 'room.leave'; sessionId: string; epoch: number }
+    | { type: 'room.people'; sessionId: string; epoch: number; people: { participantId: string; mode: VoiceMode }[] };
 
 export type FromWorker =
     | { type: 'session.start'; sessionId: string; bubbleId: string; mode: VoiceMode }
@@ -28,5 +31,6 @@ export type FromWorker =
     | { type: 'participant.leave'; sessionId: string; participantId: string; epoch: number; reason: LeaveReason }
     | { type: 'lane.signal'; sessionId: string; participantId: string; epoch: number; signal: VoiceSignal }
     | { type: 'playback.progress'; sessionId: string; segmentId: string; playedMs: number; totalMs?: number; finished: boolean; interrupted: boolean; reason?: string }
-    | { type: 'engine.status'; sessionId: string; engineId: string; voice: 'active' | 'stopped'; mode: VoiceMode; lanes: unknown[]; counters?: Record<string, number> }
+    | { type: 'engine.status'; sessionId: string; engineId: string; voice: 'active' | 'stopped'; mode: VoiceMode; lanes: unknown[]; room?: { epoch: number; connected: boolean }; counters?: Record<string, number> }
+    | { type: 'room.state'; sessionId: string; epoch: number; state: 'connected' | 'closed' | 'failed' }
     | { type: 'error'; sessionId: string; code: string; message: string; participantId?: string; epoch?: number };

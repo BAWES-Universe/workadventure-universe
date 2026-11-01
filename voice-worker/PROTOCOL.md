@@ -15,19 +15,26 @@ directions. `src/protocol.ts` and `bots/voice/protocol.ts` mirror it as TypeScri
 ## Words
 
 * **lane**: one person's audio connection in a session. Two people in a bubble are two lanes of one session.
-* **epoch**: a number the bot server gives each connection it starts with a person. All messages about that
-  connection carry it. The worker keeps only the newest per person; anything with an older epoch is stale and dropped.
+* **epoch**: a number the bot server gives each path it starts, from one counter for the whole bot: a connection with
+  a person, or the room. All messages about that path carry it. The worker keeps only the newest; anything with an older
+  epoch is stale and dropped.
+* **room**: the bot's own LiveKit participant for a bubble that the game moved to LiveKit. One per session.
 
 ## Messages
 
 Bot server to worker: `session.open`, `lane.open`, `lane.signal` (the person's offer or candidates), `lane.close`,
-`mode.set`, `bot.say`, `bot.retract`, `voice.stop`, `session.end`.
+`mode.set`, `bot.say`, `bot.retract`, `voice.stop`, `session.end`, and for LiveKit `room.join` (the address and the token the
+game made for the bot's identity), `room.people` (whose microphone the bot may subscribe to, with their modes; replaces the
+earlier list) and `room.leave`.
 
 Worker to bot server: `session.start` (session accepted), `participant.join` (audio is connected both ways),
-`participant.leave`, `lane.signal` (the answer), `playback.progress`, `engine.status`, `error`.
+`participant.leave`, `lane.signal` (the answer), `playback.progress`, `engine.status` (with `room` while in a room),
+`room.state` (`connected`, or `closed` / `failed` when the connection ended without being asked to), `error`.
 
 Errors that name a lane (`participantId`, `epoch`): `stale_epoch` (message for an old or unknown lane, dropped),
 `at_capacity` (too many connections: the bot server hangs up that person), plus `invalid_message`, `no_session`, `internal`.
+Errors with no lane and no room (`at_capacity` on `session.open`, `no_session`) are about the whole session: the bot server
+forgets that session, tells whoever was waiting on it to disconnect, and the next start opens a new one.
 
 ## Modes (per lane)
 
@@ -44,8 +51,12 @@ A microphone packet that is not permitted is dropped before it is decoded (`fram
 
 1. Only committed segments are spoken (`committed: true` is required).
 2. Playback is not hearing: `playback.progress` says how much audio was sent, never which words were heard.
-3. One current path per person. A newer epoch closes the old lane first; the old lane receives and sends nothing from then on.
-4. Audio only. The worker answers the audio of an offer and rejects video; it ignores whatever else a person sends.
+3. One current path. A newer epoch closes the old path first and the old path receives and sends nothing from then on:
+   a newer lane replaces the person's older lane, `room.join` replaces every older lane (`participant.leave` with reason
+   `superseded`), and `lane.open` replaces an older room.
+4. Audio only. The worker answers the audio of an offer and rejects video; it ignores whatever else a person sends. In a
+   room it publishes one microphone track and subscribes to nothing but the microphone of the people in `room.people`
+   (never a camera, a screen, screen-share audio, or a bot's track).
 5. Fixed audio maths: 24 kHz mono s16 is 960 bytes per 20 ms, never 1920. Real-time pacing, one frame at a time, nothing buffered ahead.
 6. If the worker is down or refuses, people's own calls are untouched; only the bot's voice is missing.
 

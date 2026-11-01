@@ -3,8 +3,8 @@ import Ajv from 'ajv/dist/2020.js';
 import type { ValidateFunction } from 'ajv';
 import schema from '../schema.json' with { type: 'json' };
 
-const FROM_BOT = ['session.open', 'lane.open', 'lane.signal', 'lane.close', 'mode.set', 'bot.say', 'bot.retract', 'voice.stop', 'session.end'] as const;
-const FROM_WORKER = ['session.start', 'participant.join', 'participant.leave', 'lane.signal', 'playback.progress', 'engine.status', 'error'] as const;
+const FROM_BOT = ['session.open', 'lane.open', 'lane.signal', 'lane.close', 'mode.set', 'bot.say', 'bot.retract', 'voice.stop', 'session.end', 'room.join', 'room.leave', 'room.people'] as const;
+const FROM_WORKER = ['session.start', 'participant.join', 'participant.leave', 'lane.signal', 'playback.progress', 'engine.status', 'room.state', 'error'] as const;
 
 const ajv = new Ajv({ strict: false, allErrors: false });
 ajv.addSchema(schema);

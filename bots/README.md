@@ -137,7 +137,10 @@ bots/
 ### 7b. Voice (audio connections)
 - **Per bot**: a bot has voice only when its configuration has `voiceEnabled: true` (the owner's choice; off until Orbit sends it). Every other bot is text-only.
 - **Worker**: a voice bot's audio runs in the separate `voice-worker/` service. The bot server reaches it at `VOICE_WORKER_URL` (default `ws://127.0.0.1:8830`) with the bearer token `VOICE_WORKER_SECRET` when one is set.
-- **Fail closed**: if the worker is down, the bot stays text-only and people's own calls are untouched.
+- **Transport follows the game**: in a peer-to-peer bubble the game starts a connection with the bot like it does between people. When the game moves the bubble to LiveKit it sends the bot an invitation (a token for the bot's own identity that lets it send a microphone and nothing else), and the bot joins the room through the worker; on the way back the bot leaves the room and the connections start again. Only one path carries audio at a time; a newer path replaces the older one.
+- **Who the bot hears**: only the microphone of the people in the bubble (never a camera, a screen, screen-share audio, or another bot).
+- **Meeting areas**: bots do not join meeting-area spaces, so there a voice bot stays text-only.
+- **Fail closed**: if the worker is down, the bot stays text-only and people's own calls are untouched. When it is back, the bot asks the people who were connected for a new offer and re-joins the room of a bubble that is on LiveKit.
 - **Code**: `voice/VoiceCalls.ts` relays the game's connection setup to the worker; `voice/VoiceLink.ts` is the socket.
 
 ### 8. Admin API Integration
