@@ -54,6 +54,27 @@ function rig(script: (string | FakeUtterance)[], options: { maxUtteranceMs?: num
     };
 }
 
+describe('a short noise is not someone speaking', () => {
+    it('sends no speech_started for a click shorter than the barge-in, and only the cleared end', () => {
+        const r = rig(['']);
+        r.speak(40);
+        r.pause(1200);
+        expect(r.sent.some((m) => m.type === 'user.speech_started')).toBe(false);
+        expect(r.turns()).toHaveLength(1);
+        expect(r.turns()[0]).toMatchObject({ outcome: 'cleared' });
+    });
+
+    it('sends speech_started once the voiced audio reaches the barge-in', () => {
+        const r = rig(['hello there']);
+        r.speak(40);
+        expect(r.sent.some((m) => m.type === 'user.speech_started')).toBe(false);
+        r.speak(100);
+        expect(r.sent.filter((m) => m.type === 'user.speech_started')).toHaveLength(1);
+        r.speak(600);
+        expect(r.sent.filter((m) => m.type === 'user.speech_started')).toHaveLength(1);
+    });
+});
+
 describe('words while someone talks', () => {
     it('fills in as they speak, each replacing the one before, and ends with one final line after a pause', () => {
         const r = rig(['Actually which of them replied this week']);

@@ -54,7 +54,7 @@
     "bot.say": {
       "title": "bot server -> worker: speak this. Only committed text may be spoken.",
       "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "segmentId", "text", "committed"],
-        "properties": { "type": { "const": "bot.say" }, "segmentId": { "$ref": "#/$defs/id" }, "text": { "type": "string", "minLength": 1, "maxLength": 4000 }, "committed": { "const": true }, "lang": { "type": "string", "maxLength": 16 } } }]
+        "properties": { "type": { "const": "bot.say" }, "segmentId": { "$ref": "#/$defs/id" }, "text": { "type": "string", "minLength": 1, "maxLength": 4000 }, "committed": { "const": true }, "lang": { "type": "string", "maxLength": 16 }, "maxMs": { "type": "integer", "minimum": 1000, "maximum": 600000 } } }]
     },
     "bot.retract": {
       "title": "bot server -> worker: this segment was withdrawn. Unplayed audio is dropped; played audio cannot be unplayed.",
@@ -92,7 +92,7 @@
         "properties": { "type": { "const": "playback.progress" }, "segmentId": { "$ref": "#/$defs/id" },
           "playedMs": { "type": "number", "minimum": 0 }, "totalMs": { "type": "number", "minimum": 0 },
           "finished": { "type": "boolean" }, "interrupted": { "type": "boolean" },
-          "reason": { "enum": ["completed", "voice_stop", "retract", "mode", "lane_loss", "rejected"] } } }]
+          "reason": { "enum": ["completed", "voice_stop", "retract", "mode", "lane_loss", "rejected", "barge_in", "limit"] } } }]
     },
     "engine.status": {
       "title": "worker -> bot server: periodic and on change",

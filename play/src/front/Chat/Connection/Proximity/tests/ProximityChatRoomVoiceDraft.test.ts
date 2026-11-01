@@ -263,4 +263,53 @@ describe("ProximityChatRoom: what a voice bot hears this person say (#1664)", ()
             ["typed", false],
         ]);
     });
+
+    describe("a voice bot's voice stopped because someone spoke over it (#1665)", () => {
+        const stream = (responseId: string, extra: Record<string, unknown> = {}, sender = nora) => ({
+            sender: sender.spaceUserId,
+            spaceName: "bubble",
+            spaceStreamMessage: { responseId, token: "", isFinal: true, isError: false, reset: false, ...extra },
+        });
+        const emitStream = (event: ReturnType<typeof stream>) =>
+            fake.emit("spaceStreamMessage", event as unknown as PublicEvent);
+        const reply = (responseId: string, text: string, sender = nora) =>
+            emitStream(stream(responseId, { finalContent: text }, sender));
+        const botLines = () => lines().filter((line) => !line.isMyMessage);
+
+        it("marks the reply that was cut off, and nothing else, without touching its words", () => {
+            reply("r-1", "A long answer.");
+            reply("r-2", "Another answer.");
+            const [first, second] = botLines();
+            expect(get(first.stoppedBySpeech)).toBe(false);
+            emitStream(stream("r-1", { stoppedBySpeech: true }));
+            expect(get(first.stoppedBySpeech)).toBe(true);
+            expect(get(second.stoppedBySpeech)).toBe(false);
+            expect(get(first.content).body).toBe("A long answer.");
+            // Still two lines: the mark is not a new message
+            expect(botLines()).toHaveLength(2);
+        });
+
+        it("marks it in the same way for a greeting streamed word by word", () => {
+            emitStream(stream("g-1", { token: "Welcome ", isFinal: false }));
+            emitStream(stream("g-1", { token: "", finalContent: "Welcome back!" }));
+            emitStream(stream("g-1", { stoppedBySpeech: true }));
+            const [greeting] = botLines();
+            expect(get(greeting.stoppedBySpeech)).toBe(true);
+            expect(get(greeting.content).body).toBe("Welcome back!");
+        });
+
+        it("believes only the bot that wrote the reply", () => {
+            reply("r-1", "A long answer.");
+            emitStream(
+                stream("r-1", { stoppedBySpeech: true }, { ...nora, spaceUserId: "room_5" } as SpaceUserExtended)
+            );
+            emitStream(stream("r-1", { stoppedBySpeech: true }, sara));
+            expect(get(botLines()[0].stoppedBySpeech)).toBe(false);
+        });
+
+        it("ignores a reply it never saw, and does not make a message of the mark", () => {
+            emitStream(stream("nobody", { stoppedBySpeech: true }));
+            expect(botLines()).toEqual([]);
+        });
+    });
 });

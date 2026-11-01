@@ -23,6 +23,8 @@ const SPEECH_RMS = 300;
 const PREROLL_MS = 200;
 /** Audio missing from the middle of a stretch, in all, beyond which its words are not trusted to be complete. */
 const GAP_LOSS_MS = 400;
+/** Voiced audio this long in a stretch is a person speaking over the bot (it does not count a cough or a click). */
+export const DEFAULT_BARGE_IN_MS = 100;
 /** The schema's limit on the words of one stretch. */
 export const MAX_TEXT_CHARS = 8000;
 
@@ -33,6 +35,10 @@ export interface RecognitionOptions {
     /** The longest stretch of speech taken, in audio milliseconds, pre-roll included. Past it the words are only offered back. */
     maxUtteranceMs: number;
     pauseMs?: number;
+    /** Voiced audio, in all, before a stretch of speech counts as speaking over the bot. Default: DEFAULT_BARGE_IN_MS. */
+    bargeInMs?: number;
+    /** A person is speaking (not just a sound): called once per stretch, as soon as it is clear. Local, no recognizer involved. */
+    onSpeaking?(participantId: string): void;
     /** No audio at all this long while someone is speaking counts as a pause too (a sender that sends nothing while silent). Default: the pause. */
     idleMs?: number;
     counters: Counters;
@@ -47,6 +53,11 @@ interface Turn {
     audioMs: number;
     quietMs: number;
     gapMs: number;
+    /** Voiced audio so far, and whether the stretch has been called speech yet. */
+    voicedMs: number;
+    speaking: boolean;
+    /** user.speech_started has gone out: only once it is speech (or words came through), never for a click or a cough. */
+    announced: boolean;
     /** The last words heard. */
     text: string;
     /** Said its last (final, lost or cleared): anything later from the recognizer is ignored. */
@@ -135,6 +146,12 @@ export class Recognition {
         turn.gapMs += frame.droppedMs;
         turn.quietMs = voiced ? 0 : turn.quietMs + ms;
         c.inc('speech_ms', Math.round(ms));
+        if (voiced) turn.voicedMs += ms;
+        if (!turn.speaking && turn.voicedMs >= (this.options.bargeInMs ?? DEFAULT_BARGE_IN_MS)) {
+            turn.speaking = true;
+            this.announce(turn, frame.participantId, frame.epoch);
+            this.options.onSpeaking?.(frame.participantId);
+        }
         turn.recognizer.push(frame.pcm16k);
         if (turn.over) return;
         if (turn.audioMs >= this.options.maxUtteranceMs) {
@@ -182,6 +199,9 @@ export class Recognition {
             audioMs: 0,
             quietMs: 0,
             gapMs: 0,
+            voicedMs: 0,
+            speaking: false,
+            announced: false,
             text: '',
             over: false,
             lastAt: performance.now(),
@@ -193,6 +213,7 @@ export class Recognition {
                 const words = clip(text);
                 if (words === turn.text) return;
                 turn.text = words;
+                this.announce(turn, participantId, frame.epoch);
                 this.options.send({ type: 'user.partial', participantId, epoch: frame.epoch, turnId: id, text: words });
             },
             final: (text) => {
@@ -217,7 +238,6 @@ export class Recognition {
         person.speaking = turn;
         this.watch(person, turn);
         this.options.counters.inc('speech_turns');
-        this.options.send({ type: 'user.speech_started', participantId, epoch: frame.epoch, turnId: id });
         // The quiet just before the first word goes in first, so it is not clipped
         for (const quiet of person.preroll) {
             turn.audioMs += quiet.length / 16;
@@ -226,6 +246,13 @@ export class Recognition {
         person.preroll = [];
         person.prerollMs = 0;
         return turn;
+    }
+
+    /** Tells the bot server someone is speaking, once per stretch. A short noise never gets this far, so it holds back no reply. */
+    private announce(turn: Turn, participantId: string, epoch: number): void {
+        if (turn.announced) return;
+        turn.announced = true;
+        this.options.send({ type: 'user.speech_started', participantId, epoch, turnId: turn.id });
     }
 
     /** Says how a stretch ended, once, and closes its recognizer. */

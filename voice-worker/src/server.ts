@@ -31,6 +31,9 @@ export interface WorkerOptions {
     recognizer?: RecognizerFactory;
     /** The longest stretch of one person's speech taken, in seconds of audio. Past it their words are offered back, never sent. Default 180. */
     maxUtteranceSeconds?: number;
+    maxReplySeconds?: number;
+    /** Voiced audio before a person counts as speaking over the bot, in milliseconds. */
+    bargeInMs?: number;
     engineId?: string;
 }
 
@@ -44,6 +47,8 @@ function parseRequestUrl(raw: string | undefined): URL | null {
 }
 
 export const DEFAULT_MAX_UTTERANCE_SECONDS = 180;
+/** The longest any one spoken reply plays, whatever the bot server asks. */
+export const DEFAULT_MAX_REPLY_SECONDS = 60;
 const MAX_MESSAGE_BYTES = 128 * 1024;
 const PING_INTERVAL_MS = 10000;
 /** A bot server that stops reading this far behind is cut off. */
@@ -106,6 +111,8 @@ export class VoiceWorker {
             recognizer: this.options.recognizer,
             maxUtteranceMs: (this.options.maxUtteranceSeconds ?? DEFAULT_MAX_UTTERANCE_SECONDS) * 1000,
             speech: this.speech,
+            maxReplyMs: (this.options.maxReplySeconds ?? DEFAULT_MAX_REPLY_SECONDS) * 1000,
+            bargeInMs: this.options.bargeInMs,
             laneCount: () => this.laneCount(),
             maxLanes: this.options.maxLanes,
             send,
@@ -285,7 +292,7 @@ class BridgeConnection {
                 session.setMode(msg.mode, msg.participantId);
                 break;
             case 'bot.say':
-                session.say(msg.segmentId, msg.text);
+                session.say(msg.segmentId, msg.text, msg.maxMs);
                 break;
             case 'bot.retract':
                 session.retract(msg.segmentId);

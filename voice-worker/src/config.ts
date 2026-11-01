@@ -1,6 +1,7 @@
 // Settings come from the environment. Everything has a default that works on one machine; none of it switches voice on or off.
 import type { IceConfig } from './lane.ts';
-import { DEFAULT_MAX_UTTERANCE_SECONDS, type WorkerOptions } from './server.ts';
+import { DEFAULT_BARGE_IN_MS } from './recognition.ts';
+import { DEFAULT_MAX_REPLY_SECONDS, DEFAULT_MAX_UTTERANCE_SECONDS, type WorkerOptions } from './server.ts';
 
 const int = (value: string | undefined, fallback: number): number => {
     const parsed = Number.parseInt(value ?? '', 10);
@@ -28,5 +29,7 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv = process.env): WorkerOpti
         maxSessionsPerConnection: int(env.VOICE_MAX_SESSIONS_PER_BOT, 64),
         ice: parseIce(env),
         maxUtteranceSeconds: int(env.VOICE_MAX_UTTERANCE_SECONDS, DEFAULT_MAX_UTTERANCE_SECONDS),
+        maxReplySeconds: int(env.VOICE_MAX_REPLY_SECONDS, DEFAULT_MAX_REPLY_SECONDS),
+        bargeInMs: int(env.VOICE_BARGE_IN_MS, DEFAULT_BARGE_IN_MS),
     };
 }

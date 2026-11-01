@@ -4,10 +4,20 @@ import { createHash } from 'node:crypto';
 import { FRAME_MS, frameBytes } from './audioFormat.ts';
 
 export const TTS_RATE = 24000;
+
+/**
+ * What the speaker needs from a speech provider: 24 kHz mono s16 audio for a text, made whole before it is played. A real
+ * provider is another implementation of this (it may take a moment, so it can answer later); none is wired.
+ */
+export interface SpeechSynthesizer {
+    /** Samples in one 20 ms frame. */
+    readonly frameSamples: number;
+    synth(text: string): Int16Array | Promise<Int16Array>;
+}
 const MS_PER_CHAR = 65;
 const SYLLABLES_PER_SECOND = 4;
 
-export class FakeSpeech {
+export class FakeSpeech implements SpeechSynthesizer {
     /** Samples in one 20 ms frame. */
     readonly frameSamples = (TTS_RATE * FRAME_MS) / 1000;
     /** Bytes in one 20 ms frame: 24 kHz mono s16 gives 960, never 1920. */

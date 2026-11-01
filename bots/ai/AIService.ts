@@ -493,6 +493,10 @@ export class AIService {
      * tries once more: the first reply and the line go out as their own message (a `reset`), then the second try.
      * A retry (a reply written again, say after a repetition) is not checked: what it talks about may have been saved
      * by the first one.
+     *
+     * For a voice bot, nothing is spoken until this has finished: the bot is told (`holdSpeech`) when a tool round or the
+     * retry starts, and that the reply is checked (`releaseSpeech`) just before the held done, so a draft that is later
+     * corrected, or an acknowledgement ahead of the work, is never said.
      */
     async *generateBotResponseStream(
         botId: string,
@@ -513,6 +517,9 @@ export class AIService {
         isRetry = false
     ): AsyncGenerator<AIStreamChunk> {
         const turn: TurnFacts = { artifactTools: false, artifactSaved: false, guard: false };
+        const hearing = spaceName !== undefined && botClient !== undefined ? { spaceName, botClient } : undefined;
+        // A new turn starts with nothing held, whatever an earlier one that was cut short left behind
+        if (!isRetry) hearing?.botClient.releaseSpeech(hearing.spaceName, playerId);
         const attempt = (text: string, retry: boolean, facts: TurnFacts) =>
             this.generateTurn(botId, playerId, text, chatInstructions, providerId, spaceName, conversationContext, botClient, adminApiService, abortSignal, images, channel, toolTimeoutSeconds, homeRoomUrl, peopleInRoom, retry, facts);
         let said = '';
@@ -523,20 +530,28 @@ export class AIService {
                 done = chunk;
                 continue;
             }
-            if (chunk.reset) said = '';
-            else if (chunk.content) said += chunk.content;
+            if (chunk.reset) {
+                said = '';
+                hearing?.botClient.holdSpeech(hearing.spaceName, playerId);
+            } else if (chunk.content) {
+                said += chunk.content;
+            }
             yield chunk;
         }
         if (!done) return;
         if (isRetry || abortSignal?.aborted || done.metadata?.error || !turn.guard || !turn.artifactTools || turn.artifactSaved || !claimsArtifactSaved(said)) {
+            hearing?.botClient.releaseSpeech(hearing.spaceName, playerId);
             yield done;
             return;
         }
         console.warn(`[AIService] Bot ${botId} said it saved an artifact but nothing was saved; saying so and trying once more`);
         yield { content: `\n\n${NOTHING_SAVED_LINE}`, done: false };
+        hearing?.botClient.holdSpeech(hearing.spaceName, playerId);
         yield { content: '', done: false, reset: true, toolNames: [] };
         const second: TurnFacts = { artifactTools: false, artifactSaved: false, guard: false };
         for await (const chunk of attempt(nothingSavedRetryMessage(message, said), true, second)) {
+            if (chunk.reset) hearing?.botClient.holdSpeech(hearing.spaceName, playerId);
+            if (chunk.done) hearing?.botClient.releaseSpeech(hearing.spaceName, playerId);
             yield chunk;
             if (chunk.done) return;
         }
