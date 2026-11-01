@@ -56,6 +56,8 @@ interface Turn {
     /** Voiced audio so far, and whether the stretch has been called speech yet. */
     voicedMs: number;
     speaking: boolean;
+    /** user.speech_started has gone out: only once it is speech (or words came through), never for a click or a cough. */
+    announced: boolean;
     /** The last words heard. */
     text: string;
     /** Said its last (final, lost or cleared): anything later from the recognizer is ignored. */
@@ -147,6 +149,7 @@ export class Recognition {
         if (voiced) turn.voicedMs += ms;
         if (!turn.speaking && turn.voicedMs >= (this.options.bargeInMs ?? DEFAULT_BARGE_IN_MS)) {
             turn.speaking = true;
+            this.announce(turn, frame.participantId, frame.epoch);
             this.options.onSpeaking?.(frame.participantId);
         }
         turn.recognizer.push(frame.pcm16k);
@@ -198,6 +201,7 @@ export class Recognition {
             gapMs: 0,
             voicedMs: 0,
             speaking: false,
+            announced: false,
             text: '',
             over: false,
             lastAt: performance.now(),
@@ -209,6 +213,7 @@ export class Recognition {
                 const words = clip(text);
                 if (words === turn.text) return;
                 turn.text = words;
+                this.announce(turn, participantId, frame.epoch);
                 this.options.send({ type: 'user.partial', participantId, epoch: frame.epoch, turnId: id, text: words });
             },
             final: (text) => {
@@ -233,7 +238,6 @@ export class Recognition {
         person.speaking = turn;
         this.watch(person, turn);
         this.options.counters.inc('speech_turns');
-        this.options.send({ type: 'user.speech_started', participantId, epoch: frame.epoch, turnId: id });
         // The quiet just before the first word goes in first, so it is not clipped
         for (const quiet of person.preroll) {
             turn.audioMs += quiet.length / 16;
@@ -242,6 +246,13 @@ export class Recognition {
         person.preroll = [];
         person.prerollMs = 0;
         return turn;
+    }
+
+    /** Tells the bot server someone is speaking, once per stretch. A short noise never gets this far, so it holds back no reply. */
+    private announce(turn: Turn, participantId: string, epoch: number): void {
+        if (turn.announced) return;
+        turn.announced = true;
+        this.options.send({ type: 'user.speech_started', participantId, epoch, turnId: turn.id });
     }
 
     /** Says how a stretch ended, once, and closes its recognizer. */

@@ -68,7 +68,7 @@ provider is wired, tests use `FakeEars`). It only ever sees the audio of people 
 on the current path, one person at a time. A stretch of speech starts at the first words and ends at a pause. Messages carry
 the person's `participantId`, the path's `epoch`, and a `turnId` that ties one stretch together:
 
-* `user.speech_started`: a person started speaking.
+* `user.speech_started`: a person started speaking: sent once per stretch, when it has as much voiced audio as the barge-in setting (`VOICE_BARGE_IN_MS`) or its first words come through, whichever is first. A click or a cough that is neither gets no `user.speech_started`; its stretch still ends with `user.turn` `cleared`.
 * `user.partial`: all the words so far, replacing the last. For that person's eyes only: the bot server shows them to that
   person as a private event and to nobody else.
 * `user.turn`: how the stretch ended.
