@@ -33,7 +33,18 @@ describe('markup', () => {
 
     it('keeps the words of a link and leaves its address to the chat', () => {
         expect(spokenVersion('See [the board](https://example.test/board/1) for the details.', LIMIT)).toBe('See the board for the details.');
-        expect(spokenVersion('The board is at https://example.test/board/1', LIMIT)).toBe(`The board is at ${SPOKEN_PHRASES.link}`);
+        expect(spokenVersion('The board is at https://example.test/board/1', LIMIT)).toBe(`The board is at ${SPOKEN_PHRASES.linkInSentence}`);
+    });
+
+    it('lets a sentence go on around a web address, and says the short line when the address stands alone', () => {
+        expect(spokenVersion('The booking page is https://example.test/rooms and it opens at 9.', LIMIT)).toBe(
+            `The booking page is ${SPOKEN_PHRASES.linkInSentence} and it opens at 9.`
+        );
+        expect(spokenVersion('See https://example.test/rooms. It opens at 9.', LIMIT)).toBe(
+            `See ${SPOKEN_PHRASES.linkInSentence}. It opens at 9.`
+        );
+        expect(spokenVersion('Here it is:\nhttps://example.test/rooms', LIMIT)).toBe(`Here it is: ${SPOKEN_PHRASES.link}`);
+        expect(spokenVersion('https://example.test/rooms', LIMIT)).toBe(SPOKEN_PHRASES.link);
     });
 });
 

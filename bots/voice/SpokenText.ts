@@ -9,6 +9,8 @@ export const SPOKEN_PHRASES = {
     table: 'The table is in the chat.',
     code: 'The code is in the chat.',
     link: 'The link is in the chat.',
+    /** A web address in the middle of a sentence: the sentence goes on around it. */
+    linkInSentence: 'the link in the chat',
     rest: 'The rest is in the chat.',
 };
 
@@ -36,7 +38,7 @@ function plain(text: string): string {
     return text
         .replace(FENCE, '\u0001code\u0001')
         .replace(/!?\[([^\]]*)\]\((?:[^()\s]|\([^()\s]*\))*\)/g, '$1')
-        .replace(/https?:\/\/\S+/g, '\u0001link\u0001')
+        .replace(/https?:\/\/\S*[^\s.,!?;:'")\]]/g, '\u0001link\u0001')
         .replace(/^\s{0,3}#{1,6}\s+/gm, '')
         .replace(/^\s*>\s?/gm, '')
         .replace(/^\s*(?:[-*+•]|\d+[.)])\s+/gm, '')
@@ -54,6 +56,8 @@ export function spokenVersion(reply: string, maxChars: number): string {
     text = text
         .replace(/\s*\n+\s*/g, ' ')
         .replace(/\u0001(table|code|link)\u0001(?:\s*\u0001\1\u0001)+/g, '\u0001$1\u0001')
+        // A web address inside a sentence ("The board is at https://…") becomes part of it, not a sentence of its own
+        .replace(/([\p{L}\p{N},;]\s*)\u0001link\u0001/gu, `$1${SPOKEN_PHRASES.linkInSentence}`)
         .replace(/\s*\u0001(table|code|link)\u0001[.!?]?/g, (_all, kind: string) => ` ${MARKERS[kind]}`)
         .replace(/\s{2,}/g, ' ')
         .trim();
