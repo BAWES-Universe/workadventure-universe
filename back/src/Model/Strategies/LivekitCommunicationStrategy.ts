@@ -3,6 +3,7 @@ import * as Sentry from "@sentry/node";
 import type { ICommunicationSpace } from "../Interfaces/ICommunicationSpace";
 import type { ICommunicationStrategy } from "../Interfaces/ICommunicationStrategy";
 import type { LiveKitService, PublishRight } from "../Services/LivekitService";
+import { isVoiceBot } from "./VoiceBot";
 
 // A person whose invitation was just sent may take a moment to appear in the media room.
 const PERMISSION_SYNC_ATTEMPTS = 10;
@@ -158,6 +159,10 @@ export class LivekitCommunicationStrategy implements ICommunicationStrategy {
     }
 
     private publishRight(user: SpaceUser): PublishRight {
+        // A voice bot only speaks: the media server lets it send a microphone and nothing else, whatever it asks for.
+        if (isVoiceBot(user)) {
+            return "microphone";
+        }
         if (this.streamingUsers.has(user.spaceUserId)) {
             return "everything";
         }

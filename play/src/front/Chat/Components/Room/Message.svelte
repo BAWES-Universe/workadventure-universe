@@ -36,7 +36,7 @@
     import { flashMessage } from "./Details/Pins";
     import { drawEveryHeldMessage } from "./DrawnMessages";
     import { chatTime } from "./MessageTime";
-    import { IconArrowBackUp, IconInfoCircle, IconPaperclip, IconTrash } from "@wa-icons";
+    import { IconArrowBackUp, IconInfoCircle, IconMicrophoneOn, IconPaperclip, IconTrash } from "@wa-icons";
 
     export let message: ChatMessage;
     export let replyDepth = 0;
@@ -221,6 +221,17 @@
                     <span class="messageHeader-name">{sender?.username ?? ""}</span>
                 {/if}
                 <time class="messageHeader-time" datetime={date?.toISOString()} title={fullDate}>{shownTime}</time>
+                {#if message.spoken}
+                    <!-- Said out loud to a voice bot: a small mic mark beside the time -->
+                    <span
+                        class="messageHeader-spoken"
+                        role="img"
+                        aria-label={$LL.chat.voiceDraft.said()}
+                        data-testid="spokenMark"
+                    >
+                        <IconMicrophoneOn font-size="13" />
+                    </span>
+                {/if}
             </div>
         {/if}
 
@@ -518,6 +529,15 @@
         font-size: 11px;
         color: rgb(255 255 255 / 0.5);
         flex-shrink: 0;
+    }
+
+    /* The mark of a line that was said out loud: quiet, right after the time. */
+    .messageHeader-spoken {
+        display: inline-flex;
+        flex-shrink: 0;
+        align-self: center;
+        margin-inline-start: -2px;
+        color: rgb(255 255 255 / 0.55);
     }
 
     /* A bot's steps line is as wide as its words */

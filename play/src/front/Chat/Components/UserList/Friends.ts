@@ -97,6 +97,14 @@ export function placeFriends(
     });
 }
 
+/**
+ * View profile gets the first button spot (and leaves ⋯) on rows that have neither Walk to nor Go, so Message stays
+ * in the same place on every row. Rows with Walk to or Go keep it in ⋯.
+ */
+export function profileTakesFirstSpot(canViewProfile: boolean, canWalk: boolean, canGo: boolean): boolean {
+    return canViewProfile && !canWalk && !canGo;
+}
+
 export function byName(a: { name: string }, b: { name: string }): number {
     return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
 }

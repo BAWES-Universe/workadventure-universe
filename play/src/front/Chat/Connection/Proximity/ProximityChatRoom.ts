@@ -4,7 +4,7 @@ import { MapStore, SearchableArrayStore } from "@workadventure/store-utils";
 import type { Readable, Writable, Unsubscriber } from "svelte/store";
 import { derived, get, writable, readable } from "svelte/store";
 import { v4 as uuidv4 } from "uuid";
-import type { Subscription } from "rxjs";
+import { Subject, type Subscription } from "rxjs";
 import type { CharacterTextureMessage, SpaceMessageQuote, SpaceMessageReaction } from "@workadventure/messages";
 import { AvailabilityStatus, FilterType } from "@workadventure/messages";
 import { ChatMessageTypes } from "@workadventure/shared-utils";
@@ -37,6 +37,16 @@ import {
 import { selectedRoomStore } from "../../Stores/SelectRoomStore";
 import { isBotUser, mapExtendedSpaceUserToChatUser } from "../../UserProvider/ChatUserMapper";
 import { parseBotReplyLimit, type BotReplyLimit } from "../../Bots/BotReplyLimit";
+import {
+    afterTypedSend,
+    applyDraftEvent,
+    discardDraft,
+    editDraft,
+    parseBotVoiceDraft,
+    sendDraft,
+    type BotVoiceDraft,
+    type SpokenLine,
+} from "../../Bots/BotVoiceDraft";
 import { parseBotSteps, type BotSteps } from "../../Bots/BotSteps";
 import { gameManager } from "../../../Phaser/Game/GameManager";
 import { availabilityStatusStore, requestedCameraState, requestedMicrophoneState } from "../../../Stores/MediaStore";
@@ -129,12 +139,17 @@ export interface ProximityChatMessageOptions {
     replyLimit?: BotReplyLimit;
     /** A bot's steps line (#1545): the message is that line. */
     steps?: BotSteps;
+    /** The line was made from what its sender said out loud to a voice bot (#1664): it carries a small mic mark. */
+    spoken?: boolean;
 }
 
 /** A steps line still working when this tab leaves stops where it was, so it doesn't spin on (#1545). */
 function stopSteps(message: ProximityChatMessage): void {
     message.steps?.update((steps) => (steps?.state === "working" ? { ...steps, state: "stopped" } : steps));
 }
+
+/** Bot replies remembered so a voice bot can mark one cut short; a person never talks over one that old. */
+const MAX_BOT_REPLIES_KEPT = 64;
 
 function fileNameOfUrl(url: string): string {
     const lastSegment = url.split("?")[0].split("#")[0].split("/").pop() ?? "";
@@ -173,6 +188,10 @@ export class ProximityChatMessage implements ChatMessage {
     steps?: Writable<BotSteps | undefined>;
     /** Set on the fixed card a bot sends one person who reached a reply limit (#1159). Local and in memory only. */
     replyLimit?: BotReplyLimit;
+    /** Set on a line made from what its sender said out loud to a voice bot (#1664). */
+    spoken?: boolean;
+    /** Whether a voice bot's voice stopped part-way through this reply because someone spoke over it (#1665). */
+    readonly stoppedBySpeech: Writable<boolean> = writable(false);
     constructor(
         public id: string,
         public sender: AnyKindOfUser,
@@ -185,6 +204,7 @@ export class ProximityChatMessage implements ChatMessage {
         this.session = options.session;
         this.notSent = options.notSent;
         this.replyLimit = options.replyLimit;
+        this.spoken = options.spoken;
         if (options.steps) this.steps = writable(options.steps);
         this.quotedMessage = options.quotedMessage;
         this.isQuotedMessage = options.isQuotedMessage;
@@ -250,11 +270,24 @@ export class ProximityChatRoom implements ChatRoom {
     private spaceReplyLimitSubscription: Subscription | undefined;
     /** The reply limit card shown for each bot, by bot id, so a newer one replaces it */
     private replyLimitCards = new Map<string, string>();
+    private spaceVoiceDraftSubscription: Subscription | undefined;
+    /**
+     * What a voice bot hears this person say (#1664), for them only, above the message box: words filling in, and
+     * words that did not come through.
+     */
+    readonly voiceDrafts: Writable<BotVoiceDraft[]> = writable([]);
+    /**
+     * Words for the message box, as Edit puts them: what the person was still saying when they sent a typed line.
+     * Never sent by themselves.
+     */
+    readonly voiceWordsForComposer = new Subject<string>();
     // Expiry timers of the typing entries, by spaceUserId of the sender
     private typingExpiryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
     private spaceStreamMessageSubscription: Subscription | undefined;
     // Active stream messages by responseId — updated incrementally as tokens arrive
     private streamMessages: Map<string, ProximityChatMessage> = new Map();
+    // The last replies of bots, by responseId and the bot that wrote them, kept after they finish so a voice bot can mark one
+    private botReplies: Map<string, { message: ProximityChatMessage; sender: string }> = new Map();
     private observeUserJoinedSubscription: Subscription | undefined;
     private observeUserLeftSubscription: Subscription | undefined;
     // Users by spaceUserId
@@ -508,8 +541,11 @@ export class ProximityChatRoom implements ChatRoom {
         mimeType?: string,
         galleryUrls?: string[],
         fileName?: string,
-        fileNames?: string[]
+        fileNames?: string[],
+        spoken?: SpokenLine
     ): void {
+        // A line the person sends while a voice bot is still hearing them wins: what they were saying stays a draft
+        if (broadcast && !spoken) this.voiceDrafts.update(afterTypedSend);
         // Determine message type from media
         let messageType = action;
         const hasGallery = galleryUrls && galleryUrls.length > 0;
@@ -561,7 +597,7 @@ export class ProximityChatRoom implements ChatRoom {
             new Date(),
             true,
             messageType,
-            { quotedMessage, react: broadcast ? this.reactToMessage : undefined }
+            { quotedMessage, react: broadcast ? this.reactToMessage : undefined, spoken: spoken !== undefined }
         );
 
         // Add message to the list
@@ -585,6 +621,8 @@ export class ProximityChatRoom implements ChatRoom {
                     fileNames: fileNames ?? [],
                     id: newMessage.id,
                     replyTo: quotedMessage ? buildQuote(quotedMessage, get(quotedMessage.content)) : undefined,
+                    // Which voice bot heard it and which stretch of speech it was, so no other bot takes it for a new request
+                    spoken: spoken ? { botId: spoken.botId, turnId: spoken.turnId } : undefined,
                 },
             });
         }
@@ -737,7 +775,8 @@ export class ProximityChatRoom implements ChatRoom {
         fileName?: string | null,
         fileNames?: string[] | null,
         sharedId?: string | null,
-        replyTo?: SpaceMessageQuote | null
+        replyTo?: SpaceMessageQuote | null,
+        spoken?: boolean
     ): void {
         // Ignore messages from the current user
         if (senderUserId === this._spaceUserId) {
@@ -822,6 +861,7 @@ export class ProximityChatRoom implements ChatRoom {
             {
                 quotedMessage: replyTo ? this.resolveQuote(replyTo) : undefined,
                 react: isShared ? this.reactToMessage : undefined,
+                spoken,
             }
         );
 
@@ -943,6 +983,69 @@ export class ProximityChatRoom implements ChatRoom {
             this.lastMessageTimestamp = line.date.getTime();
         }
         if (isFinal) this.streamMessages.delete(responseId);
+    }
+
+    /**
+     * A voice bot's voice stopped part-way through one of its replies because someone spoke over it (#1665). Only the bot
+     * that wrote the reply can say so: the line is drawn under it, and the text is untouched.
+     */
+    private markStoppedBySpeech(sender: string, responseId: string): void {
+        const reply = this.botReplies.get(responseId);
+        if (reply && reply.sender === sender) reply.message.stoppedBySpeech.set(true);
+    }
+
+    /** What a voice bot says it hears. A finished stretch whose every word came through goes out as this person's own line. */
+    private onVoiceDraft(event: NonNullable<ReturnType<typeof parseBotVoiceDraft>>): void {
+        const change = applyDraftEvent(get(this.voiceDrafts), event);
+        this.voiceDrafts.set(change.drafts);
+        if (change.send) this.sendSpokenLine(change.send);
+        if (change.toComposer) this.voiceWordsForComposer.next(change.toComposer);
+        if (event.kind === "lost" && change.drafts.some((draft) => draft.turnId === event.turnId)) {
+            // Words that did not come through wait for a choice: the chat opens if it is closed
+            openChat("bubble");
+            this.showIfNothingOpen();
+        }
+    }
+
+    /** What the person said, as their own line in the chat: with the mic mark, and the bot and turn named on it. */
+    private sendSpokenLine(line: SpokenLine): void {
+        this.sendMessage(
+            line.text,
+            "proximity",
+            true,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            line
+        );
+    }
+
+    /** Send on a draft offered back: its words go out as their line. */
+    sendVoiceDraft(turnId: string): void {
+        const change = sendDraft(get(this.voiceDrafts), turnId);
+        this.voiceDrafts.set(change.drafts);
+        if (change.send) this.sendSpokenLine(change.send);
+    }
+
+    /** Discard: the words are gone. */
+    discardVoiceDraft(turnId: string): void {
+        this.voiceDrafts.set(discardDraft(get(this.voiceDrafts), turnId));
+    }
+
+    /** Edit: the words leave the draft, to be put in the message box and sent as typed. Undefined if there is nothing to edit. */
+    editVoiceDraft(turnId: string): string | undefined {
+        const edited = editDraft(get(this.voiceDrafts), turnId);
+        this.voiceDrafts.set(edited.drafts);
+        return edited.text;
+    }
+
+    /** No more drafts: the person left the bubble, so nothing a bot said there is theirs to send any more. */
+    private endVoiceDrafts(): void {
+        this.spaceVoiceDraftSubscription?.unsubscribe();
+        this.voiceDrafts.set([]);
     }
 
     /** The fixed reply limit card, in place of the bot's last one, opening the chat if it is closed. */
@@ -1471,6 +1574,7 @@ export class ProximityChatRoom implements ChatRoom {
         this.spaceMessageSubscription?.unsubscribe();
         this.spaceStreamMessageSubscription?.unsubscribe();
         this.streamMessages.clear();
+        this.botReplies.clear();
         this.spaceMessageSubscription = this._space.observePublicEvent("spaceMessage").subscribe((event) => {
             if (isBlackListed(event.sender)) {
                 return;
@@ -1491,7 +1595,8 @@ export class ProximityChatRoom implements ChatRoom {
                 event.spaceMessage.fileName,
                 event.spaceMessage.fileNames,
                 event.spaceMessage.id,
-                event.spaceMessage.replyTo
+                event.spaceMessage.replyTo,
+                event.spaceMessage.spoken !== undefined
             );
             // if the proximity chat is not open, open it to see the message
             openChat("bubble");
@@ -1536,6 +1641,17 @@ export class ProximityChatRoom implements ChatRoom {
             this.showReplyLimit(replyLimit, event.sender.spaceUserId);
         });
 
+        // What a voice bot hears this person say (#1664), sent to them only. The pusher passes it on only from a bot
+        // about itself; it is checked here again.
+        this.spaceVoiceDraftSubscription?.unsubscribe();
+        this.spaceVoiceDraftSubscription = this._space.observePrivateEvent("botVoiceDraft").subscribe((event) => {
+            if (!isBotUser(event.sender) || event.sender.uuid !== `bot-${event.botVoiceDraft.botId}`) return;
+            // A bot this person blocked shows nothing, as with its messages
+            if (blackListManager.isBlackListed(event.sender.uuid)) return;
+            const draft = parseBotVoiceDraft(event.botVoiceDraft, event.botVoiceDraft.botName || event.sender.name);
+            if (draft) this.onVoiceDraft(draft);
+        });
+
         // Subscribe to streaming bot responses — tokens arrive incrementally
         this.spaceStreamMessageSubscription = this._space
             .observePublicEvent("spaceStreamMessage")
@@ -1545,6 +1661,10 @@ export class ProximityChatRoom implements ChatRoom {
                 }
 
                 const stream = event.spaceStreamMessage;
+                if (stream.stoppedBySpeech) {
+                    this.markStoppedBySpeech(event.sender, stream.responseId);
+                    return;
+                }
                 if (stream.steps !== undefined) {
                     this.showBotSteps(
                         event.sender,
@@ -1671,6 +1791,9 @@ export class ProximityChatRoom implements ChatRoom {
                 );
 
                 this.streamMessages.set(stream.responseId, newMessage);
+                this.botReplies.set(stream.responseId, { message: newMessage, sender: event.sender });
+                if (this.botReplies.size > MAX_BOT_REPLIES_KEPT)
+                    this.botReplies.delete(this.botReplies.keys().next().value!);
                 this.messages.push(newMessage);
 
                 this.lastMessageTimestamp = newMessage.date.getTime();
@@ -1724,8 +1847,10 @@ export class ProximityChatRoom implements ChatRoom {
                 this.spaceIsTypingSubscription?.unsubscribe();
                 this.spaceMessageReactionSubscription?.unsubscribe();
                 this.spaceReplyLimitSubscription?.unsubscribe();
+                this.endVoiceDrafts();
                 this.spaceStreamMessageSubscription?.unsubscribe();
                 this.streamMessages.clear();
+                this.botReplies.clear();
                 this.closeScriptingAudioStreamManagers();
                 if (this._space) {
                     this.spaceRegistry.leaveSpace(this._space).catch((error) => {
@@ -1948,8 +2073,10 @@ export class ProximityChatRoom implements ChatRoom {
         this.spaceIsTypingSubscription?.unsubscribe();
         this.spaceMessageReactionSubscription?.unsubscribe();
         this.spaceReplyLimitSubscription?.unsubscribe();
+        this.endVoiceDrafts();
         this.spaceStreamMessageSubscription?.unsubscribe();
         this.streamMessages.clear();
+        this.botReplies.clear();
 
         this.closeScriptingAudioStreamManagers();
 
@@ -2027,8 +2154,10 @@ export class ProximityChatRoom implements ChatRoom {
         this.spaceIsTypingSubscription?.unsubscribe();
         this.spaceMessageReactionSubscription?.unsubscribe();
         this.spaceReplyLimitSubscription?.unsubscribe();
+        this.endVoiceDrafts();
         this.spaceStreamMessageSubscription?.unsubscribe();
         this.streamMessages.clear();
+        this.botReplies.clear();
         this.clearTypingMembers();
 
         this.closeScriptingAudioStreamManagers();

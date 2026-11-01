@@ -5,6 +5,7 @@ import { TokenVerifier, TrackSource } from "livekit-server-sdk";
 import { LiveKitService } from "../src/Model/Services/LivekitService";
 import { LivekitCommunicationStrategy } from "../src/Model/Strategies/LivekitCommunicationStrategy";
 import type { ICommunicationSpace } from "../src/Model/Interfaces/ICommunicationSpace";
+import { VOICE_BOT_TAG } from "../src/Model/Strategies/VoiceBot";
 
 const API_KEY = "key";
 const API_SECRET = "secret-secret-secret-secret-secret-1234";
@@ -250,5 +251,47 @@ describe("LivekitCommunicationStrategy media permissions", () => {
         expect(grant.canPublish).toBe(true);
         // The token names its sources by their names.
         expect(grant.sources).toEqual(["camera"]);
+    });
+
+    it("gives a voice bot a microphone-only token, whether it streams or listens, and a person with the tag no more than usual", async () => {
+        const bot = SpaceUser.fromPartial({
+            spaceUserId: "room_bot",
+            uuid: "bot-1",
+            name: "Bot",
+            tags: ["bot", VOICE_BOT_TAG],
+        });
+        const impostor = SpaceUser.fromPartial({
+            spaceUserId: "room_9",
+            uuid: "uuid-9",
+            name: "Not a bot",
+            tags: [VOICE_BOT_TAG],
+        });
+        const fixture = makeFixture([], [bot, impostor]);
+        await fixture.strategy.addUser(bot);
+        await fixture.strategy.addUserToNotify(impostor);
+        await flush();
+
+        const botGrant = await grants(fixture, "room_bot");
+        expect(botGrant.identity).toBe("room_bot");
+        expect(botGrant.canPublish).toBe(true);
+        expect(botGrant.sources).toEqual(["microphone"]);
+        const impostorGrant = await grants(fixture, "room_9");
+        expect(impostorGrant.canPublish).toBe(false);
+        expect(impostorGrant.sources ?? []).toHaveLength(0);
+    });
+
+    it("keeps a voice bot that only listens limited to its microphone when permissions are synced", async () => {
+        const bot = SpaceUser.fromPartial({ spaceUserId: "room_bot", uuid: "bot-1", tags: ["bot", VOICE_BOT_TAG] });
+        const fixture = makeFixture(["room_bot"], [bot]);
+        await fixture.strategy.addUser(user("room_1", "A"));
+        await fixture.strategy.addUserToNotify(bot);
+        await flush();
+        expect((await grants(fixture, "room_bot")).sources).toEqual(["microphone"]);
+        fixture.strategy.updateUser(bot);
+        await flush();
+        // Nothing here ever widens it
+        for (const call of fixture.roomService.updateParticipant.mock.calls) {
+            expect(call[3]).toEqual(expect.objectContaining({ canPublishSources: [TrackSource.MICROPHONE] }));
+        }
     });
 });

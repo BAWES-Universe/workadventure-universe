@@ -356,6 +356,24 @@ export class Entity extends Phaser.GameObjects.Image implements ActivatableInter
         }
     }
 
+    /** Whether a click on this object does something: opens its link or file, plays its sound (not one that plays in range) */
+    public hasClickAction(): boolean {
+        return this.entityData.properties.some((property) => this.isClickAction(property));
+    }
+
+    private isClickAction(property: EntityDataProperty): boolean {
+        switch (property.type) {
+            case "openWebsite":
+            case "openFile":
+                return Boolean(property.link);
+            case "playAudio":
+                // A sound that plays when someone is in range starts by itself (see ObjectSounds)
+                return property.startsOn !== "range";
+            default:
+                return false;
+        }
+    }
+
     /** Does what this object does when you use it: opens its link or file, plays its sound. Only the given kinds. */
     public runAction(propertyTypes: string[]): void {
         for (const action of this.getDefaultActionsMenuActions(propertyTypes)) {
@@ -506,7 +524,8 @@ export class Entity extends Phaser.GameObjects.Image implements ActivatableInter
     get actionButtonLabel(): string {
         if (this.entityData.properties.length === 0)
             return get(LL).mapEditor.explorer.details.moveToEntity({ name: "" });
-        const property = this.entityData.properties.find((p) => p.type !== "entityDescriptionProperties");
+        // Named after what a click really does: a sound that plays in range, or a link left empty, does nothing on click
+        const property = this.entityData.properties.find((p) => this.isClickAction(p));
         if (!property) return get(LL).mapEditor.explorer.details.moveToEntity({ name: "" });
 
         const properties = get(LL).mapEditor.properties;
