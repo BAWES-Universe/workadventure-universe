@@ -62,7 +62,8 @@
     // Someone outside the world is asked of Orbit (once), for their Woka and the name they go by.
     $: requestChatPerson(partnerId);
     // The dot on a direct chat's woka: the same status the chat header and People show for them.
-    const partnerStatus = room.type === "direct" ? chatStatusStore(room) : undefined;
+    // Followed when the same chat row turns into a direct chat (its type is refreshed under the same id).
+    $: partnerStatus = room.type === "direct" ? chatStatusStore(room) : undefined;
     $: statusDot = $partnerStatus ? statusDotColour($partnerStatus, $LL) : undefined;
     $: partnerWoka = partnerId ? personPicture($wokaByChatId, partnerId, room.pictureStore) : undefined;
     // A direct chat is titled with the name the other person goes by in Universe, else the chat room's name.
