@@ -48,7 +48,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         save: "Zachowaś",
         fullscreen: "Połny wobraz",
         notifications: "Powěźeńki",
-        cowebsiteTrigger: "Kuždy raz se pšašaś, pjerwjej nježli webboki abo Jitsi-Meet-śpy se wótcyniju",
         ignoreFollowRequest: "Ignorěruj pšosby wó slědowanje wót drugich wužywarjow",
     },
     invite: {

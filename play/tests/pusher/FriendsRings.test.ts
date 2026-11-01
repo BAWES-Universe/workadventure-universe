@@ -409,7 +409,7 @@ describe("FriendsRings", () => {
         expect(updatesTo(bob)).toEqual([]);
     });
 
-    it("stops after 30 seconds with no answer, and holds the caller back for 10 minutes", async () => {
+    it("stops after 30 seconds with no answer, and lets the caller invite again at once", async () => {
         const { rings, connect, updatesTo } = setup();
         const alice = connect("alice", ROOM_A);
         const bob = connect("bob", ROOM_B);
@@ -424,11 +424,76 @@ describe("FriendsRings", () => {
         ]);
         expect(vi.getTimerCount()).toBe(0);
 
-        vi.advanceTimersByTime(500);
-        expect(await rings.ring(alice, "bob")).toEqual({ outcome: "too_soon", ringId: "", retryAfterSeconds: 600 });
-        vi.advanceTimersByTime(10 * 60 * 1000 - 1000);
+        expect((await rings.ring(alice, "bob")).outcome).toBe("ringing");
+    });
+
+    it("holds the caller back 1 minute after the second and third unanswered invites, then 5 minutes", async () => {
+        const { rings, connect } = setup();
+        const alice = connect("alice", ROOM_A);
+        connect("bob", ROOM_B);
+        const unanswered = async () => {
+            const answer = await rings.ring(alice, "bob");
+            expect(answer.outcome).toBe("ringing");
+            vi.advanceTimersByTime(30_000);
+        };
+
+        // 1st: the 2nd works at once.
+        await unanswered();
+        // 2nd: one minute.
+        await unanswered();
+        expect(await rings.ring(alice, "bob")).toEqual({ outcome: "too_soon", ringId: "", retryAfterSeconds: 60 });
+        vi.advanceTimersByTime(59_000);
         expect((await rings.ring(alice, "bob")).retryAfterSeconds).toBe(1);
-        vi.advanceTimersByTime(500);
+        vi.advanceTimersByTime(1000);
+        // 3rd: one minute.
+        await unanswered();
+        expect((await rings.ring(alice, "bob")).retryAfterSeconds).toBe(60);
+        vi.advanceTimersByTime(60_000);
+        // 4th: five minutes, and every one after it.
+        await unanswered();
+        expect((await rings.ring(alice, "bob")).retryAfterSeconds).toBe(300);
+        vi.advanceTimersByTime(300_000);
+        await unanswered();
+        expect((await rings.ring(alice, "bob")).retryAfterSeconds).toBe(300);
+    });
+
+    it("starts the count over once the friend comes over", async () => {
+        const { rings, connect } = setup();
+        const alice = connect("alice", ROOM_A);
+        const bob = connect("bob", ROOM_B);
+        await rings.ring(alice, "bob");
+        vi.advanceTimersByTime(30_000);
+        await rings.ring(alice, "bob");
+        vi.advanceTimersByTime(30_000);
+        expect((await rings.ring(alice, "bob")).outcome).toBe("too_soon");
+
+        vi.advanceTimersByTime(60_000);
+        await rings.ring(alice, "bob");
+        rings.reply(bob, "ring-3", "accept");
+        expect((await rings.ring(alice, "bob")).outcome).toBe("ringing");
+        vi.advanceTimersByTime(30_000);
+        // Back to the start: the next invite works at once.
+        expect((await rings.ring(alice, "bob")).outcome).toBe("ringing");
+    });
+
+    it("starts the count over after 30 minutes without an invite to that friend", async () => {
+        const { rings, connect } = setup();
+        const alice = connect("alice", ROOM_A);
+        connect("bob", ROOM_B);
+        const unanswered = async () => {
+            await rings.ring(alice, "bob");
+            vi.advanceTimersByTime(30_000 + 300_000);
+        };
+        await unanswered();
+        await unanswered();
+        await unanswered();
+        await rings.ring(alice, "bob");
+        vi.advanceTimersByTime(30_000);
+        expect((await rings.ring(alice, "bob")).retryAfterSeconds).toBeGreaterThan(0);
+
+        vi.advanceTimersByTime(30 * 60_000);
+        expect((await rings.ring(alice, "bob")).outcome).toBe("ringing");
+        vi.advanceTimersByTime(30_000);
         expect((await rings.ring(alice, "bob")).outcome).toBe("ringing");
     });
 
@@ -449,7 +514,7 @@ describe("FriendsRings", () => {
         expect((await rings.ring(bob, "alice")).outcome).toBe("ringing");
     });
 
-    it("lets the caller stop the ring from any of their tabs", async () => {
+    it("lets the caller stop the ring from any of their tabs, and invite again at once", async () => {
         const { rings, connect, updatesTo } = setup();
         const alice1 = connect("alice", ROOM_A);
         const alice2 = connect("alice", ROOM_B);
@@ -462,7 +527,7 @@ describe("FriendsRings", () => {
         expect(updatesTo(alice1)).toEqual([]);
         expect(vi.getTimerCount()).toBe(0);
         expect(rings.reply(alice2, "ring-1", "stop").ok).toBe(false);
-        expect((await rings.ring(alice1, "bob")).outcome).toBe("too_soon");
+        expect((await rings.ring(alice1, "bob")).outcome).toBe("ringing");
     });
 
     it("sends the friend to the caller's room when they accept", async () => {
@@ -534,7 +599,7 @@ describe("FriendsRings", () => {
         expect(updatesTo(alice)).toHaveLength(1);
     });
 
-    it("tells the caller when the friend declines, and holds them back", async () => {
+    it("tells the caller when the friend declines, and lets them invite again at once", async () => {
         const { rings, connect, updatesTo } = setup();
         const alice = connect("alice", ROOM_A);
         const bob1 = connect("bob", ROOM_B);
@@ -549,7 +614,7 @@ describe("FriendsRings", () => {
             { $case: "ringResult", ringResult: { ringId: "ring-1", targetUuid: "bob", result: "declined" } },
         ]);
         expect(vi.getTimerCount()).toBe(0);
-        expect((await rings.ring(alice, "bob")).outcome).toBe("too_soon");
+        expect((await rings.ring(alice, "bob")).outcome).toBe("ringing");
     });
 
     it("refuses unknown rings and actions", async () => {
@@ -577,7 +642,7 @@ describe("FriendsRings", () => {
         expect(updatesTo(bob)[1]).toEqual({ $case: "ringEnded", ringEnded: { ringId: "ring-1", reason: "stopped" } });
         expect(updatesTo(alice)).toEqual([]);
         expect(vi.getTimerCount()).toBe(0);
-        expect((await rings.ring(connect("alice", ROOM_A), "bob")).outcome).toBe("too_soon");
+        expect((await rings.ring(connect("alice", ROOM_A), "bob")).outcome).toBe("ringing");
     });
 
     it("ends as no answer when the friend's last tab closes", async () => {
@@ -595,21 +660,21 @@ describe("FriendsRings", () => {
         ]);
         expect(vi.getTimerCount()).toBe(0);
         connect("bob", ROOM_B);
-        expect((await rings.ring(alice, "bob")).outcome).toBe("too_soon");
+        expect((await rings.ring(alice, "bob")).outcome).toBe("ringing");
     });
 
-    it("forgets cooldowns that are over", async () => {
+    it("forgets callers who have not invited lately", async () => {
         const { rings, connect } = setup();
         const alice = connect("alice", ROOM_A);
         connect("bob", ROOM_B);
         connect("carol", ROOM_B);
-        const cooldowns = (rings as unknown as { cooldowns: Map<string, number> }).cooldowns;
+        const cooldowns = (rings as unknown as { cooldowns: Map<string, unknown> }).cooldowns;
 
         await rings.ring(alice, "bob");
         rings.reply(alice, "ring-1", "stop");
         expect(cooldowns.size).toBe(1);
 
-        vi.advanceTimersByTime(10 * 60 * 1000);
+        vi.advanceTimersByTime(30 * 60 * 1000);
         await rings.ring(alice, "carol");
         rings.reply(alice, "ring-2", "stop");
         expect(Array.from(cooldowns.keys())).toEqual(["alice carol"]);

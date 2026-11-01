@@ -147,7 +147,11 @@ const roomManager = {
                                 break;
                             }
                             case "editMapCommandMessage": {
-                                room.forwardEditMapCommandMessage(user, message.message.editMapCommandMessage);
+                                room.forwardEditMapCommandMessage(
+                                    user,
+                                    message.message.editMapCommandMessage,
+                                    (wamUrls) => socketManager.getLoadedRoomsByWamUrl(wamUrls)
+                                );
                                 break;
                             }
                             case "sendUserMessage": {
@@ -176,6 +180,12 @@ const roomManager = {
                             }
                             case "setAreaPropertyVariableMessage": {
                                 room.setAreaPropertyVariable(user, message.message.setAreaPropertyVariableMessage);
+                                break;
+                            }
+                            case "clickObjectSoundMessage": {
+                                room.clickObjectSound(message.message.clickObjectSoundMessage).catch((e) =>
+                                    console.error("Could not play an object's clicked sound", e)
+                                );
                                 break;
                             }
                             case "publicEvent":
