@@ -235,7 +235,8 @@
             property.audioName = null;
         }
         stopAudio();
-        if (property.audioLink) {
+        // An area's sound keeps no length: no need to ask map-storage for a link to measure it
+        if (!isArea && property.audioLink) {
             measureLinkLength(property.audioLink);
         }
         onValueChange();
