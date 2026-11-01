@@ -6,16 +6,20 @@
     let divElement: HTMLElement;
 
     export let isVisible = true;
-    // Desktop bar (#1734): a button that moved into the menu gives its room back, so it leaves no empty gap. Its box
-    // stays where it would be, just pulled back over the space before it, so the observer below still sees the moment
-    // it would fit again. The width is read by the bar too.
+    // Desktop bar (#1734): a button that moved into the menu gives its room back, so it leaves no empty gap (its box
+    // is pulled back over the space before it). While collapsed it only comes back when the bar says so (collapse turns
+    // false), so folded buttons return one at a time, nearest first, and only when the room is really there. The
+    // width is read by the bar too.
     export let collapse = false;
     export let width = 0;
 
+    let observer: IntersectionObserver | undefined = undefined;
+
     onMount(() => {
-        const observer = new IntersectionObserver(
+        observer = new IntersectionObserver(
             (entries) => {
                 entries.forEach((entry) => {
+                    if (entry.isIntersecting && !isVisible && collapse) return;
                     isVisible = entry.isIntersecting;
                     onVisibilityChange(isVisible);
                 });
@@ -29,9 +33,18 @@
         observer.observe(divElement);
 
         return () => {
-            observer.disconnect();
+            observer?.disconnect();
         };
     });
+
+    // The bar lets this button back: observe afresh, so the observer reports where the button now stands even if its
+    // box was already inside the bar while it was collapsed.
+    $: if (!collapse) reobserve();
+    function reobserve() {
+        if (!observer || !divElement) return;
+        observer.unobserve(divElement);
+        observer.observe(divElement);
+    }
 </script>
 
 <div
