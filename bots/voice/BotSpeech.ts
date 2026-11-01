@@ -9,6 +9,8 @@
  * - A person talking wins: a reply that was being written when they started to talk, or finishes while they are talking,
  *   is not spoken (a greeting included). One that is playing is stopped by the worker, and the message is marked.
  * - A greeting is finished before the person's audio has connected: it waits for it (a setting, 15 s by default), and is said once.
+ * - When the bot's voice comes from Orbit (#1746), Orbit is asked just before each spoken turn (`beforeSpeaking`): a bot
+ *   that no longer speaks answers in text for that turn, and the reply limits are the bot's own.
  */
 import { NOTHING_SAVED_LINE } from '../ai/ArtifactTools';
 import { spokenVersion } from './SpokenText';
@@ -20,15 +22,28 @@ export interface SpeechVoice {
     hasAudience(spaceName: string): boolean;
     someoneSpeaking(spaceName: string): boolean;
     lastSpokenToAt(spaceName: string): number;
+    /**
+     * Only for a bot whose voice Orbit decides: asked just before a reply is said. `text`: the bot does not speak now, so
+     * this reply stays in the chat. `wait`: the bubble's audio is being set up again for new settings, so the reply
+     * waits for it like a greeting. `speak`: say it, with these limits (the bot's own, when Orbit has them).
+     */
+    beforeSpeaking?(spaceName: string): Promise<TurnDecision>;
 }
 
-export type SpeechOutcome = 'spoken' | 'waiting' | 'held' | 'again' | 'overtaken' | 'unsaid';
+export interface TurnDecision {
+    action: 'speak' | 'text' | 'wait';
+    limits?: Partial<Pick<ReplyLimits, 'maxChars' | 'maxSeconds'>>;
+}
+
+/** `checking`: Orbit is being asked (see `beforeSpeaking`); what comes of it is not known yet. */
+export type SpeechOutcome = 'spoken' | 'waiting' | 'held' | 'again' | 'overtaken' | 'unsaid' | 'checking';
 
 const MAX_REMEMBERED = 200;
 
 interface Waiting {
     responseId: string;
-    text: string;
+    /** The reply in full: the words are cut from it when it is said, with the limits of that moment. */
+    reply: string;
     since: number;
 }
 
@@ -38,13 +53,18 @@ export class BotSpeech {
     private readonly segments = new Map<string, { spaceName: string; responseId: string }>();
     private readonly held = new Set<string>();
     private readonly waiting = new Map<string, Waiting>();
+    /** Replies Orbit is being asked about. They are not said yet, and not said twice meanwhile. */
+    private readonly checking = new Set<string>();
+    private limits: ReplyLimits;
     private seq = 0;
 
     constructor(
         private readonly voice: SpeechVoice,
-        private readonly limits: ReplyLimits = DEFAULT_REPLY_LIMITS,
+        private readonly baseLimits: ReplyLimits = DEFAULT_REPLY_LIMITS,
         private readonly now: () => number = () => performance.now()
-    ) {}
+    ) {
+        this.limits = baseLimits;
+    }
 
     /** A reply began to be written (its first words). */
     begin(responseId: string): void {
@@ -65,7 +85,7 @@ export class BotSpeech {
     final(spaceName: string, responseId: string, reply: string): SpeechOutcome {
         const at = this.started.get(responseId) ?? this.now();
         this.started.delete(responseId);
-        if (this.said.has(responseId)) return 'again';
+        if (this.said.has(responseId) || this.checking.has(responseId)) return 'again';
         const person = playerOf(responseId);
         if (person !== undefined && this.held.has(`${spaceName}\n${person}`)) return 'held';
         const words = this.wordsFor(reply);
@@ -76,10 +96,10 @@ export class BotSpeech {
             return 'overtaken';
         }
         if (!this.voice.hasAudience(spaceName)) {
-            this.waiting.set(spaceName, { responseId, text: words, since: this.now() });
+            this.waiting.set(spaceName, { responseId, reply, since: this.now() });
             return 'waiting';
         }
-        return this.speak(spaceName, responseId, words);
+        return this.speak(spaceName, responseId, reply);
     }
 
     /** Someone's audio has just connected in this bubble: a reply that was waiting for it is said now, once. */
@@ -92,7 +112,7 @@ export class BotSpeech {
             remember(this.said, waiting.responseId);
             return;
         }
-        this.speak(spaceName, waiting.responseId, waiting.text);
+        this.speak(spaceName, waiting.responseId, waiting.reply);
     }
 
     /** The voice worker cut a segment short because someone spoke: which reply it was, if it is one of ours. */
@@ -112,7 +132,44 @@ export class BotSpeech {
         return spokenVersion(reply, this.limits.maxChars);
     }
 
-    private speak(spaceName: string, responseId: string, words: string): SpeechOutcome {
+    private speak(spaceName: string, responseId: string, reply: string): SpeechOutcome {
+        const ask = this.voice.beforeSpeaking;
+        if (!ask) return this.say(spaceName, responseId, reply);
+        const askedAt = this.now();
+        this.checking.add(responseId);
+        ask.call(this.voice, spaceName).then(
+            (decision) => this.decided(spaceName, responseId, reply, askedAt, decision),
+            // Orbit could not be asked: the reply stays in the chat
+            () => this.decided(spaceName, responseId, reply, askedAt, { action: 'text' })
+        );
+        return 'checking';
+    }
+
+    private decided(spaceName: string, responseId: string, reply: string, askedAt: number, decision: TurnDecision): void {
+        this.checking.delete(responseId);
+        if (decision.action === 'text') {
+            remember(this.said, responseId);
+            return;
+        }
+        if (decision.action === 'wait') {
+            this.waiting.set(spaceName, { responseId, reply, since: this.now() });
+            return;
+        }
+        // The answer took a moment: a person who started talking meanwhile wins, as for any reply
+        if (this.voice.someoneSpeaking(spaceName) || this.voice.lastSpokenToAt(spaceName) > askedAt) {
+            remember(this.said, responseId);
+            return;
+        }
+        this.limits = { ...this.baseLimits, ...decision.limits };
+        this.say(spaceName, responseId, reply);
+    }
+
+    private say(spaceName: string, responseId: string, reply: string): SpeechOutcome {
+        const words = this.wordsFor(reply);
+        if (!words) {
+            remember(this.said, responseId);
+            return 'unsaid';
+        }
         const segmentId = `s${++this.seq}`;
         remember(this.said, responseId);
         if (!this.voice.say(spaceName, segmentId, words, Math.max(1000, this.limits.maxSeconds * 1000))) return 'unsaid';
