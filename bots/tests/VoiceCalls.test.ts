@@ -158,6 +158,15 @@ describe('VoiceCalls: signals and epochs', () => {
         expect(t.game.signals).toEqual([['room_7', JSON.stringify(answer)]]);
     });
 
+    it('passes the worker\'s request for an audio line on to the person as it is', () => {
+        const t = setup();
+        t.calls.handlePrivateEvent(t.event('start'));
+        const sessionId = (t.sent[0] as { sessionId: string }).sessionId;
+        const request = { type: 'transceiverRequest', transceiverRequest: { kind: 'audio', init: { direction: 'recvonly' } } };
+        t.fromWorker({ type: 'lane.signal', sessionId, participantId: 'room_7', epoch: 1, signal: request });
+        expect(t.game.signals).toEqual([['room_7', JSON.stringify(request)]]);
+    });
+
     it('does not pass on anything but an offer or an ICE candidate', () => {
         expect(parseSignal(OFFER)).toMatchObject({ type: 'offer' });
         expect(parseSignal(CANDIDATE)).toMatchObject({ type: 'candidate' });

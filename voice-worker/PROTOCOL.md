@@ -54,7 +54,7 @@ A microphone packet that is not permitted is dropped before it is decoded (`fram
 3. One current path. A newer epoch closes the old path first and the old path receives and sends nothing from then on:
    a newer lane replaces the person's older lane, `room.join` replaces every older lane (`participant.leave` with reason
    `superseded`), and `lane.open` replaces an older room.
-4. Audio only. The worker answers the audio of an offer and rejects video; it ignores whatever else a person sends. In a
+4. Audio only. The worker answers the audio of an offer and rejects video (an offer with no audio line is answered too, and the person is asked to add one with a transceiverRequest and offer again, so they can hear the bot with no microphone); it ignores whatever else a person sends. In a
    room it publishes one microphone track and subscribes to nothing but the microphone of the people in `room.people`
    (never a camera, a screen, screen-share audio, or a bot's track).
 5. Fixed audio maths: 24 kHz mono s16 is 960 bytes per 20 ms, never 1920. Real-time pacing, one frame at a time, nothing buffered ahead.

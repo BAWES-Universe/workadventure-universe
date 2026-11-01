@@ -15,7 +15,11 @@
         { "type": "object", "required": ["type", "candidate"],
           "properties": { "type": { "const": "candidate" },
             "candidate": { "type": "object", "required": ["candidate"],
-              "properties": { "candidate": { "type": "string", "maxLength": 2048 }, "sdpMLineIndex": { "type": ["integer", "null"], "minimum": 0 }, "sdpMid": { "type": ["string", "null"], "maxLength": 64 } } } } }
+              "properties": { "candidate": { "type": "string", "maxLength": 2048 }, "sdpMLineIndex": { "type": ["integer", "null"], "minimum": 0 }, "sdpMid": { "type": ["string", "null"], "maxLength": 64 } } } } },
+        { "title": "worker -> person only: the offer had no audio, please add an audio transceiver and offer again (simple-peer's transceiverRequest)",
+          "type": "object", "required": ["type", "transceiverRequest"],
+          "properties": { "type": { "const": "transceiverRequest" },
+            "transceiverRequest": { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "audio" }, "init": { "type": "object", "properties": { "direction": { "enum": ["recvonly", "sendrecv"] } } } } } } }
       ]
     },
     "base": {

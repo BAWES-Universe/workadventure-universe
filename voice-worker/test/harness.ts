@@ -43,12 +43,17 @@ export class FakeHuman {
     private readonly decoder = new Decoder({ channels: 1, sample_rate: 48000 });
     outgoingSignals: string[] = [];
 
-    constructor(readonly id: string, private readonly withVideo = false) {}
+    /** Where this person's later signals go (set by a test that lets the person offer again). */
+    deliver?: (signal: string) => void;
+    /** The bot asked this person to add an audio line. */
+    audioRequests = 0;
+
+    constructor(readonly id: string, private readonly withVideo = false, private readonly withMic = true) {}
 
     /** Builds the offer (and the trickled candidates) a browser would send, as JSON strings. */
     async offer(): Promise<string[]> {
         this.pc = new RTCPeerConnection({ codecs: { audio: [useOPUS()], video: [useVP8()] }, iceServers: [], iceUseIpv6: false });
-        this.pc.addTransceiver(this.mic, { direction: 'sendrecv' });
+        if (this.withMic) this.pc.addTransceiver(this.mic, { direction: 'sendrecv' });
         if (this.withVideo) this.pc.addTransceiver('video', { direction: 'sendrecv' });
         this.pc.createDataChannel('data').onMessage.subscribe((data) => {
             try {
@@ -85,6 +90,13 @@ export class FakeHuman {
         const signal = JSON.parse(json);
         if (signal.type === 'answer') await this.pc.setRemoteDescription({ type: 'answer', sdp: signal.sdp });
         else if (signal.type === 'candidate') await this.pc.addIceCandidate(signal.candidate);
+        else if (signal.type === 'transceiverRequest') {
+            // What simple-peer's initiator does with the request: add the line and offer again
+            this.audioRequests++;
+            this.pc.addTransceiver(signal.transceiverRequest.kind, { direction: signal.transceiverRequest.init?.direction ?? 'recvonly' });
+            await this.pc.setLocalDescription(await this.pc.createOffer());
+            this.deliver?.(JSON.stringify({ type: 'offer', sdp: this.pc.localDescription!.sdp }));
+        }
     }
 
     /** Sends a tone as microphone audio, one 20 ms packet at a time. */

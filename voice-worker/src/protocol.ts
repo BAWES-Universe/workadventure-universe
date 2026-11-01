@@ -12,7 +12,9 @@ export const modePlays = (m: Mode): boolean => m === 'talk' || m === 'listen_onl
 /** What a person's browser sends while setting up the call (simple-peer signals). */
 export type Signal =
     | { type: 'offer' | 'answer'; sdp: string }
-    | { type: 'candidate'; candidate: { candidate: string; sdpMLineIndex: number | null; sdpMid: string | null } };
+    | { type: 'candidate'; candidate: { candidate: string; sdpMLineIndex: number | null; sdpMid: string | null } }
+    /** Only from the worker to the person: the offer had no audio, so asks the person to add one and offer again. */
+    | { type: 'transceiverRequest'; transceiverRequest: { kind: 'audio'; init?: { direction: 'recvonly' | 'sendrecv' } } };
 
 export type LeaveReason = 'closed' | 'failed' | 'left' | 'superseded' | 'timeout';
 export type PlaybackReason = 'completed' | 'voice_stop' | 'retract' | 'mode' | 'lane_loss' | 'rejected';

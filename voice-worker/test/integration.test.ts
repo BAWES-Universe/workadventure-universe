@@ -16,8 +16,8 @@ async function rig(options: Parameters<typeof startRig>[0] = {}): Promise<Rig> {
     return r;
 }
 
-const human = (id: string, withVideo = false): FakeHuman => {
-    const h = new FakeHuman(id, withVideo);
+const human = (id: string, withVideo = false, withMic = true): FakeHuman => {
+    const h = new FakeHuman(id, withVideo, withMic);
     humans.push(h);
     return h;
 };
@@ -98,6 +98,27 @@ describe('a voice bot and a person in a peer-to-peer bubble', () => {
         r.calls.say(r.game.spaceName, 'seg-3', 'nobody should hear this');
         await waitFor('the segment to be done', () => r.fromWorker.filter((m) => m.type === 'playback.progress' && m.finished).length >= 2);
         expect(alice.audioPackets - quiet).toBeLessThanOrEqual(2);
+        expect(r.violations).toEqual([]);
+    });
+
+    it('lets a person with no microphone hear the bot: the offer has no audio line, so they are asked to add one', async () => {
+        const frames: InputFrame[] = [];
+        const r = await rig({ input: (f) => frames.push(f) });
+        const dan = human('dan', false, false);
+        dan.deliver = (signal) => r.calls.handlePrivateEvent(privateEvent(r.game, 'dan', { $case: 'webRtcSignal', webRtcSignal: { signal } }));
+        await connectBot(r, dan);
+        await waitFor('the audio connection', () => joined(r, 'dan'));
+        // The bot answered the offer, then asked for the missing audio line; the person offered again
+        await waitFor('the request for an audio line', () => dan.audioRequests === 1);
+        expect(r.worker.counters.get('audio_requested')).toBe(1);
+
+        r.calls.say(r.game.spaceName, 'seg-1', 'a person without a microphone can still hear the bot');
+        await waitFor('bot audio at the person', () => dan.loudFrames >= 20);
+        // Nothing comes in, and nobody is dropped
+        expect(frames).toEqual([]);
+        expect(r.worker.counters.get('frames_heard')).toBe(0);
+        expect(r.worker.counters.get('signal_errors')).toBe(0);
+        expect(r.fromWorker.some((m) => m.type === 'participant.leave')).toBe(false);
         expect(r.violations).toEqual([]);
     });
 

@@ -50,6 +50,9 @@ export class Lane implements OutputTarget {
     private lastTx = 0;
     private txMarker = true;
     private readonly streamId = `bot-${randomUUID()}`;
+    /** The bot's voice has a transceiver to go out on (the person's offer had an audio line). */
+    private audioReady = false;
+    private audioRequested = false;
 
     constructor(
         readonly participantId: string,
@@ -67,7 +70,7 @@ export class Lane implements OutputTarget {
     }
 
     plays(): boolean {
-        return !this.gone && this.connected && this.voiceActive() && modePlays(this.mode);
+        return !this.gone && this.connected && this.audioReady && this.voiceActive() && modePlays(this.mode);
     }
 
     healthy(): boolean {
@@ -102,19 +105,18 @@ export class Lane implements OutputTarget {
                 this.deps.counters.inc('candidates_unusable');
             }
         } else {
-            // An answer is only ever expected from the bot's side
+            // An answer is only ever expected from the bot's side, and a transceiver request only goes to the person
             this.deps.counters.inc('signal_dropped');
         }
     }
 
     private async handleOffer(sdp: string): Promise<void> {
-        const first = !this.pc;
         const pc = this.pc ?? this.createPeer();
         await pc.setRemoteDescription({ type: 'offer', sdp });
-        if (first) {
-            // The person's microphone comes in, the bot's voice goes out. Anything else in the offer (camera, screen) is refused.
-            const audio = pc.getTransceivers().find((t) => t.kind === 'audio');
-            if (!audio) throw new Error('offer has no audio');
+        // The person's microphone comes in, the bot's voice goes out. Anything else in the offer (camera, screen) is refused.
+        const audio = pc.getTransceivers().find((t) => t.kind === 'audio');
+        if (audio && !this.audioReady) {
+            this.audioReady = true;
             audio.setDirection('sendrecv');
             audio.sender.registerTrack(this.out);
             // The browser attaches the incoming track to a stream only when the answer names one
@@ -123,6 +125,14 @@ export class Lane implements OutputTarget {
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         this.deps.sendSignal(this, { type: 'answer', sdp: pc.localDescription!.sdp });
+        // A person without a microphone (off, not allowed, or not in a mode that uses it) offers no audio line. The
+        // bot cannot add one to an answer, so the person is asked to add one and offer again: they can hear the bot,
+        // and nothing comes in.
+        if (!audio && !this.audioRequested) {
+            this.audioRequested = true;
+            this.deps.counters.inc('audio_requested');
+            this.deps.sendSignal(this, { type: 'transceiverRequest', transceiverRequest: { kind: 'audio', init: { direction: 'recvonly' } } });
+        }
     }
 
     private createPeer(): RTCPeerConnection {

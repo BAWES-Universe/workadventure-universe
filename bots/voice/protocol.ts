@@ -9,7 +9,9 @@ export type LeaveReason = 'closed' | 'failed' | 'left' | 'superseded' | 'timeout
 /** What a person's browser sends while setting up a call (simple-peer signals). */
 export type VoiceSignal =
     | { type: 'offer' | 'answer'; sdp: string }
-    | { type: 'candidate'; candidate: { candidate: string; sdpMLineIndex: number | null; sdpMid: string | null } };
+    | { type: 'candidate'; candidate: { candidate: string; sdpMLineIndex: number | null; sdpMid: string | null } }
+    /** Only from the worker to the person: the offer had no audio, so the person is asked to add one and offer again. */
+    | { type: 'transceiverRequest'; transceiverRequest: { kind: 'audio'; init?: { direction: 'recvonly' | 'sendrecv' } } };
 
 export type ToWorker =
     | { type: 'session.open'; sessionId: string; bubbleId: string; botId: string }

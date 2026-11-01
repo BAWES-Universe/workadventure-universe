@@ -74,6 +74,12 @@ describe('bridge messages', () => {
         expect(checkMessage('fromWorker', { ...base, type: 'room.join', epoch: 3, serverUrl: 'wss://x', token: 't' })).not.toBeNull();
     });
 
+    it('accepts the request for an audio line, and nothing else shaped like it', () => {
+        const request = { type: 'transceiverRequest', transceiverRequest: { kind: 'audio', init: { direction: 'recvonly' } } };
+        expect(checkMessage('fromWorker', { ...base, type: 'lane.signal', participantId: 'p', epoch: 1, signal: request })).toBeNull();
+        expect(checkMessage('fromWorker', { ...base, type: 'lane.signal', participantId: 'p', epoch: 1, signal: { type: 'transceiverRequest', transceiverRequest: { kind: 'video' } } })).not.toBeNull();
+    });
+
     it('refuses what breaks the contract', () => {
         expect(checkMessage('fromBot', { ...base, type: 'lane.open', participantId: 'p' })).not.toBeNull(); // no epoch
         expect(checkMessage('fromBot', { ...base, type: 'lane.open', participantId: 'p', epoch: 0 })).not.toBeNull();
