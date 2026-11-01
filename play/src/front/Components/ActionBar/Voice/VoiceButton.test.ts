@@ -285,6 +285,25 @@ describe("the Voice button", () => {
             expect(menu()).toBeNull();
         });
 
+        it("closes when the focus tabs from the menu onto the button, but a press on the button still closes it once", async () => {
+            button().click();
+            await settle();
+            row("talk").dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: button() }));
+            await settle();
+            expect(menu()).toBeNull();
+            expect(button().getAttribute("aria-expanded")).toBe("false");
+
+            button().click();
+            await settle();
+            button().dispatchEvent(new Event("pointerdown", { bubbles: true }));
+            row("talk").dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: button() }));
+            await settle();
+            expect(menu()).not.toBeNull();
+            button().click();
+            await settle();
+            expect(menu()).toBeNull();
+        });
+
         it("says where the bot's voice stands in its top line when something needs saying", async () => {
             const status = () => target.querySelector("[data-testid=voice-menu-status]")?.textContent?.trim();
             button().click();

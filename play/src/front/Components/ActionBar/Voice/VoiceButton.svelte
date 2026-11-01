@@ -70,8 +70,12 @@
     let button: HTMLButtonElement | undefined;
     let wrap: HTMLDivElement | undefined;
 
+    // True between a pointer press on the button and its click: the press moves focus out of the menu first
+    let pressing = false;
+
     // Called straight from the tap: the browser lets sound start only from a person's own gesture
     function onTap() {
+        pressing = false;
         if (!bot) return;
         if (state === "tap_to_hear") {
             resumeBotSound(bot.spaceUserId);
@@ -81,8 +85,9 @@
     }
 
     async function closeMenu(refocus: boolean, to?: Node) {
-        // Focus moving to the button is the start of its own tap, which closes the menu itself
-        if (!refocus && to === button) return;
+        // A press on the button moves focus to it before its click, and the click closes the menu itself. Tabbing onto
+        // the button from the menu has no click to follow, so it closes here.
+        if (!refocus && to === button && pressing) return;
         open = false;
         if (refocus) {
             await tick();
@@ -125,6 +130,8 @@
             data-testid="voice-button"
             data-state={state}
             bind:this={button}
+            on:pointerdown={() => (pressing = true)}
+            on:pointercancel={() => (pressing = false)}
             on:click={onTap}
         >
             {#if $picture}
