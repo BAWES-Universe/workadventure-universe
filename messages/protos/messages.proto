@@ -1489,6 +1489,8 @@ message SpaceMessage {
   optional string id = 10;          // Chosen by the sender, the same for everyone, so reactions and replies can point at it
   optional SpaceMessageQuote replyTo = 11; // The message this one replies to
   optional SpaceMessageSpoken spoken = 12; // Set on the line made from a person's own speech to a voice bot
+  optional uint32 voiceDurationMs = 13; // A voice note's length, measured by its sender
+  repeated uint32 voiceWaveform = 14;   // A voice note's shape, 0 to 1024 per point (as Matrix writes it)
 }
 
 /**

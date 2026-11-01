@@ -16,6 +16,8 @@ export const VOICE_NOTE_MATRIX_WAVEFORM_MAX = 1024;
 
 /** A quiet bar still shows. */
 const FLOOR = 0.08;
+/** A shape whose loudest point is no higher than this (the floor, after rounding to Matrix's scale) is a silent note. */
+const SILENT_LEVEL = FLOOR + 0.01;
 
 /** The body Element gives a voice message, and the name every note of ours is uploaded under (plus its extension). */
 export const VOICE_NOTE_NAME = "Voice message";
@@ -99,10 +101,25 @@ export function waveformOf(levels: number[], bars: number): number[] {
     return peaks.map((peak) => Math.max(FLOOR, peak / max));
 }
 
-/** The same shape resampled to `bars` bars, for a bubble that shows fewer or more bars than the note carries. */
+/**
+ * The same shape resampled to `bars` bars, for a bubble that shows fewer or more bars than the note carries. The shape
+ * is already scaled, so it is not scaled again: a silent note (every bar at the floor) stays at the floor instead of
+ * turning into a row of full bars.
+ */
 export function resampleWaveform(waveform: number[], bars: number): number[] {
     if (waveform.length === 0 || bars <= 0) return new Array<number>(Math.max(bars, 0)).fill(FLOOR);
-    return waveformOf(waveform, bars);
+    const resampled: number[] = [];
+    for (let i = 0; i < bars; i++) {
+        const start = Math.floor((i * waveform.length) / bars);
+        const end = Math.max(start + 1, Math.floor(((i + 1) * waveform.length) / bars));
+        let peak = 0;
+        for (let j = start; j < end && j < waveform.length; j++) {
+            const level = waveform[j];
+            if (Number.isFinite(level)) peak = Math.max(peak, level);
+        }
+        resampled.push(Math.min(1, Math.max(FLOOR, peak)));
+    }
+    return resampled;
 }
 
 /** The shape as Element reads it: whole numbers from 0 to 1024. */
@@ -120,7 +137,10 @@ export function fromMatrixWaveform(raw: unknown): number[] | undefined {
             ? Math.min(1, Math.max(0, value / VOICE_NOTE_MATRIX_WAVEFORM_MAX))
             : 0
     );
-    return waveformOf(levels, Math.min(levels.length, VOICE_NOTE_MATRIX_WAVEFORM_POINTS));
+    const points = Math.min(levels.length, VOICE_NOTE_MATRIX_WAVEFORM_POINTS);
+    // A silent note comes back as bars at the floor: scaled up, the floor would become the loudest bar and every bar full.
+    if (Math.max(...levels) <= SILENT_LEVEL) return resampleWaveform(levels, points);
+    return waveformOf(levels, points);
 }
 
 /** Seconds from a Matrix event's milliseconds, or undefined when it is not a usable length. */
@@ -128,6 +148,37 @@ export function secondsFromMatrixDuration(milliseconds: unknown): number | undef
     return typeof milliseconds === "number" && Number.isFinite(milliseconds) && milliseconds > 0
         ? milliseconds / 1000
         : undefined;
+}
+
+/** A note's length and shape as the nearby chat sends them: whole milliseconds, and the 0 to 1024 shape Matrix uses. */
+export interface VoiceNoteOnWire {
+    voiceDurationMs: number;
+    voiceWaveform: number[];
+}
+
+/**
+ * The nearby chat sends the length and shape its sender measured, so nobody has to download and decode the file to
+ * draw it (a phone browser may not decode it at all, and the bubble then shows a flat shape).
+ */
+export function voiceNoteToWire(details: VoiceNoteDetails): VoiceNoteOnWire {
+    return {
+        voiceDurationMs: Math.max(0, Math.round(details.duration * 1000)),
+        voiceWaveform: toMatrixWaveform(details.waveform),
+    };
+}
+
+/** What a nearby message says about its note's length and shape: each undefined when it carries none usable. */
+export function voiceNoteFromWire(
+    durationMs: unknown,
+    waveform: unknown
+): { voiceDuration: number | undefined; voiceWaveform: number[] | undefined } {
+    return {
+        voiceDuration: secondsFromMatrixDuration(durationMs),
+        // A sender writes 100 points; more than that is cut, not read.
+        voiceWaveform: fromMatrixWaveform(
+            Array.isArray(waveform) ? waveform.slice(0, VOICE_NOTE_MATRIX_WAVEFORM_POINTS) : undefined
+        ),
+    };
 }
 
 const PLAYED_STORAGE_KEY = "universe-voice-notes-played";

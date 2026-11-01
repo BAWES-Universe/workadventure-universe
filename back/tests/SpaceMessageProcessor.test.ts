@@ -14,6 +14,7 @@ describe("the nearby chat line the server passes on", () => {
                     characterTextures: [],
                     galleryUrls: [],
                     fileNames: [],
+                    voiceWaveform: [],
                     spoken: { botId: "b-1", turnId: "4-2" },
                 },
             },
@@ -30,11 +31,38 @@ describe("the nearby chat line the server passes on", () => {
         const processed = eventProcessor.processPublicEvent(
             {
                 $case: "spaceMessage",
-                spaceMessage: { message: "hello", characterTextures: [], galleryUrls: [], fileNames: [] },
+                spaceMessage: {
+                    message: "hello",
+                    characterTextures: [],
+                    galleryUrls: [],
+                    fileNames: [],
+                    voiceWaveform: [],
+                },
             },
             "room_7",
             [sender]
         );
         expect(processed.$case === "spaceMessage" && processed.spaceMessage.spoken).toBeUndefined();
+    });
+
+    it("passes on a voice note's length and shape, so nobody has to read the file to draw it", () => {
+        const processed = eventProcessor.processPublicEvent(
+            {
+                $case: "spaceMessage",
+                spaceMessage: {
+                    message: "",
+                    characterTextures: [],
+                    galleryUrls: [],
+                    fileNames: [],
+                    fileName: "Voice message.m4a",
+                    voiceDurationMs: 4200,
+                    voiceWaveform: [82, 512, 1024],
+                },
+            },
+            "room_7",
+            [sender]
+        );
+        expect(processed.$case === "spaceMessage" && processed.spaceMessage.voiceDurationMs).toBe(4200);
+        expect(processed.$case === "spaceMessage" && processed.spaceMessage.voiceWaveform).toEqual([82, 512, 1024]);
     });
 });

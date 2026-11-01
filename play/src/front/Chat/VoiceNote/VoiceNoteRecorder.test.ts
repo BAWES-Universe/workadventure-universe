@@ -33,6 +33,7 @@ class FakeRecorder {
 describe("recording a voice note", () => {
     let trackStop: ReturnType<typeof vi.fn>;
     let contextClose: ReturnType<typeof vi.fn>;
+    let contextResume: ReturnType<typeof vi.fn>;
 
     beforeEach(() => {
         vi.useFakeTimers();
@@ -40,6 +41,7 @@ describe("recording a voice note", () => {
         FakeRecorder.failOnStart = false;
         trackStop = vi.fn();
         contextClose = vi.fn(() => Promise.resolve());
+        contextResume = vi.fn(() => Promise.resolve());
         vi.stubGlobal("MediaRecorder", FakeRecorder);
         vi.stubGlobal(
             "AudioContext",
@@ -52,6 +54,7 @@ describe("recording a voice note", () => {
                     return { connect: () => undefined };
                 }
                 close = contextClose;
+                resume = contextResume;
             }
         );
         Object.defineProperty(navigator, "mediaDevices", {
@@ -94,6 +97,41 @@ describe("recording a voice note", () => {
         await expect(startVoiceNoteRecording(format)).rejects.toThrow("already recording");
 
         expect(trackStop).toHaveBeenCalled();
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("starts its sound in the tap, before waiting for the microphone (an iPhone keeps it silent otherwise)", async () => {
+        let micAsked = false;
+        let resumedBeforeMic = false;
+        contextResume.mockImplementation(() => {
+            resumedBeforeMic = !micAsked;
+            return Promise.resolve();
+        });
+        Object.defineProperty(navigator, "mediaDevices", {
+            configurable: true,
+            value: {
+                getUserMedia: () => {
+                    micAsked = true;
+                    return Promise.resolve({ getTracks: () => [{ stop: trackStop }] });
+                },
+            },
+        });
+
+        const recording = await startVoiceNoteRecording(format);
+
+        expect(resumedBeforeMic).toBe(true);
+        recording.cancel();
+    });
+
+    it("lets its sound go when the microphone is refused", async () => {
+        Object.defineProperty(navigator, "mediaDevices", {
+            configurable: true,
+            value: { getUserMedia: () => Promise.reject(new DOMException("no", "NotAllowedError")) },
+        });
+
+        await expect(startVoiceNoteRecording(format)).rejects.toThrow("no");
+
+        expect(contextClose).toHaveBeenCalled();
         expect(vi.getTimerCount()).toBe(0);
     });
 
