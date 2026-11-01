@@ -55,9 +55,17 @@ export class RoomTransport implements OutputTarget {
             if (!this.gone) this.deps.onGone(this, 'closed');
         });
         let timer: NodeJS.Timeout | undefined;
+        const connecting = room.connect(this.serverUrl, this.token, { autoSubscribe: false, dynacast: false });
+        // Stopped or timed out while still joining: a join that completes later is closed at once, never left connected
+        connecting.then(
+            () => {
+                if (this.gone) void this.disconnectQuietly();
+            },
+            () => undefined
+        );
         try {
             await Promise.race([
-                room.connect(this.serverUrl, this.token, { autoSubscribe: false, dynacast: false }),
+                connecting,
                 new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new Error('connect timed out')), CONNECT_TIMEOUT_MS))),
             ]);
         } finally {
@@ -69,6 +77,8 @@ export class RoomTransport implements OutputTarget {
         // The only thing the bot publishes: one microphone track
         const track = LocalAudioTrack.createAudioTrack('bot-voice', source);
         await room.localParticipant!.publishTrack(track, new TrackPublishOptions({ source: TrackSource.SOURCE_MICROPHONE }));
+        // Stopped while publishing: stop() has already closed the room and the source
+        if (this.gone) return;
         this.connected = true;
         this.reconcile();
         this.deps.onConnected(this);
@@ -186,15 +196,19 @@ export class RoomTransport implements OutputTarget {
         this.gone = true;
         this.connected = false;
         for (const sid of [...this.readers.keys()]) this.stopReading(sid);
-        try {
-            await this.room.disconnect();
-        } catch {
-            /* already gone */
-        }
+        await this.disconnectQuietly();
         try {
             await this.source?.close();
         } catch {
             /* ignore */
+        }
+    }
+
+    private async disconnectQuietly(): Promise<void> {
+        try {
+            await this.room.disconnect();
+        } catch {
+            /* already gone */
         }
     }
 }
