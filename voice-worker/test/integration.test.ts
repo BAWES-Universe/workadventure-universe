@@ -1,5 +1,6 @@
 // The worker, the bot server's relay and fake browsers talking through the real bridge. Fake speech only.
 import { afterEach, describe, expect, it } from 'vitest';
+import net from 'node:net';
 import WebSocket from 'ws';
 import type { InputFrame } from '../src/transport.ts';
 import { FakeHuman, type Rig, connectPeople, privateEvent, sleep, startRig, waitFor } from './harness.ts';
@@ -186,6 +187,30 @@ describe('the bridge', () => {
         expect(refused).toBe(true);
         expect(r.worker.counters.get('bridge_unauthorized')).toBe(1);
         expect(r.link().isUp()).toBe(true);
+    });
+
+    it('survives request paths that are not valid URLs, on plain requests and on upgrades', async () => {
+        const r = await rig();
+        const raw = (request: string) =>
+            new Promise<string>((resolve) => {
+                const socket = net.connect(r.workerPort, '127.0.0.1', () => socket.write(request));
+                let data = '';
+                socket.on('data', (d) => (data += d));
+                socket.on('close', () => resolve(data));
+                socket.on('error', () => resolve(data));
+                setTimeout(() => socket.destroy(), 1500);
+            });
+        for (const path of ['//', '//%', '//bridge?botId=x', '/%zz']) {
+            const plain = await raw(`GET ${path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+            expect(plain).toMatch(/^HTTP\/1\.1 (400|404)/);
+            const upgrade = await raw(`GET ${path} HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n`);
+            expect(upgrade).toMatch(/^HTTP\/1\.1 400/);
+        }
+        // Still serving, and the bot's own connection is untouched
+        const health = await fetch(`http://127.0.0.1:${r.workerPort}/health`);
+        expect(health.status).toBe(200);
+        expect(r.link().isUp()).toBe(true);
+        expect(r.worker.counters.get('http_bad_url')).toBeGreaterThanOrEqual(1);
     });
 
     it('answers a message that is not in the contract with an error and does nothing else', async () => {

@@ -28,6 +28,15 @@ export interface WorkerOptions {
     engineId?: string;
 }
 
+/** The request path and query, or null when the request line is not a usable URL (such as "//" or "//%"). */
+function parseRequestUrl(raw: string | undefined): URL | null {
+    try {
+        return new URL(raw ?? '/', 'http://worker');
+    } catch {
+        return null;
+    }
+}
+
 const MAX_MESSAGE_BYTES = 128 * 1024;
 const PING_INTERVAL_MS = 10000;
 /** A bot server that stops reading this far behind is cut off. */
@@ -99,20 +108,26 @@ export class VoiceWorker {
     }
 
     private onHttp(req: http.IncomingMessage, res: http.ServerResponse): void {
-        const path = new URL(req.url ?? '/', 'http://worker').pathname;
         const json = (code: number, body: unknown) => {
             res.writeHead(code, { 'content-type': 'application/json' });
             res.end(JSON.stringify(body));
         };
+        const url = parseRequestUrl(req.url);
+        if (!url) {
+            this.counters.inc('http_bad_url');
+            return json(400, { error: 'bad request' });
+        }
+        const path = url.pathname;
         if (path === '/health') return json(200, { ok: true });
         if (path === '/stats') return this.authorized(req) ? json(200, this.stats()) : json(401, { error: 'unauthorized' });
         json(404, { error: 'not found' });
     }
 
     private onUpgrade(req: http.IncomingMessage, socket: Duplex, head: Buffer): void {
-        const url = new URL(req.url ?? '/', 'http://worker');
-        const botId = url.searchParams.get('botId') ?? '';
-        if (url.pathname !== '/bridge' || !botId || botId.length > 128) {
+        socket.on('error', () => undefined);
+        const url = parseRequestUrl(req.url);
+        const botId = url?.searchParams.get('botId') ?? '';
+        if (!url || url.pathname !== '/bridge' || !botId || botId.length > 128) {
             socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
             socket.destroy();
             return;
