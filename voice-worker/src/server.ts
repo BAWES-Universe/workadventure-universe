@@ -63,6 +63,8 @@ const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
 
 export class VoiceWorker {
     readonly counters = new Counters();
+    /** Where the previous stats read left off, so CPU is measured over the time between reads. */
+    private lastCpuRead = { at: performance.now(), cpu: process.cpuUsage() };
     /** What a bubble speaks with when it names no provider. */
     readonly speech = new FakeSpeech();
     readonly connectors: ConnectorRegistry;
@@ -110,8 +112,36 @@ export class VoiceWorker {
         return [...this.connections].flatMap((c) => c.roomSubscriptions());
     }
 
+    sessionCount(): number {
+        let n = 0;
+        for (const c of this.connections) n += c.sessionCount();
+        return n;
+    }
+
+    /**
+     * What the worker is carrying and how hard it is working, for whoever watches its load (#1751). CPU is this
+     * process's share of one core since the previous read (or since it started), so 100 is one core fully busy.
+     */
     stats(): Record<string, unknown> {
-        return { engineId: this.engineId, connections: this.connections.size, lanes: this.laneCount(), counters: this.counters.snapshot() };
+        const now = performance.now();
+        const cpu = process.cpuUsage();
+        const elapsedMs = now - this.lastCpuRead.at;
+        const usedMs = (cpu.user - this.lastCpuRead.cpu.user + (cpu.system - this.lastCpuRead.cpu.system)) / 1000;
+        this.lastCpuRead = { at: now, cpu };
+        const lanes = this.laneCount();
+        this.counters.max('peak_lanes', lanes);
+        return {
+            engineId: this.engineId,
+            connections: this.connections.size,
+            sessions: this.sessionCount(),
+            lanes,
+            maxLanes: this.options.maxLanes,
+            peakLanes: this.counters.get('peak_lanes'),
+            cpuPercent: elapsedMs > 0 ? Math.round((usedMs / elapsedMs) * 1000) / 10 : 0,
+            memoryMb: Math.round(process.memoryUsage().rss / (1024 * 1024)),
+            uptimeSeconds: Math.round(process.uptime()),
+            counters: this.counters.snapshot(),
+        };
     }
 
     sessionHost(send: (message: OutgoingMessage) => void) {
@@ -205,6 +235,10 @@ class BridgeConnection {
         return n;
     }
 
+    sessionCount(): number {
+        return this.sessions.size;
+    }
+
     roomSubscriptions(): ReturnType<RoomTransport['subscriptions']> {
         return [...this.sessions.values()].flatMap((s) => s.room?.subscriptions() ?? []);
     }
@@ -268,6 +302,7 @@ class BridgeConnection {
             let session = this.sessions.get(msg.sessionId);
             if (!session) {
                 if (this.sessions.size >= this.worker.options.maxSessionsPerConnection) {
+                    this.worker.counters.inc('sessions_refused');
                     this.send(msg.sessionId, { type: 'error', code: 'at_capacity', message: 'too many sessions' });
                     return;
                 }

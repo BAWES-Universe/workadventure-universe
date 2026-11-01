@@ -28,6 +28,10 @@ import { botWokaPicture } from '../matrix/wokaPicture';
 import type { BotAvailability } from '../matrix/BotStatusNotes';
 import type { Router } from 'express';
 import * as path from 'path';
+import * as Sentry from '@sentry/node';
+import { VoiceLoadWatch, readWorkerLoad, voiceLoadSettings, workerStatsUrl } from '../voice/VoiceLoad';
+import { voiceWorkerSettings } from '../voice/settings';
+import { captureServerEvent } from '../ai/PostHogClient';
 
 // Before anything calls Orbit or an MCP server: a failed call must never put a token or a transcript in the logs
 installAxiosErrorRedaction();
@@ -139,6 +143,8 @@ async function shutdown(signal: string) {
         
         // Stop movement analysis
         stopMovementAnalysis();
+
+        voiceLoadWatch?.stop();
         
         // Stop API server
         // Direct messages already taken in get their answer first; new ones go back to Synapse for the next bot server.
@@ -190,6 +196,8 @@ async function start() {
         // Start periodic movement analysis
         startMovementAnalysis(botManager);
 
+        startVoiceLoadWatch();
+
         // Respawn bots for rooms that have players (after hot reload)
         // Wait a bit for server to be fully ready, then respawn
         setTimeout(async () => {
@@ -204,6 +212,33 @@ async function start() {
         console.error('[BotServer] Failed to start:', error);
         process.exit(1);
     }
+}
+
+// How full the voice worker is (#1751). Only where a voice worker is set up: a server without one has nothing to read.
+let voiceLoadWatch: VoiceLoadWatch | null = null;
+
+function startVoiceLoadWatch(): void {
+    if (!process.env.VOICE_WORKER_URL) return;
+    const worker = voiceWorkerSettings();
+    const settings = voiceLoadSettings();
+    let statsUrl: string;
+    try {
+        statsUrl = workerStatsUrl(worker.url);
+    } catch {
+        console.warn('[BotServer] VOICE_WORKER_URL is not a valid address: voice load is not watched');
+        return;
+    }
+    voiceLoadWatch = new VoiceLoadWatch(
+        {
+            read: () => readWorkerLoad(statsUrl, worker.secret, settings.timeoutMs),
+            capture: (event, properties) => captureServerEvent(`voice-worker:${BOT_SERVER_ID}`, event, { ...properties, bot_server: BOT_SERVER_ID }),
+            warn: (message, details) => Sentry.captureMessage(message, { level: 'warning', tags: { area: 'voice' }, extra: details }),
+            log: (message) => console.warn(`[BotServer] ${message}`),
+        },
+        settings
+    );
+    voiceLoadWatch.start();
+    console.log(`[BotServer] Voice load watch started (every ${settings.intervalMs / 1000}s)`);
 }
 
 // Game loop to update all bots

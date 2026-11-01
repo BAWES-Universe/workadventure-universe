@@ -46,6 +46,8 @@ import { MeetingPresence, type MeetingArea } from '../voice/MeetingAreas';
 import { voiceOrbitSettings, voiceReplyLimits, voiceWorkerSettings } from '../voice/settings';
 import { BotVoiceSettings } from '../voice/VoiceSettings';
 import { BotSpeech } from '../voice/BotSpeech';
+import { pausedAtCapacityEvent } from '../voice/VoiceLoad';
+import { captureServerEvent } from '../ai/PostHogClient';
 
 // Get the secret key from environment - must match pusher's SECRET_KEY
 const SECRET_KEY = process.env.SECRET_KEY || 'default-secret-key';
@@ -2464,6 +2466,8 @@ export class BotClient {
             const responseId = this.speech?.stopped(spaceName, segmentId);
             if (responseId) this.sendSpeechStopped(spaceName, responseId);
         };
+        this.voice.onTurnedAway = (_spaceName, what) =>
+            captureServerEvent(`bot:${this.config.botId}`, 'voice_paused_at_capacity', pausedAtCapacityEvent(this.config.botId, this.config.roomUrl, what));
         this.meeting = new MeetingPresence({
             join: (spaceName) => this.joinMeetingSpace(spaceName),
             leave: (spaceName) => this.leaveMeetingSpace(spaceName),

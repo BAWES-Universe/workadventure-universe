@@ -231,6 +231,26 @@ describe('VoiceCalls: ending and failing closed', () => {
         expect(t.calls.hasCall(SPACE, 'room_7')).toBe(false);
     });
 
+    it('counts a connection, the room audio or a bubble the worker turned away for being full, and nothing else (#1751)', () => {
+        const t = setup();
+        const turned: [string, string][] = [];
+        t.calls.onTurnedAway = (space, what) => turned.push([space, what]);
+        t.calls.handlePrivateEvent(t.event('start'));
+        const sessionId = (t.sent[0] as { sessionId: string }).sessionId;
+        t.fromWorker({ type: 'error', sessionId, code: 'stale_epoch', message: 'old', participantId: 'room_7', epoch: 1 });
+        t.fromWorker({ type: 'error', sessionId, code: 'at_capacity', message: 'full', participantId: 'room_7', epoch: 1 });
+        // The same refusal again is about a call already gone: not counted twice
+        t.fromWorker({ type: 'error', sessionId, code: 'at_capacity', message: 'full', participantId: 'room_7', epoch: 1 });
+        t.fromWorker({ type: 'error', sessionId, code: 'no_session', message: 'gone' });
+        t.calls.handlePrivateEvent(t.event('start', 'room_8'));
+        const second = (t.sent.filter((m) => m.type === 'session.open').at(-1) as { sessionId: string }).sessionId;
+        t.fromWorker({ type: 'error', sessionId: second, code: 'at_capacity', message: 'full' });
+        expect(turned).toEqual([
+            [SPACE, 'connection'],
+            [SPACE, 'bubble'],
+        ]);
+    });
+
     it('shuts everything down when the bot goes', () => {
         const t = setup();
         t.calls.handlePrivateEvent(t.event('start'));
@@ -361,11 +381,14 @@ describe('VoiceCalls: a bubble on LiveKit', () => {
 
     it('gives up on a room the worker has no room for', () => {
         const t = setup();
+        const turned: [string, string][] = [];
+        t.calls.onTurnedAway = (space, what) => turned.push([space, what]);
         t.calls.handlePrivateEvent(t.livekit('invite'));
         const room = rooms(t.sent)[0];
         t.fromWorker({ type: 'error', sessionId: room.sessionId, code: 'at_capacity', message: 'full', epoch: room.epoch });
         t.calls.spaceUserJoined(SPACE, t.person('room_8'));
         expect(t.sent.filter((m) => m.type === 'room.people')).toHaveLength(1);
+        expect(turned).toEqual([[SPACE, 'room']]);
     });
 });
 

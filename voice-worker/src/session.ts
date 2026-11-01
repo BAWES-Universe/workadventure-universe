@@ -223,6 +223,7 @@ export class Session {
         );
         this.lanes.set(participantId, lane);
         c.inc('lanes_opened');
+        c.max('peak_lanes', this.host.laneCount());
         this.timers.set(lane, setTimeout(() => void this.dropLane(lane, 'timeout', true), CONNECT_TIMEOUT_MS));
     }
 
@@ -304,6 +305,7 @@ export class Session {
         });
         this.room = room;
         c.inc('rooms_opened');
+        c.max('peak_lanes', this.host.laneCount());
         // Connecting takes a while; the session keeps handling messages meanwhile
         void room.start().catch(() => void this.dropRoom(room, 'failed', true));
     }
