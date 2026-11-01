@@ -39,7 +39,12 @@ export class ObjectSounds {
         const key = `${entityId}/${propertyId}`;
         const now = this.now();
         this.forgetEnded(now);
-        const playing = this.sounds.get(key);
+        let playing = this.sounds.get(key);
+        if (playing && playing.loop !== message.loop) {
+            // Loop was switched on or off since this sound started: what is remembered no longer says what plays
+            this.sounds.delete(key);
+            playing = undefined;
+        }
         if (playing?.loop) {
             this.sounds.delete(key);
             this.send({ entityId, propertyId, playing: false, loop: true, elapsedSeconds: 0, durationSeconds: 0 });
@@ -66,13 +71,21 @@ export class ObjectSounds {
         });
     }
 
-    /** The sounds still playing, for a player who arrives */
-    public getMessages(): ObjectSoundMessage[] {
+    /**
+     * The sounds still playing, for a player who arrives. With soundOf (the sound the saved map has for an object),
+     * a sound the map no longer has, or whose loop it switched since, is left out.
+     */
+    public getMessages(
+        soundOf?: (entityId: string, propertyId: string) => { loop: boolean } | undefined
+    ): ObjectSoundMessage[] {
         const now = this.now();
         this.forgetEnded(now);
         const messages: ObjectSoundMessage[] = [];
         for (const sound of this.sounds.values()) {
             if (!sound.loop && now >= sound.startedAt + sound.durationMs) {
+                continue;
+            }
+            if (soundOf && soundOf(sound.entityId, sound.propertyId)?.loop !== sound.loop) {
                 continue;
             }
             messages.push({
@@ -85,6 +98,15 @@ export class ObjectSounds {
             });
         }
         return messages;
+    }
+
+    /** The object was deleted: its sounds are no longer playing */
+    public forget(entityId: string): void {
+        for (const [key, sound] of this.sounds) {
+            if (sound.entityId === entityId) {
+                this.sounds.delete(key);
+            }
+        }
     }
 
     /** Sounds that ended and whose wait is over are forgotten, so the list never grows past what still counts */
