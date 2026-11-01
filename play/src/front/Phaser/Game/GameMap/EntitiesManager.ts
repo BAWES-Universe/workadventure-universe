@@ -315,6 +315,13 @@ export class EntitiesManager extends Phaser.Events.EventEmitter {
         entity.on(
             EntityEvent.PropertyActivated,
             (...datas: { propertyName: string; propertyValue: string | number | boolean }[]) => {
+                // Only a change fires a property. The same link set again by a second click (the object opens it
+                // straight away, so no object card clears it) is dropped first, so every click opens it again.
+                const repeated = datas.filter((data) => this.properties.get(data.propertyName) === data.propertyValue);
+                if (repeated.length > 0) {
+                    repeated.forEach((data) => this.properties.delete(data.propertyName));
+                    this.gameMapFrontWrapper.handleEntityActionTrigger();
+                }
                 datas.forEach((data) => this.properties.set(data.propertyName, data.propertyValue));
                 this.gameMapFrontWrapper.handleEntityActionTrigger();
             }
