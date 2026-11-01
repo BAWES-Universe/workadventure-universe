@@ -16,6 +16,8 @@ export const VOICE_NOTE_MATRIX_WAVEFORM_MAX = 1024;
 
 /** A quiet bar still shows. */
 const FLOOR = 0.08;
+/** A shape whose loudest point is no higher than this (the floor, after rounding to Matrix's scale) is a silent note. */
+const SILENT_LEVEL = FLOOR + 0.01;
 
 /** The body Element gives a voice message, and the name every note of ours is uploaded under (plus its extension). */
 export const VOICE_NOTE_NAME = "Voice message";
@@ -135,7 +137,10 @@ export function fromMatrixWaveform(raw: unknown): number[] | undefined {
             ? Math.min(1, Math.max(0, value / VOICE_NOTE_MATRIX_WAVEFORM_MAX))
             : 0
     );
-    return waveformOf(levels, Math.min(levels.length, VOICE_NOTE_MATRIX_WAVEFORM_POINTS));
+    const points = Math.min(levels.length, VOICE_NOTE_MATRIX_WAVEFORM_POINTS);
+    // A silent note comes back as bars at the floor: scaled up, the floor would become the loudest bar and every bar full.
+    if (Math.max(...levels) <= SILENT_LEVEL) return resampleWaveform(levels, points);
+    return waveformOf(levels, points);
 }
 
 /** Seconds from a Matrix event's milliseconds, or undefined when it is not a usable length. */

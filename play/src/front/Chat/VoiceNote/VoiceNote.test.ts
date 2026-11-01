@@ -10,6 +10,8 @@ import {
     secondsFromMatrixDuration,
     toMatrixWaveform,
     voiceNoteFileName,
+    voiceNoteFromWire,
+    voiceNoteToWire,
     waveformOf,
 } from "./VoiceNote";
 
@@ -59,6 +61,17 @@ describe("the shape of a note", () => {
         const silent = waveformOf([0, 0, 0, 0, 0, 0], 6);
         expect(resampleWaveform(silent, 30).every((bar) => bar === 0.08)).toBe(true);
         expect(toMatrixWaveform(silent).every((level) => level < 100)).toBe(true);
+    });
+
+    it("keeps a silent note flat after it goes to Matrix or the nearby chat and comes back", () => {
+        const silent = waveformOf([0, 0, 0], 3);
+        expect(fromMatrixWaveform(toMatrixWaveform(silent))?.every((bar) => bar < 0.1)).toBe(true);
+        const back = voiceNoteFromWire(1000, voiceNoteToWire({ duration: 1, waveform: silent }).voiceWaveform);
+        expect(back.voiceWaveform?.every((bar) => bar < 0.1)).toBe(true);
+    });
+
+    it("still scales a quiet but real shape from Element so its loudest bar is full", () => {
+        expect(Math.max(...(fromMatrixWaveform([100, 300, 200]) ?? []))).toBe(1);
     });
 
     it("keeps a note's shape when drawn with fewer bars", () => {
