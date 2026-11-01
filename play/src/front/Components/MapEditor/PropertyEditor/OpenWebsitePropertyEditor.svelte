@@ -40,6 +40,7 @@
     } from "../../../WebRtc/LayoutManager";
     import USelect from "../../UI/USelect.svelte";
     import { artifactIdOfLink } from "../../../Artifacts/artifactLinkCard";
+    import { getObjectNearHint, type HintSetting } from "../../../Utils/ObjectHint";
     import PropertyEditorBase from "./PropertyEditorBase.svelte";
     import PanelSwitch from "./PanelSwitch.svelte";
     import PolicyChips from "./PolicyChips.svelte";
@@ -50,6 +51,8 @@
     export let triggerOptionActivated = true;
     export let icon = "resources/icons/icon_link.png";
     export let isArea = false;
+    /** All of the object's settings (this one included), so the Toast Message preview follows the same rule as the game. */
+    export let siblings: HintSetting[] = [];
 
     let optionAdvancedActivated = shouldDisplayAdvancedOption();
 
@@ -557,6 +560,18 @@
     onDestroy(() => {
         closePicker();
     });
+
+    // The empty Toast Message box previews what the object shows when you walk near, worked out by the same rule as
+    // the game from all of the object's settings: its Button Label after the key chip when a click does one thing and
+    // it has one, else the usual hint (#1740). Objects only; an area has no Button Label hint.
+    $: triggerPlaceholder = isArea
+        ? $LL.trigger.object()
+        : getObjectNearHint(
+              siblings.length > 0 ? siblings : [property],
+              $LL.trigger.spaceKeyboard(),
+              $LL.trigger.object(),
+              false
+          );
 </script>
 
 <PropertyEditorBase
@@ -729,6 +744,11 @@
                 <div class="u-join-field">
                     <input id="linkButton" type="text" bind:value={property.buttonLabel} on:change={onValueChange} />
                 </div>
+                {#if !isArea}
+                    <small class="op-help" data-testid="linkButton-help"
+                        >{$LL.mapEditor.entityEditor.buttonLabelHelp()}</small
+                    >
+                {/if}
             </div>
         {/if}
 
@@ -749,7 +769,7 @@
                         <input
                             id="triggerMessage"
                             type="text"
-                            placeholder={$LL.trigger.object()}
+                            placeholder={triggerPlaceholder}
                             bind:value={property.triggerMessage}
                             on:change={onValueChange}
                         />
@@ -856,6 +876,12 @@
         flex-direction: column;
         gap: 6px;
         min-width: 0;
+    }
+    .op-help {
+        padding-inline-start: 2px;
+        color: rgba(255, 255, 255, 0.6);
+        font-size: 0.78rem;
+        line-height: 1.4;
     }
     .op-label {
         padding-inline-start: 2px;
