@@ -3,13 +3,14 @@
  * person who is talking, and never the claim a retry replaced.
  */
 import { describe, expect, it } from 'vitest';
-import { BotSpeech, WAIT_FOR_AUDIENCE_MS, type SpeechVoice } from '../voice/BotSpeech';
+import { BotSpeech, type SpeechVoice } from '../voice/BotSpeech';
+import { DEFAULT_REPLY_LIMITS } from '../voice/settings';
 import { SPOKEN_PHRASES } from '../voice/SpokenText';
 
 const SPACE = 'proximity-1';
 const reply = (n: number, player = 7) => `bot-b1-player-${player}-0000000${n}-aaaa-bbbb-cccc-dddddddddddd`;
 
-function setup(options: { audience?: boolean; limits?: { maxChars: number; maxSeconds: number } } = {}) {
+function setup(options: { audience?: boolean; limits?: Partial<typeof DEFAULT_REPLY_LIMITS> } = {}) {
     let clock = 1000;
     const said: { segmentId: string; text: string; maxMs?: number }[] = [];
     const state = { audience: options.audience ?? true, speaking: false, spokenToAt: 0, sayWorks: true };
@@ -23,7 +24,7 @@ function setup(options: { audience?: boolean; limits?: { maxChars: number; maxSe
         someoneSpeaking: () => state.speaking,
         lastSpokenToAt: () => state.spokenToAt,
     };
-    const speech = new BotSpeech(voice, options.limits, () => clock);
+    const speech = new BotSpeech(voice, { ...DEFAULT_REPLY_LIMITS, ...options.limits }, () => clock);
     return { speech, said, state, tick: (ms: number) => (clock += ms), now: () => clock };
 }
 
@@ -133,10 +134,19 @@ describe('a greeting finished before anyone is connected', () => {
     it('is dropped when the audio takes too long, so an old reply is not said out of the blue', () => {
         const t = setup({ audience: false });
         t.speech.final(SPACE, 'greeting-1', 'Welcome!');
-        t.tick(WAIT_FOR_AUDIENCE_MS + 1);
+        t.tick(DEFAULT_REPLY_LIMITS.greetingWaitSeconds * 1000 + 1);
         t.state.audience = true;
         t.speech.audience(SPACE);
         expect(t.said).toEqual([]);
+    });
+
+    it('waits as long as the setting says', () => {
+        const t = setup({ audience: false, limits: { greetingWaitSeconds: 40 } });
+        t.speech.final(SPACE, 'greeting-1', 'Welcome!');
+        t.tick(30000);
+        t.state.audience = true;
+        t.speech.audience(SPACE);
+        expect(t.said.map((s) => s.text)).toEqual(['Welcome!']);
     });
 
     it('is dropped when they have begun to talk by then, and when the bot has left', () => {

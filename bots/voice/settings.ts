@@ -12,9 +12,11 @@ export interface ReplyLimits {
     maxChars: number;
     /** Seconds of speech. */
     maxSeconds: number;
+    /** How long a greeting finished before anyone's audio connected waits for it, in seconds. Past it, it is not said. */
+    greetingWaitSeconds: number;
 }
 
-export const DEFAULT_REPLY_LIMITS: ReplyLimits = { maxChars: 600, maxSeconds: 60 };
+export const DEFAULT_REPLY_LIMITS: ReplyLimits = { maxChars: 600, maxSeconds: 60, greetingWaitSeconds: 15 };
 
 export function voiceReplyLimits(env: NodeJS.ProcessEnv = process.env): ReplyLimits {
     const positive = (value: string | undefined, fallback: number): number => {
@@ -24,5 +26,6 @@ export function voiceReplyLimits(env: NodeJS.ProcessEnv = process.env): ReplyLim
     return {
         maxChars: positive(env.VOICE_REPLY_MAX_CHARS, DEFAULT_REPLY_LIMITS.maxChars),
         maxSeconds: positive(env.VOICE_REPLY_MAX_SECONDS, DEFAULT_REPLY_LIMITS.maxSeconds),
+        greetingWaitSeconds: positive(env.VOICE_GREETING_WAIT_SECONDS, DEFAULT_REPLY_LIMITS.greetingWaitSeconds),
     };
 }

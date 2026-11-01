@@ -8,7 +8,7 @@
  * - The same reply is never spoken twice, and a reconnect says nothing: nothing here runs unless a reply is finished.
  * - A person talking wins: a reply that was being written when they started to talk, or finishes while they are talking,
  *   is not spoken (a greeting included). One that is playing is stopped by the worker, and the message is marked.
- * - A greeting is finished before the person's audio has connected: it waits a few seconds for it, and is said once.
+ * - A greeting is finished before the person's audio has connected: it waits for it (a setting, 15 s by default), and is said once.
  */
 import { NOTHING_SAVED_LINE } from '../ai/ArtifactTools';
 import { spokenVersion } from './SpokenText';
@@ -24,8 +24,6 @@ export interface SpeechVoice {
 
 export type SpeechOutcome = 'spoken' | 'waiting' | 'held' | 'again' | 'overtaken' | 'unsaid';
 
-/** A reply finished before anyone's audio was connected is kept this long for when it is. */
-export const WAIT_FOR_AUDIENCE_MS = 15000;
 const MAX_REMEMBERED = 200;
 
 interface Waiting {
@@ -89,7 +87,7 @@ export class BotSpeech {
         const waiting = this.waiting.get(spaceName);
         if (!waiting) return;
         this.waiting.delete(spaceName);
-        if (this.now() - waiting.since > WAIT_FOR_AUDIENCE_MS || this.said.has(waiting.responseId)) return;
+        if (this.now() - waiting.since > this.limits.greetingWaitSeconds * 1000 || this.said.has(waiting.responseId)) return;
         if (this.voice.someoneSpeaking(spaceName)) {
             remember(this.said, waiting.responseId);
             return;
