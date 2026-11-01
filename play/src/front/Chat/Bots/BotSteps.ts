@@ -75,6 +75,12 @@ export function parseBotSteps(value: unknown): BotSteps | undefined {
     };
 }
 
+/** What a step shows under its words: why it didn't work or may have run, else what it was about. */
+export function stepMore(step: BotStep): string | undefined {
+    if ((step.state === "failed" || step.state === "unknown") && step.note) return step.note;
+    return step.detail;
+}
+
 /** The step the line names while it works: the newest that still runs. */
 export function currentStep(steps: BotSteps): BotStep | undefined {
     return [...steps.steps].reverse().find((step) => step.state === "running") ?? steps.steps.at(-1);

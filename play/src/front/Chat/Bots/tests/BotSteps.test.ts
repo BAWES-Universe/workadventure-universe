@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { currentStep, readBotSteps, stepsClock } from "../BotSteps";
+import { currentStep, readBotSteps, stepMore, stepsClock, type BotStep } from "../BotSteps";
 
 const BOT_CHAT_ID = "@bot_0b7c1d2e-1111-4222-8333-944455556666:matrix.bawes.net";
 const FIELD = {
@@ -115,5 +115,28 @@ describe("readBotSteps", () => {
         expect(stepsClock(65.7)).toBe("1:05");
         expect(stepsClock(723)).toBe("12:03");
         expect(stepsClock(-3)).toBe("0:00");
+    });
+});
+
+describe("stepMore", () => {
+    const step = (state: BotStep["state"], extra: Partial<BotStep> = {}): BotStep => ({
+        doing: "Using Search",
+        done: "Used Search",
+        state,
+        again: false,
+        ...extra,
+    });
+
+    it("shows why a call didn't work or may have run, else what it was about (#1723)", () => {
+        expect(stepMore(step("done", { detail: "funk" }))).toBe("funk");
+        expect(stepMore(step("failed", { detail: "funk", note: "Couldn't reach it. Nothing ran" }))).toBe(
+            "Couldn't reach it. Nothing ran"
+        );
+        expect(stepMore(step("unknown", { detail: "funk", note: "No answer. May have finished" }))).toBe(
+            "No answer. May have finished"
+        );
+        // A failed call without a note still says what it was about; a call with neither shows nothing
+        expect(stepMore(step("failed", { detail: "funk" }))).toBe("funk");
+        expect(stepMore(step("done"))).toBeUndefined();
     });
 });
