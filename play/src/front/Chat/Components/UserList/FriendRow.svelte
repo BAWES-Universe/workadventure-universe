@@ -20,7 +20,7 @@
     import FriendAvatar from "./FriendAvatar.svelte";
     import FriendMenuButton from "./FriendMenuButton.svelte";
     import type { PlacedFriend } from "./Friends";
-    import { isOnline, relativeTime } from "./Friends";
+    import { isOnline, profileTakesFirstSpot, relativeTime } from "./Friends";
     import { statusLabel } from "./PersonStatus";
     import { goToPersonRoom, walkToPerson } from "./PersonNavigation";
     import { runFriendAction } from "./FriendActions";
@@ -39,7 +39,8 @@
     /**
      * One friend in the Friends view: where they are (or that they hide it, or when they were last seen) and how
      * to reach them. Online: Walk to when they're here, Go when they're elsewhere and say where. Message second, and
-     * Invite first in ⋮ (online only), the same row as everyone's.
+     * Invite first in ⋮ (online only), the same row as everyone's. When there is neither Walk to nor Go (offline, or
+     * they hide where they are), View profile takes the first spot instead and leaves ⋮, so Message stays put.
      */
     export let entry: PlacedFriend;
     /** Their woka, when they are in this world. */
@@ -60,6 +61,7 @@
     $: canRing = online;
     $: ring = ringLine($outgoingRingsStore.get(friend.uuid), $ringClockStore, RING_MS);
     $: canViewProfile = $adminDashboardActivatedStore && canOpenOrbit();
+    $: profileButton = profileTakesFirstSpot(canViewProfile, canWalk, canGo);
     // Their other tabs, by room: the session to reach them at can come from the world's list, not from presence.
     $: otherSessions =
         !entry.locationUnknown && !presenceUnavailable
@@ -123,7 +125,7 @@
                   },
               ]
             : []),
-        ...(canViewProfile
+        ...(canViewProfile && !profileButton
             ? [
                   {
                       key: "profile",
@@ -206,6 +208,15 @@
                     on:click={() => go()}
                 >
                     <IconDoorIn font-size="20" />
+                </PersonActionButton>
+            {:else if profileButton}
+                <PersonActionButton
+                    label={$LL.chat.userList.viewProfile()}
+                    ariaLabel={$LL.chat.userList.viewProfile()}
+                    testId={`friend-profile-${friend.name}`}
+                    on:click={() => openOrbitProfile(friend.uuid)}
+                >
+                    <IconUserCircle font-size="20" />
                 </PersonActionButton>
             {/if}
             {#if canMessage}
