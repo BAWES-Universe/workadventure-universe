@@ -260,6 +260,9 @@ export interface BotConfiguration {
         radius: number;
     };
     enabled?: boolean; // Whether bot is active (defaults to true if not specified)
+    // Whether the bot joins its bubble's audio: the owner's choice, off until the owner turns it on (Orbit #740 will
+    // send it). Missing means off, and the bot stays text-only.
+    voiceEnabled?: boolean;
     characterTextureIds?: string[]; // Character texture IDs for bot appearance
     // The companion (pet) that walks with the bot: a companion texture id from the room's companion list.
     // Null or missing means none.

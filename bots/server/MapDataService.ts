@@ -3,6 +3,7 @@
  */
 
 import { PathTileType } from '../utils/BotPathfindingManager';
+import { meetingAreasFromWam, type MeetingArea } from '../voice/MeetingAreas';
 
 export interface MapArea {
     name: string;
@@ -18,6 +19,8 @@ interface MapData {
     collisionGrid: number[][];
     tileDimensions: { width: number; height: number };
     areas: MapArea[];
+    /** The areas with a LiveKit room setting (meeting rooms), for a voice bot that stands in one. */
+    meetingAreas: MeetingArea[];
 }
 
 interface CachedMapData extends MapData {
@@ -48,6 +51,7 @@ export class MapDataService {
                 collisionGrid: cached.collisionGrid,
                 tileDimensions: cached.tileDimensions,
                 areas: cached.areas || [],
+                meetingAreas: cached.meetingAreas || [],
             };
         }
         
@@ -330,6 +334,7 @@ export class MapDataService {
             collisionGrid,
             tileDimensions: { width: tileWidth, height: tileHeight },
             areas,
+            meetingAreas: meetingAreasFromWam(wamData),
         };
     }
 

@@ -2,6 +2,7 @@ import type { AreaData } from "@workadventure/map-editor";
 import { isAreaPropertyActive } from "@workadventure/map-editor";
 import { hasPermission, Permission, permissionsFrom } from "@workadventure/shared-utils/src/Permissions/permissions";
 import { areaSpaceName } from "@workadventure/shared-utils/src/Space/areaSpaceName";
+import { VOICE_BOT_TAG } from "../Model/Strategies/VoiceBot";
 
 interface WamLike {
     areas: Record<string, AreaData> | AreaData[];
@@ -16,14 +17,15 @@ interface WamLike {
  *
  * A name is refused only when every area carrying it is closed to this user (a Stage and its Audience share a name,
  * so being let into either is enough). Names the map does not know are never refused, and neither are bots, which
- * join the room's spaces on their own account.
+ * join the room's spaces on their own account. A voice bot is the exception: it takes part in the audio of a meeting
+ * room it stands in, so it is let in only where a player with its roles (none) would be.
  */
 export function refusedAreaSpaces(
     wam: WamLike | undefined,
     roomUrl: string,
     user: { tags: string[]; uuid: string; canEdit: boolean }
 ): string[] {
-    if (wam === undefined || user.canEdit || isBot(user)) {
+    if (wam === undefined || bypassesAreaSpaceRights(user)) {
         return [];
     }
     const areas = Array.isArray(wam.areas) ? wam.areas : Object.values(wam.areas);
@@ -47,7 +49,7 @@ export function refusedAreaSpaces(
  * the room's spaces on their own account).
  */
 export function bypassesAreaSpaceRights(user: { tags: string[]; uuid: string; canEdit: boolean }): boolean {
-    return user.canEdit || isBot(user);
+    return user.canEdit || (isBot(user) && !isVoiceBot(user));
 }
 
 /**
@@ -112,6 +114,11 @@ function canEditMaps(user: { tags: string[]; permissions?: number }): boolean {
 
 export function isBot(user: { tags: string[]; uuid: string }): boolean {
     return user.tags.includes("bot") || user.uuid.startsWith("bot-");
+}
+
+/** A voice bot: a bot whose token carries the voice tag (the bot server signs it; a person's token never has "bot"). */
+function isVoiceBot(user: { tags: string[]; uuid: string }): boolean {
+    return isBot(user) && user.tags.includes(VOICE_BOT_TAG);
 }
 
 function canEnter(area: AreaData, userTags: string[]): boolean {
