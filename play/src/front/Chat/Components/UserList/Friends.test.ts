@@ -2,7 +2,7 @@ import { AvailabilityStatus } from "@workadventure/messages";
 import type { Friend, FriendSession } from "@workadventure/messages";
 import { describe, expect, it } from "vitest";
 import type { WorldSighting } from "./Friends";
-import { groupFriends, otherWorldFaces, placeFriends, relativeTime, worldOf } from "./Friends";
+import { chatIdsToAsk, groupFriends, otherWorldFaces, placeFriends, relativeTime, savedLook, worldOf } from "./Friends";
 
 const HERE = "https://play.test/@/bawes/hub/lobby";
 const SAME_WORLD = "https://play.test/@/bawes/hub/cafe";
@@ -117,5 +117,46 @@ describe("relativeTime", () => {
         expect(relativeTime("2026-10-03T12:00:00Z", now, "en")).toBe("yesterday");
         expect(relativeTime("", now, "en")).toBe("");
         expect(relativeTime("not a date", now, "en")).toBe("");
+    });
+});
+
+describe("savedLook", () => {
+    const wokas = new Map([["@shahd:chat", "shahd-woka"]]);
+    const colourOf = (chatId: string | undefined, name: string) => `colour-of-${name}`;
+
+    it("gives someone the world isn't showing their saved woka, on the colour of their name", () => {
+        expect(savedLook({ uuid: "u1", name: "Shahd", chatId: "@shahd:chat" }, wokas, colourOf)).toEqual({
+            picture: "shahd-woka",
+            color: "colour-of-Shahd",
+        });
+    });
+
+    it("keeps the default woka when nothing is saved, or without a chat ID", () => {
+        expect(savedLook({ uuid: "u2", name: "Mishari", chatId: "@mishari:chat" }, wokas, colourOf).picture).toBe(
+            undefined
+        );
+        expect(savedLook({ uuid: "u3", name: "Yousef", chatId: "" }, wokas, colourOf)).toEqual({
+            picture: undefined,
+            color: "colour-of-Yousef",
+        });
+    });
+
+    it("gives nothing for someone not listed", () => {
+        expect(savedLook(undefined, wokas, colourOf)).toEqual({});
+    });
+});
+
+describe("chatIdsToAsk", () => {
+    const people = [
+        { uuid: "here", name: "Here", chatId: "@here:chat" },
+        { uuid: "away", name: "Away", chatId: "@away:chat" },
+        { uuid: "nochat", name: "No chat", chatId: "" },
+    ];
+
+    it("asks once for each shown person the world isn't drawing", () => {
+        const asked = new Set<string>();
+        const inWorld = (uuid: string) => uuid === "here";
+        expect(chatIdsToAsk(people, inWorld, asked)).toEqual(["@away:chat"]);
+        expect(chatIdsToAsk(people, inWorld, asked)).toEqual([]);
     });
 });
