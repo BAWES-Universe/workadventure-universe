@@ -146,6 +146,9 @@
     onDestroy(() => {
         clearTimeout(comingBackTimer);
         clearTimeout(growTimer);
+        // The widths read above go with this bar: a bar shown again (it is removed while the chat or the map editor
+        // leaves it no room) starts from Explore's full name and measures again, as on first load.
+        exploreShortLabelStore.set(false);
     });
 
     function onMenuItemVisibilityChange(isVisible: boolean, button: RightMenuItem<SvelteComponentTyped>) {
