@@ -2,7 +2,7 @@ import { get } from "svelte/store";
 import { lowerChatSheet } from "../Chat/ChatSheetStore";
 import { coWebsites, openedByPersonCoWebsite } from "../Stores/CoWebsiteStore";
 import { bringOpenHereInFront } from "../Stores/SideWindowInFrontStore";
-import { ArtifactCoWebsite } from "../WebRtc/CoWebsite/ArtifactCoWebsite";
+import { ArtifactCoWebsite, type ArtifactSummary } from "../WebRtc/CoWebsite/ArtifactCoWebsite";
 import type { ArtifactChat } from "./ArtifactApi";
 import type { ArtifactCard } from "./artifactCard";
 
@@ -19,10 +19,33 @@ export function openArtifactWindow(id: string): ArtifactCoWebsite | undefined {
  * artifact shows above it.
  */
 export function openArtifactFromCard(card: ArtifactCard, chat: ArtifactChat | undefined, makerName?: string): void {
+    openArtifact(
+        card.id,
+        chat,
+        { title: card.title, kind: card.kind, makerName: card.maker ?? makerName },
+        card.version
+    );
+}
+
+/**
+ * Opens an artifact's latest version in the window from its share link, as an object on the map links to it (game
+ * #1737). Nothing is asked first: the window asks the game's server, and when this person may not open it, the window
+ * says so. The title shows until the window knows the artifact's own.
+ */
+export function openArtifactFromLink(id: string, title: string): void {
+    openArtifact(id, undefined, { title, kind: undefined, makerName: undefined }, undefined);
+}
+
+function openArtifact(
+    id: string,
+    chat: ArtifactChat | undefined,
+    summary: ArtifactSummary,
+    version: number | undefined
+): void {
     lowerChatSheet();
-    const existing = openArtifactWindow(card.id);
+    const existing = openArtifactWindow(id);
     if (existing) {
-        existing.version.set(card.version);
+        existing.version.set(version);
         if (chat) existing.chat = chat;
         // With other panels open, it moves to the end, where the container shows the newest panel.
         if (get(coWebsites).length > 1) {
@@ -32,14 +55,5 @@ export function openArtifactFromCard(card: ArtifactCard, chat: ArtifactChat | un
         bringOpenHereInFront();
         return;
     }
-    coWebsites.add(
-        openedByPersonCoWebsite(
-            new ArtifactCoWebsite(
-                card.id,
-                chat,
-                { title: card.title, kind: card.kind, makerName: card.maker ?? makerName },
-                card.version
-            )
-        )
-    );
+    coWebsites.add(openedByPersonCoWebsite(new ArtifactCoWebsite(id, chat, summary, version)));
 }

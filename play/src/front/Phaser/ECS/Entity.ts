@@ -20,7 +20,6 @@ import { SimpleCoWebsite } from "../../WebRtc/CoWebsite/SimpleCoWebsite";
 import { createMapFileViewer, mapFileOpensInViewer } from "../../FileViewer/openFileViewer";
 import { coWebsites } from "../../Stores/CoWebsiteStore";
 import { openArtifactLink } from "../../Artifacts/openArtifactLink";
-import { scriptUtils } from "../../Api/ScriptUtils";
 import type { ActivatableInterface } from "../Game/ActivatableInterface";
 import { GameScene } from "../Game/GameScene";
 import type { OutlineableInterface } from "../Game/OutlineableInterface";
@@ -392,7 +391,7 @@ export class Entity extends Phaser.GameObjects.Image implements ActivatableInter
                                     propertyName: GameMapProperties.OPEN_TAB,
                                     propertyValue: link,
                                 });
-                            } else if (!openArtifactLink(link, (url) => scriptUtils.openTab(url))) {
+                            } else if (!openArtifactLink(link, property.buttonLabel ?? "")) {
                                 // Any other link opens framed; an artifact's share link opened its artifact window (#1737)
                                 const coWebsite = new SimpleCoWebsite(
                                     new URL(link),
