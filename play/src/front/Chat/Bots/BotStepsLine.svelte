@@ -2,12 +2,14 @@
     import { onDestroy } from "svelte";
     import type { Readable } from "svelte/store";
     import { LL } from "../../../i18n/i18n-svelte";
-    import { currentStep, stepsClock, type BotSteps } from "./BotSteps";
+    import { currentStep, stepMore, stepsClock, type BotSteps } from "./BotSteps";
+    import BotStepItem from "./BotStepItem.svelte";
     import { IconCheck, IconChevronDown, IconChevronUp, IconHelpCircle, IconMinus, IconX } from "@wa-icons";
 
     /**
      * A bot's steps line (#1545): no bubble, so it never reads as something the bot said. While the bot works it names
-     * the step running now, how many are done and a clock. Once it answers it folds into one summary to tap open.
+     * the step running now, how many are done and a clock, with each finished call listed under it. Once it answers it
+     * folds into one summary to tap open; a reply with one call is just that call's row, so nothing shows twice (#1723).
      */
     export let steps: Readable<BotSteps | undefined>;
 
@@ -18,6 +20,9 @@
     $: shown = $steps;
     $: working = shown?.state === "working";
     $: current = shown && working ? currentStep(shown) : undefined;
+    /** The calls that already ended, listed under the live line so you see what it did while it still works. */
+    $: endedWhileWorking = shown && working ? shown.steps.filter((step) => step.state !== "running") : [];
+    $: single = shown && !working && shown.steps.length === 1 ? shown.steps[0] : undefined;
     $: finished = shown?.steps.filter((step) => step.state !== "running").length ?? 0;
     $: failed = shown?.steps.filter((step) => step.state === "failed").length ?? 0;
     $: unknown = shown?.steps.filter((step) => step.state === "unknown").length ?? 0;
@@ -61,6 +66,35 @@
                     {#if elapsed}<br />{elapsed}{/if}
                 </span>
             </div>
+            {#if endedWhileWorking.length > 0}
+                <ol class="bot-steps-list" data-testid="botStepsEnded">
+                    {#each endedWhileWorking as step, index (index)}
+                        <BotStepItem {step} />
+                    {/each}
+                </ol>
+            {/if}
+        {:else if single}
+            <div class="bot-steps-row static" data-testid="botStepsSingle">
+                {#if single.state === "failed" || shown.state === "stopped"}
+                    <IconX class="bot-steps-icon bad" font-size={16} />
+                {:else if single.state === "unknown"}
+                    <IconHelpCircle class="bot-steps-icon" font-size={16} />
+                {:else if single.state === "running"}
+                    <IconMinus class="bot-steps-icon" font-size={16} />
+                {:else}
+                    <IconCheck class="bot-steps-icon" font-size={16} />
+                {/if}
+                <span class="bot-steps-words">
+                    <span
+                        >{single.done}{#if shown.state === "stopped"}<span>&nbsp;· </span><span class="bad"
+                                >{$LL.chat.botSteps.stopped()}</span
+                            >{/if}</span
+                    >
+                    {#if stepMore(single)}
+                        <small>{stepMore(single)}</small>
+                    {/if}
+                </span>
+            </div>
         {:else}
             <button
                 class="bot-steps-row"
@@ -94,32 +128,10 @@
                 {/if}
             </button>
         {/if}
-        {#if open && !working && shown.steps.length > 0}
+        {#if open && !working && shown.steps.length > 1}
             <ol class="bot-steps-list" data-testid="botStepsList">
                 {#each shown.steps as step, index (index)}
-                    <li class:bad={step.state === "failed"}>
-                        {#if step.state === "failed"}
-                            <IconX class="bot-steps-icon bad" font-size={15} />
-                        {:else if step.state === "unknown"}
-                            <IconHelpCircle class="bot-steps-icon" font-size={15} />
-                        {:else if step.state === "running"}
-                            <!-- Never finished in view: the line stopped (e.g. you walked away) before it said how it went -->
-                            <IconMinus class="bot-steps-icon" font-size={15} />
-                        {:else}
-                            <IconCheck class="bot-steps-icon" font-size={15} />
-                        {/if}
-                        <span class="bot-steps-words">
-                            <span>{step.done}</span>
-                            {#if (step.state === "failed" || step.state === "unknown") && step.note}
-                                <small>{step.note}</small>
-                            {:else if step.detail}
-                                <small>{step.detail}</small>
-                            {/if}
-                        </span>
-                        {#if step.again}
-                            <em>{$LL.chat.botSteps.again()}</em>
-                        {/if}
-                    </li>
+                    <BotStepItem {step} />
                 {/each}
             </ol>
         {/if}
@@ -151,20 +163,20 @@
         outline: 2px solid #c4b5fd;
         outline-offset: 1px;
     }
-    .bot-steps-row.live {
+    .bot-steps-row.live,
+    .bot-steps-row.static {
         cursor: default;
     }
-    .bot-steps-words {
+    .bot-steps :global(.bot-steps-words) {
         display: grid;
         min-width: 0;
         line-height: 1.35;
     }
-    .bot-steps-words small {
+    /* What a call was about wraps like any text: it is cut only by the bot server's own short limit, never to a line */
+    .bot-steps :global(.bot-steps-words small) {
         font-size: 12px;
         color: rgb(255 255 255 / 0.5);
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+        overflow-wrap: anywhere;
     }
     .bot-steps-now {
         color: white;
@@ -193,11 +205,11 @@
         color: #e96d51;
     }
     /* A call that may have run (#1692): not a failure, so not the coral */
-    .bot-steps-words .unknown {
+    .bot-steps :global(.bot-steps-words .unknown) {
         white-space: nowrap;
         color: white;
     }
-    .bot-steps-words .bad {
+    .bot-steps :global(.bot-steps-words .bad) {
         white-space: nowrap;
     }
     .bot-steps-spin {
@@ -230,7 +242,7 @@
         gap: 2px;
         min-width: 0;
     }
-    .bot-steps-list li {
+    .bot-steps-list :global(li) {
         display: flex;
         align-items: center;
         gap: 8px;
@@ -238,7 +250,7 @@
         min-width: 0;
         color: rgb(255 255 255 / 0.85);
     }
-    .bot-steps-list em {
+    .bot-steps-list :global(em) {
         margin-left: auto;
         flex: none;
         font-style: normal;
