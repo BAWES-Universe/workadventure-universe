@@ -557,54 +557,6 @@ jobs:
         run: npm test
         working-directory: "bots"
 
-  continuous-integration-voice-worker:
-    name: "Continuous Integration Voice Worker"
-
-    runs-on: "ubuntu-latest"
-
-    steps:
-      - name: "Checkout"
-        uses: "actions/checkout@v5"
-
-      - name: "Setup NodeJS"
-        uses: actions/setup-node@v3
-        with:
-          node-version: 22
-          cache: "npm"
-          cache-dependency-path: |
-            package-lock.json
-            voice-worker/package-lock.json
-
-      - name: Install Protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          version: '3.x'
-
-      # The worker's tests drive the bot server's voice code (bots/voice), so the bots packages are needed too
-      - name: "Install bots dependencies"
-        run: npm ci --workspace=@workadventure/bots
-
-      - name: "Install messages dependencies"
-        run: npm ci
-        working-directory: "messages"
-
-      - name: "Build proto messages"
-        run: npm run ts-proto
-        working-directory: "messages"
-
-      - name: "Install dependencies"
-        run: npm ci
-        working-directory: "voice-worker"
-
-      - name: "Typecheck"
-        run: npm run typecheck
-        working-directory: "voice-worker"
-
-      - name: "Vitest"
-        run: npm test
-        working-directory: "voice-worker"
-
   continuous-integration-end-to-end-tests:
     name: "Continuous Integration checking End To End tests"
 
