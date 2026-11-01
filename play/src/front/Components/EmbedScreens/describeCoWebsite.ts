@@ -2,7 +2,6 @@ import { get } from "svelte/store";
 import LL from "../../../i18n/i18n-svelte";
 import type { TranslationFunctions } from "../../../i18n/i18n-types";
 import type { CoWebsite } from "../../WebRtc/CoWebsite/CoWebsite";
-import { JitsiCoWebsite } from "../../WebRtc/CoWebsite/JitsiCoWebsite";
 import { BBBCoWebsite } from "../../WebRtc/CoWebsite/BBBCoWebsite";
 import { FileViewerCoWebsite } from "../../WebRtc/CoWebsite/FileViewerCoWebsite";
 import { ArtifactCoWebsite } from "../../WebRtc/CoWebsite/ArtifactCoWebsite";
@@ -11,7 +10,6 @@ import { artifactBadge, YOUR_ARTIFACTS_ICON, YOUR_ARTIFACTS_ICON_BACKGROUND } fr
 import { yourArtifactsList } from "../../Artifacts/chatArtifactsList";
 import { badgeOfKind, extensionOf, fileKindOf } from "../../FileViewer/fileKinds";
 import { audioFileTitle } from "../../Chat/Components/Room/Message/audioFileTitle";
-import jitsiIcon from "../images/jitsi.png";
 import meetingIcon from "../images/meeting.svg";
 import { coWebsiteIconBackground, coWebsiteIconUrl, coWebsiteSiteName } from "./coWebsiteRow";
 
@@ -67,9 +65,6 @@ export function describeCoWebsite(coWebsite: CoWebsite, texts: TranslationFuncti
                 : "",
             badge: fileBadgeFor(source.name),
         };
-    }
-    if (coWebsite instanceof JitsiCoWebsite) {
-        return { name: texts.cowebsite.jitsi(), line, iconSrc: jitsiIcon, iconBackground: "#000" };
     }
     if (coWebsite instanceof BBBCoWebsite) {
         return { name: texts.cowebsite.bigBlueButton(), line, iconSrc: meetingIcon, iconBackground: "#000" };

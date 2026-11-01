@@ -1151,21 +1151,6 @@ export class GameMapFrontWrapper {
                     break;
                 }
                 // TODO: consider whether to also add the properties of livekitRoomProperty
-                case "jitsiRoomProperty": {
-                    properties.push({
-                        name: GameMapProperties.JITSI_ROOM,
-                        type: "string",
-                        value: property.roomName ?? "",
-                    });
-                    if (property.jitsiRoomConfig) {
-                        properties.push({
-                            name: GameMapProperties.JITSI_CONFIG,
-                            type: "class",
-                            value: property.jitsiRoomConfig,
-                        });
-                    }
-                    break;
-                }
                 case "openWebsite": {
                     if (property.newTab) {
                         properties.push({

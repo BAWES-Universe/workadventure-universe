@@ -297,6 +297,8 @@ export class Entity extends Phaser.GameObjects.Image implements ActivatableInter
             if (value !== undefined && value !== null) {
                 // If the entity has a description property and it's empty, we don't consider it as a property
                 if (value.type === "entityDescriptionProperties" && value.description === "") continue;
+                // A sound that plays when someone is in range has nothing to click (#1627)
+                if (value.type === "playAudio" && value.startsOn === "range") continue;
                 return true;
             }
         }
@@ -370,31 +372,6 @@ export class Entity extends Phaser.GameObjects.Image implements ActivatableInter
         for (const property of properties) {
             if (onlyPropertyTypes && !onlyPropertyTypes.includes(property.type)) continue;
             switch (property.type) {
-                //TODO: see if we add livekit here
-                case "jitsiRoomProperty": {
-                    const roomName = property.roomName;
-                    const roomConfig = property.jitsiRoomConfig;
-                    actions.push({
-                        actionName: property.buttonLabel ?? "",
-                        protected: true,
-                        priority: 1,
-                        callback: () => {
-                            this.emit(
-                                EntityEvent.PropertyActivated,
-                                {
-                                    propertyName: GameMapProperties.JITSI_ROOM,
-                                    propertyValue: roomName,
-                                },
-                                {
-                                    propertyName: GameMapProperties.JITSI_CONFIG,
-                                    propertyValue: JSON.stringify(roomConfig),
-                                }
-                            );
-                            actionsMenuStore.clear();
-                        },
-                    });
-                    break;
-                }
                 case "openWebsite": {
                     // TODO add description to the empty interaction
                     if (!property.link) break;
@@ -404,6 +381,9 @@ export class Entity extends Phaser.GameObjects.Image implements ActivatableInter
                         actionName: property.buttonLabel ?? "",
                         protected: true,
                         priority: 1,
+                        propertyType: property.type,
+                        application: property.application,
+                        newTab,
                         callback: () => {
                             if (newTab) {
                                 this.emit(EntityEvent.PropertyActivated, {
@@ -416,7 +396,9 @@ export class Entity extends Phaser.GameObjects.Image implements ActivatableInter
                                     property.allowAPI,
                                     property.policy,
                                     property.width,
-                                    property.closable
+                                    property.closable,
+                                    undefined,
+                                    property.hideTitleBar
                                 );
                                 try {
                                     coWebsites.add(coWebsite);
@@ -430,16 +412,16 @@ export class Entity extends Phaser.GameObjects.Image implements ActivatableInter
                     break;
                 }
                 case "playAudio": {
-                    const audioLink = property.audioLink;
+                    // A sound that plays in range starts by itself (see ObjectSounds)
+                    if (property.startsOn === "range") break;
                     actions.push({
                         actionName: property.buttonLabel ?? "",
                         protected: true,
                         priority: 1,
+                        propertyType: property.type,
                         callback: () => {
-                            this.emit(EntityEvent.PropertyActivated, {
-                                propertyName: GameMapProperties.PLAY_AUDIO,
-                                propertyValue: audioLink,
-                            });
+                            // It mixes over the room music instead of replacing it (#1627)
+                            (this.scene as GameScene).getObjectSounds()?.click(this.entityId, property);
                             // Fixme: close the menu without impact audio manager and playing
                             //actionsMenuStore.clear();
                         },
@@ -453,6 +435,8 @@ export class Entity extends Phaser.GameObjects.Image implements ActivatableInter
                         actionName: property.buttonLabel ?? "",
                         protected: true,
                         priority: 1,
+                        propertyType: property.type,
+                        newTab,
                         callback: async () => {
                             const answer = await (this.scene as GameScene).connection?.queryMapStorageJwtToken();
                             const link = property.link + (answer && answer.jwt ? `?token=${answer.jwt}` : "");

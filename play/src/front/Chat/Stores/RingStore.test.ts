@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FriendsUpdateMessage, RingAnswer, RingReplyAnswer } from "@workadventure/messages";
 import { blackListManager } from "../../WebRtc/BlackListManager";
 import type { RingConnection } from "./RingStore";
-import { createRingStore, RING_AGAIN_MS } from "./RingStore";
+import { createRingStore, RING_RESULT_MS } from "./RingStore";
 
 function fakeConnection(
     ringAnswer: RingAnswer,
@@ -35,7 +35,7 @@ describe("ringStore", () => {
         vi.useRealTimers();
     });
 
-    it("rings, shows Stop, and on no answer waits ten minutes before Ring works again", async () => {
+    it("rings, shows Stop, and on no answer lets it ring again at once, the pusher deciding any wait", async () => {
         const store = createRingStore();
         const { connection, updates, queryRing } = fakeConnection(ringing);
         store.attach(connection);
@@ -46,14 +46,43 @@ describe("ringStore", () => {
         updates.next(result("no_answer"));
         const entry = get(store.outgoing).get("sara");
         expect(entry).toMatchObject({ state: "no_answer" });
-        expect(entry?.retryAt).toBe(Date.now() + RING_AGAIN_MS);
+        expect(entry?.retryAt).toBeUndefined();
         expect(get(store.toasts).map((t) => t.kind)).toEqual(["no_answer"]);
 
-        // A second ring meanwhile isn't even sent.
+        // A second ring straight after is sent to the pusher, which allows it.
+        expect(await store.ring("sara", "Sara")).toBe(true);
+        expect(queryRing).toHaveBeenCalledTimes(2);
+        expect(get(store.outgoing).get("sara")).toMatchObject({ state: "ringing" });
+    });
+
+    it("keeps what a ring ended with on their row for a while", async () => {
+        const store = createRingStore();
+        const { connection, updates } = fakeConnection(ringing);
+        store.attach(connection);
+        await store.ring("sara", "Sara");
+        updates.next(result("no_answer"));
+
+        vi.advanceTimersByTime(RING_RESULT_MS - 1);
+        expect(get(store.outgoing).has("sara")).toBe(true);
+        vi.advanceTimersByTime(1);
+        expect(get(store.outgoing).has("sara")).toBe(false);
+    });
+
+    it("when the pusher says to wait, a tap meanwhile is not sent and says how long is left", async () => {
+        const store = createRingStore();
+        const { connection, queryRing } = fakeConnection({ outcome: "too_soon", ringId: "", retryAfterSeconds: 540 });
+        store.attach(connection);
+
         expect(await store.ring("sara", "Sara")).toBe(false);
         expect(queryRing).toHaveBeenCalledTimes(1);
+        expect(get(store.toasts)[0]).toMatchObject({ kind: "too_soon", minutes: 9 });
 
-        vi.advanceTimersByTime(RING_AGAIN_MS);
+        vi.advanceTimersByTime(60_000);
+        expect(await store.ring("sara", "Sara")).toBe(false);
+        expect(queryRing).toHaveBeenCalledTimes(1);
+        expect(get(store.toasts).at(-1)).toMatchObject({ kind: "too_soon", name: "Sara", minutes: 8 });
+
+        vi.advanceTimersByTime(8 * 60_000);
         expect(get(store.outgoing).has("sara")).toBe(false);
     });
 

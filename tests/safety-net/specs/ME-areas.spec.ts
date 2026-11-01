@@ -443,7 +443,7 @@ test("ME-039 Add to this area: the plain rows, apps row and coral Delete", async
     const panel = settings(page);
     await expect(panel).toContainText("Add to this area");
     const titles = [
-        "Video call",
+        "Meeting room",
         "Quiet zone",
         "Stage",
         "Audience",
@@ -552,7 +552,7 @@ test("ME-040 In this area: the setting shows with a switch, off keeps it, on bri
         .toBe(true);
 });
 
-test("ME-041 Video call: room name and more options, Highlight added by itself, Stage and Audience still offered", async ({
+test("ME-041 Meeting room: room name and more options, Highlight added by itself, Stage and Audience still offered", async ({
     page,
 }, testInfo) => {
     const url = await areasOpen(page, testInfo);
@@ -863,10 +863,10 @@ test("ME-053 @local Focus, Highlight and Show a message act when you walk in", a
         .toBeGreaterThan(16);
 });
 
-test("ME-055 Jitsi call: no longer offered; an area that already has one keeps its page with the room name and its turn off", async ({
+test("ME-055 Jitsi call: not offered; a saved area that has one loses only that setting, and the map file drops it on the next save", async ({
     page,
 }, testInfo) => {
-    // Jitsi is discontinued: "Add to this area" does not list it, so an old Jitsi area comes from the saved map.
+    // Jitsi is no longer supported (#1688): an old Jitsi area can only come from a saved map.
     const url = await wamRoom(testInfo, "empty");
     await addWamAreas(url, [
         {
@@ -885,6 +885,14 @@ test("ME-055 Jitsi call: no longer offered; an area that already has one keeps i
                     jitsiRoomConfig: {},
                     trigger: "onaction",
                 },
+                {
+                    id: "old-highlight-prop",
+                    type: "highlight",
+                    opacity: 0.6,
+                    gradientWidth: 10,
+                    duration: 250,
+                    color: "#000000",
+                },
             ],
         },
     ]);
@@ -893,21 +901,34 @@ test("ME-055 Jitsi call: no longer offered; an area that already has one keeps i
     await pickAreas(page);
     await openAreaFromList(page, testInfo, "Old call");
     await expect(settings(page).getByTestId("jitsiRoomProperty"), "Jitsi call is not offered").toHaveCount(0);
-    const row = settings(page).locator(".em-row.on", { hasText: "Jitsi call" });
-    await expect(row.locator(".em-switch")).toBeChecked();
-    await row.locator(".em-row-main").click();
-    await expect(propertyPage(page).locator("#roomName")).toHaveValue("standup");
-    await propertyPage(page).getByTestId("area-property-remove").click();
+    await expect(settings(page).locator(".em-row.on", { hasText: "Jitsi call" }), "nor shown").toHaveCount(0);
+    const highlight = settings(page).locator(".em-row.on", { hasText: "Highlight" });
+    await expect(highlight.locator(".em-switch"), "the area keeps its other settings").toBeChecked();
+    // Any change saves the area as the game reads it: without the Jitsi setting. Switching Highlight off and back
+    // on must leave it saved and on.
+    await highlight.locator(".em-switch").click();
     await expect
-        .poll(async () => (await areaProps(url, "old-jitsi-area")).some((p) => p.type === "jitsiRoomProperty"))
-        .toBe(false);
-    await expect(settings(page).getByTestId("jitsiRoomProperty")).toHaveCount(0);
+        .poll(async () =>
+            (await areaProps(url, "old-jitsi-area")).map((p) => `${p.type}${p.disabled ? ":off" : ""}`).join(",")
+        )
+        .toBe("highlight:off");
+    await highlight.locator(".em-switch").click();
+    await expect(highlight.locator(".em-switch"), "Highlight is on again").toBeChecked();
+    await expect
+        .poll(
+            async () => {
+                const saved = await areaProps(url, "old-jitsi-area");
+                return saved.map((p) => `${p.type}${"disabled" in p ? ":flagged" : ""}`).join(",");
+            },
+            { message: "the saved area has only Highlight, and it is on" }
+        )
+        .toBe("highlight");
     await backToAreaList(page);
     await newArea(page, testInfo, url, "Call room");
     await expect(settings(page).getByTestId("jitsiRoomProperty")).toHaveCount(0);
     await page.getByTestId("livekitRoomProperty").click();
     await backToAreaRows(page);
-    await expect(settings(page).getByTestId("jitsiRoomProperty"), "nor next to a video call").toHaveCount(0);
+    await expect(settings(page).getByTestId("jitsiRoomProperty"), "nor next to a meeting room").toHaveCount(0);
 });
 
 test("ME-057 Delete an area from its settings or with the Delete key; Undo brings it back", async ({

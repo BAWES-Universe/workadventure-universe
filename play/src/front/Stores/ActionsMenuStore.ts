@@ -10,6 +10,12 @@ export type ActionsMenuAction = {
     style?: "is-success" | "is-error" | "is-primary" | string;
     actionIcon?: string;
     iconColor?: string;
+    /** The object setting behind the action ("openWebsite", "openFile", "playAudio"...), for the row's icon and hint. */
+    propertyType?: string;
+    /** The app of an "Open a website" setting (youtube, klaxoon...). */
+    application?: string;
+    /** It opens in a new browser tab. */
+    newTab?: boolean;
 };
 export interface ActionsMenuData {
     id: string;

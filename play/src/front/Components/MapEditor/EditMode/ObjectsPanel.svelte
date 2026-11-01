@@ -25,10 +25,16 @@
     } from "../../../Stores/EditModeStore";
     import EntityPropertiesEditor from "../EntityEditor/EntityPropertiesEditor.svelte";
     import USelect from "../../UI/USelect.svelte";
+    import { localUserStore } from "../../../Connection/LocalUserStore";
+    import { mapEditorActivatedForThematics, userIsConnected } from "../../../Stores/MenuStore";
     import PanelHeader from "./PanelHeader.svelte";
     import ObjectTile from "./ObjectTile.svelte";
     import UploadGuide from "./UploadGuide.svelte";
     import UploadVariants from "./UploadVariants.svelte";
+    import { hasCopyHereOutsideViewerRights, uploadOwnerView } from "./uploadOwner";
+    import { describePlacedIn } from "./uploadCopies";
+    import type { PlacedIn } from "./uploadCopies";
+    import type { Viewer } from "./uploadOwner";
     import { IconCloudUpload, IconPencil, IconRefresh, IconSearch } from "@wa-icons";
 
     const CUSTOM = "Custom";
@@ -41,9 +47,25 @@
             ?.getEntitiesCollectionsManager()
             .getEntitiesPrefabsVariantStore() ?? readable<EntityVariant[]>([]);
 
-    // An upload is shared by the whole world and deleting it removes it everywhere, so only people who may edit the
-    // room are offered "Add your own". Others keep placing, moving and deleting objects inside their own area.
-    $: canUpload = ($gameSceneStore ?? gameManager.tryGetCurrentGameScene())?.connection?.userCanEdit ?? false;
+    // Who is looking (#1628): map editors manage every upload; someone signed in with a place of their own to edit,
+    // such as their desk, may upload too and manage their own uploads. Guests can't upload.
+    $: scene = $gameSceneStore ?? gameManager.tryGetCurrentGameScene();
+    $: viewer = {
+        uuid: localUserStore.getLocalUser()?.uuid,
+        name: gameManager.getPlayerName() ?? "",
+        canEditMap: scene?.connection?.userCanEdit ?? false,
+        tags: scene?.connection?.getAllTags() ?? [],
+    } satisfies Viewer;
+    $: canUpload = viewer.canEditMap || ($userIsConnected && $mapEditorActivatedForThematics);
+    $: pickedUpload =
+        picked?.variant.defaultPrefab.type === CUSTOM
+            ? uploadOwnerView(picked.variant.defaultPrefab, viewer)
+            : undefined;
+    // Deleting an upload removes every copy of it, so its uploader may only while every copy is where they can edit.
+    $: deleteBlocked =
+        editingUpload !== undefined &&
+        !!scene &&
+        hasCopyHereOutsideViewerRights(picturesOf(editingUpload.id), scene.getGameMap(), viewer);
 
     let searchTerm = "";
     // The upload being changed. Its object is put down while the page is open, so the placing bar does not cover the
@@ -77,14 +99,14 @@
     }
 
     function label(tag: string): string {
-        if (tag === CUSTOM) return $LL.mapEditor.edit.objects.yourUploads();
+        if (tag === CUSTOM) return $LL.mapEditor.edit.objects.uploads();
         return tag.charAt(0).toUpperCase() + tag.slice(1);
     }
 
     function byTag(all: EntityVariant[]): { tag: string; items: EntityVariant[] }[] {
         const groups = new Map<string, EntityVariant[]>();
         for (const variant of all) {
-            // Your uploads show in the categories you gave them too, as they did in the old picker.
+            // Uploads show in the categories you gave them too, as they did in the old picker.
             // A prefab repeats a tag when the collection carries it too; one tile per section.
             for (const tag of new Set(variant.defaultPrefab.tags)) {
                 const list = groups.get(tag) ?? [];
@@ -92,7 +114,7 @@
                 groups.set(tag, list);
             }
         }
-        // Objects someone tagged "Custom" join Your uploads, the section that tag is shown as, rather than repeat it.
+        // Objects someone tagged "Custom" join Uploads, the section that tag is shown as, rather than repeat it.
         const taggedCustom = groups.get(CUSTOM) ?? [];
         groups.delete(CUSTOM);
         const sections = [...groups.entries()]
@@ -171,17 +193,51 @@
         }
         editingUpload = undefined;
     }
+    /** Where an upload is placed, for the box that confirms deleting it (#1690). */
+    async function loadPlacedIn(id: string): Promise<PlacedIn[]> {
+        const connection = scene?.connection;
+        if (!connection) return [];
+        const [rooms, knownRooms] = await Promise.all([
+            connection.queryUploadCopies(id),
+            // The names people see for the rooms elsewhere in the game. Without them the box falls back to the
+            // room's folder name.
+            connection.queryRoomsFromSameWorld().catch((e: unknown) => {
+                console.error(e);
+                return [];
+            }),
+        ]);
+        return describePlacedIn(rooms, knownRooms, scene?.wamUrlFile);
+    }
+
     function removeUpload(id: string) {
         // When the upload was all its category held, the panel goes back to all objects rather than an empty
         // category that no longer exists (#1636).
         const left = sections.find((section) => section.tag === category)?.items.filter((variant) => variant.id !== id);
         if (category && (left === undefined || left.length === 0)) selectCategoryStore.set(undefined);
-        for (const picture of picturesOf(id)) {
-            mapEditorDeleteCustomEntityEventStore.set({ id: picture });
-        }
+        // The whole upload goes at once, with every copy of it in every room (#1690).
+        mapEditorDeleteCustomEntityEventStore.set({
+            id,
+            wholeUpload: true,
+            pictureIds: picturesOf(id),
+            otherRoomWamUrls: [],
+        });
         editPickedVariantStore.set(undefined);
         mapEditorSelectedEntityPrefabStore.set(undefined);
         editingUpload = undefined;
+    }
+
+    // Someone in another room deleted the upload while its page is open: the panel goes back to Objects (#1690).
+    $: if (variants.length > 0) {
+        const uploadId = editingUpload?.id;
+        if (
+            uploadId !== undefined &&
+            !variants.some((variant) => variant.prefabs.some((prefab) => prefab.id === uploadId))
+        ) {
+            editingUpload = undefined;
+            editingVariants = false;
+            editPickedVariantStore.set(undefined);
+            mapEditorSelectedEntityPrefabStore.set(undefined);
+        }
     }
 
     const unsubscribePrefab = mapEditorSelectedEntityPrefabStore.subscribe((prefab) => {
@@ -210,6 +266,8 @@
     <!-- The same page the upload was made on, with its saved values (#1637). -->
     <UploadGuide
         editing={editingUpload}
+        {deleteBlocked}
+        loadPlacedIn={() => (editingUpload ? loadPlacedIn(editingUpload.id) : Promise.resolve([]))}
         on:done={() => (editingUpload = undefined)}
         on:remove={({ detail: { id } }) => removeUpload(id)}
         on:save={({ detail }) => saveUploadChanges(detail)}
@@ -242,7 +300,20 @@
             />
         </div>
     {/if}
-    {#if picked?.variant.defaultPrefab.type === CUSTOM}
+    {#if pickedUpload && pickedUpload.owner !== "unknown"}
+        <p class="em-owner" data-testid="upload-owner">
+            {#if pickedUpload.owner === "mine"}
+                {$LL.mapEditor.edit.objects.uploadedByYou()}
+            {:else}
+                {$LL.mapEditor.edit.objects.uploadedBy({
+                    name: pickedUpload.ownerName,
+                })}{#if !pickedUpload.canManage}<span
+                        >{$LL.mapEditor.edit.objects.onlyUploaderAndEditors({ name: pickedUpload.ownerName })}</span
+                    >{/if}
+            {/if}
+        </p>
+    {/if}
+    {#if pickedUpload?.canManage}
         <div class="em-links">
             <button
                 type="button"
@@ -353,6 +424,15 @@
     }
     .em-cat {
         flex: none;
+    }
+    .em-owner {
+        flex: none;
+        margin: 0 16px 4px;
+        font-size: 13px;
+        color: rgba(255, 255, 255, 0.72);
+    }
+    .em-owner span {
+        color: rgba(255, 255, 255, 0.5);
     }
     .em-links {
         display: flex;

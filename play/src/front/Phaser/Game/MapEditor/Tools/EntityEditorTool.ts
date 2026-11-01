@@ -28,6 +28,10 @@ import type { MapEditorModeManager } from "../MapEditorModeManager";
 import { AreaPreview } from "../../../Components/MapEditor/AreaPreview";
 import type { Entity } from "../../../ECS/Entity";
 import { editObjectsViewStore, editRecentObjectsStore, editTouchPreviewStore } from "../../../../Stores/EditModeStore";
+import { withUploader } from "../../../../Components/MapEditor/EditMode/uploadOwner";
+import type { Viewer } from "../../../../Components/MapEditor/EditMode/uploadOwner";
+import { localUserStore } from "../../../../Connection/LocalUserStore";
+import { gameManager } from "../../GameManager";
 import { EntityRelatedEditorTool } from "./EntityRelatedEditorTool";
 
 export class EntityEditorTool extends EntityRelatedEditorTool {
@@ -263,6 +267,15 @@ export class EntityEditorTool extends EntityRelatedEditorTool {
         });
     }
 
+    private viewer(): Viewer {
+        return {
+            uuid: localUserStore.getLocalUser()?.uuid,
+            name: gameManager.getPlayerName() ?? "",
+            canEditMap: this.scene.connection?.userCanEdit ?? false,
+            tags: this.scene.connection?.getAllTags() ?? [],
+        };
+    }
+
     protected subscribeToEntityUpload() {
         this.mapEditorEntityUploadStoreUnsubscriber = mapEditorEntityUploadEventStore.subscribe(
             (uploadEntityMessage) => {
@@ -270,7 +283,13 @@ export class EntityEditorTool extends EntityRelatedEditorTool {
                     (async () => {
                         await this.mapEditorModeManager.executeCommand(
                             new UploadEntityFrontCommand(
-                                uploadEntityMessage,
+                                withUploader(
+                                    uploadEntityMessage,
+                                    get(
+                                        this.scene.getEntitiesCollectionsManager().getEntitiesPrefabsVariantStore()
+                                    ).flatMap((variant) => variant.prefabs),
+                                    this.viewer()
+                                ),
                                 this.entitiesManager,
                                 this.scene.getEntitiesCollectionsManager()
                             )
@@ -313,14 +332,22 @@ export class EntityEditorTool extends EntityRelatedEditorTool {
             (deleteCustomEntityMessage) => {
                 if (deleteCustomEntityMessage) {
                     (async () => {
-                        await this.mapEditorModeManager.executeCommand(
-                            new DeleteCustomEntityFrontCommand(
-                                deleteCustomEntityMessage,
-                                this.scene.getGameMap(),
-                                this.entitiesManager,
-                                this.scene.getEntitiesCollectionsManager()
-                            )
+                        const command = new DeleteCustomEntityFrontCommand(
+                            deleteCustomEntityMessage,
+                            this.scene.getGameMap(),
+                            this.entitiesManager,
+                            this.scene.getEntitiesCollectionsManager()
                         );
+                        if (this.scene.connection?.userCanEdit && !deleteCustomEntityMessage.wholeUpload) {
+                            await this.mapEditorModeManager.executeCommand(command);
+                        } else if (this.scene.connection) {
+                            // Deleting a whole upload (#1690) goes through map-storage for everyone: it either
+                            // removes every copy in every room or nothing, so this room only loses the upload once
+                            // map-storage has answered.
+                            // An uploader's delete (#1628) waits for map-storage: it may still refuse it because of a
+                            // copy in another room, and the room only loses the object once it is really gone.
+                            command.emitEvent(this.scene.connection);
+                        }
                         mapEditorDeleteCustomEntityEventStore.set(undefined);
                     })().catch((e) => {
                         console.error(e);

@@ -12,6 +12,7 @@ export class SimpleCoWebsite implements CoWebsite {
     protected widthPercent?: number;
     protected closable: boolean;
     protected hideUrl: boolean;
+    protected hideTitleBar: boolean;
 
     constructor(
         url: URL,
@@ -19,7 +20,8 @@ export class SimpleCoWebsite implements CoWebsite {
         allowPolicy?: string,
         widthPercent?: number,
         closable?: boolean,
-        hideUrl?: boolean
+        hideUrl?: boolean,
+        hideTitleBar?: boolean
     ) {
         this.id = coWebsiteManager.generateUniqueId();
         this.url = url;
@@ -28,6 +30,7 @@ export class SimpleCoWebsite implements CoWebsite {
         this.widthPercent = widthPercent;
         this.closable = closable ?? true;
         this.hideUrl = hideUrl ?? false;
+        this.hideTitleBar = hideTitleBar ?? false;
     }
 
     getId(): string {
@@ -64,5 +67,10 @@ export class SimpleCoWebsite implements CoWebsite {
 
     getHideUrl(): boolean {
         return this.hideUrl;
+    }
+
+    /** "Hide title bar": the row above the page is left out while the page is the only thing open. */
+    getHideTitleBar(): boolean {
+        return this.hideTitleBar;
     }
 }
