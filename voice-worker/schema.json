@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://universe.local/voice-bridge/v1/schema.json",
+  "title": "Voice bridge v1 (bot server <-> voice worker)",
+  "description": "One JSON object per WebSocket text frame. `type` is the discriminator. Unknown fields are ignored. Times are epoch milliseconds from the sender's clock.",
+  "$defs": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "ts": { "type": "number" },
+    "epoch": { "type": "integer", "minimum": 1, "description": "Set by the bot server each time it starts a connection with a person. Everything about that connection carries it; anything with an older epoch is stale and dropped." },
+    "mode": { "enum": ["off", "listen_only", "talk", "type_and_listen", "speak_and_read"] },
+    "leaveReason": { "enum": ["closed", "failed", "left", "superseded", "timeout"] },
+    "signal": {
+      "oneOf": [
+        { "type": "object", "required": ["type", "sdp"], "properties": { "type": { "enum": ["offer", "answer"] }, "sdp": { "type": "string", "minLength": 1, "maxLength": 65536 } } },
+        { "type": "object", "required": ["type", "candidate"],
+          "properties": { "type": { "const": "candidate" },
+            "candidate": { "type": "object", "required": ["candidate"],
+              "properties": { "candidate": { "type": "string", "maxLength": 2048 }, "sdpMLineIndex": { "type": ["integer", "null"], "minimum": 0 }, "sdpMid": { "type": ["string", "null"], "maxLength": 64 } } } } }
+      ]
+    },
+    "base": {
+      "type": "object", "required": ["type", "sessionId"],
+      "properties": { "type": { "type": "string" }, "sessionId": { "$ref": "#/$defs/id" }, "ts": { "$ref": "#/$defs/ts" } }
+    },
+    "session.open": {
+      "title": "bot server -> worker: a bot is in a bubble and may get audio connections",
+      "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "bubbleId", "botId"],
+        "properties": { "type": { "const": "session.open" }, "bubbleId": { "$ref": "#/$defs/id" }, "botId": { "$ref": "#/$defs/id" } } }]
+    },
+    "lane.open": {
+      "title": "bot server -> worker: a person's browser started a connection with the bot",
+      "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "participantId", "epoch"],
+        "properties": { "type": { "const": "lane.open" }, "participantId": { "$ref": "#/$defs/id" }, "epoch": { "$ref": "#/$defs/epoch" }, "mode": { "$ref": "#/$defs/mode" } } }]
+    },
+    "lane.signal": {
+      "title": "either direction: setup data for one connection (offer, answer or ICE candidate)",
+      "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "participantId", "epoch", "signal"],
+        "properties": { "type": { "const": "lane.signal" }, "participantId": { "$ref": "#/$defs/id" }, "epoch": { "$ref": "#/$defs/epoch" }, "signal": { "$ref": "#/$defs/signal" } } }]
+    },
+    "lane.close": {
+      "title": "bot server -> worker: the connection with this person is over",
+      "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "participantId", "epoch"],
+        "properties": { "type": { "const": "lane.close" }, "participantId": { "$ref": "#/$defs/id" }, "epoch": { "$ref": "#/$defs/epoch" }, "reason": { "$ref": "#/$defs/leaveReason" } } }]
+    },
+    "mode.set": {
+      "title": "bot server -> worker: change what the bot hears from and says to one person, or to everyone",
+      "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "mode"],
+        "properties": { "type": { "const": "mode.set" }, "mode": { "$ref": "#/$defs/mode" }, "participantId": { "$ref": "#/$defs/id" } } }]
+    },
+    "bot.say": {
+      "title": "bot server -> worker: speak this. Only committed text may be spoken.",
+      "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "segmentId", "text", "committed"],
+        "properties": { "type": { "const": "bot.say" }, "segmentId": { "$ref": "#/$defs/id" }, "text": { "type": "string", "minLength": 1, "maxLength": 4000 }, "committed": { "const": true }, "lang": { "type": "string", "maxLength": 16 } } }]
+    },
+    "bot.retract": {
+      "title": "bot server -> worker: this segment was withdrawn. Unplayed audio is dropped; played audio cannot be unplayed.",
+      "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "segmentId"],
+        "properties": { "type": { "const": "bot.retract" }, "segmentId": { "$ref": "#/$defs/id" } } }]
+    },
+    "voice.stop": {
+      "title": "bot server -> worker: stop listening and speaking for this session. The session stays open for text.",
+      "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "reason"],
+        "properties": { "type": { "const": "voice.stop" }, "reason": { "enum": ["allowance_ended", "other"] } } }]
+    },
+    "session.end": {
+      "title": "bot server -> worker: close the session and every connection in it",
+      "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type"], "properties": { "type": { "const": "session.end" } } }]
+    },
+    "session.start": {
+      "title": "worker -> bot server: the session was accepted",
+      "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "bubbleId", "mode", "engine"],
+        "properties": { "type": { "const": "session.start" }, "bubbleId": { "$ref": "#/$defs/id" }, "mode": { "$ref": "#/$defs/mode" },
+          "engine": { "type": "object", "required": ["id", "kind"], "properties": { "id": { "type": "string" }, "kind": { "const": "ts" } } } } }]
+    },
+    "participant.join": {
+      "title": "worker -> bot server: this person's audio is connected both ways",
+      "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "participantId", "epoch"],
+        "properties": { "type": { "const": "participant.join" }, "participantId": { "$ref": "#/$defs/id" }, "epoch": { "$ref": "#/$defs/epoch" } } }]
+    },
+    "participant.leave": {
+      "title": "worker -> bot server: this person's audio is gone",
+      "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "participantId", "epoch", "reason"],
+        "properties": { "type": { "const": "participant.leave" }, "participantId": { "$ref": "#/$defs/id" }, "epoch": { "$ref": "#/$defs/epoch" }, "reason": { "$ref": "#/$defs/leaveReason" } } }]
+    },
+    "playback.progress": {
+      "title": "worker -> bot server: how much audio was sent to listeners. Never says which words were heard.",
+      "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "segmentId", "playedMs", "finished", "interrupted"],
+        "properties": { "type": { "const": "playback.progress" }, "segmentId": { "$ref": "#/$defs/id" },
+          "playedMs": { "type": "number", "minimum": 0 }, "totalMs": { "type": "number", "minimum": 0 },
+          "finished": { "type": "boolean" }, "interrupted": { "type": "boolean" },
+          "reason": { "enum": ["completed", "voice_stop", "retract", "mode", "lane_loss", "rejected"] } } }]
+    },
+    "engine.status": {
+      "title": "worker -> bot server: periodic and on change",
+      "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "engineId", "voice", "mode", "lanes"],
+        "properties": { "type": { "const": "engine.status" }, "engineId": { "type": "string" }, "voice": { "enum": ["active", "stopped"] }, "mode": { "$ref": "#/$defs/mode" },
+          "lanes": { "type": "array", "items": { "type": "object", "required": ["participantId", "epoch", "healthy", "mode"],
+            "properties": { "participantId": { "type": "string" }, "epoch": { "type": "integer" }, "healthy": { "type": "boolean" }, "mode": { "$ref": "#/$defs/mode" } } } },
+          "counters": { "type": "object", "additionalProperties": { "type": "number" } } } }]
+    },
+    "error": {
+      "title": "worker -> bot server: something the bot server should log or act on",
+      "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "code", "message"],
+        "properties": { "type": { "const": "error" }, "code": { "type": "string" }, "message": { "type": "string" }, "participantId": { "type": "string" }, "epoch": { "type": "integer" } } }]
+    }
+  }
+}

@@ -1003,6 +1003,8 @@ export class BotManager {
                             existingInstance.config.behaviorType !== bot.behaviorType ||
                             JSON.stringify(existingInstance.config.characterTextureIds) !== JSON.stringify(bot.characterTextureIds) ||
                             (existingInstance.config.companionTextureId ?? null) !== (bot.companionTextureId ?? null) ||
+                            // The voice tag is part of the bot's token, so a change of the owner's choice reconnects it
+                            !!existingInstance.config.voiceEnabled !== !!bot.voiceEnabled ||
                             JSON.stringify(existingInstance.config.assignedSpace) !== JSON.stringify(bot.assignedSpace);
                         
                         if (needsRespawn) {

@@ -1094,8 +1094,12 @@ export class BotAPI {
                 const companionChanged = 'companionTextureId' in updatesToApply &&
                     (updatesToApply.companionTextureId ?? null) !== (existingConfig.companionTextureId ?? null);
 
-                // If name, texture or companion changed and bot is running, despawn and respawn immediately
-                if ((nameChanged || textureChanged || companionChanged) && this.botManager.getBot(botId)) {
+                // The voice tag is part of the bot's token, so turning voice on or off reconnects the bot too
+                const voiceChanged = 'voiceEnabled' in updatesToApply &&
+                    !!updatesToApply.voiceEnabled !== !!existingConfig.voiceEnabled;
+
+                // If name, texture, companion or voice changed and bot is running, despawn and respawn immediately
+                if ((nameChanged || textureChanged || companionChanged || voiceChanged) && this.botManager.getBot(botId)) {
                     console.log(`[BotAPI] Bot ${botId} name, texture or companion changed, respawning with new config`);
                     // Clear cached MCP tools so fresh tool definitions are fetched on respawn
                     MCPConnector.clearCache(botId);

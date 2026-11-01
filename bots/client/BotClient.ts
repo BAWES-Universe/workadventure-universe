@@ -22,6 +22,7 @@ import {
     apiVersionHash,
     FollowRequestMessage,
     FollowAbortMessage,
+    PrivateSpaceEvent,
 } from '@workadventure/messages';
 import type { PositionInterface, ViewportInterface } from '../../play/src/front/Connection/ConnexionModels';
 import { BotState } from './BotState';
@@ -36,6 +37,10 @@ import type { ChatUpload, SentMedia } from '../services/ChatFiles';
 import { extractChatLinks } from '../utils/chatLinks';
 import { resolve4, resolve6 } from 'dns/promises';
 import * as Sentry from '@sentry/node';
+import { VoiceCalls } from '../voice/VoiceCalls';
+import { WorkerLink } from '../voice/VoiceLink';
+import { VOICE_BOT_TAG } from '../voice/VoiceBotTag';
+import { voiceWorkerSettings } from '../voice/settings';
 
 // Get the secret key from environment - must match pusher's SECRET_KEY
 const SECRET_KEY = process.env.SECRET_KEY || 'default-secret-key';
@@ -97,6 +102,8 @@ export class BotClient {
     private pendingMessages: ClientToServerMessage[] = [];
     private static readonly MAX_PENDING_MESSAGES = 100;
     private spaces: Map<string, SpaceUser['spaceUserId']> = new Map();
+    /** Audio connections with people, for a voice bot only (see isVoiceBot). Null for every other bot. */
+    private voice: VoiceCalls | null = null;
     private players: Map<number, PlayerInfo> = new Map();
     // Conversation bubbles the bot can see: groupId -> user ids in that bubble
     private bubbles: Map<number, number[]> = new Map();
@@ -165,7 +172,8 @@ export class BotClient {
         const tokenData = {
             identifier: botIdentifier,
             username: this.config.name,
-            tags: ['bot'],
+            // A voice bot is the only kind of bot the game opens an audio connection with
+            tags: this.isVoiceBot() ? ['bot', VOICE_BOT_TAG] : ['bot'],
         };
         
         return jwt.sign(tokenData, SECRET_KEY, { expiresIn: '30d' });
@@ -247,6 +255,7 @@ export class BotClient {
                     this.onDisconnect?.();
                 }
                 this.connected = false;
+                this.stopVoice();
                 this.resetJoin();
             });
 
@@ -267,6 +276,7 @@ export class BotClient {
      * Disconnect from server
      */
     disconnect(): void {
+        this.stopVoice();
         // Unregister this bot's userId
         if (this.userId !== null) {
             BotClient.botUserIds.delete(this.userId);
@@ -1384,6 +1394,7 @@ export class BotClient {
         }
 
         try {
+            this.voice?.spaceLeft(spaceName);
             await this.emitLeaveSpace(spaceName);
             this.spaces.delete(spaceName);
             if (this.behavior) {
@@ -2332,6 +2343,55 @@ export class BotClient {
     }
 
     /**
+     * A voice bot is one whose configuration says voice is on (the owner's choice, Orbit #740). Every other bot is
+     * text-only and never touches the voice code.
+     */
+    isVoiceBot(): boolean {
+        return this.fullConfig?.voiceEnabled === true;
+    }
+
+    /** Opens the bot's side of its audio connections. The socket to the voice worker is only used by this bot. */
+    private startVoice(): void {
+        if (!this.isVoiceBot() || this.voice) return;
+        const settings = voiceWorkerSettings();
+        this.voice = new VoiceCalls(
+            this.config.botId,
+            {
+                botSpaceUserId: (spaceName) => this.spaces.get(spaceName),
+                sendSignal: (spaceName, receiverUserId, signal) =>
+                    this.sendPrivateEvent(spaceName, receiverUserId, { $case: 'webRtcSignal', webRtcSignal: { signal } }),
+                sendDisconnect: (spaceName, receiverUserId) =>
+                    this.sendPrivateEvent(spaceName, receiverUserId, {
+                        $case: 'webRtcDisconnectMessage',
+                        webRtcDisconnectMessage: { userId: this.spaces.get(spaceName) ?? '' },
+                    }),
+            },
+            (handlers) => {
+                const link = new WorkerLink({ url: settings.url, botId: this.config.botId, secret: settings.secret, ...handlers });
+                link.start();
+                return link;
+            },
+            (message) => console.warn(`[Bot ${this.config.botId}] ${message}`)
+        );
+    }
+
+    private stopVoice(): void {
+        this.voice?.shutdown();
+        this.voice = null;
+    }
+
+    /** A private event to one person in a space the bot is in. */
+    private sendPrivateEvent(spaceName: string, receiverUserId: string, event: NonNullable<PrivateSpaceEvent['event']>): void {
+        if (!this.spaces.has(spaceName)) return;
+        this.send({
+            message: {
+                $case: 'privateEvent',
+                privateEvent: { spaceName, receiverUserId, spaceEvent: { event } },
+            },
+        });
+    }
+
+    /**
      * Set full bot configuration (called by BotManager on spawn)
      * This avoids HTTP requests to fetch config during conversations
      */
@@ -2594,6 +2654,7 @@ export class BotClient {
                 // Register this bot's userId so other bots can ignore it
                 BotClient.botUserIds.add(this.userId);
                 this.markJoined();
+                this.startVoice();
                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                     console.log(`[Bot ${this.config.botId}] ✅ Joined room, userId: ${this.userId}`);
                 }
@@ -3017,6 +3078,11 @@ export class BotClient {
                 }
                 break;
 
+            case 'privateEvent':
+                // Only a voice bot has audio connections; for every other bot a private event changes nothing
+                this.voice?.handlePrivateEvent(message.privateEvent);
+                break;
+
             case 'errorMessage':
                 console.error(`[Bot ${this.config.botId}] Server error:`, message.errorMessage.message);
                 break;
@@ -3185,6 +3251,7 @@ export class BotClient {
             // This matches frontend behavior and ensures proper cleanup
             this.emitRemoveSpaceFilter(request.spaceName);
             
+            this.voice?.spaceLeft(request.spaceName);
             await this.emitLeaveSpace(request.spaceName);
             this.spaces.delete(request.spaceName);
             if (this.behavior) {

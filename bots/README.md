@@ -134,6 +134,12 @@ bots/
 - **Extensible**: Easy to add new AI providers
 - **Memory Integration**: Conversation memory system ready for AI integration
 
+### 7b. Voice (audio connections)
+- **Per bot**: a bot has voice only when its configuration has `voiceEnabled: true` (the owner's choice; off until Orbit sends it). Every other bot is text-only.
+- **Worker**: a voice bot's audio runs in the separate `voice-worker/` service. The bot server reaches it at `VOICE_WORKER_URL` (default `ws://127.0.0.1:8830`) with the bearer token `VOICE_WORKER_SECRET` when one is set.
+- **Fail closed**: if the worker is down, the bot stays text-only and people's own calls are untouched.
+- **Code**: `voice/VoiceCalls.ts` relays the game's connection setup to the worker; `voice/VoiceLink.ts` is the socket.
+
 ### 8. Admin API Integration
 - **Configuration Tracking**: Track bot configurations per room/world/universe/user
 - **Usage Metrics**: Monitor bot conversations, messages, and active time
