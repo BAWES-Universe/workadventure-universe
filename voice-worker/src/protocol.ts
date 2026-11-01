@@ -17,7 +17,8 @@ export type Signal =
     | { type: 'transceiverRequest'; transceiverRequest: { kind: 'audio'; init?: { direction: 'recvonly' | 'sendrecv' } } };
 
 export type LeaveReason = 'closed' | 'failed' | 'left' | 'superseded' | 'timeout';
-export type PlaybackReason = 'completed' | 'voice_stop' | 'retract' | 'mode' | 'lane_loss' | 'rejected';
+/** `barge_in`: a person spoke over the bot. `limit`: the reply reached its longest time. */
+export type PlaybackReason = 'completed' | 'voice_stop' | 'retract' | 'mode' | 'lane_loss' | 'rejected' | 'barge_in' | 'limit';
 
 interface Base {
     sessionId: string;
@@ -30,7 +31,8 @@ export interface LaneOpen extends Base { type: 'lane.open'; participantId: strin
 export interface LaneSignalIn extends Base { type: 'lane.signal'; participantId: string; epoch: number; signal: Signal }
 export interface LaneClose extends Base { type: 'lane.close'; participantId: string; epoch: number; reason?: LeaveReason }
 export interface ModeSet extends Base { type: 'mode.set'; mode: Mode; participantId?: string }
-export interface BotSay extends Base { type: 'bot.say'; segmentId: string; text: string; committed: true; lang?: string }
+/** `maxMs`: the longest this reply may play; at it the audio stops (the text is in the chat in full). */
+export interface BotSay extends Base { type: 'bot.say'; segmentId: string; text: string; committed: true; lang?: string; maxMs?: number }
 export interface BotRetract extends Base { type: 'bot.retract'; segmentId: string }
 export interface VoiceStop extends Base { type: 'voice.stop'; reason: 'allowance_ended' | 'other' }
 export interface SessionEnd extends Base { type: 'session.end' }

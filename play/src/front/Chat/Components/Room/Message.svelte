@@ -136,6 +136,9 @@
     const steps = message.steps ?? readable(undefined);
     $: isSteps = $steps !== undefined && replyDepth === 0 && !isQuotedMessage;
 
+    // A voice bot's reply whose voice stopped because someone spoke over it (#1665) says so, quietly, under its words
+    const stoppedBySpeech = message.stoppedBySpeech ?? readable(false);
+
     const actions = availableActions(message);
     $: actionable =
         !isSteps &&
@@ -351,6 +354,9 @@
                         ({$LL.chat.messageEdited()})
                     </div>
                 {/if}
+                {#if $stoppedBySpeech && !isSteps}
+                    <div class="stoppedNote" data-testid="stoppedBySpeech">{$LL.chat.voiceDraft.stopped()}</div>
+                {/if}
             {/if}
         </div>
         {#if actionable && !menuOpen}
@@ -532,6 +538,12 @@
     }
 
     /* The mark of a line that was said out loud: quiet, right after the time. */
+    .stoppedNote {
+        padding: 0 8px 4px;
+        font-size: 11.5px;
+        color: rgb(255 255 255 / 0.5);
+    }
+
     .messageHeader-spoken {
         display: inline-flex;
         flex-shrink: 0;

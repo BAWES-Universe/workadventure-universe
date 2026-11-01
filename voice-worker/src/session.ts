@@ -4,7 +4,7 @@
 // a newer lane replaces the old lane, the room replaces every older lane, a lane replaces an older room, and anything
 // still addressed to an older epoch is dropped.
 import type { Counters } from './counters.ts';
-import { FakeSpeech } from './fakeSpeech.ts';
+import type { SpeechSynthesizer } from './fakeSpeech.ts';
 import { Lane, type IceConfig } from './lane.ts';
 import type { LeaveReason, Mode, Signal, WorkerToBot } from './protocol.ts';
 import { modeListens } from './protocol.ts';
@@ -30,7 +30,11 @@ export interface SessionHost {
     recognizer?: RecognizerFactory;
     /** The longest stretch of speech taken, in audio milliseconds. */
     maxUtteranceMs: number;
-    speech: FakeSpeech;
+    speech: SpeechSynthesizer;
+    /** The longest any reply may play. */
+    maxReplyMs: number;
+    /** Voiced audio before a person counts as speaking over the bot. */
+    bargeInMs?: number;
     /** Lanes alive in the whole worker, to enforce the limit. */
     laneCount(): number;
     maxLanes: number;
@@ -59,12 +63,16 @@ export class Session {
                   counters: host.counters,
                   send: (message) => host.send(message),
                   next: host.input,
+                  bargeInMs: host.bargeInMs,
+                  // A person speaking over the bot stops its voice at once, here, with no round trip
+                  onSpeaking: () => this.speaker.bargeIn(),
               })
             : undefined;
         this.input = this.recognition ? this.recognition.sink : host.input;
         this.speaker = new Speaker({
             counters: host.counters,
             speech: host.speech,
+            maxReplyMs: host.maxReplyMs,
             targets: () => (this.room ? [...this.lanes.values(), this.room] : [...this.lanes.values()]),
             active: () => this.voice === 'active',
             progress: (message) => host.send({ type: 'playback.progress', ...message }),
@@ -246,8 +254,8 @@ export class Session {
         this.sendStatus();
     }
 
-    say(segmentId: string, text: string): void {
-        this.speaker.enqueue(segmentId, text);
+    say(segmentId: string, text: string, maxMs?: number): void {
+        this.speaker.enqueue(segmentId, text, maxMs);
     }
 
     retract(segmentId: string): void {

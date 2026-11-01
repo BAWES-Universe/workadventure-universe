@@ -203,4 +203,65 @@ describe("AIService – a bot's limits from Orbit", () => {
         expect(said(chunks)).toBe("Hi! What should we build?");
         expect(mockGenerateStream).toHaveBeenCalledTimes(1);
     });
+    describe("what a voice bot may say (#1665)", () => {
+        // The bot is told when a reply is not checked yet, and when it is, in the order the chunks go out
+        const heardBot = () => {
+            const log: string[] = [];
+            return {
+                log,
+                botClient: {
+                    isInSpace: vi.fn(() => true),
+                    getRoomUrl: vi.fn(() => "http://play.test/_/global/maps.test/m.tmj"),
+                    getFullConfig: vi.fn(() => undefined),
+                    getPersonForArtifacts: vi.fn(() => ({ signedIn: true, identifier: "uuid-1", name: "Khalid" })),
+                    sendChatMessage: vi.fn(),
+                    holdSpeech: vi.fn(() => log.push("hold")),
+                    releaseSpeech: vi.fn(() => log.push("release")),
+                },
+            };
+        };
+        const replyInSpace = async (service: any, botClient: unknown, log: string[], admin: unknown, message = "add charts") => {
+            for await (const chunk of service.generateBotResponseStream("bot-1", 42, message, "You are a bot.", "universe-ai", "space-1", "", botClient, admin)) {
+                if (chunk.reset) log.push("reset");
+                if (chunk.done) log.push("done");
+            }
+        };
+
+        it("releases a plain reply just before it is done, and holds nothing", async () => {
+            const { admin, memory } = buildMocks();
+            const { botClient, log } = heardBot();
+            mockGenerateStream.mockImplementation(says("Hi!"));
+            await replyInSpace(new AIService(memory, admin, "http://admin.local"), botClient, log, admin);
+            expect(botClient.holdSpeech).not.toHaveBeenCalled();
+            // Released when the turn starts, and again before the done goes out
+            expect(log.filter((entry) => entry === "release")).toHaveLength(2);
+            expect(log.indexOf("done")).toBeGreaterThan(log.lastIndexOf("release"));
+        });
+
+        it("holds from the moment a reply is found false until the second try is done", async () => {
+            const { admin, memory } = buildMocks();
+            const { botClient, log } = heardBot();
+            mockGenerateStream.mockImplementationOnce(says("Rebuilt it, v2 has the charts.")).mockImplementationOnce(says("Sorry, I could not save it."));
+            await replyInSpace(new AIService(memory, admin, "http://admin.local"), botClient, log, admin);
+            const hold = log.indexOf("hold");
+            const reset = log.indexOf("reset");
+            expect(hold).toBeGreaterThanOrEqual(0);
+            expect(hold).toBeLessThan(reset);
+            // Nothing is released after the false claim until the second try is done: once, just before its done
+            const after = log.slice(hold);
+            expect(after.filter((entry) => entry === "release")).toHaveLength(1);
+            expect(after.indexOf("release")).toBeGreaterThan(after.indexOf("reset"));
+            expect(after.indexOf("done")).toBe(after.indexOf("release") + 1);
+        });
+
+        it("holds while tools run, because what is said ahead of the work is not checked", async () => {
+            const { admin, memory } = buildMocks();
+            const { botClient, log } = heardBot();
+            mockGenerateStream.mockImplementationOnce(toolCall).mockImplementation(says("Found it."));
+            await replyInSpace(new AIService(memory, admin, "http://admin.local"), botClient, log, admin);
+            expect(botClient.holdSpeech).toHaveBeenCalledWith("space-1", 42);
+            expect(log.indexOf("hold")).toBeLessThan(log.indexOf("done"));
+            expect(log.lastIndexOf("release")).toBeGreaterThan(log.indexOf("hold"));
+        });
+    });
 });

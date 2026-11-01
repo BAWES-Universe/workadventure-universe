@@ -42,6 +42,8 @@ interface Room {
     spaceName: string;
     sessionId: string;
     epoch: number;
+    /** The worker said the bot is in the room. */
+    connected?: boolean;
 }
 
 /** What the game gave the bot to join a bubble's LiveKit room. Kept while the game says the bubble is there. */
@@ -76,10 +78,12 @@ export interface VoiceCallStats {
     roomsJoined: number;
     roomsConnected: number;
     drafts: number;
+    spoken: number;
+    stoppedBySpeech: number;
 }
 
 export class VoiceCalls {
-    readonly stats: VoiceCallStats = { started: 0, refusedStart: 0, rejectedFromGame: 0, staleFromWorker: 0, connected: 0, roomsJoined: 0, roomsConnected: 0, drafts: 0 };
+    readonly stats: VoiceCallStats = { started: 0, refusedStart: 0, rejectedFromGame: 0, staleFromWorker: 0, connected: 0, roomsJoined: 0, roomsConnected: 0, drafts: 0, spoken: 0, stoppedBySpeech: 0 };
     private readonly bubbles = new Map<string, Bubble>();
     private readonly calls = new Map<string, Call>();
     private readonly rooms = new Map<string, Room>();
@@ -92,6 +96,15 @@ export class VoiceCalls {
     private readonly live = new Map<string, { spaceName: string; personId: string; turnId: string; text: string }>();
     /** What the bot heard each person say that they may send as their line, by space, person and turn. */
     private readonly spoken = new Map<string, { text: string; used: boolean }>();
+    /** Calls whose audio is connected both ways, and the rooms the bot is in: whether anyone can hear it now. */
+    private readonly joined = new Map<string, number>();
+    /** Who is speaking to the bot right now in each bubble, and when someone last started. */
+    private readonly talking = new Map<string, Set<string>>();
+    private readonly lastSpeechAt = new Map<string, number>();
+    /** Called when someone's audio is connected (a call or the room): what was waiting for an audience can be said. */
+    onAudience?: (spaceName: string) => void;
+    /** Called when a reply's voice stopped part-way because someone spoke over it. */
+    onStopped?: (spaceName: string, segmentId: string) => void;
     private epoch = 0;
     private bubbleSeq = 0;
 
@@ -225,6 +238,9 @@ export class VoiceCalls {
         for (const [key, lost] of this.lost) if (lost.spaceName === spaceName) this.lost.delete(key);
         for (const key of this.spoken.keys()) if (key.startsWith(`${spaceName}\n`)) this.spoken.delete(key);
         for (const [key, live] of this.live) if (live.spaceName === spaceName) this.live.delete(key);
+        for (const key of this.joined.keys()) if (key.startsWith(`${spaceName}\n`)) this.joined.delete(key);
+        this.talking.delete(spaceName);
+        this.lastSpeechAt.delete(spaceName);
     }
 
     // ---- LiveKit ----
@@ -291,6 +307,8 @@ export class VoiceCalls {
     }
 
     spaceUserLeft(spaceName: string, spaceUserId: string): void {
+        this.talking.get(spaceName)?.delete(spaceUserId);
+        this.joined.delete(callKey(spaceName, spaceUserId));
         this.lost.delete(callKey(spaceName, spaceUserId));
         this.live.delete(callKey(spaceName, spaceUserId));
         if (this.roster.get(spaceName)?.delete(spaceUserId)) this.rosterChanged(spaceName);
@@ -339,6 +357,8 @@ export class VoiceCalls {
                 this.game.sendSignal(call.spaceName, call.participantId, JSON.stringify(message.signal));
             } else if (message.type === 'participant.join') {
                 this.stats.connected++;
+                this.joined.set(callKey(call.spaceName, call.participantId), call.epoch);
+                this.onAudience?.(call.spaceName);
             } else if (message.type === 'participant.leave') {
                 this.drop(call, false);
             }
@@ -348,6 +368,8 @@ export class VoiceCalls {
                 this.stats.staleFromWorker++;
             } else if (message.state === 'connected') {
                 this.stats.roomsConnected++;
+                room.connected = true;
+                this.onAudience?.(room.spaceName);
             } else {
                 // The worker lost the bot's LiveKit connection, or never made it: the bot stays text-only until the game invites it again
                 this.rooms.delete(room.spaceName);
@@ -356,9 +378,23 @@ export class VoiceCalls {
             }
         } else if (message.type === 'user.speech_started' || message.type === 'user.partial' || message.type === 'user.turn') {
             this.handleSpeech(message);
+        } else if (message.type === 'playback.progress') {
+            this.handlePlayback(message);
         } else if (message.type === 'error') {
             this.handleWorkerError(message);
         }
+    }
+
+    /**
+     * How a reply's audio went. Only one thing is shown to people: that the voice stopped part-way because someone spoke
+     * over it. A reply cut before any of it was sent, and every other ending, shows nothing.
+     */
+    private handlePlayback(message: Extract<FromWorker, { type: 'playback.progress' }>): void {
+        if (!message.finished || !message.interrupted || message.reason !== 'barge_in' || message.playedMs <= 0) return;
+        const bubble = [...this.bubbles.values()].find((b) => b.sessionId === message.sessionId);
+        if (!bubble) return;
+        this.stats.stoppedBySpeech++;
+        this.onStopped?.(bubble.spaceName, message.segmentId);
     }
 
     /**
@@ -379,6 +415,13 @@ export class VoiceCalls {
         const room = this.rooms.get(spaceName);
         const current = call ? call.epoch === message.epoch : room?.sessionId === message.sessionId && room.epoch === message.epoch;
         const to = message.participantId;
+        // Someone is speaking to the bot: what it was about to say can wait, and what it is saying has been stopped by the worker
+        if (current && message.type === 'user.speech_started') {
+            this.lastSpeechAt.set(spaceName, performance.now());
+            this.talkingIn(spaceName).add(to);
+        } else if (message.type === 'user.turn') {
+            this.talking.get(spaceName)?.delete(to);
+        }
         if (message.type === 'user.turn' && this.live.get(callKey(spaceName, to))?.turnId === message.turnId) this.live.delete(callKey(spaceName, to));
         if (message.type === 'user.speech_started') {
             if (!current) this.stats.staleFromWorker++;
@@ -494,6 +537,8 @@ export class VoiceCalls {
         }
         this.calls.clear();
         this.bubbles.clear();
+        this.joined.clear();
+        this.talking.clear();
         // The invitations stay: they are the game's, and still say where the bubble is
         this.rooms.clear();
     }
@@ -519,9 +564,36 @@ export class VoiceCalls {
 
     // ---- for what comes next (recognition, speaking): the controls of a bubble's audio ----
 
-    say(spaceName: string, segmentId: string, text: string): boolean {
+    /** Says committed text in the bot's voice, for at most `maxMs`. False when there is no audio session to say it in. */
+    say(spaceName: string, segmentId: string, text: string, maxMs?: number): boolean {
         const bubble = this.bubbles.get(spaceName);
-        return !!bubble && this.link.send({ type: 'bot.say', sessionId: bubble.sessionId, segmentId, text, committed: true });
+        const sent = !!bubble && this.link.send({ type: 'bot.say', sessionId: bubble.sessionId, segmentId, text, committed: true, ...(maxMs ? { maxMs } : {}) });
+        if (sent) this.stats.spoken++;
+        return sent;
+    }
+
+    /** Whether anyone's audio is connected in this bubble, so that what the bot says is heard. */
+    hasAudience(spaceName: string): boolean {
+        for (const call of this.calls.values()) {
+            if (call.spaceName === spaceName && this.joined.get(callKey(spaceName, call.participantId)) === call.epoch) return true;
+        }
+        return this.rooms.get(spaceName)?.connected === true;
+    }
+
+    /** Whether someone is in the middle of speaking to the bot in this bubble. */
+    someoneSpeaking(spaceName: string): boolean {
+        return (this.talking.get(spaceName)?.size ?? 0) > 0;
+    }
+
+    /** When someone last started speaking to the bot in this bubble (performance.now time), or 0. */
+    lastSpokenToAt(spaceName: string): number {
+        return this.lastSpeechAt.get(spaceName) ?? 0;
+    }
+
+    private talkingIn(spaceName: string): Set<string> {
+        let people = this.talking.get(spaceName);
+        if (!people) this.talking.set(spaceName, (people = new Set()));
+        return people;
     }
 
     setMode(spaceName: string, mode: VoiceMode, personId?: string): boolean {
@@ -541,6 +613,9 @@ export class VoiceCalls {
         this.lost.clear();
         this.spoken.clear();
         this.live.clear();
+        this.joined.clear();
+        this.talking.clear();
+        this.lastSpeechAt.clear();
         this.link.close();
     }
 

@@ -6,7 +6,7 @@ import { FRAME_MS } from './audioFormat.ts';
 import { newOpusEncoder } from './opus.ts';
 import type { Counters } from './counters.ts';
 import type { PlaybackProgress, PlaybackReason } from './protocol.ts';
-import type { FakeSpeech } from './fakeSpeech.ts';
+import type { SpeechSynthesizer } from './fakeSpeech.ts';
 import type { OutputFrame, OutputTarget } from './transport.ts';
 
 /** Segments waiting behind the current one. More than this are refused. */
@@ -17,13 +17,17 @@ interface Segment {
     text: string;
     totalMs: number;
     playedMs: number;
+    /** The longest this reply may play. */
+    maxMs: number;
     /** False once any frame had nobody to hear it. */
     deliveredAll: boolean;
 }
 
 export interface SpeakerHost {
     counters: Counters;
-    speech: FakeSpeech;
+    speech: SpeechSynthesizer;
+    /** The longest any reply may play, whatever the bot server asks. */
+    maxReplyMs: number;
     targets(): OutputTarget[];
     /** False once voice is stopped for the session. */
     active(): boolean;
@@ -49,13 +53,13 @@ export class Speaker {
         return this.current !== undefined;
     }
 
-    enqueue(id: string, text: string): void {
+    enqueue(id: string, text: string, maxMs?: number): void {
         if (!this.host.active() || this.queue.length >= MAX_QUEUED_SEGMENTS) {
             this.host.counters.inc('say_rejected');
             this.host.progress({ segmentId: id, playedMs: 0, totalMs: 0, finished: true, interrupted: false, reason: 'rejected' });
             return;
         }
-        this.queue.push({ id, text, totalMs: 0, playedMs: 0, deliveredAll: true });
+        this.queue.push({ id, text, totalMs: 0, playedMs: 0, maxMs: Math.min(maxMs ?? this.host.maxReplyMs, this.host.maxReplyMs), deliveredAll: true });
         this.wake?.();
     }
 
@@ -68,6 +72,17 @@ export class Speaker {
             this.cancel = 'retract';
             for (const target of this.host.targets()) target.clear?.();
         }
+    }
+
+    /**
+     * A person spoke over the bot: what is playing stops within a frame, what is queued is dropped, and nothing resumes.
+     * Local, with no round trip to the bot server. False when the bot was not saying anything.
+     */
+    bargeIn(): boolean {
+        if (!this.current && !this.queue.length) return false;
+        this.host.counters.inc('barge_ins');
+        this.stopAll('barge_in');
+        return true;
     }
 
     /** Stops what is playing and drops what is queued. */
@@ -95,7 +110,7 @@ export class Speaker {
             if (!segment || this.stopped) continue;
             this.current = segment;
             this.cancel = undefined;
-            const pcm = speech.synth(segment.text);
+            const pcm = await speech.synth(segment.text);
             segment.totalMs = (pcm.length / speech.frameSamples) * FRAME_MS;
             counters.inc('tts_generated_ms', segment.totalMs);
             counters.inc('segments_started');
@@ -107,6 +122,10 @@ export class Speaker {
             for (let offset = 0; offset < pcm.length; offset += speech.frameSamples) {
                 if (this.cancel || !this.host.active()) {
                     reason = this.cancel ?? 'voice_stop';
+                    break;
+                }
+                if (frame * FRAME_MS >= segment.maxMs) {
+                    reason = 'limit';
                     break;
                 }
                 const listeners = this.host.targets().filter((t) => t.plays());

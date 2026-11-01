@@ -82,3 +82,18 @@ the person's `participantId`, the path's `epoch`, and a `turnId` that ties one s
 The longest stretch is `VOICE_MAX_UTTERANCE_SECONDS` (default 180) of audio. At it the worker stops, offers the words back and
 takes nothing more until the person pauses. A `final` that arrives for a path the bot server has since replaced is not sent either:
 it is offered back as `lost` with reason `path`. No audio is kept: it goes to the recognizer as it arrives and is dropped.
+
+## Speaking and being talked over
+
+`bot.say` carries one committed segment: the words the bot server has checked and chosen to say (the chat has the reply in
+full; this is the spoken version, see `bots/voice/SpokenText.ts`). `maxMs` is the longest it may play; the worker never plays
+longer than `VOICE_MAX_REPLY_SECONDS`. Segments play one at a time, in order. `playback.progress` ends each with a `reason`:
+
+* `completed`: all of it was sent. `limit`: it reached its longest time. `retract`, `voice_stop`, `mode`, `lane_loss`, `rejected`: as before.
+* `barge_in`: a person the bot hears spoke over it. The segment playing stops within a frame, everything queued behind it is
+  dropped (each ends with `barge_in` and `playedMs: 0`), and nothing resumes by itself. This is decided in the worker, from the
+  person's permitted microphone audio, with no round trip to the bot server: speech counts after `VOICE_BARGE_IN_MS` of voiced
+  audio, so a click or a cough does not stop it. It stops the voice for everyone in the bubble; it cancels nothing but audio.
+  The bot server marks the message when `playedMs` is more than zero.
+
+The speech itself comes from a swappable synthesizer (`SpeechSynthesizer` in `src/fakeSpeech.ts`); only a fake is wired.

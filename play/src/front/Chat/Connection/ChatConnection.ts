@@ -204,6 +204,8 @@ export interface ChatMessage {
     replyLimit?: BotReplyLimit;
     /** Set on a nearby line made from what its sender said out loud to a voice bot (#1664): a small mic mark beside its time. */
     spoken?: boolean;
+    /** Set on a voice bot's reply whose voice stopped part-way because someone spoke over it (#1665): a quiet line under it. */
+    stoppedBySpeech?: Readable<boolean>;
     /** Set when a bot's direct message carries an artifact it made: drawn as a card the person taps to open. */
     artifact?: ArtifactCard;
     /** Set when a bot's notice is the steps line of its reply (#1545): drawn as a quiet line that updates in place. */
