@@ -10,7 +10,7 @@
  * Every refusal here ends the same way: the person's browser is told to disconnect, and the bot stays text-only.
  */
 import type { PrivateEventPusherToFront, SpaceUser } from '@workadventure/messages';
-import type { FromWorker, ToWorker, VoiceMode, VoiceSignal } from './protocol';
+import type { FromWorker, ToWorker, VoiceDraft, VoiceMode, VoiceSignal } from './protocol';
 import type { VoiceLink } from './VoiceLink';
 
 /** What the relay needs from the bot's connection to the game. */
@@ -21,6 +21,8 @@ export interface GameSide {
     sendDisconnect(spaceName: string, receiverUserId: string): void;
     /** Asks a person to make a new offer to the bot, as the game does when it starts a connection. */
     sendStart(spaceName: string, receiverUserId: string): void;
+    /** Shows one person, and only them, what the bot hears them say (see handleSpeech). */
+    sendDraft(spaceName: string, receiverUserId: string, draft: VoiceDraft): void;
 }
 
 interface Call {
@@ -55,6 +57,8 @@ const MAX_TOKEN_CHARS = 8192;
 const MAX_URL_CHARS = 2048;
 /** The most people the worker is told about in one room. */
 const MAX_PEOPLE = 500;
+/** Spoken lines remembered, so each is taken once and only if the bot heard it. Oldest first out. */
+const MAX_SPOKEN = 200;
 
 export interface LinkHandlers {
     onMessage(message: FromWorker): void;
@@ -71,10 +75,11 @@ export interface VoiceCallStats {
     connected: number;
     roomsJoined: number;
     roomsConnected: number;
+    drafts: number;
 }
 
 export class VoiceCalls {
-    readonly stats: VoiceCallStats = { started: 0, refusedStart: 0, rejectedFromGame: 0, staleFromWorker: 0, connected: 0, roomsJoined: 0, roomsConnected: 0 };
+    readonly stats: VoiceCallStats = { started: 0, refusedStart: 0, rejectedFromGame: 0, staleFromWorker: 0, connected: 0, roomsJoined: 0, roomsConnected: 0, drafts: 0 };
     private readonly bubbles = new Map<string, Bubble>();
     private readonly calls = new Map<string, Call>();
     private readonly rooms = new Map<string, Room>();
@@ -83,6 +88,10 @@ export class VoiceCalls {
     private readonly roster = new Map<string, Map<string, SpaceUser>>();
     /** Connections the worker lost by going away; asked for again when it is back. */
     private readonly lost = new Map<string, { spaceName: string; personId: string }>();
+    /** The words each person is in the middle of saying, so they can be offered back if the worker goes away mid-sentence. */
+    private readonly live = new Map<string, { spaceName: string; personId: string; turnId: string; text: string }>();
+    /** What the bot heard each person say that they may send as their line, by space, person and turn. */
+    private readonly spoken = new Map<string, { text: string; used: boolean }>();
     private epoch = 0;
     private bubbleSeq = 0;
 
@@ -214,6 +223,8 @@ export class VoiceCalls {
         this.invitations.delete(spaceName);
         this.roster.delete(spaceName);
         for (const [key, lost] of this.lost) if (lost.spaceName === spaceName) this.lost.delete(key);
+        for (const key of this.spoken.keys()) if (key.startsWith(`${spaceName}\n`)) this.spoken.delete(key);
+        for (const [key, live] of this.live) if (live.spaceName === spaceName) this.live.delete(key);
     }
 
     // ---- LiveKit ----
@@ -281,6 +292,7 @@ export class VoiceCalls {
 
     spaceUserLeft(spaceName: string, spaceUserId: string): void {
         this.lost.delete(callKey(spaceName, spaceUserId));
+        this.live.delete(callKey(spaceName, spaceUserId));
         if (this.roster.get(spaceName)?.delete(spaceUserId)) this.rosterChanged(spaceName);
     }
 
@@ -342,9 +354,78 @@ export class VoiceCalls {
                 this.invitations.delete(room.spaceName);
                 this.log(`voice: LiveKit audio in ${room.spaceName} ended (${message.state})`);
             }
+        } else if (message.type === 'user.speech_started' || message.type === 'user.partial' || message.type === 'user.turn') {
+            this.handleSpeech(message);
         } else if (message.type === 'error') {
             this.handleWorkerError(message);
         }
+    }
+
+    /**
+     * What the worker heard a person say. It goes back to that person and nobody else: as a private event, drawn above
+     * their message box. Only a finished stretch whose every word came through can become a line, and it is the
+     * person's own game that sends it (so it is theirs, in the chat, like anything they type); words that did not all
+     * come through are only offered back. A result from a path the bot has since replaced never becomes a line either.
+     */
+    private handleSpeech(message: Extract<FromWorker, { type: 'user.speech_started' | 'user.partial' | 'user.turn' }>): void {
+        const bubble = [...this.bubbles.values()].find((b) => b.sessionId === message.sessionId);
+        // The person must still be in the bubble: the words of someone who left are nobody's to see
+        if (!bubble || !this.roster.get(bubble.spaceName)?.has(message.participantId)) {
+            this.stats.staleFromWorker++;
+            return;
+        }
+        const spaceName = bubble.spaceName;
+        const call = this.calls.get(callKey(spaceName, message.participantId));
+        const room = this.rooms.get(spaceName);
+        const current = call ? call.epoch === message.epoch : room?.sessionId === message.sessionId && room.epoch === message.epoch;
+        const to = message.participantId;
+        if (message.type === 'user.turn' && this.live.get(callKey(spaceName, to))?.turnId === message.turnId) this.live.delete(callKey(spaceName, to));
+        if (message.type === 'user.speech_started') {
+            if (!current) this.stats.staleFromWorker++;
+        } else if (message.type === 'user.partial') {
+            if (!current) {
+                this.stats.staleFromWorker++;
+            } else {
+                this.live.set(callKey(spaceName, to), { spaceName, personId: to, turnId: message.turnId, text: message.text });
+                this.draft(spaceName, to, { turnId: message.turnId, state: 'live', text: message.text });
+            }
+        } else if (message.outcome === 'cleared' || !message.text) {
+            this.draft(spaceName, to, { turnId: message.turnId, state: 'cleared', text: '' });
+        } else if (message.outcome === 'final' && current) {
+            this.remember(spaceName, to, message.turnId, message.text);
+            this.draft(spaceName, to, { turnId: message.turnId, state: 'final', text: message.text });
+        } else {
+            // Lost, or finished on a path that has since been replaced: offered back, never sent
+            this.stats.staleFromWorker += message.outcome === 'final' ? 1 : 0;
+            this.remember(spaceName, to, message.turnId, message.text);
+            this.draft(spaceName, to, { turnId: message.turnId, state: 'lost', text: message.text, reason: message.outcome === 'final' ? 'path' : message.reason });
+        }
+    }
+
+    private draft(spaceName: string, personId: string, draft: VoiceDraft): void {
+        this.stats.drafts++;
+        this.game.sendDraft(spaceName, personId, draft);
+    }
+
+    private remember(spaceName: string, personId: string, turnId: string, text: string): void {
+        this.spoken.set(spokenKey(spaceName, personId, turnId), { text, used: false });
+        for (const oldest of this.spoken.keys()) {
+            if (this.spoken.size <= MAX_SPOKEN) break;
+            this.spoken.delete(oldest);
+        }
+    }
+
+    /**
+     * A chat line that says it was spoken to this bot. It is taken as a request once, and only when the bot did hear
+     * those words from that person: anything else (a turn it never heard, the same turn again, other words) is just
+     * an ordinary line from them.
+     */
+    acceptSpoken(spaceName: string, personId: string, turnId: string, text: string): 'new' | 'duplicate' | 'unknown' {
+        const heard = this.spoken.get(spokenKey(spaceName, personId, turnId));
+        if (!heard || heard.text !== text.trim()) return 'unknown';
+        if (heard.used) return 'duplicate';
+        heard.used = true;
+        return 'new';
     }
 
     private handleWorkerError(message: Extract<FromWorker, { type: 'error' }>): void {
@@ -401,6 +482,12 @@ export class VoiceCalls {
 
     /** The worker went away: it holds none of this any more. People are told, so nobody waits on a silent call. */
     linkDown(): void {
+        // Whoever was mid-sentence gets their words back to decide on: nothing is sent for them
+        for (const { spaceName, personId, turnId, text } of [...this.live.values()]) {
+            this.remember(spaceName, personId, turnId, text);
+            this.draft(spaceName, personId, { turnId, state: 'lost', text, reason: 'path' });
+        }
+        this.live.clear();
         for (const call of [...this.calls.values()]) {
             this.lost.set(callKey(call.spaceName, call.participantId), { spaceName: call.spaceName, personId: call.participantId });
             this.game.sendDisconnect(call.spaceName, call.participantId);
@@ -452,6 +539,8 @@ export class VoiceCalls {
         this.invitations.clear();
         this.roster.clear();
         this.lost.clear();
+        this.spoken.clear();
+        this.live.clear();
         this.link.close();
     }
 
@@ -461,6 +550,7 @@ export class VoiceCalls {
 }
 
 const callKey = (spaceName: string, personId: string): string => `${spaceName}\n${personId}`;
+const spokenKey = (spaceName: string, personId: string, turnId: string): string => `${spaceName}\n${personId}\n${turnId}`;
 
 /** Bots are known by the tag or by the uuid prefix their token gives them (the same test the game server uses). */
 function isBotUser(user: SpaceUser): boolean {

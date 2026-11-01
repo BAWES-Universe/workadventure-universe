@@ -126,6 +126,23 @@
       "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "epoch", "state"],
         "properties": { "type": { "const": "room.state" }, "epoch": { "$ref": "#/$defs/epoch" }, "state": { "enum": ["connected", "closed", "failed"] } } }]
     },
+    "user.speech_started": {
+      "title": "worker -> bot server: a person started speaking to the bot",
+      "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "participantId", "epoch", "turnId"],
+        "properties": { "type": { "const": "user.speech_started" }, "participantId": { "$ref": "#/$defs/id" }, "epoch": { "$ref": "#/$defs/epoch" }, "turnId": { "$ref": "#/$defs/id" } } }]
+    },
+    "user.partial": {
+      "title": "worker -> bot server: all the words heard so far in a stretch of speech, replacing the last. For that person's eyes only.",
+      "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "participantId", "epoch", "turnId", "text"],
+        "properties": { "type": { "const": "user.partial" }, "participantId": { "$ref": "#/$defs/id" }, "epoch": { "$ref": "#/$defs/epoch" }, "turnId": { "$ref": "#/$defs/id" }, "text": { "type": "string", "maxLength": 8000 } } }]
+    },
+    "user.turn": {
+      "title": "worker -> bot server: how a stretch of speech ended. Only `final` ever becomes a message; `lost` is offered back to the person, never sent.",
+      "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "participantId", "epoch", "turnId", "outcome", "audioMs"],
+        "properties": { "type": { "const": "user.turn" }, "participantId": { "$ref": "#/$defs/id" }, "epoch": { "$ref": "#/$defs/epoch" }, "turnId": { "$ref": "#/$defs/id" },
+          "outcome": { "enum": ["final", "lost", "cleared"] }, "text": { "type": "string", "maxLength": 8000 },
+          "reason": { "enum": ["cap", "gap", "path", "stopped", "provider"] }, "audioMs": { "type": "number", "minimum": 0 } } }]
+    },
     "error": {
       "title": "worker -> bot server: something the bot server should log or act on",
       "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "code", "message"],

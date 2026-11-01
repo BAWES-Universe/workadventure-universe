@@ -29,7 +29,8 @@ earlier list) and `room.leave`.
 
 Worker to bot server: `session.start` (session accepted), `participant.join` (audio is connected both ways),
 `participant.leave`, `lane.signal` (the answer), `playback.progress`, `engine.status` (with `room` while in a room),
-`room.state` (`connected`, or `closed` / `failed` when the connection ended without being asked to), `error`.
+`room.state` (`connected`, or `closed` / `failed` when the connection ended without being asked to), `user.speech_started`,
+`user.partial`, `user.turn` (what the worker heard a person say, see Recognition), `error`.
 
 Errors that name a lane (`participantId`, `epoch`): `stale_epoch` (message for an old or unknown lane, dropped),
 `at_capacity` (too many connections: the bot server hangs up that person), plus `invalid_message`, `no_session`, `internal`.
@@ -60,4 +61,24 @@ A microphone packet that is not permitted is dropped before it is decoded (`fram
 5. Fixed audio maths: 24 kHz mono s16 is 960 bytes per 20 ms, never 1920. Real-time pacing, one frame at a time, nothing buffered ahead.
 6. If the worker is down or refuses, people's own calls are untouched; only the bot's voice is missing.
 
-Reserved for recognition (#1664): `user.speech_started`, `user.turn`.
+## Recognition
+
+The worker turns a person's permitted microphone audio into words through a swappable recognizer (`src/recognizer.ts`; no
+provider is wired, tests use `FakeEars`). It only ever sees the audio of people whose mode listens (`talk`, `speak_and_read`),
+on the current path, one person at a time. A stretch of speech starts at the first words and ends at a pause. Messages carry
+the person's `participantId`, the path's `epoch`, and a `turnId` that ties one stretch together:
+
+* `user.speech_started`: a person started speaking.
+* `user.partial`: all the words so far, replacing the last. For that person's eyes only: the bot server shows them to that
+  person as a private event and to nobody else.
+* `user.turn`: how the stretch ended.
+  * `final`: every word came through. The bot server hands it back to the person's own game, which sends it as their own
+    chat line with the bot and `turnId` named on it (`SpaceMessage.spoken`). The bot answers that line once.
+  * `lost`: the words so far did not all come through (`reason`: `cap` the longest stretch was reached, `gap` audio was missing
+    from the middle, `path` the connection was dropped or replaced, `stopped` the bot's voice was stopped, `provider` the recognizer
+    gave up). They are only offered back to the person (Edit, Send, Discard); nothing is ever sent for them.
+  * `cleared`: nothing to keep (no words, or the person stopped being heard on purpose: muted, a mode that does not listen).
+
+The longest stretch is `VOICE_MAX_UTTERANCE_SECONDS` (default 180) of audio. At it the worker stops, offers the words back and
+takes nothing more until the person pauses. A `final` that arrives for a path the bot server has since replaced is not sent either:
+it is offered back as `lost` with reason `path`. No audio is kept: it goes to the recognizer as it arrives and is dropped.

@@ -202,6 +202,8 @@ export interface ChatMessage {
     roomLink?: BotRoomLink;
     /** Set when a bot did not answer because the person reached a reply limit (#1159): drawn as the fixed card. */
     replyLimit?: BotReplyLimit;
+    /** Set on a nearby line made from what its sender said out loud to a voice bot (#1664): a small mic mark beside its time. */
+    spoken?: boolean;
     /** Set when a bot's direct message carries an artifact it made: drawn as a card the person taps to open. */
     artifact?: ArtifactCard;
     /** Set when a bot's notice is the steps line of its reply (#1545): drawn as a quiet line that updates in place. */

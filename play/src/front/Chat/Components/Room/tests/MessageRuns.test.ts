@@ -3,14 +3,30 @@ import { RUN_GAP_MS, dayLabel, messageRuns, runSenderKey } from "../MessageRuns"
 import type { RunItem } from "../MessageRuns";
 
 const at = (hours: number, minutes: number, day = 17) => new Date(2026, 9, day, hours, minutes);
-const msg = (id: string, senderKey: string | undefined, date: Date | null, isReply = false): RunItem => ({
+const msg = (
+    id: string,
+    senderKey: string | undefined,
+    date: Date | null,
+    isReply = false,
+    spoken = false
+): RunItem => ({
     id,
     senderKey,
     date,
     isReply,
+    spoken,
 });
 
 describe("messageRuns", () => {
+    it("starts a new run for a line said out loud, so its mic mark beside the time is always there", () => {
+        const runs = messageRuns([
+            msg("a", "me", at(19, 26)),
+            msg("b", "me", at(19, 27), false, true),
+            msg("c", "me", at(19, 28)),
+        ]);
+        expect([...runs.values()].map((place) => place.runStart)).toEqual([true, true, false]);
+    });
+
     it("keeps one person's messages a few minutes apart in one run", () => {
         const runs = messageRuns([msg("a", "me", at(19, 26)), msg("b", "me", at(19, 26)), msg("c", "me", at(19, 32))]);
         expect([...runs.values()].map((place) => place.runStart)).toEqual([true, false, false]);

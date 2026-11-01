@@ -102,7 +102,7 @@ describe('bridge messages', () => {
 describe('settings', () => {
     it('work without any environment, and stay on this machine unless told otherwise', () => {
         const options = optionsFromEnv({});
-        expect(options).toMatchObject({ port: 8830, host: '127.0.0.1', maxLanes: 200 });
+        expect(options).toMatchObject({ port: 8830, host: '127.0.0.1', maxLanes: 200, maxUtteranceSeconds: 180 });
         expect(options.secret).toBeUndefined();
     });
 
@@ -112,11 +112,12 @@ describe('settings', () => {
             VOICE_WORKER_HOST: '0.0.0.0',
             VOICE_WORKER_SECRET: 'abc',
             VOICE_MAX_LANES: '12',
+            VOICE_MAX_UTTERANCE_SECONDS: '90',
             VOICE_ICE_PORT_RANGE: '40000-40100',
             VOICE_PUBLIC_IP: '203.0.113.7, 203.0.113.8',
             VOICE_ICE_SERVERS: '[{"urls":"stun:stun.example:3478"}]',
         });
-        expect(options).toMatchObject({ port: 9000, host: '0.0.0.0', secret: 'abc', maxLanes: 12 });
+        expect(options).toMatchObject({ port: 9000, host: '0.0.0.0', secret: 'abc', maxLanes: 12, maxUtteranceSeconds: 90 });
         expect(options.ice).toEqual({
             icePortRange: [40000, 40100],
             iceAdditionalHostAddresses: ['203.0.113.7', '203.0.113.8'],
