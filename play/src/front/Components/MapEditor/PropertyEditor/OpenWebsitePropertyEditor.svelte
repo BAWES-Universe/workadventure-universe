@@ -39,6 +39,7 @@
         ON_ICON_TRIGGER_BUTTON,
     } from "../../../WebRtc/LayoutManager";
     import USelect from "../../UI/USelect.svelte";
+    import { artifactIdOfLink } from "../../../Artifacts/artifactLinkCard";
     import PropertyEditorBase from "./PropertyEditorBase.svelte";
     import PanelSwitch from "./PanelSwitch.svelte";
     import PolicyChips from "./PolicyChips.svelte";
@@ -326,6 +327,13 @@
         if (property.link == undefined || !isLinkValid) {
             embeddableLoading = false;
             warning = warning ? warning : $LL.mapEditor.properties.openWebsite.errorInvalidUrl();
+            return;
+        }
+        // An object's link to an artifact opens the game's artifact window, not a frame (#1737): nothing to check
+        if (!isArea && artifactIdOfLink(property.link)) {
+            embeddable = true;
+            embeddableLoading = false;
+            onValueChange();
             return;
         }
 
