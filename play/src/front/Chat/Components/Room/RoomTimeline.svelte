@@ -33,6 +33,8 @@
     import { nextReplyLimitExpiry, shownReplyLimitIds } from "../../Bots/BotReplyLimit";
     import BotStatusNoteCard from "../Bots/BotStatusNoteCard.svelte";
     import BotReplyLimitCard from "../Bots/BotReplyLimitCard.svelte";
+    import VoiceDraftCard from "../Bots/VoiceDraftCard.svelte";
+    import { cardToShow } from "../../Bots/BotVoiceDraft";
     import {
         PERSON_COLOUR_CONTEXT,
         NAME_BY_CHAT_ID_CONTEXT,
@@ -193,6 +195,22 @@
     $: roomName = room?.name;
     $: isEncrypted = room.isEncrypted;
     $: proximityRoom = room instanceof ProximityChatRoom ? room : undefined;
+    // What a voice bot hears this person say: above the message box, for them only (#1664)
+    $: voiceDrafts = proximityRoom ? proximityRoom.voiceDrafts : readable([]);
+    $: voiceDraftCard = cardToShow($voiceDrafts);
+    // Words they were still saying when they sent a typed line: into the message box, as Edit does
+    let voiceWordsSubscription: { unsubscribe(): void } | undefined;
+    $: {
+        voiceWordsSubscription?.unsubscribe();
+        voiceWordsSubscription = proximityRoom?.voiceWordsForComposer.subscribe((words) =>
+            messageInputBarRef?.putText(words)
+        );
+    }
+    onDestroy(() => voiceWordsSubscription?.unsubscribe());
+    function editVoiceDraft(turnId: string) {
+        const words = proximityRoom?.editVoiceDraft(turnId);
+        if (words !== undefined) messageInputBarRef?.putText(words);
+    }
     $: matrixRoom = room instanceof MatrixChatRoom ? room : undefined;
 
     // Counts the chat objects shown here: a chat can be made again under the same id (its type found out later, or a new
@@ -279,6 +297,7 @@
                 date: message.date,
                 senderKey: isNotice ? undefined : message.isMyMessage ? "me" : runSenderKey(message.sender),
                 isReply: message.quotedMessage !== undefined,
+                spoken: message.spoken === true,
             };
         })
     );
@@ -1240,6 +1259,15 @@
                     {$LL.chat.botStatus.closed()}
                 </div>
             {:else}
+                {#if voiceDraftCard}
+                    <!-- One card at most: with two voice bots in a bubble, the one addressed last -->
+                    <VoiceDraftCard
+                        draft={voiceDraftCard}
+                        onEdit={editVoiceDraft}
+                        onSend={(turnId) => proximityRoom?.sendVoiceDraft(turnId)}
+                        onDiscard={(turnId) => proximityRoom?.discardVoiceDraft(turnId)}
+                    />
+                {/if}
                 {#key room.id}
                     <MessageInputBar
                         disabled={$shouldRetrySendingEvents}
