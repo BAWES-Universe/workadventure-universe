@@ -96,7 +96,8 @@
     .typing-users.visible {
         opacity: 1;
         transform: none;
-        visibility: visible;
+        /* Not "visible": the dots hide with the conversation while a profile or details page is open (#1672). */
+        visibility: inherit;
         transition: opacity 0.2s ease, transform 0.2s ease, visibility 0s;
     }
 

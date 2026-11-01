@@ -41,6 +41,7 @@ import type {
 } from "../ChatConnection";
 import { ChatPermissionLevel, InvitationNoLongerAvailableError } from "../ChatConnection";
 import { isAChatRoomIsVisible, navChat, selectedChatMessageToReply, botsChatIds } from "../../Stores/ChatStore";
+import { readBotSteps } from "../../Bots/BotSteps";
 import { selectedRoomStore } from "../../Stores/SelectRoomStore";
 import { gameManager } from "../../../Phaser/Game/GameManager";
 import { localUserStore } from "../../../Connection/LocalUserStore";
@@ -495,10 +496,14 @@ export class MatrixChatRoom
             }
         }
         if (isFresh && senderID !== this.matrixRoom.client.getSafeUserId() && !get(this.areNotificationsMuted)) {
-            this.notifyNewMessage(message);
-            if (!isAChatRoomIsVisible() && get(selectedRoomStore)?.id !== "proximity") {
-                selectedRoomStore.set(this);
-                navChat.switchToChat();
+            // A bot's steps line ("Using Generate music…") is not a message to be told about, nor one to open the chat
+            // on: its answer follows (#1646)
+            if (!readBotSteps(senderID, event.getContent())) {
+                this.notifyNewMessage(message);
+                if (!isAChatRoomIsVisible() && get(selectedRoomStore)?.id !== "proximity") {
+                    selectedRoomStore.set(this);
+                    navChat.switchToChat();
+                }
             }
         }
 

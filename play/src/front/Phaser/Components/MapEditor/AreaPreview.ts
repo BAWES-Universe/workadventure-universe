@@ -683,11 +683,6 @@ function propertyLook(name: string): { name: string; color: string } {
                 name: "ListenerMegaphone",
                 color: "EEEBD0",
             };
-        case "jitsiRoomProperty":
-            return {
-                name: "Meeting",
-                color: "86BBD8",
-            };
         case "openWebsite":
             return {
                 name: "Link",

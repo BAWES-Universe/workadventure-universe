@@ -847,6 +847,7 @@ const chat: BaseTranslation = {
     botSteps: {
         doneCount: "{done} of {total} done",
         failed: "{count} didn't work",
+        noAnswer: "{count} no answer",
         stopped: "Stopped",
         again: "again",
         show: "Show steps",

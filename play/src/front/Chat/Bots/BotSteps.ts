@@ -4,7 +4,8 @@ import { botIdFromChatId } from "./BotChatStatus";
  * The steps line of a bot's reply (#1545): one notice per reply that the bot server updates while the bot uses its
  * tools, carried in its `universe.steps` field. Drawn as a quiet line, not a bubble.
  */
-export type BotStepState = "running" | "done" | "failed";
+/** unknown: the call went out and no answer came back, so it may have run (#1692). */
+export type BotStepState = "running" | "done" | "failed" | "unknown";
 
 export interface BotStep {
     /** While it runs, e.g. "Reading workadventu.re". */
@@ -31,7 +32,7 @@ export interface BotSteps {
 }
 
 const STATES = ["working", "done", "stopped"];
-const STEP_STATES = ["running", "done", "failed"];
+const STEP_STATES = ["running", "done", "failed", "unknown"];
 /** Each text is one short line from the bot server; a longer one is cut so it can't stretch the chat. */
 const TEXT_MAX = 200;
 

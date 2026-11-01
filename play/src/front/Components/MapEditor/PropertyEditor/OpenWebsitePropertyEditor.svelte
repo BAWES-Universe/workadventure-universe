@@ -779,6 +779,17 @@
                 disabled={property.newTab}
             />
 
+            <PanelSwitch
+                id="hideTitleBar"
+                label={$LL.mapEditor.properties.openWebsite.hideTitleBarLabel()}
+                help={$LL.mapEditor.properties.openWebsite.hideTitleBarHelp()}
+                bind:value={property.hideTitleBar}
+                onChange={() => {
+                    onValueChange();
+                }}
+                disabled={property.newTab}
+            />
+
             {#if !property.newTab}
                 <div class="op-slider">
                     <div class="op-slider-top">

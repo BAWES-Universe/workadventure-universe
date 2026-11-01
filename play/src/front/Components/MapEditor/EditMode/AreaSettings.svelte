@@ -24,7 +24,6 @@
     import type { ExtensionModule, ExtensionModuleAreaProperty } from "../../../ExternalModule/ExtensionModule";
     import { analyticsClient } from "../../../Administration/AnalyticsClient";
     import { connectionManager } from "../../../Connection/ConnectionManager";
-    import JitsiRoomPropertyEditor from "../PropertyEditor/JitsiRoomPropertyEditor.svelte";
     import PlayAudioPropertyEditor from "../PropertyEditor/PlayAudioPropertyEditor.svelte";
     import OpenWebsitePropertyEditor from "../PropertyEditor/OpenWebsitePropertyEditor.svelte";
     import OpenFilePropertyEditor from "../PropertyEditor/OpenFilePropertyEditor.svelte";
@@ -393,13 +392,6 @@
                     />
                 {:else if property.type === "silent"}
                     <SilentPropertyEditor on:close={() => remove(property.id)} on:change={() => update(property)} />
-                {:else if property.type === "jitsiRoomProperty"}
-                    <JitsiRoomPropertyEditor
-                        {property}
-                        isArea={true}
-                        on:close={() => remove(property.id)}
-                        on:change={() => update(property)}
-                    />
                 {:else if property.type === "playAudio"}
                     <PlayAudioPropertyEditor
                         property={{ ...property, hideButtonLabel: true }}
@@ -1057,7 +1049,7 @@
     .em-danger-zone .em-remove {
         margin: 0 0 4px;
     }
-    /* A setting that cannot go with one already on (Stage next to a video call): shown, greyed, not tappable. */
+    /* A setting that cannot go with one already on (Stage next to a meeting room): shown, greyed, not tappable. */
     button.em-row.em-row-off {
         opacity: 0.45;
         cursor: not-allowed;

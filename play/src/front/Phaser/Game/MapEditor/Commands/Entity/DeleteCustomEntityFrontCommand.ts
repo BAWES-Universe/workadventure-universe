@@ -1,5 +1,5 @@
 import type { Command, GameMap } from "@workadventure/map-editor";
-import { DeleteCustomEntityCommand } from "@workadventure/map-editor";
+import { DeleteCustomEntityCommand, pictureIdsOf } from "@workadventure/map-editor";
 import type { DeleteCustomEntityMessage } from "@workadventure/messages";
 import type { RoomConnection } from "../../../../../Connection/RoomConnection";
 import type { FrontCommand } from "../FrontCommand";
@@ -21,10 +21,12 @@ export class DeleteCustomEntityFrontCommand extends DeleteCustomEntityCommand im
     }
 
     execute(): Promise<void> {
-        const { id } = this.deleteCustomEntityMessage;
-        this.entitiesCollectionManager.deleteCustomEntity(id);
-        const gameMapEntitiesIdToRemove = this.gameMap?.getGameMapEntities()?.findEntitiesByPrefabId(id) ?? [];
-        this.entitiesManager.deleteEntities(gameMapEntitiesIdToRemove);
+        // Deleting an upload takes every picture of it and every placed copy (#1690).
+        for (const id of pictureIdsOf(this.deleteCustomEntityMessage)) {
+            this.entitiesCollectionManager.deleteCustomEntity(id);
+            const gameMapEntitiesIdToRemove = this.gameMap?.getGameMapEntities()?.findEntitiesByPrefabId(id) ?? [];
+            this.entitiesManager.deleteEntities(gameMapEntitiesIdToRemove);
+        }
         return super.execute();
     }
 

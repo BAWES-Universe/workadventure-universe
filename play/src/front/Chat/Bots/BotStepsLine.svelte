@@ -3,7 +3,7 @@
     import type { Readable } from "svelte/store";
     import { LL } from "../../../i18n/i18n-svelte";
     import { currentStep, stepsClock, type BotSteps } from "./BotSteps";
-    import { IconCheck, IconChevronDown, IconChevronUp, IconMinus, IconX } from "@wa-icons";
+    import { IconCheck, IconChevronDown, IconChevronUp, IconHelpCircle, IconMinus, IconX } from "@wa-icons";
 
     /**
      * A bot's steps line (#1545): no bubble, so it never reads as something the bot said. While the bot works it names
@@ -20,6 +20,7 @@
     $: current = shown && working ? currentStep(shown) : undefined;
     $: finished = shown?.steps.filter((step) => step.state !== "running").length ?? 0;
     $: failed = shown?.steps.filter((step) => step.state === "failed").length ?? 0;
+    $: unknown = shown?.steps.filter((step) => step.state === "unknown").length ?? 0;
     $: elapsed = shown && shown.startedAt > 0 ? stepsClock((now - shown.startedAt) / 1000) : "";
     $: tick(working);
 
@@ -70,6 +71,8 @@
             >
                 {#if failed > 0 || shown.state === "stopped"}
                     <IconX class="bot-steps-icon bad" font-size={16} />
+                {:else if unknown > 0}
+                    <IconHelpCircle class="bot-steps-icon" font-size={16} />
                 {:else}
                     <IconCheck class="bot-steps-icon" font-size={16} />
                 {/if}
@@ -77,6 +80,8 @@
                     <span
                         >{shown.line}{#if failed > 0}<span>&nbsp;· </span><span class="bad"
                                 >{$LL.chat.botSteps.failed({ count: failed })}</span
+                            >{/if}{#if unknown > 0}<span>&nbsp;· </span><span class="unknown"
+                                >{$LL.chat.botSteps.noAnswer({ count: unknown })}</span
                             >{/if}{#if shown.state === "stopped"}<span>&nbsp;· </span><span class="bad"
                                 >{$LL.chat.botSteps.stopped()}</span
                             >{/if}</span
@@ -95,6 +100,8 @@
                     <li class:bad={step.state === "failed"}>
                         {#if step.state === "failed"}
                             <IconX class="bot-steps-icon bad" font-size={15} />
+                        {:else if step.state === "unknown"}
+                            <IconHelpCircle class="bot-steps-icon" font-size={15} />
                         {:else if step.state === "running"}
                             <!-- Never finished in view: the line stopped (e.g. you walked away) before it said how it went -->
                             <IconMinus class="bot-steps-icon" font-size={15} />
@@ -103,7 +110,7 @@
                         {/if}
                         <span class="bot-steps-words">
                             <span>{step.done}</span>
-                            {#if step.state === "failed" && step.note}
+                            {#if (step.state === "failed" || step.state === "unknown") && step.note}
                                 <small>{step.note}</small>
                             {:else if step.detail}
                                 <small>{step.detail}</small>
@@ -184,6 +191,11 @@
     .bad,
     .bot-steps :global(.bot-steps-icon.bad) {
         color: #e96d51;
+    }
+    /* A call that may have run (#1692): not a failure, so not the coral */
+    .bot-steps-words .unknown {
+        white-space: nowrap;
+        color: white;
     }
     .bot-steps-words .bad {
         white-space: nowrap;

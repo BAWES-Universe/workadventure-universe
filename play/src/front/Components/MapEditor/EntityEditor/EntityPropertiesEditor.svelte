@@ -3,6 +3,7 @@
     import { onDestroy } from "svelte";
     import type { ApplicationDefinitionInterface } from "@workadventure/messages";
     import { v4 as uuid } from "uuid";
+    import { NEW_OBJECT_SOUND } from "@workadventure/map-editor";
     import { mapEditorSelectedEntityStore } from "../../../Stores/MapEditorStore";
     import { analyticsClient } from "../../../Administration/AnalyticsClient";
     import LL from "../../../../i18n/i18n-svelte";
@@ -16,6 +17,7 @@
     import InputSwitch from "../../Input/InputSwitch.svelte";
     import OpenFilePropertyEditor from "../PropertyEditor/OpenFilePropertyEditor.svelte";
     import type { Entity } from "../../../Phaser/ECS/Entity";
+    import { NEW_SOUND_VOLUME } from "../EditMode/areaProperties";
 
     let properties: EntityDataProperties = [];
     let entityName = "";
@@ -76,6 +78,7 @@
             forceNewTab: app.forceNewTab,
             allowAPI: app.allowAPI,
             hideUrl: false,
+            hideTitleBar: false,
         };
         $mapEditorSelectedEntityStore.addProperty(property);
 
@@ -127,15 +130,6 @@
         let buttonLabel: string;
         let policy: string | undefined;
         switch (type) {
-            case "jitsiRoomProperty":
-                return {
-                    id,
-                    type,
-                    jitsiRoomConfig: {},
-                    closable: true,
-                    roomName: "JITSI ROOM",
-                    buttonLabel: $LL.mapEditor.properties.jitsiRoomProperty.label(),
-                };
             case "livekitRoomProperty":
                 return {
                     id,
@@ -224,6 +218,7 @@
                     policy,
                     width: 50,
                     hideUrl: false,
+                    hideTitleBar: false,
                 };
             case "playAudio":
                 return {
@@ -231,7 +226,9 @@
                     type,
                     buttonLabel: $LL.mapEditor.properties.playAudio.label(),
                     audioLink: "",
-                    volume: 1,
+                    volume: NEW_SOUND_VOLUME,
+                    // A new object sound plays in range, like a fireplace (#1627)
+                    ...NEW_OBJECT_SOUND,
                 };
             default:
                 throw new Error(`Unknown property type ${type}`);
