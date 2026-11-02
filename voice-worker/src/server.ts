@@ -7,6 +7,7 @@ import type { Duplex } from 'node:stream';
 import { type RawData, WebSocket, WebSocketServer } from 'ws';
 import { ConnectorRegistry } from './connectors.ts';
 import { Counters } from './counters.ts';
+import { DEEPGRAM_ADAPTER, DEFAULT_DEEPGRAM_FINAL_TIMEOUT_MS, DeepgramRecognition } from './deepgram.ts';
 import { FAKE_ADAPTER, FakeSpeech } from './fakeSpeech.ts';
 import type { IceConfig } from './lane.ts';
 import type { BotToWorker } from './protocol.ts';
@@ -39,6 +40,8 @@ export interface WorkerOptions {
     speechTimeoutSeconds?: number;
     /** Voiced audio before a person counts as speaking over the bot, in milliseconds. */
     bargeInMs?: number;
+    /** How long a hearing provider may take for the last words after a person paused, in seconds, before it counts as failed. Default 10. */
+    recognitionFinalTimeoutSeconds?: number;
     engineId?: string;
 }
 
@@ -84,9 +87,13 @@ export class VoiceWorker {
 
     constructor(readonly options: WorkerOptions) {
         this.engineId = options.engineId ?? `voice-worker-${process.pid}`;
-        // The test engine is the only connector built in; each real provider is one more file registered by name
+        // Each real provider is one file registered by name; a registry passed in (tests) keeps what it already has
         this.connectors = options.connectors ?? new ConnectorRegistry();
         if (!this.connectors.speech(FAKE_ADAPTER)) this.connectors.registerSpeech(FAKE_ADAPTER, this.speech);
+        if (!this.connectors.recognition(DEEPGRAM_ADAPTER)) {
+            const finalTimeoutMs = (options.recognitionFinalTimeoutSeconds ?? DEFAULT_DEEPGRAM_FINAL_TIMEOUT_MS / 1000) * 1000;
+            this.connectors.registerRecognition(DEEPGRAM_ADAPTER, new DeepgramRecognition({ finalTimeoutMs }));
+        }
         this.server.on('upgrade', (req, socket, head) => this.onUpgrade(req, socket, head));
     }
 

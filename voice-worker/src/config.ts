@@ -1,5 +1,6 @@
 // Settings come from the environment. Everything has a default that works on one machine; none of it switches voice on or off.
 import type { IceConfig } from './lane.ts';
+import { DEFAULT_DEEPGRAM_FINAL_TIMEOUT_MS } from './deepgram.ts';
 import { DEFAULT_BARGE_IN_MS } from './recognition.ts';
 import { DEFAULT_MAX_REPLY_SECONDS, DEFAULT_MAX_UTTERANCE_SECONDS, DEFAULT_SPEECH_TIMEOUT_SECONDS, type WorkerOptions } from './server.ts';
 
@@ -32,5 +33,6 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv = process.env): WorkerOpti
         maxReplySeconds: int(env.VOICE_MAX_REPLY_SECONDS, DEFAULT_MAX_REPLY_SECONDS),
         speechTimeoutSeconds: int(env.VOICE_SPEECH_TIMEOUT_SECONDS, DEFAULT_SPEECH_TIMEOUT_SECONDS),
         bargeInMs: int(env.VOICE_BARGE_IN_MS, DEFAULT_BARGE_IN_MS),
+        recognitionFinalTimeoutSeconds: int(env.VOICE_RECOGNITION_FINAL_TIMEOUT_SECONDS, DEFAULT_DEEPGRAM_FINAL_TIMEOUT_MS / 1000),
     };
 }

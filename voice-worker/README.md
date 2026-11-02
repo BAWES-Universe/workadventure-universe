@@ -29,8 +29,17 @@ Recognition (#1664) plugs into `InputSink` (`src/transport.ts`) through `src/rec
 
 A bubble names its own hearing and speaking provider in `session.open` (`recognition`, `speech`, `expression`; see
 `PROTOCOL.md`, Providers). The worker looks each adapter name up in a registry (`src/connectors.ts`), so two bubbles can
-use two different providers at once. Only the test engine is built in: `FakeSpeech` (registered as `fake`, and what a bubble
-that names nothing gets) and the scripted `FakeEars` for tests. No real provider is wired yet; each one is a later change.
+use two different providers at once. Built in: the test engine, `FakeSpeech` (registered as `fake`, and what a bubble
+that names nothing gets) and the scripted `FakeEars` for tests, plus these real providers (#1748, one change each):
+
+* `deepgram` (hearing, `src/deepgram.ts`): one real-time WebSocket stream per stretch of speech to
+  `wss://api.deepgram.com/v1/listen` (or the profile's `endpoint`), the key in the `Authorization` header only
+  (`Token <key>`), 16 kHz mono `linear16`, the profile's `model` (`nova-3` when it names none) and its `language` when it
+  fixes one (otherwise Deepgram's own default applies). Deepgram's own end-of-speech cutting is off: the worker decides where
+  speech ends. Partial words are the final segments so far plus the latest guess; when the person pauses a `CloseStream`
+  message ends the audio and the words are final once Deepgram has sent its last answer (`Metadata`) or closed the stream
+  normally. A refused key (401/403), an `Error` answer, a stream closed any other way or no last answer within
+  `VOICE_RECOGNITION_FINAL_TIMEOUT_SECONDS` (default 10) fails the turn with the words heard so far.
 
 To add a provider, write one file that implements a connector and register it by its lowercase adapter name:
 
@@ -95,6 +104,7 @@ npm test
 | `VOICE_MAX_UTTERANCE_SECONDS` | `180` | The longest stretch of one person's speech taken, in seconds of audio. Past it the words are offered back to them, never sent. |
 | `VOICE_MAX_REPLY_SECONDS` | `60` | The longest one spoken reply plays, whatever the bot server asks (it asks for its own, up to this). |
 | `VOICE_SPEECH_TIMEOUT_SECONDS` | `15` | The longest a speech provider may go without sending the next piece of a reply's audio before the call counts as failed. |
+| `VOICE_RECOGNITION_FINAL_TIMEOUT_SECONDS` | `10` | The longest a hearing provider may take for a person's last words after they paused before the call counts as failed. |
 | `VOICE_BARGE_IN_MS` | `100` | Speech this long, from a person the bot hears, stops the bot's voice. A click or a cough is shorter. |
 | `VOICE_ICE_SERVERS` | Google STUN | JSON list of STUN/TURN servers, like the game's. |
 | `VOICE_ICE_PORT_RANGE` | any | `40000-40100`: the UDP ports to open on the host. |
