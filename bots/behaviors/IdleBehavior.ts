@@ -7,7 +7,7 @@ import { BaseBehavior, type BehaviorConfig } from './BaseBehavior';
 import { PositionMessage_Direction, type SpaceUser } from '@workadventure/messages';
 import { ConversationMemory } from '../memory/ConversationMemory';
 import { BotClient } from '../client/BotClient';
-import { parseEmotionsFromResponse, appendStreamedChunk, detectEmotionPrefixAtEnd } from '../ai/EmotionParser';
+import { parseEmotionsFromResponse, appendStreamedChunk, detectEmotionPrefixAtEnd, moodOf } from '../ai/EmotionParser';
 import { createBatchState, batchAppend, batchFlush } from '../ai/StreamBatcher';
 
 export interface IdleBehaviorConfig extends BehaviorConfig {
@@ -685,7 +685,7 @@ export class IdleBehavior extends BaseBehavior {
                     // Send processed message via stream final chunk — always send even if empty (to close bubble)
                     if (processedMessage.trim()) {
                         // Send the final chunk with the complete cleaned message
-                        this.bot?.sendStreamMessage(spaceName, responseId, '', true, processedMessage);
+                        this.bot?.sendStreamMessage(spaceName, responseId, '', true, processedMessage, false, undefined, false, undefined, moodOf(parsedResponse.emotions));
 
                         // Store bot's message in memory
                         if (this.conversationMemory) {
@@ -856,7 +856,7 @@ export class IdleBehavior extends BaseBehavior {
                     
                     if (cleanedMessage.trim()) {
                         if (this.bot) {
-                            this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, '', true, cleanedMessage.trim());
+                            this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, '', true, cleanedMessage.trim(), false, undefined, false, undefined, moodOf(parsedResponse.emotions));
                             if (this.conversationMemory) {
                                 this.conversationMemory.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
                             }
@@ -1020,7 +1020,7 @@ export class IdleBehavior extends BaseBehavior {
                     // Send response
                     if (cleanedMessage.trim()) {
                         if (this.bot) {
-                            this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', true, cleanedMessage.trim());
+                            this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', true, cleanedMessage.trim(), false, undefined, false, undefined, moodOf(parsedResponse.emotions));
                             // Store bot's message in memory
                             if (this.conversationMemory) {
                                 this.conversationMemory.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
@@ -1214,7 +1214,7 @@ export class IdleBehavior extends BaseBehavior {
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                             console.log(`[IdleBehavior] sendAreaArrivalMessage: Sending message to space: "${cleanedMessage.trim()}"`);
                         }
-                        this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, cleanedMessage.trim());
+                        this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, cleanedMessage.trim(), false, undefined, false, undefined, moodOf(parsedResponse.emotions));
                         if (this.conversationMemory) {
                             this.conversationMemory.addMessage(botId, followerUserId, cleanedMessage.trim(), 'bot', spaceName);
                         }
@@ -1416,7 +1416,7 @@ export class IdleBehavior extends BaseBehavior {
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                             console.log(`[IdleBehavior] sendPersonArrivalMessage: Sending message: "${cleanedMessage.trim()}"`);
                         }
-                        this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, cleanedMessage.trim());
+                        this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, cleanedMessage.trim(), false, undefined, false, undefined, moodOf(parsedResponse.emotions));
                         if (this.conversationMemory) {
                             this.conversationMemory.addMessage(botId, followerUserId, cleanedMessage.trim(), 'bot', spaceName);
                         }
@@ -1613,7 +1613,7 @@ export class IdleBehavior extends BaseBehavior {
                     // Send response
                     if (cleanedMessage.trim()) {
                         if (this.bot) {
-                            this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', true, cleanedMessage.trim());
+                            this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', true, cleanedMessage.trim(), false, undefined, false, undefined, moodOf(parsedResponse.emotions));
                             // Store bot's message in memory
                             if (this.conversationMemory) {
                                 this.conversationMemory.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
