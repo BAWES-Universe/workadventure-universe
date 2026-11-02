@@ -12,6 +12,8 @@ import type { SpeechTurn } from './BotSpeech';
 export interface AllowanceOrbit {
     /** Null when Orbit can't be asked or doesn't know the question. */
     checkVoiceAllowance(botId: string, input: { userId: string; isGuest: boolean; turnId: string }): Promise<{ allowed: true } | { allowed: false; resetsAt: string } | null>;
+    /** Gives back a reply that was counted and then never spoken. True: it was given back. False: nothing was counted under that id. Null: could not be done (Orbit down, an Orbit from before). */
+    releaseVoiceReply(botId: string, input: { turnId: string }): Promise<boolean | null>;
 }
 
 /** The person a reply is for, as Orbit counts people: their id as the game gave it, and whether they are a guest. */
@@ -28,15 +30,25 @@ export interface TurnGate {
     personOf(turn: SpeechTurn): string | undefined;
     /** May this reply be spoken? `unknown`: it could not be settled, so it stays in text and nobody is told voice is paused. */
     mayUniverseAiSpeak(turn: SpeechTurn): Promise<SpeakVerdict>;
+    /** A reply that was allowed will not be spoken after all: whatever was counted for it is given back. Never throws, never needs waiting for. */
+    release(turn: SpeechTurn): Promise<void>;
 }
 
+/** Giving a reply back is tried this many times, with these pauses between (it is safe to repeat: Orbit gives back at most once). */
+const RELEASE_PAUSES_MS = [1000, 5000];
+const MAX_COUNTED = 500;
+
 export class OrbitTurnGate implements TurnGate {
+    /** Replies this bot server was told "yes" for: only these can have been counted, so only these are given back. */
+    private readonly counted = new Set<string>();
+
     constructor(
         private readonly botId: string,
         private readonly orbit: AllowanceOrbit,
         /** Who a player id is, as the behavior learnt it. Null while it isn't known (nobody to count). */
         private readonly talker: (playerId: number) => Talker | null,
-        private readonly log: (message: string) => void = () => undefined
+        private readonly log: (message: string) => void = () => undefined,
+        private readonly pause: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms).unref?.())
     ) {}
 
     personOf(turn: SpeechTurn): string | undefined {
@@ -52,7 +64,29 @@ export class OrbitTurnGate implements TurnGate {
             this.log('voice: could not settle the allowance, this reply stays in text');
             return 'unknown';
         }
-        return answer.allowed ? 'yes' : 'no';
+        if (!answer.allowed) return 'no';
+        this.counted.add(turn.turnId);
+        for (const oldest of this.counted) {
+            if (this.counted.size <= MAX_COUNTED) break;
+            this.counted.delete(oldest);
+        }
+        return 'yes';
+    }
+
+    async release(turn: SpeechTurn): Promise<void> {
+        // Never counted here (text, a bot whose voice the maker pays for, nobody to count): nothing to give back
+        if (!this.counted.delete(turn.turnId)) return;
+        try {
+            for (let attempt = 0; ; attempt++) {
+                const result = await this.orbit.releaseVoiceReply(this.botId, { turnId: turn.turnId });
+                if (result !== null) return;
+                if (attempt >= RELEASE_PAUSES_MS.length) break;
+                await this.pause(RELEASE_PAUSES_MS[attempt]);
+            }
+            this.log('voice: could not give back a spoken reply that was never heard');
+        } catch {
+            this.log('voice: could not give back a spoken reply that was never heard');
+        }
     }
 
     private who(turn: SpeechTurn): Talker | null {

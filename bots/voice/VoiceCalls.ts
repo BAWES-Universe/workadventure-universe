@@ -138,6 +138,8 @@ export class VoiceCalls {
     private readonly told = new Map<string, VoiceStatus>();
     /** Called when a reply's voice stopped part-way because someone spoke over it. */
     onStopped?: (spaceName: string, segmentId: string) => void;
+    /** Called when a reply's segment ended without any of it being heard (see `handlePlayback`). */
+    onUnplayed?: (spaceName: string, segmentId: string) => void;
     /**
      * The worker turned someone away because it is full (#1751): one person's connection, the bubble's LiveKit audio,
      * or the whole bubble. Who watches the load counts it; nothing a person said is in it.
@@ -597,9 +599,15 @@ export class VoiceCalls {
      * over it. A reply cut before any of it was sent, and every other ending, shows nothing.
      */
     private handlePlayback(message: Extract<FromWorker, { type: 'playback.progress' }>): void {
-        if (!message.finished || !message.interrupted || message.reason !== 'barge_in' || message.playedMs <= 0) return;
+        if (!message.finished) return;
         const bubble = [...this.bubbles.values()].find((b) => b.sessionId === message.sessionId);
         if (!bubble) return;
+        // Not a moment of it was heard, however it ended: a reply that was counted is given back
+        if (message.playedMs <= 0) {
+            this.onUnplayed?.(bubble.spaceName, message.segmentId);
+            return;
+        }
+        if (!message.interrupted || message.reason !== 'barge_in') return;
         this.stats.stoppedBySpeech++;
         this.onStopped?.(bubble.spaceName, message.segmentId);
     }
@@ -869,6 +877,11 @@ export class VoiceCalls {
         }
         this.resume(spaceName, turn);
         return { action: 'speak', limits: active.replyLimits };
+    }
+
+    /** A reply that was allowed will not be spoken after all (see BotSpeech): what was counted for it is given back, in the background. */
+    unspoken(_spaceName: string, turn: SpeechTurn): void {
+        void this.gate?.release(turn).catch(() => undefined);
     }
 
     /** The person a turn is for, in the bubble's roster, when the bot knows who it is and they are still there. */

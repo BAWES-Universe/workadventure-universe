@@ -2,7 +2,7 @@
  * What a voice bot says out loud, and when (#1665): only a reply that is finished and checked, once, never over a
  * person who is talking, and never the claim a retry replaced.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { BotSpeech, type SpeechVoice } from '../voice/BotSpeech';
 import { DEFAULT_REPLY_LIMITS } from '../voice/settings';
 import { SPOKEN_PHRASES } from '../voice/SpokenText';
@@ -231,5 +231,146 @@ describe('a bot whose voice Orbit decides', () => {
         t.speech.audience(SPACE);
         await flush();
         expect(t.said.map((s) => s.text)).toEqual(['Welcome back.']);
+    });
+});
+
+describe('a reply that will not be spoken after all', () => {
+    const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+    function track(options: { audience?: boolean; decision?: () => Promise<import('../voice/BotSpeech').TurnDecision>; sayWorks?: boolean; throws?: boolean } = {}) {
+        let clock = 1000;
+        const state = { audience: options.audience ?? true, speaking: false, spokenToAt: 0 };
+        const given: string[] = [];
+        const said: string[] = [];
+        const voice: SpeechVoice = {
+            say: (_space, _segment, text) => (options.sayWorks === false ? false : (said.push(text), true)),
+            hasAudience: () => state.audience,
+            someoneSpeaking: () => state.speaking,
+            lastSpokenToAt: () => state.spokenToAt,
+            beforeSpeaking: async () => (options.decision ? options.decision() : { action: 'speak' }),
+            unspoken: (_space, turn) => {
+                given.push(turn.turnId);
+                if (options.throws) throw new Error('boom');
+            },
+        };
+        const speech = new BotSpeech(voice, DEFAULT_REPLY_LIMITS, () => clock);
+        return { speech, state, given, said, tick: (ms: number) => (clock += ms) };
+    }
+
+    it('is not let go when it was spoken', async () => {
+        const t = track();
+        t.speech.final(SPACE, reply(1), 'Hello.');
+        await flush();
+        expect(t.said).toEqual(['Hello.']);
+        expect(t.given).toEqual([]);
+    });
+
+    it('is let go when a person started talking while Orbit was being asked', async () => {
+        const t = track({
+            decision: async () => {
+                t.state.speaking = true;
+                return { action: 'speak' };
+            },
+        });
+        t.speech.final(SPACE, reply(1), 'Hello.');
+        await flush();
+        expect(t.said).toEqual([]);
+        expect(t.given).toEqual([reply(1)]);
+    });
+
+    it('is let go when told to stay in text, or when the answer fails (a bubble that went away after it was counted)', async () => {
+        const text = track({ decision: async () => ({ action: 'text' }) });
+        text.speech.final(SPACE, reply(1), 'Hello.');
+        const failed = track({ decision: async () => Promise.reject(new Error('gone')) });
+        failed.speech.final(SPACE, reply(2), 'Hello.');
+        await flush();
+        expect(text.given).toEqual([reply(1)]);
+        expect(failed.given).toEqual([reply(2)]);
+    });
+
+    it('is let go when the voice cannot say it', async () => {
+        const t = track({ sayWorks: false });
+        t.speech.final(SPACE, reply(1), 'Hello.');
+        await flush();
+        expect(t.given).toEqual([reply(1)]);
+    });
+
+    it('is let go when it waited for an audience too long, or when someone was talking by the time it came', async () => {
+        const late = track({ audience: false });
+        late.speech.final(SPACE, reply(1), 'Welcome.');
+        late.tick(DEFAULT_REPLY_LIMITS.greetingWaitSeconds * 1000 + 1);
+        late.state.audience = true;
+        late.speech.audience(SPACE);
+        expect(late.said).toEqual([]);
+        expect(late.given).toEqual([reply(1)]);
+
+        const busy = track({ audience: false });
+        busy.speech.final(SPACE, reply(2), 'Welcome.');
+        busy.state.speaking = true;
+        busy.speech.audience(SPACE);
+        expect(busy.given).toEqual([reply(2)]);
+    });
+
+    it('is let go by itself when nobody ever comes to hear it', () => {
+        vi.useFakeTimers();
+        try {
+            const t = track({ audience: false });
+            t.speech.final(SPACE, reply(1), 'Welcome.');
+            vi.advanceTimersByTime(DEFAULT_REPLY_LIMITS.greetingWaitSeconds * 1000 - 1);
+            expect(t.given).toEqual([]);
+            vi.advanceTimersByTime(2);
+            expect(t.given).toEqual([reply(1)]);
+            // And it is not let go a second time
+            t.speech.spaceLeft(SPACE);
+            expect(t.given).toEqual([reply(1)]);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('is not let go when the audience came in time and it was spoken', () => {
+        vi.useFakeTimers();
+        try {
+            const t = track({ audience: false, decision: undefined });
+            t.speech.final(SPACE, reply(1), 'Welcome.');
+            t.state.audience = true;
+            t.speech.audience(SPACE);
+            vi.advanceTimersByTime(60_000);
+            expect(t.given).toEqual([]);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('is let go when a newer one takes its place, when the space is left, and when the bot stops', () => {
+        const t = track({ audience: false });
+        t.speech.final(SPACE, reply(1), 'First.');
+        t.speech.final(SPACE, reply(2), 'Second.');
+        expect(t.given).toEqual([reply(1)]);
+        t.speech.spaceLeft(SPACE);
+        expect(t.given).toEqual([reply(1), reply(2)]);
+        t.speech.final('other', reply(3), 'Third.');
+        t.speech.shutdown();
+        expect(t.given).toEqual([reply(1), reply(2), reply(3)]);
+    });
+
+    it('is let go when the worker ended its segment without any of it heard, and only then', async () => {
+        const t = track();
+        t.speech.final(SPACE, reply(1), 'One.');
+        t.speech.final(SPACE, reply(2), 'Two.');
+        await flush();
+        t.speech.unplayed('elsewhere', 's1');
+        t.speech.unplayed(SPACE, 's9');
+        expect(t.given).toEqual([]);
+        t.speech.unplayed(SPACE, 's1');
+        t.speech.unplayed(SPACE, 's1');
+        expect(t.given).toEqual([reply(1)]);
+    });
+
+    it('never gets in the way when giving it back throws', async () => {
+        const t = track({ sayWorks: false, throws: true });
+        expect(() => t.speech.final(SPACE, reply(1), 'Hello.')).not.toThrow();
+        await flush();
+        expect(t.given).toEqual([reply(1)]);
     });
 });

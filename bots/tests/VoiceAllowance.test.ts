@@ -60,12 +60,14 @@ function bot(options: { owners?: { recognition: boolean; speech: boolean }; peop
     };
     const orbit = {
         checkVoiceAllowance: vi.fn(async (_botId: string, _input: { userId: string; isGuest: boolean; turnId: string }) => (state.answers.length ? state.answers.shift()! : state.fallback)),
+        releaseVoiceReply: vi.fn(async (_botId: string, _input: { turnId: string }): Promise<boolean | null> => true),
     };
-    const gate = new OrbitTurnGate('sam', orbit, (playerId) => people[playerId] ?? null, (m) => logs.push(m));
+    const gate = new OrbitTurnGate('sam', orbit, (playerId) => people[playerId] ?? null, (m) => logs.push(m), async () => undefined);
     const calls = new VoiceCalls('sam', game, (h) => ((handlers = h), link), (m) => logs.push(m), settings, gate);
     calls.onPaused = (space) => lines.push(`${space}:${pausedLine('Sam')}`);
     const speech = new BotSpeech(calls, DEFAULT_REPLY_LIMITS);
     calls.onAudience = (space) => speech.audience(space);
+    calls.onUnplayed = (space, segmentId) => speech.unplayed(space, segmentId);
     const t = {
         sent, statuses, lines, logs, orbit, state, calls, speech,
         says: () => (sent.filter((m) => m.type === 'bot.say') as Extract<ToWorker, { type: 'bot.say' }>[]).map((m) => m.text),
@@ -85,6 +87,11 @@ function bot(options: { owners?: { recognition: boolean; speech: boolean }; peop
         rejoin(who = 'room_7') {
             const lane = [...sent].reverse().find((m) => m.type === 'lane.open') as Extract<ToWorker, { type: 'lane.open' }>;
             handlers.onMessage({ type: 'participant.join', sessionId: lane.sessionId, participantId: who, epoch: lane.epoch } as FromWorker);
+        },
+        /** Something the worker reports about the person's audio session. */
+        workerSays(message: object, who = 'room_7') {
+            const lane = [...sent].reverse().find((m) => m.type === 'lane.open') as Extract<ToWorker, { type: 'lane.open' }>;
+            handlers.onMessage({ sessionId: lane.sessionId, participantId: who, epoch: lane.epoch, turnId: '1-1', ...message } as FromWorker);
         },
         async say(id: string, text = 'An answer.') {
             speech.final(SPACE, id, text);
@@ -219,6 +226,124 @@ describe('a reply that Universe AI pays for', () => {
     });
 });
 
+describe('a reply that was counted and then never spoken', () => {
+    const released = (b: ReturnType<typeof bot>) => b.orbit.releaseVoiceReply.mock.calls.map(([botId, input]) => [botId, input.turnId]);
+
+    it('is not given back when it was spoken', async () => {
+        const b = bot();
+        await b.connect();
+        await b.say(reply(1), 'Heard.');
+        b.workerSays({ type: 'playback.progress', segmentId: 's1', playedMs: 1800, totalMs: 1800, finished: true, interrupted: false, reason: 'completed' });
+        await flush();
+        expect(b.says()).toEqual(['Heard.']);
+        expect(released(b)).toEqual([]);
+    });
+
+    it('is given back when the person talked over it while Orbit was being asked', async () => {
+        const b = bot();
+        await b.connect();
+        b.orbit.checkVoiceAllowance.mockImplementationOnce(async () => {
+            b.workerSays({ type: 'user.speech_started' });
+            return { allowed: true };
+        });
+        await b.say(reply(1));
+        expect(b.says()).toEqual([]);
+        expect(released(b)).toEqual([['sam', reply(1)]]);
+    });
+
+    it('is given back when its voice waits for the audio to come back and nobody comes', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        try {
+            const b = bot();
+            await b.connect();
+            // The maker changed the voice: the session opens again and the reply waits, like a greeting
+            b.state.active = { ...speakingNow({ recognition: false, speech: false }), signature: 'two' };
+            await b.say(reply(1), 'Welcome back.');
+            expect(b.says()).toEqual([]);
+            expect(released(b)).toEqual([]);
+            await vi.advanceTimersByTimeAsync(DEFAULT_REPLY_LIMITS.greetingWaitSeconds * 1000 + 10);
+            expect(released(b)).toEqual([['sam', reply(1)]]);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('is given back when the person leaves while it waits', async () => {
+        const b = bot();
+        await b.connect();
+        b.state.active = { ...speakingNow({ recognition: false, speech: false }), signature: 'two' };
+        await b.say(reply(1), 'First.');
+        expect(released(b)).toEqual([]);
+        b.speech.spaceLeft(SPACE);
+        await flush();
+        expect(released(b)).toEqual([['sam', reply(1)]]);
+    });
+
+    it('is given back when the bot stops while it waits', async () => {
+        const b = bot();
+        await b.connect();
+        b.state.active = { ...speakingNow({ recognition: false, speech: false }), signature: 'two' };
+        await b.say(reply(1), 'First.');
+        b.speech.shutdown();
+        await flush();
+        expect(released(b)).toEqual([['sam', reply(1)]]);
+    });
+
+    it('is given back when the voice worker ended it without a moment of it being heard', async () => {
+        const b = bot();
+        await b.connect();
+        await b.say(reply(1), 'Lost.');
+        b.workerSays({ type: 'playback.progress', segmentId: 's1', playedMs: 0, finished: true, interrupted: true, reason: 'provider' });
+        await flush();
+        expect(released(b)).toEqual([['sam', reply(1)]]);
+    });
+
+    it('is kept counted when some of it was heard, even if it was cut', async () => {
+        const b = bot();
+        await b.connect();
+        await b.say(reply(1), 'Part of it.');
+        b.workerSays({ type: 'playback.progress', segmentId: 's1', playedMs: 900, finished: true, interrupted: true, reason: 'barge_in' });
+        await flush();
+        expect(released(b)).toEqual([]);
+    });
+
+    it('is never given back when it was never counted (turned down, or the maker pays)', async () => {
+        const b = bot();
+        await b.connect();
+        b.state.fallback = { allowed: false, resetsAt: 'x' };
+        await b.say(reply(1));
+        const maker = bot({ owners: { recognition: true, speech: true } });
+        await maker.connect();
+        await maker.say(reply(1), 'On the maker.');
+        maker.workerSays({ type: 'playback.progress', segmentId: 's1', playedMs: 0, finished: true, interrupted: true, reason: 'provider' });
+        await flush();
+        expect(released(b)).toEqual([]);
+        expect(released(maker)).toEqual([]);
+    });
+
+    it('is given back only once, however many times it is let go', async () => {
+        const b = bot();
+        await b.connect();
+        await b.say(reply(1), 'Lost.');
+        for (let i = 0; i < 3; i++) b.workerSays({ type: 'playback.progress', segmentId: 's1', playedMs: 0, finished: true, interrupted: true, reason: 'provider' });
+        await flush();
+        expect(released(b)).toHaveLength(1);
+    });
+
+    it('never gets in the way of the reply: a release Orbit cannot take is tried again, then dropped, and the next reply is spoken', async () => {
+        const b = bot();
+        await b.connect();
+        b.orbit.releaseVoiceReply.mockResolvedValue(null);
+        await b.say(reply(1), 'Lost.');
+        b.workerSays({ type: 'playback.progress', segmentId: 's1', playedMs: 0, finished: true, interrupted: true, reason: 'provider' });
+        await flush();
+        expect(b.orbit.releaseVoiceReply).toHaveBeenCalledTimes(3);
+        expect(b.logs.some((m) => m.includes('could not give back'))).toBe(true);
+        await b.say(reply(2), 'Still working.');
+        expect(b.says()).toEqual(['Lost.', 'Still working.']);
+    });
+});
+
 describe("a maker's key or a provider that is not working", () => {
     it('pauses voice for the person the same way, once', async () => {
         const b = bot();
@@ -249,10 +374,31 @@ describe("a maker's key or a provider that is not working", () => {
 
 describe('the gate', () => {
     it('asks nothing for a turn without a person and says yes', async () => {
-        const orbit = { checkVoiceAllowance: vi.fn() };
+        const orbit = { checkVoiceAllowance: vi.fn(), releaseVoiceReply: vi.fn() };
         const gate = new OrbitTurnGate('sam', orbit, () => null);
         expect(await gate.mayUniverseAiSpeak({ turnId: 't' })).toBe('yes');
         expect(gate.personOf({ turnId: 't' })).toBeUndefined();
         expect(orbit.checkVoiceAllowance).not.toHaveBeenCalled();
+    });
+
+    it('gives back a reply it said yes to, once, and nothing it did not', async () => {
+        const orbit = { checkVoiceAllowance: vi.fn(async () => ({ allowed: true }) as const), releaseVoiceReply: vi.fn(async () => true) };
+        const gate = new OrbitTurnGate('sam', orbit, () => ({ userId: 'u', isGuest: false }), undefined, async () => undefined);
+        await gate.release({ turnId: 'never-asked', playerId: 7 });
+        expect(orbit.releaseVoiceReply).not.toHaveBeenCalled();
+        await gate.mayUniverseAiSpeak({ turnId: 't', playerId: 7 });
+        await gate.release({ turnId: 't', playerId: 7 });
+        await gate.release({ turnId: 't', playerId: 7 });
+        expect(orbit.releaseVoiceReply).toHaveBeenCalledTimes(1);
+        expect(orbit.releaseVoiceReply).toHaveBeenCalledWith('sam', { turnId: 't' });
+    });
+
+    it('does not throw when Orbit throws, and stops after three tries', async () => {
+        const orbit = { checkVoiceAllowance: vi.fn(async () => ({ allowed: true }) as const), releaseVoiceReply: vi.fn(async (): Promise<boolean | null> => { throw new Error('down'); }) };
+        const logs: string[] = [];
+        const gate = new OrbitTurnGate('sam', orbit, () => ({ userId: 'u', isGuest: false }), (m) => logs.push(m), async () => undefined);
+        await gate.mayUniverseAiSpeak({ turnId: 't', playerId: 7 });
+        await expect(gate.release({ turnId: 't', playerId: 7 })).resolves.toBeUndefined();
+        expect(logs).toHaveLength(1);
     });
 });

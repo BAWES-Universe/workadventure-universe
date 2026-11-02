@@ -2488,6 +2488,7 @@ export class BotClient {
         this.voice.onPaused = (spaceName) => this.sendChatMessage(spaceName, pausedLine(this.config.name));
         this.speech = new BotSpeech(this.voice, voiceReplyLimits());
         this.voice.onAudience = (spaceName) => this.speech?.audience(spaceName);
+        this.voice.onUnplayed = (spaceName, segmentId) => this.speech?.unplayed(spaceName, segmentId);
         this.voice.onStopped = (spaceName, segmentId) => {
             const responseId = this.speech?.stopped(spaceName, segmentId);
             if (responseId) this.sendSpeechStopped(spaceName, responseId);
@@ -2502,6 +2503,7 @@ export class BotClient {
     }
 
     private stopVoice(): void {
+        this.speech?.shutdown();
         this.voice?.shutdown();
         this.voice = null;
         this.speech = null;

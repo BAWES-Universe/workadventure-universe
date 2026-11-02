@@ -947,6 +947,30 @@ export class AdminApiService {
     }
 
     /**
+     * Gives back a spoken reply that was counted and never heard (#1669). Safe to repeat: Orbit gives back at most once.
+     * True: given back. False: nothing was counted under that turn. Null: it could not be done (Orbit down, or an Orbit
+     * from before this existed); the caller carries on, the reply it belongs to is already settled.
+     */
+    async releaseVoiceReply(botId: string, input: { turnId: string }): Promise<boolean | null> {
+        if (!this.isConfigured()) return null;
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!botServiceToken) return null;
+        try {
+            const response = await axios.post(
+                `${this.adminApiUrl}/api/bots/${encodeURIComponent(botId)}/voice-allowance/release`,
+                input,
+                { headers: { Authorization: `Bearer ${botServiceToken}` }, timeout: 5000 }
+            );
+            const released = (response.data as Partial<{ released: boolean }>)?.released;
+            return typeof released === 'boolean' ? released : null;
+        } catch (error) {
+            const msg = (axios.isAxiosError(error) && error.response?.status) || (error as Error)?.message || 'Unknown error';
+            console.warn(`[AdminApiService] Giving back a voice reply failed: ${msg}`);
+            return null;
+        }
+    }
+
+    /**
      * Get available AI providers
      * Uses BOT_SERVICE_TOKEN (separate from ADMIN_API_TOKEN)
      */
