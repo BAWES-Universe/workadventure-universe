@@ -29,9 +29,15 @@ Recognition (#1664) plugs into `InputSink` (`src/transport.ts`) through `src/rec
 
 A bubble names its own hearing and speaking provider in `session.open` (`recognition`, `speech`, `expression`; see
 `PROTOCOL.md`, Providers). The worker looks each adapter name up in a registry (`src/connectors.ts`), so two bubbles can
-use two different providers at once. Besides the real providers below, the test engine is built in: `FakeSpeech` (registered as `fake`, and what a bubble
-that names nothing gets) and the scripted `FakeEars` for tests.
+use two different providers at once. Built in: the test engine, `FakeSpeech` (registered as `fake`, and what a bubble
+that names nothing gets) and the scripted `FakeEars` for tests, plus these real providers (#1748, one change each):
 
+* `soniox` (hearing, `src/soniox.ts`): one real-time WebSocket stream per stretch of speech to
+  `wss://stt-rt.soniox.com/transcribe-websocket` (or the profile's `endpoint`), the key in the `Authorization` header only,
+  16 kHz mono `s16le`, the profile's `model`, and its `language` as the only language hint when it fixes one. Partial words
+  are the final tokens so far plus the latest guesses; when the person pauses an empty text frame ends the audio and the
+  words are final on Soniox's `finished`. A refused key (401/403), an error answer (its `error_code`), a dropped stream or
+  no `finished` within `VOICE_RECOGNITION_FINAL_TIMEOUT_SECONDS` (default 10) fails the turn with the words heard so far.
 * `cartesia` (speaking, `src/cartesia.ts`): one streamed `POST /tts/bytes` per reply to `https://api.cartesia.ai` (or the
   profile's `endpoint`), the key in the `Authorization: Bearer` header only, `Cartesia-Version` from `VOICE_CARTESIA_VERSION`,
   the profile's `model` as `model_id` and voice as `voice.id`, asking for raw `pcm_s16le` at 24 kHz, which plays as it arrives.
