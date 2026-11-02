@@ -301,6 +301,19 @@ export class AIService {
         return { resting: false, config: await this.getProviderConfigById(providerId), source: 'provider' };
     }
 
+    /**
+     * What a reply from this bot would run on: Universe AI, a server provider or the maker's own key (null when it can't be told,
+     * or the key is resting). Asked before a voice bot greets someone (#1669); the answer is Orbit's own, cached as for a reply.
+     */
+    async replySource(providerId: string, botId: string): Promise<'universe-ai' | 'provider' | 'own-key' | null> {
+        try {
+            const resolved = await this.resolveProvider(providerId, botId);
+            return resolved.resting ? null : resolved.source;
+        } catch {
+            return null;
+        }
+    }
+
     /** A bot's limits as Orbit last served them, the recommended ones until it has (Orbit #666). */
     private limitsFor(botId?: string): BotLimits {
         return (botId && this.botLimits.get(botId)) || BOT_LIMIT_DEFAULTS;

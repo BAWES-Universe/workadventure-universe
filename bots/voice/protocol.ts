@@ -25,7 +25,7 @@ export interface RecognitionConfig { adapter: string; model: string; key: string
 export interface SpeechConfig { adapter: string; model: string; voiceId: string; key: string; endpoint?: string; region?: string; language?: string }
 
 export type ToWorker =
-    | { type: 'session.open'; sessionId: string; bubbleId: string; botId: string; recognition?: RecognitionConfig; speech?: SpeechConfig; expression?: VoiceExpression }
+    | { type: 'session.open'; sessionId: string; bubbleId: string; botId: string; recognition?: RecognitionConfig; speech?: SpeechConfig; expression?: VoiceExpression; turnSeconds?: number }
     | { type: 'lane.open'; sessionId: string; participantId: string; epoch: number; mode?: VoiceMode }
     | { type: 'lane.signal'; sessionId: string; participantId: string; epoch: number; signal: VoiceSignal }
     | { type: 'lane.close'; sessionId: string; participantId: string; epoch: number; reason?: LeaveReason }
