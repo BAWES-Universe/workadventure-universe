@@ -14,6 +14,7 @@ import type { RecognizerFactory } from './recognizer.ts';
 import type { RoomTransport } from './roomTransport.ts';
 import { type OutgoingMessage, Session } from './session.ts';
 import type { InputSink } from './transport.ts';
+import { ELEVENLABS_ADAPTER, ElevenLabsSpeech } from './elevenlabs.ts';
 import { checkMessage } from './validate.ts';
 
 export interface WorkerOptions {
@@ -84,9 +85,10 @@ export class VoiceWorker {
 
     constructor(readonly options: WorkerOptions) {
         this.engineId = options.engineId ?? `voice-worker-${process.pid}`;
-        // The test engine is the only connector built in; each real provider is one more file registered by name
+        // The test engine plus each real provider, one file each, registered by name
         this.connectors = options.connectors ?? new ConnectorRegistry();
         if (!this.connectors.speech(FAKE_ADAPTER)) this.connectors.registerSpeech(FAKE_ADAPTER, this.speech);
+        if (!this.connectors.speech(ELEVENLABS_ADAPTER)) this.connectors.registerSpeech(ELEVENLABS_ADAPTER, new ElevenLabsSpeech());
         this.server.on('upgrade', (req, socket, head) => this.onUpgrade(req, socket, head));
     }
 

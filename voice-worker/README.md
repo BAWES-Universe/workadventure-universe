@@ -30,7 +30,14 @@ Recognition (#1664) plugs into `InputSink` (`src/transport.ts`) through `src/rec
 A bubble names its own hearing and speaking provider in `session.open` (`recognition`, `speech`, `expression`; see
 `PROTOCOL.md`, Providers). The worker looks each adapter name up in a registry (`src/connectors.ts`), so two bubbles can
 use two different providers at once. Only the test engine is built in: `FakeSpeech` (registered as `fake`, and what a bubble
-that names nothing gets) and the scripted `FakeEars` for tests. No real provider is wired yet; each one is a later change.
+that names nothing gets) and the scripted `FakeEars` for tests, plus these real providers:
+
+* `elevenlabs` (speaking, `src/elevenlabs.ts`): one streamed `POST /v1/text-to-speech/{voiceId}/stream?output_format=pcm_24000`
+  per reply to `https://api.elevenlabs.io` (or the profile's `endpoint`), the key in the `xi-api-key` header only, the
+  profile's `model` as `model_id`. Raw 24 kHz PCM plays as it arrives. The reply's language goes as `language_code`
+  (except to `eleven_multilingual_v2`, which refuses one). Expression: `restrained` sends stability 0.75, `expressive` 0.3,
+  `natural` nothing (the voice's saved settings). A refusal fails with ElevenLabs' status; an unreachable server or a
+  dropped stream fails without one.
 
 To add a provider, write one file that implements a connector and register it by its lowercase adapter name:
 
