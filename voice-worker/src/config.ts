@@ -1,4 +1,5 @@
 // Settings come from the environment. Everything has a default that works on one machine; none of it switches voice on or off.
+import { DEFAULT_CARTESIA_VERSION } from './cartesia.ts';
 import type { IceConfig } from './lane.ts';
 import { DEFAULT_BARGE_IN_MS } from './recognition.ts';
 import { DEFAULT_MAX_REPLY_SECONDS, DEFAULT_MAX_UTTERANCE_SECONDS, DEFAULT_SPEECH_TIMEOUT_SECONDS, type WorkerOptions } from './server.ts';
@@ -32,5 +33,6 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv = process.env): WorkerOpti
         maxReplySeconds: int(env.VOICE_MAX_REPLY_SECONDS, DEFAULT_MAX_REPLY_SECONDS),
         speechTimeoutSeconds: int(env.VOICE_SPEECH_TIMEOUT_SECONDS, DEFAULT_SPEECH_TIMEOUT_SECONDS),
         bargeInMs: int(env.VOICE_BARGE_IN_MS, DEFAULT_BARGE_IN_MS),
+        cartesiaVersion: env.VOICE_CARTESIA_VERSION?.trim() || DEFAULT_CARTESIA_VERSION,
     };
 }

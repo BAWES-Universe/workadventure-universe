@@ -14,6 +14,7 @@ import type { RecognizerFactory } from './recognizer.ts';
 import type { RoomTransport } from './roomTransport.ts';
 import { type OutgoingMessage, Session } from './session.ts';
 import type { InputSink } from './transport.ts';
+import { CARTESIA_ADAPTER, CartesiaSpeech } from './cartesia.ts';
 import { checkMessage } from './validate.ts';
 
 export interface WorkerOptions {
@@ -39,6 +40,8 @@ export interface WorkerOptions {
     speechTimeoutSeconds?: number;
     /** Voiced audio before a person counts as speaking over the bot, in milliseconds. */
     bargeInMs?: number;
+    /** The Cartesia API version every Cartesia request names. Default DEFAULT_CARTESIA_VERSION. */
+    cartesiaVersion?: string;
     engineId?: string;
 }
 
@@ -87,6 +90,7 @@ export class VoiceWorker {
         // The test engine is the only connector built in; each real provider is one more file registered by name
         this.connectors = options.connectors ?? new ConnectorRegistry();
         if (!this.connectors.speech(FAKE_ADAPTER)) this.connectors.registerSpeech(FAKE_ADAPTER, this.speech);
+        if (!this.connectors.speech(CARTESIA_ADAPTER)) this.connectors.registerSpeech(CARTESIA_ADAPTER, new CartesiaSpeech({ version: options.cartesiaVersion }));
         this.server.on('upgrade', (req, socket, head) => this.onUpgrade(req, socket, head));
     }
 
