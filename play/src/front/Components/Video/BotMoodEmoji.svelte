@@ -17,7 +17,8 @@
     const TEXT_REPLY_MS = 2500;
 
     let recent = false;
-    let seenMood = 0;
+    // A mood that was there before this box was drawn (it is drawn again when the layout changes) is not new
+    let seenMood = feeling?.moodSeq ?? 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     function noticeMood(current: BotFeeling | undefined) {

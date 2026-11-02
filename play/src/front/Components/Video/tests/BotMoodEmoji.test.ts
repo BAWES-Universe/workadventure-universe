@@ -42,6 +42,16 @@ describe("the emoji beside a bot's Woka (#1667)", () => {
         expect(emoji()).toBeNull();
     });
 
+    it("does not play a mood again when the box is drawn again", async () => {
+        mount({ mood: "😄", moodSeq: 4 }, false);
+        await tick();
+        expect(emoji()).toBeNull();
+        // A new mood after that still shows
+        shown!.$set({ feeling: { mood: "🙂", moodSeq: 5 } });
+        await tick();
+        expect(emoji()?.textContent?.trim()).toBe("🙂");
+    });
+
     it("shows a mood while the bot talks", async () => {
         mount({ mood: "😄", moodSeq: 1 }, true);
         await tick();
@@ -51,7 +61,9 @@ describe("the emoji beside a bot's Woka (#1667)", () => {
     });
 
     it("shows a mood for a reply that is only read for 2.5 seconds, then lets it go", async () => {
-        mount({ mood: "🙂", moodSeq: 1 }, false);
+        mount(undefined, false);
+        await tick();
+        shown!.$set({ feeling: { mood: "🙂", moodSeq: 1 } });
         await tick();
         expect(emoji()?.textContent?.trim()).toBe("🙂");
         vi.advanceTimersByTime(2499);
