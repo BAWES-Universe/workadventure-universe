@@ -172,3 +172,64 @@ describe('a voice that was cut short', () => {
         expect(t.speech.stopped(SPACE, 's9')).toBeUndefined();
     });
 });
+
+describe('a bot whose voice Orbit decides', () => {
+    function withOrbit(decision: () => Promise<import('../voice/BotSpeech').TurnDecision>) {
+        const t = setup();
+        const asked: string[] = [];
+        const voice: SpeechVoice = {
+            say: (_space, segmentId, text, maxMs) => (t.said.push({ segmentId, text, maxMs }), true),
+            hasAudience: () => true,
+            someoneSpeaking: () => false,
+            lastSpokenToAt: () => 0,
+            beforeSpeaking: async (space) => (asked.push(space), decision()),
+        };
+        return { ...t, asked, speech: new BotSpeech(voice, DEFAULT_REPLY_LIMITS, t.now) };
+    }
+    const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+    it('asks just before a reply is said, and says it when told to', async () => {
+        const t = withOrbit(async () => ({ action: 'speak', limits: { maxChars: 30, maxSeconds: 5 } }));
+        expect(t.speech.final(SPACE, reply(1), 'A reply that is longer than thirty characters, so it is cut.')).toBe('checking');
+        expect(t.said).toEqual([]);
+        await flush();
+        expect(t.asked).toEqual([SPACE]);
+        expect(t.said).toHaveLength(1);
+        expect(t.said[0].text.length).toBeLessThanOrEqual(30);
+        expect(t.said[0].maxMs).toBe(5000);
+    });
+
+    it('does not say a reply twice while Orbit is being asked', async () => {
+        const t = withOrbit(async () => ({ action: 'speak' }));
+        t.speech.final(SPACE, reply(1), 'Hello.');
+        expect(t.speech.final(SPACE, reply(1), 'Hello.')).toBe('again');
+        await flush();
+        expect(t.said).toHaveLength(1);
+    });
+
+    it('leaves a reply in the chat when told to answer in text, or when Orbit cannot be asked', async () => {
+        const text = withOrbit(async () => ({ action: 'text' }));
+        text.speech.final(SPACE, reply(1), 'Hello.');
+        const down = withOrbit(async () => {
+            throw new Error('down');
+        });
+        down.speech.final(SPACE, reply(1), 'Hello.');
+        await flush();
+        expect(text.said).toEqual([]);
+        expect(down.said).toEqual([]);
+        // The same reply finished again is not said either
+        expect(text.speech.final(SPACE, reply(1), 'Hello.')).toBe('again');
+    });
+
+    it('keeps a reply for when the audio is back, like a greeting, when told to wait', async () => {
+        let action: 'wait' | 'speak' = 'wait';
+        const t = withOrbit(async () => ({ action }));
+        t.speech.final(SPACE, reply(1), 'Welcome back.');
+        await flush();
+        expect(t.said).toEqual([]);
+        action = 'speak';
+        t.speech.audience(SPACE);
+        await flush();
+        expect(t.said.map((s) => s.text)).toEqual(['Welcome back.']);
+    });
+});

@@ -8,10 +8,20 @@
  * an older path can be told apart and dropped: the newest path is the only one that carries audio.
  *
  * Every refusal here ends the same way: the person's browser is told to disconnect, and the bot stays text-only.
+ *
+ * Who hears and who speaks for a bubble is the bot's maker's choice in Orbit (#1746, `VoiceSettings`). When the bot
+ * server has it, a bubble's session is opened with that choice (provider, model, voice and key), and what the worker
+ * sends before the session is open waits for it. A bot Orbit says does not speak gets no session at all and stays text-only.
+ * Just before each spoken turn Orbit is asked again (`beforeSpeaking`): a bot that no longer speaks answers in text for
+ * that turn; one whose settings changed has the bubble's session closed and opened again with the new ones, and the people
+ * in it reconnect, as after the worker comes back. The worker reads the settings when it creates a session, so this is
+ * the only way a change reaches a bubble.
  */
 import type { PrivateEventPusherToFront, SpaceUser } from '@workadventure/messages';
-import type { FromWorker, ToWorker, VoiceDraft, VoiceMode, VoiceSignal, VoiceStatus } from './protocol';
+import type { FromWorker, ProviderPart, ToWorker, VoiceDraft, VoiceMode, VoiceSignal, VoiceStatus } from './protocol';
+import type { TurnDecision } from './BotSpeech';
 import type { VoiceLink } from './VoiceLink';
+import type { ActiveVoice, PartProvider, VoiceSettings } from './VoiceSettings';
 
 /** What the relay needs from the bot's connection to the game. */
 export interface GameSide {
@@ -37,6 +47,10 @@ interface Call {
 interface Bubble {
     sessionId: string;
     spaceName: string;
+    /** What the session was opened with, without the keys (see VoiceSettings). Only for a bot whose voice comes from Orbit. */
+    signature?: string;
+    /** A provider refused its key: the next turn fetches the keys again by opening the session anew. */
+    stale?: boolean;
 }
 
 /** The bot's LiveKit participant in a bubble, as the worker holds it. */
@@ -63,6 +77,10 @@ const MAX_URL_CHARS = 2048;
 const MAX_PEOPLE = 500;
 /** Spoken lines remembered, so each is taken once and only if the bot heard it. Oldest first out. */
 const MAX_SPOKEN = 200;
+/** What is held for a session that is still waiting for Orbit's answer: the setup data of a few connections, no more. */
+const MAX_HELD = 100;
+/** Sessions whose providers are remembered, so a late report from the worker is still told to Orbit for the right provider. */
+const MAX_SESSIONS = 50;
 /** The modes a person may choose for themselves (#1666): talk and listen, speak and read, type and listen, text only. */
 const PERSON_MODES: readonly VoiceMode[] = ['talk', 'speak_and_read', 'type_and_listen', 'off'];
 const DEFAULT_PERSON_MODE: VoiceMode = 'talk';
@@ -114,6 +132,12 @@ export class VoiceCalls {
     private readonly told = new Map<string, VoiceStatus>();
     /** Called when a reply's voice stopped part-way because someone spoke over it. */
     onStopped?: (spaceName: string, segmentId: string) => void;
+    /** Sessions waiting for Orbit's answer before they are opened, with what the worker is to get once they are. */
+    private readonly opening = new Map<string, ToWorker[]>();
+    /** The provider each part of a session runs on, to report how its calls went. */
+    private readonly sessions = new Map<string, Record<ProviderPart, PartProvider>>();
+    /** Only for a bot whose voice Orbit decides (see VoiceSettings): asked just before a reply is said. */
+    readonly beforeSpeaking?: (spaceName: string) => Promise<TurnDecision>;
     private epoch = 0;
     private bubbleSeq = 0;
 
@@ -124,8 +148,11 @@ export class VoiceCalls {
         private readonly game: GameSide,
         /** Opens the socket to the worker, wired to this relay. */
         openLink: (handlers: LinkHandlers) => VoiceLink,
-        private readonly log: (message: string) => void = () => undefined
+        private readonly log: (message: string) => void = () => undefined,
+        /** What each bubble hears and speaks with, from Orbit. Without it a bubble gets the worker's built-in test engine. */
+        private readonly settings?: VoiceSettings
     ) {
+        if (settings) this.beforeSpeaking = (spaceName) => this.prepareTurn(spaceName);
         this.link = openLink({
             onMessage: (message) => this.handleWorkerMessage(message),
             onUp: () => this.linkUp(),
@@ -209,7 +236,7 @@ export class VoiceCalls {
         // A newer connection replaces the one before it: the worker closes the old path when it opens the new one
         const call: Call = { spaceName, sessionId: bubble.sessionId, participantId: person.spaceUserId, epoch };
         this.calls.set(key, call);
-        if (!this.link.send({ type: 'lane.open', sessionId: bubble.sessionId, participantId: person.spaceUserId, epoch, mode: this.modeOf(spaceName, person.spaceUserId) })) {
+        if (!this.post({ type: 'lane.open', sessionId: bubble.sessionId, participantId: person.spaceUserId, epoch, mode: this.modeOf(spaceName, person.spaceUserId) })) {
             this.calls.delete(key);
             this.refuse(spaceName, person.spaceUserId);
             return;
@@ -260,7 +287,7 @@ export class VoiceCalls {
             this.stats.rejectedFromGame++;
             return;
         }
-        const sent = this.link.send({ type: 'lane.signal', sessionId: call.sessionId, participantId: call.participantId, epoch: call.epoch, signal });
+        const sent = this.post({ type: 'lane.signal', sessionId: call.sessionId, participantId: call.participantId, epoch: call.epoch, signal });
         if (!sent) this.drop(call, true);
     }
 
@@ -268,7 +295,7 @@ export class VoiceCalls {
         const call = this.calls.get(callKey(spaceName, personId));
         if (!call) return;
         this.calls.delete(callKey(spaceName, personId));
-        this.link.send({ type: 'lane.close', sessionId: call.sessionId, participantId: call.participantId, epoch: call.epoch, reason });
+        this.post({ type: 'lane.close', sessionId: call.sessionId, participantId: call.participantId, epoch: call.epoch, reason });
     }
 
     /** The bot left a space: its connections there end with it. */
@@ -277,7 +304,7 @@ export class VoiceCalls {
         const bubble = this.bubbles.get(spaceName);
         if (bubble) {
             this.bubbles.delete(spaceName);
-            this.link.send({ type: 'session.end', sessionId: bubble.sessionId });
+            this.endSession(bubble.sessionId);
         }
         this.rooms.delete(spaceName);
         this.invitations.delete(spaceName);
@@ -312,7 +339,7 @@ export class VoiceCalls {
         for (const call of [...this.calls.values()]) if (call.spaceName === spaceName) this.calls.delete(callKey(spaceName, call.participantId));
         for (const [key, lost] of this.lost) if (lost.spaceName === spaceName) this.lost.delete(key);
         const room: Room = { spaceName, sessionId: bubble.sessionId, epoch: ++this.epoch };
-        if (!this.link.send({ type: 'room.join', sessionId: room.sessionId, epoch: room.epoch, serverUrl, token })) {
+        if (!this.post({ type: 'room.join', sessionId: room.sessionId, epoch: room.epoch, serverUrl, token })) {
             this.log(`voice: no LiveKit audio in ${spaceName} (worker not available)`);
             this.tellEveryone(spaceName, 'paused');
             return;
@@ -328,14 +355,14 @@ export class VoiceCalls {
         const room = this.rooms.get(spaceName);
         if (!room) return;
         this.rooms.delete(spaceName);
-        this.link.send({ type: 'room.leave', sessionId: room.sessionId, epoch: room.epoch });
+        this.post({ type: 'room.leave', sessionId: room.sessionId, epoch: room.epoch });
         this.tellEveryone(spaceName, 'paused');
     }
 
     /** Tells the worker whose microphone it may take from the room: the people in the bubble, never a bot. */
     private sendPeople(room: Room): void {
         const people = [...(this.roster.get(room.spaceName)?.keys() ?? [])].slice(0, MAX_PEOPLE).map((participantId) => ({ participantId, mode: this.modeOf(room.spaceName, participantId) }));
-        this.link.send({ type: 'room.people', sessionId: room.sessionId, epoch: room.epoch, people });
+        this.post({ type: 'room.people', sessionId: room.sessionId, epoch: room.epoch, people });
     }
 
     private rosterChanged(spaceName: string): void {
@@ -380,11 +407,83 @@ export class VoiceCalls {
         const known = this.bubbles.get(spaceName);
         if (known) return known;
         const bubble: Bubble = { sessionId: `${this.botId}.${++this.bubbleSeq}`.slice(0, MAX_ID_CHARS), spaceName };
-        if (!this.link.send({ type: 'session.open', sessionId: bubble.sessionId, bubbleId: spaceName.slice(0, MAX_ID_CHARS), botId: this.botId.slice(0, MAX_ID_CHARS) })) {
-            return undefined;
+        if (this.settings) {
+            if (!this.link.isUp()) return undefined;
+            // Orbit is asked who hears and speaks for this bot: the session opens when it has answered, and what is
+            // sent for it meanwhile is held (see post)
+            this.opening.set(bubble.sessionId, []);
+            this.bubbles.set(spaceName, bubble);
+            void this.openSession(bubble, this.settings);
+            return bubble;
         }
+        if (!this.openMessage(bubble)) return undefined;
         this.bubbles.set(spaceName, bubble);
         return bubble;
+    }
+
+    private openMessage(bubble: Bubble, settings: object = {}): boolean {
+        return this.link.send({ type: 'session.open', sessionId: bubble.sessionId, bubbleId: bubble.spaceName.slice(0, MAX_ID_CHARS), botId: this.botId.slice(0, MAX_ID_CHARS), ...settings });
+    }
+
+    /**
+     * Opens a bubble's session with what Orbit says the bot hears and speaks with. When the bot does not speak (voice
+     * off, universe off, no profile, a provider or key that does not work), or Orbit cannot be asked, there is no session:
+     * the people waiting are told to disconnect and the bot stays text-only, as when the worker is away.
+     */
+    private async openSession(bubble: Bubble, settings: VoiceSettings): Promise<void> {
+        let setup: Awaited<ReturnType<VoiceSettings['sessionSettings']>> = null;
+        let why = 'not available';
+        let providers: Record<ProviderPart, PartProvider> | undefined;
+        try {
+            const active = await settings.active();
+            if ('reason' in active) {
+                why = active.reason;
+            } else {
+                providers = active.providers;
+                bubble.signature = active.signature;
+                setup = await settings.sessionSettings(active);
+                why = 'a provider cannot be used';
+            }
+        } catch {
+            // The settings never throw; if they do, the bot is text-only
+        }
+        // The bubble ended while Orbit was being asked (the bot left, or the worker went away): nothing to open
+        if (this.bubbles.get(bubble.spaceName) !== bubble) return;
+        const held = this.opening.get(bubble.sessionId) ?? [];
+        this.opening.delete(bubble.sessionId);
+        if (!setup || !providers) {
+            this.evictBubble(bubble.sessionId, `the bot does not speak: ${why}`);
+            return;
+        }
+        this.rememberSession(bubble.sessionId, providers);
+        // setup holds the keys: it goes into this one message and nowhere else
+        if (!this.openMessage(bubble, setup)) {
+            this.evictBubble(bubble.sessionId, 'worker not available');
+            return;
+        }
+        for (const message of held) this.link.send(message);
+    }
+
+    private rememberSession(sessionId: string, providers: Record<ProviderPart, PartProvider>): void {
+        this.sessions.set(sessionId, providers);
+        for (const oldest of this.sessions.keys()) {
+            if (this.sessions.size <= MAX_SESSIONS) break;
+            this.sessions.delete(oldest);
+        }
+    }
+
+    /** Sends to the worker, or holds the message when the session it is for is still waiting for Orbit. */
+    private post(message: ToWorker): boolean {
+        const held = this.opening.get(message.sessionId);
+        if (!held) return this.link.send(message);
+        if (held.length >= MAX_HELD) return false;
+        held.push(message);
+        return true;
+    }
+
+    private endSession(sessionId: string): void {
+        // A session that was never opened has nothing to end on the worker
+        if (!this.opening.delete(sessionId)) this.link.send({ type: 'session.end', sessionId });
     }
 
     private refuse(spaceName: string, personId: string): void {
@@ -398,7 +497,7 @@ export class VoiceCalls {
     private drop(call: Call, closeOnWorker: boolean): void {
         this.calls.delete(callKey(call.spaceName, call.participantId));
         if (closeOnWorker) {
-            this.link.send({ type: 'lane.close', sessionId: call.sessionId, participantId: call.participantId, epoch: call.epoch, reason: 'failed' });
+            this.post({ type: 'lane.close', sessionId: call.sessionId, participantId: call.participantId, epoch: call.epoch, reason: 'failed' });
         }
         this.game.sendDisconnect(call.spaceName, call.participantId);
         this.tell(call.spaceName, call.participantId, 'paused');
@@ -443,8 +542,34 @@ export class VoiceCalls {
             this.handleSpeech(message);
         } else if (message.type === 'playback.progress') {
             this.handlePlayback(message);
+        } else if (message.type === 'provider.ok' || message.type === 'provider.failed') {
+            this.handleProvider(message);
         } else if (message.type === 'error') {
             this.handleWorkerError(message);
+        }
+    }
+
+    /**
+     * How a call to a provider went, told to Orbit for the provider that part of this session runs on. A server's own
+     * provider has no health: Orbit says so and it is ignored there. A key a provider refused is fetched again for the
+     * next turn, in case it was replaced. Nothing here waits for Orbit, and nothing here carries a key.
+     */
+    private handleProvider(message: Extract<FromWorker, { type: 'provider.ok' | 'provider.failed' }>): void {
+        const provider = this.sessions.get(message.sessionId)?.[message.part];
+        if (!this.settings || !provider) return;
+        if (message.type === 'provider.failed' && message.rejected) {
+            const bubble = [...this.bubbles.values()].find((b) => b.sessionId === message.sessionId);
+            if (bubble) bubble.stale = true;
+        }
+        if (!provider.owner) return;
+        if (message.type === 'provider.ok') {
+            this.settings.report(provider.providerId, message.part, { ok: true });
+        } else {
+            this.settings.report(provider.providerId, message.part, {
+                ok: false,
+                ...(message.status !== undefined ? { status: message.status } : {}),
+                ...(message.rejected ? { rejected: true } : {}),
+            });
         }
     }
 
@@ -561,11 +686,12 @@ export class VoiceCalls {
      * Forgets a bubble the worker does not hold, so the next start opens a new one instead of reusing a dead one.
      * Whoever was waiting on it is told to disconnect and stays text-only.
      */
-    private evictBubble(sessionId: string): void {
+    private evictBubble(sessionId: string, reason = 'worker refused it'): void {
         for (const [spaceName, bubble] of this.bubbles) {
             if (bubble.sessionId !== sessionId) continue;
             this.bubbles.delete(spaceName);
-            this.log(`voice: no audio session for ${spaceName} (worker refused it)`);
+            this.opening.delete(sessionId);
+            this.log(`voice: no audio session for ${spaceName} (${reason})`);
             for (const call of [...this.calls.values()]) if (call.sessionId === sessionId) this.drop(call, false);
             const room = this.rooms.get(spaceName);
             if (room?.sessionId === sessionId) {
@@ -604,6 +730,7 @@ export class VoiceCalls {
         for (const spaceName of [...this.rooms.keys()]) this.tellEveryone(spaceName, 'paused');
         this.calls.clear();
         this.bubbles.clear();
+        this.opening.clear();
         this.joined.clear();
         this.talking.clear();
         // The invitations stay: they are the game's, and still say where the bubble is
@@ -616,15 +743,21 @@ export class VoiceCalls {
      * LiveKit gets the bot back in its room. Anyone who is gone by now is simply not asked.
      */
     linkUp(): void {
-        const lost = [...this.lost.values()];
-        this.lost.clear();
+        this.restore();
+    }
+
+    /** Asks the people who lost their connection for a new offer, and puts the bot back in the room of a bubble that is on LiveKit. */
+    private restore(onlySpace?: string): void {
+        const lost = [...this.lost.values()].filter((l) => onlySpace === undefined || l.spaceName === onlySpace);
         for (const { spaceName, personId } of lost) {
+            this.lost.delete(callKey(spaceName, personId));
             const person = this.roster.get(spaceName)?.get(personId);
             if (!person || this.invitations.has(spaceName) || this.game.botSpaceUserId(spaceName) === undefined) continue;
             this.start(spaceName, person);
             if (this.calls.has(callKey(spaceName, personId))) this.game.sendStart(spaceName, personId);
         }
         for (const [spaceName, invitation] of [...this.invitations]) {
+            if (onlySpace !== undefined && spaceName !== onlySpace) continue;
             if (!this.rooms.has(spaceName) && this.game.botSpaceUserId(spaceName) !== undefined) this.joinRoom(spaceName, invitation.serverUrl, invitation.token);
         }
     }
@@ -634,7 +767,7 @@ export class VoiceCalls {
     /** Says committed text in the bot's voice, for at most `maxMs`. False when there is no audio session to say it in. */
     say(spaceName: string, segmentId: string, text: string, maxMs?: number): boolean {
         const bubble = this.bubbles.get(spaceName);
-        const sent = !!bubble && this.link.send({ type: 'bot.say', sessionId: bubble.sessionId, segmentId, text, committed: true, ...(maxMs ? { maxMs } : {}) });
+        const sent = !!bubble && this.post({ type: 'bot.say', sessionId: bubble.sessionId, segmentId, text, committed: true, ...(maxMs ? { maxMs } : {}) });
         if (sent) this.stats.spoken++;
         return sent;
     }
@@ -663,17 +796,74 @@ export class VoiceCalls {
         return people;
     }
 
+    /**
+     * Asked just before a reply is said (see BotSpeech): Orbit is read again. A bot that does not speak now answers in
+     * text for this turn and its session is left alone (its people can still talk to it, and the next turn asks again).
+     * One whose settings changed gets its session closed and opened again, so the reply waits for the people to
+     * reconnect. Orbit cannot be asked: text.
+     */
+    private async prepareTurn(spaceName: string): Promise<TurnDecision> {
+        const bubble = this.bubbles.get(spaceName);
+        if (!this.settings || !bubble || this.opening.has(bubble.sessionId)) return { action: 'text' };
+        let active: ActiveVoice;
+        try {
+            active = await this.settings.active();
+        } catch {
+            return { action: 'text' };
+        }
+        if (this.bubbles.get(spaceName) !== bubble) return { action: 'text' };
+        if ('reason' in active) {
+            this.log(`voice: ${spaceName} answers in text this time (${active.reason})`);
+            return { action: 'text' };
+        }
+        if (active.signature !== bubble.signature || bubble.stale) {
+            this.reopen(bubble);
+            return { action: 'wait' };
+        }
+        return { action: 'speak', limits: active.replyLimits };
+    }
+
+    /** Closes a bubble's session and opens it again with the settings Orbit has now: the people in it reconnect, as after the worker comes back. */
+    private reopen(bubble: Bubble): void {
+        const { spaceName } = bubble;
+        const people = [...this.calls.values()].filter((call) => call.spaceName === spaceName);
+        const inRoom = this.rooms.has(spaceName);
+        this.bubbles.delete(spaceName);
+        this.endSession(bubble.sessionId);
+        this.rooms.delete(spaceName);
+        // Whoever was mid-sentence gets their words back to decide on, as when the worker goes away
+        for (const [key, live] of [...this.live]) {
+            if (live.spaceName !== spaceName) continue;
+            this.live.delete(key);
+            this.remember(spaceName, live.personId, live.turnId, live.text);
+            this.draft(spaceName, live.personId, { turnId: live.turnId, state: 'lost', text: live.text, reason: 'path' });
+        }
+        this.talking.delete(spaceName);
+        for (const call of people) {
+            const key = callKey(spaceName, call.participantId);
+            this.calls.delete(key);
+            this.joined.delete(key);
+            this.lost.set(key, { spaceName, personId: call.participantId });
+            this.game.sendDisconnect(spaceName, call.participantId);
+            this.tell(spaceName, call.participantId, 'paused');
+        }
+        if (inRoom) this.tellEveryone(spaceName, 'paused');
+        this.log(`voice: ${spaceName} reconnects with the bot's new voice settings`);
+        this.restore(spaceName);
+    }
+
     setMode(spaceName: string, mode: VoiceMode, personId?: string): boolean {
         const bubble = this.bubbles.get(spaceName);
-        return !!bubble && this.link.send({ type: 'mode.set', sessionId: bubble.sessionId, mode, participantId: personId });
+        return !!bubble && this.post({ type: 'mode.set', sessionId: bubble.sessionId, mode, participantId: personId });
     }
 
     /** The bot leaves or is switched off: every connection ends. */
     shutdown(): void {
         for (const call of [...this.calls.values()]) this.game.sendDisconnect(call.spaceName, call.participantId);
-        for (const bubble of this.bubbles.values()) this.link.send({ type: 'session.end', sessionId: bubble.sessionId });
+        for (const bubble of this.bubbles.values()) this.endSession(bubble.sessionId);
         this.calls.clear();
         this.bubbles.clear();
+        this.opening.clear();
         this.rooms.clear();
         this.invitations.clear();
         this.roster.clear();

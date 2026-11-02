@@ -32,7 +32,7 @@ import type { BaseBehavior } from '../behaviors/BaseBehavior';
 import { BotPathfindingManager } from '../utils/BotPathfindingManager';
 import { PathSmoother } from '../utils/PathSmoother';
 import { movementLogger } from '../utils/MovementLogger';
-import type { BotConfiguration } from '../server/AdminApiService';
+import { adminApiService, type BotConfiguration } from '../server/AdminApiService';
 import { CANNOT_CHECK_CHAT_LINE, type BotAccessGate, type BotAccessVerdict } from '../server/BotAccessGate';
 import { FileParser } from '../services/FileParser';
 import type { ChatUpload, SentMedia } from '../services/ChatFiles';
@@ -43,7 +43,8 @@ import { VoiceCalls } from '../voice/VoiceCalls';
 import { WorkerLink } from '../voice/VoiceLink';
 import { VOICE_BOT_TAG } from '../voice/VoiceBotTag';
 import { MeetingPresence, type MeetingArea } from '../voice/MeetingAreas';
-import { voiceReplyLimits, voiceWorkerSettings } from '../voice/settings';
+import { voiceOrbitSettings, voiceReplyLimits, voiceWorkerSettings } from '../voice/settings';
+import { BotVoiceSettings } from '../voice/VoiceSettings';
 import { BotSpeech } from '../voice/BotSpeech';
 
 // Get the secret key from environment - must match pusher's SECRET_KEY
@@ -2451,7 +2452,11 @@ export class BotClient {
                 link.start();
                 return link;
             },
-            (message) => console.warn(`[Bot ${this.config.botId}] ${message}`)
+            (message) => console.warn(`[Bot ${this.config.botId}] ${message}`),
+            // Who hears and speaks for this bot is its maker's choice in Orbit. Without Orbit (a local setup) the worker's test engine is used.
+            adminApiService.isConfigured() && process.env.BOT_SERVICE_TOKEN
+                ? new BotVoiceSettings(this.config.botId, adminApiService, voiceOrbitSettings(), (message) => console.warn(`[Bot ${this.config.botId}] ${message}`))
+                : undefined
         );
         this.speech = new BotSpeech(this.voice, voiceReplyLimits());
         this.voice.onAudience = (spaceName) => this.speech?.audience(spaceName);
