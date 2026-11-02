@@ -399,8 +399,10 @@ export class DmReplyService extends BaseBehavior {
                 config.roomUrl,
                 peopleInRoom
             )) {
-                if (chunk.reset) {
-                    // The model said something before calling tools: in a bubble that stays as its own bubble.
+                if (chunk.reset || chunk.toolSteps?.length) {
+                    // The model said something before calling tools: in a bubble that stays as its own bubble. Calls that
+                    // only began (their arguments are still coming in) say it now too, so the chat shows the work from the
+                    // first second instead of after a minute; the reset that follows adds nothing to say.
                     const interim = withoutRoomCardMark(parseEmotionsFromResponse(fullMessage).cleanedResponse);
                     if (interim) await hooks.onInterimMessage?.(interim);
                     if (chunk.toolSteps?.length) {
