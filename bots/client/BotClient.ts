@@ -2489,6 +2489,8 @@ export class BotClient {
         this.speech = new BotSpeech(this.voice, voiceReplyLimits());
         this.voice.onAudience = (spaceName) => this.speech?.audience(spaceName);
         this.voice.onUnplayed = (spaceName, segmentId) => this.speech?.unplayed(spaceName, segmentId);
+        this.voice.onHeard = (spaceName, segmentId) => this.speech?.heard(spaceName, segmentId);
+        this.voice.onSessionEnded = (spaceName) => this.speech?.sessionEnded(spaceName);
         this.voice.onStopped = (spaceName, segmentId) => {
             const responseId = this.speech?.stopped(spaceName, segmentId);
             if (responseId) this.sendSpeechStopped(spaceName, responseId);

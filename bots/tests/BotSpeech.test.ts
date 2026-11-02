@@ -367,6 +367,23 @@ describe('a reply that will not be spoken after all', () => {
         expect(t.given).toEqual([reply(1)]);
     });
 
+    it('is let go when its session ends before any of it began to play, and kept when some was heard', async () => {
+        const t = track();
+        t.speech.final(SPACE, reply(1), 'One.');
+        await flush();
+        t.speech.final(SPACE, reply(2), 'Two.');
+        await flush();
+        t.speech.heard(SPACE, 's2');
+        t.speech.heard('elsewhere', 's1');
+        t.speech.sessionEnded('elsewhere');
+        expect(t.given).toEqual([]);
+        t.speech.sessionEnded(SPACE);
+        expect(t.given).toEqual([reply(1)]);
+        // Once is enough
+        t.speech.sessionEnded(SPACE);
+        expect(t.given).toEqual([reply(1)]);
+    });
+
     it('never gets in the way when giving it back throws', async () => {
         const t = track({ sayWorks: false, throws: true });
         expect(() => t.speech.final(SPACE, reply(1), 'Hello.')).not.toThrow();

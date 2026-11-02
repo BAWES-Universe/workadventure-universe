@@ -61,7 +61,7 @@ interface Waiting {
 export class BotSpeech {
     private readonly started = new Map<string, number>();
     private readonly said = new Set<string>();
-    private readonly segments = new Map<string, { spaceName: string; responseId: string }>();
+    private readonly segments = new Map<string, { spaceName: string; responseId: string; heard: boolean }>();
     private readonly held = new Set<string>();
     private readonly waiting = new Map<string, Waiting>();
     /** Replies Orbit is being asked about. They are not said yet, and not said twice meanwhile. */
@@ -147,6 +147,24 @@ export class BotSpeech {
         if (!segment || segment.spaceName !== spaceName) return;
         this.segments.delete(segmentId);
         this.giveUp(spaceName, segment.responseId);
+    }
+
+    /** Some of this segment has been played to someone: the reply stays counted, whatever happens to the session next. */
+    heard(spaceName: string, segmentId: string): void {
+        const segment = this.segments.get(segmentId);
+        if (segment && segment.spaceName === spaceName) segment.heard = true;
+    }
+
+    /**
+     * A bubble's audio session ended (the person left, the voice was opened again, the worker went away): a reply that was
+     * sent to it and never began to play will not play now, and its final report may never come. Those are given back.
+     */
+    sessionEnded(spaceName: string): void {
+        for (const [segmentId, segment] of [...this.segments]) {
+            if (segment.spaceName !== spaceName || segment.heard) continue;
+            this.segments.delete(segmentId);
+            this.giveUp(spaceName, segment.responseId);
+        }
     }
 
     spaceLeft(spaceName: string): void {
@@ -247,7 +265,7 @@ export class BotSpeech {
             this.giveUp(spaceName, responseId);
             return 'unsaid';
         }
-        this.segments.set(segmentId, { spaceName, responseId });
+        this.segments.set(segmentId, { spaceName, responseId, heard: false });
         for (const oldest of this.segments.keys()) {
             if (this.segments.size <= MAX_REMEMBERED) break;
             this.segments.delete(oldest);

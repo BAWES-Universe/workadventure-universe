@@ -68,6 +68,8 @@ function bot(options: { owners?: { recognition: boolean; speech: boolean }; peop
     const speech = new BotSpeech(calls, DEFAULT_REPLY_LIMITS);
     calls.onAudience = (space) => speech.audience(space);
     calls.onUnplayed = (space, segmentId) => speech.unplayed(space, segmentId);
+    calls.onHeard = (space, segmentId) => speech.heard(space, segmentId);
+    calls.onSessionEnded = (space) => speech.sessionEnded(space);
     const t = {
         sent, statuses, lines, logs, orbit, state, calls, speech,
         says: () => (sent.filter((m) => m.type === 'bot.say') as Extract<ToWorker, { type: 'bot.say' }>[]).map((m) => m.text),
@@ -295,6 +297,33 @@ describe('a reply that was counted and then never spoken', () => {
         await b.say(reply(1), 'Lost.');
         b.workerSays({ type: 'playback.progress', segmentId: 's1', playedMs: 0, finished: true, interrupted: true, reason: 'provider' });
         await flush();
+        expect(released(b)).toEqual([['sam', reply(1)]]);
+    });
+
+    it('is given back when the session ends before any of it began to play, and kept when some of it was heard', async () => {
+        const gone = bot();
+        await gone.connect();
+        await gone.say(reply(1), 'Never played.');
+        gone.calls.spaceLeft(SPACE);
+        await flush();
+        expect(released(gone)).toEqual([['sam', reply(1)]]);
+
+        const heard = bot();
+        await heard.connect();
+        await heard.say(reply(1), 'Playing.');
+        heard.workerSays({ type: 'playback.progress', segmentId: 's1', playedMs: 500, finished: false, interrupted: false });
+        heard.calls.spaceLeft(SPACE);
+        await flush();
+        expect(released(heard)).toEqual([]);
+    });
+
+    it('is given back when the voice is opened again before it began to play', async () => {
+        const b = bot();
+        await b.connect();
+        await b.say(reply(1), 'Never played.');
+        // The maker changes the voice: the session is closed and opened again
+        b.state.active = { ...speakingNow({ recognition: false, speech: false }), signature: 'two' };
+        await b.say(reply(2), 'Next.');
         expect(released(b)).toEqual([['sam', reply(1)]]);
     });
 

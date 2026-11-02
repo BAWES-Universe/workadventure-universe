@@ -140,6 +140,10 @@ export class VoiceCalls {
     onStopped?: (spaceName: string, segmentId: string) => void;
     /** Called when a reply's segment ended without any of it being heard (see `handlePlayback`). */
     onUnplayed?: (spaceName: string, segmentId: string) => void;
+    /** Called when some of a reply's segment has been heard (the worker reports what it played). */
+    onHeard?: (spaceName: string, segmentId: string) => void;
+    /** Called when a bubble's audio session ends (left, closed, opened again, the worker went away): what it had not yet played will not play. */
+    onSessionEnded?: (spaceName: string) => void;
     /**
      * The worker turned someone away because it is full (#1751): one person's connection, the bubble's LiveKit audio,
      * or the whole bubble. Who watches the load counts it; nothing a person said is in it.
@@ -324,6 +328,7 @@ export class VoiceCalls {
         if (bubble) {
             this.bubbles.delete(spaceName);
             this.endSession(bubble.sessionId);
+            this.onSessionEnded?.(spaceName);
         }
         this.rooms.delete(spaceName);
         this.invitations.delete(spaceName);
@@ -599,9 +604,10 @@ export class VoiceCalls {
      * over it. A reply cut before any of it was sent, and every other ending, shows nothing.
      */
     private handlePlayback(message: Extract<FromWorker, { type: 'playback.progress' }>): void {
-        if (!message.finished) return;
         const bubble = [...this.bubbles.values()].find((b) => b.sessionId === message.sessionId);
         if (!bubble) return;
+        if (message.playedMs > 0) this.onHeard?.(bubble.spaceName, message.segmentId);
+        if (!message.finished) return;
         // Not a moment of it was heard, however it ended: a reply that was counted is given back
         if (message.playedMs <= 0) {
             this.onUnplayed?.(bubble.spaceName, message.segmentId);
@@ -728,6 +734,7 @@ export class VoiceCalls {
             if (bubble.sessionId !== sessionId) continue;
             this.bubbles.delete(spaceName);
             this.opening.delete(sessionId);
+            this.onSessionEnded?.(spaceName);
             this.log(`voice: no audio session for ${spaceName} (${reason})`);
             for (const call of [...this.calls.values()]) if (call.sessionId === sessionId) this.drop(call, false);
             const room = this.rooms.get(spaceName);
@@ -766,6 +773,7 @@ export class VoiceCalls {
         }
         for (const spaceName of [...this.rooms.keys()]) this.tellEveryone(spaceName, 'paused');
         this.calls.clear();
+        for (const spaceName of this.bubbles.keys()) this.onSessionEnded?.(spaceName);
         this.bubbles.clear();
         this.opening.clear();
         this.joined.clear();
@@ -917,6 +925,7 @@ export class VoiceCalls {
         const inRoom = this.rooms.has(spaceName);
         this.bubbles.delete(spaceName);
         this.endSession(bubble.sessionId);
+        this.onSessionEnded?.(spaceName);
         this.rooms.delete(spaceName);
         // Whoever was mid-sentence gets their words back to decide on, as when the worker goes away
         for (const [key, live] of [...this.live]) {
@@ -947,7 +956,10 @@ export class VoiceCalls {
     /** The bot leaves or is switched off: every connection ends. */
     shutdown(): void {
         for (const call of [...this.calls.values()]) this.game.sendDisconnect(call.spaceName, call.participantId);
-        for (const bubble of this.bubbles.values()) this.endSession(bubble.sessionId);
+        for (const bubble of this.bubbles.values()) {
+            this.endSession(bubble.sessionId);
+            this.onSessionEnded?.(bubble.spaceName);
+        }
         this.calls.clear();
         this.bubbles.clear();
         this.opening.clear();
