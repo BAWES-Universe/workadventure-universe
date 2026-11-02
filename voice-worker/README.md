@@ -32,6 +32,12 @@ A bubble names its own hearing and speaking provider in `session.open` (`recogni
 use two different providers at once. Built in: the test engine, `FakeSpeech` (registered as `fake`, and what a bubble
 that names nothing gets) and the scripted `FakeEars` for tests, plus these real providers (#1748, one change each):
 
+* `soniox` (hearing, `src/soniox.ts`): one real-time WebSocket stream per stretch of speech to
+  `wss://stt-rt.soniox.com/transcribe-websocket` (or the profile's `endpoint`), the key in the `Authorization` header only,
+  16 kHz mono `s16le`, the profile's `model`, and its `language` as the only language hint when it fixes one. Partial words
+  are the final tokens so far plus the latest guesses; when the person pauses an empty text frame ends the audio and the
+  words are final on Soniox's `finished`. A refused key (401/403), an error answer (its `error_code`), a dropped stream or
+  no `finished` within `VOICE_RECOGNITION_FINAL_TIMEOUT_SECONDS` (default 10) fails the turn with the words heard so far.
 * `deepgram` (hearing, `src/deepgram.ts`): one real-time WebSocket stream per stretch of speech to
   `wss://api.deepgram.com/v1/listen` (or the profile's `endpoint`), the key in the `Authorization` header only
   (`Token <key>`), 16 kHz mono `linear16`, the profile's `model` (`nova-3` when it names none) and its `language` when it
