@@ -893,7 +893,7 @@ export class AdminApiService {
      */
     async checkReplyAllowance(
         botId: string,
-        input: { userId: string; isGuest?: boolean; source: 'universe-ai' | 'provider' | 'own-key' }
+        input: { userId: string; isGuest?: boolean; source: 'universe-ai' | 'provider' | 'own-key'; greeting?: boolean }
     ): Promise<ReplyAllowance> {
         if (!this.isConfigured()) return { allowed: true };
         const botServiceToken = process.env.BOT_SERVICE_TOKEN;
@@ -914,6 +914,35 @@ export class AdminApiService {
             const msg = (axios.isAxiosError(error) && error.response?.status) || (error as Error)?.message || 'Unknown error';
             console.warn(`[AdminApiService] Reply limit check failed, letting the reply through: ${msg}`);
             return { allowed: true };
+        }
+    }
+
+    /**
+     * May this reply be spoken (game #1669, Orbit voice-allowance)? Counts it against the person's Universe AI window when it
+     * is, under the reply's turn, so asking again never counts it twice. Null when Orbit can't be asked or doesn't know the
+     * question: the caller keeps the reply in text, so nothing is spoken on Universe AI's account without an answer.
+     */
+    async checkVoiceAllowance(
+        botId: string,
+        input: { userId: string; isGuest: boolean; turnId: string }
+    ): Promise<{ allowed: true } | { allowed: false; resetsAt: string } | null> {
+        if (!this.isConfigured()) return null;
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!botServiceToken) return null;
+        try {
+            const response = await axios.post(
+                `${this.adminApiUrl}/api/bots/${encodeURIComponent(botId)}/voice-allowance`,
+                input,
+                { headers: { Authorization: `Bearer ${botServiceToken}` }, timeout: 5000 }
+            );
+            const body = response.data as Partial<{ allowed: boolean; resetsAt: string }>;
+            if (body?.allowed === true) return { allowed: true };
+            if (body?.allowed === false && typeof body.resetsAt === 'string' && !Number.isNaN(Date.parse(body.resetsAt))) return { allowed: false, resetsAt: body.resetsAt };
+            return null;
+        } catch (error) {
+            const msg = (axios.isAxiosError(error) && error.response?.status) || (error as Error)?.message || 'Unknown error';
+            console.warn(`[AdminApiService] Voice allowance check failed, the reply stays in text: ${msg}`);
+            return null;
         }
     }
 

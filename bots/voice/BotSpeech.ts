@@ -27,7 +27,13 @@ export interface SpeechVoice {
      * this reply stays in the chat. `wait`: the bubble's audio is being set up again for new settings, so the reply
      * waits for it like a greeting. `speak`: say it, with these limits (the bot's own, when Orbit has them).
      */
-    beforeSpeaking?(spaceName: string): Promise<TurnDecision>;
+    beforeSpeaking?(spaceName: string, turn: SpeechTurn): Promise<TurnDecision>;
+}
+
+/** The reply about to be said: its id (a retry or a reconnect asks again under the same one) and the person it is for, when known. */
+export interface SpeechTurn {
+    turnId: string;
+    playerId?: number;
 }
 
 export interface TurnDecision {
@@ -137,7 +143,7 @@ export class BotSpeech {
         if (!ask) return this.say(spaceName, responseId, reply);
         const askedAt = this.now();
         this.checking.add(responseId);
-        ask.call(this.voice, spaceName).then(
+        ask.call(this.voice, spaceName, { turnId: responseId, playerId: playerOf(responseId) }).then(
             (decision) => this.decided(spaceName, responseId, reply, askedAt, decision),
             // Orbit could not be asked: the reply stays in the chat
             () => this.decided(spaceName, responseId, reply, askedAt, { action: 'text' })

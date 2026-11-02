@@ -40,8 +40,11 @@ interface Base {
 }
 
 // bot server -> worker
-/** `recognition`, `speech`, `expression`: which providers this bubble hears and speaks with. Without them the worker's built-in test engine is used. */
-export interface SessionOpen extends Base { type: 'session.open'; bubbleId: string; botId: string; recognition?: RecognitionConfig; speech?: SpeechConfig; expression?: Expression }
+/**
+ * `recognition`, `speech`, `expression`: which providers this bubble hears and speaks with. Without them the worker's built-in test engine is used.
+ * `turnSeconds`: the longest stretch of one person's speech taken in this bubble (#1669); without it the worker's `VOICE_MAX_UTTERANCE_SECONDS` applies.
+ */
+export interface SessionOpen extends Base { type: 'session.open'; bubbleId: string; botId: string; recognition?: RecognitionConfig; speech?: SpeechConfig; expression?: Expression; turnSeconds?: number }
 export interface LaneOpen extends Base { type: 'lane.open'; participantId: string; epoch: number; mode?: Mode }
 export interface LaneSignalIn extends Base { type: 'lane.signal'; participantId: string; epoch: number; signal: Signal }
 export interface LaneClose extends Base { type: 'lane.close'; participantId: string; epoch: number; reason?: LeaveReason }

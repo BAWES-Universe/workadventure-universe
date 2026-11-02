@@ -337,6 +337,7 @@ class BridgeConnection {
                     recognition: msg.recognition,
                     speech: msg.speech,
                     expression: msg.expression,
+                    turnSeconds: msg.turnSeconds,
                 });
                 this.sessions.set(msg.sessionId, session);
                 this.worker.counters.inc('sessions_opened');

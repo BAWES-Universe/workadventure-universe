@@ -16,10 +16,16 @@
  * that turn; one whose settings changed has the bubble's session closed and opened again with the new ones, and the people
  * in it reconnect, as after the worker comes back. The worker reads the settings when it creates a session, so this is
  * the only way a change reaches a bubble.
+ *
+ * A reply that Universe AI pays for for any part (#1669) is also asked of the Universe AI allowance (`TurnGate`): spoken replies
+ * come out of the person's 5-hour window, some always kept for text. When it says no, or the maker's key or provider is not
+ * working, the reply stays in text, that person's button shows paused and one fixed line says so (once, until voice speaks for them
+ * again). Nothing else changes: the chat, the bubble and everyone else's voice carry on.
  */
 import type { PrivateEventPusherToFront, SpaceUser } from '@workadventure/messages';
 import type { FromWorker, ProviderPart, ToWorker, VoiceDraft, VoiceMode, VoiceSignal, VoiceStatus } from './protocol';
-import type { TurnDecision } from './BotSpeech';
+import type { SpeechTurn, TurnDecision } from './BotSpeech';
+import type { TurnGate } from './VoiceAllowance';
 import type { VoiceLink } from './VoiceLink';
 import type { ActiveVoice, PartProvider, VoiceSettings } from './VoiceSettings';
 
@@ -142,7 +148,11 @@ export class VoiceCalls {
     /** The provider each part of a session runs on, to report how its calls went. */
     private readonly sessions = new Map<string, Record<ProviderPart, PartProvider>>();
     /** Only for a bot whose voice Orbit decides (see VoiceSettings): asked just before a reply is said. */
-    readonly beforeSpeaking?: (spaceName: string) => Promise<TurnDecision>;
+    readonly beforeSpeaking?: (spaceName: string, turn: SpeechTurn) => Promise<TurnDecision>;
+    /** Voice has just been paused for someone in this bubble (the allowance, or a key or provider that isn't working): say so, once. */
+    onPaused?: (spaceName: string) => void;
+    /** Who is paused by the allowance or a key, by bubble and person: the line is said once, and the button is put back when voice speaks for them again. */
+    private readonly pausedFor = new Set<string>();
     private epoch = 0;
     private bubbleSeq = 0;
 
@@ -155,9 +165,11 @@ export class VoiceCalls {
         openLink: (handlers: LinkHandlers) => VoiceLink,
         private readonly log: (message: string) => void = () => undefined,
         /** What each bubble hears and speaks with, from Orbit. Without it a bubble gets the worker's built-in test engine. */
-        private readonly settings?: VoiceSettings
+        private readonly settings?: VoiceSettings,
+        /** Settles a reply that Universe AI pays for against the person's allowance (#1669). Without it nothing is counted. */
+        private readonly gate?: TurnGate
     ) {
-        if (settings) this.beforeSpeaking = (spaceName) => this.prepareTurn(spaceName);
+        if (settings) this.beforeSpeaking = (spaceName, turn) => this.prepareTurn(spaceName, turn);
         this.link = openLink({
             onMessage: (message) => this.handleWorkerMessage(message),
             onUp: () => this.linkUp(),
@@ -316,6 +328,7 @@ export class VoiceCalls {
         this.roster.delete(spaceName);
         for (const [key, lost] of this.lost) if (lost.spaceName === spaceName) this.lost.delete(key);
         for (const key of this.spoken.keys()) if (key.startsWith(`${spaceName}\n`)) this.spoken.delete(key);
+        for (const key of this.pausedFor) if (key.startsWith(`${spaceName}\n`)) this.pausedFor.delete(key);
         for (const [key, live] of this.live) if (live.spaceName === spaceName) this.live.delete(key);
         for (const key of this.joined.keys()) if (key.startsWith(`${spaceName}\n`)) this.joined.delete(key);
         for (const key of this.modes.keys()) if (key.startsWith(`${spaceName}\n`)) this.modes.delete(key);
@@ -401,6 +414,7 @@ export class VoiceCalls {
         this.live.delete(callKey(spaceName, spaceUserId));
         this.modes.delete(callKey(spaceName, spaceUserId));
         this.told.delete(callKey(spaceName, spaceUserId));
+        this.pausedFor.delete(callKey(spaceName, spaceUserId));
         if (this.roster.get(spaceName)?.delete(spaceUserId)) this.rosterChanged(spaceName);
     }
 
@@ -817,7 +831,7 @@ export class VoiceCalls {
      * One whose settings changed gets its session closed and opened again, so the reply waits for the people to
      * reconnect. Orbit cannot be asked: text.
      */
-    private async prepareTurn(spaceName: string): Promise<TurnDecision> {
+    private async prepareTurn(spaceName: string, turn: SpeechTurn): Promise<TurnDecision> {
         const bubble = this.bubbles.get(spaceName);
         if (!this.settings || !bubble || this.opening.has(bubble.sessionId)) return { action: 'text' };
         let active: ActiveVoice;
@@ -829,13 +843,57 @@ export class VoiceCalls {
         if (this.bubbles.get(spaceName) !== bubble) return { action: 'text' };
         if ('reason' in active) {
             this.log(`voice: ${spaceName} answers in text this time (${active.reason})`);
+            // The maker's key or a provider that isn't working is voice paused for the person; a bot that doesn't speak at all (off) is not
+            if (PAUSING_REASONS.has(active.reason)) this.pause(spaceName, turn);
             return { action: 'text' };
+        }
+        // Universe AI pays for hearing or speaking: the reply comes out of the person's allowance, which also keeps some for text.
+        // Asked before a session is opened again, so a reply that stays in text does not reconnect anyone
+        if (this.gate && (!active.providers.recognition.owner || !active.providers.speech.owner)) {
+            let verdict: Awaited<ReturnType<TurnGate['mayUniverseAiSpeak']>> = 'unknown';
+            try {
+                verdict = await this.gate.mayUniverseAiSpeak(turn);
+            } catch {
+                // The gate never throws; if it does, the reply stays in text
+            }
+            if (this.bubbles.get(spaceName) !== bubble) return { action: 'text' };
+            if (verdict !== 'yes') {
+                this.log(`voice: ${spaceName} answers in text this time (${verdict === 'no' ? 'the allowance for spoken replies is used' : 'the allowance could not be settled'})`);
+                if (verdict === 'no') this.pause(spaceName, turn);
+                return { action: 'text' };
+            }
         }
         if (active.signature !== bubble.signature || bubble.stale) {
             this.reopen(bubble);
             return { action: 'wait' };
         }
+        this.resume(spaceName, turn);
         return { action: 'speak', limits: active.replyLimits };
+    }
+
+    /** The person a turn is for, in the bubble's roster, when the bot knows who it is and they are still there. */
+    private spaceUserFor(spaceName: string, turn: SpeechTurn): { key: string; personId?: string } {
+        const uuid = this.gate?.personOf(turn);
+        let personId: string | undefined;
+        if (uuid) for (const user of this.roster.get(spaceName)?.values() ?? []) if (user.uuid === uuid) personId = user.spaceUserId;
+        return { key: personId ? callKey(spaceName, personId) : `${spaceName}\n?${uuid ?? ''}`, personId };
+    }
+
+    /** Voice is paused for the person this turn is for: their button shows it, and one line says so, once until it speaks for them again. */
+    private pause(spaceName: string, turn: SpeechTurn): void {
+        const { key, personId } = this.spaceUserFor(spaceName, turn);
+        if (this.pausedFor.has(key)) return;
+        this.pausedFor.add(key);
+        if (personId) this.tell(spaceName, personId, 'paused');
+        this.onPaused?.(spaceName);
+    }
+
+    /** Voice speaks for the person again (on a later turn, by itself): their button is put back. */
+    private resume(spaceName: string, turn: SpeechTurn): void {
+        if (this.pausedFor.size === 0) return;
+        const { key, personId } = this.spaceUserFor(spaceName, turn);
+        if (!this.pausedFor.delete(key)) return;
+        if (personId && (this.joined.has(key) || this.rooms.get(spaceName)?.connected)) this.tell(spaceName, personId, 'on');
     }
 
     /** Closes a bubble's session and opens it again with the settings Orbit has now: the people in it reconnect, as after the worker comes back. */
@@ -890,6 +948,7 @@ export class VoiceCalls {
         this.lastSpeechAt.clear();
         this.modes.clear();
         this.told.clear();
+        this.pausedFor.clear();
         this.link.close();
     }
 
@@ -897,6 +956,9 @@ export class VoiceCalls {
         return this.calls.has(callKey(spaceName, personId));
     }
 }
+
+/** Why a bot that doesn't speak now has voice paused for the person (its maker's key or a provider isn't working), not just off. */
+const PAUSING_REASONS: ReadonlySet<string> = new Set(['key-down', 'provider']);
 
 const callKey = (spaceName: string, personId: string): string => `${spaceName}\n${personId}`;
 const spokenKey = (spaceName: string, personId: string, turnId: string): string => `${spaceName}\n${personId}\n${turnId}`;
