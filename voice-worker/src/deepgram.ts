@@ -155,7 +155,8 @@ class DeepgramStream implements Recognizer {
             this.liveText = text;
         }
         const heard = this.heard();
-        if (heard && heard !== this.lastShown) {
+        // A guess revised to nothing is shown too, so the stretch does not keep words Deepgram has taken back
+        if (heard !== this.lastShown) {
             this.lastShown = heard;
             this.events.partial(heard);
         }

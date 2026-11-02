@@ -143,6 +143,21 @@ describe('hearing with Deepgram', () => {
         expect(got.failures).toEqual([]);
     });
 
+    it('takes back words Deepgram revises to nothing, so a silent end does not say them', async () => {
+        const deepgram = await fakeDeepgram({ onCloseStream: endWith('') });
+        const { got, events } = heard();
+        const stream = new DeepgramRecognition().listen(settings(deepgram.url), events);
+        await waitFor('the stream to open', () => deepgram.requests.length === 1);
+        await waitFor('the socket', () => deepgram.socket() !== undefined);
+        deepgram.send(results('uh', false));
+        deepgram.send(results('', false));
+        await waitFor('the guess and its removal', () => got.partials.length === 2);
+        expect(got.partials).toEqual(['uh', '']);
+        stream.finish();
+        await waitFor('the end', () => got.finals.length === 1);
+        expect(got.finals).toEqual(['']);
+    });
+
     it('says the words when Deepgram has sent its last answer, without waiting for the stream to close', async () => {
         const deepgram = await fakeDeepgram({
             onCloseStream: (send) => {
