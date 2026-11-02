@@ -6,7 +6,19 @@ import { typingExceptWorkingBots, workingBotIds } from "../BotTyping";
 
 const BOT = "@bot_0b7c1d2e-1111-4222-8333-944455556666:matrix.bawes.net";
 const SPACE_BOT = "bot-space-user-id";
-const steps = (state: BotSteps["state"]): BotSteps => ({ state, line: "Reading", startedAt: 0, steps: [] });
+const step = (state: BotSteps["steps"][number]["state"]): BotSteps["steps"][number] => ({
+    doing: "Making an artifact",
+    done: "Made an artifact",
+    state,
+    again: false,
+});
+// A line that works with a tool running; "writing" is the same line once every tool has ended.
+const steps = (state: BotSteps["state"], stepState: BotSteps["steps"][number]["state"] = "running"): BotSteps => ({
+    state,
+    line: "Reading",
+    startedAt: 0,
+    steps: [step(stepState)],
+});
 
 function stepsLine(sender: { chatId?: string; spaceUserId?: string }, value: BotSteps | undefined) {
     const store = writable<BotSteps | undefined>(value);
@@ -44,6 +56,17 @@ describe("workingBotIds", () => {
         expect(get(working).has(BOT)).toBe(false);
     });
 
+    it("does not count a bot whose line is working but whose tools have all ended: it is writing its answer", () => {
+        const line = stepsLine({ chatId: BOT }, steps("working", "running"));
+        const working = workingBotIds(writable([line.message]));
+        expect(get(working).has(BOT)).toBe(true);
+        line.store.set(steps("working", "done"));
+        expect(get(working).has(BOT)).toBe(false);
+        // The next tool begins: the line works again
+        line.store.set({ ...steps("working", "done"), steps: [step("done"), step("running")] });
+        expect(get(working).has(BOT)).toBe(true);
+    });
+
     it("keeps a bot working through its other messages, like a line it said between tools", () => {
         const line = stepsLine({ chatId: BOT }, steps("working"));
         const working = workingBotIds(writable([line.message, text({ chatId: BOT })]));
@@ -75,6 +98,14 @@ describe("typingExceptWorkingBots", () => {
         expect(get(shown).map((m) => m.id)).toEqual(["@sara:matrix.bawes.net"]);
         line.store.set(steps("done"));
         expect(get(shown).map((m) => m.id)).toEqual([BOT, "@sara:matrix.bawes.net"]);
+    });
+
+    it("shows a bot again while it writes its answer after its last tool, until the line is done", () => {
+        const line = stepsLine({ chatId: BOT }, steps("working", "running"));
+        const shown = typingExceptWorkingBots(writable([member(BOT)]), workingBotIds(writable([line.message])));
+        expect(get(shown)).toEqual([]);
+        line.store.set(steps("working", "done"));
+        expect(get(shown).map((m) => m.id)).toEqual([BOT]);
     });
 
     it("shows a bot that has no steps line at all", () => {
