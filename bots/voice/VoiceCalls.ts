@@ -882,9 +882,10 @@ export class VoiceCalls {
     /** Voice is paused for the person this turn is for: their button shows it, and one line says so, once until it speaks for them again. */
     private pause(spaceName: string, turn: SpeechTurn): void {
         const { key, personId } = this.spaceUserFor(spaceName, turn);
+        // The button is put to paused every time (a reconnect since may have set it to on; `tell` sends only a change), the line once
+        if (personId) this.tell(spaceName, personId, 'paused');
         if (this.pausedFor.has(key)) return;
         this.pausedFor.add(key);
-        if (personId) this.tell(spaceName, personId, 'paused');
         this.onPaused?.(spaceName);
     }
 

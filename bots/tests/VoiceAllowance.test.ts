@@ -81,6 +81,11 @@ function bot(options: { owners?: { recognition: boolean; speech: boolean }; peop
             const lane = sent.find((m) => m.type === 'lane.open') as Extract<ToWorker, { type: 'lane.open' }>;
             handlers.onMessage({ type: 'participant.join', sessionId: lane.sessionId, participantId: who, epoch: lane.epoch } as FromWorker);
         },
+        /** The worker says the person's audio is connected again (a reconnect). */
+        rejoin(who = 'room_7') {
+            const lane = [...sent].reverse().find((m) => m.type === 'lane.open') as Extract<ToWorker, { type: 'lane.open' }>;
+            handlers.onMessage({ type: 'participant.join', sessionId: lane.sessionId, participantId: who, epoch: lane.epoch } as FromWorker);
+        },
         async say(id: string, text = 'An answer.') {
             speech.final(SPACE, id, text);
             await flush();
@@ -132,6 +137,19 @@ describe('a reply that Universe AI pays for', () => {
         b.state.answers = [{ allowed: false, resetsAt: 'x' }];
         await b.say(reply(4));
         expect(b.lines).toHaveLength(2);
+    });
+
+    it('puts the button back to paused when a reconnect has set it to on, without saying the line again', async () => {
+        const b = bot();
+        await b.connect();
+        b.state.fallback = { allowed: false, resetsAt: 'x' };
+        await b.say(reply(1));
+        // The person's audio connects again: their button is on
+        b.rejoin();
+        expect(b.statuses.slice(-1)).toEqual(['room_7:on']);
+        await b.say(reply(2));
+        expect(b.statuses.slice(-1)).toEqual(['room_7:paused']);
+        expect(b.lines).toHaveLength(1);
     });
 
     it('is only held back for the person whose allowance is used: another person in the bubble keeps hearing the bot', async () => {
