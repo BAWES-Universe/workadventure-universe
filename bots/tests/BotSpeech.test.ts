@@ -233,3 +233,66 @@ describe('a bot whose voice Orbit decides', () => {
         expect(t.said.map((s) => s.text)).toEqual(['Welcome back.']);
     });
 });
+
+describe('two voice bots in one bubble (#1670)', () => {
+    function crowdedSetup() {
+        const retracted: string[] = [];
+        const said: string[] = [];
+        const state = { crowded: false };
+        const voice: SpeechVoice = {
+            say: (_space, _id, text) => (said.push(text), true),
+            hasAudience: () => true,
+            someoneSpeaking: () => false,
+            lastSpokenToAt: () => 0,
+            crowded: () => state.crowded,
+            retract: (_space, segmentId) => void retracted.push(segmentId),
+        };
+        return { speech: new BotSpeech(voice, DEFAULT_REPLY_LIMITS, () => 1000), said, retracted, state };
+    }
+
+    it('keeps a reply in the chat while another voice bot is here, and never says it later', () => {
+        const t = crowdedSetup();
+        t.state.crowded = true;
+        expect(t.speech.final(SPACE, reply(1), 'Noted.')).toBe('unsaid');
+        t.state.crowded = false;
+        expect(t.speech.final(SPACE, reply(1), 'Noted.')).toBe('again');
+        expect(t.said).toEqual([]);
+        expect(t.speech.final(SPACE, reply(2), 'Next one.')).toBe('spoken');
+        expect(t.said).toEqual(['Next one.']);
+    });
+
+    it('takes back what is still playing, and only that, when a second voice bot arrives', () => {
+        const t = crowdedSetup();
+        t.speech.final(SPACE, reply(1), 'First.');
+        t.speech.final(SPACE, reply(2), 'Second.');
+        t.speech.final('other-space', reply(3), 'Elsewhere.');
+        t.speech.played('s1');
+        t.speech.crowded(SPACE);
+        expect(t.retracted).toEqual(['s2']);
+    });
+
+    it('drops a greeting that was waiting for someone to connect', () => {
+        const t = crowdedSetup();
+        let audience = false;
+        const voice: SpeechVoice = { say: () => true, hasAudience: () => audience, someoneSpeaking: () => false, lastSpokenToAt: () => 0, crowded: () => t.state.crowded };
+        const speech = new BotSpeech(voice, DEFAULT_REPLY_LIMITS, () => 1000);
+        expect(speech.final(SPACE, reply(1), 'Welcome!')).toBe('waiting');
+        speech.crowded(SPACE);
+        audience = true;
+        speech.audience(SPACE);
+        expect(speech.final(SPACE, reply(1), 'Welcome!')).toBe('again');
+    });
+
+    it('does not say a reply that was waiting for its turn once a second voice bot is here', () => {
+        const t = crowdedSetup();
+        let audience = false;
+        const said: string[] = [];
+        const voice: SpeechVoice = { say: (_s, _i, text) => (said.push(text), true), hasAudience: () => audience, someoneSpeaking: () => false, lastSpokenToAt: () => 0, crowded: () => t.state.crowded };
+        const speech = new BotSpeech(voice, DEFAULT_REPLY_LIMITS, () => 1000);
+        speech.final(SPACE, reply(1), 'Welcome!');
+        t.state.crowded = true;
+        audience = true;
+        speech.audience(SPACE);
+        expect(said).toEqual([]);
+    });
+});

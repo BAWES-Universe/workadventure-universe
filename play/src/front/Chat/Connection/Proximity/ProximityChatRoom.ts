@@ -48,6 +48,7 @@ import {
     type SpokenLine,
 } from "../../Bots/BotVoiceDraft";
 import { parseBotSteps, type BotSteps } from "../../Bots/BotSteps";
+import { isVoiceBotUser, voiceBotCount } from "../../Bots/TwoVoiceBots";
 import { gameManager } from "../../../Phaser/Game/GameManager";
 import { availabilityStatusStore, requestedCameraState, requestedMicrophoneState } from "../../../Stores/MediaStore";
 import { localUserStore } from "../../../Connection/LocalUserStore";
@@ -761,6 +762,11 @@ export class ProximityChatRoom implements ChatRoom {
             return users;
         });
         this.membersId.push(userId.toString());*/
+    }
+
+    /** Said once to everyone in the bubble, as the line for someone joining is: it is not sent to anyone. */
+    private addTwoVoiceBotsLine(): void {
+        this.sendMessage(get(LL).chat.timeLine.twoVoiceBots(), "incoming", false);
     }
 
     private addOutcomingUser(spaceUser: SpaceUserExtended): void {
@@ -1911,6 +1917,8 @@ export class ProximityChatRoom implements ChatRoom {
             }
 
             this.addEnteringChatWithUsers(users);
+            // Walking into a bubble that already has two voice bots: they are answering in text, and the chat says why
+            if (voiceBotCount(users, this._spaceUserId) >= 2) this.addTwoVoiceBotsLine();
         }
 
         this.spaceWatcherUserJoinedObserver = this._space.observeUserJoined.subscribe((spaceUser) => {
@@ -1919,6 +1927,14 @@ export class ProximityChatRoom implements ChatRoom {
                 return;
             }
             this.addIncomingUser(spaceUser);
+            // The second voice bot has just arrived: both answer in text now
+            if (
+                isVoiceBotUser(spaceUser) &&
+                this._space &&
+                voiceBotCount(get(this._space.usersStore).values(), this._spaceUserId, spaceUser.spaceUserId) === 1
+            ) {
+                this.addTwoVoiceBotsLine();
+            }
         });
 
         this.spaceWatcherUserLeftObserver = this._space.observeUserLeft.subscribe((spaceUser) => {

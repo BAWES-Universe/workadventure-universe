@@ -9,6 +9,8 @@
  * - A person talking wins: a reply that was being written when they started to talk, or finishes while they are talking,
  *   is not spoken (a greeting included). One that is playing is stopped by the worker, and the message is marked.
  * - A greeting is finished before the person's audio has connected: it waits for it (a setting, 15 s by default), and is said once.
+ * - With two voice bots in one bubble neither speaks (#1670): what one was saying stops, and replies stay in the chat.
+ *   They are marked as said, so when one bot leaves nothing is replayed.
  * - When the bot's voice comes from Orbit (#1746), Orbit is asked just before each spoken turn (`beforeSpeaking`): a bot
  *   that no longer speaks answers in text for that turn, and the reply limits are the bot's own.
  */
@@ -22,6 +24,10 @@ export interface SpeechVoice {
     hasAudience(spaceName: string): boolean;
     someoneSpeaking(spaceName: string): boolean;
     lastSpokenToAt(spaceName: string): number;
+    /** Another voice bot is in this space: nothing is said out loud (#1670). */
+    crowded?(spaceName: string): boolean;
+    /** Takes back a reply's audio: what is playing stops, what is queued is dropped. */
+    retract?(spaceName: string, segmentId: string): void;
     /**
      * Only for a bot whose voice Orbit decides: asked just before a reply is said. `text`: the bot does not speak now, so
      * this reply stays in the chat. `wait`: the bubble's audio is being set up again for new settings, so the reply
@@ -51,6 +57,8 @@ export class BotSpeech {
     private readonly started = new Map<string, number>();
     private readonly said = new Set<string>();
     private readonly segments = new Map<string, { spaceName: string; responseId: string }>();
+    /** Replies whose audio is not over yet, with the space each is in. */
+    private readonly unfinished = new Map<string, string>();
     private readonly held = new Set<string>();
     private readonly waiting = new Map<string, Waiting>();
     /** Replies Orbit is being asked about. They are not said yet, and not said twice meanwhile. */
@@ -86,6 +94,11 @@ export class BotSpeech {
         const at = this.started.get(responseId) ?? this.now();
         this.started.delete(responseId);
         if (this.said.has(responseId) || this.checking.has(responseId)) return 'again';
+        // Another voice bot is here: this reply stays in the chat, and is not said later either
+        if (this.voice.crowded?.(spaceName)) {
+            remember(this.said, responseId);
+            return 'unsaid';
+        }
         const person = playerOf(responseId);
         if (person !== undefined && this.held.has(`${spaceName}\n${person}`)) return 'held';
         const words = this.wordsFor(reply);
@@ -115,6 +128,23 @@ export class BotSpeech {
         this.speak(spaceName, waiting.responseId, waiting.reply);
     }
 
+    /** The audio of a reply is over, however it ended. */
+    played(segmentId: string): void {
+        this.unfinished.delete(segmentId);
+    }
+
+    /** A second voice bot arrived in this space: what was waiting is dropped, and what is playing or queued stops. */
+    crowded(spaceName: string): void {
+        const waiting = this.waiting.get(spaceName);
+        if (waiting) remember(this.said, waiting.responseId);
+        this.waiting.delete(spaceName);
+        for (const [segmentId, space] of [...this.unfinished]) {
+            if (space !== spaceName) continue;
+            this.unfinished.delete(segmentId);
+            this.voice.retract?.(spaceName, segmentId);
+        }
+    }
+
     /** The voice worker cut a segment short because someone spoke: which reply it was, if it is one of ours. */
     stopped(spaceName: string, segmentId: string): string | undefined {
         const segment = this.segments.get(segmentId);
@@ -123,6 +153,7 @@ export class BotSpeech {
 
     spaceLeft(spaceName: string): void {
         this.waiting.delete(spaceName);
+        for (const [segmentId, space] of [...this.unfinished]) if (space === spaceName) this.unfinished.delete(segmentId);
         for (const key of this.held) if (key.startsWith(`${spaceName}\n`)) this.held.delete(key);
     }
 
@@ -133,6 +164,10 @@ export class BotSpeech {
     }
 
     private speak(spaceName: string, responseId: string, reply: string): SpeechOutcome {
+        if (this.voice.crowded?.(spaceName)) {
+            remember(this.said, responseId);
+            return 'unsaid';
+        }
         const ask = this.voice.beforeSpeaking;
         if (!ask) return this.say(spaceName, responseId, reply);
         const askedAt = this.now();
@@ -174,6 +209,7 @@ export class BotSpeech {
         remember(this.said, responseId);
         if (!this.voice.say(spaceName, segmentId, words, Math.max(1000, this.limits.maxSeconds * 1000))) return 'unsaid';
         this.segments.set(segmentId, { spaceName, responseId });
+        remember(this.unfinished, segmentId, spaceName);
         for (const oldest of this.segments.keys()) {
             if (this.segments.size <= MAX_REMEMBERED) break;
             this.segments.delete(oldest);
