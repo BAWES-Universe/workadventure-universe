@@ -29,8 +29,15 @@ Recognition (#1664) plugs into `InputSink` (`src/transport.ts`) through `src/rec
 
 A bubble names its own hearing and speaking provider in `session.open` (`recognition`, `speech`, `expression`; see
 `PROTOCOL.md`, Providers). The worker looks each adapter name up in a registry (`src/connectors.ts`), so two bubbles can
-use two different providers at once. Only the test engine is built in: `FakeSpeech` (registered as `fake`, and what a bubble
-that names nothing gets) and the scripted `FakeEars` for tests. No real provider is wired yet; each one is a later change.
+use two different providers at once. Besides the real providers below, the test engine is built in: `FakeSpeech` (registered as `fake`, and what a bubble
+that names nothing gets) and the scripted `FakeEars` for tests.
+
+* `cartesia` (speaking, `src/cartesia.ts`): one streamed `POST /tts/bytes` per reply to `https://api.cartesia.ai` (or the
+  profile's `endpoint`), the key in the `Authorization: Bearer` header only, `Cartesia-Version` from `VOICE_CARTESIA_VERSION`,
+  the profile's `model` as `model_id` and voice as `voice.id`, asking for raw `pcm_s16le` at 24 kHz, which plays as it arrives.
+  The reply's language goes as `language` (base code, such as `ar`). Expression: `restrained` sends `generation_config.emotion`
+  `calm` (Sonic 3 and newer only); `natural` and `expressive` send nothing, so Cartesia reads the emotion from the words. A
+  refusal fails with Cartesia's status; an unreachable server or a dropped stream fails without one.
 
 To add a provider, write one file that implements a connector and register it by its lowercase adapter name:
 
@@ -96,6 +103,7 @@ npm test
 | `VOICE_MAX_REPLY_SECONDS` | `60` | The longest one spoken reply plays, whatever the bot server asks (it asks for its own, up to this). |
 | `VOICE_SPEECH_TIMEOUT_SECONDS` | `15` | The longest a speech provider may go without sending the next piece of a reply's audio before the call counts as failed. |
 | `VOICE_BARGE_IN_MS` | `100` | Speech this long, from a person the bot hears, stops the bot's voice. A click or a cough is shorter. |
+| `VOICE_CARTESIA_VERSION` | `2026-08-14` | The `Cartesia-Version` every Cartesia request names. Change it only together with `src/cartesia.ts`. |
 | `VOICE_ICE_SERVERS` | Google STUN | JSON list of STUN/TURN servers, like the game's. |
 | `VOICE_ICE_PORT_RANGE` | any | `40000-40100`: the UDP ports to open on the host. |
 | `VOICE_PUBLIC_IP` | none | Public address(es) of the host when it is behind a NAT. |
