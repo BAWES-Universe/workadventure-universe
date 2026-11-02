@@ -19,7 +19,11 @@ describe("the emoji beside a bot's Woka (#1667)", () => {
     let shown: BotMoodEmoji | undefined;
 
     beforeEach(() => {
-        vi.useFakeTimers();
+        // Reduced motion: it just appears and goes, so there is no movement to wait for
+        window.matchMedia = vi.fn().mockReturnValue({ matches: true }) as unknown as typeof window.matchMedia;
+        vi.useFakeTimers({
+            toFake: ["setTimeout", "clearTimeout", "requestAnimationFrame", "cancelAnimationFrame", "performance"],
+        });
         target = document.createElement("div");
         document.body.appendChild(target);
     });
@@ -63,7 +67,7 @@ describe("the emoji beside a bot's Woka (#1667)", () => {
     it("shows a mood for a reply that is only read for 2.5 seconds, then lets it go", async () => {
         mount(undefined, false);
         await tick();
-        shown!.$set({ feeling: { mood: "🙂", moodSeq: 1 } });
+        shown!.$set({ feeling: { mood: "🙂", moodSeq: 1, work: "read" } });
         await tick();
         expect(emoji()?.textContent?.trim()).toBe("🙂");
         vi.advanceTimersByTime(2499);
@@ -71,10 +75,9 @@ describe("the emoji beside a bot's Woka (#1667)", () => {
         expect(emoji()?.textContent?.trim()).toBe("🙂");
         vi.advanceTimersByTime(2);
         await tick();
-        // It floats away: the element is gone once the 0.7 s float has run
-        vi.advanceTimersByTime(1000);
-        await tick();
-        expect(emoji()).toBeNull();
+        // The mood has gone (it floats away) and the work emoji, which was waiting, takes the spot
+        const all = [...target.querySelectorAll("[data-testid=botMoodEmoji]")];
+        expect(all.at(-1)?.textContent?.trim()).toBe("📖");
     });
 
     it("shows the work emoji in the mood's place while the bot is not talking, and says it in words", async () => {
