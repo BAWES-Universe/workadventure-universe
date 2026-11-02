@@ -41,7 +41,7 @@ that names nothing gets) and the scripted `FakeEars` for tests, plus these real 
 * `elevenlabs` (speaking, `src/elevenlabs.ts`): one streamed `POST /v1/text-to-speech/{voiceId}/stream?output_format=pcm_24000`
   per reply to `https://api.elevenlabs.io` (or the profile's `endpoint`), the key in the `xi-api-key` header only, the
   profile's `model` as `model_id`. Raw 24 kHz PCM plays as it arrives. The reply's language goes as `language_code`
-  (except to `eleven_multilingual_v2`, which refuses one). Expression: `restrained` sends stability 0.75, `expressive` 0.3,
+  (only to the v2.5 and v3 models; the others refuse one, so they go without it). Expression: `restrained` sends stability 0.75, `expressive` 0.3,
   `natural` nothing (the voice's saved settings). A refusal fails with ElevenLabs' status; an unreachable server or a
   dropped stream fails without one.
 

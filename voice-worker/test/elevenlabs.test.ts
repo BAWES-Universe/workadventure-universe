@@ -85,8 +85,10 @@ describe('speaking with ElevenLabs', () => {
         const el = await fakeElevenLabs((res) => res.end(pcm(1)));
         await collect(new ElevenLabsSpeech().speak(request(el.base, { lang: 'ar-KW' })));
         await collect(new ElevenLabsSpeech().speak(request(el.base, {}, { language: 'fr' })));
-        await collect(new ElevenLabsSpeech().speak(request(el.base, { lang: 'ar' }, { model: 'eleven_multilingual_v2' })));
-        expect(el.seen.map((s) => s.body?.language_code)).toEqual(['ar', 'fr', undefined]);
+        for (const model of ['eleven_multilingual_v2', 'eleven_turbo_v2', 'eleven_flash_v2', 'eleven_monolingual_v1']) {
+            await collect(new ElevenLabsSpeech().speak(request(el.base, { lang: 'ar' }, { model })));
+        }
+        expect(el.seen.map((s) => s.body?.language_code)).toEqual(['ar', 'fr', undefined, undefined, undefined, undefined]);
     });
 
     it('makes the voice steadier or livelier for the chosen expression, and leaves the saved settings for natural', async () => {

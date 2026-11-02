@@ -12,8 +12,12 @@ export const ELEVENLABS_ENDPOINT = 'https://api.elevenlabs.io';
  */
 const STABILITY: Partial<Record<Expression, number>> = { restrained: 0.75, expressive: 0.3 };
 
-/** Models that take no language_code (ElevenLabs refuses it for them). */
-const NO_LANGUAGE_CODE = /multilingual_v2|monolingual|english_v1/;
+/**
+ * Models that take a language_code. ElevenLabs answers 400 when it is sent to any other model (multilingual_v2, the
+ * English-only turbo_v2 / flash_v2 and the monolingual ones), so it is an allowlist: a model not named here just goes
+ * without the hint.
+ */
+const TAKES_LANGUAGE_CODE = /_v2_5$|_v3$/;
 
 export class ElevenLabsSpeech implements SpeechConnector {
     async *speak(request: SpeechRequest): AsyncGenerator<Int16Array> {
@@ -22,7 +26,7 @@ export class ElevenLabsSpeech implements SpeechConnector {
         const url = `${base}/v1/text-to-speech/${encodeURIComponent(settings.voiceId)}/stream?output_format=pcm_24000`;
         const body: Record<string, unknown> = { text: request.text, model_id: settings.model };
         const lang = request.lang ?? settings.language;
-        if (lang && !NO_LANGUAGE_CODE.test(settings.model)) body.language_code = lang.split(/[-_]/)[0].toLowerCase();
+        if (lang && TAKES_LANGUAGE_CODE.test(settings.model)) body.language_code = lang.split(/[-_]/)[0].toLowerCase();
         const stability = request.expression ? STABILITY[request.expression] : undefined;
         if (stability !== undefined) body.voice_settings = { stability };
 
