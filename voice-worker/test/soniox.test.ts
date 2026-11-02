@@ -172,6 +172,23 @@ describe('hearing with Soniox', () => {
         expect(got.failures).toEqual([{ text: 'hello', status: 402 }]);
     });
 
+    it('skips answers that are not shaped like one, and keeps listening', async () => {
+        const soniox = await fakeSoniox({ onEnd: (send) => send({ tokens: [{ text: ' there', is_final: true }], finished: true }) });
+        const { got, events } = heard();
+        const stream = new SonioxRecognition().listen(settings(soniox.url), events);
+        await waitFor('the stream to be configured', () => soniox.configs.length === 1);
+        for (const raw of ['null', '5', '"text"', '[1,2]', 'not json', '{"tokens":5}', '{"tokens":"hi"}', '{"tokens":[null,7,"x",{"text":3}]}']) {
+            soniox.socket()!.send(raw);
+        }
+        soniox.send({ tokens: [null, { text: 'hello', is_final: true }] });
+        await waitFor('the words after them', () => got.partials.length === 1);
+        expect(got.partials).toEqual(['hello']);
+        stream.finish();
+        await waitFor('the last words', () => got.finals.length === 1);
+        expect(got.finals).toEqual(['hello there']);
+        expect(got.failures).toEqual([]);
+    });
+
     it('fails without a status when the stream drops before the last words', async () => {
         const soniox = await fakeSoniox();
         const { got, events } = heard();

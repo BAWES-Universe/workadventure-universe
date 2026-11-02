@@ -22,7 +22,7 @@ interface SonioxToken {
 }
 
 interface SonioxAnswer {
-    tokens?: SonioxToken[];
+    tokens?: unknown;
     finished?: unknown;
     error_code?: unknown;
 }
@@ -61,7 +61,13 @@ class SonioxStream implements Recognizer {
             if (this.finishing) this.ws.send('');
         });
         this.ws.on('message', (data, isBinary) => {
-            if (!isBinary) this.answer(data.toString());
+            if (isBinary) return;
+            // Nothing Soniox sends may throw out of here: a socket handler that throws takes the whole worker down
+            try {
+                this.answer(data.toString());
+            } catch {
+                this.fail(new ProviderError('soniox sent an answer that could not be read'));
+            }
         });
         // Refused before the stream started (a wrong key answers 401 here)
         this.ws.on('unexpected-response', (_req, res) => {
@@ -103,18 +109,24 @@ class SonioxStream implements Recognizer {
 
     private answer(raw: string): void {
         if (this.done) return;
-        let message: SonioxAnswer;
+        let parsed: unknown;
         try {
-            message = JSON.parse(raw) as SonioxAnswer;
+            parsed = JSON.parse(raw);
         } catch {
             return;
         }
+        // Anything but an object is not an answer: skipped like a line that is not JSON
+        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return;
+        const message = parsed as SonioxAnswer;
         if (typeof message.error_code === 'number') {
             this.fail(new ProviderError('soniox answered with an error', message.error_code));
             return;
         }
         let live = '';
-        for (const token of message.tokens ?? []) {
+        const tokens: unknown[] = Array.isArray(message.tokens) ? message.tokens : [];
+        for (const item of tokens) {
+            if (typeof item !== 'object' || item === null) continue;
+            const token = item as SonioxToken;
             if (typeof token.text !== 'string' || !isWord(token.text)) continue;
             if (token.is_final === true) this.finalText += token.text;
             else live += token.text;
