@@ -124,10 +124,18 @@ export function describeStep(call: { id: string; name: string; arguments?: unkno
     };
 }
 
-/** A tool server's tool by its words: searching and reading are told apart, anything else makes something. */
+/**
+ * A tool server's tool by its words: searching and reading are told apart, anything else makes something. Whole words
+ * only, so "upload", "spreadsheet" and "payload" are not mistaken for loading or reading.
+ */
 export function kindOf(words: string): StepKind {
-    if (/search|find|look ?up|lookup|query/i.test(words)) return 'search';
-    if (/read|fetch|open|scrape|browse|load/i.test(words)) return 'read';
+    const parts = words
+        .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+        .toLowerCase()
+        .split(/[^a-z]+/)
+        .filter(Boolean);
+    if (parts.some((part) => /^(search|find|lookup|query|queries)/.test(part))) return 'search';
+    if (parts.some((part) => /^(read|fetch|open|scrape|browse|load)/.test(part))) return 'read';
     return 'write';
 }
 

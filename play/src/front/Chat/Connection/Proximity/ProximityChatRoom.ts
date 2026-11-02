@@ -48,7 +48,7 @@ import {
     type SpokenLine,
 } from "../../Bots/BotVoiceDraft";
 import { parseBotSteps, workKindOf, type BotSteps } from "../../Bots/BotSteps";
-import { setBotMood, setBotWork } from "../../Bots/BotMood";
+import { forgetBotFeelings, setBotMood, setBotWork } from "../../Bots/BotMood";
 import { gameManager } from "../../../Phaser/Game/GameManager";
 import { availabilityStatusStore, requestedCameraState, requestedMicrophoneState } from "../../../Stores/MediaStore";
 import { localUserStore } from "../../../Connection/LocalUserStore";
@@ -765,6 +765,7 @@ export class ProximityChatRoom implements ChatRoom {
     }
 
     private addOutcomingUser(spaceUser: SpaceUserExtended): void {
+        forgetBotFeelings(spaceUser.spaceUserId);
         this.sendMessage(get(LL).chat.timeLine.outcoming({ userName: spaceUser.name }), "outcoming", false);
         this.removeTypingUserbyID(spaceUser.spaceUserId.toString());
 
@@ -1606,6 +1607,7 @@ export class ProximityChatRoom implements ChatRoom {
         this.spaceStreamMessageSubscription?.unsubscribe();
         this.streamMessages.clear();
         this.botReplies.clear();
+        forgetBotFeelings();
         this.spaceMessageSubscription = this._space.observePublicEvent("spaceMessage").subscribe((event) => {
             if (isBlackListed(event.sender)) {
                 return;
@@ -1887,6 +1889,7 @@ export class ProximityChatRoom implements ChatRoom {
                 this.spaceStreamMessageSubscription?.unsubscribe();
                 this.streamMessages.clear();
                 this.botReplies.clear();
+                forgetBotFeelings();
                 this.closeScriptingAudioStreamManagers();
                 if (this._space) {
                     this.spaceRegistry.leaveSpace(this._space).catch((error) => {
@@ -2113,6 +2116,7 @@ export class ProximityChatRoom implements ChatRoom {
         this.spaceStreamMessageSubscription?.unsubscribe();
         this.streamMessages.clear();
         this.botReplies.clear();
+        forgetBotFeelings();
 
         this.closeScriptingAudioStreamManagers();
 
@@ -2194,6 +2198,7 @@ export class ProximityChatRoom implements ChatRoom {
         this.spaceStreamMessageSubscription?.unsubscribe();
         this.streamMessages.clear();
         this.botReplies.clear();
+        forgetBotFeelings();
         this.clearTypingMembers();
 
         this.closeScriptingAudioStreamManagers();

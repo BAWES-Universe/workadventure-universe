@@ -29,6 +29,11 @@ describe('ToolSteps', () => {
         expect(describeStep({ id: 'a', name: 'doc_lookup' }).kind).toBe('search');
         expect(describeStep({ id: 'a', name: 'fetch_page' }, 'Open a page').kind).toBe('read');
         expect(describeStep({ id: 'a', name: 'generate_music' }).kind).toBe('write');
+        expect(describeStep({ id: 'a', name: 'webSearch' }).kind).toBe('search');
+        // Whole words only: these merely contain "read" or "load"
+        expect(describeStep({ id: 'a', name: 'upload_file' }).kind).toBe('write');
+        expect(describeStep({ id: 'a', name: 'make_spreadsheet' }).kind).toBe('write');
+        expect(describeStep({ id: 'a', name: 'send_payload' }).kind).toBe('write');
         const steps = new ReplySteps(0);
         steps.start([describeStep({ id: 'a', name: 'web_search' })]);
         expect(steps.field().steps[0].kind).toBe('search');

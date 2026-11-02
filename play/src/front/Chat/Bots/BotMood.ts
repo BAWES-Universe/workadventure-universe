@@ -52,3 +52,14 @@ export function setBotWork(id: string, work: BotStepKind | undefined): void {
 export function botFeeling(id: string): Readable<BotFeeling | undefined> {
     return derived(feelings, (all) => all.get(id));
 }
+
+/** A bot left, or the chat it was in closed: its emoji goes with it (one bot's, or every bot's when no id is given). */
+export function forgetBotFeelings(id?: string): void {
+    feelings.update((all) => {
+        if (id === undefined) return all.size ? new Map() : all;
+        if (!all.has(id)) return all;
+        const next = new Map(all);
+        next.delete(id);
+        return next;
+    });
+}
