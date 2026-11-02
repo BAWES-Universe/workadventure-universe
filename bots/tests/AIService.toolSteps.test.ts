@@ -139,8 +139,8 @@ describe("AIService – the steps a reply shows (#1545)", () => {
         expect(reset.reset).toBe(true);
         // Moving around the map is not a step anyone waits for
         expect(reset.toolSteps).toEqual([
-            { id: "c1", doing: "Using Make a song", done: "Used Make a song", detail: "upbeat 8-bit funk", group: "tool:generate_music" },
-            { id: "c2", doing: "Using Make a song", done: "Used Make a song", detail: "same, meaner bass", group: "tool:generate_music" },
+            { id: "c1", doing: "Using Make a song", done: "Used Make a song", detail: "upbeat 8-bit funk", group: "tool:generate_music", kind: "write" },
+            { id: "c2", doing: "Using Make a song", done: "Used Make a song", detail: "same, meaner bass", group: "tool:generate_music", kind: "write" },
         ]);
         const ended = chunks.find((chunk) => chunk.toolStepResults);
         expect(ended).toMatchObject({ content: "", done: false });
@@ -159,7 +159,7 @@ describe("AIService – the steps a reply shows (#1545)", () => {
             .mockImplementationOnce(says("Done."));
         const chunks = await reply(new AIService(memory, admin, "http://admin.local"));
         expect(chunks.find((chunk) => chunk.toolSteps).toolSteps).toEqual([
-            { id: "r1", doing: "Reading a page", done: "Read a page", detail: "notaurl", group: "page" },
+            { id: "r1", doing: "Reading a page", done: "Read a page", detail: "notaurl", group: "page", kind: "read" },
         ]);
     });
 

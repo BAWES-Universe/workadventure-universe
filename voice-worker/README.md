@@ -38,6 +38,12 @@ that names nothing gets) and the scripted `FakeEars` for tests, plus these real 
   are the final tokens so far plus the latest guesses; when the person pauses an empty text frame ends the audio and the
   words are final on Soniox's `finished`. A refused key (401/403), an error answer (its `error_code`), a dropped stream or
   no `finished` within `VOICE_RECOGNITION_FINAL_TIMEOUT_SECONDS` (default 10) fails the turn with the words heard so far.
+* `elevenlabs` (speaking, `src/elevenlabs.ts`): one streamed `POST /v1/text-to-speech/{voiceId}/stream?output_format=pcm_24000`
+  per reply to `https://api.elevenlabs.io` (or the profile's `endpoint`), the key in the `xi-api-key` header only, the
+  profile's `model` as `model_id`. Raw 24 kHz PCM plays as it arrives. The reply's language goes as `language_code`
+  (only to the v2.5 and v3 models; the others refuse one, so they go without it). Expression: `restrained` sends stability 0.75, `expressive` 0.3,
+  `natural` nothing (the voice's saved settings). A refusal fails with ElevenLabs' status; an unreachable server or a
+  dropped stream fails without one.
 * `cartesia` (speaking, `src/cartesia.ts`): one streamed `POST /tts/bytes` per reply to `https://api.cartesia.ai` (or the
   profile's `endpoint`), the key in the `Authorization: Bearer` header only, `Cartesia-Version` from `VOICE_CARTESIA_VERSION`,
   the profile's `model` as `model_id` and voice as `voice.id`, asking for raw `pcm_s16le` at 24 kHz, which plays as it arrives.

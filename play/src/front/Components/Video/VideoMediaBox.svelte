@@ -18,7 +18,9 @@
     import { liveBroadcastStore } from "../../Stores/MegaphoneStore";
     import { chatSheetOpenStore } from "../../Chat/ChatSheetStore";
     import { chatVisibilityStore } from "../../Stores/ChatStore";
+    import { botFeeling } from "../../Chat/Bots/BotMood";
     import ActionMediaBox from "./ActionMediaBox.svelte";
+    import BotMoodEmoji from "./BotMoodEmoji.svelte";
     import UserName from "./UserName.svelte";
     import UpDownChevron from "./UpDownChevron.svelte";
     import CenteredVideo from "./CenteredVideo.svelte";
@@ -43,6 +45,8 @@
 
     // Check if this is a bot (bot UUIDs start with "bot-")
     const isBot = extendedSpaceUser.uuid?.startsWith("bot-") ?? false;
+    // The mood or work emoji beside a bot's Woka (#1667); people have none
+    const feelingStore = isBot ? botFeeling(extendedSpaceUser.spaceUserId) : readable(undefined);
 
     let showUserSubMenu = false;
 
@@ -211,6 +215,7 @@
                         : "absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2"}
                     grayscale={$statusStore === "connecting"}
                 >
+                    <BotMoodEmoji slot="mood" feeling={$feelingStore} talking={showVoiceIndicator} />
                     {#if extendedSpaceUser && extendedSpaceUser.spaceUserId !== "local"}
                         <div
                             class="flex items-center justify-center picture-in-picture:hidden"
@@ -285,6 +290,7 @@
                     position="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2"
                     grayscale={false}
                 >
+                    <BotMoodEmoji slot="mood" feeling={$feelingStore} talking={false} />
                     {#if extendedSpaceUser && extendedSpaceUser.spaceUserId !== "local"}
                         <div
                             class="flex items-center justify-center picture-in-picture:hidden"
