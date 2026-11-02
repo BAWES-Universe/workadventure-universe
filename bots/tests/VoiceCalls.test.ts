@@ -486,6 +486,25 @@ describe('VoiceCalls: what a person says to the bot', () => {
         expect(t.calls.acceptSpoken(SPACE, 'room_7', '1-1', ' hello there ')).toBe('new');
     });
 
+    it('with several people in the bubble, drops a finished turn that was not said to the bot: not kept, not sent, not taken as a line', () => {
+        const t = talking();
+        const heard: [string, string, string][] = [];
+        t.calls.hears = (space, person, text) => {
+            heard.push([space, person, text]);
+            return /^nora\b/i.test(text);
+        };
+        t.say({ type: 'user.turn', outcome: 'final', text: 'Sara, lunch at one?', audioMs: 900 });
+        expect(heard).toEqual([[SPACE, 'room_7', 'Sara, lunch at one?']]);
+        expect(t.game.drafts).toEqual([['room_7', { turnId: '1-1', state: 'cleared', text: '' }]]);
+        expect(t.calls.acceptSpoken(SPACE, 'room_7', '1-1', 'Sara, lunch at one?')).toBe('unknown');
+        expect(t.calls.stats.unaddressed).toBe(1);
+
+        // Said to the bot: sent as their line like before
+        t.say({ type: 'user.turn', turnId: '1-2', outcome: 'final', text: 'Nora, what do you think?', audioMs: 900 });
+        expect(t.game.drafts[1]).toEqual(['room_7', { turnId: '1-2', state: 'final', text: 'Nora, what do you think?' }]);
+        expect(t.calls.acceptSpoken(SPACE, 'room_7', '1-2', 'Nora, what do you think?')).toBe('new');
+    });
+
     it('offers back words that did not all come through, and never as a line to send by itself', () => {
         const t = talking();
         t.say({ type: 'user.turn', outcome: 'lost', reason: 'cap', text: 'one two three', audioMs: 180000 });

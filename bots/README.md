@@ -127,6 +127,14 @@ bots/
 - **Interrupt Handling**: New summon requests cancel ongoing return journeys
 - **Bubble Initiation**: Bots stop and initiate conversation bubble when reaching summoned player
 
+### 6b. Who the bot listens to in a nearby chat (game #1220, option b)
+- **One person with the bot**: works as it always did. Everything that person says is for the bot.
+- **Two or more people in the bubble**: the bot only reads, saves and answers the person who is talking to it. That is someone whose line starts with its name (optionally after "hey", "hi", "ok" or an @, accents and case ignored), who summoned it, or whom it answered within the follow-up window. Anything else is dropped before it reaches the behavior: no transcript, no memory, no personal facts, no AI call, and Orbit is not asked about that person's access either. Everyone in the bubble still sees the bot's answer.
+- **Follow-up window**: after the bot answers a person they can go on without its name for `BOT_FOLLOW_UP_SECONDS` (default 30; `0` means the name is needed every time). Each answer renews it. It is the number the Voice menu tells people (`followUpSeconds` in `botVoiceStatus`). A person who leaves the bubble loses theirs.
+- **Voice**: a voice bot's spoken turn goes through the same rule (`VoiceCalls.hears`). A finished turn that was not said to the bot is cleared from the speaker's screen and never offered back or sent as their line. The speech-to-text provider still hears the audio to find the name; nothing from it is kept.
+- **Two or more voice bots** in one bubble answer in text until #357.
+- **Code**: `client/BotAttention.ts` (the rule), asked in `BotClient` before `mayChat` and `onChatMessage`.
+
 ### 7. AI Integration
 - **LMStudio**: Initial support for local LLM (planned)
 - **Ultravox**: Voice AI integration (planned)
