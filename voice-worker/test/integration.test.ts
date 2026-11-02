@@ -363,4 +363,17 @@ describe('the bridge', () => {
         await waitFor('the connection to close', () => r.worker.laneCount() === 0);
         expect(r.worker.stats()).toMatchObject({ lanes: 0, peakLanes: 1 });
     });
+
+    it('gives the same CPU figure to every reader, measured on its own clock (#1751)', async () => {
+        const r = await rig();
+        // Busy for a moment, then one sample closes
+        const until = performance.now() + 50;
+        while (performance.now() < until) Math.sqrt(Math.random());
+        r.worker.sampleCpu();
+        const first = r.worker.stats().cpuPercent as number;
+        const second = r.worker.stats().cpuPercent as number;
+        expect(first).toBeGreaterThan(0);
+        expect(second).toBe(first);
+        expect(r.worker.cpuPercent()).toBe(first);
+    });
 });

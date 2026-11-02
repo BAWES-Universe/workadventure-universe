@@ -66,7 +66,7 @@ npm run typecheck
 
 `GET /stats` (behind `VOICE_WORKER_SECRET`) gives `connections`, `sessions`, `lanes` (audio connections, a LiveKit
 room counting as one), `maxLanes` (`VOICE_MAX_LANES`), `peakLanes` (since the worker started), `cpuPercent` (this
-process's share of one core since the previous read), `memoryMb`, `uptimeSeconds` and the `counters`, among them
+process's share of one core, averaged over the last minute; reading it changes nothing), `memoryMb`, `uptimeSeconds` and the `counters`, among them
 `lanes_refused` and `sessions_refused` for those turned away because the worker was full. The bot server reads it every
 minute for its load events and warnings (game #1751).
 

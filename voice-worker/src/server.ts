@@ -58,13 +58,21 @@ export const DEFAULT_MAX_REPLY_SECONDS = 60;
 export const DEFAULT_SPEECH_TIMEOUT_SECONDS = 15;
 const MAX_MESSAGE_BYTES = 128 * 1024;
 const PING_INTERVAL_MS = 10000;
+/** CPU is sampled this often, and /stats gives its average over the last CPU_WINDOW_SAMPLES samples (one minute). */
+const CPU_SAMPLE_MS = 5000;
+const CPU_WINDOW_SAMPLES = 12;
 /** A bot server that stops reading this far behind is cut off. */
 const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
 
 export class VoiceWorker {
     readonly counters = new Counters();
-    /** Where the previous stats read left off, so CPU is measured over the time between reads. */
-    private lastCpuRead = { at: performance.now(), cpu: process.cpuUsage() };
+    /**
+     * CPU is measured on the worker's own clock, not per /stats read, so every reader (and a second read soon after the
+     * first) sees the same figure: the start of the current sample, and the last minute's samples in percent.
+     */
+    private cpuMark = { at: performance.now(), cpu: process.cpuUsage() };
+    private readonly cpuSamples: number[] = [];
+    private cpuTimer?: NodeJS.Timeout;
     /** What a bubble speaks with when it names no provider. */
     readonly speech = new FakeSpeech();
     readonly connectors: ConnectorRegistry;
@@ -89,12 +97,15 @@ export class VoiceWorker {
         });
         this.pingTimer = setInterval(() => this.connections.forEach((c) => c.ping()), PING_INTERVAL_MS);
         this.pingTimer.unref?.();
+        this.cpuTimer = setInterval(() => this.sampleCpu(), CPU_SAMPLE_MS);
+        this.cpuTimer.unref?.();
         return (this.server.address() as AddressInfo).port;
     }
 
     /** Stops serving and closes every connection, like a worker that goes down. */
     async close(): Promise<void> {
         clearInterval(this.pingTimer);
+        clearInterval(this.cpuTimer);
         this.wss.close();
         this.server.closeAllConnections();
         await Promise.allSettled([...this.connections].map((c) => c.shutdown()));
@@ -120,14 +131,9 @@ export class VoiceWorker {
 
     /**
      * What the worker is carrying and how hard it is working, for whoever watches its load (#1751). CPU is this
-     * process's share of one core since the previous read (or since it started), so 100 is one core fully busy.
+     * process's share of one core over the last minute, so 100 is one core fully busy. Reading it changes nothing.
      */
     stats(): Record<string, unknown> {
-        const now = performance.now();
-        const cpu = process.cpuUsage();
-        const elapsedMs = now - this.lastCpuRead.at;
-        const usedMs = (cpu.user - this.lastCpuRead.cpu.user + (cpu.system - this.lastCpuRead.cpu.system)) / 1000;
-        this.lastCpuRead = { at: now, cpu };
         const lanes = this.laneCount();
         this.counters.max('peak_lanes', lanes);
         return {
@@ -137,11 +143,31 @@ export class VoiceWorker {
             lanes,
             maxLanes: this.options.maxLanes,
             peakLanes: this.counters.get('peak_lanes'),
-            cpuPercent: elapsedMs > 0 ? Math.round((usedMs / elapsedMs) * 1000) / 10 : 0,
+            cpuPercent: this.cpuPercent(),
             memoryMb: Math.round(process.memoryUsage().rss / (1024 * 1024)),
             uptimeSeconds: Math.round(process.uptime()),
             counters: this.counters.snapshot(),
         };
+    }
+
+    /** CPU since the current sample began, in percent of one core. Reading it changes nothing. */
+    private cpuSinceMark(): number {
+        const elapsedMs = performance.now() - this.cpuMark.at;
+        const cpu = process.cpuUsage(this.cpuMark.cpu);
+        return elapsedMs > 0 ? ((cpu.user + cpu.system) / 1000 / elapsedMs) * 100 : 0;
+    }
+
+    /** Closes the current CPU sample and starts the next. */
+    sampleCpu(): void {
+        this.cpuSamples.push(this.cpuSinceMark());
+        if (this.cpuSamples.length > CPU_WINDOW_SAMPLES) this.cpuSamples.shift();
+        this.cpuMark = { at: performance.now(), cpu: process.cpuUsage() };
+    }
+
+    /** The last minute's average CPU, in percent of one core (before the first sample: since the worker started). */
+    cpuPercent(): number {
+        const value = this.cpuSamples.length > 0 ? this.cpuSamples.reduce((a, b) => a + b, 0) / this.cpuSamples.length : this.cpuSinceMark();
+        return Math.round(value * 10) / 10;
     }
 
     sessionHost(send: (message: OutgoingMessage) => void) {
