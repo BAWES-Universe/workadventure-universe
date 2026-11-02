@@ -132,6 +132,11 @@ export class VoiceCalls {
     private readonly told = new Map<string, VoiceStatus>();
     /** Called when a reply's voice stopped part-way because someone spoke over it. */
     onStopped?: (spaceName: string, segmentId: string) => void;
+    /**
+     * The worker turned someone away because it is full (#1751): one person's connection, the bubble's LiveKit audio,
+     * or the whole bubble. Who watches the load counts it; nothing a person said is in it.
+     */
+    onTurnedAway?: (spaceName: string, what: 'connection' | 'room' | 'bubble') => void;
     /** Sessions waiting for Orbit's answer before they are opened, with what the worker is to get once they are. */
     private readonly opening = new Map<string, ToWorker[]>();
     /** The provider each part of a session runs on, to report how its calls went. */
@@ -663,8 +668,10 @@ export class VoiceCalls {
         if (message.participantId !== undefined && message.epoch !== undefined) {
             // The worker refused this connection (for example, no room for it): the bot stays text-only
             const call = this.currentCall(message.sessionId, message.participantId, message.epoch);
-            if (call && message.code === 'at_capacity') this.drop(call, false);
-            else if (!call) this.stats.staleFromWorker++;
+            if (call && message.code === 'at_capacity') {
+                this.drop(call, false);
+                this.onTurnedAway?.(call.spaceName, 'connection');
+            } else if (!call) this.stats.staleFromWorker++;
         } else if (message.epoch !== undefined) {
             // About the room (no person is named)
             const room = this.currentRoom(message.sessionId, message.epoch);
@@ -673,13 +680,21 @@ export class VoiceCalls {
                 this.invitations.delete(room.spaceName);
                 this.log(`voice: no LiveKit audio in ${room.spaceName} (worker is full)`);
                 this.tellEveryone(room.spaceName, 'paused');
+                this.onTurnedAway?.(room.spaceName, 'room');
             } else if (!room) {
                 this.stats.staleFromWorker++;
             }
         } else if (message.code === 'at_capacity' || message.code === 'no_session') {
             // About the whole bubble: the worker has no such session (it was refused, or it forgot it)
+            const spaceName = this.spaceOfSession(message.sessionId);
             this.evictBubble(message.sessionId);
+            if (message.code === 'at_capacity' && spaceName !== undefined) this.onTurnedAway?.(spaceName, 'bubble');
         }
+    }
+
+    private spaceOfSession(sessionId: string): string | undefined {
+        for (const [spaceName, bubble] of this.bubbles) if (bubble.sessionId === sessionId) return spaceName;
+        return undefined;
     }
 
     /**

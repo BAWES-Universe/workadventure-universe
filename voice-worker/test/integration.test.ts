@@ -352,5 +352,28 @@ describe('the bridge', () => {
         expect(r.worker.laneCount()).toBe(1);
         expect(r.worker.counters.get('lanes_refused')).toBe(1);
         expect(r.violations).toEqual([]);
+        // What the load watch reads (#1751): live and peak connections against the cap, and how hard the worker works
+        const stats = r.worker.stats();
+        expect(stats).toMatchObject({ connections: 1, sessions: 1, lanes: 1, maxLanes: 1, peakLanes: 1, counters: expect.objectContaining({ lanes_refused: 1 }) });
+        expect(typeof stats.cpuPercent).toBe('number');
+        expect(stats.cpuPercent as number).toBeGreaterThanOrEqual(0);
+        expect(stats.memoryMb as number).toBeGreaterThan(0);
+        // The peak stays after the connection is gone
+        r.calls.handlePrivateEvent(privateEvent(r.game, 'alice', { $case: 'webRtcDisconnectMessage', webRtcDisconnectMessage: { userId: 'alice' } }));
+        await waitFor('the connection to close', () => r.worker.laneCount() === 0);
+        expect(r.worker.stats()).toMatchObject({ lanes: 0, peakLanes: 1 });
+    });
+
+    it('gives the same CPU figure to every reader, measured on its own clock (#1751)', async () => {
+        const r = await rig();
+        // Busy for a moment, then one sample closes
+        const until = performance.now() + 50;
+        while (performance.now() < until) Math.sqrt(Math.random());
+        r.worker.sampleCpu();
+        const first = r.worker.stats().cpuPercent as number;
+        const second = r.worker.stats().cpuPercent as number;
+        expect(first).toBeGreaterThan(0);
+        expect(second).toBe(first);
+        expect(r.worker.cpuPercent()).toBe(first);
     });
 });
