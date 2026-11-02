@@ -8,7 +8,7 @@ const VOICE_BOT_TAG = "voice-bot";
 
 type VoiceBotUser = { spaceUserId: string; tags?: string[]; uuid?: string };
 
-export function isVoiceBotUser(user: Pick<VoiceBotUser, "tags" | "uuid">): boolean {
+export function isVoiceBotUser(user: Partial<VoiceBotUser>): boolean {
     const isBot = (user.tags?.includes("bot") ?? false) || (user.uuid?.startsWith("bot-") ?? false);
     return isBot && (user.tags?.includes(VOICE_BOT_TAG) ?? false);
 }
