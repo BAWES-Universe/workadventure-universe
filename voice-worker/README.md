@@ -29,9 +29,15 @@ Recognition (#1664) plugs into `InputSink` (`src/transport.ts`) through `src/rec
 
 A bubble names its own hearing and speaking provider in `session.open` (`recognition`, `speech`, `expression`; see
 `PROTOCOL.md`, Providers). The worker looks each adapter name up in a registry (`src/connectors.ts`), so two bubbles can
-use two different providers at once. Only the test engine is built in: `FakeSpeech` (registered as `fake`, and what a bubble
-that names nothing gets) and the scripted `FakeEars` for tests, plus these real providers:
+use two different providers at once. Built in: the test engine, `FakeSpeech` (registered as `fake`, and what a bubble
+that names nothing gets) and the scripted `FakeEars` for tests, plus these real providers (#1748, one change each):
 
+* `soniox` (hearing, `src/soniox.ts`): one real-time WebSocket stream per stretch of speech to
+  `wss://stt-rt.soniox.com/transcribe-websocket` (or the profile's `endpoint`), the key in the `Authorization` header only,
+  16 kHz mono `s16le`, the profile's `model`, and its `language` as the only language hint when it fixes one. Partial words
+  are the final tokens so far plus the latest guesses; when the person pauses an empty text frame ends the audio and the
+  words are final on Soniox's `finished`. A refused key (401/403), an error answer (its `error_code`), a dropped stream or
+  no `finished` within `VOICE_RECOGNITION_FINAL_TIMEOUT_SECONDS` (default 10) fails the turn with the words heard so far.
 * `elevenlabs` (speaking, `src/elevenlabs.ts`): one streamed `POST /v1/text-to-speech/{voiceId}/stream?output_format=pcm_24000`
   per reply to `https://api.elevenlabs.io` (or the profile's `endpoint`), the key in the `xi-api-key` header only, the
   profile's `model` as `model_id`. Raw 24 kHz PCM plays as it arrives. The reply's language goes as `language_code`
