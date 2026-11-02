@@ -114,6 +114,14 @@ describe('a voice bot says the words it writes', () => {
         expect(streamed(t.send).at(-1)![2]).toBe(table);
     });
 
+    it('sends the mood with the final reply and nothing otherwise (#1667)', async () => {
+        const t = await voiceBot();
+        const moods = () => t.send.mock.calls.map(([m]) => m.message?.publicEvent?.spaceEvent?.event?.spaceStreamMessage).filter(Boolean).map((s) => s.mood);
+        t.bot.sendStreamMessage(SPACE, 'bot-voice-1-player-3-mmm', 'Hi', false);
+        t.bot.sendStreamMessage(SPACE, 'bot-voice-1-player-3-mmm', '', true, 'Hi', false, undefined, false, undefined, '😄');
+        expect(moods()).toEqual([undefined, '😄']);
+    });
+
     it('does not say a steps line or an error', async () => {
         const t = await voiceBot();
         t.worker({ type: 'participant.join' });
