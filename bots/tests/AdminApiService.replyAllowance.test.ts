@@ -64,3 +64,50 @@ describe('asking Orbit for a reply allowance', () => {
         }
     });
 });
+
+describe('asking Orbit whether a reply may be spoken (#1669)', () => {
+    const SPEAK = { userId: 'wa-sara', isGuest: false, turnId: 'bot-1-player-4-aaaa' };
+
+    it('asks with the service token, who the reply is for and its turn', async () => {
+        expect(await service.checkVoiceAllowance('bot-1', SPEAK)).toEqual({ allowed: true });
+        expect(asked).toEqual({ url: '/api/bots/bot-1/voice-allowance', auth: 'Bearer service-token', body: SPEAK });
+    });
+
+    it("passes on Orbit's no with the end of the window", async () => {
+        answer = { status: 200, body: JSON.stringify({ allowed: false, resetsAt: '2026-11-02T13:00:00.000Z' }) };
+        expect(await service.checkVoiceAllowance('bot-1', SPEAK)).toEqual({ allowed: false, resetsAt: '2026-11-02T13:00:00.000Z' });
+    });
+
+    it('is null, so the reply stays in text, when Orbit cannot be asked or does not know the question', async () => {
+        answer = { status: 404, body: '{"error":"Not found"}' };
+        expect(await service.checkVoiceAllowance('bot-1', SPEAK)).toBeNull();
+        answer = { status: 500, body: '{}' };
+        expect(await service.checkVoiceAllowance('bot-1', SPEAK)).toBeNull();
+        answer = { status: 200, body: 'nonsense' };
+        expect(await service.checkVoiceAllowance('bot-1', SPEAK)).toBeNull();
+        answer = { status: 200, body: JSON.stringify({ allowed: false }) };
+        expect(await service.checkVoiceAllowance('bot-1', SPEAK)).toBeNull();
+    });
+
+    it('asks for a greeting when told it is one', async () => {
+        await service.checkReplyAllowance('bot-1', { ...ASK, greeting: true });
+        expect(asked.body).toEqual({ ...ASK, greeting: true });
+    });
+});
+
+describe('giving back a spoken reply that was never heard (#1669)', () => {
+    it('asks with the service token and the turn, and says whether Orbit gave it back', async () => {
+        answer = { status: 200, body: '{"released":true}' };
+        expect(await service.releaseVoiceReply('bot-1', { turnId: 'bot-1-player-4-aaaa' })).toBe(true);
+        expect(asked).toEqual({ url: '/api/bots/bot-1/voice-allowance/release', auth: 'Bearer service-token', body: { turnId: 'bot-1-player-4-aaaa' } });
+        answer = { status: 200, body: '{"released":false}' };
+        expect(await service.releaseVoiceReply('bot-1', { turnId: 'bot-1-player-4-aaaa' })).toBe(false);
+    });
+
+    it('is null, and never throws, when Orbit cannot be asked or is from before this existed', async () => {
+        for (const bad of [{ status: 404, body: '{"error":"Not found"}' }, { status: 500, body: '{}' }, { status: 200, body: 'nonsense' }, { status: 200, body: '{}' }]) {
+            answer = bad;
+            expect(await service.releaseVoiceReply('bot-1', { turnId: 't' })).toBeNull();
+        }
+    });
+});

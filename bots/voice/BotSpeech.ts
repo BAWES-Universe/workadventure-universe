@@ -27,7 +27,18 @@ export interface SpeechVoice {
      * this reply stays in the chat. `wait`: the bubble's audio is being set up again for new settings, so the reply
      * waits for it like a greeting. `speak`: say it, with these limits (the bot's own, when Orbit has them).
      */
-    beforeSpeaking?(spaceName: string): Promise<TurnDecision>;
+    beforeSpeaking?(spaceName: string, turn: SpeechTurn): Promise<TurnDecision>;
+    /**
+     * This reply will not be spoken after all (talked over, nobody to hear it, never played). Whatever was counted for it
+     * is given back. Never throws and never waits: a reply that is not spoken must not depend on it.
+     */
+    unspoken?(spaceName: string, turn: SpeechTurn): void;
+}
+
+/** The reply about to be said: its id (a retry or a reconnect asks again under the same one) and the person it is for, when known. */
+export interface SpeechTurn {
+    turnId: string;
+    playerId?: number;
 }
 
 export interface TurnDecision {
@@ -50,11 +61,13 @@ interface Waiting {
 export class BotSpeech {
     private readonly started = new Map<string, number>();
     private readonly said = new Set<string>();
-    private readonly segments = new Map<string, { spaceName: string; responseId: string }>();
+    private readonly segments = new Map<string, { spaceName: string; responseId: string; heard: boolean }>();
     private readonly held = new Set<string>();
     private readonly waiting = new Map<string, Waiting>();
     /** Replies Orbit is being asked about. They are not said yet, and not said twice meanwhile. */
     private readonly checking = new Set<string>();
+    /** The timer that lets go of each waiting reply nobody came to hear. */
+    private readonly waitTimers = new Map<string, ReturnType<typeof setTimeout>>();
     private limits: ReplyLimits;
     private seq = 0;
 
@@ -96,7 +109,7 @@ export class BotSpeech {
             return 'overtaken';
         }
         if (!this.voice.hasAudience(spaceName)) {
-            this.waiting.set(spaceName, { responseId, reply, since: this.now() });
+            this.park(spaceName, { responseId, reply, since: this.now() });
             return 'waiting';
         }
         return this.speak(spaceName, responseId, reply);
@@ -104,12 +117,16 @@ export class BotSpeech {
 
     /** Someone's audio has just connected in this bubble: a reply that was waiting for it is said now, once. */
     audience(spaceName: string): void {
-        const waiting = this.waiting.get(spaceName);
+        const waiting = this.unpark(spaceName);
         if (!waiting) return;
-        this.waiting.delete(spaceName);
-        if (this.now() - waiting.since > this.limits.greetingWaitSeconds * 1000 || this.said.has(waiting.responseId)) return;
+        if (this.said.has(waiting.responseId)) return;
+        if (this.now() - waiting.since > this.limits.greetingWaitSeconds * 1000) {
+            this.giveUp(spaceName, waiting.responseId);
+            return;
+        }
         if (this.voice.someoneSpeaking(spaceName)) {
             remember(this.said, waiting.responseId);
+            this.giveUp(spaceName, waiting.responseId);
             return;
         }
         this.speak(spaceName, waiting.responseId, waiting.reply);
@@ -121,9 +138,77 @@ export class BotSpeech {
         return segment && segment.spaceName === spaceName ? segment.responseId : undefined;
     }
 
+    /**
+     * The voice worker finished a segment without a moment of it being heard (refused, retracted, a provider that
+     * failed before any audio, talked over before it began). The person did not get this reply in voice.
+     */
+    unplayed(spaceName: string, segmentId: string): void {
+        const segment = this.segments.get(segmentId);
+        if (!segment || segment.spaceName !== spaceName) return;
+        this.segments.delete(segmentId);
+        this.giveUp(spaceName, segment.responseId);
+    }
+
+    /** Some of this segment has been played to someone: the reply stays counted, whatever happens to the session next. */
+    heard(spaceName: string, segmentId: string): void {
+        const segment = this.segments.get(segmentId);
+        if (segment && segment.spaceName === spaceName) segment.heard = true;
+    }
+
+    /**
+     * A bubble's audio session ended (the person left, the voice was opened again, the worker went away): a reply that was
+     * sent to it and never began to play will not play now, and its final report may never come. Those are given back.
+     */
+    sessionEnded(spaceName: string): void {
+        for (const [segmentId, segment] of [...this.segments]) {
+            if (segment.spaceName !== spaceName || segment.heard) continue;
+            this.segments.delete(segmentId);
+            this.giveUp(spaceName, segment.responseId);
+        }
+    }
+
     spaceLeft(spaceName: string): void {
-        this.waiting.delete(spaceName);
+        const waiting = this.unpark(spaceName);
+        if (waiting) this.giveUp(spaceName, waiting.responseId);
         for (const key of this.held) if (key.startsWith(`${spaceName}\n`)) this.held.delete(key);
+    }
+
+    /** The bot is going away: whatever was waiting for someone to hear it will not be said. */
+    shutdown(): void {
+        for (const spaceName of [...this.waiting.keys()]) this.spaceLeft(spaceName);
+    }
+
+    /** A reply waits for someone's audio. One it replaces, or one nobody comes for, is let go. */
+    private park(spaceName: string, waiting: Waiting): void {
+        const displaced = this.unpark(spaceName);
+        if (displaced && displaced.responseId !== waiting.responseId) this.giveUp(spaceName, displaced.responseId);
+        this.waiting.set(spaceName, waiting);
+        const timer = setTimeout(() => {
+            if (this.waiting.get(spaceName)?.responseId !== waiting.responseId) return;
+            this.waiting.delete(spaceName);
+            this.waitTimers.delete(spaceName);
+            this.giveUp(spaceName, waiting.responseId);
+        }, this.limits.greetingWaitSeconds * 1000);
+        timer.unref?.();
+        this.waitTimers.set(spaceName, timer);
+    }
+
+    private unpark(spaceName: string): Waiting | undefined {
+        const waiting = this.waiting.get(spaceName);
+        this.waiting.delete(spaceName);
+        const timer = this.waitTimers.get(spaceName);
+        if (timer) clearTimeout(timer);
+        this.waitTimers.delete(spaceName);
+        return waiting;
+    }
+
+    /** This reply will not be spoken: what was counted for it is given back. A failure there never reaches the reply. */
+    private giveUp(spaceName: string, responseId: string): void {
+        try {
+            this.voice.unspoken?.(spaceName, { turnId: responseId, playerId: playerOf(responseId) });
+        } catch {
+            // Giving it back is best effort
+        }
     }
 
     private wordsFor(reply: string): string {
@@ -137,7 +222,7 @@ export class BotSpeech {
         if (!ask) return this.say(spaceName, responseId, reply);
         const askedAt = this.now();
         this.checking.add(responseId);
-        ask.call(this.voice, spaceName).then(
+        ask.call(this.voice, spaceName, { turnId: responseId, playerId: playerOf(responseId) }).then(
             (decision) => this.decided(spaceName, responseId, reply, askedAt, decision),
             // Orbit could not be asked: the reply stays in the chat
             () => this.decided(spaceName, responseId, reply, askedAt, { action: 'text' })
@@ -149,15 +234,18 @@ export class BotSpeech {
         this.checking.delete(responseId);
         if (decision.action === 'text') {
             remember(this.said, responseId);
+            // Nothing is counted for a reply turned down, but one counted just before the bubble went away is
+            this.giveUp(spaceName, responseId);
             return;
         }
         if (decision.action === 'wait') {
-            this.waiting.set(spaceName, { responseId, reply, since: this.now() });
+            this.park(spaceName, { responseId, reply, since: this.now() });
             return;
         }
         // The answer took a moment: a person who started talking meanwhile wins, as for any reply
         if (this.voice.someoneSpeaking(spaceName) || this.voice.lastSpokenToAt(spaceName) > askedAt) {
             remember(this.said, responseId);
+            this.giveUp(spaceName, responseId);
             return;
         }
         this.limits = { ...this.baseLimits, ...decision.limits };
@@ -168,12 +256,16 @@ export class BotSpeech {
         const words = this.wordsFor(reply);
         if (!words) {
             remember(this.said, responseId);
+            this.giveUp(spaceName, responseId);
             return 'unsaid';
         }
         const segmentId = `s${++this.seq}`;
         remember(this.said, responseId);
-        if (!this.voice.say(spaceName, segmentId, words, Math.max(1000, this.limits.maxSeconds * 1000))) return 'unsaid';
-        this.segments.set(segmentId, { spaceName, responseId });
+        if (!this.voice.say(spaceName, segmentId, words, Math.max(1000, this.limits.maxSeconds * 1000))) {
+            this.giveUp(spaceName, responseId);
+            return 'unsaid';
+        }
+        this.segments.set(segmentId, { spaceName, responseId, heard: false });
         for (const oldest of this.segments.keys()) {
             if (this.segments.size <= MAX_REMEMBERED) break;
             this.segments.delete(oldest);

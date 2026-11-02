@@ -118,6 +118,11 @@ describe('bridge messages', () => {
         expect(checkMessage('fromBot', { ...base, type: 'session.open', bubbleId: 'b', botId: 'x', speech: { ...voice, adapter: 'ElevenLabs' } })).not.toBeNull();
         expect(checkMessage('fromBot', { ...base, type: 'session.open', bubbleId: 'b', botId: 'x', speech: { ...voice, endpoint: 'file:///etc/passwd' } })).not.toBeNull();
         expect(checkMessage('fromBot', { ...base, type: 'session.open', bubbleId: 'b', botId: 'x', expression: 'shouting' })).not.toBeNull();
+        // The longest stretch of speech: a whole number of seconds from 5 to 3600
+        expect(checkMessage('fromBot', { ...base, type: 'session.open', bubbleId: 'b', botId: 'x', turnSeconds: 180 })).toBeNull();
+        expect(checkMessage('fromBot', { ...base, type: 'session.open', bubbleId: 'b', botId: 'x', turnSeconds: 4 })).not.toBeNull();
+        expect(checkMessage('fromBot', { ...base, type: 'session.open', bubbleId: 'b', botId: 'x', turnSeconds: 3601 })).not.toBeNull();
+        expect(checkMessage('fromBot', { ...base, type: 'session.open', bubbleId: 'b', botId: 'x', turnSeconds: 'long' })).not.toBeNull();
     });
 
     it('accepts provider reports from the worker only, with a status only when there was one', () => {

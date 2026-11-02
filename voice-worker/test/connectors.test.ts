@@ -411,6 +411,30 @@ describe('two bubbles with two different connectors', () => {
         expect(voice.requests[0].settings).toMatchObject({ endpoint: 'https://tts.example/v1', region: 'eu', language: 'ar' });
     });
 
+    it('takes each bubble\'s own longest stretch of speech (turnSeconds), the worker\'s own when a bubble names none', async () => {
+        const hearing: RecognitionConnector = { listen: (_settings, events) => new FakeEars(['one two three four five six seven eight nine ten']).factory(events) };
+        const { bot } = await start(new ConnectorRegistry().registerRecognition('ears', hearing));
+        const short = new FakeHuman('short');
+        const plain = new FakeHuman('plain');
+        humans.push(short, plain);
+        open(bot, 's1', { recognition: recognition('ears', KEY_A), turnSeconds: 5 });
+        open(bot, 's2', { recognition: recognition('ears', KEY_B) });
+        await waitFor('both sessions', () => bot.of('session.start').length === 2);
+        await bot.join('s1', short);
+        await bot.join('s2', plain);
+
+        // Both talk for just over 5 seconds: only the bubble that named 5 seconds is cut
+        short.startMic(440);
+        plain.startMic(440);
+        await sleep(5600);
+        short.stopMic();
+        plain.stopMic();
+        await waitFor('the short bubble\'s stretch to be cut', () => bot.of('user.turn', 's1').some((t) => t.outcome === 'lost' && t.reason === 'cap'), 6000);
+        await waitFor('the plain bubble\'s words', () => bot.of('user.turn', 's2').some((t) => t.outcome === 'final'), 6000);
+        expect(bot.of('user.turn', 's2').some((t) => t.reason === 'cap')).toBe(false);
+        expect(bot.violations).toEqual([]);
+    }, 30000);
+
     it('uses the built-in test engine when a bubble names nothing, and says nothing about providers', async () => {
         const { bot } = await start(new ConnectorRegistry());
         open(bot, 's1');
