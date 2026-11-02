@@ -1,5 +1,6 @@
-# The voice worker's typecheck and tests (#1756). Its own workflow so that it runs only when the worker, the bot
-# server's voice code it drives, or the message types it reads change, and so that no other PR waits on it.
+# The voice worker's typecheck and tests (#1756), with its LiveKit tests run against a throwaway livekit-server
+# (#1758). Its own workflow so that it runs only when the worker, the bot server's voice code it drives, or the
+# message types it reads change, and so that no other PR waits on it.
 
 name: "Continuous Integration Voice Worker"
 
@@ -82,7 +83,45 @@ jobs:
         run: npm run typecheck
         working-directory: "voice-worker"
 
-      # The LiveKit tests (test/livekit.test.ts) skip themselves here: no livekit-server runs in this job yet (#1758)
+      # A throwaway livekit-server for test/livekit.test.ts (#1758): the image and version the end-to-end tests use,
+      # on the runner's own network so the worker and the test's people reach it at 127.0.0.1 as when run by hand.
+      - name: "Start livekit-server"
+        env:
+          LIVEKIT_CONFIG: |
+            port: 7880
+            bind_addresses: ["127.0.0.1"]
+            rtc:
+              tcp_port: 7881
+              udp_port: 7882
+              use_external_ip: false
+              node_ip: 127.0.0.1
+            keys:
+              devkey: secret-secret-secret-secret-12345
+        run: |
+          docker run -d --name livekit --network host -e LIVEKIT_CONFIG livekit/livekit-server:v1.8.4
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:7880 > /dev/null && exit 0
+            sleep 1
+          done
+          docker logs livekit
+          echo "livekit-server did not answer within 60 seconds" >&2
+          exit 1
+
+      # The JSON report lets the next step check that no test skipped itself (the LiveKit file skips when no server answers)
       - name: "Vitest"
-        run: npm test
+        run: npm test -- --reporter=default --reporter=json --outputFile.json=vitest-report.json
         working-directory: "voice-worker"
+
+      - name: "Check that no test was skipped"
+        run: |
+          node -e '
+            const r = require("./vitest-report.json");
+            const skipped = r.numPendingTests + r.numTodoTests;
+            console.log(`${r.numPassedTests} passed, ${skipped} skipped`);
+            if (skipped > 0) { console.error("Some tests were skipped; the LiveKit tests need the livekit-server above"); process.exit(1); }
+          '
+        working-directory: "voice-worker"
+
+      - name: "livekit-server log"
+        if: failure()
+        run: docker logs livekit || true
