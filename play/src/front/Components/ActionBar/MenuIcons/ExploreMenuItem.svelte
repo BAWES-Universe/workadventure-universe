@@ -1,5 +1,6 @@
 <script lang="ts">
-    import { roomListActivated } from "../../../Stores/MenuStore";
+    import { getContext } from "svelte";
+    import { exploreShortLabelStore, roomListActivated } from "../../../Stores/MenuStore";
     import { roomListVisibilityStore } from "../../../Stores/ModalStore";
     import { universeNameStore } from "../../../Stores/ExploreStore";
     import ActionBarButton from "../ActionBarButton.svelte";
@@ -20,12 +21,16 @@
     $: label = $universeNameStore
         ? $LL.actionbar.explore.button({ universe: displayName($universeNameStore) })
         : $LL.actionbar.explore.buttonWithoutName();
+
+    // When the bar is short of room it shows just "Explore" (#1734); the menu always has the full name.
+    const inProfileMenu = getContext("profileMenu");
+    $: shownLabel = $exploreShortLabelStore && !inProfileMenu ? $LL.actionbar.explore.buttonWithoutName() : label;
 </script>
 
 {#if $roomListActivated}
     <ActionBarButton
         on:click={toggleExploreList}
-        {label}
+        label={shownLabel}
         boldLabel={true}
         chevron
         first={true}

@@ -332,6 +332,12 @@ const orbitMenuItem: RightMenuItem<OrbitMenuItem> = {
 
 // "Explore {Universe}" in its own pill between Tools and Orbit. When the bar runs out of room it moves into the menu
 // like the other items here. Phones show it in the zoom column instead (ExplorerMenu.svelte).
+/**
+ * The desktop bar is short of room (#1734): Explore says "Explore" instead of "Explore {Universe}", so Tools can stay in
+ * the bar. Set by ActionBar.svelte only while the full name would push a button into the menu.
+ */
+export const exploreShortLabelStore = writable(false);
+
 const exploreMenuItem: RightMenuItem<ExploreMenuItem> = {
     id: "explore",
     fallsInBurgerMenuStore: writable(false),
