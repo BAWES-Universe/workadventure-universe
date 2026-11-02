@@ -14,7 +14,11 @@ export function isVoiceBotUser(user: Partial<VoiceBotUser>): boolean {
 }
 
 /** The voice bots in a space, not counting the person who asks (a bot may also be the one looking). */
-export function voiceBotCount(users: Iterable<VoiceBotUser>, mySpaceUserId: string, exceptSpaceUserId?: string): number {
+export function voiceBotCount(
+    users: Iterable<VoiceBotUser>,
+    mySpaceUserId: string,
+    exceptSpaceUserId?: string
+): number {
     let count = 0;
     for (const user of users) {
         if (user.spaceUserId === mySpaceUserId || user.spaceUserId === exceptSpaceUserId) continue;
@@ -22,4 +26,3 @@ export function voiceBotCount(users: Iterable<VoiceBotUser>, mySpaceUserId: stri
     }
     return count;
 }
-
