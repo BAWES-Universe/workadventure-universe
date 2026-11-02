@@ -19,7 +19,19 @@ describe('ToolSteps', () => {
             done: 'Used Make a song',
             detail: 'upbeat 8-bit funk',
             group: 'tool:generate_music',
+            kind: 'write',
         });
+    });
+
+    it('tells reading, searching and writing apart for the emoji beside the Woka (#1667)', () => {
+        expect(describeStep({ id: 'a', name: 'read_web_page', arguments: { url: 'https://x.test' } }).kind).toBe('read');
+        expect(describeStep({ id: 'a', name: 'web_search' }).kind).toBe('search');
+        expect(describeStep({ id: 'a', name: 'doc_lookup' }).kind).toBe('search');
+        expect(describeStep({ id: 'a', name: 'fetch_page' }, 'Open a page').kind).toBe('read');
+        expect(describeStep({ id: 'a', name: 'generate_music' }).kind).toBe('write');
+        const steps = new ReplySteps(0);
+        steps.start([describeStep({ id: 'a', name: 'web_search' })]);
+        expect(steps.field().steps[0].kind).toBe('search');
     });
 
     it('says "Using" while it runs and "Used" once done, so a name never reads as an order', () => {

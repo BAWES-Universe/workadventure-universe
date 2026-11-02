@@ -19,7 +19,12 @@ export interface BotStep {
     again: boolean;
     /** Why it didn't work. */
     note?: string;
+    /** What it is about, for the working emoji beside the bot's Woka (#1667). */
+    kind?: BotStepKind;
 }
+
+export type BotStepKind = "read" | "search" | "write";
+const STEP_KINDS = ["read", "search", "write"];
 
 export interface BotSteps {
     /** working: steps run. done: the answer came. stopped: the reply failed part-way. */
@@ -65,6 +70,7 @@ export function parseBotSteps(value: unknown): BotSteps | undefined {
             state: step.state as BotStepState,
             again: step.again === true,
             note: text(step.note) || undefined,
+            kind: STEP_KINDS.includes(step.kind as string) ? (step.kind as BotStepKind) : undefined,
         });
     }
     return {
@@ -73,6 +79,15 @@ export function parseBotSteps(value: unknown): BotSteps | undefined {
         startedAt: typeof field.startedAt === "number" && Number.isFinite(field.startedAt) ? field.startedAt : 0,
         steps,
     };
+}
+
+/**
+ * What the bot is busy with while its steps line works, for the emoji beside its Woka (#1667): the newest step that
+ * still runs, else writing the answer. Nothing once the line is done or stopped.
+ */
+export function workKindOf(steps: BotSteps): BotStepKind | undefined {
+    if (steps.state !== "working") return undefined;
+    return currentStep(steps)?.kind ?? "write";
 }
 
 /** What a step shows under its words: why it didn't work or may have run, else what it was about. */
