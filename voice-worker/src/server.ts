@@ -5,8 +5,9 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { Duplex } from 'node:stream';
 import { type RawData, WebSocket, WebSocketServer } from 'ws';
+import { ConnectorRegistry } from './connectors.ts';
 import { Counters } from './counters.ts';
-import { FakeSpeech } from './fakeSpeech.ts';
+import { FAKE_ADAPTER, FakeSpeech } from './fakeSpeech.ts';
 import type { IceConfig } from './lane.ts';
 import type { BotToWorker } from './protocol.ts';
 import type { RecognizerFactory } from './recognizer.ts';
@@ -27,11 +28,15 @@ export interface WorkerOptions {
     ice: IceConfig;
     /** Receives permitted microphone audio (a tap on all of it, for tests and measuring). */
     input?: InputSink;
-    /** Turns permitted microphone audio into words (a provider's adapter, or FakeEars). Without one the audio is only counted. */
+    /** Hearing and speaking providers by adapter name. The test engine is always registered as "fake" for speech. */
+    connectors?: ConnectorRegistry;
+    /** Turns permitted microphone audio into words for a bubble that names no recognition provider (FakeEars in tests). Without one the audio is only counted. */
     recognizer?: RecognizerFactory;
     /** The longest stretch of one person's speech taken, in seconds of audio. Past it their words are offered back, never sent. Default 180. */
     maxUtteranceSeconds?: number;
     maxReplySeconds?: number;
+    /** The longest wait for the next piece of a reply's audio from a speech provider, in seconds, before it counts as failed. Default 15. */
+    speechTimeoutSeconds?: number;
     /** Voiced audio before a person counts as speaking over the bot, in milliseconds. */
     bargeInMs?: number;
     engineId?: string;
@@ -49,6 +54,8 @@ function parseRequestUrl(raw: string | undefined): URL | null {
 export const DEFAULT_MAX_UTTERANCE_SECONDS = 180;
 /** The longest any one spoken reply plays, whatever the bot server asks. */
 export const DEFAULT_MAX_REPLY_SECONDS = 60;
+/** How long a speech provider may go without sending the next piece of a reply's audio. */
+export const DEFAULT_SPEECH_TIMEOUT_SECONDS = 15;
 const MAX_MESSAGE_BYTES = 128 * 1024;
 const PING_INTERVAL_MS = 10000;
 /** A bot server that stops reading this far behind is cut off. */
@@ -56,7 +63,9 @@ const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
 
 export class VoiceWorker {
     readonly counters = new Counters();
+    /** What a bubble speaks with when it names no provider. */
     readonly speech = new FakeSpeech();
+    readonly connectors: ConnectorRegistry;
     private readonly server = http.createServer((req, res) => this.onHttp(req, res));
     private readonly wss = new WebSocketServer({ noServer: true, maxPayload: MAX_MESSAGE_BYTES });
     private readonly connections = new Set<BridgeConnection>();
@@ -65,6 +74,9 @@ export class VoiceWorker {
 
     constructor(readonly options: WorkerOptions) {
         this.engineId = options.engineId ?? `voice-worker-${process.pid}`;
+        // The test engine is the only connector built in; each real provider is one more file registered by name
+        this.connectors = options.connectors ?? new ConnectorRegistry();
+        if (!this.connectors.speech(FAKE_ADAPTER)) this.connectors.registerSpeech(FAKE_ADAPTER, this.speech);
         this.server.on('upgrade', (req, socket, head) => this.onUpgrade(req, socket, head));
     }
 
@@ -108,10 +120,12 @@ export class VoiceWorker {
             counters: this.counters,
             ice: this.options.ice,
             input: this.options.input ?? (() => undefined),
+            connectors: this.connectors,
             recognizer: this.options.recognizer,
             maxUtteranceMs: (this.options.maxUtteranceSeconds ?? DEFAULT_MAX_UTTERANCE_SECONDS) * 1000,
-            speech: this.speech,
+            defaultSpeech: this.speech,
             maxReplyMs: (this.options.maxReplySeconds ?? DEFAULT_MAX_REPLY_SECONDS) * 1000,
+            speechTimeoutMs: (this.options.speechTimeoutSeconds ?? DEFAULT_SPEECH_TIMEOUT_SECONDS) * 1000,
             bargeInMs: this.options.bargeInMs,
             laneCount: () => this.laneCount(),
             maxLanes: this.options.maxLanes,
@@ -257,7 +271,12 @@ class BridgeConnection {
                     this.send(msg.sessionId, { type: 'error', code: 'at_capacity', message: 'too many sessions' });
                     return;
                 }
-                session = new Session(msg.sessionId, msg.bubbleId, msg.botId, this.worker.sessionHost((m) => this.send(msg.sessionId, m)));
+                // The providers are read once, when the session starts; a repeated session.open does not change them
+                session = new Session(msg.sessionId, msg.bubbleId, msg.botId, this.worker.sessionHost((m) => this.send(msg.sessionId, m)), undefined, {
+                    recognition: msg.recognition,
+                    speech: msg.speech,
+                    expression: msg.expression,
+                });
                 this.sessions.set(msg.sessionId, session);
                 this.worker.counters.inc('sessions_opened');
             }
@@ -292,7 +311,7 @@ class BridgeConnection {
                 session.setMode(msg.mode, msg.participantId);
                 break;
             case 'bot.say':
-                session.say(msg.segmentId, msg.text, msg.maxMs);
+                session.say(msg.segmentId, msg.text, msg.maxMs, msg.lang);
                 break;
             case 'bot.retract':
                 session.retract(msg.segmentId);

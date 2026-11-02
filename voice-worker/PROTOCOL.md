@@ -22,7 +22,7 @@ directions. `src/protocol.ts` and `bots/voice/protocol.ts` mirror it as TypeScri
 
 ## Messages
 
-Bot server to worker: `session.open`, `lane.open`, `lane.signal` (the person's offer or candidates), `lane.close`,
+Bot server to worker: `session.open` (optionally naming the bubble's providers, see Providers), `lane.open`, `lane.signal` (the person's offer or candidates), `lane.close`,
 `mode.set`, `bot.say`, `bot.retract`, `voice.stop`, `session.end`, and for LiveKit `room.join` (the address and the token the
 game made for the bot's identity), `room.people` (whose microphone the bot may subscribe to, with their modes; replaces the
 earlier list) and `room.leave`.
@@ -30,7 +30,8 @@ earlier list) and `room.leave`.
 Worker to bot server: `session.start` (session accepted), `participant.join` (audio is connected both ways),
 `participant.leave`, `lane.signal` (the answer), `playback.progress`, `engine.status` (with `room` while in a room),
 `room.state` (`connected`, or `closed` / `failed` when the connection ended without being asked to), `user.speech_started`,
-`user.partial`, `user.turn` (what the worker heard a person say, see Recognition), `error`.
+`user.partial`, `user.turn` (what the worker heard a person say, see Recognition), `provider.ok` and `provider.failed` (how a
+call to a speech provider went, see Providers), `error`.
 
 Errors that name a lane (`participantId`, `epoch`): `stale_epoch` (message for an old or unknown lane, dropped),
 `at_capacity` (too many connections: the bot server hangs up that person), plus `invalid_message`, `no_session`, `internal`.
@@ -63,8 +64,8 @@ A microphone packet that is not permitted is dropped before it is decoded (`fram
 
 ## Recognition
 
-The worker turns a person's permitted microphone audio into words through a swappable recognizer (`src/recognizer.ts`; no
-provider is wired, tests use `FakeEars`). It only ever sees the audio of people whose mode listens (`talk`, `speak_and_read`),
+The worker turns a person's permitted microphone audio into words through the recognizer of the bubble's provider (see
+Providers; `src/recognizer.ts` is what a provider's connector implements, and tests use `FakeEars`). It only ever sees the audio of people whose mode listens (`talk`, `speak_and_read`),
 on the current path, one person at a time. A stretch of speech starts at the first words and ends at a pause. Messages carry
 the person's `participantId`, the path's `epoch`, and a `turnId` that ties one stretch together:
 
@@ -90,10 +91,53 @@ full; this is the spoken version, see `bots/voice/SpokenText.ts`). `maxMs` is th
 longer than `VOICE_MAX_REPLY_SECONDS`. Segments play one at a time, in order. `playback.progress` ends each with a `reason`:
 
 * `completed`: all of it was sent. `limit`: it reached its longest time. `retract`, `voice_stop`, `mode`, `lane_loss`, `rejected`: as before.
+* `provider`: the speech provider failed or went quiet (see Providers). What had already arrived was played; the rest is only in the chat.
 * `barge_in`: a person the bot hears spoke over it. The segment playing stops within a frame, everything queued behind it is
   dropped (each ends with `barge_in` and `playedMs: 0`), and nothing resumes by itself. This is decided in the worker, from the
   person's permitted microphone audio, with no round trip to the bot server: speech counts after `VOICE_BARGE_IN_MS` of voiced
   audio, so a click or a cough does not stop it. It stops the voice for everyone in the bubble; it cancels nothing but audio.
   The bot server marks the message when `playedMs` is more than zero.
 
-The speech itself comes from a swappable synthesizer (`SpeechSynthesizer` in `src/fakeSpeech.ts`); only a fake is wired.
+The speech itself comes from the bubble's speech connector (see Providers), which hands the reply over in pieces as the
+provider makes it. The first piece plays at once; the worker does not wait for the whole reply. Because of that, `totalMs`
+in `playback.progress` is the audio made so far, and is only complete on the message that ends the segment (it is left out of
+the in-progress ones until the provider is done). The worker reads ahead of playback, but never further than the reply may play
+(`maxMs`, `VOICE_MAX_REPLY_SECONDS`), and when the reply is cut for any reason it closes the provider call. A speech provider that
+sends nothing for `VOICE_SPEECH_TIMEOUT_SECONDS` (default 15) counts as failed.
+
+## Providers
+
+Each bubble picks its own hearing and speaking provider. `session.open` may carry, all optional:
+
+* `recognition`: `{ adapter, model, key, endpoint?, region?, language? }`, who hears the people in this bubble.
+* `speech`: `{ adapter, model, voiceId, key, endpoint?, region?, language? }`, who speaks for the bot in this bubble.
+* `expression`: `restrained`, `natural` or `expressive`, how much feeling the voice puts in (each connector maps it to what
+  its provider offers). Handed to the speech connector with every reply.
+
+`adapter` is the lowercase name Orbit stores (`soniox`, `elevenlabs`, `deepgram`, `cartesia`...). The worker has a registry of
+connectors by that name (`src/connectors.ts`); a provider is one small file implementing `RecognitionConnector` or
+`SpeechConnector` and registered under its name. A bubble that names nothing gets the built-in test engine (a generated tone
+for speech; no hearing unless the worker was given a test recognizer). The test engine is also registered as `fake`.
+The settings are read when the session is created; a repeated `session.open` for a session that exists does not change them.
+`bot.say` may carry `lang`; it goes to the speech connector (the bubble's `language` is used when it does not).
+
+An adapter the worker has no connector for does not fail the session. Hearing: every stretch of speech ends as soon as it
+starts (`user.turn` `cleared`, nothing to offer back), and the failure is reported. Speaking: every reply ends in text only,
+with `playback.progress` reason `provider` and `playedMs: 0`, and the failure is reported. A provider call that fails part-way
+ends that turn the same way: `user.turn` `lost` with reason `provider` and the words so far, or the reply stops with reason
+`provider` after the audio that arrived.
+
+The worker tells the bot server how each call went, so it can pass it on:
+
+* `provider.ok { part, adapter }`. Speech: exactly one per spoken reply, sent when the reply ends (finished, or cut off after the
+  provider had made audio). A reply that is cut before the provider made any audio is neither ok nor failed, and sends nothing.
+  Recognition: one per stretch of speech the provider answered.
+* `provider.failed { part, adapter, status?, rejected? }`. Exactly one for a call that failed. `part` is `recognition` or
+  `speech`. `status` is the provider's HTTP status when it answered with one, and is left out for a timeout, a dropped connection,
+  an unknown adapter or a failure with no status. `rejected` is `true` (otherwise left out) when the provider refused the key
+  itself (401 or 403).
+
+**Keys.** A key is held only for the provider call. It is never logged, never put in a counter, never in `engine.status`, `/stats`
+or an `error`, and never in a report: the reports carry the adapter name and the status, not the provider's own words.
+A connector gets it as a `Secret` that prints as `[secret]` however it is logged or serialised and calls `reveal()` only to
+make the request.

@@ -29,3 +29,28 @@ export function voiceReplyLimits(env: NodeJS.ProcessEnv = process.env): ReplyLim
         greetingWaitSeconds: positive(env.VOICE_GREETING_WAIT_SECONDS, DEFAULT_REPLY_LIMITS.greetingWaitSeconds),
     };
 }
+
+/** How the bot server talks to Orbit about a bot's voice. Ordinary settings: they do not switch voice on or off. */
+export interface VoiceOrbitSettings {
+    /** How long one Orbit call may take before the bot answers in text instead, in milliseconds. */
+    timeoutMs: number;
+    /** How long Orbit's answer to "does this bot speak now" is reused, in milliseconds. 0 asks every time. */
+    activeCacheMs: number;
+    /** How long the server's voice limits are reused when Orbit's answer for a bot carries none, in milliseconds. */
+    limitsCacheMs: number;
+}
+
+export const DEFAULT_VOICE_ORBIT_SETTINGS: VoiceOrbitSettings = { timeoutMs: 5000, activeCacheMs: 3000, limitsCacheMs: 60000 };
+
+export function voiceOrbitSettings(env: NodeJS.ProcessEnv = process.env): VoiceOrbitSettings {
+    const seconds = (value: string | undefined, fallbackMs: number, allowZero: boolean): number => {
+        const parsed = Number.parseFloat(value ?? '');
+        if (!Number.isFinite(parsed) || parsed < 0 || (parsed === 0 && !allowZero)) return fallbackMs;
+        return Math.round(parsed * 1000);
+    };
+    return {
+        timeoutMs: seconds(env.VOICE_ORBIT_TIMEOUT_SECONDS, DEFAULT_VOICE_ORBIT_SETTINGS.timeoutMs, false),
+        activeCacheMs: seconds(env.VOICE_ACTIVE_CACHE_SECONDS, DEFAULT_VOICE_ORBIT_SETTINGS.activeCacheMs, true),
+        limitsCacheMs: seconds(env.VOICE_LIMITS_CACHE_SECONDS, DEFAULT_VOICE_ORBIT_SETTINGS.limitsCacheMs, true),
+    };
+}

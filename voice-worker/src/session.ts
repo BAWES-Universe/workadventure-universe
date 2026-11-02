@@ -3,13 +3,14 @@
 // transport rules); the session only carries it out. Every path has an epoch from one counter, and the newest wins:
 // a newer lane replaces the old lane, the room replaces every older lane, a lane replaces an older room, and anything
 // still addressed to an older epoch is dropped.
+import { type ConnectorRegistry, type ProviderReporter, Secret, type SpeechConnector, type SpeechSettings, type Voice, isRejection, statusOf } from './connectors.ts';
 import type { Counters } from './counters.ts';
-import type { SpeechSynthesizer } from './fakeSpeech.ts';
+import { FAKE_SPEECH_SETTINGS } from './fakeSpeech.ts';
 import { Lane, type IceConfig } from './lane.ts';
-import type { LeaveReason, Mode, Signal, WorkerToBot } from './protocol.ts';
+import type { Expression, LeaveReason, Mode, ProviderPart, RecognitionConfig, Signal, SpeechConfig, WorkerToBot } from './protocol.ts';
 import { modeListens } from './protocol.ts';
 import { Recognition } from './recognition.ts';
-import type { RecognizerFactory } from './recognizer.ts';
+import type { Recognizer, RecognizerEvents, RecognizerFactory } from './recognizer.ts';
 import { RoomTransport } from './roomTransport.ts';
 import { Speaker } from './speaker.ts';
 import type { InputSink } from './transport.ts';
@@ -26,19 +27,59 @@ export interface SessionHost {
     counters: Counters;
     ice: IceConfig;
     input: InputSink;
-    /** Turns people's speech into words. Without one, audio is only counted. */
+    /** The providers a bubble may name. */
+    connectors: ConnectorRegistry;
+    /** Turns people's speech into words when the bubble names no provider. Without one, audio is only counted. */
     recognizer?: RecognizerFactory;
     /** The longest stretch of speech taken, in audio milliseconds. */
     maxUtteranceMs: number;
-    speech: SpeechSynthesizer;
+    /** Speaks when the bubble names no provider (the test engine). */
+    defaultSpeech: SpeechConnector;
     /** The longest any reply may play. */
     maxReplyMs: number;
+    /** The longest wait for the next piece of a reply's audio before the provider counts as failed. */
+    speechTimeoutMs: number;
     /** Voiced audio before a person counts as speaking over the bot. */
     bargeInMs?: number;
     /** Lanes alive in the whole worker, to enforce the limit. */
     laneCount(): number;
     maxLanes: number;
     send(message: OutgoingMessage): void;
+}
+
+/** The providers a bubble asked for when its session was opened. Keys are held as Secrets from here on. */
+export interface SessionSettings {
+    recognition?: RecognitionConfig;
+    speech?: SpeechConfig;
+    expression?: Expression;
+}
+
+/** A recognizer that gives up on its first audio (the adapter is unknown, or the connector could not start). It says so once. */
+function failingRecognizer(events: RecognizerEvents, error?: unknown): Recognizer {
+    let said = false;
+    const fail = () => {
+        if (said) return;
+        said = true;
+        const status = statusOf(error);
+        events.failed('', status === undefined ? undefined : { status });
+    };
+    return { push: fail, finish: fail, close: () => (said = true) };
+}
+
+/** Keeps a connector's recognizer from throwing into the audio path: a throw is a failure at the provider. */
+function guardedRecognizer(inner: Recognizer, events: RecognizerEvents): Recognizer {
+    let broken = false;
+    const guard = (run: () => void) => {
+        if (broken) return;
+        try {
+            run();
+        } catch (error) {
+            broken = true;
+            const status = statusOf(error);
+            events.failed('', status === undefined ? undefined : { status });
+        }
+    };
+    return { push: (pcm) => guard(() => inner.push(pcm)), finish: () => guard(() => inner.finish()), close: () => { broken = true; inner.close(); } };
 }
 
 export class Session {
@@ -55,10 +96,19 @@ export class Session {
     private readonly statusTimer: NodeJS.Timeout;
     private closing = false;
 
-    constructor(readonly id: string, readonly bubbleId: string, readonly botId: string, private readonly host: SessionHost, public defaultMode: Mode = 'talk') {
-        this.recognition = host.recognizer
+    constructor(
+        readonly id: string,
+        readonly bubbleId: string,
+        readonly botId: string,
+        private readonly host: SessionHost,
+        public defaultMode: Mode = 'talk',
+        settings: SessionSettings = {}
+    ) {
+        const hearing = this.hearingFor(settings.recognition);
+        this.recognition = hearing
             ? new Recognition({
-                  factory: host.recognizer,
+                  factory: hearing.factory,
+                  provider: hearing.provider,
                   maxUtteranceMs: host.maxUtteranceMs,
                   counters: host.counters,
                   send: (message) => host.send(message),
@@ -71,14 +121,65 @@ export class Session {
         this.input = this.recognition ? this.recognition.sink : host.input;
         this.speaker = new Speaker({
             counters: host.counters,
-            speech: host.speech,
+            ...this.speakingFor(settings.speech, settings.expression),
             maxReplyMs: host.maxReplyMs,
+            speechTimeoutMs: host.speechTimeoutMs,
             targets: () => (this.room ? [...this.lanes.values(), this.room] : [...this.lanes.values()]),
             active: () => this.voice === 'active',
             progress: (message) => host.send({ type: 'playback.progress', ...message }),
         });
         this.statusTimer = setInterval(() => this.sendStatus(), STATUS_INTERVAL_MS);
         this.statusTimer.unref?.();
+    }
+
+    private reporter(part: ProviderPart, adapter: string): ProviderReporter {
+        const c = this.host.counters;
+        return {
+            ok: () => {
+                c.inc(`provider_ok_${part}`);
+                this.host.send({ type: 'provider.ok', part, adapter });
+            },
+            failed: (status) => {
+                c.inc(`provider_failed_${part}`);
+                const rejected = isRejection(status);
+                this.host.send({ type: 'provider.failed', part, adapter, ...(status === undefined ? {} : { status }), ...(rejected ? { rejected: true as const } : {}) });
+            },
+        };
+    }
+
+    /** Hearing for this bubble: the provider it names, else the worker's own engine. An adapter the worker does not have hears nothing and says so. */
+    private hearingFor(config?: RecognitionConfig): { factory: RecognizerFactory; provider?: ProviderReporter } | undefined {
+        if (!config) return this.host.recognizer ? { factory: this.host.recognizer } : undefined;
+        const settings = { adapter: config.adapter, model: config.model, key: new Secret(config.key), endpoint: config.endpoint, region: config.region, language: config.language };
+        const connector = this.host.connectors.recognition(config.adapter);
+        const factory: RecognizerFactory = (events) => {
+            if (!connector) return failingRecognizer(events);
+            try {
+                return guardedRecognizer(connector.listen(settings, events), events);
+            } catch (error) {
+                return failingRecognizer(events, error);
+            }
+        };
+        return { factory, provider: this.reporter('recognition', config.adapter) };
+    }
+
+    /** Speaking for this bubble, the same way. An adapter the worker does not have makes every reply fail at once, so it ends in text. */
+    private speakingFor(config?: SpeechConfig, expression?: Expression): { voice: Voice; provider?: ProviderReporter } {
+        if (!config) {
+            const speech = this.host.defaultSpeech;
+            return { voice: { speak: (request) => speech.speak({ ...request, settings: FAKE_SPEECH_SETTINGS, expression }) } };
+        }
+        const settings: SpeechSettings = { adapter: config.adapter, model: config.model, voiceId: config.voiceId, key: new Secret(config.key), endpoint: config.endpoint, region: config.region, language: config.language };
+        const connector = this.host.connectors.speech(config.adapter);
+        const voice: Voice = {
+            speak: (request) =>
+                connector
+                    ? connector.speak({ ...request, lang: request.lang ?? settings.language, settings, expression })
+                    : (async function* (): AsyncGenerator<Int16Array> {
+                          throw new Error('no such speech adapter');
+                      })(),
+        };
+        return { voice, provider: this.reporter('speech', config.adapter) };
     }
 
     /** Starts a connection with a person. A newer epoch replaces the one before it; an older or equal one is refused. */
@@ -254,8 +355,8 @@ export class Session {
         this.sendStatus();
     }
 
-    say(segmentId: string, text: string, maxMs?: number): void {
-        this.speaker.enqueue(segmentId, text, maxMs);
+    say(segmentId: string, text: string, maxMs?: number, lang?: string): void {
+        this.speaker.enqueue(segmentId, text, maxMs, lang);
     }
 
     retract(segmentId: string): void {

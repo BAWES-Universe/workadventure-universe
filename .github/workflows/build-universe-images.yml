@@ -13,13 +13,14 @@ on:
       - 'uploader/**'
       - 'discord-bot/**'
       - 'bots/**'
+      - 'voice-worker/**'
       - 'libs/**'
       - 'messages/**'
       - '.github/workflows/build-universe-images.yml'
   workflow_dispatch:
     inputs:
       service:
-        description: 'Service to build (play, back, map-storage, uploader, discord-bot, bot-server, or all)'
+        description: 'Service to build (play, back, map-storage, uploader, discord-bot, bot-server, voice-worker, or all)'
         required: false
         default: 'all'
         type: choice
@@ -31,6 +32,7 @@ on:
           - uploader
           - discord-bot
           - bot-server
+          - voice-worker
 
 # Serialise runs per ref. Two pushes to `universe` inside one run's window both computed the
 # same next version (get-version reads the latest tag at the start of a run, the tag is only
@@ -384,6 +386,49 @@ jobs:
           cache-to: type=gha,mode=max,scope=bot-server
 
 
+  build-voice-worker:
+    # Not in the release's needs on purpose: a voice-worker build that fails must never hold back a
+    # game release. The deploy job deploys the worker only when this build succeeded.
+    needs: get-version
+    if: ${{ github.event.inputs.service == 'all' || github.event.inputs.service == 'voice-worker' || github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/voice-worker-universe
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: ./voice-worker
+          file: ./voice-worker/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha,scope=voice-worker
+          cache-to: type=gha,mode=max,scope=voice-worker
+
   # ─────────────────────────────────────────────────
   # Release: tag and GitHub Release (the version itself
   # comes from get-version, which also feeds RELEASE_VERSION)
@@ -493,11 +538,12 @@ jobs:
   # Fires only if release produced a new version
   # ─────────────────────────────────────────────────
   deploy:
-    if: needs.release.outputs.created == 'true'
-    needs: release
+    # always(): the voice-worker build is not part of the release, so its failure must not skip this job.
+    if: ${{ always() && needs.release.outputs.created == 'true' }}
+    needs: [release, build-voice-worker]
     runs-on: ubuntu-latest
-    # Six services one after another, each waited on up to 20 minutes (120 in the worst case).
-    timeout-minutes: 150
+    # Seven services one after another, each waited on up to 20 minutes (140 in the worst case).
+    timeout-minutes: 170
     # Recording the deployment uses the deployments API; nothing here reads repository files.
     permissions:
       contents: read
@@ -513,6 +559,8 @@ jobs:
           COOLIFY_BOT_SERVER_UUID: ${{ secrets.COOLIFY_BOT_SERVER_UUID }}
           COOLIFY_DISCORD_BOT_UUID: ${{ secrets.COOLIFY_DISCORD_BOT_UUID }}
           COOLIFY_UPLOADER_UUID: ${{ secrets.COOLIFY_UPLOADER_UUID }}
+          COOLIFY_VOICE_WORKER_UUID: ${{ secrets.COOLIFY_VOICE_WORKER_UUID }}
+          VOICE_WORKER_BUILT: ${{ needs.build-voice-worker.result == 'success' }}
           NEW_VERSION: ${{ needs.release.outputs.new_version }}
         run: |
           # Coolify answering "queued" only means it took the job. A service counts as deployed once its
@@ -570,6 +618,7 @@ jobs:
             "back ${COOLIFY_BACK_UUID}" \
             "map-storage ${COOLIFY_MAP_STORAGE_UUID}" \
             "play ${COOLIFY_PLAY_UUID}" \
+            "voice-worker ${COOLIFY_VOICE_WORKER_UUID:-unset}" \
             "bot-server ${COOLIFY_BOT_SERVER_UUID}" \
             "discord-bot ${COOLIFY_DISCORD_BOT_UUID}" \
             "uploader ${COOLIFY_UPLOADER_UUID}"; do
@@ -579,6 +628,18 @@ jobs:
             if [ "$1" = "play" ] && [ -n "$failed" ]; then
               echo "::error::play not deployed: it needs${failed} deployed first"
               failed="$failed play"
+              continue
+            fi
+            # The voice worker goes just before the bot server, which connects to it. It never fails the
+            # game deploy: without it voice bots answer in text.
+            if [ "$1" = "voice-worker" ]; then
+              if [ "$VOICE_WORKER_BUILT" != true ]; then
+                echo "::warning::voice-worker not deployed: its image did not build in this run"
+              elif [ "$2" = "unset" ]; then
+                echo "::warning::voice-worker not deployed: COOLIFY_VOICE_WORKER_UUID is not set"
+              else
+                deploy_one "$1" "$2" || echo "::warning::voice-worker did not deploy; voice bots answer in text until it does"
+              fi
               continue
             fi
             deploy_one "$1" "$2" || failed="$failed $1"

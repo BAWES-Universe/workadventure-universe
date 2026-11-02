@@ -15,8 +15,17 @@ export type VoiceSignal =
     /** Only from the worker to the person: the offer had no audio, so the person is asked to add one and offer again. */
     | { type: 'transceiverRequest'; transceiverRequest: { kind: 'audio'; init?: { direction: 'recvonly' | 'sendrecv' } } };
 
+/** How much feeling the voice puts in. */
+export type VoiceExpression = 'restrained' | 'natural' | 'expressive';
+/** Which of the two jobs a provider does. */
+export type ProviderPart = 'recognition' | 'speech';
+/** The provider a bubble hears with, named by the adapter name Orbit stores (lowercase). The key is used for the provider call only. */
+export interface RecognitionConfig { adapter: string; model: string; key: string; endpoint?: string; region?: string; language?: string }
+/** The provider a bubble speaks with. */
+export interface SpeechConfig { adapter: string; model: string; voiceId: string; key: string; endpoint?: string; region?: string; language?: string }
+
 export type ToWorker =
-    | { type: 'session.open'; sessionId: string; bubbleId: string; botId: string }
+    | { type: 'session.open'; sessionId: string; bubbleId: string; botId: string; recognition?: RecognitionConfig; speech?: SpeechConfig; expression?: VoiceExpression }
     | { type: 'lane.open'; sessionId: string; participantId: string; epoch: number; mode?: VoiceMode }
     | { type: 'lane.signal'; sessionId: string; participantId: string; epoch: number; signal: VoiceSignal }
     | { type: 'lane.close'; sessionId: string; participantId: string; epoch: number; reason?: LeaveReason }
@@ -52,4 +61,8 @@ export type FromWorker =
     | { type: 'user.speech_started'; sessionId: string; participantId: string; epoch: number; turnId: string }
     | { type: 'user.partial'; sessionId: string; participantId: string; epoch: number; turnId: string; text: string }
     | { type: 'user.turn'; sessionId: string; participantId: string; epoch: number; turnId: string; outcome: 'final' | 'lost' | 'cleared'; text?: string; reason?: LostReason; audioMs: number }
+    /** A provider call worked (speech: once per spoken reply). */
+    | { type: 'provider.ok'; sessionId: string; part: ProviderPart; adapter: string }
+    /** A provider call failed. `status`: its HTTP status when it had one. `rejected`: it refused the key itself (401 or 403). */
+    | { type: 'provider.failed'; sessionId: string; part: ProviderPart; adapter: string; status?: number; rejected?: true }
     | { type: 'error'; sessionId: string; code: string; message: string; participantId?: string; epoch?: number };

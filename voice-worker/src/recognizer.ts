@@ -1,7 +1,8 @@
 // What a speech recognizer is to the worker, so a provider can be swapped in without touching anything else: one
 // session per stretch of speech, fed the person's permitted audio, answering with words. Recognition.ts decides when
-// a stretch starts and ends, enforces the limits and says what the words become. No provider is wired yet; FakeEars
-// stands in for one, with a script, so tests need no keys, no network and no spend.
+// a stretch starts and ends, enforces the limits and says what the words become. A recognizer is made per session by the
+// connector its bubble names (connectors.ts); FakeEars stands in for one, with a script, so tests need no keys, no
+// network and no spend.
 
 /** What a recognizer says back. Words only: audio is never kept, here or by anything that gets it. */
 export interface RecognizerEvents {
@@ -9,8 +10,11 @@ export interface RecognizerEvents {
     partial(text: string): void;
     /** Every word of the stretch, after `finish()`. */
     final(text: string): void;
-    /** The recognizer gave up part-way (dropped stream, refused, timed out) with the words it had. */
-    failed(text: string): void;
+    /**
+     * The recognizer gave up part-way (dropped stream, refused, timed out) with the words it had. `status` is the
+     * provider's HTTP status when it answered with one; leave it out for a timeout or a dropped connection.
+     */
+    failed(text: string, failure?: { status?: number }): void;
 }
 
 export interface Recognizer {

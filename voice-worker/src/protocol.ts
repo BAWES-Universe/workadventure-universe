@@ -18,7 +18,21 @@ export type Signal =
 
 export type LeaveReason = 'closed' | 'failed' | 'left' | 'superseded' | 'timeout';
 /** `barge_in`: a person spoke over the bot. `limit`: the reply reached its longest time. */
-export type PlaybackReason = 'completed' | 'voice_stop' | 'retract' | 'mode' | 'lane_loss' | 'rejected' | 'barge_in' | 'limit';
+export type PlaybackReason = 'completed' | 'voice_stop' | 'retract' | 'mode' | 'lane_loss' | 'rejected' | 'barge_in' | 'limit' | 'provider';
+
+/** How much feeling the voice puts in. Handed to the speech connector, which maps it to what its provider offers. */
+export type Expression = 'restrained' | 'natural' | 'expressive';
+export const EXPRESSIONS: readonly Expression[] = ['restrained', 'natural', 'expressive'];
+/** Which of the two jobs a provider does. */
+export type ProviderPart = 'recognition' | 'speech';
+
+/**
+ * What the bot server names for hearing in `session.open`: an adapter (lowercase, as Orbit stores it), the model, and the
+ * key. The key is only ever used for the provider call: it is never logged, counted or sent back.
+ */
+export interface RecognitionConfig { adapter: string; model: string; key: string; endpoint?: string; region?: string; language?: string }
+/** The same for speaking, with the voice. */
+export interface SpeechConfig { adapter: string; model: string; voiceId: string; key: string; endpoint?: string; region?: string; language?: string }
 
 interface Base {
     sessionId: string;
@@ -26,7 +40,8 @@ interface Base {
 }
 
 // bot server -> worker
-export interface SessionOpen extends Base { type: 'session.open'; bubbleId: string; botId: string }
+/** `recognition`, `speech`, `expression`: which providers this bubble hears and speaks with. Without them the worker's built-in test engine is used. */
+export interface SessionOpen extends Base { type: 'session.open'; bubbleId: string; botId: string; recognition?: RecognitionConfig; speech?: SpeechConfig; expression?: Expression }
 export interface LaneOpen extends Base { type: 'lane.open'; participantId: string; epoch: number; mode?: Mode }
 export interface LaneSignalIn extends Base { type: 'lane.signal'; participantId: string; epoch: number; signal: Signal }
 export interface LaneClose extends Base { type: 'lane.close'; participantId: string; epoch: number; reason?: LeaveReason }
@@ -70,9 +85,16 @@ export type LostReason = 'cap' | 'gap' | 'path' | 'stopped' | 'provider';
 export interface UserTurn extends Base {
     type: 'user.turn'; participantId: string; epoch: number; turnId: string; outcome: 'final' | 'lost' | 'cleared'; text?: string; reason?: LostReason; audioMs: number;
 }
+/** A provider call worked. For speech: one per spoken reply. For recognition: one per stretch of speech the provider answered. */
+export interface ProviderOk extends Base { type: 'provider.ok'; part: ProviderPart; adapter: string }
+/**
+ * A provider call failed. `status`: the provider's HTTP status, when there was one (left out for a timeout or a dropped
+ * connection). `rejected`: the provider refused the key itself (401 or 403). Never carries the key or the provider's own words.
+ */
+export interface ProviderFailed extends Base { type: 'provider.failed'; part: ProviderPart; adapter: string; status?: number; rejected?: true }
 export interface ErrorMsg extends Base { type: 'error'; code: string; message: string; participantId?: string; epoch?: number }
 
 export type BotToWorker = SessionOpen | LaneOpen | LaneSignalIn | LaneClose | ModeSet | BotSay | BotRetract | VoiceStop | SessionEnd | RoomJoin | RoomLeave | RoomPeople;
 export type WorkerToBot =
-    | SessionStart | ParticipantJoin | ParticipantLeave | LaneSignalOut | PlaybackProgress | EngineStatus | RoomState | UserSpeechStarted | UserPartial | UserTurn | ErrorMsg;
+    | SessionStart | ParticipantJoin | ParticipantLeave | LaneSignalOut | PlaybackProgress | EngineStatus | RoomState | UserSpeechStarted | UserPartial | UserTurn | ProviderOk | ProviderFailed | ErrorMsg;
 

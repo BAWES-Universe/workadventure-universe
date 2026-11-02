@@ -16,7 +16,7 @@ import {
 } from '@livekit/rtc-node';
 import type { RemoteParticipant, RemoteTrack, RemoteTrackPublication } from '@livekit/rtc-node';
 import type { Counters } from './counters.ts';
-import { TTS_RATE } from './fakeSpeech.ts';
+import { TTS_RATE } from './audioFormat.ts';
 import { type Mode, modeListens, modePlays } from './protocol.ts';
 import type { InputSink, OutputFrame, OutputTarget } from './transport.ts';
 
