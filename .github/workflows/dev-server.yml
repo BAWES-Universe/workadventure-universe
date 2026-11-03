@@ -191,6 +191,7 @@ jobs:
     uses: ./.github/workflows/dev-server-switch.yml
     with:
       tag: ${{ needs.build.outputs.tag }}
+      branch: ${{ needs.decide.outputs.branch }}
       pr: ${{ needs.decide.outputs.pr }}
       sha: ${{ needs.build.outputs.sha }}
       mode: ${{ needs.decide.outputs.mode }}
