@@ -7,8 +7,11 @@ import type { BotStepKind } from "./BotSteps";
  * private job (a direct message) never gets here, so others never see it.
  */
 
+/** A bot's wave when a person told it they are done talking with it (#1670): it comes with no words, and shows like a mood. */
+export const WAVE_MOOD = "👋";
+
 /** The moods a bot can show. Anything else a sender puts in is not drawn. */
-export const BOT_MOODS = ["😄", "🙂", "😏", "😕", "😟", "😒", "😠"] as const;
+export const BOT_MOODS = ["😄", "🙂", "😏", "😕", "😟", "😒", "😠", WAVE_MOOD] as const;
 
 export const WORK_EMOJI: Record<BotStepKind, string> = { read: "📖", search: "🔎", write: "✍️" };
 

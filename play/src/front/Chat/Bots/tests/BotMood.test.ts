@@ -1,6 +1,6 @@
 import { get } from "svelte/store";
 import { describe, expect, it } from "vitest";
-import { botFeeling, forgetBotFeelings, setBotMood, setBotWork } from "../BotMood";
+import { botFeeling, forgetBotFeelings, setBotMood, setBotWork, WAVE_MOOD } from "../BotMood";
 import { parseBotSteps, workKindOf } from "../BotSteps";
 
 const field = (state: string, steps: object[]) => ({ v: 1, state, line: "x", startedAt: 1, steps });
@@ -22,6 +22,12 @@ describe("how a bot feels beside its Woka (#1667)", () => {
     it("draws only the moods it knows", () => {
         setBotMood("bot-b", "💣");
         expect(get(botFeeling("bot-b"))).toBeUndefined();
+    });
+
+    it("draws the wave a bot gives a person who said they are done (#1670)", () => {
+        setBotMood("bot-w", WAVE_MOOD);
+        expect(get(botFeeling("bot-w"))?.mood).toBe("👋");
+        setBotMood("bot-w", undefined);
     });
 
     it("keeps work and mood apart, each bot on its own", () => {

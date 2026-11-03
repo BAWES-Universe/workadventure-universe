@@ -140,6 +140,22 @@ eventProcessor.registerPrivateEventProcessor("botVoiceStatus", (event, sender) =
     return event;
 });
 
+// A voice bot telling one person it stopped listening to them without its name (#1670): only a bot may send it, and
+// only about itself.
+eventProcessor.registerPrivateEventProcessor("botVoiceDone", (event, sender) => {
+    if (event.$case !== "botVoiceDone") {
+        throw new Error("Invalid event type");
+    }
+    const uuid = sender?.uuid ?? "";
+    if (!sender || !(sender.tags.includes("bot") || uuid.startsWith("bot-"))) {
+        throw new Error("Only a bot can send its voice done notice");
+    }
+    if (uuid.startsWith("bot-") && event.botVoiceDone.botId !== uuid.slice("bot-".length)) {
+        throw new Error("A bot can only send its own voice done notice");
+    }
+    return event;
+});
+
 // How a person wants to talk with bots (#1666) goes to a bot and to nobody else.
 eventProcessor.registerPrivateEventProcessor("voiceModeChoice", (event, _sender, receiver) => {
     if (event.$case !== "voiceModeChoice") {

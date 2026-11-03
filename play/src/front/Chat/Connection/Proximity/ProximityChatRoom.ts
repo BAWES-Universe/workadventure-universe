@@ -48,7 +48,7 @@ import {
     type SpokenLine,
 } from "../../Bots/BotVoiceDraft";
 import { parseBotSteps, workKindOf, type BotSteps } from "../../Bots/BotSteps";
-import { forgetBotFeelings, setBotMood, setBotWork } from "../../Bots/BotMood";
+import { forgetBotFeelings, setBotMood, setBotWork, WAVE_MOOD } from "../../Bots/BotMood";
 import { isVoiceBotUser, voiceBotCount } from "../../Bots/TwoVoiceBots";
 import { gameManager } from "../../../Phaser/Game/GameManager";
 import { availabilityStatusStore, requestedCameraState, requestedMicrophoneState } from "../../../Stores/MediaStore";
@@ -279,6 +279,7 @@ export class ProximityChatRoom implements ChatRoom {
     /** The reply limit card shown for each bot, by bot id, so a newer one replaces it */
     private replyLimitCards = new Map<string, string>();
     private spaceVoiceDraftSubscription: Subscription | undefined;
+    private spaceVoiceDoneSubscription: Subscription | undefined;
     /**
      * What a voice bot hears this person say (#1664), for them only, above the message box: words filling in, and
      * words that did not come through.
@@ -770,6 +771,11 @@ export class ProximityChatRoom implements ChatRoom {
         this.sendMessage(get(LL).chat.timeLine.twoVoiceBots(), "incoming", false);
     }
 
+    /** Only this person sees it: the bot's wave on its box is what others see (#1670). */
+    private addVoiceDoneLine(botName: string): void {
+        this.sendMessage(get(LL).chat.timeLine.voiceDone({ botName }), "incoming", false);
+    }
+
     private addOutcomingUser(spaceUser: SpaceUserExtended): void {
         forgetBotFeelings(spaceUser.spaceUserId);
         this.sendMessage(get(LL).chat.timeLine.outcoming({ userName: spaceUser.name }), "outcoming", false);
@@ -1082,6 +1088,7 @@ export class ProximityChatRoom implements ChatRoom {
     /** No more drafts: the person left the bubble, so nothing a bot said there is theirs to send any more. */
     private endVoiceDrafts(): void {
         this.spaceVoiceDraftSubscription?.unsubscribe();
+        this.spaceVoiceDoneSubscription?.unsubscribe();
         this.voiceDrafts.set([]);
     }
 
@@ -1693,6 +1700,15 @@ export class ProximityChatRoom implements ChatRoom {
             if (draft) this.onVoiceDraft(draft);
         });
 
+        // A voice bot telling this person it stopped listening to them without its name, because they said they are
+        // done (#1670), sent to them only. A line in their own chat, like the one for two voice bots: it is sent to nobody.
+        this.spaceVoiceDoneSubscription?.unsubscribe();
+        this.spaceVoiceDoneSubscription = this._space.observePrivateEvent("botVoiceDone").subscribe((event) => {
+            if (!isBotUser(event.sender) || event.sender.uuid !== `bot-${event.botVoiceDone.botId}`) return;
+            if (blackListManager.isBlackListed(event.sender.uuid)) return;
+            this.addVoiceDoneLine(event.botVoiceDone.botName || event.sender.name);
+        });
+
         // Subscribe to streaming bot responses — tokens arrive incrementally
         this.spaceStreamMessageSubscription = this._space
             .observePublicEvent("spaceStreamMessage")
@@ -1706,7 +1722,13 @@ export class ProximityChatRoom implements ChatRoom {
                     this.markStoppedBySpeech(event.sender, stream.responseId);
                     return;
                 }
-                if (stream.isFinal && !stream.isError && stream.finalContent && stream.steps === undefined) {
+                // A wave comes with no words: the bot's answer to "stop" is its box, not a line (#1670)
+                if (
+                    stream.isFinal &&
+                    !stream.isError &&
+                    (stream.finalContent || stream.mood === WAVE_MOOD) &&
+                    stream.steps === undefined
+                ) {
                     this.showBotMood(event.sender, stream.mood);
                 }
                 if (stream.steps !== undefined) {

@@ -2173,6 +2173,50 @@ export class BotClient {
     }
 
     /**
+     * Whether this bot should tell, by its own judgement, that this person is done talking with it (#1670): a voice bot
+     * with other people in the bubble, and not on a summon to this person (a summon makes everything they say its own).
+     */
+    mayEndFollowUp(spaceName: string, playerId: number): boolean {
+        return this.isVoiceBot() && this.attention.endable(spaceName, playerId);
+    }
+
+    /**
+     * The bot has judged that this person is done talking with it (#1670). Only their follow-up window ends: the bot
+     * stops speaking to them, they need its name again, and a private line says so. Nobody else's window is touched, and
+     * nothing the bot is working on is cancelled. False when it does not apply (the caller then answers as usual).
+     */
+    endFollowUp(spaceName: string, playerId: number): boolean {
+        if (!this.mayEndFollowUp(spaceName, playerId)) return false;
+        this.attention.ended(spaceName, playerId);
+        this.speech?.endFor(spaceName, playerId);
+        this.sendVoiceDone(spaceName, playerId);
+        return true;
+    }
+
+    /** Tells one person, and only them, that the bot stopped listening to them without its name (#1670). */
+    private sendVoiceDone(spaceName: string, playerId: number): void {
+        const spaceUserId = this.spaces.get(spaceName);
+        if (!spaceUserId) return;
+        const cut = spaceUserId.lastIndexOf('_');
+        if (cut < 0) return;
+        this.send({
+            message: {
+                $case: 'privateEvent',
+                privateEvent: {
+                    spaceName,
+                    receiverUserId: `${spaceUserId.slice(0, cut)}_${playerId}`,
+                    spaceEvent: {
+                        event: {
+                            $case: 'botVoiceDone',
+                            botVoiceDone: { botId: this.config.botId, botName: this.config.name },
+                        },
+                    },
+                },
+            },
+        });
+    }
+
+    /**
      * Show one person, and only them, the fixed card for a reply limit they reached (#1159). Sent as a private event
      * to that person in the bot's nearby chat; the pusher passes it on only when a bot sends it.
      */

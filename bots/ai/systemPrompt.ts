@@ -193,7 +193,16 @@ export interface SystemPromptParts {
     now?: Date;
     /** The newest files in this person's chats with the bot (buildRecentFilesLine); empty when there are none. */
     recentFiles?: string;
+    /** Only a voice bot with other people in the bubble (#1670): how the bot tells that this person is done talking with it. */
+    endFollowUp?: boolean;
 }
+
+/**
+ * How a voice bot with several people around it ends one person's follow-up (#1670). The bot's own judgement decides, not a
+ * word list: a natural "stop", "we're done" or "stay quiet" to the bot ends it, a quoted or unrelated "stop" does not.
+ * It sits after the Now line so the fixed rules above stay the same from message to message.
+ */
+export const END_FOLLOW_UP_RULE = `\n\n**WHEN THIS PERSON IS DONE TALKING WITH YOU (other people are here too):** If this person is clearly telling YOU that they are done talking with you right now (a natural "stop", "we're done", "that's all", "please stay quiet", "enough", in any language), write NO reply text at all: only the [EMOTION_UPDATE] block, with "doneTalking": true added to its JSON. Do not say goodbye, do not confirm, do not ask anything. In every other case leave "doneTalking" out. These are NOT a request to stop talking with you, so answer them as usual: someone quoting the word, telling another person to stop, a request about something else ("stop the music", "how do I stop the build?"), or a question about the word. Stopping never cancels anything you are already working on for anyone.`;
 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -270,7 +279,7 @@ function oneLine(text: string): string {
 }
 
 export function buildSystemPromptWithEnds(parts: SystemPromptParts): BuiltSystemPrompt {
-    const { chatInstructions, mapContextInfo, conversationContext, pendingMediaNotice, now, channel = 'world', recentFiles } = parts;
+    const { chatInstructions, mapContextInfo, conversationContext, pendingMediaNotice, now, channel = 'world', recentFiles, endFollowUp } = parts;
 
     // CRITICAL: Chat instructions define the bot's personality and MUST be followed
     let systemPrompt = '';
@@ -301,6 +310,7 @@ export function buildSystemPromptWithEnds(parts: SystemPromptParts): BuiltSystem
     systemPrompt += buildNowLine(now, pendingMediaNotice);
     // After the Now line: it changes as files come, so the cached part above stays the same
     if (recentFiles) systemPrompt += recentFiles;
+    if (endFollowUp) systemPrompt += END_FOLLOW_UP_RULE;
     systemPrompt += CLOSING_REMINDER;
     return { prompt: systemPrompt, cacheEnds };
 }

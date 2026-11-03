@@ -117,6 +117,7 @@ const chat: BaseTranslation = {
         incoming: "{userName} joined the discussion",
         outcoming: "{userName} has left the discussion",
         youLeft: "You left the discussion",
+        voiceDone: "Done talking with {botName}. Use its name to talk again.",
         twoVoiceBots: "Two bots are here, so bots answer in text for now. Voice comes back when one leaves.",
         youleftMeetingRoom: "You have left the meeting room",
         youJoinedMeetingRoom: "You have joined the meeting room",

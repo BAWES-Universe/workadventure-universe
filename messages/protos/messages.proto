@@ -1420,6 +1420,7 @@ message PrivateSpaceEvent {
     BotVoiceDraftMessage botVoiceDraft = 24;
     BotVoiceStatusMessage botVoiceStatus = 25;
     VoiceModeChoiceMessage voiceModeChoice = 26;
+    BotVoiceDoneMessage botVoiceDone = 27;
     // From 30: upstream WorkAdventure uses the numbers right after ours.
     InviteToSpeakPrivateMessage inviteToSpeak = 30;
     DeclineToSpeakPrivateMessage declineToSpeak = 31;
@@ -1465,6 +1466,15 @@ message BotVoiceStatusMessage {
   string botName = 2;
   string state = 3;            // "connecting" | "on" | "paused" (the bot says voice is unavailable)
   int32 followUpSeconds = 4;   // how long the bot keeps listening after it answers without its name; 0: the bot sends none
+}
+
+/**
+ * A voice bot tells one person it stopped listening to them without its name, because they told it they are done (#1670).
+ * Only a bot may send it (the pusher refuses anyone else), and only about itself.
+ */
+message BotVoiceDoneMessage {
+  string botId = 1;
+  string botName = 2;
 }
 
 /**
