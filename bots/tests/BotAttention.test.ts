@@ -12,12 +12,9 @@ const OTHER_BOT = 50;
 
 function setup(name = 'Sales Researcher', seconds = 30) {
     let now = 1_000_000;
-    const uuids = new Map<number, string>([
-        [KHALID, 'uuid-khalid'],
-        [SARA, 'uuid-sara'],
-    ]);
-    const attention = new BotAttention(name, seconds, (id) => id !== OTHER_BOT, (id) => uuids.get(id), () => now);
-    return { attention, advance: (ms: number) => (now += ms) };
+    const summonedTo = new Set<number>();
+    const attention = new BotAttention(name, seconds, (id) => id !== OTHER_BOT, (id) => summonedTo.has(id), () => now);
+    return { attention, summonedTo, advance: (ms: number) => (now += ms) };
 }
 
 describe('BotAttention', () => {
@@ -104,16 +101,17 @@ describe('BotAttention', () => {
         expect(attention.attention(SPACE, KHALID, 'go on')).toBe('follow-up');
     });
 
-    it('hears the person who summoned it until it has answered them, then by the window', () => {
-        const { attention, advance } = setup('Nora', 30);
+    it('hears the person it is summoned to for as long as the summon lasts, and not once it has ended', () => {
+        const { attention, summonedTo, advance } = setup('Nora', 30);
         attention.personJoined(SPACE, KHALID);
         attention.personJoined(SPACE, SARA);
-        attention.summonedBy('uuid-khalid');
+        summonedTo.add(KHALID);
         advance(120_000);
         expect(attention.attention(SPACE, KHALID, 'thanks for coming')).toBe('summoned');
         expect(attention.attention(SPACE, SARA, 'thanks for coming')).toBe('ignored');
-        attention.answered(SPACE, KHALID);
-        expect(attention.attention(SPACE, KHALID, 'one more thing')).toBe('follow-up');
+        // The summon ended (they left, or walked far away): nothing of it is left behind
+        summonedTo.delete(KHALID);
+        expect(attention.attention(SPACE, KHALID, 'one more thing')).toBe('ignored');
     });
 
     it('forgets a person, and the whole bubble, when they leave', () => {

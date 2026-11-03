@@ -169,7 +169,7 @@ export class BotClient {
             config.name,
             followUpSeconds(),
             (userId) => userId !== this.userId && !BotClient.isBot(userId),
-            (userId) => this.behavior?.getPersonForAccess?.(userId)?.identifier ?? undefined
+            (userId) => this.behavior?.isSummonedBy?.(userId) ?? false
         );
     }
 
@@ -2634,8 +2634,6 @@ export class BotClient {
         try {
             this.behavior.startSummon(playerUuid, targetPosition);
             console.log(`[Bot ${this.config.botId}] ✅ Behavior.startSummon() completed`);
-            // The person who summoned the bot is talking to it, even with others around (#1220)
-            this.attention.summonedBy(playerUuid);
         } catch (error: any) {
             console.error(`[Bot ${this.config.botId}] ❌ Behavior.startSummon() failed:`, error.message);
             // Re-throw the error so BotManager can handle it

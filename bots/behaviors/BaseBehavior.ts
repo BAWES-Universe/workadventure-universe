@@ -154,6 +154,14 @@ export abstract class BaseBehavior {
         }
         return undefined;
     }
+    /**
+     * Whether the bot is on a summon to this person right now. The summon ends when they leave or walk far away, and
+     * until then what they say is for the bot even with others around (#1220).
+     */
+    isSummonedBy(userId: number): boolean {
+        const uuid = this.userIdToUuid.get(userId);
+        return this.isSummoned && !!uuid && uuid === this.summonedPlayerUuid;
+    }
     // Authentication tracking - map userId (number) to isLogged (boolean)
     protected userIdToIsLogged: Map<number, boolean> = new Map();
 

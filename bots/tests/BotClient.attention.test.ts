@@ -205,15 +205,22 @@ describe('BotClient: a bot only hears the person talking to it', () => {
         expect(t.onChatMessage.mock.calls[0][2]).toBe(KHALID);
     });
 
-    it('hears the person who summoned it, even without its name', async () => {
+    it('hears the person it is summoned to, even without its name, until the summon ends', async () => {
         const t = setup();
         await t.receive(joined(KHALID));
         await t.receive(joined(SARA));
-        (t.bot as unknown as { attention: { summonedBy(uuid: string): void } }).attention.summonedBy('uuid-7');
+        const state = t.behavior as unknown as { isSummoned: boolean; summonedPlayerUuid: string | null };
 
+        // A summon that failed or ended leaves nothing behind
+        await t.receive(chatFrom(KHALID, 'thanks for coming'));
+        expect(t.onChatMessage).not.toHaveBeenCalled();
+
+        state.isSummoned = true;
+        state.summonedPlayerUuid = 'uuid-7';
         await t.receive(chatFrom(SARA, 'who called it?'));
         expect(t.onChatMessage).not.toHaveBeenCalled();
         await t.receive(chatFrom(KHALID, 'thanks for coming'));
         expect(t.onChatMessage).toHaveBeenCalledTimes(1);
+        expect(t.onChatMessage.mock.calls[0][2]).toBe(KHALID);
     });
 });

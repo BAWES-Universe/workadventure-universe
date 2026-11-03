@@ -45,8 +45,6 @@ export class BotAttention {
     private readonly people = new Map<string, Set<number>>();
     /** When the bot last answered each person, by space. */
     private readonly answeredAt = new Map<string, Map<number, number>>();
-    /** People who summoned the bot (by uuid): theirs until the bot has answered them. */
-    private readonly summoners = new Set<string>();
 
     constructor(
         botName: string,
@@ -54,8 +52,8 @@ export class BotAttention {
         readonly followUpSeconds: number,
         /** True for a real person: not this bot, not another bot. */
         private readonly isPerson: (userId: number) => boolean,
-        /** The person's uuid, when the bot knows it (for a summon). */
-        private readonly uuidOf: (userId: number) => string | undefined = () => undefined,
+        /** Whether the bot is on a summon to this person right now. The summon itself says when that ends. */
+        private readonly isSummonedBy: (userId: number) => boolean = () => false,
         private readonly now: () => number = Date.now
     ) {
         this.name = plainWords(botName);
@@ -73,8 +71,6 @@ export class BotAttention {
     personLeft(spaceName: string, userId: number): void {
         this.people.get(spaceName)?.delete(userId);
         this.answeredAt.get(spaceName)?.delete(userId);
-        const uuid = this.uuidOf(userId);
-        if (uuid) this.summoners.delete(uuid);
     }
 
     /** The bot left the space: nobody's window carries over to the next time. */
@@ -93,11 +89,6 @@ export class BotAttention {
 
     // ---- who the bot listens to ----
 
-    /** Someone summoned the bot: what they say next is for it, even with others around. */
-    summonedBy(uuid: string): void {
-        this.summoners.add(uuid);
-    }
-
     /** Whether the words begin with the bot's name, with or without a calling word or an @ before it. */
     isNamed(text: string): boolean {
         if (!this.name) return false;
@@ -112,8 +103,7 @@ export class BotAttention {
     attention(spaceName: string, speakerId: number, text: string): Attention {
         if (!this.isGroup(spaceName, speakerId)) return 'alone';
         if (this.isNamed(text)) return 'named';
-        const uuid = this.uuidOf(speakerId);
-        if (uuid && this.summoners.has(uuid)) return 'summoned';
+        if (this.isSummonedBy(speakerId)) return 'summoned';
         const last = this.answeredAt.get(spaceName)?.get(speakerId);
         if (last !== undefined && this.now() - last < this.followUpSeconds * 1000) return 'follow-up';
         return 'ignored';
@@ -129,7 +119,5 @@ export class BotAttention {
         let answers = this.answeredAt.get(spaceName);
         if (!answers) this.answeredAt.set(spaceName, (answers = new Map()));
         answers.set(speakerId, this.now());
-        const uuid = this.uuidOf(speakerId);
-        if (uuid) this.summoners.delete(uuid);
     }
 }
