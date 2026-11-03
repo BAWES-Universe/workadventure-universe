@@ -20,6 +20,7 @@ import {
 } from "../WebRtc/BackgroundProcessor/createBackgroundTransformer";
 import { waitForFirstVideoFrame } from "../WebRtc/BackgroundProcessor/waitForFirstVideoFrame";
 import { NoiseSuppressionTransformer } from "../WebRtc/NoiseSuppression/NoiseSuppressionTransformer";
+import { retryPlanFor } from "../WebRtc/CameraHelp";
 import { LL } from "../../i18n/i18n-svelte";
 import { MediaStreamConstraintsError } from "./Errors/MediaStreamConstraintsError";
 import { BrowserTooOldError } from "./Errors/BrowserTooOldError";
@@ -31,6 +32,7 @@ import { privacyShutdownStore } from "./PrivacyShutdownStore";
 import { inExternalServiceStore, myCameraStore, myMicrophoneStore, proximityMeetingStore } from "./MyMediaStore";
 import { userMovingStore } from "./GameStore";
 import { hideHelpCameraSettings } from "./HelpSettingsStore";
+import { cameraWasRefused, clearCameraRefused, markCameraRefused, setCameraRetryHandler } from "./CameraRetryStore";
 import { isLiveStreamingStore } from "./IsStreamingStore";
 import { videoStreamElementsStore } from "./PeerStore";
 import { bubbleMatesStore } from "./CurrentPlayerGroupStore";
@@ -128,6 +130,25 @@ function createBatchGetUserMediaStore() {
 }
 
 export const batchGetUserMediaStore = createBatchGetUserMediaStore();
+
+// "Try again" on the camera access card: ask the browser again. A refused camera is switched off and on. When only the
+// microphone was refused, the camera stays as the player left it and the microphone is switched off and on instead.
+// Not in a batch: the constraints are only recomputed when they differ, so the off and on must each be seen, the first
+// releasing the device and the second asking for it.
+setCameraRetryHandler(() => {
+    const plan = retryPlanFor({
+        cameraRefused: cameraWasRefused(),
+        microphoneRequested: get(requestedMicrophoneState),
+    });
+    if (plan.camera) {
+        requestedCameraState.disableWebcam();
+        requestedCameraState.enableWebcam();
+    }
+    if (plan.microphone) {
+        requestedMicrophoneState.disableMicrophone();
+        requestedMicrophoneState.enableMicrophone();
+    }
+});
 
 /**
  * A store containing whether the webcam was enabled in the last 10 seconds
@@ -832,6 +853,7 @@ export const rawLocalStreamStore = derived<[typeof mediaStreamConstraintsStore],
                             // Also, let's switch the webcam back on if it was off (because some code or the user might have turned it off while we were waiting for getUserMedia,
                             // but we need to show the user that the webcam is on because we just got a stream)
                             requestedCameraState.enableWebcam();
+                            clearCameraRefused();
                         }
                         if (currentStream.getAudioTracks().length > 0) {
                             const audioTrackSettings = currentStream.getAudioTracks()[0]?.getSettings();
@@ -868,6 +890,7 @@ export const rawLocalStreamStore = derived<[typeof mediaStreamConstraintsStore],
                                 constraints,
                                 e
                             );
+                            markCameraRefused();
                             // TODO: does it make sense to pop this error when retrying?
                             set({
                                 type: "error",

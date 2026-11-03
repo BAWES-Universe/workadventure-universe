@@ -608,7 +608,8 @@ test.describe("Join: camera and microphone", () => {
         await expect(help).toBeVisible();
         await expect(help.getByText("Camera / Microphone access needed")).toBeVisible();
         await expect(help.getByText("So people you walk up to can see and hear you.", { exact: false })).toBeVisible();
-        await help.getByRole("button", { name: "Allow camera and mic" }).click();
+        await expect(help.getByRole("button", { name: "Try again" })).toBeVisible();
+        await help.getByRole("button", { name: "How to allow" }).click();
         await expect(help.getByText("Permission denied")).toBeVisible();
         await expect(help.getByText("You must allow camera and microphone access in your browser.")).toBeVisible();
         if (!isPhone(testInfo)) await expect(help.getByRole("img", { name: "help camera setup" })).toBeVisible();
