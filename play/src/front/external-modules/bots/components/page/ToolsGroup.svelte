@@ -120,6 +120,16 @@
         onServers={(loaded) => (servers = loaded)}
         onOpenServer={onOpenScreen && design !== "old" && design !== "live" ? (server) => onOpenScreen?.({ k: "server", id: server.id }) : undefined}
     />
+    <!-- Prototype (mock 1): checking with people, under the servers whose tools it covers, styled like the rows around it -->
+    {#if design !== "live"}
+        <button type="button" class="bp-set bp-link" data-testid="tools-asking-row" on:click={() => onOpenScreen?.({ k: "asking" })}>
+            <span class="bp-tx">
+                <span class="bp-t">Checking with people</span>
+                <span class="bp-m">Before it changes, deletes or sends something, or makes more than 5 things, it asks the person first</span>
+            </span>
+            <IconChevronRight font-size="18" />
+        </button>
+    {/if}
     <PageField title={page.tools.patience()} hint={page.tools.patienceHint()}>
         <PageChips
             label={page.tools.patience()}
@@ -149,14 +159,6 @@
             onPick={(steps) => onChange({ ...bot, maxSteps: steps || null })}
         />
     </PageField>
-    <!-- Prototype (mock 1 redo): the asking settings on a screen of their own -->
-    {#if design !== "live"}<button type="button" class="bp-drill" data-testid="tools-asking-row" on:click={() => onOpenScreen?.({ k: "asking" })}>
-        <span class="bp-tx">
-            <span class="bp-t">When it asks first</span>
-            <span class="bp-m">Cards wait 10 min · asks before making more than 5 · “allow more” ends after 1 hour quiet</span>
-        </span>
-        <IconChevronRight font-size="18" />
-    </button>{/if}
     <label class="bp-set" for="bot-show-tool-calls-{bot.id}">
         <span class="bp-tx">
             <span class="bp-t">{page.tools.showToolCalls()}</span>
@@ -199,6 +201,16 @@
     .bp-t {
         font-size: 13px;
         font-weight: 600;
+    }
+    .bp-link {
+        width: 100%;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        background: none;
+        font: inherit;
+        color: #fff;
+        text-align: start;
     }
     .bp-drill {
         display: flex;

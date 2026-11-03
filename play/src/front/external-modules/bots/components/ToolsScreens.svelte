@@ -55,7 +55,7 @@
     // The title in the panel's header, like the other inner screens
     $: title =
         current.k === "asking"
-            ? "When it asks first"
+            ? "Checking with people"
             : current.k === "kind"
             ? KIND_TITLE[current.kind]
             : current.k === "heading"
@@ -138,10 +138,10 @@
 
 {#if current.k === "asking"}
     <div class="ts" data-testid="tools-asking">
-        <p class="ts-lead">How {botName} checks with people before it does things. Every number here is a setting.</p>
-        <PageField title="A card waits for an answer" hint="Then it does nothing and says so">
+        <p class="ts-lead">Before {botName} changes, deletes or sends something with its tools, it shows the person a card and waits for their tap. These set how long it waits and when else it asks.</p>
+        <PageField title="Waits for a tap" hint="If nobody answers the card, it does nothing and says so">
             <PageChips
-                label="A card waits for an answer"
+                label="Waits for a tap"
                 options={[{ value: 5, label: "5 min" }, { value: 10, label: "10 min" }, { value: 30, label: "30 min" }]}
                 value={wait}
                 onPick={(v) => (wait = v)}
