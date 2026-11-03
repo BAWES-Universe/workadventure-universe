@@ -494,14 +494,22 @@ jobs:
   # See dev-server.yml.
   # ─────────────────────────────────────────────────
   dev-server-check:
-    if: github.ref == 'refs/heads/universe-develop' && github.event_name == 'push'
-    needs: [build-play, build-back, build-map-storage, build-uploader, build-bot-server]
+    # The voice server build is waited for so dev never redeploys its old image, but it is not
+    # required: like on prod, a failed voice server build never holds back the game apps. The
+    # explicit results replace the implicit "every need succeeded" that !cancelled() switches off.
+    if: >-
+      ${{ !cancelled() && github.ref == 'refs/heads/universe-develop' && github.event_name == 'push'
+      && needs.build-play.result == 'success' && needs.build-back.result == 'success'
+      && needs.build-map-storage.result == 'success' && needs.build-uploader.result == 'success'
+      && needs.build-bot-server.result == 'success' }}
+    needs: [build-play, build-back, build-map-storage, build-uploader, build-bot-server, build-voice-worker]
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: read
     outputs:
       free: ${{ steps.check.outputs.free }}
+      voice_worker: ${{ needs.build-voice-worker.result == 'success' }}
     steps:
       - id: check
         env:
@@ -528,6 +536,8 @@ jobs:
     uses: ./.github/workflows/dev-server-switch.yml
     with:
       tag: universe-develop
+      # false when this run's voice server image did not build: dev's voice server is left alone.
+      voice_worker: ${{ needs.dev-server-check.outputs.voice_worker }}
       # Checked again inside the switch lock: a PR may take on-dev while this run waits.
       mode: free
     secrets:

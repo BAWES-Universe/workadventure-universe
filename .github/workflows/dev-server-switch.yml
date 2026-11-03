@@ -25,6 +25,13 @@ on:
         required: false
         type: string
         default: ''
+      voice_worker:
+        description: >-
+          `true` includes the dev voice server in the switch (when DEV_COOLIFY_VOICE_WORKER_UUID is
+          set). `false` leaves it alone, for a run whose voice server image did not build.
+        required: false
+        type: string
+        default: 'true'
       mode:
         description: >-
           Who dev belongs to, checked again once this run holds the switch lock. `pr`: the PR
@@ -58,15 +65,27 @@ jobs:
       COOLIFY_BASE: ${{ vars.DEV_COOLIFY_BASE }}
       COOLIFY_TOKEN: ${{ secrets.DEV_COOLIFY_TOKEN }}
       # Deploy order: play last, so the front only changes once its back ends are on the new tag.
+      # The voice server goes just before the bot server, which connects to it. Like on prod, it is
+      # optional: its line is empty (and skipped) until DEV_COOLIFY_VOICE_WORKER_UUID is set, or when
+      # the caller says its image did not build, so it can never stop the game apps from switching.
       APPS: |
         back-universe ${{ vars.DEV_COOLIFY_BACK_UUID }}
         map-storage-universe ${{ vars.DEV_COOLIFY_MAP_STORAGE_UUID }}
         uploader-universe ${{ vars.DEV_COOLIFY_UPLOADER_UUID }}
+        ${{ (inputs.voice_worker == 'true' && vars.DEV_COOLIFY_VOICE_WORKER_UUID != '') && format('voice-worker-universe {0}', vars.DEV_COOLIFY_VOICE_WORKER_UUID) || '' }}
         bot-server-universe ${{ vars.DEV_COOLIFY_BOT_SERVER_UUID }}
         play-universe ${{ vars.DEV_COOLIFY_PLAY_UUID }}
     steps:
       - name: Check configuration
+        env:
+          VOICE_WORKER_INPUT: ${{ inputs.voice_worker }}
+          VOICE_WORKER_UUID: ${{ vars.DEV_COOLIFY_VOICE_WORKER_UUID }}
         run: |
+          if [ "$VOICE_WORKER_INPUT" != true ]; then
+            echo "::warning::The voice server image did not build in this run, so the dev voice server is not switched"
+          elif [ -z "$VOICE_WORKER_UUID" ]; then
+            echo "::warning::DEV_COOLIFY_VOICE_WORKER_UUID is not set, so the dev voice server is not switched"
+          fi
           missing=""
           [ -n "$COOLIFY_TOKEN" ] || missing="$missing DEV_COOLIFY_TOKEN(secret)"
           [ -n "$COOLIFY_BASE" ] || missing="$missing DEV_COOLIFY_BASE(variable)"
