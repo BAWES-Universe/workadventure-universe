@@ -11,6 +11,10 @@ const camera: DeepPartial<Translation["camera"]> = {
     enable: {
         title: "يرجى تشغيل الكاميرا والميكروفون.", // Please turn on your camera and microphone.
         start: "لنبدأ!", // Let's start!
+        howToAllow: "كيفية السماح", // How to allow
+        blockedHintIosApp: "أغلق Universe من مبدّل التطبيقات، ثم افتحه مجدداً واضغط «حاول مرة أخرى».", // Close Universe from the app switcher, open it again, then tap Try again.
+        blockedHintIosBrowser:
+            "اضغط aA في شريط العنوان › إعدادات الموقع، واسمح بالكاميرا والميكروفون، ثم اضغط «حاول مرة أخرى».", // Tap aA in the address bar › Website Settings, allow Camera and Microphone, then tap Try again.
     },
     help: {
         title: "مطلوب الوصول إلى الكاميرا / الميكروفون", // Access to camera/microphone required
@@ -20,6 +24,20 @@ const camera: DeepPartial<Translation["camera"]> = {
         continue: "المتابعة بدون كاميرا", // Continue without camera
         why: "ليراك ويسمعك من تقترب منهم. يمكنك إيقافهما في أي وقت.",
         allow: "السماح بالكاميرا", // Allow camera
+        iosTitle: "الكاميرا محظورة", // Camera is blocked
+        iosWhy: "لا يستطيع الآخرون رؤيتك. يستغرق هذا دقيقة تقريباً.", // People can't see you. This takes about a minute.
+        tryAgain: "حاول مرة أخرى", // Try again
+        tryAgainDone: "حاولنا مرة أخرى. إذا لم يسألك الآيفون، اتبع الخطوة 2.", // Tried again. If iPhone didn't ask, follow step 2.
+        steps: {
+            tryAgain: "اضغط «حاول مرة أخرى». إذا سألك الآيفون، اضغط «سماح».", // Tap Try again. If iPhone asks, tap Allow.
+            closeApp:
+                "لم يظهر سؤال؟ أغلق Universe: اسحب لأعلى من أسفل الشاشة، توقف قليلاً، ثم اسحب Universe لأعلى. افتحه واضغط زر الكاميرا.", // Nothing asked? Close Universe: swipe up from the bottom edge, pause, flick Universe up. Open it and tap the camera button.
+            settingsApp:
+                "ما زالت محظورة؟ افتح الإعدادات › التطبيقات › Safari › الكاميرا واختر «اسأل» أو «سماح». كرر ذلك للميكروفون. ثم أعد الخطوة 2.", // Still blocked? Open Settings › Apps › Safari › Camera and choose Ask or Allow. Do the same for Microphone. Then repeat step 2.
+            settingsTab:
+                "ما زالت محظورة؟ اضغط aA في شريط العنوان › إعدادات الموقع › الكاميرا واختر «اسأل» أو «سماح». كرر ذلك للميكروفون. ثم أعد تحميل الصفحة.", // Still blocked? Tap aA in the address bar › Website Settings › Camera and choose Ask or Allow. Do the same for Microphone. Then reload the page.
+            olderIphone: "آيفون أقدم: الإعدادات › Safari.", // Older iPhone: Settings › Safari.
+        },
         screen: {
             firefox: "/resources/help-setting-camera-permission/ar-SA-firefox.png", // Firefox help setting camera permission
             chrome: "/resources/help-setting-camera-permission/ar-SA-chrome.png", // Chrome help setting camera permission

@@ -23,6 +23,8 @@
     import { StringUtils } from "../../Utils/StringUtils";
     import { popupStore } from "../../Stores/PopupStore";
     import { showHelpCameraSettings } from "../../Stores/HelpSettingsStore";
+    import { currentInstallEnvironment } from "../../Install/InstallPlatform";
+    import { cameraHelpKindFor } from "../../WebRtc/CameraHelp";
     import bgMap from "../images/map-exemple.png";
     import JoinLegal from "../Join/JoinLegal.svelte";
     import USelect from "../UI/USelect.svelte";
@@ -44,6 +46,14 @@
     let lastMicrophone: string | undefined = undefined;
     let cameraBlocked = false;
     let microphoneBlocked = false;
+    // The address bar is the way back on a computer or Android. The iPhone app has none, so it says what works there.
+    const helpKind = cameraHelpKindFor(currentInstallEnvironment());
+    $: blockedHint =
+        helpKind === "ios-app"
+            ? $LL.camera.enable.blockedHintIosApp()
+            : helpKind === "ios-browser"
+            ? $LL.camera.enable.blockedHintIosBrowser()
+            : $LL.camera.enable.blockedHint();
     // The test sound is your join sound (Settings > Sound), played on the speaker picked here
     const sound = new Audio();
 
@@ -297,7 +307,7 @@
                         <div class="camera-off-message">
                             <span class="camera-off-icon"><IconLock font-size="28" /></span>
                             <span class="text-base font-semibold text-white">{$LL.camera.enable.cameraBlocked()}</span>
-                            <span class="font-normal">{$LL.camera.enable.blockedHint()}</span>
+                            <span class="font-normal">{blockedHint}</span>
                             <span class="flex flex-wrap justify-center gap-2 mt-1">
                                 <button
                                     type="button"
@@ -380,7 +390,7 @@
                 {#if microphoneBlocked}
                     <p class="u-join-error">
                         {$LL.camera.enable.microphoneBlocked()}
-                        {$LL.camera.enable.blockedHint()}
+                        {blockedHint}
                     </p>
                 {:else if microphoneOn}
                     <div class="grid gap-1.5">

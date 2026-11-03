@@ -31,6 +31,7 @@ import { privacyShutdownStore } from "./PrivacyShutdownStore";
 import { inExternalServiceStore, myCameraStore, myMicrophoneStore, proximityMeetingStore } from "./MyMediaStore";
 import { userMovingStore } from "./GameStore";
 import { hideHelpCameraSettings } from "./HelpSettingsStore";
+import { setCameraRetryHandler } from "./CameraRetryStore";
 import { isLiveStreamingStore } from "./IsStreamingStore";
 import { videoStreamElementsStore } from "./PeerStore";
 import { bubbleMatesStore } from "./CurrentPlayerGroupStore";
@@ -128,6 +129,15 @@ function createBatchGetUserMediaStore() {
 }
 
 export const batchGetUserMediaStore = createBatchGetUserMediaStore();
+
+// "Try again" on the camera access card: turn the camera off and on in one go, so the browser is asked once more
+// even when the camera was already requested
+setCameraRetryHandler(() => {
+    batchGetUserMediaStore.startBatch();
+    requestedCameraState.disableWebcam();
+    requestedCameraState.enableWebcam();
+    batchGetUserMediaStore.commitChanges();
+});
 
 /**
  * A store containing whether the webcam was enabled in the last 10 seconds

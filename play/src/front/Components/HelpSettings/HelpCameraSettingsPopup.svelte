@@ -3,23 +3,34 @@
     import { getNavigatorType, isAndroid as isAndroidFct, NavigatorType } from "../../WebRtc/DeviceUtils";
     import { LL } from "../../../i18n/i18n-svelte";
     import { popupStore } from "../../Stores/PopupStore";
+    import { cameraRetriedStore, resetCameraRetry, retryCameraAccess } from "../../Stores/CameraRetryStore";
+    import { currentInstallEnvironment } from "../../Install/InstallPlatform";
+    import { cameraHelpKindFor } from "../../WebRtc/CameraHelp";
     import { IconCamera, IconInfoCircle, IconMicrophone } from "@wa-icons";
+    import CameraBlockedSteps from "./CameraBlockedSteps.svelte";
 
     let isAndroid = isAndroidFct();
     let isFirefox = getNavigatorType() === NavigatorType.firefox;
     let isChrome = getNavigatorType() === NavigatorType.chrome;
     let showDetails = false;
+    // iPhone and iPad have no address bar to point at: they get the steps in order, always visible. Computers and
+    // Android keep the pictures behind "How to allow".
+    const iosKind = (() => {
+        const kind = cameraHelpKindFor(currentInstallEnvironment());
+        return kind === "other" ? undefined : kind;
+    })();
 
-    function allow() {
+    function toggleDetails() {
         showDetails = !showDetails;
     }
 
     function close() {
         popupStore.removePopup("cameraAccessDenied");
+        resetCameraRetry();
     }
 </script>
 
-<!-- Same behaviour as before: Allow shows how to unblock the browser, Continue closes. Restyled in the Universe look. -->
+<!-- Try again asks the browser again; on an iPhone the steps for when it does not ask are always shown. Continue closes. Restyled in the Universe look. -->
 <form
     class="helpCameraSettings camera-help u-glass z-[600] self-center mx-auto pointer-events-auto flex flex-col w-[min(380px,calc(100vw-1.5rem))] overflow-hidden rounded-2xl text-white text-sm md:text-base"
     on:submit|preventDefault={close}
@@ -30,10 +41,25 @@
             <span class="camera-help-tile"><IconCamera font-size="20" /></span>
             <span class="camera-help-tile"><IconMicrophone font-size="20" /></span>
         </div>
-        <h2 class="u-text-gradient m-0 text-lg font-bold leading-6">{$LL.camera.help.title()}</h2>
-        <p class="m-0 text-sm leading-5 text-white/70">{$LL.camera.help.why()}</p>
+        <h2 class="u-text-gradient m-0 text-lg font-bold leading-6">
+            {iosKind ? $LL.camera.help.iosTitle() : $LL.camera.help.title()}
+        </h2>
+        <p class="m-0 text-sm leading-5 text-white/70">
+            {iosKind ? $LL.camera.help.iosWhy() : $LL.camera.help.why()}
+        </p>
 
-        {#if showDetails}
+        <button
+            type="button"
+            class="u-cta m-0 flex h-11 w-full items-center justify-center rounded-xl px-4 text-sm font-bold"
+            on:click|preventDefault={retryCameraAccess}>{$LL.camera.help.tryAgain()}</button
+        >
+
+        {#if iosKind}
+            <CameraBlockedSteps kind={iosKind} />
+            {#if $cameraRetriedStore}
+                <p class="m-0 text-start text-xs leading-5 text-white/70">{$LL.camera.help.tryAgainDone()}</p>
+            {/if}
+        {:else if showDetails}
             <div class="w-full text-start">
                 <p
                     class="m-0 flex items-center gap-2 rounded-xl border border-solid border-danger/40 bg-danger/15 px-3 py-2 text-sm font-semibold text-white"
@@ -59,11 +85,13 @@
         {/if}
     </section>
     <section class="flex flex-col gap-2 px-5 pb-5">
-        <button
-            type="button"
-            class="u-cta m-0 flex h-11 w-full items-center justify-center rounded-xl px-4 text-sm font-bold"
-            on:click|preventDefault={allow}>{$LL.camera.help.allow()}</button
-        >
+        {#if !iosKind}
+            <button
+                type="button"
+                class="u-cta-secondary m-0 flex h-11 w-full items-center justify-center rounded-xl px-4 text-sm font-bold"
+                on:click|preventDefault={toggleDetails}>{$LL.camera.enable.howToAllow()}</button
+            >
+        {/if}
         <button
             type="submit"
             class="m-0 flex h-10 w-full items-center justify-center rounded-xl bg-transparent px-4 text-sm font-semibold text-white/70 hover:bg-white/10 hover:text-white"
