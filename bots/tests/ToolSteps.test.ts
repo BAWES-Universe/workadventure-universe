@@ -19,7 +19,24 @@ describe('ToolSteps', () => {
             done: 'Used Make a song',
             detail: 'upbeat 8-bit funk',
             group: 'tool:generate_music',
+            kind: 'write',
         });
+    });
+
+    it('tells reading, searching and writing apart for the emoji beside the Woka (#1667)', () => {
+        expect(describeStep({ id: 'a', name: 'read_web_page', arguments: { url: 'https://x.test' } }).kind).toBe('read');
+        expect(describeStep({ id: 'a', name: 'web_search' }).kind).toBe('search');
+        expect(describeStep({ id: 'a', name: 'doc_lookup' }).kind).toBe('search');
+        expect(describeStep({ id: 'a', name: 'fetch_page' }, 'Open a page').kind).toBe('read');
+        expect(describeStep({ id: 'a', name: 'generate_music' }).kind).toBe('write');
+        expect(describeStep({ id: 'a', name: 'webSearch' }).kind).toBe('search');
+        // Whole words only: these merely contain "read" or "load"
+        expect(describeStep({ id: 'a', name: 'upload_file' }).kind).toBe('write');
+        expect(describeStep({ id: 'a', name: 'make_spreadsheet' }).kind).toBe('write');
+        expect(describeStep({ id: 'a', name: 'send_payload' }).kind).toBe('write');
+        const steps = new ReplySteps(0);
+        steps.start([describeStep({ id: 'a', name: 'web_search' })]);
+        expect(steps.field().steps[0].kind).toBe('search');
     });
 
     it('says "Using" while it runs and "Used" once done, so a name never reads as an order', () => {
@@ -164,5 +181,17 @@ describe('ToolSteps', () => {
         expect(field.steps[0].note).toBe('No answer. May have finished');
         expect(field.line).toBe('2 steps');
         expect(steps.text()).toBe("2 steps · 1 didn't work · 1 no answer");
+    });
+
+    it('shows a call once when it is announced as it begins and again with its arguments, filling in what it is about', () => {
+        const steps = new ReplySteps(0);
+        steps.start([{ id: 'a', doing: 'Making an artifact', done: 'Made an artifact', group: 'make_artifact', kind: 'write' }]);
+        steps.start([{ id: 'a', doing: 'Making an artifact', done: 'Made an artifact', detail: 'Moon base', group: 'make_artifact', kind: 'write' }]);
+        expect(steps.size).toBe(1);
+        expect(steps.field().steps).toMatchObject([{ doing: 'Making an artifact', detail: 'Moon base', state: 'running' }]);
+        // A later call with the same id, once the first ended, is a new call
+        steps.finish([{ id: 'a', ok: true }]);
+        steps.start([{ id: 'a', doing: 'Making an artifact', done: 'Made an artifact', detail: 'Moon base', group: 'make_artifact' }]);
+        expect(steps.size).toBe(2);
     });
 });

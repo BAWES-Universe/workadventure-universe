@@ -5,6 +5,9 @@
  */
 import { CHANGE_ARTIFACT_TOOL, MAKE_ARTIFACT_TOOL } from './ArtifactTools';
 
+/** What a step is about, for the working emoji beside the bot's Woka (#1667): reading ("📖"), searching ("🔎") or writing ("✍️"). */
+export type StepKind = 'read' | 'search' | 'write';
+
 /** The field of the steps message, read by the game. */
 export const STEPS_KEY = 'universe.steps';
 
@@ -20,6 +23,8 @@ export interface ToolStep {
     detail?: string;
     /** Steps with the same group are counted together in the summary. */
     group: string;
+    /** What the call is about; the game shows it as the working emoji. */
+    kind?: StepKind;
 }
 
 /** How a call ended. */
@@ -43,6 +48,7 @@ export interface ShownStep {
     /** The same call with the same detail ran earlier in this reply. */
     again?: boolean;
     note?: string;
+    kind?: StepKind;
 }
 
 /** What the `universe.steps` field carries. */
@@ -73,10 +79,10 @@ const TOKEN_LIKE = /(?=[A-Za-z0-9_-]*\d)(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]{
 const OWN_STEPS: Record<string, (args: Record<string, unknown>) => Omit<ToolStep, 'id'>> = {
     read_web_page: (args) => {
         const where = pageName(args.url);
-        return { doing: where ? `Reading ${where}` : 'Reading a page', done: 'Read a page', detail: shown(args.url), group: 'page' };
+        return { doing: where ? `Reading ${where}` : 'Reading a page', done: 'Read a page', detail: shown(args.url), group: 'page', kind: 'read' };
     },
-    [MAKE_ARTIFACT_TOOL]: (args) => ({ doing: 'Making an artifact', done: 'Made an artifact', detail: shown(args.title), group: 'make_artifact' }),
-    [CHANGE_ARTIFACT_TOOL]: (args) => ({ doing: 'Changing an artifact', done: 'Changed an artifact', detail: shown(args.title), group: 'change_artifact' }),
+    [MAKE_ARTIFACT_TOOL]: (args) => ({ doing: 'Making an artifact', done: 'Made an artifact', detail: shown(args.title), group: 'make_artifact', kind: 'write' }),
+    [CHANGE_ARTIFACT_TOOL]: (args) => ({ doing: 'Changing an artifact', done: 'Changed an artifact', detail: shown(args.title), group: 'change_artifact', kind: 'write' }),
 };
 
 /** How a group reads in the summary, by count. Groups without one say "<done> 3 times". */
@@ -114,7 +120,23 @@ export function describeStep(call: { id: string; name: string; arguments?: unkno
         done: named ? `Used ${words}` : 'Used a tool',
         detail: detailOf(args),
         group: `tool:${call.name}`,
+        kind: kindOf(`${call.name} ${title ?? ''}`),
     };
+}
+
+/**
+ * A tool server's tool by its words: searching and reading are told apart, anything else makes something. Whole words
+ * only, so "upload", "spreadsheet" and "payload" are not mistaken for loading or reading.
+ */
+export function kindOf(words: string): StepKind {
+    const parts = words
+        .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+        .toLowerCase()
+        .split(/[^a-z]+/)
+        .filter(Boolean);
+    if (parts.some((part) => /^(search|find|lookup|query|queries)/.test(part))) return 'search';
+    if (parts.some((part) => /^(read|fetch|open|scrape|browse|load)/.test(part))) return 'read';
+    return 'write';
 }
 
 /** "generate_music" and "generateMusic" read "Generate music". */
@@ -160,6 +182,16 @@ export class ReplySteps {
 
     start(steps: ToolStep[]): void {
         for (const step of steps) {
+            // A call is announced when it begins and again when its arguments are complete: the second time only
+            // fills in what it is about
+            const begun = this.steps.find((s) => s.id === step.id && s.state === 'running');
+            if (begun) {
+                if (!begun.detail && step.detail) {
+                    begun.detail = step.detail;
+                    if (this.steps.some((s) => s !== begun && s.group === begun.group && s.detail === begun.detail)) begun.again = true;
+                }
+                continue;
+            }
             // Only a call about something can be seen to repeat: two calls without a detail may differ
             const again = !!step.detail && this.steps.some((s) => s.group === step.group && s.detail === step.detail);
             this.steps.push({ ...step, state: 'running', ...(again ? { again } : {}) });
@@ -198,13 +230,14 @@ export class ReplySteps {
             state: this.state,
             line: this.state === 'working' ? this.liveLine() : summaryOf(this.steps),
             startedAt: this.startedAt,
-            steps: this.steps.map(({ doing, done, detail, state, again, note }) => ({
+            steps: this.steps.map(({ doing, done, detail, state, again, note, kind }) => ({
                 doing,
                 done,
                 ...(detail ? { detail } : {}),
                 state,
                 ...(again ? { again } : {}),
                 ...(note ? { note } : {}),
+                ...(kind ? { kind } : {}),
             })),
         };
     }

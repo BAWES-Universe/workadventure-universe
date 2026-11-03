@@ -1,11 +1,12 @@
 import { derived, get, type Readable } from "svelte/store";
 import type { ChatMessage } from "../Connection/ChatConnection";
-import type { BotSteps } from "./BotSteps";
+import { currentStep, type BotSteps } from "./BotSteps";
 
 /**
- * While a bot's steps line is working (#1545) the line shows what it does, so the typing dots wait: they show before
- * the first tool starts and again after the last one, until the bot is done writing (#1674). The ids are the ones
- * typing members go by: the chat ID in a direct message, the space user ID in the nearby chat.
+ * While a bot's steps line shows a tool running (#1545) the line shows what it does, so the typing dots wait: they show
+ * before the first tool starts and again after the last one ends, while the bot writes its answer (#1674). The line
+ * stays "working" through that writing, so it is the running step that counts, not the line's state. The ids are the
+ * ones typing members go by: the chat ID in a direct message, the space user ID in the nearby chat.
  */
 export function workingBotIds(messages: Readable<readonly ChatMessage[]>): Readable<ReadonlySet<string>> {
     // In an array: a chat's messages are an array that is also a store, and derived would take it for a list of stores.
@@ -24,7 +25,7 @@ export function workingBotIds(messages: Readable<readonly ChatMessage[]>): Reada
             const working = new Set<string>();
             const unsubscribes = [...newest].map(([id, steps]) =>
                 steps.subscribe((value) => {
-                    if (value?.state === "working") working.add(id);
+                    if (value?.state === "working" && currentStep(value)) working.add(id);
                     else working.delete(id);
                     set(new Set(working));
                 })

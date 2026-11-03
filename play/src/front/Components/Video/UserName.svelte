@@ -35,10 +35,12 @@
         <div class="flex justify-between rounded bg-transparent">
             <div class="relative px-2 py-1 text-white text-sm bold rounded text-nowrap flex flex-col items-center">
                 <div
-                    class="w-8 @[15rem]/videomediabox:w-16 @[25rem]/videomediabox:w-32"
+                    class="relative w-8 @[15rem]/videomediabox:w-16 @[25rem]/videomediabox:w-32"
                     style="image-rendering:pixelated"
                 >
                     <Woka src={$picture ?? ""} customWidth="100%" {grayscale} />
+                    <!-- A bot's mood or work emoji (#1667) -->
+                    <slot name="mood" />
                 </div>
                 <div class="flex items-center">
                     <span class="select-none">{name}</span>

@@ -1657,6 +1657,36 @@ describe('DmReplyService history', () => {
         ]);
     });
 
+    it('says the line before a tool and starts the steps as the tool begins, so the chat shows the work from the first second', async () => {
+        const order: string[] = [];
+        const service = await stepsService(async function* () {
+            yield { content: "I'll make it.", done: false };
+            yield { content: '', done: false, toolSteps: [{ id: 'a', doing: 'Making an artifact', done: 'Made an artifact', group: 'make_artifact', kind: 'write' }] };
+            order.push('the page is still being written');
+            yield { content: '', done: false, reset: true, toolNames: [], toolSteps: [{ id: 'a', doing: 'Making an artifact', done: 'Made an artifact', detail: 'Moon base', group: 'make_artifact', kind: 'write' }] };
+            yield { content: '', done: false, toolStepResults: [{ id: 'a', ok: true }] };
+            yield { content: 'Here it is.', done: false };
+            yield { content: '', done: true, metadata: {} };
+        });
+        const shown: Array<[any, string]> = [];
+        const reply = await (service as any).replyNow(BOT, { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false }, 'make a page', [], {
+            onInterimMessage: async (text: string) => void order.push(`said: ${text}`),
+            onSteps: async (field: any, text: string) => {
+                shown.push([structuredClone(field), text]);
+                order.push(`line: ${text}`);
+            },
+        });
+        expect(reply.text).toBe('Here it is.');
+        // Both came before the page was written, and the reset said nothing again
+        expect(order.slice(0, 3)).toEqual(["said: I'll make it.", 'line: Making an artifact…', 'the page is still being written']);
+        expect(order.filter((entry) => entry.startsWith('said:'))).toHaveLength(1);
+        expect(shown[0][0].steps).toMatchObject([{ state: 'running' }]);
+        expect(shown[0][0].steps[0].detail).toBeUndefined();
+        // The reset filled in what it was about, on the same step
+        expect(shown[1][0].steps).toMatchObject([{ state: 'running', detail: 'Moon base' }]);
+        expect(shown.at(-1)![0]).toMatchObject({ state: 'done', steps: [{ state: 'done', detail: 'Moon base' }] });
+    });
+
     it("shows no steps when the bot's Show tool calls switch is off", async () => {
         const onSteps = vi.fn(async () => undefined);
         const service = await stepsService(async function* () {

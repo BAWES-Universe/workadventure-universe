@@ -120,4 +120,26 @@ describe('withNearbySteps', () => {
         await read(withNearbySteps(reply(toolRound), line));
         expect(sent).toEqual([]);
     });
+
+    it('starts the line when calls begin, and keeps that chunk from the reply, which waits for the reset', async () => {
+        const { sent, line } = lineFor();
+        const begun = { id: 'a', doing: 'Make a song', done: 'Make a song', group: 'tool:generate_music' };
+        const seen = await read(
+            withNearbySteps(
+                reply([
+                    { content: 'On it', done: false },
+                    { content: '', done: false, toolSteps: [begun] },
+                    { content: '', done: false, reset: true, toolNames: ['generate_music'], toolSteps: [song('a', 'funk')] },
+                    { content: '', done: false, toolStepResults: [{ id: 'a', ok: true }] },
+                    { content: 'Here it is', done: false },
+                    { content: '', done: true },
+                ]),
+                line
+            )
+        );
+        expect(seen.filter((chunk) => chunk.toolSteps).map((chunk) => chunk.reset)).toEqual([true]);
+        // The line was there from the first chunk, and the reset only filled it in
+        expect(sent[0].field.steps).toMatchObject([{ state: 'running' }]);
+        expect(sent[1].field.steps).toMatchObject([{ state: 'running', detail: 'funk' }]);
+    });
 });

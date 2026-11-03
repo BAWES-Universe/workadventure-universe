@@ -113,6 +113,8 @@ Each bubble picks its own hearing and speaking provider. `session.open` may carr
 * `speech`: `{ adapter, model, voiceId, key, endpoint?, region?, language? }`, who speaks for the bot in this bubble.
 * `expression`: `restrained`, `natural` or `expressive`, how much feeling the voice puts in (each connector maps it to what
   its provider offers). Handed to the speech connector with every reply.
+* `turnSeconds`: a whole number from 5 to 3600, the longest stretch of one person's speech taken in this bubble (Orbit's voice limit, #1669).
+  Without it `VOICE_MAX_UTTERANCE_SECONDS` applies.
 
 `adapter` is the lowercase name Orbit stores (`soniox`, `elevenlabs`, `deepgram`, `cartesia`...). The worker has a registry of
 connectors by that name (`src/connectors.ts`); a provider is one small file implementing `RecognitionConnector` or
