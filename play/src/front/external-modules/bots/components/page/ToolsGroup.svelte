@@ -124,7 +124,7 @@
     {#if design !== "live"}
         <button type="button" class="bp-set bp-link" data-testid="tools-asking-row" on:click={() => onOpenScreen?.({ k: "asking" })}>
             <span class="bp-tx">
-                <span class="bp-t">Checking with people</span>
+                <span class="bp-t">Asking for approvals</span>
                 <span class="bp-m">Before it changes, deletes or sends something, or makes more than 5 things, it asks the person first</span>
             </span>
             <IconChevronRight font-size="18" />

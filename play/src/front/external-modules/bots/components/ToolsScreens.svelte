@@ -26,6 +26,14 @@
         search = "";
         openTool = null;
     }
+    /** Prototype: tool names on the heading cards (names=0 shows the count only, as approved first) */
+    const names = typeof location === "undefined" || new URLSearchParams(location.search).get("names") !== "0";
+    /** How many names a card shows before "+N more" (all of them when only one more would be hidden) */
+    const BADGES = 6;
+    function openOne(id: string, kind: ToolKind, tool: string) {
+        go({ k: "heading", id, kind });
+        openTool = tool;
+    }
     function back() {
         if (stack.length <= 1) onClose();
         else stack = stack.slice(0, -1);
@@ -55,7 +63,7 @@
     // The title in the panel's header, like the other inner screens
     $: title =
         current.k === "asking"
-            ? "Checking with people"
+            ? "Asking for approvals"
             : current.k === "kind"
             ? KIND_TITLE[current.kind]
             : current.k === "heading"
@@ -317,6 +325,29 @@
                                 <button type="button" class="ts-open" on:click={() => (shown = { ...shown, [kind]: false })}
                                     >Hide tools</button
                                 >
+                            {:else if names}
+                                <!-- The tools' names right on the card: the first few, then how many more -->
+                                {@const first = list.length <= BADGES + 1 ? list : list.slice(0, BADGES)}
+                                <div class="ts-badges" data-testid="tools-names-{kind}">
+                                    {#each first as tool (tool.name)}
+                                        <button
+                                            type="button"
+                                            class="ts-badge"
+                                            class:new={!tool.reviewedBy}
+                                            on:click={() => server && openOne(server.id, kind, tool.name)}>{tool.title}</button
+                                        >
+                                    {/each}
+                                    {#if list.length > first.length}
+                                        <button
+                                            type="button"
+                                            class="ts-badge ts-more"
+                                            data-testid="tools-open-{kind}"
+                                            on:click={() => server && go({ k: "heading", id: server.id, kind })}
+                                            >+{list.length - first.length} more</button
+                                        >
+                                    {/if}
+                                </div>
+                                {#if toCheck(list)}<span class="ts-warn">{toCheck(list)} to check</span>{/if}
                             {:else}
                                 <button
                                     type="button"
@@ -553,6 +584,30 @@
         flex-direction: row;
         gap: 10px;
         align-items: baseline;
+    }
+    .ts-badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+    .ts-badge {
+        min-height: 36px;
+        padding: 0 12px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.05);
+        color: #fff;
+        font: inherit;
+        font-size: 13px;
+        cursor: pointer;
+    }
+    .ts-badge.new {
+        color: #fcd34d;
+        border-color: rgba(252, 211, 77, 0.35);
+    }
+    .ts-badge.ts-more {
+        font-weight: 600;
+        color: #c4b5fd;
     }
     .ts-warn {
         font-size: 12.5px;
