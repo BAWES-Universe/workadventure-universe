@@ -23,6 +23,7 @@
     import { StringUtils } from "../../Utils/StringUtils";
     import { popupStore } from "../../Stores/PopupStore";
     import { showHelpCameraSettings } from "../../Stores/HelpSettingsStore";
+    import { markCameraRefused } from "../../Stores/CameraRetryStore";
     import { currentInstallEnvironment } from "../../Install/InstallPlatform";
     import { cameraHelpKindFor } from "../../WebRtc/CameraHelp";
     import bgMap from "../images/map-exemple.png";
@@ -214,6 +215,8 @@
 
     function howToAllow() {
         helpAsked = true;
+        // The card may have been closed before (that forgets the refusal): the screen knows the camera is blocked
+        if (cameraBlocked) markCameraRefused();
         showHelpCameraSettings();
     }
 
