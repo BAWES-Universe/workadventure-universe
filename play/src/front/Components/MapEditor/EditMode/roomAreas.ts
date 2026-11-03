@@ -31,7 +31,9 @@ function keyOf(areas: AreaData[]): string {
 
 /** The areas of the room for the Areas lists, reread every second while a list is shown. */
 export const roomAreasStore = readable<AreaData[]>([], (set) => {
-    let key = "";
+    // Nothing read yet: the first read always sets the list, even an empty one, so a room with no areas replaces the
+    // list the previous room left behind (a readable keeps its last value between two subscriptions).
+    let key: string | undefined;
     const refresh = () => {
         const next = loadAreas();
         const nextKey = keyOf(next);
