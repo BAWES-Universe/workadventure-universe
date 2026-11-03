@@ -29,10 +29,11 @@
     /** Prototype: tool names on the heading cards (names=0 shows the count only, as approved first) */
     const names = typeof location === "undefined" || new URLSearchParams(location.search).get("names") !== "0";
     /** How many names a card shows before "+N more" (all of them when only one more would be hidden) */
-    const BADGES = 6;
-    function openOne(id: string, kind: ToolKind, tool: string) {
-        go({ k: "heading", id, kind });
-        openTool = tool;
+    const NAMES = 3;
+    /** The first few tool names, quiet, under the count: "List issues, Get issue, List comments +18 more" */
+    function nameLine(list: KindedTool[]): { names: string; more: string } {
+        if (list.length <= NAMES + 1) return { names: list.map((t) => t.title).join(", "), more: "" };
+        return { names: list.slice(0, NAMES).map((t) => t.title).join(", "), more: `+${list.length - NAMES} more` };
     }
     function back() {
         if (stack.length <= 1) onClose();
@@ -80,6 +81,12 @@
         make: "Makes new things",
         change: "Changes things",
         send: "Deletes or sends out",
+    };
+    /** What the picked choice does, said under it so it never reads as a tab */
+    const RUN_SAYS: Record<ToolRun, string> = {
+        run: "Uses them without asking anyone.",
+        ask: "Shows the person a card and waits for their tap, every time.",
+        off: "Never uses them.",
     };
     const KIND_HINT: Record<ToolKind, string> = {
         look: "Reads and finds things. Changes nothing.",
@@ -269,13 +276,22 @@
                     >
                 </div>
             {/if}
+            <p class="ts-lead">
+                {server.name}'s {tools.length} tools are sorted by what they do. For each kind, pick whether {botName}
+                uses them right away, asks first, or never.
+            </p>
             <label class="ts-search">
                 <IconSearch font-size="16" />
-                <input type="search" placeholder="Find a tool in {server.name}" aria-label="Find a tool" bind:value={search} />
+                <input
+                    type="search"
+                    placeholder="Search all {tools.length} {server.name} tools"
+                    aria-label="Search all {tools.length} {server.name} tools"
+                    bind:value={search}
+                />
             </label>
             {#if search.trim()}
                 {@const found = tools.filter((t) => matches(t, search))}
-                <div class="ts-m">{found.length} found</div>
+                <div class="ts-m">{found.length} of {tools.length} tools match. Tap one to see where it sits and move it.</div>
                 <div class="ts-list">
                     {#each found as tool (tool.name)}
                         {@const opened = openTool === tool.name}
@@ -312,6 +328,7 @@
                                 value={server.toolKinds?.runs[kind] ?? "ask"}
                                 onPick={(run) => server && setRun(server, kind, run)}
                             />
+                            <div class="ts-says">{RUN_SAYS[server.toolKinds?.runs[kind] ?? "ask"]}</div>
                             {#if design === "b" && shown[kind]}
                                 <div class="ts-list">
                                     {#each list as tool (tool.name)}
@@ -325,29 +342,6 @@
                                 <button type="button" class="ts-open" on:click={() => (shown = { ...shown, [kind]: false })}
                                     >Hide tools</button
                                 >
-                            {:else if names}
-                                <!-- The tools' names right on the card: the first few, then how many more -->
-                                {@const first = list.length <= BADGES + 1 ? list : list.slice(0, BADGES)}
-                                <div class="ts-badges" data-testid="tools-names-{kind}">
-                                    {#each first as tool (tool.name)}
-                                        <button
-                                            type="button"
-                                            class="ts-badge"
-                                            class:new={!tool.reviewedBy}
-                                            on:click={() => server && openOne(server.id, kind, tool.name)}>{tool.title}</button
-                                        >
-                                    {/each}
-                                    {#if list.length > first.length}
-                                        <button
-                                            type="button"
-                                            class="ts-badge ts-more"
-                                            data-testid="tools-open-{kind}"
-                                            on:click={() => server && go({ k: "heading", id: server.id, kind })}
-                                            >+{list.length - first.length} more</button
-                                        >
-                                    {/if}
-                                </div>
-                                {#if toCheck(list)}<span class="ts-warn">{toCheck(list)} to check</span>{/if}
                             {:else}
                                 <button
                                     type="button"
@@ -358,9 +352,16 @@
                                             ? (shown = { ...shown, [kind]: true })
                                             : server && go({ k: "heading", id: server.id, kind })}
                                 >
-                                    <span class="ts-tx">
-                                        <span>{list.length} {list.length === 1 ? "tool" : "tools"}</span>
-                                        {#if toCheck(list)}<span class="ts-warn">{toCheck(list)} to check</span>{/if}
+                                    <span class="ts-tx ts-tx2">
+                                        <span class="ts-l1">
+                                            <span>{list.length} {list.length === 1 ? "tool" : "tools"}</span>
+                                            {#if toCheck(list)}<span class="ts-warn">{toCheck(list)} to check</span>{/if}
+                                        </span>
+                                        {#if names}{@const line = nameLine(list)}<span class="ts-names"
+                                                ><span class="ts-nm">{line.names}</span>{#if line.more}<span class="ts-more"
+                                                        >&nbsp;{line.more}</span
+                                                    >{/if}</span
+                                            >{/if}
                                     </span>
                                     <IconChevronRight font-size="18" />
                                 </button>
@@ -373,19 +374,23 @@
             {@const kind = current.kind}
             {@const list = tools.filter((t) => t.kind === kind)}
             <p class="ts-lead">{KIND_HINT[kind]}</p>
-            <PageSegment
-                label={KIND_TITLE[kind]}
-                options={runOptions(kind)}
-                value={server.toolKinds?.runs[kind] ?? "ask"}
-                onPick={(run) => server && setRun(server, kind, run)}
-            />
-            {#if list.length > 8}
-                <label class="ts-search">
-                    <IconSearch font-size="16" />
-                    <input type="search" placeholder="Find one of {list.length} tools" aria-label="Find a tool" bind:value={search} />
-                </label>
-            {/if}
-            <div class="ts-m">Tap a tool to move it to another heading.</div>
+            <div class="ts-field">
+                <div class="ts-ct">When {botName} uses these {list.length} tools</div>
+                <PageSegment
+                    label="When {botName} uses these tools"
+                    options={runOptions(kind)}
+                    value={server.toolKinds?.runs[kind] ?? "ask"}
+                    onPick={(run) => server && setRun(server, kind, run)}
+                />
+                <div class="ts-says">{RUN_SAYS[server.toolKinds?.runs[kind] ?? "ask"]}</div>
+            </div>
+            <div class="ts-field">
+                <div class="ts-ct">{list.length} tools <span class="ts-count">from {server.name}</span></div>
+                <div class="ts-m">
+                    Tap a tool to move it under another heading, like {KIND_TITLE[kind === "change" ? "send" : "change"]}. It then
+                    follows that heading's choice.
+                </div>
+            </div>
             <div class="ts-list">
                 {#each list.filter((t) => matches(t, search)) as tool (tool.name)}
                     {@const opened = openTool === tool.name}
@@ -580,34 +585,49 @@
         text-align: start;
         cursor: pointer;
     }
+    .ts-open .ts-tx.ts-tx2 {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 2px;
+        padding: 6px 0;
+    }
+    .ts-l1 {
+        display: flex;
+        gap: 10px;
+        align-items: baseline;
+    }
+    .ts-names {
+        display: flex;
+        min-width: 0;
+        font-size: 12.5px;
+        font-weight: 400;
+        line-height: 1.3;
+        color: rgba(244, 242, 250, 0.6);
+        white-space: nowrap;
+    }
+    .ts-nm {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .ts-more {
+        flex: none;
+    }
     .ts-open .ts-tx {
         flex-direction: row;
         gap: 10px;
         align-items: baseline;
     }
-    .ts-badges {
+    .ts-says {
+        font-size: 12.5px;
+        line-height: 1.3;
+        color: rgba(244, 242, 250, 0.72);
+        padding: 0 4px;
+    }
+    .ts-field {
         display: flex;
-        flex-wrap: wrap;
+        flex-direction: column;
         gap: 6px;
-    }
-    .ts-badge {
-        min-height: 36px;
-        padding: 0 12px;
-        border-radius: 999px;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        background: rgba(255, 255, 255, 0.05);
-        color: #fff;
-        font: inherit;
-        font-size: 13px;
-        cursor: pointer;
-    }
-    .ts-badge.new {
-        color: #fcd34d;
-        border-color: rgba(252, 211, 77, 0.35);
-    }
-    .ts-badge.ts-more {
-        font-weight: 600;
-        color: #c4b5fd;
     }
     .ts-warn {
         font-size: 12.5px;
