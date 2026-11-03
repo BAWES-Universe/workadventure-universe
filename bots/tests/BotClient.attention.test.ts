@@ -266,6 +266,23 @@ describe('BotClient: a bot only hears the person talking to it', () => {
         }
     });
 
+    it('keeps a person in the conversation while a spoken answer to them plays, and starts their window when it is over', async () => {
+        const t = setup();
+        await t.receive(joined(KHALID));
+        await t.receive(joined(SARA));
+        const internals = t.bot as unknown as {
+            attention: { attention(space: string, id: number, text: string): string };
+            speech: { onOver?: (space: string, person: number) => void; isSpeakingTo(person: number): boolean } | null;
+        };
+        // A voice bot's speech: Khalid's answer is playing
+        let playing = true;
+        internals.speech = { isSpeakingTo: (person: number) => playing && person === KHALID };
+        expect(internals.attention.attention(SPACE, KHALID, 'wait, one more thing')).toBe('follow-up');
+        expect(internals.attention.attention(SPACE, SARA, 'wait, one more thing')).toBe('ignored');
+        playing = false;
+        expect(internals.attention.attention(SPACE, KHALID, 'wait, one more thing')).toBe('ignored');
+    });
+
     it('hears the person it is summoned to, even without its name, until the summon ends', async () => {
         const t = setup();
         await t.receive(joined(KHALID));

@@ -489,3 +489,22 @@ describe('two voice bots in one bubble (#1670)', () => {
         expect(said).toEqual([]);
     });
 });
+
+describe('the person a spoken reply is for (#1220)', () => {
+    it('is being spoken to until the audio is over, and their follow-up window starts then', () => {
+        const t = setup();
+        const over: [string, number][] = [];
+        t.speech.onOver = (space, person) => over.push([space, person]);
+        t.speech.final(SPACE, reply(1, 7), 'A long answer.');
+        expect(t.speech.isSpeakingTo(7)).toBe(true);
+        expect(t.speech.isSpeakingTo(8)).toBe(false);
+        expect(over).toEqual([]);
+
+        t.speech.played('s1');
+        expect(t.speech.isSpeakingTo(7)).toBe(false);
+        expect(over).toEqual([[SPACE, 7]]);
+        // A segment that is not ours changes nothing
+        t.speech.played('s9');
+        expect(over).toHaveLength(1);
+    });
+});

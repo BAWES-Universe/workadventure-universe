@@ -169,7 +169,7 @@ export class BotClient {
             config.name,
             followUpSeconds(),
             (userId) => this.behavior?.isSummonedBy?.(userId) ?? false,
-            (userId) => this.behavior?.isBusyWith?.(userId) ?? false
+            (userId) => (this.behavior?.isBusyWith?.(userId) ?? false) || (this.speech?.isSpeakingTo(userId) ?? false)
         );
     }
 
@@ -2529,6 +2529,8 @@ export class BotClient {
         this.voice.onHeard = (spaceName, segmentId) => this.speech?.heard(spaceName, segmentId);
         this.voice.onSessionEnded = (spaceName) => this.speech?.sessionEnded(spaceName);
         this.voice.onPlayed = (_spaceName, segmentId) => this.speech?.played(segmentId);
+        // A spoken answer is over: the person can go on without the bot's name from now (#1220)
+        this.speech.onOver = (spaceName, personId) => this.attention.answered(spaceName, personId);
         this.voice.onCrowded =(spaceName) => this.speech?.crowded(spaceName);
         this.voice.onStopped = (spaceName, segmentId) => {
             const responseId = this.speech?.stopped(spaceName, segmentId);

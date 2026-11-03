@@ -1620,6 +1620,8 @@ export abstract class BaseBehavior {
             this.activeConversations.set(senderId, state);
         }
         state.isGenerating = true;
+        // Where the person is now: they may have come back in a new bubble since the conversation began
+        state.spaceName = spaceName;
         state.lastMessageTime = Date.now();
         state.currentTask = currentTask || state.currentTask;
         state.generation = (state.generation || 0) + 1;
