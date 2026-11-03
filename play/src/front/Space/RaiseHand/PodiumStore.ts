@@ -2,7 +2,12 @@ import type { Readable, Unsubscriber } from "svelte/store";
 import { derived, get, writable } from "svelte/store";
 import type { Subscription } from "rxjs";
 import { userCanModerateCallsStore } from "../../Stores/GameStore";
-import { isListenerStore, isSpeakerStore, listenerWaitingMediaStore } from "../../Stores/MediaStore";
+import {
+    clearAudienceTalking,
+    isListenerStore,
+    isSpeakerStore,
+    listenerWaitingMediaStore,
+} from "../../Stores/MediaStore";
 import { currentLiveStreamingSpaceStore } from "../../Stores/MegaphoneStore";
 import type { SpaceInterface, SpaceUserExtended } from "../SpaceInterface";
 import type { RaisedHand } from "./RaiseHandStore";
@@ -179,6 +184,7 @@ export function clearStageState(): void {
     isSpeakerStore.set(false);
     isListenerStore.set(false);
     listenerWaitingMediaStore.set(undefined);
+    clearAudienceTalking();
     speakInvitationStore.set(undefined);
     pendingInvitesStore.set(new Set());
     broughtOnStageStore.set(new Set());

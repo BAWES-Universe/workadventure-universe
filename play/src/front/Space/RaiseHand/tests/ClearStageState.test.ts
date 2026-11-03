@@ -4,6 +4,7 @@ import type { SpaceInterface } from "../../SpaceInterface";
 
 // Only the stores matter here: the real modules pull in the whole game (environment, devices, i18n).
 vi.mock("../../../Stores/MediaStore", () => ({
+    clearAudienceTalking: vi.fn(),
     isSpeakerStore: writable(false),
     isListenerStore: writable(false),
     listenerWaitingMediaStore: writable(undefined),
@@ -17,7 +18,12 @@ vi.mock("../RaiseHandStore", () => ({
     registerConversationSpace: vi.fn(),
 }));
 
-import { isListenerStore, isSpeakerStore, listenerWaitingMediaStore } from "../../../Stores/MediaStore";
+import {
+    clearAudienceTalking,
+    isListenerStore,
+    isSpeakerStore,
+    listenerWaitingMediaStore,
+} from "../../../Stores/MediaStore";
 import { currentLiveStreamingSpaceStore } from "../../../Stores/MegaphoneStore";
 import {
     broughtOnStageStore,
@@ -33,6 +39,7 @@ function fakeSpace(stopStreaming = vi.fn()) {
 
 describe("clearStageState (the scene closes, e.g. a portal)", () => {
     beforeEach(() => {
+        vi.mocked(clearAudienceTalking).mockClear();
         currentLiveStreamingSpaceStore.set(undefined);
         isSpeakerStore.set(false);
         isListenerStore.set(false);
@@ -69,6 +76,7 @@ describe("clearStageState (the scene closes, e.g. a portal)", () => {
         expect(get(isListenerStore)).toBe(false);
         expect(get(speakingFromAudienceStore)).toBeUndefined();
         expect(get(listenerWaitingMediaStore)).toBeUndefined();
+        expect(clearAudienceTalking).toHaveBeenCalledTimes(1);
         expect(get(speakInvitationStore)).toBeUndefined();
         expect(get(pendingInvitesStore).size).toBe(0);
         expect(get(broughtOnStageStore).size).toBe(0);
