@@ -11,8 +11,8 @@
     } from "../../Stores/CameraRetryStore";
     import { currentInstallEnvironment } from "../../Install/InstallPlatform";
     import { cameraHelpKindFor } from "../../WebRtc/CameraHelp";
-    import { IconCamera, IconInfoCircle, IconMicrophone } from "@wa-icons";
     import CameraBlockedSteps from "./CameraBlockedSteps.svelte";
+    import { IconCamera, IconInfoCircle, IconMicrophone } from "@wa-icons";
 
     let isAndroid = isAndroidFct();
     let isFirefox = getNavigatorType() === NavigatorType.firefox;

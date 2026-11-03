@@ -20,6 +20,7 @@ import {
 } from "../WebRtc/BackgroundProcessor/createBackgroundTransformer";
 import { waitForFirstVideoFrame } from "../WebRtc/BackgroundProcessor/waitForFirstVideoFrame";
 import { NoiseSuppressionTransformer } from "../WebRtc/NoiseSuppression/NoiseSuppressionTransformer";
+import { retryPlanFor } from "../WebRtc/CameraHelp";
 import { LL } from "../../i18n/i18n-svelte";
 import { MediaStreamConstraintsError } from "./Errors/MediaStreamConstraintsError";
 import { BrowserTooOldError } from "./Errors/BrowserTooOldError";
@@ -32,7 +33,6 @@ import { inExternalServiceStore, myCameraStore, myMicrophoneStore, proximityMeet
 import { userMovingStore } from "./GameStore";
 import { hideHelpCameraSettings } from "./HelpSettingsStore";
 import { cameraWasRefused, clearCameraRefused, markCameraRefused, setCameraRetryHandler } from "./CameraRetryStore";
-import { retryPlanFor } from "../WebRtc/CameraHelp";
 import { isLiveStreamingStore } from "./IsStreamingStore";
 import { videoStreamElementsStore } from "./PeerStore";
 import { bubbleMatesStore } from "./CurrentPlayerGroupStore";
