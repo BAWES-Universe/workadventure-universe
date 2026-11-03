@@ -7,6 +7,7 @@ import { MapStore } from "@workadventure/store-utils";
 import { readBotStatusNote, type BotStatusNote } from "../../Bots/BotChatStatus";
 import { readBotRoomLink, type BotRoomLink } from "../../Bots/BotRoomLink";
 import { readBotReplyLimit, type BotReplyLimit } from "../../Bots/BotReplyLimit";
+import { parseBotAsk, type BotAsk } from "../../Bots/BotAsk";
 import { readArtifactField, type ArtifactCard } from "../../../Artifacts/artifactCard";
 import { readBotSteps, type BotSteps } from "../../Bots/BotSteps";
 import type { ChatMessage, ChatMessageContent, ChatMessageType, ChatUser, SharedFileInfo } from "../ChatConnection";
@@ -62,6 +63,8 @@ export class MatrixChatMessage implements ChatMessage {
     readonly roomLink: BotRoomLink | undefined;
     readonly replyLimit: BotReplyLimit | undefined;
     readonly artifact: ArtifactCard | undefined;
+    /** A bot's card waiting for one person (prototype): an approval or a question. */
+    readonly ask: BotAsk | undefined;
     /** A bot's steps line (#1545): the bot server updates this one message while the bot works. */
     readonly steps: Writable<BotSteps | undefined>;
     readonly canReact = writable(true);
@@ -84,6 +87,7 @@ export class MatrixChatMessage implements ChatMessage {
             room.getMember(event.getSender() ?? "")?.name ?? ""
         );
         this.artifact = readArtifactField(event.getSender(), event.getOriginalContent());
+        this.ask = this.botStatus === undefined ? parseBotAsk(event.getOriginalContent()["universe.ask"]) : undefined;
         this.steps = writable(readBotSteps(event.getSender(), this.stepsContent()));
         this.date = event.getDate();
         this.sender = this.getSender();

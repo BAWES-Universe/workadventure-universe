@@ -3,7 +3,9 @@
 
 export type RuleValue = "yes" | "no" | "default";
 /** What a rule can say something about. `dm` is direct messages, from anywhere. */
-export type RuleAction = "chat" | "dm" | "summon" | "manage";
+// change and send (prototype): two new Bots permissions. Making the bot change things (a Linear issue, a post) or
+// delete and send things (email, deleting) with the bot's own connections.
+export type RuleAction = "chat" | "dm" | "summon" | "manage" | "change" | "send";
 
 export interface BotRule {
     id: string;
@@ -16,6 +18,8 @@ export interface BotRule {
     dm: RuleValue;
     summon: RuleValue;
     manage: RuleValue;
+    change: RuleValue;
+    send: RuleValue;
 }
 
 export interface BotRole {
@@ -36,7 +40,7 @@ export interface BotPermissions {
     roles: BotRole[];
 }
 
-export const SHOWN_ACTIONS: readonly RuleAction[] = ["chat", "dm", "summon", "manage"];
+export const SHOWN_ACTIONS: readonly RuleAction[] = ["chat", "dm", "summon", "change", "send", "manage"];
 
 /** Longest line Orbit keeps for people who may not chat with the bot */
 export const REFUSAL_REPLY_MAX = 500;
@@ -76,6 +80,8 @@ export function readRule(raw: unknown): BotRule | undefined {
         dm: value(rule.dm),
         summon: value(rule.summon),
         manage: value(rule.manage),
+        change: value(rule.change),
+        send: value(rule.send),
     };
 }
 
@@ -99,6 +105,8 @@ export function readPermissions(raw: unknown): BotPermissions {
                           dm: defaults.dm === true,
                           summon: defaults.summon === true,
                           manage: defaults.manage === true,
+                          change: defaults.change === true,
+                          send: defaults.send === true,
                       },
                   },
               ];
@@ -136,7 +144,7 @@ export function rolesWithoutRule(permissions: BotPermissions): BotRole[] {
 
 /** A row that says nothing but Default everywhere adds nothing: it is the same as no row */
 export function saysNothing(rule: BotRule): boolean {
-    return (["chat", "dm", "summon", "manage"] as const).every((action) => rule[action] === "default");
+    return (["chat", "dm", "summon", "manage", "change", "send"] as const).every((action) => rule[action] === "default");
 }
 
 export interface DefaultFor {

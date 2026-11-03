@@ -115,6 +115,8 @@ export function computeVoiceView(
 }
 
 const views = writable<ReadonlyMap<SpaceInterface, VoiceSpaceView>>(new Map());
+/** Mock only: lets the mock page show the Voice button for a stand-in bot. */
+export const mockVoiceViews = views;
 
 /** The space whose first voice bot the button is for: the first one we are in with one. */
 export const currentVoiceSpaceStore: Readable<VoiceSpaceView | undefined> = derived(views, ($views) => {

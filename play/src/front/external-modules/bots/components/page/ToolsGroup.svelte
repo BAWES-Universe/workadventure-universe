@@ -84,6 +84,39 @@
               })
             : page.tools.modelStops({ model: shortName(stopsAtModel.model), limit: tokensLabel(stopsAtModel.tokens) })
         : null;
+    // Prototype choices, with the recommended ones picked
+    const askDirection = [
+        { value: "rarely", label: "Rarely" },
+        { value: "big", label: "Before bigger jobs" },
+        { value: "never", label: "Never" },
+    ];
+    let direction = "rarely";
+    const batchChoices = [
+        { value: 3, label: "3" },
+        { value: 5, label: "5" },
+        { value: 10, label: "10" },
+        { value: 0, label: "No limit" },
+    ];
+    let batch = 5;
+    const waitChoices = [
+        { value: 5, label: "5 min" },
+        { value: 10, label: "10 min" },
+        { value: 30, label: "30 min" },
+    ];
+    let wait = 10;
+    const quietChoices = [
+        { value: 30, label: "30 min" },
+        { value: 60, label: "1 hour" },
+        { value: 120, label: "2 hours" },
+    ];
+    let quiet = 60;
+    const mostChoices = [
+        { value: 4, label: "4 hours" },
+        { value: 8, label: "8 hours" },
+        { value: 24, label: "24 hours" },
+    ];
+    let most = 8;
+    let allowedChats = 2;
     $: stepLimit = limitChips(ceiling?.steps ?? null, STEP_CHOICES, bot.maxSteps, String, page.tools);
 </script>
 
@@ -118,6 +151,41 @@
             onPick={(steps) => onChange({ ...bot, maxSteps: steps || null })}
         />
     </PageField>
+    <!-- Prototype: when the bot asks before a big job, how long a card waits, and the batch limit -->
+    <PageField
+        title="Asks which way to go"
+        hint="Before a long or costly job that could go very different ways. Otherwise it picks and says what it picked."
+    >
+        <PageChips label="Asks which way to go" options={askDirection} value={direction} onPick={(v) => (direction = v)} />
+    </PageField>
+    <PageField title="Asks before making more than" hint="The same kind of thing, like images or songs, in one reply">
+        <PageChips label="Asks before making more than" options={batchChoices} value={batch} onPick={(v) => (batch = v)} />
+    </PageField>
+    <PageField title="A card waits for an answer" hint="Then it does nothing and says so">
+        <PageChips label="A card waits for an answer" options={waitChoices} value={wait} onPick={(v) => (wait = v)} />
+    </PageField>
+    <PageField
+        title="“Allow more” ends when quiet for"
+        hint="After someone taps “allow more” on a card, it ends once they send nothing for this long"
+    >
+        <PageChips label="Allow more ends when quiet for" options={quietChoices} value={quiet} onPick={(v) => (quiet = v)} />
+    </PageField>
+    <PageField title="“Allow more” ends after at most" hint="Even in a busy chat, and always when the person leaves">
+        <PageChips label="Allow more ends after at most" options={mostChoices} value={most} onPick={(v) => (most = v)} />
+    </PageField>
+    <div class="bp-set" data-testid="bot-allowed-more">
+        <span class="bp-tx">
+            <span class="bp-t">Allowed more right now</span>
+            <span class="bp-m"
+                >{allowedChats
+                    ? `${allowedChats} chats: Khalid for WEB issues, Omar for MAP issues`
+                    : "None. Every change asks first again."}</span
+            >
+        </span>
+        {#if allowedChats}
+            <button type="button" class="bp-end" on:click={() => (allowedChats = 0)}>End all</button>
+        {/if}
+    </div>
     <label class="bp-set" for="bot-show-tool-calls-{bot.id}">
         <span class="bp-tx">
             <span class="bp-t">{page.tools.showToolCalls()}</span>
@@ -160,6 +228,17 @@
     .bp-t {
         font-size: 13px;
         font-weight: 600;
+    }
+    .bp-end {
+        flex: none;
+        min-height: 36px;
+        padding: 0 14px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(255, 255, 255, 0.06);
+        font-size: 13px;
+        font-weight: 600;
+        color: #fca5a5;
     }
     .bp-m {
         font-size: 12.5px;

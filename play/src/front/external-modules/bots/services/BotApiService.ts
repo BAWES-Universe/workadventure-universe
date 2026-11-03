@@ -1578,6 +1578,14 @@ export interface McpServer {
         error: string | null;
     } | null;
     createdAt: string;
+    /** What each tool does and whether it runs, asks first or is off (prototype). */
+    toolKinds?: {
+        tools: import("../toolKindsModel").KindedTool[];
+        runs: Record<import("../toolKindsModel").ToolKind, import("../toolKindsModel").ToolRun>;
+        openTool?: string;
+        reviewRequired?: boolean;
+        legacy?: boolean;
+    };
 }
 
 export interface CreateMcpServerDto {

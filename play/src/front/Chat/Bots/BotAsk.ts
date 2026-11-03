@@ -1,0 +1,69 @@
+/**
+ * A bot's card that waits for one person (prototype): an approval before a tool changes, deletes or sends something,
+ * or a question with a few directions before a big job. It travels in the `universe.ask` field of a notice whose body
+ * says the same in plain words, so other chat apps can read it. The card's own last row takes a typed answer.
+ */
+export type BotAskKind = "approval" | "question";
+
+export interface BotAskOption {
+    id: string;
+    label: string;
+    /** One short line under the label (question cards). */
+    detail?: string;
+    /** The action itself: the one gradient button of an approval. */
+    main?: boolean;
+    /** Ticked, on a question that takes more than one answer. */
+    picked?: boolean;
+}
+
+export interface BotAsk {
+    id: string;
+    kind: BotAskKind;
+    /** The tool's own title ("Create a Linear issue") or the question. */
+    title: string;
+    /** What exactly happens: team, title, recipient, text. Approval cards only. */
+    lines?: Array<{ label?: string; text: string }>;
+    /** Whose account acts, when it isn't the person asking ("Khalid's Linear"). */
+    actsAs?: string;
+    /** "Asks every time": deletes and sends out. */
+    everyTime?: boolean;
+    /** What the tool does isn't confirmed yet: only people who manage the bot get here, and every use asks. */
+    notReviewed?: boolean;
+    /** Where to look when the bot couldn't confirm the outcome ("Linear" and a link). */
+    checkAt?: { label: string; url: string };
+    options: BotAskOption[];
+    /** A question that takes more than one answer: options tick, and Continue sends them. */
+    multi?: boolean;
+    /** A queued card behind this one that closes soon, so its warning is not hidden. */
+    queuedClosingSoon?: boolean;
+    /** The one person who can answer, and their name for everyone else. */
+    asker: string;
+    askerName: string;
+    expiresAt: number;
+    /** Once answered or gone: which option, or typed, or expired. After an option ran: its result line, or that the
+     * outcome couldn't be confirmed. */
+    answer?: { option?: string; picked?: string[]; spoken?: boolean; allowedMore?: string; typed?: boolean; expired?: boolean; closed?: boolean; result?: string; unknown?: boolean };
+}
+
+/** The ask a bot's notice carries, or undefined. */
+export function parseBotAsk(value: unknown): BotAsk | undefined {
+    if (!value || typeof value !== "object") return undefined;
+    const field = value as Record<string, unknown>;
+    if (field.v !== 1 || (field.kind !== "approval" && field.kind !== "question")) return undefined;
+    if (typeof field.id !== "string" || typeof field.title !== "string" || !Array.isArray(field.options)) return undefined;
+    return field as unknown as BotAsk;
+}
+
+/** The cards still waiting for you, oldest first. */
+export function allWaitingForMe(asks: Array<BotAsk | undefined>, me: string | undefined, now: number): BotAsk[] {
+    return asks.filter((ask): ask is BotAsk => !!ask && !ask.answer && ask.asker === me && ask.expiresAt > now);
+}
+
+/** The newest card still waiting for you. */
+export function waitingForMe(asks: Array<BotAsk | undefined>, me: string | undefined, now: number): BotAsk | undefined {
+    for (let i = asks.length - 1; i >= 0; i--) {
+        const ask = asks[i];
+        if (ask && !ask.answer && ask.asker === me && ask.expiresAt > now) return ask;
+    }
+    return undefined;
+}

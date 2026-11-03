@@ -63,6 +63,8 @@
                 dm: access.actions.dm(),
                 summon: access.actions.summon(),
                 manage: access.actions.manage(),
+                change: "Change things",
+                send: "Delete or send",
             },
             allowsAndBlocks: (allows, blocks) => access.allowsAndBlocks({ allows, blocks }),
             blocksOnly: (blocks) => access.blocksOnly({ blocks }),
