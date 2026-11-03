@@ -23,10 +23,9 @@
     let showDetails = false;
     // iPhone and iPad have no address bar to point at: they get the steps in order, always visible. Computers and
     // Android keep the pictures behind "How to allow".
-    const iosKind = (() => {
-        const kind = cameraHelpKindFor(currentInstallEnvironment());
-        return hint || kind === "other" ? undefined : kind;
-    })();
+    // Reactive: the same card is reused in place when it is opened again with another hint value
+    const helpKind = cameraHelpKindFor(currentInstallEnvironment());
+    $: iosKind = hint || helpKind === "other" ? undefined : helpKind;
 
     function toggleDetails() {
         showDetails = !showDetails;
