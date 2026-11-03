@@ -168,7 +168,8 @@ export class BotClient {
         this.attention = new BotAttention(
             config.name,
             followUpSeconds(),
-            (userId) => this.behavior?.isSummonedBy?.(userId) ?? false
+            (userId) => this.behavior?.isSummonedBy?.(userId) ?? false,
+            (userId) => this.behavior?.isBusyWith?.(userId) ?? false
         );
     }
 
@@ -487,6 +488,8 @@ export class BotClient {
         }
         this.behavior = behavior;
         behavior.setBot(this);
+        // Who the bot has just answered can go on without its name for a while (#1220)
+        behavior.onAnswerFinished = (userId, spaceName) => this.attention.answered(spaceName, userId);
     }
 
     /**
@@ -3159,7 +3162,6 @@ export class BotClient {
                         const textUrls = this.extractUrlsFromText(chatMessage);
                         const detectedUrl = textUrls[0] || undefined;
                         const detectedMime = detectedUrl ? await this.inferMimeTypeFromUrl(detectedUrl) : undefined;
-                        this.attention.began(message.updateSpaceUserMessage.spaceName, message.updateSpaceUserMessage.userId ?? 0);
                         this.behavior.onChatMessage(
                             message.updateSpaceUserMessage.spaceName,
                             chatMessage,
@@ -3168,8 +3170,7 @@ export class BotClient {
                             undefined,
                             detectedMime,
                             textUrls.length > 1 ? textUrls.slice(1) : undefined
-                        ).then(() => this.attention.ended(message.updateSpaceUserMessage.spaceName, message.updateSpaceUserMessage.userId ?? 0, true)).catch(error => {
-                            this.attention.ended(message.updateSpaceUserMessage.spaceName, message.updateSpaceUserMessage.userId ?? 0, false);
+                        ).catch(error => {
                             console.error(`[Bot ${this.config.botId}] onChatMessage error:`, error);
                             Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
                         });
@@ -3290,7 +3291,6 @@ export class BotClient {
                         const detectedMime: string | null | undefined = detectedUrl && !spaceMessage.mimeType
                             ? await this.inferMimeTypeFromUrl(detectedUrl)
                             : spaceMessage.mimeType;
-                        this.attention.began(spaceName, senderId);
                         this.behavior.onChatMessage(
                             spaceName,
                             spaceMessage.message,
@@ -3300,8 +3300,7 @@ export class BotClient {
                             detectedMime,
                             galleryUrls.length > 0 ? galleryUrls : undefined,
                             BotClient.uploadsOf(spaceMessage, detectedMime)
-                        ).then(() => this.attention.ended(spaceName, senderId, true)).catch(error => {
-                            this.attention.ended(spaceName, senderId, false);
+                        ).catch(error => {
                             console.error(`[Bot ${this.config.botId}] onChatMessage error:`, error);
                             Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
                         });

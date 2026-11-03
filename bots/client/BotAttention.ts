@@ -45,8 +45,6 @@ export class BotAttention {
     private readonly people = new Map<string, Set<number>>();
     /** When the bot last answered each person, by space. */
     private readonly answeredAt = new Map<string, Map<number, number>>();
-    /** How many of a person's lines the bot is working on right now, by space: they are in the conversation until it is done. */
-    private readonly working = new Map<string, Map<number, number>>();
 
     constructor(
         botName: string,
@@ -54,6 +52,8 @@ export class BotAttention {
         readonly followUpSeconds: number,
         /** Whether the bot is on a summon to this person right now. The summon itself says when that ends. */
         private readonly isSummonedBy: (userId: number) => boolean = () => false,
+        /** Whether the bot is answering this person right now, or has their earlier line waiting its turn. */
+        private readonly isBusyWith: (userId: number) => boolean = () => false,
         private readonly now: () => number = Date.now
     ) {
         this.name = plainWords(botName);
@@ -71,14 +71,12 @@ export class BotAttention {
     personLeft(spaceName: string, userId: number): void {
         this.people.get(spaceName)?.delete(userId);
         this.answeredAt.get(spaceName)?.delete(userId);
-        this.working.get(spaceName)?.delete(userId);
     }
 
     /** The bot left the space: nobody's window carries over to the next time. */
     spaceLeft(spaceName: string): void {
         this.people.delete(spaceName);
         this.answeredAt.delete(spaceName);
-        this.working.delete(spaceName);
     }
 
     /** More than the speaker is in the bubble. The speaker counts even if their join was not seen yet. */
@@ -107,7 +105,7 @@ export class BotAttention {
         if (this.isNamed(text)) return 'named';
         if (this.isSummonedBy(speakerId)) return 'summoned';
         // A follow-up sent while the bot is still answering is part of that conversation (it may change or add to the ask)
-        if ((this.working.get(spaceName)?.get(speakerId) ?? 0) > 0) return 'follow-up';
+        if (this.isBusyWith(speakerId)) return 'follow-up';
         const last = this.answeredAt.get(spaceName)?.get(speakerId);
         if (last !== undefined && this.now() - last < this.followUpSeconds * 1000) return 'follow-up';
         return 'ignored';
@@ -116,22 +114,6 @@ export class BotAttention {
     /** Whether what this person said is for the bot. */
     hears(spaceName: string, speakerId: number, text: string): boolean {
         return this.attention(spaceName, speakerId, text) !== 'ignored';
-    }
-
-    /** The bot starts working on a line from this person: until it is done they can go on without its name. */
-    began(spaceName: string, speakerId: number): void {
-        let counts = this.working.get(spaceName);
-        if (!counts) this.working.set(spaceName, (counts = new Map()));
-        counts.set(speakerId, (counts.get(speakerId) ?? 0) + 1);
-    }
-
-    /** The bot is done with a line from this person. When it answered, the follow-up window starts from now. */
-    ended(spaceName: string, speakerId: number, answered: boolean): void {
-        const counts = this.working.get(spaceName);
-        const left = (counts?.get(speakerId) ?? 0) - 1;
-        if (left > 0) counts?.set(speakerId, left);
-        else counts?.delete(speakerId);
-        if (answered) this.answered(spaceName, speakerId);
     }
 
     /** The bot has answered this person: they can go on without its name for the follow-up window. */

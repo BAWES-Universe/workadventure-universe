@@ -223,7 +223,11 @@ describe('BotClient: a bot only hears the person talking to it', () => {
         await t.receive(joined(SARA));
         // The answer takes a long time
         let finish!: () => void;
-        t.onChatMessage.mockImplementationOnce(() => new Promise<void>((resolve) => (finish = resolve)));
+        const slow = new Promise<void>((resolve) => (finish = resolve));
+        t.ai.generateBotResponseStream.mockImplementationOnce(async function* () {
+            await slow;
+            yield { type: 'content', content: 'Done.' };
+        });
         await t.receive(chatFrom(KHALID, 'Nora, research the market'));
         expect(t.onChatMessage).toHaveBeenCalledTimes(1);
 
@@ -232,6 +236,34 @@ describe('BotClient: a bot only hears the person talking to it', () => {
         await t.receive(chatFrom(KHALID, 'and add the prices'));
         expect(t.onChatMessage).toHaveBeenCalledTimes(2);
         finish();
+    });
+
+    it('starts the follow-up window when the answer is finished, also for a line that waited its turn', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        try {
+            const t = setup();
+            await t.receive(joined(KHALID));
+            await t.receive(joined(SARA));
+            const attention = (t.bot as unknown as { attention: { attention(space: string, id: number, text: string): string } }).attention;
+            let finish!: () => void;
+            const slow = new Promise<void>((resolve) => (finish = resolve));
+            t.ai.generateBotResponseStream.mockImplementationOnce(async function* () {
+                await slow;
+                yield { type: 'content', content: 'Done.' };
+            });
+            await t.receive(chatFrom(KHALID, 'Nora, research the market'));
+            vi.advanceTimersByTime(60_000);
+            expect(attention.attention(SPACE, KHALID, 'and the prices?')).toBe('follow-up');
+            finish();
+            await new Promise((resolve) => setTimeout(resolve, 50));
+            // Answered just now: 20 seconds later is still inside the window, 40 is not
+            vi.advanceTimersByTime(20_000);
+            expect(attention.attention(SPACE, KHALID, 'and the prices?')).toBe('follow-up');
+            vi.advanceTimersByTime(20_000);
+            expect(attention.attention(SPACE, KHALID, 'and the prices?')).toBe('ignored');
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('hears the person it is summoned to, even without its name, until the summon ends', async () => {

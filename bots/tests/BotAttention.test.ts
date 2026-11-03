@@ -12,8 +12,9 @@ const SARA = 8;
 function setup(name = 'Sales Researcher', seconds = 30) {
     let now = 1_000_000;
     const summonedTo = new Set<number>();
-    const attention = new BotAttention(name, seconds, (id) => summonedTo.has(id), () => now);
-    return { attention, summonedTo, advance: (ms: number) => (now += ms) };
+    const busyWith = new Set<number>();
+    const attention = new BotAttention(name, seconds, (id) => summonedTo.has(id), (id) => busyWith.has(id), () => now);
+    return { attention, summonedTo, busyWith, advance: (ms: number) => (now += ms) };
 }
 
 describe('BotAttention', () => {
@@ -83,32 +84,22 @@ describe('BotAttention', () => {
         expect(attention.attention(SPACE, KHALID, 'and the day after?')).toBe('ignored');
     });
 
-    it('keeps listening to a person while it is still working on their line, then by the window', () => {
-        const { attention, advance } = setup('Nora', 30);
+    it('keeps listening to a person while it is still answering them or has their line waiting, then by the window', () => {
+        const { attention, busyWith, advance } = setup('Nora', 30);
         attention.personJoined(SPACE, KHALID);
         attention.personJoined(SPACE, SARA);
-        attention.began(SPACE, KHALID);
+        busyWith.add(KHALID);
         // A long answer (tools, a slow model): well past the window, and the person adds to the ask
         advance(120_000);
         expect(attention.attention(SPACE, KHALID, 'and make it short')).toBe('follow-up');
         expect(attention.attention(SPACE, SARA, 'and make it short')).toBe('ignored');
-        attention.began(SPACE, KHALID);
-        attention.ended(SPACE, KHALID, true);
-        expect(attention.attention(SPACE, KHALID, 'thanks')).toBe('follow-up');
-        attention.ended(SPACE, KHALID, true);
+        // The answer is done: the window starts from now
+        busyWith.delete(KHALID);
+        attention.answered(SPACE, KHALID);
         advance(29_000);
         expect(attention.attention(SPACE, KHALID, 'thanks')).toBe('follow-up');
         advance(2_000);
         expect(attention.attention(SPACE, KHALID, 'thanks')).toBe('ignored');
-    });
-
-    it('does not keep a person in the conversation when the bot failed to answer them', () => {
-        const { attention } = setup('Nora', 30);
-        attention.personJoined(SPACE, KHALID);
-        attention.personJoined(SPACE, SARA);
-        attention.began(SPACE, KHALID);
-        attention.ended(SPACE, KHALID, false);
-        expect(attention.attention(SPACE, KHALID, 'hello?')).toBe('ignored');
     });
 
     it('needs the name every time when the window is 0', () => {
