@@ -283,6 +283,42 @@ describe('BotClient: a bot only hears the person talking to it', () => {
         expect(internals.attention.attention(SPACE, KHALID, 'wait, one more thing')).toBe('ignored');
     });
 
+    it('does not open the follow-up window with a greeting: a greeted newcomer still needs the name, until the bot has answered them', async () => {
+        const t = setup();
+        await t.receive(joined(KHALID));
+        await t.receive(joined(SARA));
+        // The bot greets Sara as she arrives (the bot speaking first, not an answer to her)
+        const social = t.behavior as unknown as {
+            currentSpaceName: string;
+            activeConversations: Map<number, unknown>;
+            sendGreetingWithRetry(space: string, text: string, botId: string, playerId: number, attempt: number): void;
+        };
+        social.currentSpaceName = SPACE;
+        social.activeConversations.set(SARA, {});
+        (t.bot as unknown as { spaces: Map<string, number> }).spaces.set(SPACE, 1);
+        const streamed = vi.spyOn(t.bot, 'sendStreamMessage').mockImplementation(() => undefined);
+        vi.useFakeTimers({ toFake: ['setTimeout'] });
+        try {
+            social.sendGreetingWithRetry(SPACE, 'Hi Sara, welcome!', 'bot-1', SARA, 0);
+            await vi.advanceTimersByTimeAsync(1500);
+        } finally {
+            vi.useRealTimers();
+        }
+        expect(streamed).toHaveBeenCalled();
+        social.activeConversations.delete(SARA);
+
+        // Her reply without the name is not for the bot
+        await t.receive(chatFrom(SARA, 'thanks, nice to be here'));
+        expect(t.onChatMessage).not.toHaveBeenCalled();
+
+        // With the name she is heard, and after that answer she can go on without it
+        await t.receive(chatFrom(SARA, 'Nora, what is on today?'));
+        expect(t.onChatMessage).toHaveBeenCalledTimes(1);
+        t.onChatMessage.mockClear();
+        await t.receive(chatFrom(SARA, 'and tomorrow?'));
+        expect(t.onChatMessage).toHaveBeenCalledTimes(1);
+    });
+
     it('hears the person it is summoned to, even without its name, until the summon ends', async () => {
         const t = setup();
         await t.receive(joined(KHALID));

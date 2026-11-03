@@ -1928,6 +1928,8 @@ export abstract class BaseBehavior {
         state.abortController = undefined;
 
         if (!aborted) {
+            // Only an answer to the person opens their follow-up window; a greeting or arrival line (the bot speaking
+            // first) does not and never comes through here (game #1220 option b)
             this.onAnswerFinished?.(senderId, state.spaceName);
             // Drain LLM-generated answers first (one-shot, no new generation)
             while (state.pendingAnswers.length > 0) {
