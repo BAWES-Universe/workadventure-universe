@@ -270,6 +270,14 @@ jobs:
           fi
           code=$(get "/api/v1/applications/${VOICE_UUID}" /tmp/voice.json)
           [ "$code" = 200 ] || fail "HTTP $code reading the app (is DEV_COOLIFY_VOICE_WORKER_UUID an app of the Universe Dev team?)"
+          # Only a Docker Image app is ever switched. An app built from a git repo (for example an old
+          # Dockerfile app that was replaced and stopped) is left alone: deploying it would start it again.
+          build_pack=$(jq -r '.build_pack // empty' /tmp/voice.json)
+          case "$build_pack" in
+            dockerfile|nixpacks|railpack|static|dockercompose)
+              echo "::warning::The app in DEV_COOLIFY_VOICE_WORKER_UUID is built from git (build pack '$build_pack'), not a Docker image, so the dev voice server was not switched"
+              exit 0 ;;
+          esac
           send -X PATCH "${COOLIFY_BASE}/api/v1/applications/${VOICE_UUID}" \
             -d "$(jq -cn --arg tag "$TAG" '{docker_registry_image_tag: $tag}')" > /dev/null \
             || fail "Coolify refused the tag change (is the app set to run a Docker image?)"
