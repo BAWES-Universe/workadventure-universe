@@ -84,6 +84,14 @@ export interface ArtifactCall {
     chat: ArtifactChat;
 }
 
+/**
+ * Read and change also carry the artifacts the person pointed at (game #1781): the one way a bot opens another bot's work.
+ * Only these two routes take it; the list and the search refuse a body with fields they do not know.
+ */
+export interface ArtifactReachCall extends ArtifactCall {
+    referencedArtifactIds?: string[];
+}
+
 export interface ArtifactEdit {
     old: string;
     new: string;
@@ -1323,7 +1331,7 @@ export class AdminApiService {
     /** Change one with small edits (or the whole new file). Every change is a new version. */
     changeArtifact(
         id: string,
-        call: ArtifactCall,
+        call: ArtifactReachCall,
         change: { edits?: ArtifactEdit[]; content?: string; summary?: string | null; title?: string | null; baseVersion?: number | null; dropMedia?: string[] },
         timeoutMs?: number,
         media: ArtifactMediaUpload[] = []
@@ -1334,13 +1342,13 @@ export class AdminApiService {
     /** Read one version of an artifact, with its text. */
     readArtifact(
         id: string,
-        call: ArtifactCall,
+        call: ArtifactReachCall,
         version?: number | null
     ): Promise<{ artifact: ArtifactSummary; version: ArtifactVersionSummary; content: string; hidden: boolean }> {
         return this.artifactCall(`api/artifacts/${encodeURIComponent(id)}/read`, { ...call, ...(version ? { version } : {}) });
     }
 
-    /** The artifacts made in this chat that the person may open, plus their own from other chats, the most recently changed first. */
+    /** The artifacts made in this chat that the person may open, plus the ones this bot made for them in other chats, the most recently changed first. */
     listArtifactsInChat(call: ArtifactCall): Promise<{ artifacts: ArtifactSummary[]; hidden: boolean }> {
         return this.artifactCall('api/artifacts/in-chat', call);
     }

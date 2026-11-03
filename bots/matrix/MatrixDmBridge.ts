@@ -17,6 +17,7 @@ import {
 import { ACCESS_CACHE_TTL_MS } from '../server/BotAccessGate';
 import { BotWokaAvatar } from './BotWokaAvatar';
 import { ARTIFACT_KEY, artifactDirectMessage } from '../ai/ArtifactTools';
+import { artifactIdOfCard } from '../ai/ArtifactReferences';
 import { STEPS_KEY, type StepsField } from '../ai/ToolSteps';
 
 /** The field of a reply that names the bot's room: the game shows a card under it to go there. */
@@ -434,6 +435,22 @@ export class MatrixDmBridge implements MatrixEventHandler {
         }
     }
 
+    /**
+     * The artifact on the card the person replied to (game #1781), so a bot that did not make it may open it: pointing at a
+     * card is the person's own word. Nothing when the message is not a reply, or the card cannot be read.
+     */
+    private async repliedArtifactIds(botUserId: string, event: MatrixEvent): Promise<string[]> {
+        const eventId = event.content?.['m.relates_to']?.['m.in_reply_to']?.event_id;
+        if (typeof eventId !== 'string' || !eventId) return [];
+        try {
+            const replied = await this.client.getEvent(botUserId, event.room_id, eventId);
+            const id = artifactIdOfCard(replied?.content?.[ARTIFACT_KEY]);
+            return id ? [id] : [];
+        } catch {
+            return [];
+        }
+    }
+
     /** True the first time an event id is seen, so a message read back after joining is never answered twice. */
     private firstSighting(eventId: string): boolean {
         if (this.handledEvents.has(eventId)) return false;
@@ -572,8 +589,10 @@ export class MatrixDmBridge implements MatrixEventHandler {
         const sentAt = event.origin_server_ts ?? Date.now();
         if (!catchUp) this.answeringLive.set(event.room_id, sentAt);
         try {
+            const pointedArtifactIds = await this.repliedArtifactIds(botUserId, event);
             const reply = await this.deps.reply(botId, person, text, attachments, {
                 roomId: event.room_id,
+                pointedArtifactIds,
                 onInterimMessage: async (interim) => {
                     // A lost "let me look" line must not cost the person the real answer, so it never throws.
                     try {

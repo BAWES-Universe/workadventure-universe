@@ -46,7 +46,8 @@
         window.removeEventListener("resize", measureBarClear);
     });
 
-    const roomName = gameManager.currentStartedRoom?.roomName ?? "";
+    // The room of the map the player is on, not the one the page started in: walking through a portal does not reload it.
+    const roomName = gameManager.currentMapRoom.roomName ?? "";
     // People only, bots left out (#1396).
     $: peopleHere = peopleAmongPlayers($playersStore.values()) + 1;
     $: roomLine =

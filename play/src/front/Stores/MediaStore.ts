@@ -386,6 +386,11 @@ export function setAudienceTalking(propertyId: string, allowTalking: boolean): v
     }
     audienceCanTalkStore.set(talkingAudiences.size > 0);
 }
+/** The scene closes without the area-leave handlers running: no Audience of the old room lets people talk any more. */
+export function clearAudienceTalking(): void {
+    talkingAudiences.clear();
+    audienceCanTalkStore.set(false);
+}
 /**
  * We only listen to a Stage: in an Audience, and not talking in a bubble there. Our camera is not shown and our
  * microphone reaches no one. In an Audience that lets people talk, a bubble makes us a normal bubble member again.

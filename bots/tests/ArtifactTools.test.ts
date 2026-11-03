@@ -161,6 +161,23 @@ describe('read_artifact and list_artifacts', () => {
         expect(ctx.admin.readArtifact).toHaveBeenLastCalledWith('art-1', expect.anything(), null);
     });
 
+    it('sends the artifacts the person pointed at with a read or a change, and with nothing else (game #1781)', async () => {
+        const ctx = { ...context(), referencedArtifactIds: ['0b7c1d2e-1111-4222-8333-944455556666'] };
+        await runArtifactTool('read_artifact', { id: 'art-1' }, ctx);
+        expect(ctx.admin.readArtifact).toHaveBeenLastCalledWith('art-1', expect.objectContaining({ botId: 'bot1', referencedArtifactIds: ['0b7c1d2e-1111-4222-8333-944455556666'] }), null);
+        await runArtifactTool('change_artifact', { id: 'art-1', content: '<p>x</p>' }, ctx);
+        expect(vi.mocked(ctx.admin.changeArtifact).mock.calls[0][1]).toMatchObject({ referencedArtifactIds: ['0b7c1d2e-1111-4222-8333-944455556666'] });
+        // The list is the bot's own and takes no ids: Orbit refuses a body with fields it does not know
+        await runArtifactTool('list_artifacts', {}, ctx);
+        expect(vi.mocked(ctx.admin.listArtifactsInChat).mock.calls[0][0]).not.toHaveProperty('referencedArtifactIds');
+    });
+
+    it('sends no list of pointed-at artifacts when the person pointed at none', async () => {
+        const ctx = { ...context(), referencedArtifactIds: [] };
+        await runArtifactTool('read_artifact', { id: 'art-1' }, ctx);
+        expect(vi.mocked(ctx.admin.readArtifact).mock.calls[0][1]).not.toHaveProperty('referencedArtifactIds');
+    });
+
     it('lists what was made in the chat, newest first, without addresses', async () => {
         const run = await runArtifactTool('list_artifacts', {}, context());
         expect(run.result).toEqual({ artifacts: [{ id: 'art-1', title: 'Quests board', kind: 'app', version: 1, madeBy: 'Scout' }] });
