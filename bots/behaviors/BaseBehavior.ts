@@ -154,6 +154,23 @@ export abstract class BaseBehavior {
         }
         return undefined;
     }
+    /** Called when the bot has finished answering a person (not when it was cancelled): who and where. */
+    onAnswerFinished?: (userId: number, spaceName: string) => void;
+
+    /** Whether the bot is answering this person right now, or has a line of theirs waiting for its turn. */
+    isBusyWith(userId: number): boolean {
+        const state = this.activeConversations.get(userId);
+        return !!state && (state.isGenerating || state.messageQueue.length > 0);
+    }
+
+    /**
+     * Whether the bot is on a summon to this person right now. The summon ends when they leave or walk far away, and
+     * until then what they say is for the bot even with others around (#1220).
+     */
+    isSummonedBy(userId: number): boolean {
+        const uuid = this.userIdToUuid.get(userId);
+        return this.isSummoned && !!uuid && uuid === this.summonedPlayerUuid;
+    }
     // Authentication tracking - map userId (number) to isLogged (boolean)
     protected userIdToIsLogged: Map<number, boolean> = new Map();
 
@@ -1603,6 +1620,8 @@ export abstract class BaseBehavior {
             this.activeConversations.set(senderId, state);
         }
         state.isGenerating = true;
+        // Where the person is now: they may have come back in a new bubble since the conversation began
+        state.spaceName = spaceName;
         state.lastMessageTime = Date.now();
         state.currentTask = currentTask || state.currentTask;
         state.generation = (state.generation || 0) + 1;
@@ -1909,6 +1928,9 @@ export abstract class BaseBehavior {
         state.abortController = undefined;
 
         if (!aborted) {
+            // Only an answer to the person opens their follow-up window; a greeting or arrival line (the bot speaking
+            // first) does not and never comes through here (game #1220 option b)
+            this.onAnswerFinished?.(senderId, state.spaceName);
             // Drain LLM-generated answers first (one-shot, no new generation)
             while (state.pendingAnswers.length > 0) {
                 const answer = state.pendingAnswers.shift()!;

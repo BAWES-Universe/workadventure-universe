@@ -70,6 +70,19 @@ describe('BotClient voice', () => {
         expect(tags(setup(true))).toEqual(['bot', 'voice-bot']);
     });
 
+    it('lets a voice bot hear a spoken turn only when it is said to the bot, once others are in the bubble (#1220)', async () => {
+        const { internals, bot } = setup(true);
+        internals.startVoice();
+        (bot as unknown as { behavior: unknown }).behavior = { onSpaceUserJoined: vi.fn().mockResolvedValue(undefined) };
+        const hears = (bot as unknown as { voice: { hears: (space: string, person: string, text: string) => boolean } }).voice.hears;
+        const join = (id: number) => ({ $case: 'addSpaceUserMessage', addSpaceUserMessage: { spaceName: 'space-1', user: { spaceUserId: `room_${id}`, name: `P${id}`, uuid: `u${id}`, tags: [] } } });
+        await internals.handleSubMessage(join(3));
+        expect(hears('space-1', 'room_3', 'what time is it')).toBe(true);
+        await internals.handleSubMessage(join(4));
+        expect(hears('space-1', 'room_3', 'what time is it')).toBe(false);
+        expect(hears('space-1', 'room_3', 'Echo, what time is it')).toBe(true);
+    });
+
     it('does not open a socket to the worker, or answer audio events, for a text-only bot', async () => {
         const { internals, send } = setup(false);
         internals.startVoice();
@@ -100,7 +113,7 @@ describe('BotClient voice', () => {
                 privateEvent: {
                     spaceName: 'space-1',
                     receiverUserId: 'room_3',
-                    spaceEvent: { event: { $case: 'botVoiceStatus', botVoiceStatus: { botId: 'abc', botName: 'Echo', state: 'connecting', followUpSeconds: 0 } } },
+                    spaceEvent: { event: { $case: 'botVoiceStatus', botVoiceStatus: { botId: 'abc', botName: 'Echo', state: 'connecting', followUpSeconds: 30 } } },
                 },
             },
         });

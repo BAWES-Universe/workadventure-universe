@@ -109,11 +109,13 @@ export interface VoiceCallStats {
     roomsConnected: number;
     drafts: number;
     spoken: number;
+    /** Finished turns dropped because they were not said to the bot (several people in the bubble). */
+    unaddressed: number;
     stoppedBySpeech: number;
 }
 
 export class VoiceCalls {
-    readonly stats: VoiceCallStats = { started: 0, refusedStart: 0, rejectedFromGame: 0, staleFromWorker: 0, connected: 0, roomsJoined: 0, roomsConnected: 0, drafts: 0, spoken: 0, stoppedBySpeech: 0 };
+    readonly stats: VoiceCallStats = { started: 0, refusedStart: 0, rejectedFromGame: 0, staleFromWorker: 0, connected: 0, roomsJoined: 0, roomsConnected: 0, drafts: 0, spoken: 0, unaddressed: 0, stoppedBySpeech: 0 };
     private readonly bubbles = new Map<string, Bubble>();
     private readonly calls = new Map<string, Call>();
     private readonly rooms = new Map<string, Room>();
@@ -131,6 +133,11 @@ export class VoiceCalls {
     /** Who is speaking to the bot right now in each bubble, and when someone last started. */
     private readonly talking = new Map<string, Set<string>>();
     private readonly lastSpeechAt = new Map<string, number>();
+    /**
+     * Whether what someone just said is for this bot. With several people in the bubble it is only what is said to the
+     * bot (its name, a summon, or the follow-up right after an answer); without this every turn is the bot's to hear.
+     */
+    hears?: (spaceName: string, personId: string, text: string) => boolean;
     /** Called when someone's audio is connected (a call or the room): what was waiting for an audience can be said. */
     onAudience?: (spaceName: string) => void;
     /** What each person's mode is, as they chose it. Missing: the default. Kept so a choice made before the audio connects still applies. */
@@ -705,6 +712,10 @@ export class VoiceCalls {
                 this.draft(spaceName, to, { turnId: message.turnId, state: 'live', text: message.text });
             }
         } else if (message.outcome === 'cleared' || !message.text) {
+            this.draft(spaceName, to, { turnId: message.turnId, state: 'cleared', text: '' });
+        } else if (message.outcome === 'final' && current && this.hears && !this.hears(spaceName, to, message.text)) {
+            // Others are in the bubble and this was not said to the bot (#1220): it is not kept, offered back or sent
+            this.stats.unaddressed++;
             this.draft(spaceName, to, { turnId: message.turnId, state: 'cleared', text: '' });
         } else if (message.outcome === 'final' && current) {
             this.remember(spaceName, to, message.turnId, message.text);

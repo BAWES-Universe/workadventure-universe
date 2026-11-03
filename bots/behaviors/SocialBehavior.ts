@@ -505,6 +505,9 @@ export class SocialBehavior extends BaseBehavior {
             }
             
             try {
+                // A greeting is the bot speaking first, not an answer to someone who spoke to it, so it deliberately does
+                // not open the follow-up window (game #1220 option b: in a group the person uses the bot's name, summons
+                // it, or follows up on an answer). `onAnswerFinished` is therefore not called from here.
                 // Stream greeting word-by-word so it appears incrementally,
                 // matching the follow-up streaming UX.
                 const responseId = crypto.randomUUID();

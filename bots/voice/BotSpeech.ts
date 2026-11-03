@@ -145,9 +145,24 @@ export class BotSpeech {
         this.speak(spaceName, waiting.responseId, waiting.reply);
     }
 
+    /** Called when the audio of a reply for this person is over, however it ended (#1220: their follow-up window starts then). */
+    onOver?: (spaceName: string, personId: number) => void;
+
+    /** Whether a reply for this person is being played now. */
+    isSpeakingTo(personId: number): boolean {
+        for (const segmentId of this.unfinished.keys()) {
+            const segment = this.segments.get(segmentId);
+            if (segment && playerOf(segment.responseId) === personId) return true;
+        }
+        return false;
+    }
+
     /** The audio of a reply is over, however it ended. */
     played(segmentId: string): void {
         this.unfinished.delete(segmentId);
+        const segment = this.segments.get(segmentId);
+        const person = segment ? playerOf(segment.responseId) : undefined;
+        if (segment && person !== undefined) this.onOver?.(segment.spaceName, person);
     }
 
     /** A second voice bot arrived in this space: what was waiting is dropped, and what is playing or queued stops. */
@@ -192,6 +207,8 @@ export class BotSpeech {
      * sent to it and never began to play will not play now, and its final report may never come. Those are given back.
      */
     sessionEnded(spaceName: string): void {
+        // What was already playing has no one to report its end now: it is not "being played" any more (#1220)
+        for (const [segmentId, space] of [...this.unfinished]) if (space === spaceName) this.unfinished.delete(segmentId);
         for (const [segmentId, segment] of [...this.segments]) {
             if (segment.spaceName !== spaceName || segment.heard) continue;
             this.segments.delete(segmentId);

@@ -49,6 +49,7 @@ import { BotSpeech } from '../voice/BotSpeech';
 import { OrbitTurnGate, pausedLine } from '../voice/VoiceAllowance';
 import { pausedAtCapacityEvent } from '../voice/VoiceLoad';
 import { captureServerEvent } from '../ai/PostHogClient';
+import { BotAttention, followUpSeconds } from './BotAttention';
 
 // Get the secret key from environment - must match pusher's SECRET_KEY
 const SECRET_KEY = process.env.SECRET_KEY || 'default-secret-key';
@@ -156,8 +157,37 @@ export class BotClient {
     // Callback invoked when WebSocket unexpectedly disconnects (not during initial connection)
     public onDisconnect?: () => void;
 
+    /**
+     * Who the bot listens to when others are in the bubble (#1220): the person who says its name, who summoned it, or
+     * who it answered a moment ago. With one person it listens to them as always.
+     */
+    private readonly attention: BotAttention;
+
     constructor(private config: BotConfig) {
         this.state = new BotState(config.position);
+        this.attention = new BotAttention(
+            config.name,
+            followUpSeconds(),
+            (userId) => this.behavior?.isSummonedBy?.(userId) ?? false,
+            (userId) => (this.behavior?.isBusyWith?.(userId) ?? false) || (this.speech?.isSpeakingTo(userId) ?? false)
+        );
+    }
+
+    /**
+     * Counts someone toward the people in the bubble (#1220), unless it is this bot or another bot. Bots are told apart
+     * by who they are (the bot tag or a bot uuid, as the voice relay does), not by their number: numbers repeat from
+     * room to room, and a person must never be taken for a bot because of one.
+     */
+    private rememberPerson(spaceName: string, userId: number, user: { tags?: string[]; uuid?: string }): void {
+        if (userId === this.userId || user.tags?.includes('bot') || user.uuid?.startsWith('bot-')) return;
+        this.attention.personJoined(spaceName, userId);
+    }
+
+    /** The numeric player id in a space user id ("roomID_userID"), or 0. */
+    private static playerIdOf(spaceUserId: string | undefined): number {
+        const at = spaceUserId?.lastIndexOf('_') ?? -1;
+        const id = at === -1 ? NaN : Number.parseInt(spaceUserId!.substring(at + 1), 10);
+        return Number.isNaN(id) ? 0 : id;
     }
     
     /**
@@ -458,6 +488,8 @@ export class BotClient {
         }
         this.behavior = behavior;
         behavior.setBot(this);
+        // Who the bot has just answered can go on without its name for a while (#1220)
+        behavior.onAnswerFinished = (userId, spaceName) => this.attention.answered(spaceName, userId);
     }
 
     /**
@@ -1426,6 +1458,7 @@ export class BotClient {
         try {
             this.voice?.spaceLeft(spaceName);
             this.speech?.spaceLeft(spaceName);
+            this.attention.spaceLeft(spaceName);
             await this.emitLeaveSpace(spaceName);
             this.spaces.delete(spaceName);
             if (this.behavior) {
@@ -2461,8 +2494,8 @@ export class BotClient {
                             botId: this.config.botId,
                             botName: this.config.name,
                             state: status,
-                            // No setting for how long a bot keeps listening without its name exists yet: 0 says so
-                            followUpSeconds: 0,
+                            // How long, after answering someone, the bot goes on listening to them without its name
+                            followUpSeconds: this.attention.followUpSeconds,
                         },
                     }),
             },
@@ -2489,11 +2522,15 @@ export class BotClient {
         // Voice paused for someone (the allowance, or a key that isn't working): the one fixed line, in the chat the reply is in
         this.voice.onPaused = (spaceName) => this.sendChatMessage(spaceName, pausedLine(this.config.name));
         this.speech = new BotSpeech(this.voice, voiceReplyLimits());
+        // With others in the bubble, a spoken turn is the bot's only when it was said to the bot (#1220)
+        this.voice.hears = (spaceName, personId, text) => this.attention.hears(spaceName, BotClient.playerIdOf(personId), text);
         this.voice.onAudience = (spaceName) => this.speech?.audience(spaceName);
         this.voice.onUnplayed = (spaceName, segmentId) => this.speech?.unplayed(spaceName, segmentId);
         this.voice.onHeard = (spaceName, segmentId) => this.speech?.heard(spaceName, segmentId);
         this.voice.onSessionEnded = (spaceName) => this.speech?.sessionEnded(spaceName);
         this.voice.onPlayed = (_spaceName, segmentId) => this.speech?.played(segmentId);
+        // A spoken answer is over: the person can go on without the bot's name from now (#1220)
+        this.speech.onOver = (spaceName, personId) => this.attention.answered(spaceName, personId);
         this.voice.onCrowded =(spaceName) => this.speech?.crowded(spaceName);
         this.voice.onStopped = (spaceName, segmentId) => {
             const responseId = this.speech?.stopped(spaceName, segmentId);
@@ -3052,6 +3089,7 @@ export class BotClient {
                             }
                             
                             // Call onSpaceUserJoined to track UUIDs and auth status
+                            this.rememberPerson(spaceName, numericUserId, spaceUser);
                             await this.behavior.onSpaceUserJoined(spaceName, userWithId);
                         } else {
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -3104,6 +3142,7 @@ export class BotClient {
                         console.log(`[Bot ${this.config.botId}] 📝 Tracking UUID from addSpaceUserMessage for user ${numericUserId} (${spaceUser.name}): ${spaceUser.uuid || 'NO UUID'}, isLogged: ${spaceUser.isLogged || false}`);
                     }
                     
+                    this.rememberPerson(spaceName, numericUserId, spaceUser);
                     await this.behavior.onSpaceUserJoined(spaceName, userWithId);
                 }
                 break;
@@ -3113,6 +3152,10 @@ export class BotClient {
                     const chatMessage = message.updateSpaceUserMessage.message.message;
                     if (chatMessage && this.behavior) {
                         console.log(`[Bot ${this.config.botId}] Received chat via updateSpaceUserMessage: "${chatMessage}" from user ${message.updateSpaceUserMessage.userId}`);
+                        // With others in the bubble, only what is said to the bot reaches it (#1220)
+                        if (!this.attention.hears(message.updateSpaceUserMessage.spaceName, message.updateSpaceUserMessage.userId ?? 0, chatMessage)) {
+                            break;
+                        }
                         if (!(await this.mayChat(message.updateSpaceUserMessage.spaceName, message.updateSpaceUserMessage.userId ?? 0, message))) {
                             break;
                         }
@@ -3219,6 +3262,11 @@ export class BotClient {
                             if (spaceMessage.spoken.botId !== this.config.botId) break;
                             if (this.voice?.acceptSpoken(spaceName, senderUserId, spaceMessage.spoken.turnId, spaceMessage.message) === 'duplicate') break;
                         }
+                        // With others in the bubble, a line not meant for the bot goes no further: it is not read, saved or
+                        // answered, and the person is not even asked about (#1220). Before anything else is done with it.
+                        if (!this.attention.hears(spaceName, senderId, spaceMessage.message)) {
+                            break;
+                        }
                         // Before anything is done with the message (links looked up, files read, the AI asked)
                         if (!(await this.mayChat(spaceName, senderId, message))) {
                             break;
@@ -3271,6 +3319,10 @@ export class BotClient {
             case 'removeSpaceUserMessage':
                 this.voice?.spaceUserLeft(message.removeSpaceUserMessage.spaceName, message.removeSpaceUserMessage.spaceUserId);
                 if (this.behavior && !this.isMeetingSpace(message.removeSpaceUserMessage.spaceName)) {
+                    this.attention.personLeft(
+                        message.removeSpaceUserMessage.spaceName,
+                        BotClient.playerIdOf(message.removeSpaceUserMessage.spaceUserId) || (message.removeSpaceUserMessage.userId ?? 0)
+                    );
                     this.behavior.onSpaceUserLeft(message.removeSpaceUserMessage.spaceName, message.removeSpaceUserMessage.userId);
                 }
                 break;
@@ -3460,6 +3512,7 @@ export class BotClient {
             
             this.voice?.spaceLeft(request.spaceName);
             this.speech?.spaceLeft(request.spaceName);
+            this.attention.spaceLeft(request.spaceName);
             await this.emitLeaveSpace(request.spaceName);
             this.spaces.delete(request.spaceName);
             if (this.behavior && !this.isMeetingSpace(request.spaceName)) {
