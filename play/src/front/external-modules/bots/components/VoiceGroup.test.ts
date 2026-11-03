@@ -400,4 +400,12 @@ describe("the bot page's Voice group (#1668)", () => {
         expect(text()).toContain("Couldn’t save that. The providers in the voice profile don't work right now");
         expect(text()).toContain("River · Natural · Universe AI");
     });
+
+    it("puts the switch back when turning voice on fails", async () => {
+        mocks.api.getBotVoice.mockResolvedValue(answer());
+        mocks.api.saveBotVoice.mockRejectedValue(new Error("nope"));
+        await mount();
+        await click("bot-voice-switch");
+        expect((byTestId("bot-voice-switch")[0] as HTMLInputElement).checked).toBe(false);
+    });
 });

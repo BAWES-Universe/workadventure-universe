@@ -2,7 +2,7 @@
     // Voice: whether the bot talks in bubbles, with which voice, how it speaks and who pays (#1668). Off by default. More
     // voice settings fold in who pays for listening and speaking, models, language and versions. Every change saves at
     // once as a new version, like the rest of the page. Every number, voice and key comes from Orbit.
-    import { onDestroy } from "svelte";
+    import { onDestroy, tick } from "svelte";
     import LL, { locale } from "../../../../../i18n/i18n-svelte";
     import { modalVisibilityStore } from "../../../../Stores/ModalStore";
     import { canOpenOrbit, openOrbitPage } from "../../../admin-api/index";
@@ -392,17 +392,26 @@
     }
     let pendingNote: Note | null = null;
 
-    function switchVoice(next: boolean) {
+    /** The switch is a native checkbox that has already flipped when this runs: when nothing changed (a failed save, or
+     *  nothing to turn on), put it back to what the page says. */
+    async function onSwitch(next: boolean) {
+        await switchVoice(next);
+        await tick();
+        const input = document.getElementById("bot-voice-switch");
+        if (input instanceof HTMLInputElement) input.checked = view?.kind === "on" || asking;
+    }
+
+    async function switchVoice(next: boolean) {
         if (!voice || saving) return;
         if (!next) {
             asking = false;
-            void run(() => botApiService.setBotVoiceEnabled(bot.id, false));
+            await run(() => botApiService.setBotVoiceEnabled(bot.id, false));
             return;
         }
         const revision = liveRevision(voice);
         // Turned on again with the voice it had, when that still works
         if (revision && fullProfile(revision.profile) && !pauseOf(voice, revision.profile)) {
-            void run(() => botApiService.setBotVoiceEnabled(bot.id, true));
+            await run(() => botApiService.setBotVoiceEnabled(bot.id, true));
             return;
         }
         const options = payerOptions(voice);
@@ -412,7 +421,7 @@
             asking = true;
             return;
         }
-        void turnOnWith(options[0]);
+        await turnOnWith(options[0]);
     }
 
     /** Speaks on / Listens on: another place for one job. A new place for speaking brings a voice that company has. */
@@ -741,7 +750,7 @@
                         checked={view.kind === "on" || asking}
                         disabled={saving}
                         label={v.switchLabel()}
-                        onChange={switchVoice}
+                        onChange={onSwitch}
                     />
                 </label>
 
