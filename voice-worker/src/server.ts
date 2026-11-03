@@ -7,6 +7,7 @@ import type { Duplex } from 'node:stream';
 import { type RawData, WebSocket, WebSocketServer } from 'ws';
 import { ConnectorRegistry } from './connectors.ts';
 import { Counters } from './counters.ts';
+import { DEEPGRAM_ADAPTER, DEFAULT_DEEPGRAM_FINAL_TIMEOUT_MS, DeepgramRecognition } from './deepgram.ts';
 import { FAKE_ADAPTER, FakeSpeech } from './fakeSpeech.ts';
 import type { IceConfig } from './lane.ts';
 import type { BotToWorker } from './protocol.ts';
@@ -100,6 +101,10 @@ export class VoiceWorker {
             this.connectors.registerRecognition(SONIOX_ADAPTER, new SonioxRecognition({ finalTimeoutMs }));
         }
         if (!this.connectors.speech(ELEVENLABS_ADAPTER)) this.connectors.registerSpeech(ELEVENLABS_ADAPTER, new ElevenLabsSpeech());
+        if (!this.connectors.recognition(DEEPGRAM_ADAPTER)) {
+            const finalTimeoutMs = (options.recognitionFinalTimeoutSeconds ?? DEFAULT_DEEPGRAM_FINAL_TIMEOUT_MS / 1000) * 1000;
+            this.connectors.registerRecognition(DEEPGRAM_ADAPTER, new DeepgramRecognition({ finalTimeoutMs }));
+        }
         this.server.on('upgrade', (req, socket, head) => this.onUpgrade(req, socket, head));
     }
 
