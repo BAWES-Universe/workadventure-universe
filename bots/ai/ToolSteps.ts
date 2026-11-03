@@ -182,6 +182,16 @@ export class ReplySteps {
 
     start(steps: ToolStep[]): void {
         for (const step of steps) {
+            // A call is announced when it begins and again when its arguments are complete: the second time only
+            // fills in what it is about
+            const begun = this.steps.find((s) => s.id === step.id && s.state === 'running');
+            if (begun) {
+                if (!begun.detail && step.detail) {
+                    begun.detail = step.detail;
+                    if (this.steps.some((s) => s !== begun && s.group === begun.group && s.detail === begun.detail)) begun.again = true;
+                }
+                continue;
+            }
             // Only a call about something can be seen to repeat: two calls without a detail may differ
             const again = !!step.detail && this.steps.some((s) => s.group === step.group && s.detail === step.detail);
             this.steps.push({ ...step, state: 'running', ...(again ? { again } : {}) });

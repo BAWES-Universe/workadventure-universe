@@ -182,4 +182,16 @@ describe('ToolSteps', () => {
         expect(field.line).toBe('2 steps');
         expect(steps.text()).toBe("2 steps · 1 didn't work · 1 no answer");
     });
+
+    it('shows a call once when it is announced as it begins and again with its arguments, filling in what it is about', () => {
+        const steps = new ReplySteps(0);
+        steps.start([{ id: 'a', doing: 'Making an artifact', done: 'Made an artifact', group: 'make_artifact', kind: 'write' }]);
+        steps.start([{ id: 'a', doing: 'Making an artifact', done: 'Made an artifact', detail: 'Moon base', group: 'make_artifact', kind: 'write' }]);
+        expect(steps.size).toBe(1);
+        expect(steps.field().steps).toMatchObject([{ doing: 'Making an artifact', detail: 'Moon base', state: 'running' }]);
+        // A later call with the same id, once the first ended, is a new call
+        steps.finish([{ id: 'a', ok: true }]);
+        steps.start([{ id: 'a', doing: 'Making an artifact', done: 'Made an artifact', detail: 'Moon base', group: 'make_artifact' }]);
+        expect(steps.size).toBe(2);
+    });
 });
