@@ -120,9 +120,20 @@
 
     async function checkPermissions() {
         const [camera, microphone] = await Promise.all([permissionState("camera"), permissionState("microphone")]);
-        if (camera === undefined && microphone === undefined && $localStreamStore.type === "error") {
-            cameraBlocked = $localStreamStore.error.name === "NotAllowedError";
-            microphoneBlocked = cameraBlocked;
+        if (camera === undefined && microphone === undefined) {
+            // The browser can't be asked: only a stream error or a stream that arrived says anything
+            if ($localStreamStore.type === "error") {
+                cameraBlocked = $localStreamStore.error.name === "NotAllowedError";
+                microphoneBlocked = cameraBlocked;
+            } else if ($localStreamStore.stream) {
+                // A device that now delivers is not blocked; one without a track keeps what was known before
+                if ($localStreamStore.stream.getVideoTracks().length > 0) {
+                    cameraBlocked = false;
+                }
+                if ($localStreamStore.stream.getAudioTracks().length > 0) {
+                    microphoneBlocked = false;
+                }
+            }
             return;
         }
         cameraBlocked = camera === "denied";
