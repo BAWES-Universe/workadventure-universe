@@ -79,6 +79,8 @@
     const unsubscribeLocalStreamStore = localStreamStore.subscribe((value) => {
         if (value.type === "success") {
             stream = value.stream;
+            // A stream arrived (for example after Try again on the access card): the blocked hints may be out of date
+            checkPermissions().catch((e) => console.warn(e));
 
             if (stream !== undefined) {
                 const videoTracks = stream.getVideoTracks();
