@@ -166,3 +166,19 @@ describe('moodOf', () => {
         expect(feel(0, 'sarcastic')).toBe('😏');
     });
 });
+
+describe('doneTalking (#1670)', () => {
+    const parse = (extra: string) =>
+        parseEmotionsFromResponse(`[EMOTION_UPDATE]{"personSentiment":0,"isInsult":false,"insultSeverity":0,"context":"neutral"${extra}}[/EMOTION_UPDATE]`);
+
+    it('is read only when the bot wrote the boolean true', () => {
+        expect(parse(', "doneTalking": true').emotions?.doneTalking).toBe(true);
+        for (const extra of ['', ', "doneTalking": false', ', "doneTalking": "true"', ', "doneTalking": 1']) {
+            expect(parse(extra).emotions?.doneTalking).toBeUndefined();
+        }
+    });
+
+    it('leaves no words when the bot wrote only the block', () => {
+        expect(parse(', "doneTalking": true').cleanedResponse).toBe('');
+    });
+});

@@ -10,7 +10,7 @@ import type { SpaceUser } from '@workadventure/messages';
 import { ConversationMemory } from '../memory/ConversationMemory';
 import { movementLogger } from '../utils/MovementLogger';
 import { BotClient } from '../client/BotClient';
-import { parseEmotionsFromResponse, appendStreamedChunk, detectEmotionPrefixAtEnd, moodOf } from '../ai/EmotionParser';
+import { parseEmotionsFromResponse, appendStreamedChunk, detectEmotionPrefixAtEnd, moodOf, WAVE_MOOD } from '../ai/EmotionParser';
 import { createBatchState, batchAppend, batchFlush } from '../ai/StreamBatcher';
 import type { BehaviorMoves } from './behaviorModel';
 import { distance, distanceToRoute, nearestPointInCircle, nearestStopIndex, nextStop } from './leash';
@@ -1011,7 +1011,9 @@ export class SocialBehavior extends BaseBehavior {
                     
                     // Parse emotions from AI response (unified emotion system)
                     const parsedResponse = parseEmotionsFromResponse(fullMessage);
-                    let processedMessage = parsedResponse.cleanedResponse;
+                    // The bot judged that this person is done talking with it (#1670): their window ends and nothing is said, whatever was written
+                    const personDone = this.personIsDone(spaceName, playerId, parsedResponse.emotions);
+                    let processedMessage = personDone ? '' : parsedResponse.cleanedResponse;
                     
                     // Update emotions from AI analysis
                     if (parsedResponse.emotions && this.conversationMemory) {
@@ -1097,7 +1099,8 @@ export class SocialBehavior extends BaseBehavior {
                         }
                     } else {
                         // Response contained only emotion/control blocks — finalize with empty content to close bubble
-                        this.bot?.sendStreamMessage(spaceName, responseId, '', true, '');
+                        // A wave on the bot's box when the person said they are done; otherwise nothing to show
+                        this.bot?.sendStreamMessage(spaceName, responseId, '', true, '', false, undefined, false, undefined, personDone ? WAVE_MOOD : undefined);
                     }
                     break;
                 }

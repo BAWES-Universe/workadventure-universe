@@ -843,6 +843,8 @@ export class AIService {
                 ].filter(Boolean).join('\n\n') || undefined,
                 channel,
                 recentFiles: await recentFiles,
+                // A voice bot with others in the bubble tells, by its own judgement, when this person is done talking with it (#1670)
+                endFollowUp: channel === 'world' && !!spaceName && playerId !== undefined && !!botClient?.mayEndFollowUp?.(spaceName, playerId),
             });
 
             // Check if Qwen model (for /no_think directive)

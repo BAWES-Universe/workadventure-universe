@@ -179,6 +179,30 @@ export class BotSpeech {
         }
     }
 
+    /**
+     * This person told the bot they are done talking with it (#1670): what is playing for them stops, what is queued for
+     * them is dropped, and what was waiting for an audience for them is not said later. Nothing here is counted as an
+     * answer to them, so their follow-up window does not start again when the audio ends. Others' replies are not touched.
+     */
+    endFor(spaceName: string, personId: number): void {
+        const waiting = this.waiting.get(spaceName);
+        if (waiting && playerOf(waiting.responseId) === personId) {
+            this.unpark(spaceName);
+            remember(this.said, waiting.responseId);
+            this.giveUp(spaceName, waiting.responseId);
+        }
+        for (const [segmentId, space] of [...this.unfinished]) {
+            const segment = this.segments.get(segmentId);
+            if (space !== spaceName || !segment || playerOf(segment.responseId) !== personId) continue;
+            this.unfinished.delete(segmentId);
+            // Forgotten here, so the report that it ended does not count as an answer that opens their window again
+            this.segments.delete(segmentId);
+            this.voice.retract?.(spaceName, segmentId);
+            // Not a moment of it was heard: what was counted for it is given back
+            if (!segment.heard) this.giveUp(spaceName, segment.responseId);
+        }
+    }
+
     /** The voice worker cut a segment short because someone spoke: which reply it was, if it is one of ours. */
     stopped(spaceName: string, segmentId: string): string | undefined {
         const segment = this.segments.get(segmentId);

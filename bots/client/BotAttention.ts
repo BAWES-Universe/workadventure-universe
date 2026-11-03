@@ -116,6 +116,24 @@ export class BotAttention {
         return this.attention(spaceName, speakerId, text) !== 'ignored';
     }
 
+    /** Whether this person shares the bubble with at least one other person (#1670: only then does a window exist to end). */
+    inGroup(spaceName: string, speakerId: number): boolean {
+        return this.isGroup(spaceName, speakerId);
+    }
+
+    /**
+     * The person told the bot they are done talking with it (#1670): their window is over at once, and they need the
+     * name again. Nobody else's window is touched, and a summon is not ended by it (see `endable`).
+     */
+    ended(spaceName: string, speakerId: number): void {
+        this.answeredAt.get(spaceName)?.delete(speakerId);
+    }
+
+    /** Whether "stop" from this person can end something: others are here and the bot is not on a summon to them. */
+    endable(spaceName: string, speakerId: number): boolean {
+        return this.isGroup(spaceName, speakerId) && !this.isSummonedBy(speakerId);
+    }
+
     /** The bot has answered this person: they can go on without its name for the follow-up window. */
     answered(spaceName: string, speakerId: number): void {
         let answers = this.answeredAt.get(spaceName);
