@@ -7,7 +7,8 @@
  * on and paused. The first time a bot's status arrives, and each time it starts connecting again, our saved choice
  * is sent to it, and again whenever the choice changes: the bot (and its voice worker) enforce it.
  *
- * Two voice bots in one bubble: only the first one gets the button (two voice bots answering is a later issue, #1670).
+ * Two voice bots in one bubble: only the first one gets the button. Both bots say their voice is paused then (#1670),
+ * so the button shows that, and the chat says why (TwoVoiceBots.ts).
  */
 import type { Readable } from "svelte/store";
 import { derived, get, writable } from "svelte/store";

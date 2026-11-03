@@ -27,6 +27,7 @@ import type { FromWorker, ProviderPart, ToWorker, VoiceDraft, VoiceMode, VoiceSi
 import type { SpeechTurn, TurnDecision } from './BotSpeech';
 import type { TurnGate } from './VoiceAllowance';
 import type { VoiceLink } from './VoiceLink';
+import { VOICE_BOT_TAG } from './VoiceBotTag';
 import type { ActiveVoice, PartProvider, VoiceSettings } from './VoiceSettings';
 
 /** What the relay needs from the bot's connection to the game. */
@@ -136,6 +137,10 @@ export class VoiceCalls {
     private readonly modes = new Map<string, VoiceMode>();
     /** The last status each person was told, so only a change is sent. */
     private readonly told = new Map<string, VoiceStatus>();
+    /** Where each person's audio really stands, whatever they were told: the button shows paused while another voice bot is here (#1670). */
+    private readonly actual = new Map<string, VoiceStatus>();
+    /** The other voice bots in each space, by space user id. While there is one, this bot answers in text and says nothing out loud. */
+    private readonly otherVoiceBots = new Map<string, Set<string>>();
     /** Called when a reply's voice stopped part-way because someone spoke over it. */
     onStopped?: (spaceName: string, segmentId: string) => void;
     /** Called when a reply's segment ended without any of it being heard (see `handlePlayback`). */
@@ -144,6 +149,10 @@ export class VoiceCalls {
     onHeard?: (spaceName: string, segmentId: string) => void;
     /** Called when a bubble's audio session ends (left, closed, opened again, the worker went away): what it had not yet played will not play. */
     onSessionEnded?: (spaceName: string) => void;
+    /** Called when a reply's audio is over, however it ended. */
+    onPlayed?: (spaceName: string, segmentId: string) => void;
+    /** Called when a second voice bot arrives in a space: whatever this bot was saying out loud stops there. */
+    onCrowded?: (spaceName: string) => void;
     /**
      * The worker turned someone away because it is full (#1751): one person's connection, the bubble's LiveKit audio,
      * or the whole bubble. Who watches the load counts it; nothing a person said is in it.
@@ -293,9 +302,30 @@ export class VoiceCalls {
     /** Tells one person where their audio stands, once per change. */
     private tell(spaceName: string, personId: string, status: VoiceStatus): void {
         const key = callKey(spaceName, personId);
-        if (this.told.get(key) === status) return;
-        this.told.set(key, status);
-        this.game.sendStatus(spaceName, personId, status);
+        this.actual.set(key, status);
+        // With two voice bots in the bubble neither speaks: the button shows paused, and what is true comes back with one bot
+        const shown = this.crowded(spaceName) ? 'paused' : status;
+        if (this.told.get(key) === shown) return;
+        this.told.set(key, shown);
+        this.game.sendStatus(spaceName, personId, shown);
+    }
+
+    /** Whether another voice bot is in this space: two voice bots would talk over each other, so both answer in text (#1670). */
+    crowded(spaceName: string): boolean {
+        return (this.otherVoiceBots.get(spaceName)?.size ?? 0) > 0;
+    }
+
+    /** The voice bots here changed: whoever was told something different is told again, and a bot that was speaking goes quiet. */
+    private crowdChanged(spaceName: string, wasCrowded: boolean): void {
+        const now = this.crowded(spaceName);
+        if (now === wasCrowded) return;
+        for (const personId of this.roster.get(spaceName)?.keys() ?? []) this.tell(spaceName, personId, this.actual.get(callKey(spaceName, personId)) ?? 'connecting');
+        if (now) this.onCrowded?.(spaceName);
+    }
+
+    /** Whether this user is a voice bot other than this one. */
+    private isOtherVoiceBot(spaceName: string, user: SpaceUser): boolean {
+        return user.spaceUserId.length > 0 && user.spaceUserId.length <= MAX_ID_CHARS && user.spaceUserId !== this.game.botSpaceUserId(spaceName) && isBotUser(user) && (user.tags?.includes(VOICE_BOT_TAG) ?? false);
     }
 
     private tellEveryone(spaceName: string, status: VoiceStatus): void {
@@ -333,6 +363,7 @@ export class VoiceCalls {
         this.rooms.delete(spaceName);
         this.invitations.delete(spaceName);
         this.roster.delete(spaceName);
+        this.otherVoiceBots.delete(spaceName);
         for (const [key, lost] of this.lost) if (lost.spaceName === spaceName) this.lost.delete(key);
         for (const key of this.spoken.keys()) if (key.startsWith(`${spaceName}\n`)) this.spoken.delete(key);
         for (const key of this.pausedFor) if (key.startsWith(`${spaceName}\n`)) this.pausedFor.delete(key);
@@ -340,6 +371,7 @@ export class VoiceCalls {
         for (const key of this.joined.keys()) if (key.startsWith(`${spaceName}\n`)) this.joined.delete(key);
         for (const key of this.modes.keys()) if (key.startsWith(`${spaceName}\n`)) this.modes.delete(key);
         for (const key of this.told.keys()) if (key.startsWith(`${spaceName}\n`)) this.told.delete(key);
+        for (const key of this.actual.keys()) if (key.startsWith(`${spaceName}\n`)) this.actual.delete(key);
         this.talking.delete(spaceName);
         this.lastSpeechAt.delete(spaceName);
     }
@@ -397,13 +429,28 @@ export class VoiceCalls {
 
     /** Everyone in a space the bot is in (all of them, replacing what was known). */
     spaceUsers(spaceName: string, users: readonly SpaceUser[]): void {
+        const wasCrowded = this.crowded(spaceName);
         const people = new Map<string, SpaceUser>();
-        for (const user of users) if (this.isPerson(spaceName, user)) people.set(user.spaceUserId, user);
+        const voiceBots = new Set<string>();
+        for (const user of users) {
+            if (this.isPerson(spaceName, user)) people.set(user.spaceUserId, user);
+            else if (this.isOtherVoiceBot(spaceName, user)) voiceBots.add(user.spaceUserId);
+        }
         this.roster.set(spaceName, people);
+        this.otherVoiceBots.set(spaceName, voiceBots);
         this.rosterChanged(spaceName);
+        this.crowdChanged(spaceName, wasCrowded);
     }
 
     spaceUserJoined(spaceName: string, user: SpaceUser): void {
+        if (this.isOtherVoiceBot(spaceName, user)) {
+            const wasCrowded = this.crowded(spaceName);
+            let bots = this.otherVoiceBots.get(spaceName);
+            if (!bots) this.otherVoiceBots.set(spaceName, (bots = new Set()));
+            bots.add(user.spaceUserId);
+            this.crowdChanged(spaceName, wasCrowded);
+            return;
+        }
         if (!this.isPerson(spaceName, user)) return;
         let people = this.roster.get(spaceName);
         if (!people) this.roster.set(spaceName, (people = new Map()));
@@ -415,6 +462,8 @@ export class VoiceCalls {
     }
 
     spaceUserLeft(spaceName: string, spaceUserId: string): void {
+        const wasCrowded = this.crowded(spaceName);
+        if (this.otherVoiceBots.get(spaceName)?.delete(spaceUserId)) this.crowdChanged(spaceName, wasCrowded);
         this.talking.get(spaceName)?.delete(spaceUserId);
         this.joined.delete(callKey(spaceName, spaceUserId));
         this.lost.delete(callKey(spaceName, spaceUserId));
@@ -422,6 +471,7 @@ export class VoiceCalls {
         this.modes.delete(callKey(spaceName, spaceUserId));
         this.told.delete(callKey(spaceName, spaceUserId));
         this.pausedFor.delete(callKey(spaceName, spaceUserId));
+        this.actual.delete(callKey(spaceName, spaceUserId));
         if (this.roster.get(spaceName)?.delete(spaceUserId)) this.rosterChanged(spaceName);
     }
 
@@ -608,6 +658,7 @@ export class VoiceCalls {
         if (!bubble) return;
         if (message.playedMs > 0) this.onHeard?.(bubble.spaceName, message.segmentId);
         if (!message.finished) return;
+        this.onPlayed?.(bubble.spaceName, message.segmentId);
         // Not a moment of it was heard, however it ended: a reply that was counted is given back
         if (message.playedMs <= 0) {
             this.onUnplayed?.(bubble.spaceName, message.segmentId);
@@ -811,6 +862,8 @@ export class VoiceCalls {
 
     /** Says committed text in the bot's voice, for at most `maxMs`. False when there is no audio session to say it in. */
     say(spaceName: string, segmentId: string, text: string, maxMs?: number): boolean {
+        // Never out loud while another voice bot is here
+        if (this.crowded(spaceName)) return false;
         const bubble = this.bubbles.get(spaceName);
         const sent = !!bubble && this.post({ type: 'bot.say', sessionId: bubble.sessionId, segmentId, text, committed: true, ...(maxMs ? { maxMs } : {}) });
         if (sent) this.stats.spoken++;
@@ -948,6 +1001,12 @@ export class VoiceCalls {
         this.restore(spaceName);
     }
 
+    /** Takes back a reply's audio: what is playing stops, what is queued is dropped. */
+    retract(spaceName: string, segmentId: string): void {
+        const bubble = this.bubbles.get(spaceName);
+        if (bubble) this.post({ type: 'bot.retract', sessionId: bubble.sessionId, segmentId });
+    }
+
     setMode(spaceName: string, mode: VoiceMode, personId?: string): boolean {
         const bubble = this.bubbles.get(spaceName);
         return !!bubble && this.post({ type: 'mode.set', sessionId: bubble.sessionId, mode, participantId: personId });
@@ -975,6 +1034,8 @@ export class VoiceCalls {
         this.modes.clear();
         this.told.clear();
         this.pausedFor.clear();
+        this.actual.clear();
+        this.otherVoiceBots.clear();
         this.link.close();
     }
 
