@@ -226,13 +226,8 @@
 {:else if server}
     <div class="ts" data-testid="tools-{current.k}">
         {#if current.k === "server"}
-            <div class="ts-hd">
-                <span class="ts-ico"><IconTool font-size="20" /><i class="ts-dot" /></span>
-                <span class="ts-tx">
-                    <span class="ts-t">{server.name}</span>
-                    <span class="ts-m">{tools.length} tools · Connected</span>
-                </span>
-            </div>
+            <!-- The panel title already names the server, so this says only how it is -->
+            <div class="ts-state"><i class="ts-dot" />Connected · {tools.length} tools</div>
             <div class="ts-url">{server.serverUrl}</div>
             <div class="ts-actions">
                 <button type="button" class="ts-chip">Test server</button>
@@ -417,15 +412,18 @@
         height: 32px;
         color: rgba(255, 255, 255, 0.85);
     }
+    .ts-state {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        color: rgba(244, 242, 250, 0.8);
+    }
     .ts-dot {
-        position: absolute;
-        right: 2px;
-        bottom: 2px;
         width: 9px;
         height: 9px;
         border-radius: 50%;
         background: #4ade80;
-        box-shadow: 0 0 0 2px #0a0814;
     }
     .ts-tx {
         display: flex;

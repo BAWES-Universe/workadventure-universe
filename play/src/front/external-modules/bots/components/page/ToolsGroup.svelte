@@ -76,6 +76,8 @@
             ? page.tools.none()
             : servers.length <= 2
             ? servers.map((s) => s.name).join(", ")
+            : design === "live"
+            ? page.tools.count({ count: servers.length })
             : `${servers.length} servers · ${servers.reduce((n, s) => n + (s.toolKinds?.tools.length ?? 0), 0)} tools`;
     $: waits = page.tools.waits({ patience: durationLabel(patience) });
     $: brief = names ? `${names} · ${waits}` : waits;
@@ -116,7 +118,7 @@
     <BotMcpServersEditor
         botId={bot.id}
         onServers={(loaded) => (servers = loaded)}
-        onOpenServer={onOpenScreen && design !== "old" ? (server) => onOpenScreen?.({ k: "server", id: server.id }) : undefined}
+        onOpenServer={onOpenScreen && design !== "old" && design !== "live" ? (server) => onOpenScreen?.({ k: "server", id: server.id }) : undefined}
     />
     <PageField title={page.tools.patience()} hint={page.tools.patienceHint()}>
         <PageChips
@@ -148,13 +150,13 @@
         />
     </PageField>
     <!-- Prototype (mock 1 redo): the asking settings on a screen of their own -->
-    <button type="button" class="bp-drill" data-testid="tools-asking-row" on:click={() => onOpenScreen?.({ k: "asking" })}>
+    {#if design !== "live"}<button type="button" class="bp-drill" data-testid="tools-asking-row" on:click={() => onOpenScreen?.({ k: "asking" })}>
         <span class="bp-tx">
             <span class="bp-t">When it asks first</span>
             <span class="bp-m">Cards wait 10 min · asks before making more than 5 · “allow more” ends after 1 hour quiet</span>
         </span>
         <IconChevronRight font-size="18" />
-    </button>
+    </button>{/if}
     <label class="bp-set" for="bot-show-tool-calls-{bot.id}">
         <span class="bp-tx">
             <span class="bp-t">{page.tools.showToolCalls()}</span>

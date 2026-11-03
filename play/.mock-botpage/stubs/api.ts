@@ -168,7 +168,14 @@ const bigServers = [
     tavily,
     { id: "s6", name: "Gmail", serverUrl: "https://gmail.example/mcp", authType: "oauth", oauthConnected: false, enabled: true, lastTestedAt: null, lastTestResult: null, createdAt: "2026-11-03T18:30:00Z" },
 ];
-const servers = T === "big" || T === "changed" ? bigServers : T === "imagine" ? [imagine, linear, tavily] : [linear, imagine, tavily];
+// Today's live code: no headings yet, a server shows its tools' names
+const liveServers = bigServers.map((x) => {
+    const { toolKinds, ...rest } = x as Record<string, unknown> & { toolKinds?: { tools: Array<{ name: string }> } };
+    const names = toolKinds?.tools.map((t) => t.name) ?? [];
+    const r = rest as { lastTestResult?: Record<string, unknown> | null };
+    return { ...rest, lastTestResult: r.lastTestResult ? { ...r.lastTestResult, toolNames: names } : null };
+});
+const servers = T === "live" ? liveServers : T === "big" || T === "changed" ? bigServers : T === "imagine" ? [imagine, linear, tavily] : [linear, imagine, tavily];
 const call = null as string | null;
 const role = (id: string, key: string, name: string, color: string, builtIn: boolean, d: Record<string, boolean>) => ({ id, key, name, color, builtIn, defaults: d });
 const all = { chat: true, dm: true, summon: true, manage: true, change: true, send: true };
