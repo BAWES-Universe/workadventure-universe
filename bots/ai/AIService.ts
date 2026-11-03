@@ -8,6 +8,7 @@
  * - Usage tracking
  */
 
+import { pointedArtifactIds } from './ArtifactReferences';
 import type { ConversationMemory } from '../memory/ConversationMemory';
 import type { AdminApiService, AIProviderCredentials, BotAiCredentialsAnswer } from '../server/AdminApiService';
 import { BotClient } from '../client/BotClient';
@@ -2999,6 +3000,12 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         }
     }
 
+    /** The messages the bot's replies read ("Messages it remembers"): a link older than that is out of view, so it points at nothing. */
+    private recentHistoryOf<T>(memory: { conversationHistory?: T[] } | undefined, botId: string): T[] | undefined {
+        const window = this.conversationMemory?.windowFor?.(botId);
+        return window && window > 0 ? memory?.conversationHistory?.slice(-window) : memory?.conversationHistory;
+    }
+
     /**
      * Run one artifact tool for the person who is talking to the bot, and put its card in their chat: in a bubble that is
      * a line of nearby chat; in a direct message it waits in memory and goes out with the reply. Never throws.
@@ -3029,6 +3036,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             botId,
             person,
             chat,
+            // Only what the person themselves pointed at: their messages in the recent window, and a card they replied to
+            referencedArtifactIds: pointedArtifactIds(this.recentHistoryOf(memory, botId), memory?.pointedArtifacts),
             saveTimeoutMs: limits.artifactSaveSeconds * 1000,
             media: { turn: where.turnMedia ?? memory?.turnMedia ?? [], maxBytes: limits.artifactMediaBytes },
         });

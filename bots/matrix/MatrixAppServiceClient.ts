@@ -129,6 +129,19 @@ export class MatrixAppServiceClient {
         return Object.keys(response.data?.joined ?? {});
     }
 
+    /** One event of a room, read as a bot that is in it; null when it is not there or the bot may not read it. */
+    async getEvent(userId: string, roomId: string, eventId: string): Promise<MatrixEvent | null> {
+        try {
+            const response = await this.http.get(
+                `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/event/${encodeURIComponent(eventId)}`,
+                { params: { user_id: userId } }
+            );
+            return (response.data as MatrixEvent) ?? null;
+        } catch {
+            return null;
+        }
+    }
+
     /** The latest messages in a room, oldest first, read as a bot that is in it. */
     async getRecentMessages(userId: string, roomId: string, limit = 20): Promise<MatrixEvent[]> {
         const response = await this.http.get(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/messages`, {

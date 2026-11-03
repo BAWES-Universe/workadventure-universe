@@ -71,6 +71,8 @@ export interface DmReplyHooks {
     onSteps?: (field: StepsField, text: string) => Promise<void>;
     /** The Matrix room the message came in. Live artifacts made in this chat belong to it. */
     roomId?: string;
+    /** The artifacts the person pointed at by replying to a card (game #1781): the bot may open those even when another bot made them. */
+    pointedArtifactIds?: string[];
 }
 
 export interface DmReply {
@@ -116,7 +118,7 @@ const MAX_LAST_FILES = 500;
 export class DmReplyService extends BaseBehavior {
     private queues = new Map<string, Promise<unknown>>();
     /** Per chat, the words that wait behind the answer in progress, to be answered together once it is done. */
-    private waiting = new Map<string, { texts: string[]; answer: Promise<DmReply | null> }>();
+    private waiting = new Map<string, { texts: string[]; pointed: string[]; answer: Promise<DmReply | null> }>();
     private playerIds = new Map<string, number>();
     private nextPlayerId = -1;
     private loadedBots = new Set<string>();
@@ -155,6 +157,8 @@ export class DmReplyService extends BaseBehavior {
         const waiting = this.waiting.get(key);
         if (waiting && attachments.length === 0) {
             waiting.texts.push(text);
+            // A card replied to in a message that waits is pointed at by the one answer that covers it (game #1781)
+            waiting.pointed.push(...(hooks.pointedArtifactIds ?? []));
             return waiting.answer.then((reply) => ({
                 text: '',
                 media: [],
@@ -162,12 +166,13 @@ export class DmReplyService extends BaseBehavior {
             }));
         }
         const previous = this.queues.get(key);
-        const batch = { texts: [text] } as { texts: string[]; answer: Promise<DmReply | null> };
+        const batch = { texts: [text], pointed: [...(hooks.pointedArtifactIds ?? [])] } as { texts: string[]; pointed: string[]; answer: Promise<DmReply | null> };
         const next = (previous ?? Promise.resolve())
             .catch(() => undefined)
             .then(() => {
                 if (this.waiting.get(key) === batch) this.waiting.delete(key);
-                return this.replyNow(botId, person, batch.texts.join('\n'), attachments, hooks);
+                const pointedArtifactIds = [...new Set(batch.pointed)];
+                return this.replyNow(botId, person, batch.texts.join('\n'), attachments, pointedArtifactIds.length ? { ...hooks, pointedArtifactIds } : hooks);
             });
         batch.answer = next.catch(() => null);
         // Words that come after a file wait behind the file, never in a batch from before it
@@ -357,6 +362,8 @@ export class DmReplyService extends BaseBehavior {
         const turnMemory = memory.getMemory(botId, playerId);
         if (turnMemory) {
             turnMemory.dmRoomId = hooks.roomId;
+            // Only this turn's reply: a card pointed at earlier is not pointed at again by the next message
+            turnMemory.pointedArtifacts = hooks.pointedArtifactIds ?? [];
             turnMemory.pendingArtifacts = [];
         }
 
