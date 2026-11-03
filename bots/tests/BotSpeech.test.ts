@@ -519,3 +519,42 @@ describe('the person a spoken reply is for (#1220)', () => {
         expect(t.speech.isSpeakingTo(7)).toBe(false);
     });
 });
+
+describe('a person who says they are done (#1670)', () => {
+    function withRetract() {
+        const retracted: string[] = [];
+        const t = setup();
+        const voice: SpeechVoice = {
+            say: (_space, segmentId, text, maxMs) => (t.said.push({ segmentId, text, maxMs }), true),
+            hasAudience: () => true,
+            someoneSpeaking: () => false,
+            lastSpokenToAt: () => 0,
+            retract: (_space, segmentId) => void retracted.push(segmentId),
+        };
+        const speech = new BotSpeech(voice, DEFAULT_REPLY_LIMITS, t.now);
+        const over: number[] = [];
+        speech.onOver = (_space, person) => void over.push(person);
+        return { speech, said: t.said, retracted, over };
+    }
+
+    it('stops what is playing for them, and its end does not open their window again', () => {
+        const t = withRetract();
+        t.speech.final(SPACE, reply(1, 7), 'Here is my answer to Khalid.');
+        t.speech.endFor(SPACE, 7);
+        expect(t.retracted).toEqual(['s1']);
+        expect(t.speech.isSpeakingTo(7)).toBe(false);
+        t.speech.played('s1');
+        expect(t.over).toEqual([]);
+    });
+
+    it('leaves what is playing for someone else alone', () => {
+        const t = withRetract();
+        t.speech.final(SPACE, reply(1, 7), 'To Khalid.');
+        t.speech.final(SPACE, reply(2, 8), 'To Sara.');
+        t.speech.endFor(SPACE, 7);
+        expect(t.retracted).toEqual(['s1']);
+        expect(t.speech.isSpeakingTo(8)).toBe(true);
+        t.speech.played('s2');
+        expect(t.over).toEqual([8]);
+    });
+});

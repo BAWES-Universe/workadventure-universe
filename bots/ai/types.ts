@@ -260,6 +260,8 @@ export interface AIEmotionData {
     isInsult: boolean;             // Whether the message was an insult
     insultSeverity: number;        // 1-10 if insult, 0 otherwise
     context: 'sarcastic' | 'joking' | 'sincere' | 'frustrated' | 'angry' | 'neutral' | string;
+    /** Several people are in the bubble and this person told the bot they are done talking with it (#1670). Only ever true. */
+    doneTalking?: boolean;
 }
 
 /**

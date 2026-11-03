@@ -172,3 +172,40 @@ describe('followUpSeconds', () => {
         }
     });
 });
+
+describe('a person who says they are done (#1670)', () => {
+    it('needs the name again at once, and nobody else loses their window', () => {
+        const { attention } = setup();
+        for (const id of [KHALID, SARA]) {
+            attention.personJoined(SPACE, id);
+            attention.answered(SPACE, id);
+        }
+        expect(attention.attention(SPACE, KHALID, 'and one more thing')).toBe('follow-up');
+
+        attention.ended(SPACE, KHALID);
+        expect(attention.attention(SPACE, KHALID, 'and one more thing')).toBe('ignored');
+        expect(attention.attention(SPACE, KHALID, 'Sales Researcher, one more thing')).toBe('named');
+        expect(attention.attention(SPACE, SARA, 'and one more thing')).toBe('follow-up');
+    });
+
+    it('opens a window again only with a later answer', () => {
+        const { attention } = setup();
+        attention.personJoined(SPACE, KHALID);
+        attention.personJoined(SPACE, SARA);
+        attention.answered(SPACE, KHALID);
+        attention.ended(SPACE, KHALID);
+        attention.answered(SPACE, KHALID);
+        expect(attention.attention(SPACE, KHALID, 'go on')).toBe('follow-up');
+    });
+
+    it('can end something only when others are here and the bot is not on a summon to the person', () => {
+        const { attention, summonedTo } = setup();
+        attention.personJoined(SPACE, KHALID);
+        expect(attention.endable(SPACE, KHALID)).toBe(false);
+        attention.personJoined(SPACE, SARA);
+        expect(attention.endable(SPACE, KHALID)).toBe(true);
+        summonedTo.add(KHALID);
+        expect(attention.endable(SPACE, KHALID)).toBe(false);
+        expect(attention.endable(SPACE, SARA)).toBe(true);
+    });
+});
