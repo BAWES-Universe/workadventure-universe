@@ -51,7 +51,8 @@
       "title": "bot server -> worker: a bot is in a bubble and may get audio connections. `recognition` and `speech` name the providers this bubble hears and speaks with (all optional: without them the built-in test engine is used).",
       "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "bubbleId", "botId"],
         "properties": { "type": { "const": "session.open" }, "bubbleId": { "$ref": "#/$defs/id" }, "botId": { "$ref": "#/$defs/id" },
-          "recognition": { "$ref": "#/$defs/recognitionConfig" }, "speech": { "$ref": "#/$defs/speechConfig" }, "expression": { "$ref": "#/$defs/expression" } } }]
+          "recognition": { "$ref": "#/$defs/recognitionConfig" }, "speech": { "$ref": "#/$defs/speechConfig" }, "expression": { "$ref": "#/$defs/expression" },
+          "turnSeconds": { "type": "integer", "minimum": 5, "maximum": 3600 } } }]
     },
     "lane.open": {
       "title": "bot server -> worker: a person's browser started a connection with the bot",

@@ -52,6 +52,8 @@ export interface SessionSettings {
     recognition?: RecognitionConfig;
     speech?: SpeechConfig;
     expression?: Expression;
+    /** The longest stretch of one person's speech taken, in seconds of audio (#1669). Missing: the worker's own setting. */
+    turnSeconds?: number;
 }
 
 /** A recognizer that gives up on its first audio (the adapter is unknown, or the connector could not start). It says so once. */
@@ -109,7 +111,7 @@ export class Session {
             ? new Recognition({
                   factory: hearing.factory,
                   provider: hearing.provider,
-                  maxUtteranceMs: host.maxUtteranceMs,
+                  maxUtteranceMs: settings.turnSeconds !== undefined ? settings.turnSeconds * 1000 : host.maxUtteranceMs,
                   counters: host.counters,
                   send: (message) => host.send(message),
                   next: host.input,

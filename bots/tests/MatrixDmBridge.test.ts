@@ -248,6 +248,38 @@ describe('MatrixDmBridge', () => {
         expect(client.sendText).not.toHaveBeenCalled();
     });
 
+    it('tells the reply which artifact a replied-to card holds, so a bot that did not make it may open it (game #1781)', async () => {
+        await bridge.onEvent(invite());
+        const art = '0b7c1d2e-1111-4222-8333-944455556666';
+        client.getEvent = vi.fn(async () => ({
+            type: 'm.room.message', room_id: ROOM, sender: BOT_USER, event_id: '$card',
+            content: { msgtype: 'm.text', body: 'Clock · Page · Version 1', 'universe.artifact': { id: art, version: 1, title: 'Clock', kind: 'page', maker: 'Other' } },
+        }));
+        const reply = { ...message('make it bigger'), event_id: '$reply' };
+        reply.content['m.relates_to'] = { 'm.in_reply_to': { event_id: '$card' } };
+        await bridge.onEvent(reply);
+        expect(client.getEvent).toHaveBeenCalledWith(BOT_USER, ROOM, '$card');
+        expect(deps.reply).toHaveBeenLastCalledWith(BOT, expect.anything(), 'make it bigger', [], expect.objectContaining({ pointedArtifactIds: [art] }));
+    });
+
+    it('points at nothing for a reply to an ordinary message, a missing event, or a message that is not a reply (game #1781)', async () => {
+        await bridge.onEvent(invite());
+        client.getEvent = vi.fn(async () => ({ type: 'm.room.message', room_id: ROOM, sender: ALICE, event_id: '$old', content: { msgtype: 'm.text', body: 'hi' } }));
+        const reply = { ...message('and this?'), event_id: '$r1' };
+        reply.content['m.relates_to'] = { 'm.in_reply_to': { event_id: '$old' } };
+        await bridge.onEvent(reply);
+        expect(deps.reply).toHaveBeenLastCalledWith(BOT, expect.anything(), 'and this?', [], expect.objectContaining({ pointedArtifactIds: [] }));
+        client.getEvent = vi.fn(async () => null);
+        const gone = { ...message('this one?'), event_id: '$r2' };
+        gone.content['m.relates_to'] = { 'm.in_reply_to': { event_id: '$missing' } };
+        await bridge.onEvent(gone);
+        expect(deps.reply).toHaveBeenLastCalledWith(BOT, expect.anything(), 'this one?', [], expect.objectContaining({ pointedArtifactIds: [] }));
+        client.getEvent = vi.fn();
+        await bridge.onEvent(message('plain'));
+        expect(client.getEvent).not.toHaveBeenCalled();
+        expect(deps.reply).toHaveBeenLastCalledWith(BOT, expect.anything(), 'plain', [], expect.objectContaining({ pointedArtifactIds: [] }));
+    });
+
     it('joins a direct chat from someone allowed, and replies to their messages', async () => {
         await bridge.onEvent(invite());
         expect(deps.checkAccess).toHaveBeenCalledWith(BOT, ALICE);
@@ -1657,6 +1689,36 @@ describe('DmReplyService history', () => {
         ]);
     });
 
+    it('says the line before a tool and starts the steps as the tool begins, so the chat shows the work from the first second', async () => {
+        const order: string[] = [];
+        const service = await stepsService(async function* () {
+            yield { content: "I'll make it.", done: false };
+            yield { content: '', done: false, toolSteps: [{ id: 'a', doing: 'Making an artifact', done: 'Made an artifact', group: 'make_artifact', kind: 'write' }] };
+            order.push('the page is still being written');
+            yield { content: '', done: false, reset: true, toolNames: [], toolSteps: [{ id: 'a', doing: 'Making an artifact', done: 'Made an artifact', detail: 'Moon base', group: 'make_artifact', kind: 'write' }] };
+            yield { content: '', done: false, toolStepResults: [{ id: 'a', ok: true }] };
+            yield { content: 'Here it is.', done: false };
+            yield { content: '', done: true, metadata: {} };
+        });
+        const shown: Array<[any, string]> = [];
+        const reply = await (service as any).replyNow(BOT, { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false }, 'make a page', [], {
+            onInterimMessage: async (text: string) => void order.push(`said: ${text}`),
+            onSteps: async (field: any, text: string) => {
+                shown.push([structuredClone(field), text]);
+                order.push(`line: ${text}`);
+            },
+        });
+        expect(reply.text).toBe('Here it is.');
+        // Both came before the page was written, and the reset said nothing again
+        expect(order.slice(0, 3)).toEqual(["said: I'll make it.", 'line: Making an artifact…', 'the page is still being written']);
+        expect(order.filter((entry) => entry.startsWith('said:'))).toHaveLength(1);
+        expect(shown[0][0].steps).toMatchObject([{ state: 'running' }]);
+        expect(shown[0][0].steps[0].detail).toBeUndefined();
+        // The reset filled in what it was about, on the same step
+        expect(shown[1][0].steps).toMatchObject([{ state: 'running', detail: 'Moon base' }]);
+        expect(shown.at(-1)![0]).toMatchObject({ state: 'done', steps: [{ state: 'done', detail: 'Moon base' }] });
+    });
+
     it("shows no steps when the bot's Show tool calls switch is off", async () => {
         const onSteps = vi.fn(async () => undefined);
         const service = await stepsService(async function* () {
@@ -1727,6 +1789,28 @@ describe('DmReplyService history', () => {
         expect(await third).toEqual({ text: '', media: [], answeredTogether: true });
         expect(await withFile).toMatchObject({ text: 'answer to see this' });
         expect(asked).toEqual(['hi', 'are you there\nhello?', 'see this']);
+    });
+
+    it('keeps the card a waiting message replied to, when its words are answered together with the others (game #1781)', async () => {
+        const { DmReplyService } = await import('../server/DmReplyService');
+        const service = Object.create(DmReplyService.prototype) as InstanceType<typeof DmReplyService>;
+        let release!: () => void;
+        const first = new Promise<void>((resolve) => (release = resolve));
+        const hooksSeen: Array<{ pointedArtifactIds?: string[] }> = [];
+        const replyNow = vi.fn(async (_bot: string, _person: unknown, text: string, _files: unknown, hooks: { pointedArtifactIds?: string[] }) => {
+            hooksSeen.push(hooks);
+            if (hooksSeen.length === 1) await first;
+            return { text: `answer to ${text}`, media: [] };
+        });
+        Object.assign(service, { queues: new Map(), waiting: new Map(), replyNow });
+        const person = { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false };
+        const answering = service.reply(BOT, person, 'hi');
+        const second = service.reply(BOT, person, 'make it bigger', [], { roomId: ROOM, pointedArtifactIds: ['art-a'] });
+        const third = service.reply(BOT, person, 'and red', [], { roomId: ROOM, pointedArtifactIds: ['art-a', 'art-b'] });
+        release();
+        await Promise.all([answering, second, third]);
+        expect(hooksSeen[0].pointedArtifactIds).toBeUndefined();
+        expect(hooksSeen[1]).toMatchObject({ roomId: ROOM, pointedArtifactIds: ['art-a', 'art-b'] });
     });
 
     it('answers words sent after a file after the file, never in a batch from before it (#1159)', async () => {

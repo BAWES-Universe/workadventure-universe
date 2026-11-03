@@ -46,6 +46,7 @@ import { MeetingPresence, type MeetingArea } from '../voice/MeetingAreas';
 import { voiceOrbitSettings, voiceReplyLimits, voiceWorkerSettings } from '../voice/settings';
 import { BotVoiceSettings } from '../voice/VoiceSettings';
 import { BotSpeech } from '../voice/BotSpeech';
+import { OrbitTurnGate, pausedLine } from '../voice/VoiceAllowance';
 import { pausedAtCapacityEvent } from '../voice/VoiceLoad';
 import { captureServerEvent } from '../ai/PostHogClient';
 import { BotAttention, followUpSeconds } from './BotAttention';
@@ -413,7 +414,7 @@ export class BotClient {
         const gate = this.accessGate;
         if (!gate || !this.behavior) return true;
         const verdict = await this.chatVerdict(gate, this.behavior.getPersonForAccess(personId));
-        if (verdict.kind === 'allowed') return true;
+        if (verdict.kind === 'allowed') return this.greetingWithinAllowance(personId);
         if (verdict.kind === 'refused') {
             const toldAt = this.toldNoChat.get(personId);
             if (toldAt === undefined || Date.now() - toldAt >= BotClient.TOLD_NO_CHAT_FOR_MS) {
@@ -422,6 +423,20 @@ export class BotClient {
             }
         }
         return false;
+    }
+
+    /**
+     * A voice bot greets only while replies beyond the ones kept for text are left (#1669): a greeting is a Universe AI reply nobody
+     * asked for. A greeting that isn't made says nothing. Every other bot is as it was. Never throws.
+     */
+    private async greetingWithinAllowance(personId: number): Promise<boolean> {
+        if (!this.isVoiceBot() || !this.behavior) return true;
+        try {
+            return await this.behavior.mayGreetWithinAllowance(personId);
+        } catch (error) {
+            console.warn(`[Bot ${this.config.botId}] Could not check the allowance for a greeting, greeting anyway: ${error instanceof Error ? error.message : 'unknown'}`);
+            return true;
+        }
     }
 
     /**
@@ -2071,7 +2086,8 @@ export class BotClient {
         isError?: boolean,
         errorMessage?: string,
         reset?: boolean,
-        steps?: string
+        steps?: string,
+        mood?: string
     ): void {
         const spaceUserId = this.spaces.get(spaceName);
         if (!spaceUserId) {
@@ -2099,6 +2115,7 @@ export class BotClient {
                                 errorMessage,
                                 reset: reset ?? false,
                                 ...(steps !== undefined ? { steps } : {}),
+                                ...(mood ? { mood } : {}),
                             },
                         },
                     },
@@ -2479,12 +2496,28 @@ export class BotClient {
             // Who hears and speaks for this bot is its maker's choice in Orbit. Without Orbit (a local setup) the worker's test engine is used.
             adminApiService.isConfigured() && process.env.BOT_SERVICE_TOKEN
                 ? new BotVoiceSettings(this.config.botId, adminApiService, voiceOrbitSettings(), (message) => console.warn(`[Bot ${this.config.botId}] ${message}`))
+                : undefined,
+            // A reply Universe AI pays for comes out of the person's allowance (#1669)
+            adminApiService.isConfigured() && process.env.BOT_SERVICE_TOKEN
+                ? new OrbitTurnGate(
+                      this.config.botId,
+                      adminApiService,
+                      (playerId) => this.behavior?.getTalker(playerId) ?? null,
+                      (message) => console.warn(`[Bot ${this.config.botId}] ${message}`)
+                  )
                 : undefined
         );
+        // Voice paused for someone (the allowance, or a key that isn't working): the one fixed line, in the chat the reply is in
+        this.voice.onPaused = (spaceName) => this.sendChatMessage(spaceName, pausedLine(this.config.name));
         this.speech = new BotSpeech(this.voice, voiceReplyLimits());
         // With others in the bubble, a spoken turn is the bot's only when it was said to the bot (#1220)
         this.voice.hears = (spaceName, personId, text) => this.attention.hears(spaceName, BotClient.playerIdOf(personId), text);
         this.voice.onAudience = (spaceName) => this.speech?.audience(spaceName);
+        this.voice.onUnplayed = (spaceName, segmentId) => this.speech?.unplayed(spaceName, segmentId);
+        this.voice.onHeard = (spaceName, segmentId) => this.speech?.heard(spaceName, segmentId);
+        this.voice.onSessionEnded = (spaceName) => this.speech?.sessionEnded(spaceName);
+        this.voice.onPlayed = (_spaceName, segmentId) => this.speech?.played(segmentId);
+        this.voice.onCrowded =(spaceName) => this.speech?.crowded(spaceName);
         this.voice.onStopped = (spaceName, segmentId) => {
             const responseId = this.speech?.stopped(spaceName, segmentId);
             if (responseId) this.sendSpeechStopped(spaceName, responseId);
@@ -2499,6 +2532,7 @@ export class BotClient {
     }
 
     private stopVoice(): void {
+        this.speech?.shutdown();
         this.voice?.shutdown();
         this.voice = null;
         this.speech = null;

@@ -699,3 +699,93 @@ describe('VoiceCalls: telling a person where their audio stands (#1666)', () => 
         expect(t.game.statuses).toEqual([]);
     });
 });
+
+describe('VoiceCalls: two voice bots in one bubble (#1670)', () => {
+    const voiceBot = (id: string) => ({ spaceUserId: id, uuid: `bot-${id}`, tags: ['bot', 'voice-bot'], name: id }) as never;
+    const textBot = (id: string) => ({ spaceUserId: id, uuid: `bot-${id}`, tags: ['bot'], name: id }) as never;
+
+    it('tells everyone the voice is paused while another voice bot is here, and what is true when it leaves', () => {
+        const t = setup();
+        t.calls.spaceUsers(SPACE, [t.person('room_7'), t.person('room_8')]);
+        t.calls.handlePrivateEvent(t.event('start', 'room_7'));
+        const sessionId = (t.sent[0] as { sessionId: string }).sessionId;
+        t.fromWorker({ type: 'participant.join', sessionId, participantId: 'room_7', epoch: 1 });
+        t.game.statuses.length = 0;
+        t.calls.spaceUserJoined(SPACE, voiceBot('room_5'));
+        expect(t.calls.crowded(SPACE)).toBe(true);
+        expect(t.game.statuses).toEqual([['room_7', 'paused'], ['room_8', 'paused']]);
+        t.game.statuses.length = 0;
+        t.calls.spaceUserLeft(SPACE, 'room_5');
+        expect(t.calls.crowded(SPACE)).toBe(false);
+        expect(t.game.statuses).toEqual([['room_7', 'on'], ['room_8', 'connecting']]);
+    });
+
+    it('keeps saying paused to a connection that comes up while it is crowded, and says on when it is not any more', () => {
+        const t = setup();
+        t.calls.spaceUsers(SPACE, [t.person('room_7'), voiceBot('room_5')]);
+        t.calls.handlePrivateEvent(t.event('start', 'room_7'));
+        const sessionId = (t.sent[0] as { sessionId: string }).sessionId;
+        t.fromWorker({ type: 'participant.join', sessionId, participantId: 'room_7', epoch: 1 });
+        expect(t.game.statuses).toEqual([['room_7', 'paused']]);
+        t.calls.spaceUserLeft(SPACE, 'room_5');
+        expect(t.game.statuses).toEqual([['room_7', 'paused'], ['room_7', 'on']]);
+    });
+
+    it('says nothing out loud while crowded, and counts only other voice bots (not text bots, people, or itself)', () => {
+        const t = setup();
+        t.calls.handlePrivateEvent(t.event('start', 'room_7'));
+        t.calls.spaceUsers(SPACE, [t.person('room_7'), textBot('room_4'), voiceBot(BOT)]);
+        expect(t.calls.crowded(SPACE)).toBe(false);
+        expect(t.calls.say(SPACE, 's1', 'Hello', 1000)).toBe(true);
+        t.calls.spaceUserJoined(SPACE, voiceBot('room_5'));
+        expect(t.calls.say(SPACE, 's2', 'Hello', 1000)).toBe(false);
+        expect(t.sent.filter((m) => m.type === 'bot.say')).toHaveLength(1);
+    });
+
+    it('ignores a person who only carries the voice bot tag, and a bot that is not tagged', () => {
+        const t = setup();
+        t.calls.spaceUsers(SPACE, [t.person('room_7'), t.person('room_6', { tags: ['voice-bot'] }), textBot('room_4')]);
+        expect(t.calls.crowded(SPACE)).toBe(false);
+    });
+
+    it('knows about a second voice bot that was already there when it arrived, and stays crowded until both others are gone', () => {
+        const t = setup();
+        t.calls.spaceUsers(SPACE, [t.person('room_7'), voiceBot('room_5'), voiceBot('room_6')]);
+        expect(t.calls.crowded(SPACE)).toBe(true);
+        t.calls.spaceUserLeft(SPACE, 'room_5');
+        expect(t.calls.crowded(SPACE)).toBe(true);
+        t.calls.spaceUserLeft(SPACE, 'room_6');
+        expect(t.calls.crowded(SPACE)).toBe(false);
+    });
+
+    it('tells the speech when a second voice bot arrives, once, and lets it take back a reply', () => {
+        const t = setup();
+        const crowded = vi.fn();
+        t.calls.onCrowded = crowded;
+        t.calls.handlePrivateEvent(t.event('start', 'room_7'));
+        t.calls.spaceUserJoined(SPACE, voiceBot('room_5'));
+        t.calls.spaceUserJoined(SPACE, voiceBot('room_6'));
+        expect(crowded).toHaveBeenCalledTimes(1);
+        t.calls.retract(SPACE, 's1');
+        expect(t.sent.find((m) => m.type === 'bot.retract')).toMatchObject({ segmentId: 's1' });
+    });
+
+    it('tells the speech when a reply\'s audio is over', () => {
+        const t = setup();
+        const played = vi.fn();
+        t.calls.onPlayed = played;
+        t.calls.handlePrivateEvent(t.event('start', 'room_7'));
+        const sessionId = (t.sent[0] as { sessionId: string }).sessionId;
+        t.fromWorker({ type: 'playback.progress', sessionId, segmentId: 's1', playedMs: 500, totalMs: 500, finished: false, interrupted: false });
+        t.fromWorker({ type: 'playback.progress', sessionId, segmentId: 's1', playedMs: 500, totalMs: 500, finished: true, interrupted: false });
+        expect(played).toHaveBeenCalledTimes(1);
+        expect(played).toHaveBeenCalledWith(SPACE, 's1');
+    });
+
+    it('forgets the other voice bots when it leaves the space', () => {
+        const t = setup();
+        t.calls.spaceUsers(SPACE, [t.person('room_7'), voiceBot('room_5')]);
+        t.calls.spaceLeft(SPACE);
+        expect(t.calls.crowded(SPACE)).toBe(false);
+    });
+});

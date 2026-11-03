@@ -295,6 +295,49 @@ describe('a bot that does not speak answers in text', () => {
     });
 });
 
+describe('the longest stretch of speech (#1669)', () => {
+    async function opened(limits: object | null | Error, own?: object) {
+        const o = orbit();
+        o.state.active.alice = speaking({ parts: { recognition: 'owner', speech: 'owner' }, ...(own ? { limits: own } : {}) });
+        o.state.providers.ears = provider('ears', 'soniox', KEYS.ears);
+        o.state.providers['voice-a'] = provider('voice-a', 'elevenlabs', KEYS.voiceA);
+        o.state.limits = limits;
+        const alice = bot('alice', o.fake);
+        await alice.connect();
+        return alice.opens()[0];
+    }
+
+    it("is the bot's own when Orbit sent it (a lent key's value is in it) and goes to the worker with the session", async () => {
+        expect((await opened(null, { turnSeconds: 90, replyCharacters: 400, replySeconds: 30 })).turnSeconds).toBe(90);
+    });
+
+    it("is the server's when the bot has none of its own", async () => {
+        expect((await opened({ turnSeconds: 120 })).turnSeconds).toBe(120);
+        expect((await opened({ turnSeconds: 120 }, { replyCharacters: 400 })).turnSeconds).toBe(120);
+    });
+
+    it('is left out, so the worker keeps its own, when there is none or it is not one the worker accepts', async () => {
+        expect(await opened(null)).not.toHaveProperty('turnSeconds');
+        expect(await opened(new Error('down'))).not.toHaveProperty('turnSeconds');
+        for (const turnSeconds of [0, 4, 3601, 90.5, '90']) expect(await opened({ turnSeconds })).not.toHaveProperty('turnSeconds');
+    });
+
+    it('does not make a bubble reconnect when it changes: it reaches a bubble the next time its session is opened', async () => {
+        const o = orbit();
+        o.state.active.alice = speaking({ parts: { recognition: 'owner', speech: 'owner' }, limits: { turnSeconds: 90 } });
+        o.state.providers.ears = provider('ears', 'soniox', KEYS.ears);
+        o.state.providers['voice-a'] = provider('voice-a', 'elevenlabs', KEYS.voiceA);
+        const alice = bot('alice', o.fake);
+        await alice.connect();
+        alice.joined();
+        o.state.active.alice = speaking({ parts: { recognition: 'owner', speech: 'owner' }, limits: { turnSeconds: 45 } });
+        alice.speech.final(SPACE, 'bot-alice-player-7-00000001-aaaa-bbbb-cccc-dddddddddddd', 'Hello.');
+        await flush();
+        expect(alice.opens()).toHaveLength(1);
+        expect(alice.sent.filter((m) => m.type === 'bot.say')).toHaveLength(1);
+    });
+});
+
 describe('before each spoken turn', () => {
     async function speakingBot(o = orbit()) {
         o.state.active.alice = speaking({ parts: { recognition: 'owner', speech: 'owner' } });

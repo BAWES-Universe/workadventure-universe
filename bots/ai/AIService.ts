@@ -8,6 +8,7 @@
  * - Usage tracking
  */
 
+import { pointedArtifactIds } from './ArtifactReferences';
 import type { ConversationMemory } from '../memory/ConversationMemory';
 import type { AdminApiService, AIProviderCredentials, BotAiCredentialsAnswer } from '../server/AdminApiService';
 import { BotClient } from '../client/BotClient';
@@ -299,6 +300,19 @@ export class AIService {
             }
         }
         return { resting: false, config: await this.getProviderConfigById(providerId), source: 'provider' };
+    }
+
+    /**
+     * What a reply from this bot would run on: Universe AI, a server provider or the maker's own key (null when it can't be told,
+     * or the key is resting). Asked before a voice bot greets someone (#1669); the answer is Orbit's own, cached as for a reply.
+     */
+    async replySource(providerId: string, botId: string): Promise<'universe-ai' | 'provider' | 'own-key' | null> {
+        try {
+            const resolved = await this.resolveProvider(providerId, botId);
+            return resolved.resting ? null : resolved.source;
+        } catch {
+            return null;
+        }
     }
 
     /** A bot's limits as Orbit last served them, the recommended ones until it has (Orbit #666). */
@@ -885,7 +899,7 @@ export class AIService {
             const playerMemory = this.conversationMemory.getMemory(botId, playerId);
             const playerUuid = playerMemory?.userUuid || `temp-${playerId}`;
             // Map to accumulate tool call arguments by ID (for streaming tool calls where arguments come in chunks)
-            const toolCallAccumulator: Map<string, { id: string; name: string; arguments: string }> = new Map();
+            const toolCallAccumulator: Map<string, { id: string; name: string; arguments: string; announced?: boolean }> = new Map();
 
             // For Qwen models, add /no_think to user message instead of system prompt
             const userMessageForQwen = isQwenModel 
@@ -1087,6 +1101,11 @@ export class AIService {
                             }
                         }
                     }
+
+                    // A call whose name is known has begun, though its arguments are still coming in (an artifact's whole
+                    // page can take a minute): the steps line starts now instead of when they are complete.
+                    const begun = this.beginSteps(toolCallAccumulator, toolServerMap);
+                    if (begun.length) yield {content: '', done: false, toolSteps: begun};
 
                     // If we have tool calls and chunk is done, execute them BEFORE yielding any content
                     if (chunk.done && toolCallAccumulator.size > 0) {
@@ -1509,6 +1528,8 @@ export class AIService {
                                             }
                                         }
                                     }
+                                    const begunNext = this.beginSteps(toolCallAccumulator, toolServerMap);
+                                    if (begunNext.length) yield {content: '', done: false, toolSteps: begunNext};
                                     if (resultChunk.done) {
                                         streamCompleted = true;
                                         // Buffer done chunk instead of yielding it — callers break
@@ -2979,6 +3000,12 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         }
     }
 
+    /** The messages the bot's replies read ("Messages it remembers"): a link older than that is out of view, so it points at nothing. */
+    private recentHistoryOf<T>(memory: { conversationHistory?: T[] } | undefined, botId: string): T[] | undefined {
+        const window = this.conversationMemory?.windowFor?.(botId);
+        return window && window > 0 ? memory?.conversationHistory?.slice(-window) : memory?.conversationHistory;
+    }
+
     /**
      * Run one artifact tool for the person who is talking to the bot, and put its card in their chat: in a bubble that is
      * a line of nearby chat; in a direct message it waits in memory and goes out with the reply. Never throws.
@@ -3009,6 +3036,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             botId,
             person,
             chat,
+            // Only what the person themselves pointed at: their messages in the recent window, and a card they replied to
+            referencedArtifactIds: pointedArtifactIds(this.recentHistoryOf(memory, botId), memory?.pointedArtifacts),
             saveTimeoutMs: limits.artifactSaveSeconds * 1000,
             media: { turn: where.turnMedia ?? memory?.turnMedia ?? [], maxBytes: limits.artifactMediaBytes },
         });
@@ -4029,6 +4058,20 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         } catch {
             return '';
         }
+    }
+
+    /**
+     * The calls that have a name and were not announced yet, as steps (#1545), marked announced. Tool pieces arrive over
+     * seconds, so this lets the steps line start when a call begins; the reset that follows once the arguments are
+     * complete carries the same steps and only fills in what they were about.
+     */
+    private beginSteps(
+        calls: Map<string, { id: string; name: string; arguments: string; announced?: boolean }>,
+        toolServerMap: Map<string, { title?: string }>
+    ): ToolStep[] {
+        const fresh = Array.from(calls.values()).filter((call) => call.name && !call.announced);
+        for (const call of fresh) call.announced = true;
+        return this.stepsOf(fresh, toolServerMap);
     }
 
     /** The calls a reset starts, as the steps line shows them: tool servers' tools and our own work tools (#1545). */

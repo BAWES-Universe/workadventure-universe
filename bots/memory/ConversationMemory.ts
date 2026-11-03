@@ -135,6 +135,9 @@ export interface BotPlayerMemory {
     // turn is in. Runtime only: nothing here is saved.
     pendingArtifacts?: Array<{ id: string; version: number; title: string; kind: 'app' | 'page' | 'markdown' | 'svg'; maker: string }>;
     dmRoomId?: string;
+    /** The artifacts the person pointed at by replying to their card in the turn being answered (game #1781), from the
+     * chat app. Their pasted links come from the history. Started fresh with each turn. Runtime only. */
+    pointedArtifacts?: string[];
     /** What make and change did in the turn being answered, by their arguments, so asking the model again for the same
      * turn (a repeated reply is regenerated) does not make a second copy. Cleared when the next turn starts. Runtime only. */
     artifactCalls?: Map<string, Record<string, unknown>>;
@@ -196,7 +199,8 @@ export class ConversationMemory {
         if (Number.isInteger(messages) && messages > 0) this.historyWindow.set(botId, messages);
     }
 
-    private windowFor(botId: string): number {
+    /** How many recent messages this bot's replies read: what "recent" means for what a person pointed at (game #1781). */
+    windowFor(botId: string): number {
         return this.historyWindow.get(botId) ?? DEFAULT_HISTORY_WINDOW;
     }
 

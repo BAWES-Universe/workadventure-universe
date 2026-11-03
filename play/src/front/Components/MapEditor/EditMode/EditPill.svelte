@@ -2,13 +2,16 @@
     // The pill at the top while editing: Done leaves, the middle says what you edit, Undo and Redo on the right.
     import { LL } from "../../../../i18n/i18n-svelte";
     import { gameManager } from "../../../Phaser/Game/GameManager";
+    import { gameSceneStore } from "../../../Stores/GameSceneStore";
     import { EditorToolName } from "../../../Phaser/Game/MapEditor/MapEditorModeManager";
     import { mapEditorVisibilityStore } from "../../../Stores/MapEditorStore";
     import { editPillStore, editUndoRedoStore } from "../../../Stores/EditModeStore";
     import { analyticsClient } from "../../../Administration/AnalyticsClient";
     import { IconArrowBackUp, IconCheck } from "@wa-icons";
 
-    const roomName = gameManager.currentStartedRoom?.roomName ?? "";
+    // The room the player is in now: the page does not reload when they walk through a portal, so the room the page
+    // started in is not it.
+    $: roomName = ($gameSceneStore?.room ?? gameManager.currentMapRoom).roomName ?? "";
 
     // A module's own job (a bot's route) takes the pill over: its title, and Done, Undo and Redo do its job
     $: job = $editPillStore;

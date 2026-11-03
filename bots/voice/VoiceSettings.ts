@@ -84,6 +84,11 @@ export interface SpeakingNow {
     profile: { recognitionModel: string; speechModel: string; voiceId: string; expression: VoiceExpression; language?: string };
     /** The reply limits for this bot, when Orbit (or the server's limits) gave any. */
     replyLimits?: Partial<Pick<ReplyLimits, 'maxChars' | 'maxSeconds'>>;
+    /**
+     * The longest stretch of one person's speech the worker takes in (#1669), when Orbit (or the server's limits) gave one. Not part of
+     * `signature`: a changed value reaches a bubble the next time its session is opened, so one limit edit does not cut every call.
+     */
+    turnSeconds?: number;
 }
 
 export type ActiveVoice = { speaks: false; reason: string } | SpeakingNow;
@@ -93,6 +98,7 @@ export interface SessionSettings {
     recognition: RecognitionConfig;
     speech: SpeechConfig;
     expression: VoiceExpression;
+    turnSeconds?: number;
 }
 
 /** How one provider call went, as the worker said it. */
@@ -161,7 +167,7 @@ export class BotVoiceSettings implements VoiceSettings {
         const language = profile?.language?.mode === 'fixed' && profile.language.code ? profile.language.code : undefined;
         // A part that Orbit says Universe AI pays for has no health to report; when Orbit does not say, the report is sent and ignored
         const paidBy = (part: ProviderPart): boolean => answer!.parts?.[part] !== 'universe-ai';
-        const replyLimits = (await this.limitsFor(answer.limits)) ?? undefined;
+        const { replyLimits, turnSeconds } = await this.limitsFor(answer.limits);
         return {
             keep: true,
             value: {
@@ -173,22 +179,35 @@ export class BotVoiceSettings implements VoiceSettings {
                 },
                 profile: { recognitionModel: recognition.model, speechModel: speech.model, voiceId: speech.voiceId, expression, language },
                 replyLimits,
+                ...(turnSeconds !== undefined ? { turnSeconds } : {}),
             },
         };
     }
 
-    /** The reply limits: the bot's own from Orbit when it sent them, else the server's, else none (the settings from the environment apply). */
-    private async limitsFor(fromBot: Partial<VoiceLimits> | null | undefined): Promise<SpeakingNow['replyLimits'] | null> {
-        const own = replyLimitsOf(fromBot);
-        if (own) return own;
-        if (this.limitsCache && this.now() - this.limitsCache.at < this.options.limitsCacheMs) return replyLimitsOf(this.limitsCache.value);
+    /**
+     * The limits that go to the bubble: the bot's own from Orbit when it sent them (a lent key's values are in them), else the
+     * server's, else none (the settings from the environment apply). Each limit is read on its own, so a bot that sent only some
+     * takes the rest from the server's.
+     */
+    private async limitsFor(fromBot: Partial<VoiceLimits> | null | undefined): Promise<{ replyLimits?: SpeakingNow['replyLimits']; turnSeconds?: number }> {
+        let replyLimits = replyLimitsOf(fromBot);
+        let turnSeconds = turnSecondsOf(fromBot);
+        if (replyLimits !== undefined && turnSeconds !== undefined) return { replyLimits, turnSeconds };
+        const server = await this.serverLimits();
+        replyLimits ??= replyLimitsOf(server);
+        turnSeconds ??= turnSecondsOf(server);
+        return { replyLimits, turnSeconds };
+    }
+
+    private async serverLimits(): Promise<Partial<VoiceLimits> | null | undefined> {
+        if (this.limitsCache && this.now() - this.limitsCache.at < this.options.limitsCacheMs) return this.limitsCache.value;
         try {
             const server = await this.orbit.getVoiceLimits(this.options.timeoutMs);
             this.limitsCache = { value: server, at: this.now() };
-            return replyLimitsOf(server);
+            return server;
         } catch (error) {
             this.log(`voice: could not read the server's voice limits (${describe(error)})`);
-            return replyLimitsOf(this.limitsCache?.value);
+            return this.limitsCache?.value;
         }
     }
 
@@ -209,6 +228,7 @@ export class BotVoiceSettings implements VoiceSettings {
             recognition: { adapter: forEars.adapter, model: profile.recognitionModel, key: forEars.key, ...connection(forEars), ...(profile.language ? { language: profile.language } : {}) },
             speech: { adapter: forVoice.adapter, model: profile.speechModel, voiceId: profile.voiceId, key: forVoice.key, ...connection(forVoice), ...(profile.language ? { language: profile.language } : {}) },
             expression: profile.expression,
+            ...(active.turnSeconds !== undefined ? { turnSeconds: active.turnSeconds } : {}),
         };
     }
 
@@ -273,6 +293,12 @@ function replyLimitsOf(limits: Partial<VoiceLimits> | null | undefined): Speakin
     const maxSeconds = whole(limits?.replySeconds);
     if (maxChars === undefined && maxSeconds === undefined) return undefined;
     return { ...(maxChars !== undefined ? { maxChars } : {}), ...(maxSeconds !== undefined ? { maxSeconds } : {}) };
+}
+
+/** The longest stretch of speech, only when it is a whole number the worker accepts (5 to 3600, as Orbit keeps it). */
+function turnSecondsOf(limits: Partial<VoiceLimits> | null | undefined): number | undefined {
+    const seconds = limits?.turnSeconds;
+    return typeof seconds === 'number' && Number.isInteger(seconds) && seconds >= 5 && seconds <= 3600 ? seconds : undefined;
 }
 
 /** A line about a failed call that cannot carry a key: the status or the error's code, never its request or answer. */
