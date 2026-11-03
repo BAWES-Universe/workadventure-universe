@@ -8,12 +8,11 @@ import { BotAttention, DEFAULT_FOLLOW_UP_SECONDS, followUpSeconds } from '../cli
 const SPACE = 'proximity-1';
 const KHALID = 7;
 const SARA = 8;
-const OTHER_BOT = 50;
 
 function setup(name = 'Sales Researcher', seconds = 30) {
     let now = 1_000_000;
     const summonedTo = new Set<number>();
-    const attention = new BotAttention(name, seconds, (id) => id !== OTHER_BOT, (id) => summonedTo.has(id), () => now);
+    const attention = new BotAttention(name, seconds, (id) => summonedTo.has(id), () => now);
     return { attention, summonedTo, advance: (ms: number) => (now += ms) };
 }
 
@@ -25,10 +24,9 @@ describe('BotAttention', () => {
         expect(attention.hears(SPACE, KHALID, 'what is the weather?')).toBe(true);
     });
 
-    it('does not take another bot, or a bubble it has not seen, for company', () => {
+    it('does not take a bubble it has not seen for company', () => {
         const { attention } = setup();
         attention.personJoined(SPACE, KHALID);
-        attention.personJoined(SPACE, OTHER_BOT);
         expect(attention.attention(SPACE, KHALID, 'hello')).toBe('alone');
         expect(attention.attention('unseen', KHALID, 'hello')).toBe('alone');
     });
@@ -83,6 +81,34 @@ describe('BotAttention', () => {
         expect(attention.attention(SPACE, KHALID, 'and the day after?')).toBe('follow-up');
         advance(2_000);
         expect(attention.attention(SPACE, KHALID, 'and the day after?')).toBe('ignored');
+    });
+
+    it('keeps listening to a person while it is still working on their line, then by the window', () => {
+        const { attention, advance } = setup('Nora', 30);
+        attention.personJoined(SPACE, KHALID);
+        attention.personJoined(SPACE, SARA);
+        attention.began(SPACE, KHALID);
+        // A long answer (tools, a slow model): well past the window, and the person adds to the ask
+        advance(120_000);
+        expect(attention.attention(SPACE, KHALID, 'and make it short')).toBe('follow-up');
+        expect(attention.attention(SPACE, SARA, 'and make it short')).toBe('ignored');
+        attention.began(SPACE, KHALID);
+        attention.ended(SPACE, KHALID, true);
+        expect(attention.attention(SPACE, KHALID, 'thanks')).toBe('follow-up');
+        attention.ended(SPACE, KHALID, true);
+        advance(29_000);
+        expect(attention.attention(SPACE, KHALID, 'thanks')).toBe('follow-up');
+        advance(2_000);
+        expect(attention.attention(SPACE, KHALID, 'thanks')).toBe('ignored');
+    });
+
+    it('does not keep a person in the conversation when the bot failed to answer them', () => {
+        const { attention } = setup('Nora', 30);
+        attention.personJoined(SPACE, KHALID);
+        attention.personJoined(SPACE, SARA);
+        attention.began(SPACE, KHALID);
+        attention.ended(SPACE, KHALID, false);
+        expect(attention.attention(SPACE, KHALID, 'hello?')).toBe('ignored');
     });
 
     it('needs the name every time when the window is 0', () => {

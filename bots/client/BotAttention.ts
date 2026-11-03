@@ -41,17 +41,17 @@ function plainWords(text: string): string {
 
 export class BotAttention {
     private readonly name: string;
-    /** Who is in each space, apart from the bot itself and other bots. */
+    /** Who is in each space: people only. The caller leaves out this bot and other bots (see `personJoined`). */
     private readonly people = new Map<string, Set<number>>();
     /** When the bot last answered each person, by space. */
     private readonly answeredAt = new Map<string, Map<number, number>>();
+    /** How many of a person's lines the bot is working on right now, by space: they are in the conversation until it is done. */
+    private readonly working = new Map<string, Map<number, number>>();
 
     constructor(
         botName: string,
         /** Seconds a person can go on without the name after the bot answered them. */
         readonly followUpSeconds: number,
-        /** True for a real person: not this bot, not another bot. */
-        private readonly isPerson: (userId: number) => boolean,
         /** Whether the bot is on a summon to this person right now. The summon itself says when that ends. */
         private readonly isSummonedBy: (userId: number) => boolean = () => false,
         private readonly now: () => number = Date.now
@@ -61,8 +61,8 @@ export class BotAttention {
 
     // ---- who is in the bubble ----
 
+    /** Someone is in the space. Only people: the bot does not tell people from bots by an id (ids repeat from room to room) but by who they are, so it is the caller that leaves bots out. */
     personJoined(spaceName: string, userId: number): void {
-        if (!this.isPerson(userId)) return;
         let set = this.people.get(spaceName);
         if (!set) this.people.set(spaceName, (set = new Set()));
         set.add(userId);
@@ -71,12 +71,14 @@ export class BotAttention {
     personLeft(spaceName: string, userId: number): void {
         this.people.get(spaceName)?.delete(userId);
         this.answeredAt.get(spaceName)?.delete(userId);
+        this.working.get(spaceName)?.delete(userId);
     }
 
     /** The bot left the space: nobody's window carries over to the next time. */
     spaceLeft(spaceName: string): void {
         this.people.delete(spaceName);
         this.answeredAt.delete(spaceName);
+        this.working.delete(spaceName);
     }
 
     /** More than the speaker is in the bubble. The speaker counts even if their join was not seen yet. */
@@ -104,6 +106,8 @@ export class BotAttention {
         if (!this.isGroup(spaceName, speakerId)) return 'alone';
         if (this.isNamed(text)) return 'named';
         if (this.isSummonedBy(speakerId)) return 'summoned';
+        // A follow-up sent while the bot is still answering is part of that conversation (it may change or add to the ask)
+        if ((this.working.get(spaceName)?.get(speakerId) ?? 0) > 0) return 'follow-up';
         const last = this.answeredAt.get(spaceName)?.get(speakerId);
         if (last !== undefined && this.now() - last < this.followUpSeconds * 1000) return 'follow-up';
         return 'ignored';
@@ -112,6 +116,22 @@ export class BotAttention {
     /** Whether what this person said is for the bot. */
     hears(spaceName: string, speakerId: number, text: string): boolean {
         return this.attention(spaceName, speakerId, text) !== 'ignored';
+    }
+
+    /** The bot starts working on a line from this person: until it is done they can go on without its name. */
+    began(spaceName: string, speakerId: number): void {
+        let counts = this.working.get(spaceName);
+        if (!counts) this.working.set(spaceName, (counts = new Map()));
+        counts.set(speakerId, (counts.get(speakerId) ?? 0) + 1);
+    }
+
+    /** The bot is done with a line from this person. When it answered, the follow-up window starts from now. */
+    ended(spaceName: string, speakerId: number, answered: boolean): void {
+        const counts = this.working.get(spaceName);
+        const left = (counts?.get(speakerId) ?? 0) - 1;
+        if (left > 0) counts?.set(speakerId, left);
+        else counts?.delete(speakerId);
+        if (answered) this.answered(spaceName, speakerId);
     }
 
     /** The bot has answered this person: they can go on without its name for the follow-up window. */

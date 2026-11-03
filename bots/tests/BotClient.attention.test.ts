@@ -27,6 +27,10 @@ const joined = (id: number) => ({
     $case: 'addSpaceUserMessage',
     addSpaceUserMessage: { spaceName: SPACE, user: { spaceUserId: `room_${id}`, name: `P${id}`, uuid: `uuid-${id}`, isLogged: true } },
 });
+const botJoined = (id: number) => ({
+    $case: 'addSpaceUserMessage',
+    addSpaceUserMessage: { spaceName: SPACE, user: { spaceUserId: `room_${id}`, name: 'Other bot', uuid: 'bot-other', isLogged: false, tags: ['bot'] } },
+});
 const left = (id: number) => ({ $case: 'removeSpaceUserMessage', removeSpaceUserMessage: { spaceName: SPACE, spaceUserId: `room_${id}` } });
 
 const behaviorConfig: SocialBehaviorConfig = {
@@ -203,6 +207,31 @@ describe('BotClient: a bot only hears the person talking to it', () => {
         await t.receive(chatFrom(KHALID, 'is anyone there'));
         expect(t.onChatMessage).toHaveBeenCalledTimes(1);
         expect(t.onChatMessage.mock.calls[0][2]).toBe(KHALID);
+    });
+
+    it('does not count another bot as company, whatever its number', async () => {
+        const t = setup();
+        await t.receive(joined(KHALID));
+        await t.receive(botJoined(40));
+        await t.receive(chatFrom(KHALID, 'what is the weather?'));
+        expect(t.onChatMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('takes a follow-up sent while it is still answering, as part of the same conversation', async () => {
+        const t = setup();
+        await t.receive(joined(KHALID));
+        await t.receive(joined(SARA));
+        // The answer takes a long time
+        let finish!: () => void;
+        t.onChatMessage.mockImplementationOnce(() => new Promise<void>((resolve) => (finish = resolve)));
+        await t.receive(chatFrom(KHALID, 'Nora, research the market'));
+        expect(t.onChatMessage).toHaveBeenCalledTimes(1);
+
+        await t.receive(chatFrom(SARA, 'and add the prices'));
+        expect(t.onChatMessage).toHaveBeenCalledTimes(1);
+        await t.receive(chatFrom(KHALID, 'and add the prices'));
+        expect(t.onChatMessage).toHaveBeenCalledTimes(2);
+        finish();
     });
 
     it('hears the person it is summoned to, even without its name, until the summon ends', async () => {

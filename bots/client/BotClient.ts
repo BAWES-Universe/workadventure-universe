@@ -168,9 +168,18 @@ export class BotClient {
         this.attention = new BotAttention(
             config.name,
             followUpSeconds(),
-            (userId) => userId !== this.userId && !BotClient.isBot(userId),
             (userId) => this.behavior?.isSummonedBy?.(userId) ?? false
         );
+    }
+
+    /**
+     * Counts someone toward the people in the bubble (#1220), unless it is this bot or another bot. Bots are told apart
+     * by who they are (the bot tag or a bot uuid, as the voice relay does), not by their number: numbers repeat from
+     * room to room, and a person must never be taken for a bot because of one.
+     */
+    private rememberPerson(spaceName: string, userId: number, user: { tags?: string[]; uuid?: string }): void {
+        if (userId === this.userId || user.tags?.includes('bot') || user.uuid?.startsWith('bot-')) return;
+        this.attention.personJoined(spaceName, userId);
     }
 
     /** The numeric player id in a space user id ("roomID_userID"), or 0. */
@@ -3075,7 +3084,7 @@ export class BotClient {
                             }
                             
                             // Call onSpaceUserJoined to track UUIDs and auth status
-                            this.attention.personJoined(spaceName, numericUserId);
+                            this.rememberPerson(spaceName, numericUserId, spaceUser);
                             await this.behavior.onSpaceUserJoined(spaceName, userWithId);
                         } else {
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -3128,7 +3137,7 @@ export class BotClient {
                         console.log(`[Bot ${this.config.botId}] 📝 Tracking UUID from addSpaceUserMessage for user ${numericUserId} (${spaceUser.name}): ${spaceUser.uuid || 'NO UUID'}, isLogged: ${spaceUser.isLogged || false}`);
                     }
                     
-                    this.attention.personJoined(spaceName, numericUserId);
+                    this.rememberPerson(spaceName, numericUserId, spaceUser);
                     await this.behavior.onSpaceUserJoined(spaceName, userWithId);
                 }
                 break;
@@ -3150,6 +3159,7 @@ export class BotClient {
                         const textUrls = this.extractUrlsFromText(chatMessage);
                         const detectedUrl = textUrls[0] || undefined;
                         const detectedMime = detectedUrl ? await this.inferMimeTypeFromUrl(detectedUrl) : undefined;
+                        this.attention.began(message.updateSpaceUserMessage.spaceName, message.updateSpaceUserMessage.userId ?? 0);
                         this.behavior.onChatMessage(
                             message.updateSpaceUserMessage.spaceName,
                             chatMessage,
@@ -3158,7 +3168,8 @@ export class BotClient {
                             undefined,
                             detectedMime,
                             textUrls.length > 1 ? textUrls.slice(1) : undefined
-                        ).then(() => this.attention.answered(message.updateSpaceUserMessage.spaceName, message.updateSpaceUserMessage.userId ?? 0)).catch(error => {
+                        ).then(() => this.attention.ended(message.updateSpaceUserMessage.spaceName, message.updateSpaceUserMessage.userId ?? 0, true)).catch(error => {
+                            this.attention.ended(message.updateSpaceUserMessage.spaceName, message.updateSpaceUserMessage.userId ?? 0, false);
                             console.error(`[Bot ${this.config.botId}] onChatMessage error:`, error);
                             Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
                         });
@@ -3279,6 +3290,7 @@ export class BotClient {
                         const detectedMime: string | null | undefined = detectedUrl && !spaceMessage.mimeType
                             ? await this.inferMimeTypeFromUrl(detectedUrl)
                             : spaceMessage.mimeType;
+                        this.attention.began(spaceName, senderId);
                         this.behavior.onChatMessage(
                             spaceName,
                             spaceMessage.message,
@@ -3288,7 +3300,8 @@ export class BotClient {
                             detectedMime,
                             galleryUrls.length > 0 ? galleryUrls : undefined,
                             BotClient.uploadsOf(spaceMessage, detectedMime)
-                        ).then(() => this.attention.answered(spaceName, senderId)).catch(error => {
+                        ).then(() => this.attention.ended(spaceName, senderId, true)).catch(error => {
+                            this.attention.ended(spaceName, senderId, false);
                             console.error(`[Bot ${this.config.botId}] onChatMessage error:`, error);
                             Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
                         });
