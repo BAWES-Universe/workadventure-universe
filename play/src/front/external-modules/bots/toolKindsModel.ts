@@ -19,3 +19,10 @@ export interface KindedTool {
      * to be confirmed again. */
     changedSince?: string;
 }
+
+/** Prototype: the Tools inner screens (a server, one of its headings, one heading across servers, asking settings). */
+export type ToolsScreen =
+    | { k: "server"; id: string }
+    | { k: "heading"; id: string; kind: ToolKind }
+    | { k: "kind"; kind: ToolKind }
+    | { k: "asking" };

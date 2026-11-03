@@ -9,5 +9,5 @@ html,body{margin:0;background:#1b1a24;font-family:"Roboto Condensed",system-ui,s
 .hdr .back{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;background:rgba(255,255,255,.08)}
 </style>
 <link href="https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@400;500;600;700&display=swap" rel="stylesheet">
-</head><body><div id="panel"><div class="hdr"><span class="back">‹</span><span id="title">Bots</span></div><div id="app"></div></div>
+</head><body><div id="panel"><div class="hdr"><span class="back" onclick="dispatchEvent(new Event('mock-back'))">‹</span><span id="title">Bots</span></div><div id="app"></div></div>
 <script>window.env={};</script><script type="module" src="./main.ts"></script></body></html>

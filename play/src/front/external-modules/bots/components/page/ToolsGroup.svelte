@@ -22,7 +22,8 @@
         modelCapFor,
         tokensLabel,
     } from "./replyLimits";
-    import { IconTool } from "@wa-icons";
+    import { IconChevronRight, IconTool } from "@wa-icons";
+    import type { ToolKind, ToolsScreen } from "../../toolKindsModel";
 
     export let bot: BotData;
     export let open: boolean;
@@ -34,6 +35,20 @@
     export let onToolCount: ((count: number) => void) | undefined = undefined;
     /** What "Runs on" offers (loaded by the Mind group): each choice's longest reply and steps. */
     export let aiOptions: BotAiOptions | null = null;
+    /** Prototype: opens one of the Tools inner screens */
+    export let onOpenScreen: ((screen: ToolsScreen) => void) | undefined = undefined;
+    const design = typeof location !== "undefined" ? new URLSearchParams(location.search).get("d") ?? "a" : "a";
+    const KIND_ROWS: Array<{ kind: ToolKind; title: string }> = [
+        { kind: "look", title: "Looks things up" },
+        { kind: "make", title: "Makes new things" },
+        { kind: "change", title: "Changes things" },
+        { kind: "send", title: "Deletes or sends out" },
+    ];
+    function kindLine(kind: ToolKind): string {
+        const list = (servers ?? []).filter((s) => s.toolKinds?.tools.some((t) => t.kind === kind));
+        const count = list.reduce((n, s) => n + (s.toolKinds?.tools.filter((t) => t.kind === kind).length ?? 0), 0);
+        return `${count} tools from ${list.length} ${list.length === 1 ? "server" : "servers"}`;
+    }
 
     let servers: McpServer[] | undefined;
     $: if (servers) onToolCount?.(servers.length);
@@ -61,7 +76,7 @@
             ? page.tools.none()
             : servers.length <= 2
             ? servers.map((s) => s.name).join(", ")
-            : page.tools.count({ count: servers.length });
+            : `${servers.length} servers · ${servers.reduce((n, s) => n + (s.toolKinds?.tools.length ?? 0), 0)} tools`;
     $: waits = page.tools.waits({ patience: durationLabel(patience) });
     $: brief = names ? `${names} · ${waits}` : waits;
     // What the bot runs on, as the model's limit below finds it: Orbit's current pick when the bot has none saved
@@ -84,44 +99,25 @@
               })
             : page.tools.modelStops({ model: shortName(stopsAtModel.model), limit: tokensLabel(stopsAtModel.tokens) })
         : null;
-    // Prototype choices, with the recommended ones picked
-    const askDirection = [
-        { value: "rarely", label: "Rarely" },
-        { value: "big", label: "Before bigger jobs" },
-        { value: "never", label: "Never" },
-    ];
-    let direction = "rarely";
-    const batchChoices = [
-        { value: 3, label: "3" },
-        { value: 5, label: "5" },
-        { value: 10, label: "10" },
-        { value: 0, label: "No limit" },
-    ];
-    let batch = 5;
-    const waitChoices = [
-        { value: 5, label: "5 min" },
-        { value: 10, label: "10 min" },
-        { value: 30, label: "30 min" },
-    ];
-    let wait = 10;
-    const quietChoices = [
-        { value: 30, label: "30 min" },
-        { value: 60, label: "1 hour" },
-        { value: 120, label: "2 hours" },
-    ];
-    let quiet = 60;
-    const mostChoices = [
-        { value: 4, label: "4 hours" },
-        { value: 8, label: "8 hours" },
-        { value: 24, label: "24 hours" },
-    ];
-    let most = 8;
-    let allowedChats = 2;
     $: stepLimit = limitChips(ceiling?.steps ?? null, STEP_CHOICES, bot.maxSteps, String, page.tools);
 </script>
 
 <PageGroup id="tools" icon={IconTool} title={page.tools.title()} {brief} {open} {onToggle}>
-    <BotMcpServersEditor botId={bot.id} onServers={(loaded) => (servers = loaded)} />
+    {#if design === "c" && servers}
+        <!-- Design C: what the tools do comes first, across every server -->
+        <div class="bp-label">What its tools do</div>
+        {#each KIND_ROWS as row (row.kind)}
+            <button type="button" class="bp-drill" on:click={() => onOpenScreen?.({ k: "kind", kind: row.kind })}>
+                <span class="bp-tx"><span class="bp-t">{row.title}</span><span class="bp-m">{kindLine(row.kind)}</span></span>
+                <IconChevronRight font-size="18" />
+            </button>
+        {/each}
+    {/if}
+    <BotMcpServersEditor
+        botId={bot.id}
+        onServers={(loaded) => (servers = loaded)}
+        onOpenServer={onOpenScreen && design !== "old" ? (server) => onOpenScreen?.({ k: "server", id: server.id }) : undefined}
+    />
     <PageField title={page.tools.patience()} hint={page.tools.patienceHint()}>
         <PageChips
             label={page.tools.patience()}
@@ -151,41 +147,14 @@
             onPick={(steps) => onChange({ ...bot, maxSteps: steps || null })}
         />
     </PageField>
-    <!-- Prototype: when the bot asks before a big job, how long a card waits, and the batch limit -->
-    <PageField
-        title="Asks which way to go"
-        hint="Before a long or costly job that could go very different ways. Otherwise it picks and says what it picked."
-    >
-        <PageChips label="Asks which way to go" options={askDirection} value={direction} onPick={(v) => (direction = v)} />
-    </PageField>
-    <PageField title="Asks before making more than" hint="The same kind of thing, like images or songs, in one reply">
-        <PageChips label="Asks before making more than" options={batchChoices} value={batch} onPick={(v) => (batch = v)} />
-    </PageField>
-    <PageField title="A card waits for an answer" hint="Then it does nothing and says so">
-        <PageChips label="A card waits for an answer" options={waitChoices} value={wait} onPick={(v) => (wait = v)} />
-    </PageField>
-    <PageField
-        title="“Allow more” ends when quiet for"
-        hint="After someone taps “allow more” on a card, it ends once they send nothing for this long"
-    >
-        <PageChips label="Allow more ends when quiet for" options={quietChoices} value={quiet} onPick={(v) => (quiet = v)} />
-    </PageField>
-    <PageField title="“Allow more” ends after at most" hint="Even in a busy chat, and always when the person leaves">
-        <PageChips label="Allow more ends after at most" options={mostChoices} value={most} onPick={(v) => (most = v)} />
-    </PageField>
-    <div class="bp-set" data-testid="bot-allowed-more">
+    <!-- Prototype (mock 1 redo): the asking settings on a screen of their own -->
+    <button type="button" class="bp-drill" data-testid="tools-asking-row" on:click={() => onOpenScreen?.({ k: "asking" })}>
         <span class="bp-tx">
-            <span class="bp-t">Allowed more right now</span>
-            <span class="bp-m"
-                >{allowedChats
-                    ? `${allowedChats} chats: Khalid for WEB issues, Omar for MAP issues`
-                    : "None. Every change asks first again."}</span
-            >
+            <span class="bp-t">When it asks first</span>
+            <span class="bp-m">Cards wait 10 min · asks before making more than 5 · “allow more” ends after 1 hour quiet</span>
         </span>
-        {#if allowedChats}
-            <button type="button" class="bp-end" on:click={() => (allowedChats = 0)}>End all</button>
-        {/if}
-    </div>
+        <IconChevronRight font-size="18" />
+    </button>
     <label class="bp-set" for="bot-show-tool-calls-{bot.id}">
         <span class="bp-tx">
             <span class="bp-t">{page.tools.showToolCalls()}</span>
@@ -228,6 +197,27 @@
     .bp-t {
         font-size: 13px;
         font-weight: 600;
+    }
+    .bp-drill {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        min-height: 52px;
+        margin: 0;
+        padding: 6px 8px;
+        border: 0;
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.04);
+        font: inherit;
+        color: #fff;
+        text-align: start;
+        cursor: pointer;
+    }
+    .bp-label {
+        font-size: 12px;
+        font-weight: 600;
+        color: rgba(244, 242, 250, 0.6);
     }
     .bp-end {
         flex: none;

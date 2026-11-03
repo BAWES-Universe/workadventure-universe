@@ -47,6 +47,8 @@
     import UsageGroup from "./page/UsageGroup.svelte";
     import MakerAskedCard from "./page/MakerAskedCard.svelte";
     import BotUsageScreen from "./BotUsageScreen.svelte";
+    import ToolsScreens from "./ToolsScreens.svelte";
+    import type { ToolsScreen } from "../toolKindsModel";
     import { IconAdjustmentsHorizontal, IconCurrentLocation, IconPaw, IconPencil } from "@wa-icons";
 
     export let bot: BotData | null = null;
@@ -74,6 +76,13 @@
     export let editingAdvanced = false;
     /** One of Usage's screens: who uses the bot, what it ran on, its limits */
     export let usageScreen: UsageScreen | null = null;
+    /** Prototype (mock 1 redo): one of the Tools inner screens */
+    export let toolsScreen: ToolsScreen | null = null;
+    const toolsDesign = (typeof location !== "undefined" ? new URLSearchParams(location.search).get("d") : null) as
+        | "a"
+        | "b"
+        | "c"
+        | null ?? "a";
     $: telemetryState = $botTelemetryStore && $botTelemetryStore.botId === bot?.id ? $botTelemetryStore : undefined;
     $: telemetryLocked = telemetryState?.data?.universeHides === true;
     $: advancedBrief = !telemetryState
@@ -596,6 +605,14 @@
     />
 {:else if currentBot && editingRuleId}
     <BotRuleScreen botId={currentBot.id} ruleId={editingRuleId} onClose={() => (editingRuleId = null)} />
+{:else if currentBot && toolsScreen}
+    <ToolsScreens
+        botId={currentBot.id}
+        botName={currentBot.name || "The bot"}
+        screen={toolsScreen}
+        design={toolsDesign}
+        onClose={() => (toolsScreen = null)}
+    />
 {:else if currentBot && usageScreen}
     <BotUsageScreen bot={currentBot} screen={usageScreen} />
 {:else if currentBot && editingAdvanced}
@@ -712,6 +729,7 @@
                 onToggle={toggleGroup}
                 onChange={(next) => apply(next)}
                 wide={!$mobileLayoutStore}
+                onOpenScreen={(screen) => (toolsScreen = screen)}
                 {onToolCount}
                 {aiOptions}
             />

@@ -26,7 +26,9 @@ const bot = {
     createdBy: { id: "sara", name: "Sara" },
     updatedBy: moved || new URLSearchParams(location.search).get("s") === "sara-moved" ? { id: "khalid", name: "Khalid" } : { id: "sara", name: "Sara" },
 };
+const sc = q.get("screen");
+const toolsScreen = !sc ? null : sc === "asking" ? { k: "asking" } : sc.startsWith("kind:") ? { k: "kind", kind: sc.slice(5) } : { k: "server", id: sc.slice(7) };
 new BotDetailView({
     target: document.getElementById("app")!,
-    props: { bot, onSave: () => {}, onDelete: () => {}, onLocate: () => {} },
+    props: { bot, onSave: () => {}, onDelete: () => {}, onLocate: () => {}, toolsScreen } as never,
 });

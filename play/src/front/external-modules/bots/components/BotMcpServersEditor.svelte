@@ -8,11 +8,13 @@
         type McpServerTestResult,
     } from "../services/BotApiService";
     import PageButton from "./page/PageButton.svelte";
-    import { IconChevronDown, IconPlus, IconTool } from "@wa-icons";
+    import { IconChevronDown, IconChevronRight, IconPlus, IconTool } from "@wa-icons";
 
     export let botId: string;
     /** Told the servers after every load, so the Tools group can say what the bot has. */
     export let onServers: ((servers: McpServer[]) => void) | undefined = undefined;
+    /** Prototype (mock 1 redo): a server opens its own screen instead of growing in place */
+    export let onOpenServer: ((server: McpServer) => void) | undefined = undefined;
 
     // ─── State ─────────────────────────────────────────────────────────────────────
 
@@ -611,8 +613,19 @@
         if (server.authType === "oauth" && !server.oauthConnected) return "Needs you to connect it";
         if (!result) return "Not tested yet";
         if (!result.success) return testError[server.id] || result.error || "Can't connect";
-        const count = result.toolCount ?? 0;
+        const count = server.toolKinds?.tools.length ?? result.toolCount ?? 0;
         return `${count} tool${count !== 1 ? "s" : ""} · Connected`;
+    }
+
+    /** What a server's tools need from a manager, said on its row so it can't be missed */
+    function needsLine(server: McpServer): string {
+        const kinds = server.toolKinds;
+        if (!kinds) return "";
+        if (kinds.legacy) return "Not checked yet";
+        const open = kinds.tools.filter((t) => !t.reviewedBy);
+        if (!open.length) return "";
+        if (open.every((t) => t.changedSince)) return open.length === 1 ? "1 tool changed" : `${open.length} tools changed`;
+        return `${open.length} to check`;
     }
 
     function getStatusDot(server: McpServer): string {
@@ -656,7 +669,7 @@
                     type="button"
                     class="mcp-row mcp-toggle"
                     aria-expanded={expanded}
-                    on:click={() => (openServerId = expanded ? null : server.id)}
+                    on:click={() => (onOpenServer ? onOpenServer(server) : (openServerId = expanded ? null : server.id))}
                 >
                     <span class="mcp-ico">
                         <IconTool font-size="20" />
@@ -664,10 +677,14 @@
                     </span>
                     <span class="mcp-tx">
                         <span class="mcp-t">{server.name}</span>
-                        <span class="mcp-m" class:mcp-bad={getStatusDot(server) === "failed"}>{statusLine(server)}</span
+                        <span class="mcp-m" class:mcp-bad={getStatusDot(server) === "failed"}
+                            >{statusLine(server)}{#if needsLine(server)}<span class="mcp-needs"> · {needsLine(server)}</span
+                                >{/if}</span
                         >
                     </span>
-                    <span class="mcp-chev"><IconChevronDown font-size="18" /></span>
+                    <span class="mcp-chev"
+                        >{#if onOpenServer}<IconChevronRight font-size="18" />{:else}<IconChevronDown font-size="18" />{/if}</span
+                    >
                 </button>
                 {#if expanded}
                     <div class="mcp-body">
@@ -1180,6 +1197,9 @@
         font-size: 12.5px;
         line-height: 1.3;
         color: rgba(244, 242, 250, 0.64);
+    }
+    .mcp-needs {
+        color: #fcd34d;
     }
     .mcp-bad {
         color: #ff8a7a;
