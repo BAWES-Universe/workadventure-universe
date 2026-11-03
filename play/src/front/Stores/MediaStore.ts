@@ -131,15 +131,15 @@ function createBatchGetUserMediaStore() {
 
 export const batchGetUserMediaStore = createBatchGetUserMediaStore();
 
-// "Try again" on the camera access card: ask the browser again, in one batch. A refused camera is switched off and on
-// (so it is asked for even when it was already requested). When only the microphone was refused, the camera stays as
-// the player left it and the microphone is switched off and on instead.
+// "Try again" on the camera access card: ask the browser again. A refused camera is switched off and on. When only the
+// microphone was refused, the camera stays as the player left it and the microphone is switched off and on instead.
+// Not in a batch: the constraints are only recomputed when they differ, so the off and on must each be seen, the first
+// releasing the device and the second asking for it.
 setCameraRetryHandler(() => {
     const plan = retryPlanFor({
         cameraRefused: cameraWasRefused(),
         microphoneRequested: get(requestedMicrophoneState),
     });
-    batchGetUserMediaStore.startBatch();
     if (plan.camera) {
         requestedCameraState.disableWebcam();
         requestedCameraState.enableWebcam();
@@ -148,7 +148,6 @@ setCameraRetryHandler(() => {
         requestedMicrophoneState.disableMicrophone();
         requestedMicrophoneState.enableMicrophone();
     }
-    batchGetUserMediaStore.commitChanges();
 });
 
 /**
