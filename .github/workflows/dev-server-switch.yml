@@ -1,7 +1,6 @@
 name: Dev server switch
 
 # Points the dev server's game apps (dev.bawes.net) at one image tag and redeploys them.
-# The dev voice server is built by Coolify from a git branch, so it is pointed at the branch instead.
 # Called by dev-server.yml (the `on-dev` label) and by build-universe-images.yml (fresh
 # universe-develop builds). It only changes which image tag each dev app runs: environment
 # variables are never touched, so the dev/prod separation checked by the env gate is unchanged.
@@ -26,13 +25,13 @@ on:
         required: false
         type: string
         default: ''
-      branch:
+      voice_worker:
         description: >-
-          Branch dev is switched to (for example universe-develop). The dev voice server is built
-          by Coolify from a git branch, not from the images, so it follows this branch.
+          `true` includes the dev voice server in the switch (when DEV_COOLIFY_VOICE_WORKER_UUID is
+          set). `false` leaves it alone, for a run whose voice server image did not build.
         required: false
         type: string
-        default: ''
+        default: 'true'
       mode:
         description: >-
           Who dev belongs to, checked again once this run holds the switch lock. `pr`: the PR
@@ -238,52 +237,49 @@ jobs:
             esac
           done <<< "$APPS"
 
-      # The dev voice server (Coolify app voice-worker-dev) is not one of the image apps above: Coolify
-      # builds it from a git branch of this repo. So instead of an image tag it is pointed at the
-      # branch dev now follows, then deployed (a rebuild from that branch). It runs after the game
-      # apps and never fails the switch, like the voice server on prod: without it voice bots on
-      # dev answer in text. An app set to a Docker image instead is given the image tag.
-      # Skipped, with a warning, until DEV_COOLIFY_VOICE_WORKER_UUID is set.
+      # The dev voice server (Coolify app voice-worker-dev) runs the same kind of pulled image as the
+      # apps above, but it gets its own step: it runs after the game apps and never fails the switch,
+      # like the voice server on prod (without it voice bots on dev answer in text). It is skipped
+      # with a warning until DEV_COOLIFY_VOICE_WORKER_UUID is set, when the caller says its image did
+      # not build, or when its image for this tag does not exist.
       - name: Switch and deploy the dev voice server
         if: steps.slot.outputs.go == 'true'
         continue-on-error: true
         env:
           VOICE_UUID: ${{ vars.DEV_COOLIFY_VOICE_WORKER_UUID }}
-          BRANCH: ${{ inputs.branch }}
+          VOICE_WORKER: ${{ inputs.voice_worker }}
         run: |
           set -uo pipefail
-          if [ -z "$VOICE_UUID" ]; then
-            echo "::warning::DEV_COOLIFY_VOICE_WORKER_UUID is not set, so the dev voice server was not switched"
+          if [ "$VOICE_WORKER" != true ]; then
+            echo "::warning::The voice server image did not build in this run, so the dev voice server was not switched"
             exit 0
           fi
-          if [ -z "$BRANCH" ]; then
-            echo "::warning::No branch was given for this switch, so the dev voice server was not switched"
+          if [ -z "$VOICE_UUID" ]; then
+            echo "::warning::DEV_COOLIFY_VOICE_WORKER_UUID is not set, so the dev voice server was not switched"
             exit 0
           fi
           fail() { echo "::error::dev voice server: $1"; exit 1; }
           get() { curl -sS --max-time 20 -o "$2" -w '%{http_code}' -H "Authorization: Bearer ${COOLIFY_TOKEN}" "${COOLIFY_BASE}$1" || true; }
           send() { curl -sS --max-time 30 --fail-with-body -H "Authorization: Bearer ${COOLIFY_TOKEN}" -H 'Content-Type: application/json' "$@"; }
 
+          ref="ghcr.io/bawes-universe/voice-worker-universe:${TAG}"
+          if ! docker buildx imagetools inspect "$ref" > /dev/null; then
+            echo "::warning::$ref does not exist, so the dev voice server was not switched"
+            exit 0
+          fi
           code=$(get "/api/v1/applications/${VOICE_UUID}" /tmp/voice.json)
           [ "$code" = 200 ] || fail "HTTP $code reading the app (is DEV_COOLIFY_VOICE_WORKER_UUID an app of the Universe Dev team?)"
-          build_pack=$(jq -r '.build_pack // empty' /tmp/voice.json)
-          echo "Dev voice server: build pack '${build_pack:-unknown}', branch '$(jq -r '.git_branch // empty' /tmp/voice.json)'"
-          if [ "$build_pack" = dockerimage ]; then
-            field=docker_registry_image_tag; want="$TAG"
-          else
-            field=git_branch; want="$BRANCH"
-          fi
           send -X PATCH "${COOLIFY_BASE}/api/v1/applications/${VOICE_UUID}" \
-            -d "$(jq -cn --arg f "$field" --arg v "$want" '{($f): $v}')" > /dev/null \
-            || fail "Coolify refused the $field change"
+            -d "$(jq -cn --arg tag "$TAG" '{docker_registry_image_tag: $tag}')" > /dev/null \
+            || fail "Coolify refused the tag change (is the app set to run a Docker image?)"
           body=$(send -X POST "${COOLIFY_BASE}/api/v1/deploy?uuid=${VOICE_UUID}") || fail "deploy request failed: ${body:-no reply}"
           id=$(jq -r '.deployments[0].deployment_uuid // empty' <<< "$body")
           [ -n "$id" ] || fail "Coolify returned no deployment id: $body"
 
-          deadline=$(( $(date +%s) + 15 * 60 ))
+          deadline=$(( $(date +%s) + 10 * 60 ))
           misses=0
           while :; do
-            [ "$(date +%s)" -lt "$deadline" ] || fail "deployment $id did not finish within 15 minutes"
+            [ "$(date +%s)" -lt "$deadline" ] || fail "deployment $id did not finish within 10 minutes"
             code=$(get "/api/v1/deployments/${id}" /tmp/voice-deployment.json)
             status=""
             [ "$code" = 200 ] && status=$(jq -r '.status // empty' /tmp/voice-deployment.json 2>/dev/null)
@@ -302,9 +298,9 @@ jobs:
 
           code=$(get "/api/v1/applications/${VOICE_UUID}" /tmp/voice.json)
           [ "$code" = 200 ] || fail "HTTP $code reading the app after the deployment finished"
-          got=$(jq -r --arg f "$field" '.[$f] // empty' /tmp/voice.json)
-          echo "Dev voice server: finished, $field '$got', status '$(jq -r '.status // empty' /tmp/voice.json)'"
-          [ "$got" = "$want" ] || fail "Coolify reports $field '$got' after the deploy, expected '$want'"
+          got=$(jq -r '.docker_registry_image_tag // empty' /tmp/voice.json)
+          echo "Dev voice server: finished, tag '$got', status '$(jq -r '.status // empty' /tmp/voice.json)'"
+          [ "$got" = "$TAG" ] || fail "Coolify reports tag '$got' after the deploy, expected '$TAG'"
 
       # Clear old images once every app runs the new tag, so back-to-back switches don't fill
       # the dev disk between Coolify's scheduled cleanups. Volumes and networks are never touched:
