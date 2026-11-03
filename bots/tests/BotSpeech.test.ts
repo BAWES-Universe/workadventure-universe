@@ -507,4 +507,15 @@ describe('the person a spoken reply is for (#1220)', () => {
         t.speech.played('s9');
         expect(over).toHaveLength(1);
     });
+
+    it('is no longer being spoken to once the audio session ends mid-playback, and only for that bubble', () => {
+        const t = setup();
+        t.speech.final(SPACE, reply(1, 7), 'A long answer.');
+        t.speech.heard(SPACE, 's1');
+        expect(t.speech.isSpeakingTo(7)).toBe(true);
+        t.speech.sessionEnded('elsewhere');
+        expect(t.speech.isSpeakingTo(7)).toBe(true);
+        t.speech.sessionEnded(SPACE);
+        expect(t.speech.isSpeakingTo(7)).toBe(false);
+    });
 });

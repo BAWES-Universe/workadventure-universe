@@ -207,6 +207,8 @@ export class BotSpeech {
      * sent to it and never began to play will not play now, and its final report may never come. Those are given back.
      */
     sessionEnded(spaceName: string): void {
+        // What was already playing has no one to report its end now: it is not "being played" any more (#1220)
+        for (const [segmentId, space] of [...this.unfinished]) if (space === spaceName) this.unfinished.delete(segmentId);
         for (const [segmentId, segment] of [...this.segments]) {
             if (segment.spaceName !== spaceName || segment.heard) continue;
             this.segments.delete(segmentId);
