@@ -3,8 +3,9 @@ import HelpCameraSettingsPopup from "../Components/HelpSettings/HelpCameraSettin
 import { popupStore } from "./PopupStore";
 import { resetCameraRetry } from "./CameraRetryStore";
 
-export function showHelpCameraSettings() {
-    popupStore.addPopup(HelpCameraSettingsPopup, {}, "cameraAccessDenied");
+/** hint: the one-time first-visit tip. Nothing was refused, so the card has no Try again and no "blocked" wording. */
+export function showHelpCameraSettings(hint = false) {
+    popupStore.addPopup(HelpCameraSettingsPopup, { hint }, "cameraAccessDenied");
 }
 
 export function hideHelpCameraSettings() {

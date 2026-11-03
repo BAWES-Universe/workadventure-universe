@@ -14,6 +14,9 @@
     import CameraBlockedSteps from "./CameraBlockedSteps.svelte";
     import { IconCamera, IconInfoCircle, IconMicrophone } from "@wa-icons";
 
+    /** The first-visit tip: nothing was refused, so no "blocked" wording and no Try again. */
+    export let hint = false;
+
     let isAndroid = isAndroidFct();
     let isFirefox = getNavigatorType() === NavigatorType.firefox;
     let isChrome = getNavigatorType() === NavigatorType.chrome;
@@ -22,7 +25,7 @@
     // Android keep the pictures behind "How to allow".
     const iosKind = (() => {
         const kind = cameraHelpKindFor(currentInstallEnvironment());
-        return kind === "other" ? undefined : kind;
+        return hint || kind === "other" ? undefined : kind;
     })();
 
     function toggleDetails() {
@@ -54,11 +57,13 @@
             {iosKind ? $LL.camera.help.iosWhy() : $LL.camera.help.why()}
         </p>
 
-        <button
-            type="button"
-            class="u-cta m-0 flex h-11 w-full items-center justify-center rounded-xl px-4 text-sm font-bold"
-            on:click|preventDefault={retryCameraAccess}>{$LL.camera.help.tryAgain()}</button
-        >
+        {#if !hint}
+            <button
+                type="button"
+                class="u-cta m-0 flex h-11 w-full items-center justify-center rounded-xl px-4 text-sm font-bold"
+                on:click|preventDefault={retryCameraAccess}>{$LL.camera.help.tryAgain()}</button
+            >
+        {/if}
 
         {#if iosKind}
             <CameraBlockedSteps kind={iosKind} />
