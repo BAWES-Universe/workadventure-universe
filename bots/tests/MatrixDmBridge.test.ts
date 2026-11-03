@@ -248,6 +248,38 @@ describe('MatrixDmBridge', () => {
         expect(client.sendText).not.toHaveBeenCalled();
     });
 
+    it('tells the reply which artifact a replied-to card holds, so a bot that did not make it may open it (game #1781)', async () => {
+        await bridge.onEvent(invite());
+        const art = '0b7c1d2e-1111-4222-8333-944455556666';
+        client.getEvent = vi.fn(async () => ({
+            type: 'm.room.message', room_id: ROOM, sender: BOT_USER, event_id: '$card',
+            content: { msgtype: 'm.text', body: 'Clock · Page · Version 1', 'universe.artifact': { id: art, version: 1, title: 'Clock', kind: 'page', maker: 'Other' } },
+        }));
+        const reply = { ...message('make it bigger'), event_id: '$reply' };
+        reply.content['m.relates_to'] = { 'm.in_reply_to': { event_id: '$card' } };
+        await bridge.onEvent(reply);
+        expect(client.getEvent).toHaveBeenCalledWith(BOT_USER, ROOM, '$card');
+        expect(deps.reply).toHaveBeenLastCalledWith(BOT, expect.anything(), 'make it bigger', [], expect.objectContaining({ pointedArtifactIds: [art] }));
+    });
+
+    it('points at nothing for a reply to an ordinary message, a missing event, or a message that is not a reply (game #1781)', async () => {
+        await bridge.onEvent(invite());
+        client.getEvent = vi.fn(async () => ({ type: 'm.room.message', room_id: ROOM, sender: ALICE, event_id: '$old', content: { msgtype: 'm.text', body: 'hi' } }));
+        const reply = { ...message('and this?'), event_id: '$r1' };
+        reply.content['m.relates_to'] = { 'm.in_reply_to': { event_id: '$old' } };
+        await bridge.onEvent(reply);
+        expect(deps.reply).toHaveBeenLastCalledWith(BOT, expect.anything(), 'and this?', [], expect.objectContaining({ pointedArtifactIds: [] }));
+        client.getEvent = vi.fn(async () => null);
+        const gone = { ...message('this one?'), event_id: '$r2' };
+        gone.content['m.relates_to'] = { 'm.in_reply_to': { event_id: '$missing' } };
+        await bridge.onEvent(gone);
+        expect(deps.reply).toHaveBeenLastCalledWith(BOT, expect.anything(), 'this one?', [], expect.objectContaining({ pointedArtifactIds: [] }));
+        client.getEvent = vi.fn();
+        await bridge.onEvent(message('plain'));
+        expect(client.getEvent).not.toHaveBeenCalled();
+        expect(deps.reply).toHaveBeenLastCalledWith(BOT, expect.anything(), 'plain', [], expect.objectContaining({ pointedArtifactIds: [] }));
+    });
+
     it('joins a direct chat from someone allowed, and replies to their messages', async () => {
         await bridge.onEvent(invite());
         expect(deps.checkAccess).toHaveBeenCalledWith(BOT, ALICE);

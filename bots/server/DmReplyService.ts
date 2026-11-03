@@ -71,6 +71,8 @@ export interface DmReplyHooks {
     onSteps?: (field: StepsField, text: string) => Promise<void>;
     /** The Matrix room the message came in. Live artifacts made in this chat belong to it. */
     roomId?: string;
+    /** The artifacts the person pointed at by replying to a card (game #1781): the bot may open those even when another bot made them. */
+    pointedArtifactIds?: string[];
 }
 
 export interface DmReply {
@@ -357,6 +359,8 @@ export class DmReplyService extends BaseBehavior {
         const turnMemory = memory.getMemory(botId, playerId);
         if (turnMemory) {
             turnMemory.dmRoomId = hooks.roomId;
+            // Only this turn's reply: a card pointed at earlier is not pointed at again by the next message
+            turnMemory.pointedArtifacts = hooks.pointedArtifactIds ?? [];
             turnMemory.pendingArtifacts = [];
         }
 

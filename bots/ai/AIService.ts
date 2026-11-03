@@ -8,6 +8,7 @@
  * - Usage tracking
  */
 
+import { pointedArtifactIds } from './ArtifactReferences';
 import type { ConversationMemory } from '../memory/ConversationMemory';
 import type { AdminApiService, AIProviderCredentials, BotAiCredentialsAnswer } from '../server/AdminApiService';
 import { BotClient } from '../client/BotClient';
@@ -3029,6 +3030,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             botId,
             person,
             chat,
+            // Only what the person themselves pointed at: their messages in the recent window, and a card they replied to
+            referencedArtifactIds: pointedArtifactIds(memory?.conversationHistory, memory?.pointedArtifacts),
             saveTimeoutMs: limits.artifactSaveSeconds * 1000,
             media: { turn: where.turnMedia ?? memory?.turnMedia ?? [], maxBytes: limits.artifactMediaBytes },
         });

@@ -34,7 +34,7 @@ export function fileToolDefinitions(options: { artifacts: boolean }): Array<{ ty
                 name: FIND_FILES_TOOL,
                 description:
                     'Find files from your chats with this person: what they sent you and what you sent or made them' +
-                    (options.artifacts ? ', and the artifacts made with them' : '') +
+                    (options.artifacts ? ', and the artifacts you made for them or that were made in this chat (not what they made with other bots)' : '') +
                     '. Newest first, a page at a time. Use it when they mean a file that is not in the recent conversation or the ' +
                     'newest files list ("the PDF I sent last week", "that song you made"). Each file has an id like f12 for open_file ' +
                     'and send_again' +
