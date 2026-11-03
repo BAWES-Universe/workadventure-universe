@@ -170,6 +170,30 @@ export abstract class BaseBehavior {
         const identifier = this.userIdToUuid.get(userId) ?? null;
         return { signedIn: !!identifier && this.userIdToIsLogged.get(userId) === true, identifier };
     }
+    /**
+     * Who a player is, as Orbit counts people against the Universe AI allowance (#1669): their id as the game gave it and whether
+     * they are a guest. Null while the id isn't known (there is nobody to count).
+     */
+    getTalker(playerId: number): { userId: string; isGuest: boolean } | null {
+        const { signedIn, identifier } = this.getPersonForAccess(playerId);
+        return identifier ? { userId: identifier, isGuest: !signedIn } : null;
+    }
+
+    /**
+     * A voice bot's greeting is a Universe AI reply nobody asked for. It is made only while replies beyond the ones kept for text are
+     * left (#1669, Orbit's reply-allowance with `greeting`); a greeting that isn't made is not announced. Anything that can't be
+     * settled (no id yet, Orbit can't be asked, a bot on its maker's own key) lets it through, as for any reply.
+     */
+    async mayGreetWithinAllowance(playerId: number): Promise<boolean> {
+        const botId = this.bot?.getBotId();
+        const aiProviderRef = this.bot?.getFullConfig()?.aiProviderRef;
+        const talker = this.getTalker(playerId);
+        if (!botId || !aiProviderRef || !talker || !this.aiService || !this.adminApiService) return true;
+        const source = await this.aiService.replySource(aiProviderRef, botId);
+        if (!source || source === 'own-key') return true;
+        const answer = await this.adminApiService.checkReplyAllowance(botId, { userId: talker.userId, isGuest: talker.isGuest, source, greeting: true });
+        return answer.allowed;
+    }
     // Pending UUID tracking - map spaceUserId (string) to userId (number) for users we've seen but don't have UUID yet
     // This helps match addSpaceUserMessage when it arrives after a chat message
     protected pendingSpaceUserIdToUserId: Map<string, number> = new Map();

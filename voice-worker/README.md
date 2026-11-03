@@ -38,6 +38,18 @@ that names nothing gets) and the scripted `FakeEars` for tests, plus these real 
   are the final tokens so far plus the latest guesses; when the person pauses an empty text frame ends the audio and the
   words are final on Soniox's `finished`. A refused key (401/403), an error answer (its `error_code`), a dropped stream or
   no `finished` within `VOICE_RECOGNITION_FINAL_TIMEOUT_SECONDS` (default 10) fails the turn with the words heard so far.
+* `elevenlabs` (speaking, `src/elevenlabs.ts`): one streamed `POST /v1/text-to-speech/{voiceId}/stream?output_format=pcm_24000`
+  per reply to `https://api.elevenlabs.io` (or the profile's `endpoint`), the key in the `xi-api-key` header only, the
+  profile's `model` as `model_id`. Raw 24 kHz PCM plays as it arrives. The reply's language goes as `language_code`
+  (only to the v2.5 and v3 models; the others refuse one, so they go without it). Expression: `restrained` sends stability 0.75, `expressive` 0.3,
+  `natural` nothing (the voice's saved settings). A refusal fails with ElevenLabs' status; an unreachable server or a
+  dropped stream fails without one.
+* `cartesia` (speaking, `src/cartesia.ts`): one streamed `POST /tts/bytes` per reply to `https://api.cartesia.ai` (or the
+  profile's `endpoint`), the key in the `Authorization: Bearer` header only, `Cartesia-Version` from `VOICE_CARTESIA_VERSION`,
+  the profile's `model` as `model_id` and voice as `voice.id`, asking for raw `pcm_s16le` at 24 kHz, which plays as it arrives.
+  The reply's language goes as `language` (base code, such as `ar`). Expression: `restrained` sends `generation_config.emotion`
+  `calm` (Sonic 3 and newer only); `natural` and `expressive` send nothing, so Cartesia reads the emotion from the words. A
+  refusal fails with Cartesia's status; an unreachable server or a dropped stream fails without one.
 * `deepgram` (hearing, `src/deepgram.ts`): one real-time WebSocket stream per stretch of speech to
   `wss://api.deepgram.com/v1/listen` (or the profile's `endpoint`), the key in the `Authorization` header only
   (`Token <key>`), 16 kHz mono `linear16`, the profile's `model` (`nova-3` when it names none) and its `language` when it
@@ -112,6 +124,7 @@ npm test
 | `VOICE_SPEECH_TIMEOUT_SECONDS` | `15` | The longest a speech provider may go without sending the next piece of a reply's audio before the call counts as failed. |
 | `VOICE_RECOGNITION_FINAL_TIMEOUT_SECONDS` | `10` | The longest a hearing provider may take for a person's last words after they paused before the call counts as failed. |
 | `VOICE_BARGE_IN_MS` | `100` | Speech this long, from a person the bot hears, stops the bot's voice. A click or a cough is shorter. |
+| `VOICE_CARTESIA_VERSION` | `2026-08-14` | The `Cartesia-Version` every Cartesia request names. Change it only together with `src/cartesia.ts`. |
 | `VOICE_ICE_SERVERS` | Google STUN | JSON list of STUN/TURN servers, like the game's. |
 | `VOICE_ICE_PORT_RANGE` | any | `40000-40100`: the UDP ports to open on the host. |
 | `VOICE_PUBLIC_IP` | none | Public address(es) of the host when it is behind a NAT. |

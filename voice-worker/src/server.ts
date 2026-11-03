@@ -15,6 +15,8 @@ import type { RecognizerFactory } from './recognizer.ts';
 import type { RoomTransport } from './roomTransport.ts';
 import { type OutgoingMessage, Session } from './session.ts';
 import type { InputSink } from './transport.ts';
+import { ELEVENLABS_ADAPTER, ElevenLabsSpeech } from './elevenlabs.ts';
+import { CARTESIA_ADAPTER, CartesiaSpeech } from './cartesia.ts';
 import { DEFAULT_SONIOX_FINAL_TIMEOUT_MS, SONIOX_ADAPTER, SonioxRecognition } from './soniox.ts';
 import { checkMessage } from './validate.ts';
 
@@ -41,6 +43,8 @@ export interface WorkerOptions {
     speechTimeoutSeconds?: number;
     /** Voiced audio before a person counts as speaking over the bot, in milliseconds. */
     bargeInMs?: number;
+    /** The Cartesia API version every Cartesia request names. Default DEFAULT_CARTESIA_VERSION. */
+    cartesiaVersion?: string;
     /** How long a hearing provider may take for the last words after a person paused, in seconds, before it counts as failed. Default 10. */
     recognitionFinalTimeoutSeconds?: number;
     engineId?: string;
@@ -91,10 +95,12 @@ export class VoiceWorker {
         // Each real provider is one file registered by name; a registry passed in (tests) keeps what it already has
         this.connectors = options.connectors ?? new ConnectorRegistry();
         if (!this.connectors.speech(FAKE_ADAPTER)) this.connectors.registerSpeech(FAKE_ADAPTER, this.speech);
+        if (!this.connectors.speech(CARTESIA_ADAPTER)) this.connectors.registerSpeech(CARTESIA_ADAPTER, new CartesiaSpeech({ version: options.cartesiaVersion }));
         if (!this.connectors.recognition(SONIOX_ADAPTER)) {
             const finalTimeoutMs = (options.recognitionFinalTimeoutSeconds ?? DEFAULT_SONIOX_FINAL_TIMEOUT_MS / 1000) * 1000;
             this.connectors.registerRecognition(SONIOX_ADAPTER, new SonioxRecognition({ finalTimeoutMs }));
         }
+        if (!this.connectors.speech(ELEVENLABS_ADAPTER)) this.connectors.registerSpeech(ELEVENLABS_ADAPTER, new ElevenLabsSpeech());
         if (!this.connectors.recognition(DEEPGRAM_ADAPTER)) {
             const finalTimeoutMs = (options.recognitionFinalTimeoutSeconds ?? DEFAULT_DEEPGRAM_FINAL_TIMEOUT_MS / 1000) * 1000;
             this.connectors.registerRecognition(DEEPGRAM_ADAPTER, new DeepgramRecognition({ finalTimeoutMs }));
@@ -349,6 +355,7 @@ class BridgeConnection {
                     recognition: msg.recognition,
                     speech: msg.speech,
                     expression: msg.expression,
+                    turnSeconds: msg.turnSeconds,
                 });
                 this.sessions.set(msg.sessionId, session);
                 this.worker.counters.inc('sessions_opened');
