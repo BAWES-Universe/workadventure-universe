@@ -456,6 +456,26 @@ describe('two voice bots in one bubble (#1670)', () => {
         expect(given).toEqual([reply(1)]);
     });
 
+    it('gives back a reply that was counted and then reaches the voice while a second voice bot is here', () => {
+        const given: string[] = [];
+        let crowded = false;
+        let audience = false;
+        const voice: SpeechVoice = {
+            say: () => true,
+            hasAudience: () => audience,
+            someoneSpeaking: () => false,
+            lastSpokenToAt: () => 0,
+            crowded: () => crowded,
+            unspoken: (_space, turn) => void given.push(turn.turnId),
+        };
+        const speech = new BotSpeech(voice, DEFAULT_REPLY_LIMITS, () => 1000);
+        speech.final(SPACE, reply(1), 'Welcome!');
+        crowded = true;
+        audience = true;
+        speech.audience(SPACE);
+        expect(given).toEqual([reply(1)]);
+    });
+
     it('does not say a reply that was waiting for its turn once a second voice bot is here', () => {
         const t = crowdedSetup();
         let audience = false;

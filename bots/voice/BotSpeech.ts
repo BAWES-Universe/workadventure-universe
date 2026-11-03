@@ -253,6 +253,8 @@ export class BotSpeech {
     private speak(spaceName: string, responseId: string, reply: string): SpeechOutcome {
         if (this.voice.crowded?.(spaceName)) {
             remember(this.said, responseId);
+            // A reply that waited for its audience may already be counted: it is given back (nothing happens if it was not)
+            this.giveUp(spaceName, responseId);
             return 'unsaid';
         }
         const ask = this.voice.beforeSpeaking;
