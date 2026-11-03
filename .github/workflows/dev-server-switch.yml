@@ -49,7 +49,8 @@ permissions:
 jobs:
   switch:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 25 minutes for the game apps, up to 10 more for the voice server, and room for the rest.
+    timeout-minutes: 40
     # One switch at a time, whichever path started it. Never cancel one half-way: a cancelled
     # switch would leave some apps on the old tag and some on the new one.
     concurrency:
@@ -176,7 +177,7 @@ jobs:
 
       # One app at a time, in the order of APPS: each is switched, deployed and confirmed before
       # the next one starts. The whole switch shares one 25-minute budget, inside the job's
-      # 30-minute timeout.
+      # 40-minute timeout (the voice server step after it has its own 10 minutes).
       - name: Switch, deploy and confirm each app
         if: steps.slot.outputs.go == 'true'
         run: |
