@@ -199,7 +199,8 @@ export class ConversationMemory {
         if (Number.isInteger(messages) && messages > 0) this.historyWindow.set(botId, messages);
     }
 
-    private windowFor(botId: string): number {
+    /** How many recent messages this bot's replies read: what "recent" means for what a person pointed at (game #1781). */
+    windowFor(botId: string): number {
         return this.historyWindow.get(botId) ?? DEFAULT_HISTORY_WINDOW;
     }
 

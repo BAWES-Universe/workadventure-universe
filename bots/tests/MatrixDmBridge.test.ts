@@ -1791,6 +1791,28 @@ describe('DmReplyService history', () => {
         expect(asked).toEqual(['hi', 'are you there\nhello?', 'see this']);
     });
 
+    it('keeps the card a waiting message replied to, when its words are answered together with the others (game #1781)', async () => {
+        const { DmReplyService } = await import('../server/DmReplyService');
+        const service = Object.create(DmReplyService.prototype) as InstanceType<typeof DmReplyService>;
+        let release!: () => void;
+        const first = new Promise<void>((resolve) => (release = resolve));
+        const hooksSeen: Array<{ pointedArtifactIds?: string[] }> = [];
+        const replyNow = vi.fn(async (_bot: string, _person: unknown, text: string, _files: unknown, hooks: { pointedArtifactIds?: string[] }) => {
+            hooksSeen.push(hooks);
+            if (hooksSeen.length === 1) await first;
+            return { text: `answer to ${text}`, media: [] };
+        });
+        Object.assign(service, { queues: new Map(), waiting: new Map(), replyNow });
+        const person = { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false };
+        const answering = service.reply(BOT, person, 'hi');
+        const second = service.reply(BOT, person, 'make it bigger', [], { roomId: ROOM, pointedArtifactIds: ['art-a'] });
+        const third = service.reply(BOT, person, 'and red', [], { roomId: ROOM, pointedArtifactIds: ['art-a', 'art-b'] });
+        release();
+        await Promise.all([answering, second, third]);
+        expect(hooksSeen[0].pointedArtifactIds).toBeUndefined();
+        expect(hooksSeen[1]).toMatchObject({ roomId: ROOM, pointedArtifactIds: ['art-a', 'art-b'] });
+    });
+
     it('answers words sent after a file after the file, never in a batch from before it (#1159)', async () => {
         const { DmReplyService } = await import('../server/DmReplyService');
         const service = Object.create(DmReplyService.prototype) as InstanceType<typeof DmReplyService>;
