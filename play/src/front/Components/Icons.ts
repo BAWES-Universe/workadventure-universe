@@ -205,5 +205,6 @@ export { default as IconPlayerSkipBackFilled } from "~icons/tabler/player-skip-b
 export { default as IconPlayerSkipForwardFilled } from "~icons/tabler/player-skip-forward-filled";
 export { default as IconRewindBackward10 } from "~icons/tabler/rewind-backward-10";
 export { default as IconRewindForward10 } from "~icons/tabler/rewind-forward-10";
+export { default as IconVolume } from "~icons/tabler/volume";
 export { default as IconVolume2 } from "~icons/tabler/volume-2";
 export { default as IconVolumeOff } from "~icons/tabler/volume-off";
