@@ -12,6 +12,16 @@ import { writable } from "svelte/store";
 export const cameraRetriedStore = writable(false);
 
 let retryHandler: (() => void) | undefined;
+// The browser refused a request that included the camera, so the camera was switched off because of it, not by the player
+let cameraRefused = false;
+
+export function markCameraRefused(): void {
+    cameraRefused = true;
+}
+
+export function cameraWasRefused(): boolean {
+    return cameraRefused;
+}
 
 export function setCameraRetryHandler(handler: () => void): void {
     retryHandler = handler;
@@ -24,5 +34,6 @@ export function retryCameraAccess(): void {
 }
 
 export function resetCameraRetry(): void {
+    cameraRefused = false;
     cameraRetriedStore.set(false);
 }

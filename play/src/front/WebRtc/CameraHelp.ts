@@ -18,3 +18,15 @@ export function cameraHelpKindFor(env: InstallEnvironment): CameraHelpKind {
     if (!isIos) return "other";
     return isInstalledApp(env) ? "ios-app" : "ios-browser";
 }
+
+/**
+ * What "Try again" asks the browser for. A camera the browser refused is asked for again. A camera the player had off
+ * stays off when only the microphone was refused: only the microphone is asked for again.
+ */
+export function retryPlanFor(state: { cameraRefused: boolean; microphoneRequested: boolean }): {
+    camera: boolean;
+    microphone: boolean;
+} {
+    if (state.cameraRefused) return { camera: true, microphone: false };
+    return { camera: false, microphone: state.microphoneRequested };
+}

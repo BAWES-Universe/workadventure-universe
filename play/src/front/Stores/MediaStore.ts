@@ -31,7 +31,8 @@ import { privacyShutdownStore } from "./PrivacyShutdownStore";
 import { inExternalServiceStore, myCameraStore, myMicrophoneStore, proximityMeetingStore } from "./MyMediaStore";
 import { userMovingStore } from "./GameStore";
 import { hideHelpCameraSettings } from "./HelpSettingsStore";
-import { setCameraRetryHandler } from "./CameraRetryStore";
+import { cameraWasRefused, markCameraRefused, setCameraRetryHandler } from "./CameraRetryStore";
+import { retryPlanFor } from "../WebRtc/CameraHelp";
 import { isLiveStreamingStore } from "./IsStreamingStore";
 import { videoStreamElementsStore } from "./PeerStore";
 import { bubbleMatesStore } from "./CurrentPlayerGroupStore";
@@ -130,12 +131,23 @@ function createBatchGetUserMediaStore() {
 
 export const batchGetUserMediaStore = createBatchGetUserMediaStore();
 
-// "Try again" on the camera access card: turn the camera off and on in one go, so the browser is asked once more
-// even when the camera was already requested
+// "Try again" on the camera access card: ask the browser again, in one batch. A refused camera is switched off and on
+// (so it is asked for even when it was already requested). When only the microphone was refused, the camera stays as
+// the player left it and the microphone is switched off and on instead.
 setCameraRetryHandler(() => {
+    const plan = retryPlanFor({
+        cameraRefused: cameraWasRefused(),
+        microphoneRequested: get(requestedMicrophoneState),
+    });
     batchGetUserMediaStore.startBatch();
-    requestedCameraState.disableWebcam();
-    requestedCameraState.enableWebcam();
+    if (plan.camera) {
+        requestedCameraState.disableWebcam();
+        requestedCameraState.enableWebcam();
+    }
+    if (plan.microphone) {
+        requestedMicrophoneState.disableMicrophone();
+        requestedMicrophoneState.enableMicrophone();
+    }
     batchGetUserMediaStore.commitChanges();
 });
 
@@ -873,6 +885,7 @@ export const rawLocalStreamStore = derived<[typeof mediaStreamConstraintsStore],
                                 constraints,
                                 e
                             );
+                            markCameraRefused();
                             // TODO: does it make sense to pop this error when retrying?
                             set({
                                 type: "error",

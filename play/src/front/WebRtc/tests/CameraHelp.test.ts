@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { InstallEnvironment } from "../../Install/InstallPlatform";
-import { cameraHelpKindFor } from "../CameraHelp";
+import { cameraHelpKindFor, retryPlanFor } from "../CameraHelp";
 
 const IPHONE =
     "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
@@ -55,5 +55,28 @@ describe("cameraHelpKindFor", () => {
         expect(cameraHelpKindFor(env(IPHONE, { platform: "iPhone", maxTouchPoints: 5, nativeShell: true }))).toBe(
             "other"
         );
+    });
+});
+
+describe("retryPlanFor", () => {
+    it("asks for a refused camera again, which asks for the microphone in the same request", () => {
+        expect(retryPlanFor({ cameraRefused: true, microphoneRequested: true })).toEqual({
+            camera: true,
+            microphone: false,
+        });
+    });
+
+    it("leaves a camera that was off by choice alone when only the microphone was refused", () => {
+        expect(retryPlanFor({ cameraRefused: false, microphoneRequested: true })).toEqual({
+            camera: false,
+            microphone: true,
+        });
+    });
+
+    it("turns nothing on when nothing was requested", () => {
+        expect(retryPlanFor({ cameraRefused: false, microphoneRequested: false })).toEqual({
+            camera: false,
+            microphone: false,
+        });
     });
 });
