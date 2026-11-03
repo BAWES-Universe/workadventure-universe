@@ -19,6 +19,11 @@ export function markCameraRefused(): void {
     cameraRefused = true;
 }
 
+/** The camera works again, or the player chose to go on without it: a later microphone refusal is not the camera's. */
+export function clearCameraRefused(): void {
+    cameraRefused = false;
+}
+
 export function cameraWasRefused(): boolean {
     return cameraRefused;
 }
@@ -33,7 +38,7 @@ export function retryCameraAccess(): void {
     retryHandler?.();
 }
 
+/** The card closed: Try again has not been tapped since it opened. */
 export function resetCameraRetry(): void {
-    cameraRefused = false;
     cameraRetriedStore.set(false);
 }

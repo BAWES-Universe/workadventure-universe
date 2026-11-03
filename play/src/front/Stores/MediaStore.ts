@@ -31,7 +31,7 @@ import { privacyShutdownStore } from "./PrivacyShutdownStore";
 import { inExternalServiceStore, myCameraStore, myMicrophoneStore, proximityMeetingStore } from "./MyMediaStore";
 import { userMovingStore } from "./GameStore";
 import { hideHelpCameraSettings } from "./HelpSettingsStore";
-import { cameraWasRefused, markCameraRefused, setCameraRetryHandler } from "./CameraRetryStore";
+import { cameraWasRefused, clearCameraRefused, markCameraRefused, setCameraRetryHandler } from "./CameraRetryStore";
 import { retryPlanFor } from "../WebRtc/CameraHelp";
 import { isLiveStreamingStore } from "./IsStreamingStore";
 import { videoStreamElementsStore } from "./PeerStore";
@@ -849,6 +849,7 @@ export const rawLocalStreamStore = derived<[typeof mediaStreamConstraintsStore],
                             // Also, let's switch the webcam back on if it was off (because some code or the user might have turned it off while we were waiting for getUserMedia,
                             // but we need to show the user that the webcam is on because we just got a stream)
                             requestedCameraState.enableWebcam();
+                            clearCameraRefused();
                         }
                         if (currentStream.getAudioTracks().length > 0) {
                             const audioTrackSettings = currentStream.getAudioTracks()[0]?.getSettings();

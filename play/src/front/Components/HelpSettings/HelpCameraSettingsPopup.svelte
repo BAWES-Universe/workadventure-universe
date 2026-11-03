@@ -3,7 +3,12 @@
     import { getNavigatorType, isAndroid as isAndroidFct, NavigatorType } from "../../WebRtc/DeviceUtils";
     import { LL } from "../../../i18n/i18n-svelte";
     import { popupStore } from "../../Stores/PopupStore";
-    import { cameraRetriedStore, resetCameraRetry, retryCameraAccess } from "../../Stores/CameraRetryStore";
+    import {
+        cameraRetriedStore,
+        clearCameraRefused,
+        resetCameraRetry,
+        retryCameraAccess,
+    } from "../../Stores/CameraRetryStore";
     import { currentInstallEnvironment } from "../../Install/InstallPlatform";
     import { cameraHelpKindFor } from "../../WebRtc/CameraHelp";
     import { IconCamera, IconInfoCircle, IconMicrophone } from "@wa-icons";
@@ -27,6 +32,7 @@
     function close() {
         popupStore.removePopup("cameraAccessDenied");
         resetCameraRetry();
+        clearCameraRefused();
     }
 </script>
 
