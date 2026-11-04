@@ -200,6 +200,14 @@ describe("the Permissions screens", () => {
         expect(line).toContain("Tap a role or person to set them differently.");
     });
 
+    it("still draws the tools line when Orbit sends no roles", async () => {
+        mocks.getBotPermissions.mockResolvedValue({ rules: [] } as unknown as BotPermissions);
+        await loadBotPermissions("b1");
+        mount();
+        await settle();
+        expect(byTestId("bot-access-tools-line")[0].textContent).toContain("Admin can have this bot change things.");
+    });
+
     it("shows a row's changing and deleting or sending in its line", async () => {
         await open(permissions({ rules: [rule({ change: "yes", deleteOrSend: "yes" })] }));
         mount();

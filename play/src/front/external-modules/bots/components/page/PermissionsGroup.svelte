@@ -93,11 +93,9 @@
     function toolsLineOf(permissions: BotPermissions | undefined): string {
         if (!permissions) return "";
         const admin = "Admin";
-        const change = [admin, ...permissions.roles.filter((role) => role.defaults.change).map((role) => role.name)];
-        const send = [
-            admin,
-            ...permissions.roles.filter((role) => role.defaults.deleteOrSend).map((role) => role.name),
-        ];
+        const roles = permissions.roles ?? [];
+        const change = [admin, ...roles.filter((role) => role.defaults.change).map((role) => role.name)];
+        const send = [admin, ...roles.filter((role) => role.defaults.deleteOrSend).map((role) => role.name)];
         return [
             access.toolsChange({ names: names(change) }),
             access.toolsSend({ names: names(send) }),
