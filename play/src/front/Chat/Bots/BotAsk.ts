@@ -23,6 +23,8 @@ export interface BotAsk {
     title: string;
     /** What exactly happens: team, title, recipient, text. Approval cards only. */
     lines?: Array<{ label?: string; text: string }>;
+    /** Mock: open with every detail shown */
+    expanded?: boolean;
     /** Whose account acts, when it isn't the person asking ("Khalid's Linear"). */
     actsAs?: string;
     /** "Asks every time": deletes and sends out. */

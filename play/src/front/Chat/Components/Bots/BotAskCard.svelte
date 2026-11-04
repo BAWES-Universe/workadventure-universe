@@ -4,8 +4,10 @@
     import {
         IconAlertTriangle,
         IconCheck,
+        IconChevronDown,
         IconChevronLeft,
         IconChevronRight,
+        IconChevronUp,
         IconClock,
         IconLock,
         IconUsers,
@@ -32,7 +34,13 @@
     /** Nearby chat (prototype): where your next message goes while the card waits, with a switch for the other way. */
     export let replyTo: "bot" | "everyone" | undefined = undefined;
 
+    // A new card starts folded (a mock scene can open it with every detail shown)
     let showAll = false;
+    let foldedFor: BotAsk | undefined;
+    $: if (ask !== foldedFor) {
+        foldedFor = ask;
+        showAll = ask.expanded ?? false;
+    }
 
     $: mine = ask.asker === me;
     $: answered = ask.answer?.option ? ask.options.find((option) => option.id === ask.answer?.option) : undefined;
@@ -40,6 +48,7 @@
     // A minute before it closes, the card says so once and offers more time
     $: closingSoon = open && ask.expiresAt - now < 60_000;
     $: shownLines = showAll ? ask.lines ?? [] : (ask.lines ?? []).slice(0, 3);
+    $: expandable = (ask.lines?.length ?? 0) > 3;
 </script>
 
 {#if compact && docked && open}
@@ -86,15 +95,34 @@
         {/if}
     </div>
     {#if ask.lines?.length && open}
-        <div class="ask-lines">
-            {#each shownLines as line, i (i)}
-                <div dir="auto">{#if line.label}<span class="ask-label">{line.label}</span> {/if}{line.text}</div>
-            {/each}
-        </div>
-        {#if (ask.lines?.length ?? 0) > 3 || ask.kind === "approval"}
-            <button type="button" class="ask-more" on:click={() => (showAll = !showAll)}
-                >{showAll ? "Show less" : "Show all details"}</button
+        {#if expandable}
+            <!-- The whole details box is the tap area: tap anywhere on it to show or hide the rest -->
+            <button
+                type="button"
+                class="ask-lines ask-lines-tap"
+                class:clamped={!showAll}
+                aria-expanded={showAll}
+                data-testid="botAskDetails"
+                on:click={() => (showAll = !showAll)}
             >
+                {#each shownLines as line, i (i)}
+                    <span class="ask-line" dir="auto"
+                        >{#if line.label}<span class="ask-label">{line.label}</span> {/if}{line.text}</span
+                    >
+                {/each}
+                <span class="ask-more"
+                    >{showAll ? "Show less" : `Show all ${ask.lines?.length ?? 0} details`}{#if showAll}<IconChevronUp
+                        />{:else}<IconChevronDown />{/if}</span
+                >
+            </button>
+        {:else}
+            <div class="ask-lines">
+                {#each shownLines as line, i (i)}
+                    <span class="ask-line" dir="auto"
+                        >{#if line.label}<span class="ask-label">{line.label}</span> {/if}{line.text}</span
+                    >
+                {/each}
+            </div>
         {/if}
     {/if}
 
@@ -289,14 +317,42 @@
     .ask-label {
         color: rgba(255, 255, 255, 0.55);
     }
-    .ask-more {
-        align-self: flex-start;
-        padding: 0;
+    /* The details box as one button: at least 44 px tall, the whole box reacts to a tap */
+    .ask-lines-tap {
+        width: 100%;
+        min-height: 44px;
+        margin: 0;
         border: 0;
-        background: none;
+        color: inherit;
+        font: inherit;
+        font-size: 13px;
+        line-height: 18px;
+        text-align: start;
+        cursor: pointer;
+    }
+    .ask-lines-tap:hover {
+        background: rgba(255, 255, 255, 0.08);
+    }
+    .ask-line {
+        display: block;
+    }
+    /* Folded: each line keeps to two lines, so a long description never pushes the buttons away */
+    .ask-lines-tap.clamped .ask-line {
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
+    .ask-more {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 6px;
+        margin-top: 4px;
+        padding-top: 6px;
+        border-top: 1px solid rgba(255, 255, 255, 0.06);
         font-size: 12.5px;
         color: #c4b5fd;
-        cursor: pointer;
     }
     .ask-options {
         display: flex;
@@ -415,7 +471,7 @@
     }
     .ask-option:focus-visible,
     .ask-small:focus-visible,
-    .ask-more:focus-visible {
+    .ask-lines-tap:focus-visible {
         outline: 2px solid #a78bfa;
         outline-offset: 2px;
     }
