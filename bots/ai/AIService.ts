@@ -10,7 +10,8 @@
 
 import { pointedArtifactIds } from './ArtifactReferences';
 import type { ConversationMemory } from '../memory/ConversationMemory';
-import type { AdminApiService, AIProviderCredentials, BotAiCredentialsAnswer } from '../server/AdminApiService';
+import type { AdminApiService, AIProviderCredentials, BotAccessPerson, BotAiCredentialsAnswer } from '../server/AdminApiService';
+import { BotAccessGate } from '../server/BotAccessGate';
 import { BotClient } from '../client/BotClient';
 import type { AIProviderConfig, AIStreamChunk, AIUsageMetadata, BotLimits, ToolCall } from './types';
 import { BOT_LIMIT_DEFAULTS, readBotLimits } from './types';
@@ -22,6 +23,8 @@ import type { MapDataService } from '../server/MapDataService';
 import * as Sentry from '@sentry/node';
 import { MCPConnector, toolTimeoutMs, type ToolServerEntry } from '../mcp/MCPConnector';
 import type { ToolSuggester } from '../mcp/ToolCatalog';
+import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision } from '../mcp/ToolGate';
+import { ToolPolicySource } from '../mcp/ToolPolicy';
 import { appendStreamedChunk } from './EmotionParser';
 import { describeStep, resultOf, showsAsStep, type ToolStep } from './ToolSteps';
 import { jsonrepair } from 'jsonrepair';
@@ -182,6 +185,8 @@ export class AIService {
     private madeMedia = new Map<string, MadeWith>();
     private providerRegistry: AIProviderRegistry;
     private mapDataService?: MapDataService;
+    /** The one check right before a tool server's tool runs, and before the model is offered it (#1656). */
+    private toolGate: ToolGate;
 
     constructor(
         conversationMemory: ConversationMemory,
@@ -194,6 +199,52 @@ export class AIService {
         this.adminApiUrl = adminApiUrl;
         this.providerRegistry = new AIProviderRegistry();
         this.mapDataService = mapDataService;
+        this.toolGate = this.buildToolGate(new BotAccessGate(adminApiService));
+    }
+
+    /**
+     * Use the bot server's own access gate for the two permissions a tool may need (change, delete or send), so its
+     * answers are kept once for everything that asks Orbit who may do what.
+     */
+    useAccessGate(gate: BotAccessGate): void {
+        this.toolGate = this.buildToolGate(gate);
+    }
+
+    private buildToolGate(access: BotAccessGate): ToolGate {
+        const policy = new ToolPolicySource(() => {
+            const adminApiToken = this.adminApiService?.['adminApiToken'];
+            return this.adminApiUrl && adminApiToken ? { adminApiUrl: this.adminApiUrl, adminApiToken } : null;
+        });
+        return new ToolGate(policy, access, {
+            canManageBotTools: (botId, identifier) => this.adminApiService.canManageBotTools(botId, identifier),
+        });
+    }
+
+    /** Who is asking, as the gate names them: the signed-in person, or a guest. Same person in a bubble and in a direct message. */
+    private gatePerson(botId: string | undefined, playerId: number | undefined, botClient?: BotClient, spaceName?: string): BotAccessPerson {
+        try {
+            const chat = botId !== undefined && playerId !== undefined ? this.chatCallFor(botId, playerId, botClient, spaceName) : null;
+            if (!chat || !chat.person.signedIn || !chat.person.identifier) return { signedIn: false };
+            return { signedIn: true, identifier: chat.person.identifier };
+        } catch (error) {
+            // Not knowing who is asking is the same as a guest: the stricter reading
+            console.warn('[AIService] Could not tell who is asking for a tool:', error instanceof Error ? error.message : error);
+            return { signedIn: false };
+        }
+    }
+
+    /** What the gate needs to know about one tool call or one tool in the list. */
+    private gateCallFor(botId: string, toolName: string, entry: ToolServerEntry, person: BotAccessPerson, botClient?: BotClient): GateCall {
+        return {
+            botId,
+            toolName,
+            ...(entry.title ? { toolTitle: entry.title } : {}),
+            serverId: entry.serverId,
+            ...(entry.fingerprint ? { fingerprint: entry.fingerprint } : {}),
+            person,
+            // A voice bot speaking in a bubble: servers that were never checked are not used by voice
+            voice: !!botClient?.isVoiceBot?.(),
+        };
     }
 
     /** At most this many names, so a crowded room can't swamp the prompt. */
@@ -854,7 +905,14 @@ export class AIService {
             const isQwenModel = config.model.toLowerCase().includes('qwen');
 
             // Define tools for function calling
-            const { tools, toolServerMap } = await this.buildTools(botId, botClient, adminApiService || this.adminApiService, channel, providerId);
+            const { tools, toolServerMap } = await this.buildTools(
+                botId,
+                botClient,
+                adminApiService || this.adminApiService,
+                channel,
+                providerId,
+                this.gatePerson(botId, playerId, botClient, spaceName)
+            );
             if (turn) turn.artifactTools = tools.some((tool) => writesArtifact(tool?.function?.name ?? ''));
 
             // Generate stream with tools
@@ -2620,7 +2678,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     /**
      * Build tool definitions for function calling
      */
-    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService, channel: 'world' | 'dm' = 'world', providerId?: string): Promise<{ tools: any[]; toolServerMap: Map<string, ToolServerEntry> }> {
+    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService, channel: 'world' | 'dm' = 'world', providerId?: string, asking?: BotAccessPerson): Promise<{ tools: any[]; toolServerMap: Map<string, ToolServerEntry> }> {
         const tools: any[] = [];
         const toolServerMap = new Map<string, ToolServerEntry>();
 
@@ -2826,6 +2884,19 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     toolServerMap.set(key, value);
                 }
 
+                // Tools this person can't use are not offered to the model (#1656). The call is checked again when it is made.
+                const offered = new Set<string>();
+                if (asking) {
+                    await Promise.all(
+                        mcpTools.map(async (mcpTool: any) => {
+                            const entry = toolServerMap.get(mcpTool.function.name);
+                            if (!entry || (await this.toolGate.offers(this.gateCallFor(botId, mcpTool.function.name, entry, asking, botClient)))) {
+                                offered.add(mcpTool.function.name);
+                            }
+                        })
+                    );
+                }
+
                 // Build a set of existing tool names for deduplication
                 const existingToolNames = new Set(tools.map(t => t.function.name));
 
@@ -2833,6 +2904,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 // depend on which MCP server answered first (issue #1333):
                 // built-in tools first, then MCP tools by name.
                 for (const mcpTool of sortToolsByName(mcpTools)) {
+                    if (asking && !offered.has(mcpTool.function.name)) continue;
                     if (!existingToolNames.has(mcpTool.function.name)) {
                         tools.push(mcpTool);
                         existingToolNames.add(mcpTool.function.name);
@@ -3454,6 +3526,16 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         const mcpServerConfig = toolServerMap?.get(toolCall.name);
                         if (mcpServerConfig) {
                             try {
+                                // One check right before the call starts (#1656): the model's list is only a convenience
+                                const verdict = botId
+                                    ? await this.toolGate.decide(
+                                          this.gateCallFor(botId, toolCall.name, mcpServerConfig, this.gatePerson(botId, playerId, botClient, spaceName), botClient)
+                                      )
+                                    : ({ kind: 'refuse', why: 'cannot_check', line: CANNOT_CHECK_TOOL_LINE } as GateDecision);
+                                if (verdict.kind !== 'run') {
+                                    result = this.toolNotRun(verdict);
+                                    break;
+                                }
                                 const parsedArgs = typeof toolCall.arguments === 'string'
                                     ? this.safeParseToolArgs(toolCall.arguments)
                                     : toolCall.arguments || {};
@@ -3504,6 +3586,15 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
         // Wait for all tool calls to complete in parallel
         return Promise.all(toolPromises);
+    }
+
+    /**
+     * What the model is told when the gate did not let a tool run. A refusal is a line the person can be told as it is.
+     * A tool that needs an OK waits for a card, and a card needs a direct message to be shown in.
+     */
+    private toolNotRun(verdict: Exclude<GateDecision, { kind: 'run' }>): { error: string } {
+        if (verdict.kind === 'refuse') return { error: `${verdict.line} This was not done, and it cannot be done another way. Tell the person.` };
+        return { error: 'This needs the person\'s OK first and it was not done. Tell them to message you directly and ask again there.' };
     }
 
     /**

@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { openToolGate } from './helpers/openToolGate';
 
 vi.mock("@sentry/node", () => ({
     startSpanManual: vi.fn((_opts: unknown, callback: (span: any) => any) =>
@@ -133,7 +134,7 @@ describe("AIService – the steps a reply shows (#1545)", () => {
                 )
             )
             .mockImplementationOnce(says("Here it is."));
-        const chunks = await reply(new AIService(memory, admin, "http://admin.local"));
+        const chunks = await reply(openToolGate(new AIService(memory, admin, "http://admin.local")));
 
         const reset = chunks.find((chunk) => chunk.toolSteps && chunk.reset);
         expect(reset.reset).toBe(true);
@@ -157,7 +158,7 @@ describe("AIService – the steps a reply shows (#1545)", () => {
         mockGenerateStream
             .mockImplementationOnce(calls({ id: "r1", name: "read_web_page", args: { url: "notaurl" } }))
             .mockImplementationOnce(says("Done."));
-        const chunks = await reply(new AIService(memory, admin, "http://admin.local"));
+        const chunks = await reply(openToolGate(new AIService(memory, admin, "http://admin.local")));
         expect(chunks.find((chunk) => chunk.toolSteps && chunk.reset).toolSteps).toEqual([
             { id: "r1", doing: "Reading a page", done: "Read a page", detail: "notaurl", group: "page", kind: "read" },
         ]);
@@ -171,7 +172,7 @@ describe("AIService – the steps a reply shows (#1545)", () => {
             .mockImplementationOnce(calls({ id: "c1", name: "generate_music", args: { prompt: "funk" } }))
             .mockImplementationOnce(calls({ id: "c2", name: "generate_music", args: { prompt: "disco" } }))
             .mockImplementation(says("Here is the first one."));
-        const chunks = await reply(new AIService(memory, admin, "http://admin.local"));
+        const chunks = await reply(openToolGate(new AIService(memory, admin, "http://admin.local")));
 
         const announced = chunks.filter((chunk) => chunk.toolSteps && chunk.reset).flatMap((chunk) => chunk.toolSteps.map((step: any) => step.id));
         expect(announced).toEqual(["c1", "c2"]);
@@ -197,7 +198,7 @@ describe("AIService – the steps a reply shows (#1545)", () => {
                 yield { content: "", done: true, metadata: { tokensUsed: 5, latency: 10, error: false } };
             })
             .mockImplementationOnce(says("Here it is."));
-        const service = new AIService(memory, admin, "http://admin.local");
+        const service = openToolGate(new AIService(memory, admin, "http://admin.local"));
         const chunks: any[] = [];
         for await (const chunk of service.generateBotResponseStream("bot-1", 42, "make me a song", "You are a bot.", "universe-ai", "!dm:matrix.test", "", undefined, undefined, undefined, undefined, "dm")) {
             if (chunk.toolSteps) events.push(chunk.reset ? "reset" : "begun");
@@ -221,7 +222,7 @@ describe("AIService – the steps a reply shows (#1545)", () => {
                 yield { content: "", done: true, metadata: { tokensUsed: 5, latency: 10, error: false } };
             })
             .mockImplementationOnce(says("Done."));
-        const chunks = await reply(new AIService(memory, admin, "http://admin.local"));
+        const chunks = await reply(openToolGate(new AIService(memory, admin, "http://admin.local")));
         expect(chunks.filter((chunk) => chunk.toolSteps && !chunk.reset)).toEqual([]);
     });
 
@@ -236,7 +237,7 @@ describe("AIService – the steps a reply shows (#1545)", () => {
                 yield { content: "", done: true, metadata: { tokensUsed: 5, latency: 10, error: false } };
             })
             .mockImplementation(says("Both made."));
-        const chunks = await reply(new AIService(memory, admin, "http://admin.local"));
+        const chunks = await reply(openToolGate(new AIService(memory, admin, "http://admin.local")));
         const begun = chunks.filter((chunk) => chunk.toolSteps && !chunk.reset).flatMap((chunk) => chunk.toolSteps.map((step: any) => step.id));
         expect(begun).toEqual(["c1", "c2"]);
     });
