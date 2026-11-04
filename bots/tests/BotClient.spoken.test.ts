@@ -168,4 +168,26 @@ describe('a spoken line is for the bot that heard it', () => {
         await t.receive(line('room_3', 'hello'));
         expect(t.behavior.onChatMessage).toHaveBeenCalledTimes(2);
     });
+    describe('telling a card that the answer was said out loud (#1661)', () => {
+        it('notes a line that was said to this bot and let through, once', async () => {
+            const t = await voiceBot();
+            await t.receive(line('room_3', 'jazz please', { botId: 'voice-1', turnId: '2-1' }));
+            expect(t.bot.takeSpoken(SPACE, 3)).toBe(true);
+            expect(t.bot.takeSpoken(SPACE, 3)).toBe(false);
+        });
+
+        it('does not note a line the bot did not hear, so a typed answer after it is not called spoken', async () => {
+            const t = await voiceBot();
+            (t.bot as unknown as { attention: { hears: () => boolean } }).attention.hears = () => false;
+            await t.receive(line('room_3', 'talking to Sara', { botId: 'voice-1', turnId: '2-2' }));
+            expect(t.bot.takeSpoken(SPACE, 3)).toBe(false);
+        });
+
+        it('forgets what was said out loud when the person types next', async () => {
+            const t = await voiceBot();
+            await t.receive(line('room_3', 'jazz please', { botId: 'voice-1', turnId: '2-3' }));
+            await t.receive(line('room_3', 'or something typed'));
+            expect(t.bot.takeSpoken(SPACE, 3)).toBe(false);
+        });
+    });
 });
