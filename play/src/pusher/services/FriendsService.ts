@@ -73,6 +73,8 @@ const OrbitFriendSearch = z.object({
             name: z.string().nullable(),
             // Missing from an Orbit that does not send it yet.
             chatId: z.string().nullable().optional(),
+            // Their Woka layers, bottom first. Missing from an Orbit that does not send them yet.
+            characterTextures: z.array(z.object({ id: z.string(), url: z.string() })).optional(),
             universes: z.array(z.string()),
             relationship: z.string(),
         })
