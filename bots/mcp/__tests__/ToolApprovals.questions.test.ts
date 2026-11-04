@@ -9,6 +9,7 @@ const asked = { question: 'Which style?', choices: [{ id: 'c1', label: 'Pop' }, 
 function setup() {
     const sent: Array<Record<string, any>> = [];
     const picks: string[] = [];
+    const said: string[] = [];
     const orbit = {
         cardSettings: vi.fn(async () => ({ ...DEFAULT_CARD_SETTINGS, askWhichWay: 'beforeBiggerJobs' as const })),
         touchGrants: vi.fn(async () => undefined),
@@ -22,13 +23,13 @@ function setup() {
     });
     const approvals = new ToolApprovals({
         orbit: orbit as never,
-        cards: { send: async () => '$x', say: async () => undefined },
+        cards: { send: async () => '$x', say: async (_b, _r, text) => void said.push(text) },
         gate: { decide: async () => ({ kind: 'run' as const }) },
         tools: { find: async () => null, run: async () => undefined },
         questions,
     });
     const field = () => sent.at(-1)!['m.new_content']?.['universe.ask'] ?? sent.at(-1)!['universe.ask'];
-    return { approvals, orbit, sent, picks, field };
+    return { approvals, orbit, sent, picks, said, field };
 }
 
 describe('question cards through ToolApprovals', () => {
@@ -54,11 +55,13 @@ describe('question cards through ToolApprovals', () => {
         expect(s.orbit.read).not.toHaveBeenCalled();
     });
 
-    it('ignores a pick on a card it does not hold, without asking Orbit for an action', async () => {
+    it('tells the person when a card it no longer holds is tapped, without asking Orbit for an action', async () => {
         const s = setup();
         await s.approvals.handleTap('b1', '!dm', person, { ask: 'q-gone', revision: 1, tap: { action: 'pick', choices: ['c1'] } });
+        await s.approvals.handleTap('b1', '!dm', person, { ask: 'q-gone', revision: 1, tap: { action: 'reviewAgain' } });
         expect(s.orbit.read).not.toHaveBeenCalled();
         expect(s.sent).toHaveLength(0);
+        expect(s.said).toEqual(['That question is no longer open. Ask me again.', 'That question is no longer open. Ask me again.']);
     });
 
     it('answers a waiting question when the person writes in the chat, and still looks after approval cards', async () => {

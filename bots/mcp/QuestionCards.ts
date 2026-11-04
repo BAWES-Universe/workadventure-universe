@@ -92,10 +92,17 @@ const errorText = (error: unknown) => (error instanceof Error ? error.message : 
 export class QuestionCards {
     private readonly cards = new Map<string, Card>();
     private counter = 0;
+    /** Questions being shown right now, so a second one asked at the same moment is not a second card. */
+    private readonly showing = new Set<string>();
     private readonly now: () => number;
 
     constructor(private readonly deps: QuestionDeps) {
         this.now = deps.now ?? Date.now;
+    }
+
+    /** Whether this id is the id of a question card, one this process may no longer hold (it restarted, or the card was dropped). */
+    static isQuestionId(id: string): boolean {
+        return id.startsWith('q-');
     }
 
     /** Whether this id is a question card this process holds. */
@@ -113,6 +120,10 @@ export class QuestionCards {
         // One question card at a time for a person in a chat: the same question again is that card, a different one waits for it
         const open = this.waitingOf(botId, roomId, person, nearby)[0];
         if (open) return { kind: 'waiting', result: nearby ? WAITING_NEARBY_RESULT : WAITING_RESULT };
+        // Two questions asked in the same round (parallel tool calls) are one card: the second finds the first still being shown
+        const asking = JSON.stringify([botId, roomId, person.uuid, nearby]);
+        if (this.showing.has(asking)) return { kind: 'waiting', result: nearby ? WAITING_NEARBY_RESULT : WAITING_RESULT };
+        this.showing.add(asking);
         try {
             const waitMinutes = Math.max(1, (await this.deps.waitMinutes(botId)) || 10);
             const id = `q-${this.now().toString(36)}-${(this.counter++).toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -130,6 +141,8 @@ export class QuestionCards {
         } catch (error) {
             console.warn('[QuestionCards] Could not ask:', errorText(error));
             return { kind: 'failed', result: NO_CARD_RESULT };
+        } finally {
+            this.showing.delete(asking);
         }
     }
 
