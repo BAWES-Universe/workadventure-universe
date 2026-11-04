@@ -977,7 +977,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         const mimeType = item.mimeType || String(response.headers['content-type'] || 'application/octet-stream');
         // A song ends as audio, so the game's card knows it (the "Open in player" row); another file keeps its own name
         const filename =
-            (item.mediaType === 'audio' ? audioFileNameFor(item.url, mimeType, item.name) : undefined) ||
+            (item.mediaType === 'audio' ? audioFileNameFor(item.url, mimeType.startsWith('audio/') ? mimeType : 'audio/mpeg', item.name) : undefined) ||
             item.name ||
             new URL(item.url).pathname.split('/').pop() ||
             `${item.mediaType}`;

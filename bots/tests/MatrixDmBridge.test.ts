@@ -218,6 +218,11 @@ describe('MatrixDmBridge', () => {
             expect(client.sendMessage).toHaveBeenCalledWith(BOT_USER, ROOM, expect.objectContaining({ msgtype: 'm.audio', body: 'song.mp3', filename: 'song.mp3' }));
         });
 
+        it('names a song with no type and no ending as song.mp3 too', async () => {
+            await sendOne({ ...song, url: 'https://tools.example.com/files/7f3a', mimeType: '' }, vi.fn(async () => null));
+            expect(client.sendMessage).toHaveBeenCalledWith(BOT_USER, ROOM, expect.objectContaining({ msgtype: 'm.audio', filename: 'song.mp3' }));
+        });
+
         it("keeps the tool's link when the copy fails, and the file still reaches the person", async () => {
             const mediaSent = await sendOne(song, vi.fn(async () => { throw new Error('uploader down'); }));
             expect(client.sendMessage).toHaveBeenCalledWith(BOT_USER, ROOM, expect.objectContaining({ msgtype: 'm.audio' }));

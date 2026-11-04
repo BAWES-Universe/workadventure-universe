@@ -36,4 +36,12 @@ describe('BotClient links to files already in storage', () => {
         // No ending in the link: the song goes out as song.mp3, so the chat card knows it is an audio file (#1803)
         expect(sent).toHaveBeenCalledWith('bubble-1', 'https://cdn.example.com/files/7f3a?sig=x', 'audio', 'audio/mpeg', undefined, 'song.mp3', undefined);
     });
+
+    it('names a song from a stored link with no ending and no type, so its card still knows it is audio', async () => {
+        const client = bot();
+        const sent = vi.spyOn(client as never, 'sendMediaMessage').mockReturnValue(true as never);
+        client.markStored('https://cdn.example.com/files/7f3a');
+        await client.sendAudio('bubble-1', 'https://cdn.example.com/files/7f3a');
+        expect(sent).toHaveBeenCalledWith('bubble-1', 'https://cdn.example.com/files/7f3a', 'audio', 'audio/mpeg', undefined, 'song.mp3', undefined);
+    });
 });
