@@ -74,6 +74,9 @@ export interface CardSettings {
     askWhichWay: AskWhichWay;
     /** Asks before making more than this many things in one request; null is no limit. Recommended: 5. */
     askBeforeMaking: number | null;
+    /** How long "allow more" lasts when the person is quiet, and at most (Orbit #803). Missing until Orbit has answered once. */
+    allowMoreIdleMinutes?: number;
+    allowMoreMaxMinutes?: number;
 }
 export const DEFAULT_CARD_WAIT_MINUTES = 10;
 export const DEFAULT_ASK_BEFORE_MAKING = 5;
@@ -85,6 +88,14 @@ export const DEFAULT_CARD_SETTINGS: CardSettings = {
 
 const TIMEOUT_MS = 8_000;
 const SETTINGS_FRESH_MS = 30_000;
+
+/** The two "allow more" times, each on its own: a missing or odd one keeps the last value (or stays missing). */
+function allowMoreTimes(data: Record<string, unknown>, last: CardSettings): Pick<CardSettings, 'allowMoreIdleMinutes' | 'allowMoreMaxMinutes'> {
+    const minutes = (value: unknown, fallback: number | undefined) => (typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 24 * 60 ? value : fallback);
+    const idle = minutes(data.allowMoreIdleMinutes, last.allowMoreIdleMinutes);
+    const max = minutes(data.allowMoreMaxMinutes, last.allowMoreMaxMinutes);
+    return { ...(idle !== undefined ? { allowMoreIdleMinutes: idle } : {}), ...(max !== undefined ? { allowMoreMaxMinutes: max } : {}) };
+}
 
 export interface OrbitSide {
     adminApiUrl: string;
@@ -224,6 +235,7 @@ export class OrbitActions {
                             : typeof data.askBeforeMaking === 'number' && Number.isInteger(data.askBeforeMaking) && data.askBeforeMaking >= 1 && data.askBeforeMaking <= 1000
                               ? data.askBeforeMaking
                               : value.askBeforeMaking,
+                    ...allowMoreTimes(data, value),
                 };
             } catch {
                 // the recommended wait, or the last one Orbit gave

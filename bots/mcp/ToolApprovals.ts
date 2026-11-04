@@ -368,11 +368,13 @@ export class ToolApprovals {
             switch (tap.tap.action) {
                 case 'decide': {
                     const option: AskDecision = tap.tap.option;
+                    // "Allow more" lasts as this bot's own setting says; the server's own times only when Orbit can't be read
+                    const times = option === 'approveAndRemember' ? allowMoreTimesOf(await this.settings(botId)) : undefined;
                     const answer = await orbit.decide(botId, id, {
                         actorKey,
                         revision: tap.revision,
                         decision: option,
-                        ...(option === 'approveAndRemember' ? { idleMinutes: GRANT_IDLE_MINUTES, absoluteMinutes: GRANT_ABSOLUTE_MINUTES } : {}),
+                        ...(times ? { idleMinutes: times.idleMinutes, absoluteMinutes: times.absoluteMinutes } : {}),
                     });
                     // A 409 that is not an answer about this action (no action in it) is a tap that did not count
                     if (!answer.action) return void (await this.tell(botId, roomId, person, "I couldn't record that. Tap again in a moment."));
@@ -389,7 +391,7 @@ export class ToolApprovals {
                         await this.redraw(id, card, answer.action, { option: 'decline' });
                         return void (await this.endLine(card, 'notDone'));
                     }
-                    const allowedMore = option === 'approveAndRemember' && answer.grantId ? allowedMoreLine() : undefined;
+                    const allowedMore = option === 'approveAndRemember' && answer.grantId ? allowedMoreLine(times) : undefined;
                     if (allowedMore && card.nearby) this.remembering.add(JSON.stringify([botId, roomId, person.uuid]));
                     // The tap is recorded; running it takes as long as the tool does, so it does not hold the chat
                     void this.dispatch(id, card, answer.action, option, allowedMore);
@@ -803,10 +805,17 @@ function gateCall(botId: string, toolName: string, entry: ToolServerEntry, perso
     };
 }
 
+/** How long "allow more" lasts for this bot: its own setting, else the server's. */
+export function allowMoreTimesOf(settings: CardSettings): { idleMinutes: number; absoluteMinutes: number } {
+    const idleMinutes = settings.allowMoreIdleMinutes ?? GRANT_IDLE_MINUTES;
+    return { idleMinutes, absoluteMinutes: Math.max(idleMinutes, settings.allowMoreMaxMinutes ?? GRANT_ABSOLUTE_MINUTES) };
+}
+
 /** How long "allow more" lasts, in words. */
-export function allowedMoreLine(): string {
+export function allowedMoreLine(times: { idleMinutes: number; absoluteMinutes: number } = { idleMinutes: GRANT_IDLE_MINUTES, absoluteMinutes: GRANT_ABSOLUTE_MINUTES }): string {
+    const { idleMinutes, absoluteMinutes } = times;
     const hours = (minutes: number) => (minutes % 60 === 0 ? `${minutes / 60} hour${minutes === 60 ? '' : 's'}` : `${minutes} minutes`);
-    return `Lasts until you stop writing for ${hours(GRANT_IDLE_MINUTES)}, or ${hours(GRANT_ABSOLUTE_MINUTES)} at most. Ask me again ends it.`;
+    return `Lasts until you stop writing for ${hours(idleMinutes)}, or ${hours(absoluteMinutes)} at most. Ask me again ends it.`;
 }
 
 /** What a card shows for an action that is already past waiting, from Orbit's own record of it. */

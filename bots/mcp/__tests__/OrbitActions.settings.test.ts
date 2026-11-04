@@ -30,6 +30,19 @@ describe("a bot's card settings", () => {
         expect(await new OrbitActions(orbit).cardSettings('b1')).toEqual({ cardWaitMinutes: 10, askWhichWay: 'beforeBiggerJobs', askBeforeMaking: 5 });
     });
 
+    it('carry how long "allow more" lasts, each time on its own, and leave it out when Orbit does not say', async () => {
+        answers({ allowMoreIdleMinutes: 120, allowMoreMaxMinutes: 1440 });
+        expect(await new OrbitActions(orbit).cardSettings('b1')).toMatchObject({ allowMoreIdleMinutes: 120, allowMoreMaxMinutes: 1440 });
+        vi.restoreAllMocks();
+        answers({ allowMoreIdleMinutes: 30, allowMoreMaxMinutes: 'long' });
+        const odd = await new OrbitActions(orbit).cardSettings('b2');
+        expect(odd.allowMoreIdleMinutes).toBe(30);
+        expect(odd).not.toHaveProperty('allowMoreMaxMinutes');
+        vi.restoreAllMocks();
+        answers({ allowMoreIdleMinutes: 0, allowMoreMaxMinutes: 2.5 });
+        expect(await new OrbitActions(orbit).cardSettings('b3')).toEqual(DEFAULT_CARD_SETTINGS);
+    });
+
     it('are kept for a moment, so a chat does not ask Orbit for every message', async () => {
         const get = answers({ askWhichWay: 'never' });
         let now = 1000;
