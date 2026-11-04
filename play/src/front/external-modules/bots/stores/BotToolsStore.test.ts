@@ -93,6 +93,8 @@ describe("the Tools store (game #1655)", () => {
             askBeforeMaking: 5,
             askWhichWay: "rarely",
             cardWaitMinutes: 10,
+            allowMoreIdleMinutes: 60,
+            allowMoreMaxMinutes: 480,
         });
         await loadBotToolSettings("botA");
 
@@ -102,6 +104,8 @@ describe("the Tools store (game #1655)", () => {
             askBeforeMaking: 5,
             askWhichWay: "never",
             cardWaitMinutes: 10,
+            allowMoreIdleMinutes: 60,
+            allowMoreMaxMinutes: 480,
         });
         const first = saveBotToolSettings("botA", { cardWaitMinutes: 30 }).catch(() => undefined);
         await saveBotToolSettings("botA", { askWhichWay: "never" });
@@ -112,6 +116,8 @@ describe("the Tools store (game #1655)", () => {
             askBeforeMaking: 5,
             askWhichWay: "never",
             cardWaitMinutes: 10,
+            allowMoreIdleMinutes: 60,
+            allowMoreMaxMinutes: 480,
         });
     });
 

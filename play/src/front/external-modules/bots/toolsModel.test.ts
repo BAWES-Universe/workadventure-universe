@@ -3,6 +3,7 @@ import {
     briefNames,
     exampleHeading,
     headingOf,
+    readAllowedMore,
     readBotToolSettings,
     readServerTools,
     searchTools,
@@ -121,13 +122,58 @@ describe("the bot page's tool headings (game #1655, Orbit #738)", () => {
     });
 
     it("reads the bot's asking settings, with Orbit's defaults and no limit as null", () => {
-        expect(readBotToolSettings({})).toEqual({ askBeforeMaking: 5, askWhichWay: "rarely", cardWaitMinutes: 10 });
+        expect(readBotToolSettings({})).toEqual({
+            askBeforeMaking: 5,
+            askWhichWay: "rarely",
+            cardWaitMinutes: 10,
+            allowMoreIdleMinutes: 60,
+            allowMoreMaxMinutes: 480,
+        });
         expect(readBotToolSettings({ askBeforeMaking: null, askWhichWay: "never", cardWaitMinutes: 30 })).toEqual({
             askBeforeMaking: null,
             askWhichWay: "never",
             cardWaitMinutes: 30,
+            allowMoreIdleMinutes: 60,
+            allowMoreMaxMinutes: 480,
         });
         expect(readBotToolSettings({ askWhichWay: "sometimes" }).askWhichWay).toBe("rarely");
+        expect(readBotToolSettings({ allowMoreIdleMinutes: 120, allowMoreMaxMinutes: 1440 })).toMatchObject({
+            allowMoreIdleMinutes: 120,
+            allowMoreMaxMinutes: 1440,
+        });
+        expect(readBotToolSettings({ allowMoreIdleMinutes: "soon" }).allowMoreIdleMinutes).toBe(60);
+    });
+
+    it("reads who is allowed more right now: a name or nothing, the tool's title, and only places and choices as words", () => {
+        const rows = readAllowedMore({
+            grants: [
+                {
+                    id: "g1",
+                    requesterKey: "u1",
+                    person: { name: " Khalid ", isGuest: false },
+                    toolName: "create_issue",
+                    toolTitle: "Create issue",
+                    scope: {
+                        fixed: { team: "WEB", dryRun: false, labels: ["x"], nested: { a: 1 } },
+                        varies: ["title"],
+                    },
+                },
+                {
+                    id: "g2",
+                    person: { name: null, isGuest: true },
+                    toolName: "send_note",
+                    scope: { fixed: {}, varies: [] },
+                },
+                { id: "g3" },
+                "nonsense",
+            ],
+        });
+        expect(rows).toEqual([
+            { id: "g1", name: "Khalid", isGuest: false, tool: "Create issue", fixed: "WEB · false" },
+            { id: "g2", name: null, isGuest: true, tool: "send_note", fixed: "" },
+        ]);
+        expect(readAllowedMore(null)).toEqual([]);
+        expect(readAllowedMore({ grants: "no" })).toEqual([]);
     });
 
     it("puts a tool where a person chose, else where it was suggested, else nowhere yet", () => {

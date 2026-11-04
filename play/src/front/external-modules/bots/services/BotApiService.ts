@@ -14,8 +14,10 @@ import type { PushOverview, PushSettings } from "../../../Notification/Push/Push
 import { ChatPusherSchema, type ChatPusher, type PushActivityReport } from "../../../Notification/Push/PushChat";
 import { readBotUsage, type BotUsage, type UsageRange } from "../usageModel";
 import {
+    readAllowedMore,
     readBotToolSettings,
     readServerTools,
+    type AllowedMore,
     type BotToolSettings,
     type Heading,
     type ServerTools,
@@ -1730,6 +1732,21 @@ export class BotApiService {
             body: JSON.stringify(change),
         });
         return readBotToolSettings(await response.json());
+    }
+
+    /** Who is allowed more right now on this bot (Orbit #803): the remembered approvals that are still alive */
+    async getAllowedMore(botId: string): Promise<AllowedMore[]> {
+        const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/action-grants`);
+        return readAllowedMore(await response.json());
+    }
+
+    /** End all: every remembered approval of this bot ends, so the next change asks again. Answers how many ended. */
+    async endAllowedMore(botId: string): Promise<number> {
+        const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/action-grants/end-all`, {
+            method: "POST",
+        });
+        const ended = ((await response.json()) as { ended?: unknown } | null)?.ended;
+        return typeof ended === "number" ? ended : 0;
     }
 }
 
