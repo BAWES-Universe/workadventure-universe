@@ -1,5 +1,6 @@
 import { readable, type Readable } from "svelte/store";
 import { localUserStore } from "../../Connection/LocalUserStore";
+import { PENDING_ANSWER_TIMEOUT_MS } from "../../Stores/WokaMenuStore";
 import { botApiService } from "./services/BotApiService";
 
 /** How a bot and a person stand: the bot's own feelings, and what it thinks the person feels. */
@@ -60,20 +61,26 @@ async function emotionsOf(botId: string): Promise<BotEmotions | null | undefined
 
 /**
  * What a bot's card shows: its description and how it feels about you. The card holds its buttons back until both are
- * in (`loading`), then both show at once.
+ * in (`loading`), then both show at once. When Orbit or the bot server stalls, the card stops waiting after the same
+ * time as for its other answers and shows what it has.
  */
 export function botCardInfo(botId: string): Readable<BotCardInfo> {
     return readable<BotCardInfo>({ loading: true }, (set) => {
         let live = true;
+        const timer = setTimeout(() => {
+            if (live) set({ loading: false });
+        }, PENDING_ANSWER_TIMEOUT_MS);
         Promise.all([descriptionOf(botId), emotionsOf(botId)])
             .then(([description, emotions]) => {
                 if (live) set({ loading: false, description, emotions });
             })
             .catch(() => {
                 if (live) set({ loading: false });
-            });
+            })
+            .finally(() => clearTimeout(timer));
         return () => {
             live = false;
+            clearTimeout(timer);
         };
     });
 }

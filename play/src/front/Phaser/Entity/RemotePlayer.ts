@@ -36,13 +36,15 @@ const BOT_MESSAGE_ANSWER = "bot-message";
 const NO_MEMBERSHIP_BUTTON_KEPT_MS = 60 * 1000;
 
 /**
- * What the membership button says for each person, kept for the session so a card opens at once the next time (#1790).
- * A button is kept; "none" is asked again after a minute, since it may only mean Orbit did not answer.
+ * What the membership button says for each person in each universe, kept for the session so a card opens at once the
+ * next time (#1790). Orbit answers for the universe of the room you are in, so the key holds both. A button is kept;
+ * "none" is asked again after a minute, since it may only mean Orbit did not answer.
  */
 const membershipAnswers = new CardAnswers(
-    (userUuid: string) => botApiService.getMembershipButton(userUuid),
+    (key: string) => botApiService.getMembershipButton(key.slice(key.indexOf("\0") + 1)),
     (button) => (button === null ? NO_MEMBERSHIP_BUTTON_KEPT_MS : Infinity)
 );
+const membershipKey = (userUuid: string) => `${botApiService.getRoomId() ?? ""}\0${userUuid}`;
 
 export enum RemotePlayerEvent {
     Clicked = "Clicked",
@@ -203,13 +205,13 @@ export class RemotePlayer extends Character implements ActivatableInterface {
         try {
             await addMembershipCardButton({
                 userUuid: this.userUuid,
-                ask: (userUuid) => membershipAnswers.get(userUuid),
+                ask: (userUuid) => membershipAnswers.get(membershipKey(userUuid)),
                 // The card may have closed, turned to someone else or been opened again while Orbit answered
                 stillShown: () => opening === this.cardOpening && this.isCardShown(),
                 add: (action) => wokaMenuStore.addAction(action),
                 open: (userUuid) => {
                     // Membership is about to change there: the next card asks again
-                    membershipAnswers.forget(userUuid);
+                    membershipAnswers.forget(membershipKey(userUuid));
                     openOrbitMembership(userUuid);
                 },
                 icons: { membership: IconPlanet, pending: IconClock, roles: IconUserCog },
