@@ -106,8 +106,8 @@
 <style lang="scss">
     .profile-card {
         display: grid;
-        gap: 14px;
-        padding: 18px 16px;
+        gap: 12px;
+        padding: 10px 16px 16px;
         font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
         line-height: normal;
         color: #fff;
@@ -124,7 +124,6 @@
         color: rgb(255 255 255 / 0.82);
         white-space: pre-wrap;
         overflow-wrap: anywhere;
-        text-align: center;
     }
     .links {
         display: grid;

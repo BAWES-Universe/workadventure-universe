@@ -24,8 +24,27 @@ import { isBotUser } from "../../Chat/UserProvider/ChatUserMapper";
 import { botIdFromChatId } from "../../Chat/Bots/BotChatStatus";
 import { botDmAccessCache } from "../../Chat/Bots/BotStatusStore";
 import { friendMenuAction } from "../../Chat/Components/UserList/FriendMenuAction";
+import { CardAnswers } from "../../Components/ActionsMenu/cardAnswers";
 import { addMembershipCardButton } from "./MembershipCardButton";
 import { IconClock, IconMessage, IconPlanet, IconUserCircle, IconUserCog, IconUsersPlus, IconWalk } from "@wa-icons";
+
+/** The answers a card holds its buttons back for (see WokaMenuStore.expect). */
+const MEMBERSHIP_ANSWER = "membership";
+const BOT_MESSAGE_ANSWER = "bot-message";
+
+/** How long "no membership button" is trusted: Orbit gives the same answer when it could not be reached. */
+const NO_MEMBERSHIP_BUTTON_KEPT_MS = 60 * 1000;
+
+/**
+ * What the membership button says for each person in each universe, kept for the session so a card opens at once the
+ * next time (#1790). Orbit answers for the universe of the room you are in, so the key holds both. A button is kept;
+ * "none" is asked again after a minute, since it may only mean Orbit did not answer.
+ */
+const membershipAnswers = new CardAnswers(
+    (key: string) => botApiService.getMembershipButton(key.slice(key.indexOf("\0") + 1)),
+    (button) => (button === null ? NO_MEMBERSHIP_BUTTON_KEPT_MS : Infinity)
+);
+const membershipKey = (userUuid: string) => `${botApiService.getRoomId() ?? ""}\0${userUuid}`;
 
 export enum RemotePlayerEvent {
     Clicked = "Clicked",
@@ -160,7 +179,7 @@ export class RemotePlayer extends Character implements ActivatableInterface {
         for (const action of this.getDefaultWokaMenuActions()) {
             wokaMenuStore.addAction(action);
         }
-        this.addBotMessageWhenAllowed();
+        this.addBotMessageWhenAllowed(this.cardOpening);
         void this.addMembershipAction(this.cardOpening);
 
         // Send the remote player clicked event to the iframe listener
@@ -181,40 +200,55 @@ export class RemotePlayer extends Character implements ActivatableInterface {
      */
     private async addMembershipAction(opening: number): Promise<void> {
         if (!canOpenOrbit()) return;
-        await addMembershipCardButton({
-            userUuid: this.userUuid,
-            ask: (userUuid) => botApiService.getMembershipButton(userUuid),
-            // The card may have closed, turned to someone else or been opened again while Orbit answered
-            stillShown: () => opening === this.cardOpening && this.isCardShown(),
-            add: (action) => wokaMenuStore.addAction(action),
-            open: (userUuid) => {
-                openOrbitMembership(userUuid);
-            },
-            icons: { membership: IconPlanet, pending: IconClock, roles: IconUserCog },
-        });
+        // The card holds its buttons back until Orbit has answered, so this one never appears late and moves the others
+        wokaMenuStore.expect(this.userUuid, MEMBERSHIP_ANSWER);
+        try {
+            await addMembershipCardButton({
+                userUuid: this.userUuid,
+                ask: (userUuid) => membershipAnswers.get(membershipKey(userUuid)),
+                // The card may have closed, turned to someone else or been opened again while Orbit answered
+                stillShown: () => opening === this.cardOpening && this.isCardShown(),
+                add: (action) => wokaMenuStore.addAction(action),
+                open: (userUuid) => {
+                    // Membership is about to change there: the next card asks again
+                    membershipAnswers.forget(membershipKey(userUuid));
+                    openOrbitMembership(userUuid);
+                },
+                icons: { membership: IconPlanet, pending: IconClock, roles: IconUserCog },
+            });
+        } finally {
+            // An answer from an earlier opening must not end the wait of the one that is open now
+            if (opening === this.cardOpening) wokaMenuStore.settle(this.userUuid, MEMBERSHIP_ANSWER);
+        }
     }
 
     private getDefaultWokaMenuActions(): WokaMenuAction[] {
         const actions: WokaMenuAction[] = [];
+        const worldUser = [...(get(this.scene.allUsersInWorldStore)?.values() ?? [])].find(
+            (user) => user.uuid === this.userUuid
+        );
+        const isBot = isBotUser({ uuid: this.userUuid, tags: worldUser?.tags });
         // Under the card's "more" (⋯) button: it opens the Moderate screen, which says what blocking does and asks
-        // before doing it (Block, or Report to the room's admins).
-        actions.push({
-            actionName: blackListManager.isBlackListed(this.userUuid)
-                ? get(LL).report.block.unblock()
-                : get(LL).report.block.blockOrReport(),
-            protected: true,
-            priority: -1,
-            overflow: true,
-            style: "text-red-500",
-            testId: "wokamenu-block-user-button",
-            callback: () => {
-                // Track the report user action
-                analyticsClient.reportUser();
+        // before doing it (Block, or Report to the room's admins). Nobody blocks or reports a bot, so its card has
+        // neither the button nor the list.
+        if (!isBot) {
+            const blocked = blackListManager.isBlackListed(this.userUuid);
+            actions.push({
+                actionName: blocked ? get(LL).report.block.unblock() : get(LL).report.block.blockOrReport(),
+                protected: true,
+                priority: -1,
+                overflow: true,
+                style: blocked ? undefined : "text-red-500",
+                testId: "wokamenu-block-user-button",
+                callback: () => {
+                    // Track the report user action
+                    analyticsClient.reportUser();
 
-                showReportScreenStore.set({ userUuid: this.userUuid, userName: this.playerName });
-            },
-            actionIcon: banIcon,
-        });
+                    showReportScreenStore.set({ userUuid: this.userUuid, userName: this.playerName });
+                },
+                actionIcon: banIcon,
+            });
+        }
         if (!blackListManager.isBlackListed(this.userUuid)) {
             actions.push({
                 // Walks you to them: the same words as the People tab's button.
@@ -240,10 +274,6 @@ export class RemotePlayer extends Character implements ActivatableInterface {
             chatID === localUserStore.getChatId() || this.userUuid === localUserStore.getLocalUser()?.uuid;
         // Invite: anyone on the map you haven't blocked, guests too, between Walk to and Add friend. The server says
         // where it reaches; "can't invite from here" shows if it doesn't.
-        const worldUser = [...(get(this.scene.allUsersInWorldStore)?.values() ?? [])].find(
-            (user) => user.uuid === this.userUuid
-        );
-        const isBot = isBotUser({ uuid: this.userUuid, tags: worldUser?.tags });
         if (get(invitesEnabledStore) && !isMyOtherSession && !isBot && !blackListManager.isBlackListed(this.userUuid)) {
             actions.push({
                 actionName: get(LL).chat.friends.ring.ring(),
@@ -273,7 +303,12 @@ export class RemotePlayer extends Character implements ActivatableInterface {
                     protected: false,
                     priority: inMain ? 1.5 : -0.5,
                     overflow: !inMain,
-                    style: friendAction.danger ? "text-red-500" : "bg-white/10 hover:bg-white/30",
+                    // Accepting a request is the one main step on the card
+                    style: friendAction.danger
+                        ? "text-red-500"
+                        : relationship === "request_received"
+                        ? "is-primary"
+                        : "bg-white/10 hover:bg-white/30",
                     testId: "wokamenu-friend-button",
                     callback: friendAction.act,
                     actionIcon: friendAction.icon,
@@ -330,10 +365,12 @@ export class RemotePlayer extends Character implements ActivatableInterface {
      * A bot's card gets Message once Orbit says its owner lets you message it, the way Summon waits for its answer.
      * Bots get a chat id only while bot chats are on. A card closed or showing someone else by then gets nothing.
      */
-    private addBotMessageWhenAllowed(): void {
+    private addBotMessageWhenAllowed(opening: number): void {
         const chatID = this.getChatID();
         const botId = botIdFromChatId(chatID);
         if (!chatID || !botId || !get(userIsConnected)) return;
+        // The card holds its buttons back until this is answered, so Message never appears late
+        wokaMenuStore.expect(this.userUuid, BOT_MESSAGE_ANSWER);
         botDmAccessCache
             .get(botId)
             .then((allowed) => {
@@ -342,7 +379,10 @@ export class RemotePlayer extends Character implements ActivatableInterface {
                 if (card.actions.some((action) => action.testId === "wokamenu-message-button")) return;
                 wokaMenuStore.addAction(this.messageAction(chatID));
             })
-            .catch((error) => console.error("[RemotePlayer] Could not check whether you may message this bot:", error));
+            .catch((error) => console.error("[RemotePlayer] Could not check whether you may message this bot:", error))
+            .finally(() => {
+                if (opening === this.cardOpening) wokaMenuStore.settle(this.userUuid, BOT_MESSAGE_ANSWER);
+            });
     }
 
     /**

@@ -831,6 +831,50 @@ const chat: BaseTranslation = {
         people: "People",
         bots: "Bots",
     },
+    // The card of a player or a bot (#1790)
+    personCard: {
+        wantsToBeFriends: "Wants to be friends",
+        blocked: "Blocked",
+        more: "More",
+        youSuffix: "{status} · You",
+        otherTabSuffix: "{status} · Your other tab",
+        // A bot's state under its name: the state, then what it means for you
+        restingStatus: "{state} · replies are paused",
+        feelings: {
+            title: "{botName} and you",
+            feels: "Feels",
+            thinksYouFeel: "Thinks you feel",
+            empty: "You haven't met yet. Feelings start with your first chat.",
+            happiness: "Happiness",
+            trust: "Trust",
+            familiarity: "Familiarity",
+            frustration: "Frustration",
+            happinessWords: {
+                high: "Delighted",
+                good: "Content",
+                low: "Neutral",
+                none: "Unhappy",
+            },
+            trustWords: {
+                high: "Deep trust",
+                good: "Trusting",
+                low: "Cautious",
+                none: "Wary",
+            },
+            familiarityWords: {
+                high: "Close friend",
+                good: "Acquaintance",
+                low: "Getting to know",
+                none: "Stranger",
+            },
+            frustrationWords: {
+                high: "Furious",
+                good: "Annoyed",
+                low: "Irritated",
+                none: "Calm",
+            },
+        },
+    },
     botStatus: {
         online: "Online",
         resting: "Resting",
