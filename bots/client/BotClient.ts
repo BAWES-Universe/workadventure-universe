@@ -3412,8 +3412,9 @@ export class BotClient {
                         if (spaceMessage.spoken) {
                             if (spaceMessage.spoken.botId !== this.config.botId) break;
                             if (this.voice?.acceptSpoken(spaceName, senderUserId, spaceMessage.spoken.turnId, spaceMessage.message) === 'duplicate') break;
-                            // Said out loud, not typed: a card waiting for an answer says so (#1661)
-                            this.noteSpoken(spaceName, senderId);
+                        } else {
+                            // Typed: whatever was said out loud before is not what this answers (#1661)
+                            this.lastSpoken.delete(`${spaceName}|${senderId}`);
                         }
                         // With others in the bubble, a line not meant for the bot goes no further: it is not read, saved or
                         // answered, and the person is not even asked about (#1220). Before anything else is done with it.
@@ -3424,6 +3425,8 @@ export class BotClient {
                         if (!(await this.mayChat(spaceName, senderId, message))) {
                             break;
                         }
+                        // Said out loud, not typed, to this bot and let through: a card waiting for an answer says so (#1661)
+                        if (spaceMessage.spoken) this.noteSpoken(spaceName, senderId);
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                             console.log(`[Bot ${this.config.botId}] Calling behavior.onChatMessage: "${spaceMessage.message}" from ${senderName} (userId: ${senderId})`);
                         }
