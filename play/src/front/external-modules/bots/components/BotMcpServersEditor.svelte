@@ -623,7 +623,7 @@
     /** One line under a server's name: what it gives the bot, or why it doesn't. */
     function statusLine(server: McpServer): string {
         const result = server.lastTestResult;
-        if (server.authType === "oauth" && !server.oauthConnected) return "Needs you to connect it";
+        if (server.authType === "oauth" && !server.oauthConnected) return `Needs you to connect ${server.name}`;
         if (!result) return "Not tested yet";
         if (!result.success) return testError[server.id] || result.error || "Can't connect";
         const count = result.toolCount ?? 0;
@@ -633,7 +633,7 @@
     /** The first line on a server's own page: whether it is connected and how many tools it offers */
     function headLine(server: McpServer): string {
         const result = server.lastTestResult;
-        if (server.authType === "oauth" && !server.oauthConnected) return "Needs you to connect it";
+        if (server.authType === "oauth" && !server.oauthConnected) return `Needs you to connect ${server.name}`;
         if (!result) return "Not tested yet";
         if (!result.success) return testError[server.id] || result.error || "Can't connect";
         const count = result.toolCount ?? 0;

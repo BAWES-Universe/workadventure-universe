@@ -133,8 +133,8 @@
                     <span class="th-from" class:moved={isMoved(tool)}>{fromLine(tool)}</span>
                 </button>
                 {#if open}
-                    <div class="th-move" role="group" aria-label={text.moveTo()}>
-                        <span>{text.moveTo()}</span>
+                    <div class="th-move" role="group" aria-label={text.moveTo({ tool: toolLabel(tool) })}>
+                        <span>{text.moveTo({ tool: toolLabel(tool) })}</span>
                         {#each others as to (to)}
                             <button
                                 type="button"

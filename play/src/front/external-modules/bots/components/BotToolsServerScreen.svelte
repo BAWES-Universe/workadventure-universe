@@ -41,6 +41,9 @@
     // A server from before tools were checked says so; until then it keeps working in text as it did
     $: unchecked = data?.state === "notCheckedYet";
     $: needsConfirm = tools.length > 0 && (unchecked || waiting > 0);
+    // What the banner is about: every tool of an old server, else the ones still waiting. With only one, it is named.
+    $: checking = unchecked ? tools : tools.filter((tool) => tool.state !== "confirmed");
+    $: onlyTool = checking.length === 1 ? toolLabel(checking[0]) : undefined;
     $: headings = usedHeadings(tools);
 
     // Read when the page opens: another person may have moved or confirmed a tool since the list was last loaded
@@ -119,12 +122,20 @@
     {:else}
         {#if needsConfirm}
             <section class="ts-check" data-testid="bot-tools-confirm">
-                <b>{text.checkTitle({ count: unchecked ? tools.length : waiting })}</b>
+                <b
+                    >{onlyTool
+                        ? text.checkTitleOne({ tool: onlyTool })
+                        : text.checkTitle({ server: serverName, count: checking.length })}</b
+                >
                 <p>
                     {unchecked ? text.checkOldLine({ server: serverName }) : text.checkLine({ server: serverName })}
                 </p>
                 <PageButton go tall testId="bot-tools-confirm-all" disabled={confirming} on:click={confirmAll}
-                    >{confirming ? text.confirming() : text.confirmAll()}</PageButton
+                    >{confirming
+                        ? text.confirming()
+                        : onlyTool
+                        ? text.confirmOne({ tool: onlyTool })
+                        : text.confirmAll()}</PageButton
                 >
             </section>
         {/if}

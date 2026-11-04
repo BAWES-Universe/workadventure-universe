@@ -17,7 +17,6 @@
     export let bot: BotData;
 
     $: text = $LL.mapEditor.edit.bots.page.tools.approvals;
-    $: botName = bot.name || "Bot";
     $: held = $botToolsStore && $botToolsStore.botId === bot.id ? $botToolsStore : undefined;
     $: settings = held?.settings;
 
@@ -58,7 +57,7 @@
 </script>
 
 <div class="ta-screen" data-testid="bot-tools-approvals">
-    <p class="ta-line">{text.intro({ bot: botName })}</p>
+    <p class="ta-line">{text.intro()}</p>
     {#if loadFailed && !settings}
         <p class="ta-fail" role="alert">{text.loadFailed()}</p>
     {:else if settings}

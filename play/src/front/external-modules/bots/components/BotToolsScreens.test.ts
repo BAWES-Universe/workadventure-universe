@@ -184,11 +184,11 @@ describe("the bot page's Tools screens (game #1655)", () => {
         );
         await mountServer();
         expect(byTestId("bot-tools-heading-changesThings")?.textContent).toContain(
-            "Shows the person a card and waits for their tap, every time."
+            "This bot shows the person chatting a card and waits for their OK, every time."
         );
         await click(byTestId("bot-tools-choice-changesThings-off"));
         expect(mocks.saveMcpServerSettings).toHaveBeenCalledWith("b1", "s1", { changesThings: "off" });
-        expect(byTestId("bot-tools-heading-changesThings")?.textContent).toContain("Never uses them.");
+        expect(byTestId("bot-tools-heading-changesThings")?.textContent).toContain("This bot never uses these tools.");
     });
 
     it("puts a choice back and says so when Orbit refuses it", async () => {
@@ -224,11 +224,35 @@ describe("the bot page's Tools screens (game #1655)", () => {
         );
         mocks.confirmMcpTools.mockResolvedValue(answer({ policyRevision: 5 }));
         await mountServer();
-        expect(byTestId("bot-tools-confirm")?.textContent).toContain("Check what these 6 tools do");
+        expect(byTestId("bot-tools-confirm")?.textContent).toContain("Check what Linear's 6 tools do");
         expect(target.textContent).toContain("4 to check");
         await click(byTestId("bot-tools-confirm-all"));
         expect(mocks.confirmMcpTools).toHaveBeenCalledWith("b1", "s1", 4);
         expect(byTestId("bot-tools-confirm")).toBeNull();
+    });
+
+    it("names the tool in the check banner and the button when only one waits", async () => {
+        mocks.getMcpServerTools.mockResolvedValue(
+            answer({
+                state: "notConfirmedYet",
+                tools: [
+                    tool({
+                        id: "t1",
+                        name: "update_page",
+                        title: "Update page",
+                        suggestedHeading: "changesThings",
+                        suggestionSource: "server",
+                        state: "notConfirmedYet",
+                        confirmedBy: null,
+                    }),
+                    tool({ id: "t2", name: "list_pages", title: "List pages", suggestedHeading: "looksUp" }),
+                ],
+            })
+        );
+        await mountServer();
+        const banner = byTestId("bot-tools-confirm")?.textContent ?? "";
+        expect(banner).toContain("Check what Update page does");
+        expect(byTestId("bot-tools-confirm-all")?.textContent).toContain("Confirm Update page");
     });
 
     it("shows Orbit's reason when the tools moved while a person was looking", async () => {
@@ -327,7 +351,7 @@ describe("the bot page's Tools screens (game #1655)", () => {
         it("shows how long a card waits, the most things it makes before asking, and when it asks which way to go", async () => {
             mocks.getBotToolSettings.mockResolvedValue(settings);
             await mountApprovals();
-            expect(target.textContent).toContain("Before Linear SH changes, deletes or sends something");
+            expect(target.textContent).toContain("Before this bot changes, deletes or sends something");
             expect(picked("Waits for a tap")).toBe("10 min");
             expect(picked("Asks before making more than")).toBe("5");
             expect(picked("Asks which way to go")).toBe("Rarely");
