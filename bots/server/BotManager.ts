@@ -355,6 +355,8 @@ export class BotManager {
         };
         
         const client = new BotClient(botConfig);
+        // Cards in nearby chat and voice come and go through the AI service's side of it (#1658)
+        client.setAsks(this.aiService.asksPort());
         client.setAccessGate(this.accessGate);
         
         // Store botId mapping

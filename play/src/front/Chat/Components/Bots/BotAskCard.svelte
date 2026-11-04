@@ -10,6 +10,7 @@
         IconChevronRight,
         IconChevronUp,
         IconClock,
+        IconLock,
         IconX,
     } from "@wa-icons";
 
@@ -271,7 +272,10 @@
                 <span class="ask-result" dir="auto">{answer.result}</span>
             {/if}
         {:else if answer?.typed}
-            <span class="ask-who" dir="auto">{$LL.chat.botAsk.typed()}</span>
+            <!-- In nearby chat what the person said may have been spoken, so the line doesn't say "typed" -->
+            <span class="ask-who" dir="auto"
+                >{shown.private ? $LL.chat.botAsk.saidSomethingElse() : $LL.chat.botAsk.typed()}</span
+            >
         {:else if answer?.closed}
             <div class="ask-row">
                 <span class="ask-who"><IconX />{$LL.chat.botAsk.closed()}</span>
@@ -294,6 +298,10 @@
                     on:click={() => tap({ action: "reviewAgain" })}>{$LL.chat.botAsk.reviewAgain()}</button
                 >
             </div>
+        {/if}
+        <!-- In nearby chat only the person who asked has this card, and the line says so while it waits (#1658) -->
+        {#if shown.private && open}
+            <span class="ask-private" data-testid="botAskPrivate"><IconLock />{$LL.chat.botAsk.onlyYouSeeCard()}</span>
         {/if}
         <!-- A tap on an ended card (Review again, Ask me again) can fail too, so this shows in every state -->
         {#if failed}
@@ -392,6 +400,15 @@
     .ask-title {
         font-size: 14px;
         line-height: 19px;
+    }
+    .ask-private {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding-top: 10px;
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        color: rgba(255, 255, 255, 0.66);
+        font-size: 14px;
     }
     .ask-acts {
         font-size: 12px;

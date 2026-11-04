@@ -942,6 +942,10 @@ const chat: BaseTranslation = {
         openApp: "Open {app}",
         notReviewed: "Nobody has confirmed this tool yet, so only people who manage {name} can use the tool for now.",
         sendFailed: "Couldn't send your answer. Try again.",
+        // Nearby chat and voice (#1658): the card comes to the person who asked and nobody else
+        onlyYouSeeCard: "Only you see this card",
+        onlyYouSeeReply: "Only you see this reply",
+        saidSomethingElse: "You said something else, so nothing was done",
     },
     voiceDraft: {
         onlyYou: "Only you see this",

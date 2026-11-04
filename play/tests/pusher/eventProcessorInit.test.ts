@@ -169,4 +169,48 @@ describe("eventProcessorInit", () => {
             ).toThrow("A voice mode can only be sent to a bot");
         });
     });
+    describe("botAsk", () => {
+        const card = {
+            $case: "botAsk" as const,
+            botAsk: { botId: "b-1", botName: "Nora", kind: "card", id: "act-1", revision: 0, body: "{}" },
+        };
+        const person = spaceUser("room_7", []);
+
+        it("passes on a bot's own card", () => {
+            expect(
+                eventProcessor.processPrivateEvent(card, spaceUser("room_12", ["bot"], undefined, "bot-b-1"), person)
+            ).toEqual(card);
+        });
+
+        it("refuses a card from a player, so nobody can put a card on someone else's screen", () => {
+            expect(() =>
+                eventProcessor.processPrivateEvent(card, spaceUser("room_9", ["member"], undefined, "u-9"), person)
+            ).toThrow("Only a bot can send a card");
+        });
+
+        it("refuses a card a bot sends as another bot", () => {
+            expect(() =>
+                eventProcessor.processPrivateEvent(card, spaceUser("room_12", ["bot"], undefined, "bot-b-2"), person)
+            ).toThrow("A bot can only send its own card");
+        });
+    });
+    describe("botAskAnswer", () => {
+        const tap = {
+            $case: "botAskAnswer" as const,
+            botAskAnswer: { askId: "act-1", revision: 0, tap: '{"action":"close"}' },
+        };
+        const sender = spaceUser("room_7", []);
+
+        it("passes on a tap sent to a bot", () => {
+            expect(
+                eventProcessor.processPrivateEvent(tap, sender, spaceUser("room_12", ["bot"], undefined, "bot-b-1"))
+            ).toEqual(tap);
+        });
+
+        it("refuses a tap sent to a player, so a card's tap never reaches anyone else", () => {
+            expect(() =>
+                eventProcessor.processPrivateEvent(tap, sender, spaceUser("room_9", ["member"], undefined, "u-9"))
+            ).toThrow("A tap on a card can only be sent to a bot");
+        });
+    });
 });

@@ -919,7 +919,13 @@ export class SocialBehavior extends BaseBehavior {
                 this.bot,
                 this.adminApiService,
                 abortSignal,
-                images
+                images,
+                'world',
+                undefined,
+                undefined,
+                undefined,
+                false,
+                true // a person said it
             ), spaceName, botId, playerId, abortSignal)) {
                 if (chunk.reset) {
                     if (abortSignal?.aborted) break;

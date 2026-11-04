@@ -38,6 +38,7 @@ import { selectedRoomStore } from "../../Stores/SelectRoomStore";
 import { isBotUser, mapExtendedSpaceUserToChatUser } from "../../UserProvider/ChatUserMapper";
 import { fileNameOfLink } from "../../../FileViewer/fileKinds";
 import { parseBotReplyLimit, type BotReplyLimit } from "../../Bots/BotReplyLimit";
+import { botAskTapJson, readNearbyBotAsk, type BotAsk, type BotAskTap } from "../../Bots/BotAsk";
 import {
     afterTypedSend,
     applyDraftEvent,
@@ -148,6 +149,10 @@ export interface ProximityChatMessageOptions {
     replyLimit?: BotReplyLimit;
     /** A bot's steps line (#1545): the message is that line. */
     steps?: BotSteps;
+    /** A card a bot showed this person alone (#1658): the message is that card. */
+    ask?: BotAsk;
+    /** A reply a bot wrote for this person alone (#1658): it carries "Only you see this reply". */
+    privateReply?: boolean;
     /** The line was made from what its sender said out loud to a voice bot (#1664): it carries a small mic mark. */
     spoken?: boolean;
 }
@@ -188,6 +193,10 @@ export class ProximityChatMessage implements ChatMessage {
     steps?: Writable<BotSteps | undefined>;
     /** Set on the fixed card a bot sends one person who reached a reply limit (#1159). Local and in memory only. */
     replyLimit?: BotReplyLimit;
+    /** Set on a card a bot showed this person alone (#1658): the bot's own events change it as the card ends. */
+    ask?: Writable<BotAsk | undefined>;
+    /** Set on a reply a bot wrote for this person alone (#1658). Local and in memory only. */
+    privateReply?: boolean;
     /** Set on a line made from what its sender said out loud to a voice bot (#1664). */
     spoken?: boolean;
     /** Whether a voice bot's voice stopped part-way through this reply because someone spoke over it (#1665). */
@@ -206,10 +215,18 @@ export class ProximityChatMessage implements ChatMessage {
         this.replyLimit = options.replyLimit;
         this.spoken = options.spoken;
         if (options.steps) this.steps = writable(options.steps);
+        if (options.ask) this.ask = writable(options.ask);
+        this.privateReply = options.privateReply;
         this.quotedMessage = options.quotedMessage;
         this.isQuotedMessage = options.isQuotedMessage;
         const isConversation =
-            !options.session && !options.notSent && !options.isQuotedMessage && !options.replyLimit && !options.steps;
+            !options.session &&
+            !options.notSent &&
+            !options.isQuotedMessage &&
+            !options.replyLimit &&
+            !options.steps &&
+            !options.ask &&
+            !options.privateReply;
         const hasContent = type !== "incoming" && type !== "outcoming";
         this.canReact.set(isConversation && hasContent && options.react !== undefined);
         this.canReply.set(isConversation && hasContent);
@@ -268,6 +285,9 @@ export class ProximityChatRoom implements ChatRoom {
     private spaceIsTypingSubscription: Subscription | undefined;
     private spaceMessageReactionSubscription: Subscription | undefined;
     private spaceReplyLimitSubscription: Subscription | undefined;
+    private spaceBotAskSubscription: Subscription | undefined;
+    /** The card shown for each card id (#1658), so the bot's next event about it changes that card instead of adding one */
+    private askCards = new Map<string, { messageId: string; botSpaceUserId: string }>();
     /** The reply limit card shown for each bot, by bot id, so a newer one replaces it */
     private replyLimitCards = new Map<string, string>();
     private spaceVoiceDraftSubscription: Subscription | undefined;
@@ -1109,6 +1129,96 @@ export class ProximityChatRoom implements ChatRoom {
         this.showIfNothingOpen();
     }
 
+    /**
+     * A card a bot shows this person alone, or a reply only they need (#1658). A card the bot sends again with the same id
+     * (it ended, or the person came back) changes the card already shown; a card that is new is pinned above the message
+     * box while it waits, and stays in the chat as it ended.
+     */
+    private onBotAsk(
+        event: { botId: string; botName: string; kind: string; id: string; revision: number; body: string },
+        senderSpaceUserId: string
+    ): void {
+        if (event.kind === "reply") {
+            const body = event.body.trim();
+            if (!body) return;
+            this.addBotCardMessage(senderSpaceUserId, { privateReply: true }, body, `${event.botId}-reply-${event.id}`);
+            return;
+        }
+        if (event.kind !== "card") return;
+        const ask = readNearbyBotAsk(event.body, Date.now());
+        if (!ask || ask.id !== event.id) return;
+        const shown = this.askCards.get(ask.id);
+        const shownMessage = shown ? this.messages.get(shown.messageId) : undefined;
+        if (shown && shownMessage instanceof ProximityChatMessage && shownMessage.ask) {
+            // Only the bot's own newer word changes a card; an older one that arrives late is ignored
+            const current = get(shownMessage.ask);
+            if (current && ask.revision >= current.revision) shownMessage.ask.set(ask);
+            this.askCards.set(ask.id, { messageId: shown.messageId, botSpaceUserId: senderSpaceUserId });
+            return;
+        }
+        const message = this.addBotCardMessage(senderSpaceUserId, { ask }, "", `${event.botId}-ask-${ask.id}`);
+        if (message) this.askCards.set(ask.id, { messageId: message.id, botSpaceUserId: senderSpaceUserId });
+    }
+
+    private addBotCardMessage(
+        senderSpaceUserId: string,
+        options: ProximityChatMessageOptions,
+        body: string,
+        id: string
+    ): ProximityChatMessage | undefined {
+        if (this.messages.get(id)) return undefined;
+        // The sender as this chat knows them (with their picture and status), as for the bot's streamed replies
+        const spaceUser = this.users?.get(senderSpaceUserId);
+        const message = new ProximityChatMessage(
+            id,
+            spaceUser ? mapExtendedSpaceUserToChatUser(spaceUser) : this.unknownUser,
+            writable({ body, url: undefined, urls: undefined, filename: undefined, fileNames: undefined }),
+            new Date(),
+            false,
+            "proximity",
+            options
+        );
+        this.removeTypingUserbyID(senderSpaceUserId);
+        this.messages.push(message);
+        this.lastMessageTimestamp = message.date.getTime();
+        // Unread like any message that arrives, so another open room still shows it came
+        this.markUnread();
+        openChat("bubble");
+        this.showIfNothingOpen();
+        return message;
+    }
+
+    /**
+     * A tap on a card in nearby chat (#1658): only the card's id and revision and what was tapped, sent to the bot that
+     * showed it and to nobody else. The bot server decides what it means and edits the card.
+     */
+    async answerBotAsk(ask: Pick<BotAsk, "id" | "revision">, tap: BotAskTap): Promise<void> {
+        const shown = this.askCards.get(ask.id);
+        const space = this._space;
+        if (!shown || !space || space.destroyed) throw new Error("The bot that asked is no longer here");
+        space.emitPrivateMessage(
+            {
+                $case: "botAskAnswer",
+                botAskAnswer: { askId: ask.id, revision: ask.revision, tap: botAskTapJson(tap) },
+            },
+            shown.botSpaceUserId
+        );
+        return Promise.resolve();
+    }
+
+    /**
+     * This person left the bubble: a card still waiting there can no longer be answered, so it leaves the chat. The bot
+     * shows it again if the person comes back before it closes. Cards that ended stay where they were asked.
+     */
+    private dropWaitingAsks(): void {
+        for (const [askId, shown] of this.askCards) {
+            const message = this.messages.get(shown.messageId);
+            const ask = message instanceof ProximityChatMessage && message.ask ? get(message.ask) : undefined;
+            if (ask && !ask.answer) this.messages.delete(shown.messageId);
+            if (!ask || !ask.answer) this.askCards.delete(askId);
+        }
+    }
+
     private applyRemoteReaction(senderUserId: string, event: SpaceMessageReaction): void {
         if (!isUsableReaction(event.reaction)) return;
         const message = this.messages.get(event.messageId);
@@ -1681,6 +1791,16 @@ export class ProximityChatRoom implements ChatRoom {
             this.showReplyLimit(replyLimit, event.sender.spaceUserId);
         });
 
+        // The card a bot shows this person alone before it changes, deletes or sends something, and the replies only
+        // they need (#1658). The pusher passes them on only from a bot about itself; it is checked here again.
+        this.spaceBotAskSubscription?.unsubscribe();
+        this.spaceBotAskSubscription = this._space.observePrivateEvent("botAsk").subscribe((event) => {
+            if (!isBotUser(event.sender) || event.sender.uuid !== `bot-${event.botAsk.botId}`) return;
+            // A bot this person blocked shows nothing, as with its messages
+            if (blackListManager.isBlackListed(event.sender.uuid)) return;
+            this.onBotAsk(event.botAsk, event.sender.spaceUserId);
+        });
+
         // What a voice bot hears this person say (#1664), sent to them only. The pusher passes it on only from a bot
         // about itself; it is checked here again.
         this.spaceVoiceDraftSubscription?.unsubscribe();
@@ -1905,6 +2025,8 @@ export class ProximityChatRoom implements ChatRoom {
                 this.spaceIsTypingSubscription?.unsubscribe();
                 this.spaceMessageReactionSubscription?.unsubscribe();
                 this.spaceReplyLimitSubscription?.unsubscribe();
+                this.spaceBotAskSubscription?.unsubscribe();
+                this.dropWaitingAsks();
                 this.endVoiceDrafts();
                 this.spaceStreamMessageSubscription?.unsubscribe();
                 this.streamMessages.clear();
@@ -2142,6 +2264,8 @@ export class ProximityChatRoom implements ChatRoom {
         this.spaceIsTypingSubscription?.unsubscribe();
         this.spaceMessageReactionSubscription?.unsubscribe();
         this.spaceReplyLimitSubscription?.unsubscribe();
+        this.spaceBotAskSubscription?.unsubscribe();
+        this.dropWaitingAsks();
         this.endVoiceDrafts();
         this.spaceStreamMessageSubscription?.unsubscribe();
         this.streamMessages.clear();
@@ -2224,6 +2348,8 @@ export class ProximityChatRoom implements ChatRoom {
         this.spaceIsTypingSubscription?.unsubscribe();
         this.spaceMessageReactionSubscription?.unsubscribe();
         this.spaceReplyLimitSubscription?.unsubscribe();
+        this.spaceBotAskSubscription?.unsubscribe();
+        this.dropWaitingAsks();
         this.endVoiceDrafts();
         this.spaceStreamMessageSubscription?.unsubscribe();
         this.streamMessages.clear();

@@ -65,6 +65,8 @@ export interface BotAsk {
     notReviewed?: boolean;
     /** Where to look when the outcome could not be confirmed. */
     checkAt?: { label: string; url: string };
+    /** Only the person who asked sees this card: it came to them alone in nearby chat (#1658), not in a direct message. */
+    private?: boolean;
     /** When the card closes, on THIS device's clock. */
     expiresAt: number;
     /** How long a card waits, for "No answer in 10 min". */
@@ -149,7 +151,25 @@ export function readBotAsk(
     receivedAt: number
 ): BotAsk | undefined {
     if (!content || !botIdFromChatId(sender) || content.msgtype !== "m.notice") return undefined;
-    const field = content[BOT_ASK_KEY];
+    return parseAskField(content[BOT_ASK_KEY], receivedAt);
+}
+
+/**
+ * The card a bot sent one person in nearby chat (#1658): the same field a direct message's notice carries, as JSON in a
+ * private event. Who sent it is checked by the caller (only the bot itself, about itself). Only this person sees it.
+ */
+export function readNearbyBotAsk(body: string, receivedAt: number): BotAsk | undefined {
+    let field: unknown;
+    try {
+        field = JSON.parse(body);
+    } catch {
+        return undefined;
+    }
+    const ask = parseAskField(field, receivedAt);
+    return ask ? { ...ask, private: true } : undefined;
+}
+
+function parseAskField(field: unknown, receivedAt: number): BotAsk | undefined {
     if (!field || typeof field !== "object") return undefined;
     const o = field as Record<string, unknown>;
     if (o.v !== 1 || o.kind !== "approval") return undefined;
@@ -233,6 +253,11 @@ export type BotAskTap =
     | { action: "reviewAgain" }
     | { action: "askAgain" };
 
+/** A tap as the private event to a bot in nearby chat carries it (#1658): the same words, as JSON. */
+export function botAskTapJson(tap: BotAskTap): string {
+    return JSON.stringify(tap);
+}
+
 export function botAskAnswerContent(ask: Pick<BotAsk, "id" | "revision">, tap: BotAskTap): Record<string, unknown> {
     return { v: 1, ask: ask.id, revision: ask.revision, ...tap };
 }
@@ -250,9 +275,11 @@ export interface AskedMessage<M> {
 
 /** Every card in the chat, oldest first, kept up to date as the bot server changes them. */
 export function chatAsks<M extends MessageWithAsk>(messages: Readable<readonly M[]>): Readable<Array<AskedMessage<M>>> {
+    // The store is passed as a list of one: nearby chat's messages are an array that is also a store, and `derived` would
+    // take a bare one for a list of stores and subscribe to each message.
     return derived(
-        messages,
-        ($messages, set: (value: Array<AskedMessage<M>>) => void) => {
+        [messages],
+        ([$messages], set: (value: Array<AskedMessage<M>>) => void) => {
             const withAsk = $messages.filter(
                 (message): message is M & { ask: Readable<BotAsk | undefined> } => !!message.ask
             );

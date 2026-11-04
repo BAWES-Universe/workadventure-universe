@@ -1423,11 +1423,37 @@ message PrivateSpaceEvent {
     BotVoiceStatusMessage botVoiceStatus = 25;
     VoiceModeChoiceMessage voiceModeChoice = 26;
     BotVoiceDoneMessage botVoiceDone = 27;
+    BotAskMessage botAsk = 28;
+    BotAskAnswerMessage botAskAnswer = 29;
     // From 30: upstream WorkAdventure uses the numbers right after ours.
     InviteToSpeakPrivateMessage inviteToSpeak = 30;
     DeclineToSpeakPrivateMessage declineToSpeak = 31;
     MoveToAudiencePrivateMessage moveToAudience = 32;
   }
+}
+
+/**
+ * A bot shows one person, and only them, the card it needs one answer with before it changes, deletes or sends something
+ * (#1658), or a reply only they need. Only a bot may send it (the pusher refuses anyone else), and only about itself.
+ * Everyone in the bubble reads the bot's one plain line instead; this is what only the person who asked gets.
+ */
+message BotAskMessage {
+  string botId = 1;
+  string botName = 2;
+  string kind = 3;       // "card" | "reply"
+  string id = 4;         // card: the card's id (a later event with the same id and a higher revision replaces it); reply: this reply's id
+  int32 revision = 5;    // card only
+  string body = 6;       // card: the card as JSON, the field a direct message's notice carries as `universe.ask`; reply: the words
+}
+
+/**
+ * A tap on a card a bot showed in nearby chat (#1658): goes to that bot and to nobody else. It names the card and the
+ * revision the person saw and what they tapped, never new content.
+ */
+message BotAskAnswerMessage {
+  string askId = 1;
+  int32 revision = 2;
+  string tap = 3;        // JSON: { action: "decide" | "close" | "moreTime" | "reviewAgain" | "askAgain", option? }
 }
 
 message CommunicationStrategyMessage {

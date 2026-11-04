@@ -50,6 +50,8 @@ import { OrbitTurnGate, pausedLine } from '../voice/VoiceAllowance';
 import { pausedAtCapacityEvent } from '../voice/VoiceLoad';
 import { captureServerEvent } from '../ai/PostHogClient';
 import { BotAttention, followUpSeconds } from './BotAttention';
+import { isBotSpaceUser, type BotAsksPort } from '../mcp/NearbyAsks';
+import type { PrivateEventPusherToFront } from '@workadventure/messages';
 import { audioFileNameFor } from '../utils/audioFileName';
 
 // Get the secret key from environment - must match pusher's SECRET_KEY
@@ -120,6 +122,8 @@ export class BotClient {
     private meeting: MeetingPresence | null = null;
     private meetingAreas: { areas: MeetingArea[]; roomUrl: string } = { areas: [], roomUrl: '' };
     private players: Map<number, PlayerInfo> = new Map();
+    /** Cards in nearby chat and voice (#1658). Set by the bot manager; without it a bubble never gets a card. */
+    private asks: BotAsksPort | undefined;
     // Conversation bubbles the bot can see: groupId -> user ids in that bubble
     private bubbles: Map<number, number[]> = new Map();
     private queryId: number = 0;
@@ -2252,6 +2256,60 @@ export class BotClient {
     }
 
     /**
+     * The card this bot needs one answer with, or a reply only one person needs, to that person and nobody else
+     * (#1658). Sent as a private event; the pusher passes it on only when a bot sends it about itself. False when the
+     * bot is not in that space, so nothing was sent.
+     */
+    sendAskEvent(spaceName: string, playerId: number, event: { kind: 'card' | 'reply'; id: string; revision: number; body: string }): boolean {
+        const spaceUserId = this.spaces.get(spaceName);
+        if (!spaceUserId) return false;
+        const cut = spaceUserId.lastIndexOf('_');
+        if (cut < 0) return false;
+        this.sendPrivateEvent(spaceName, `${spaceUserId.slice(0, cut)}_${playerId}`, {
+            $case: 'botAsk',
+            botAsk: { botId: this.config.botId, botName: this.config.name, ...event },
+        });
+        return true;
+    }
+
+    /**
+     * One plain line everyone in the bubble reads, and hears from a voice bot (#1658): a message of its own, finished at
+     * once, so a voice bot says it as it says any reply.
+     */
+    sayToBubble(spaceName: string, line: string): boolean {
+        if (!this.spaces.has(spaceName) || !line.trim()) return false;
+        const responseId = `bot-${this.config.botId}-say-${uuidv4()}`;
+        this.sendStreamMessage(spaceName, responseId, line, false);
+        this.sendStreamMessage(spaceName, responseId, '', true, line);
+        return true;
+    }
+
+    /** Where cards in nearby chat and voice are shown, and their taps come from (#1658). */
+    setAsks(asks: BotAsksPort | undefined): void {
+        this.asks = asks;
+    }
+
+    /** Whether this person is in a bubble the bot sees: a card is for people in one, and nobody else. */
+    inBubble(playerId: number): boolean {
+        return this.getBubbleUserIds(playerId) !== undefined;
+    }
+
+    /**
+     * A tap on a card, from one person in the bubble (#1658): the event must come to this bot from a person (never a bot)
+     * in a space it is in. Who they are is the game's word, never the event's.
+     */
+    private onAskEvent(event: PrivateEventPusherToFront): void {
+        const inner = event.spaceEvent?.event;
+        if (!inner || inner.$case !== 'botAskAnswer' || !this.asks) return;
+        const sender = event.sender;
+        const me = this.spaces.get(event.spaceName);
+        if (!sender || !me || event.receiverUserId !== me || sender.spaceUserId === me || isBotSpaceUser(sender)) return;
+        const playerId = BotClient.playerIdOf(sender.spaceUserId);
+        if (!playerId) return;
+        this.asks.tap(this, event.spaceName, playerId, inner.botAskAnswer);
+    }
+
+    /**
      * Start typing indicator in space (shows bot is typing)
      */
     startTyping(spaceName: string): void {
@@ -3157,6 +3215,11 @@ export class BotClient {
 
             case 'addSpaceUserMessage':
                 if (message.addSpaceUserMessage.user) this.voice?.spaceUserJoined(message.addSpaceUserMessage.spaceName, message.addSpaceUserMessage.user);
+                // A person who came back (a reload, or walking back to the bubble) gets their cards and replies again (#1658)
+                if (message.addSpaceUserMessage.user && this.asks && !isBotSpaceUser(message.addSpaceUserMessage.user)) {
+                    const joined = BotClient.playerIdOf(message.addSpaceUserMessage.user.spaceUserId);
+                    if (joined) this.asks.personBack(this, message.addSpaceUserMessage.spaceName, joined);
+                }
                 // When a user joins a space, we get their SpaceUser info
                 // Extract numeric userId from spaceUserId to avoid name collisions
                 if (this.behavior && message.addSpaceUserMessage && !this.isMeetingSpace(message.addSpaceUserMessage.spaceName)) {
@@ -3395,6 +3458,8 @@ export class BotClient {
             case 'privateEvent':
                 // Only a voice bot has audio connections; for every other bot a private event changes nothing
                 this.voice?.handlePrivateEvent(message.privateEvent);
+                // A tap on a card this bot showed in nearby chat (#1658)
+                this.onAskEvent(message.privateEvent);
                 break;
 
             case 'errorMessage':
