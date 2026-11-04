@@ -1,6 +1,6 @@
 import { get, writable } from "svelte/store";
 import type { SvelteComponent } from "svelte";
-import { CardAnswers } from "../../Components/ActionsMenu/cardAnswers";
+import { CardAnswers, CARD_ANSWER_KEPT_MS } from "../../Components/ActionsMenu/cardAnswers";
 import type { ExtensionModule, ExtensionModuleOptions } from "../../ExternalModule/ExtensionModule";
 import { localUserStore } from "../../Connection/LocalUserStore";
 import { mapEditorActivated, userIsConnected } from "../../Stores/MenuStore";
@@ -829,11 +829,11 @@ let lastProcessedMenu: { userUuid: string; actionCount: number } | null = null;
 let wokaMenuOpening = 0;
 const SUMMON_ANSWER = "bot-summon";
 
-// Whether Summon shows for you on a bot's card, kept for the session so the card opens at once the next time. Only a
-// real yes or no is kept: when it could not be found out, the next look asks again.
+// Whether Summon shows for you on a bot's card, kept only for a few seconds so a permission changed in Orbit shows the
+// next time the card opens. Only a real yes or no is kept: when it could not be found out, the next look asks again.
 const summonAnswers = new CardAnswers(
     (botId: string) => botApiService.getBotAccess(botId, "summon", localUserStore.getLocalUser()?.uuid),
-    (answer) => (answer.allowed === null ? 0 : Infinity)
+    (answer) => (answer.allowed === null ? 0 : CARD_ANSWER_KEPT_MS)
 );
 
 function setupWokaMenuHook() {
