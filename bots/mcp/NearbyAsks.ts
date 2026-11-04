@@ -11,6 +11,7 @@ import type { BotClient } from '../client/BotClient';
 import type { Asker, NearbySurface } from './ToolApprovals';
 import { parseTap } from './ApprovalCard';
 import type { AskField } from './ApprovalCard';
+import type { QuestionField } from './QuestionCard';
 
 /** Bots are known by the tag or by the uuid prefix their token gives them (the same test the game server uses). */
 export function isBotSpaceUser(user: SpaceUser): boolean {
@@ -45,7 +46,7 @@ export class NearbyAsks implements NearbySurface, BotAsksPort {
 
     /* ---------------------------------- the surface ---------------------------------- */
 
-    async card(botId: string, spaceName: string, person: Asker, ask: AskField): Promise<void> {
+    async card(botId: string, spaceName: string, person: Asker, ask: AskField | QuestionField): Promise<void> {
         const bot = this.deps.bot(botId);
         if (!bot || person.playerId === undefined || !bot.inBubble(person.playerId)) throw new Error('The person is not in the bubble');
         if (!bot.sendAskEvent(spaceName, person.playerId, { kind: 'card', id: ask.id, revision: ask.revision, body: JSON.stringify(ask) })) throw new Error('The bot is not in the bubble');

@@ -1,7 +1,7 @@
 <script lang="ts">
     import { onDestroy } from "svelte";
     import { endedAsk, closesSoon, type BotAsk, type BotAskDecision, type BotAskTap } from "../../Bots/BotAsk";
-    import LL from "../../../../i18n/i18n-svelte";
+    import LL, { locale } from "../../../../i18n/i18n-svelte";
     import {
         IconAlertTriangle,
         IconCheck,
@@ -41,6 +41,8 @@
 
     // A new card, or the same card after the bot server changed it, starts folded and ready for a tap
     let showAll = false;
+    // A question card that lets more than one choice tick: the ids ticked so far
+    let ticked: string[] = [];
     let sending = false;
     let failed = false;
     let seen: BotAsk | undefined;
@@ -53,6 +55,7 @@
         seen = ask;
         clearTimeout(editTimer);
         showAll = false;
+        ticked = [];
         sending = false;
         failed = false;
     }
@@ -69,6 +72,30 @@
     $: expandable = shown.lines.length > 3 || shown.lines.some((line) => line.text.length > 90);
     $: shownLines = showAll ? shown.lines : shown.lines.slice(0, 3);
     $: app = shown.checkAt?.label ?? $LL.chat.botAsk.theApp();
+    // A question card (#1661): choices instead of options, and what the person types or says counts as the answer
+    $: question = shown.question;
+    $: pickedNames =
+        question && answer?.picked
+            ? question.choices.filter((choice) => answer?.picked?.includes(choice.id)).map((choice) => choice.label)
+            : [];
+    $: pickedText = listOf(pickedNames, $locale);
+
+    function listOf(names: string[], language: string): string {
+        if (names.length < 2 || typeof Intl === "undefined" || !Intl.ListFormat) return names.join(", ");
+        return new Intl.ListFormat(language, { style: "long", type: "conjunction" }).format(names);
+    }
+
+    /** One tap on a choice: a single choice is the answer; with more than one allowed it ticks, and Continue sends them. */
+    function choose(id: string) {
+        if (!question) return;
+        if (!question.multiple) return tap({ action: "pick", choices: [id] });
+        ticked = ticked.includes(id) ? ticked.filter((other) => other !== id) : [...ticked, id];
+    }
+
+    /** The ticked choices in the order they are shown, so what is sent never depends on the order they were ticked in. */
+    $: tickedInOrder = question
+        ? question.choices.filter((choice) => ticked.includes(choice.id)).map((choice) => choice.id)
+        : [];
 
     function tap(action: BotAskTap) {
         if (sending) return;
@@ -201,21 +228,61 @@
         {/if}
 
         {#if open}
-            <div class="ask-options" role="group" aria-label={shown.title}>
-                {#each options as option (option.id)}
-                    <button
-                        type="button"
-                        class="ask-option"
-                        class:main={option.id === "approve"}
-                        disabled={sending}
-                        data-testid="botAskOption"
-                        data-option={option.id}
-                        on:click={() => tap({ action: "decide", option: option.id })}
-                    >
-                        {option.label}
-                    </button>
-                {/each}
-            </div>
+            {#if question}
+                <div class="ask-options" role="group" aria-label={shown.title}>
+                    {#each question.choices as choice (choice.id)}
+                        {@const isTicked = ticked.includes(choice.id)}
+                        <button
+                            type="button"
+                            class="ask-choice"
+                            class:ticked={isTicked}
+                            disabled={sending}
+                            role={question.multiple ? "checkbox" : undefined}
+                            aria-checked={question.multiple ? isTicked : undefined}
+                            data-testid="botAskChoice"
+                            data-choice={choice.id}
+                            on:click={() => choose(choice.id)}
+                        >
+                            {#if question.multiple}
+                                <span class="ask-tick" aria-hidden="true"
+                                    >{#if isTicked}<IconCheck />{/if}</span
+                                >
+                            {/if}
+                            <span class="ask-choice-text">
+                                <b class="ask-choice-name" dir="auto">{choice.label}</b>
+                                {#if choice.line}<span class="ask-choice-line" dir="auto">{choice.line}</span>{/if}
+                            </span>
+                        </button>
+                    {/each}
+                    {#if question.multiple}
+                        <button
+                            type="button"
+                            class="ask-option main"
+                            disabled={sending || tickedInOrder.length === 0}
+                            data-testid="botAskContinue"
+                            on:click={() => tap({ action: "pick", choices: tickedInOrder })}
+                        >
+                            {$LL.chat.botAsk.continueWith({ count: tickedInOrder.length })}
+                        </button>
+                    {/if}
+                </div>
+            {:else}
+                <div class="ask-options" role="group" aria-label={shown.title}>
+                    {#each options as option (option.id)}
+                        <button
+                            type="button"
+                            class="ask-option"
+                            class:main={option.id === "approve"}
+                            disabled={sending}
+                            data-testid="botAskOption"
+                            data-option={option.id}
+                            on:click={() => tap({ action: "decide", option: option.id })}
+                        >
+                            {option.label}
+                        </button>
+                    {/each}
+                </div>
+            {/if}
             {#if queuedClosingSoon}
                 <div class="ask-row">
                     <span class="ask-who"
@@ -241,6 +308,14 @@
                     >
                 </div>
             {/if}
+        {:else if question && pickedNames.length > 0}
+            <span class="ask-done" dir="auto" data-testid="botAskPicked"
+                ><IconCheck />{$LL.chat.botAsk.picked({ label: pickedText })}</span
+            >
+        {:else if question && answer?.typed}
+            <span class="ask-who" dir="auto" data-testid="botAskAnswered">{$LL.chat.botAsk.answeredByTyping()}</span>
+        {:else if question && answer?.spoken}
+            <span class="ask-who" dir="auto" data-testid="botAskAnswered">{$LL.chat.botAsk.answeredOutLoud()}</span>
         {:else if picked}
             <span class="ask-done" dir="auto"><IconCheck />{$LL.chat.botAsk.picked({ label: picked.label })}</span>
             {#if answer?.allowedMore}
@@ -491,6 +566,64 @@
         cursor: pointer;
         text-align: center;
     }
+    /* A choice on a question card: equal rows, none marked; one tap picks it. At least 44 px tall. */
+    .ask-choice {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-height: 52px;
+        padding: 8px 14px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.06);
+        color: #fff;
+        text-align: start;
+        cursor: pointer;
+    }
+    .ask-choice:hover {
+        background: rgba(255, 255, 255, 0.1);
+    }
+    .ask-choice.ticked {
+        border-color: rgba(167, 139, 250, 0.6);
+        background: rgba(134, 41, 252, 0.28);
+    }
+    .ask-choice:disabled {
+        opacity: 0.45;
+        cursor: default;
+    }
+    .ask-choice-text {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        min-width: 0;
+    }
+    .ask-choice-name {
+        font-size: 14px;
+        line-height: 19px;
+    }
+    .ask-choice-line {
+        font-size: 13px;
+        line-height: 18px;
+        color: rgba(255, 255, 255, 0.62);
+    }
+    .ask-tick {
+        display: grid;
+        place-items: center;
+        flex: none;
+        width: 22px;
+        height: 22px;
+        border: 2px solid rgba(255, 255, 255, 0.5);
+        border-radius: 6px;
+        color: #14121e;
+    }
+    .ask-choice.ticked .ask-tick {
+        border-color: #a78bfa;
+        background: #a78bfa;
+    }
+    .ask-tick :global(svg) {
+        width: 16px;
+        height: 16px;
+    }
     .ask-option.main {
         border: 0;
         background: linear-gradient(90deg, #8629fc, #4156f6);
@@ -540,6 +673,7 @@
         color: rgba(255, 255, 255, 0.85);
     }
     .ask-option:focus-visible,
+    .ask-choice:focus-visible,
     .ask-small:focus-visible,
     .ask-icon:focus-visible,
     .ask-lines-tap:focus-visible {

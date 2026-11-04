@@ -263,6 +263,7 @@ describe('what a person says while their card waits in a bubble (#1658)', () => 
         const approvals = {
             touch: vi.fn(),
             waitingLabel: vi.fn(() => label),
+            answerQuestionByMessage: vi.fn(async () => false),
             replyPrivately: vi.fn(async () => undefined),
             onPersonMessage: vi.fn(async () => undefined),
         };

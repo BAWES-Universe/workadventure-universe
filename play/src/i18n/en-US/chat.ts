@@ -882,6 +882,11 @@ const chat: BaseTranslation = {
         closeCard: "Close, nothing is done",
         open: "Open",
         typeSomethingElse: "Or type something else",
+        // Question cards (#1661)
+        typeYourOwnAnswer: "Or type your own answer",
+        continueWith: "Continue with {count}",
+        answeredByTyping: "You answered by typing",
+        answeredOutLoud: "You answered out loud",
         picked: "You picked {label}",
         typed: "You typed something else, so nothing was done",
         closed: "You closed this card, so nothing was done",

@@ -22,6 +22,7 @@ import { botMatrixId, readMatrixConfig } from '../matrix/MatrixConfig';
 import { OrbitActions } from '../mcp/OrbitActions';
 import { ToolApprovals, type CardSurface } from '../mcp/ToolApprovals';
 import { NearbyAsks } from '../mcp/NearbyAsks';
+import { QuestionCards } from '../mcp/QuestionCards';
 import { verifyMatrixRegistration } from '../matrix/verifyMatrixRegistration';
 import { MatrixAppServiceClient } from '../matrix/MatrixAppServiceClient';
 import { MatrixDmBridge } from '../matrix/MatrixDmBridge';
@@ -82,16 +83,33 @@ const nearbyAsks = new NearbyAsks({
     },
     approvals: () => approvals,
 });
-const approvals = new ToolApprovals({
-    orbit: new OrbitActions(() => {
-        const serviceToken = process.env.BOT_SERVICE_TOKEN;
-        return ADMIN_API_URL && ADMIN_API_TOKEN && serviceToken ? { adminApiUrl: ADMIN_API_URL, adminApiToken: ADMIN_API_TOKEN, serviceToken } : null;
-    }),
-    cards: {
-        send: (botId, roomId, content) => (dmCards ? dmCards.send(botId, roomId, content) : Promise.reject(new Error('Direct messages are off'))),
-        say: (botId, roomId, text) => (dmCards ? dmCards.say(botId, roomId, text) : Promise.reject(new Error('Direct messages are off'))),
-    },
+const orbitActions = new OrbitActions(() => {
+    const serviceToken = process.env.BOT_SERVICE_TOKEN;
+    return ADMIN_API_URL && ADMIN_API_TOKEN && serviceToken ? { adminApiUrl: ADMIN_API_URL, adminApiToken: ADMIN_API_TOKEN, serviceToken } : null;
+});
+const cardSurface: CardSurface = {
+    send: (botId, roomId, content) => (dmCards ? dmCards.send(botId, roomId, content) : Promise.reject(new Error('Direct messages are off'))),
+    say: (botId, roomId, text) => (dmCards ? dmCards.say(botId, roomId, text) : Promise.reject(new Error('Direct messages are off'))),
+};
+// The question cards a bot shows before a big job (#1661): kept here, and a pick goes back to the bot as what the person said
+const questions = new QuestionCards({
+    cards: cardSurface,
     nearby: nearbyAsks,
+    waitMinutes: async (botId) => (await orbitActions.cardSettings(botId)).cardWaitMinutes,
+    // The bot goes on with the pick in the background: the tap that brought it is not held until the job is done
+    picked: async ({ botId, roomId, person, nearby, text }) => {
+        if (nearby) {
+            if (person.playerId !== undefined) botManager.getBot(botId)?.answerFromCard(roomId, person.playerId, text);
+            return;
+        }
+        void matrixBridge?.carryOnWith(roomId, person, text);
+    },
+});
+const approvals = new ToolApprovals({
+    orbit: orbitActions,
+    cards: cardSurface,
+    nearby: nearbyAsks,
+    questions,
     gate: aiService.gate,
     tools: {
         find: (botId, toolName) => aiService.findToolEntry(botId, toolName),

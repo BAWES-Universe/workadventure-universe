@@ -20,7 +20,9 @@ import { askEdit, askNotice, argumentLines, buildAsk, cardTitle, outcomeOf, reme
 import { acceptLine, fallbackLine, nameForLine, WORDS_SYSTEM, wordsPrompt, type Moment } from './NearbyWords';
 import type { GateCall, GateDecision, ToolGate } from './ToolGate';
 import type { ToolServerEntry } from './MCPConnector';
-import { OrbitActionsUnavailable, type OrbitActions, type SavedAction } from './OrbitActions';
+import { DEFAULT_CARD_SETTINGS, OrbitActionsUnavailable, type CardSettings, type OrbitActions, type SavedAction } from './OrbitActions';
+import type { QuestionField } from './QuestionCard';
+import type { Asked, AskInput, QuestionCards } from './QuestionCards';
 
 /** How long a remembered approval lasts. Recommended values; the bot server's owner can change them. */
 export const GRANT_IDLE_MINUTES = Math.max(1, Number(process.env.BOT_GRANT_IDLE_MINUTES) || 60);
@@ -34,7 +36,7 @@ const MAX_CARDS = 2000;
  */
 export interface NearbySurface {
     /** The card, or the card as it ended, to this person alone. Throws when the person is no longer in the bubble. */
-    card(botId: string, spaceName: string, person: Asker, ask: AskField): Promise<void>;
+    card(botId: string, spaceName: string, person: Asker, ask: AskField | QuestionField): Promise<void>;
     /** A reply only this person needs: shown to them alone and never said aloud. Its id is the same each time it is sent again. */
     reply(botId: string, spaceName: string, person: Asker, text: string, id: string): Promise<void>;
     /** One line everyone in the bubble reads, and hears from a voice bot. */
@@ -85,6 +87,8 @@ export interface ApprovalDeps {
     nearby?: NearbySurface;
     gate: Pick<ToolGate, 'decide'>;
     tools: ToolRunner;
+    /** The question cards (#1661): taps on them, and what the person types or says while one waits, are theirs. */
+    questions?: QuestionCards;
     /** The bot tells the person how an approved action ended. Never throws. */
     followUp?: (outcome: Outcome) => Promise<void>;
     now?: () => number;
@@ -311,6 +315,10 @@ export class ToolApprovals {
      */
     async handleTap(botId: string, roomId: string, person: Asker, tap: ParsedTap): Promise<void> {
         try {
+            // A question card is not an action Orbit keeps: its taps are the question cards' own (#1661)
+            if (await this.deps.questions?.handleTap(botId, roomId, person, tap)) return;
+            // A pick belongs to a question card, never to an approval
+            if (tap.tap.action === 'pick') return;
             let card = this.cards.get(tap.ask);
             if (card && (card.botId !== botId || card.roomId !== roomId || card.person.uuid !== person.uuid)) return;
             if (!card) {
@@ -605,6 +613,30 @@ export class ToolApprovals {
         );
     }
 
+    /** The bot's own settings for cards (how it asks, and when): read once in a while, never throws, the recommended ones when Orbit can't be asked. */
+    settings(botId: string): Promise<CardSettings> {
+        return this.deps.orbit.cardSettings(botId).catch(() => ({ ...DEFAULT_CARD_SETTINGS }));
+    }
+
+    /** Whether question cards are set up here at all. */
+    get asksQuestions(): boolean {
+        return !!this.deps.questions;
+    }
+
+    /** Shows a question card for the person (#1661). Never throws. */
+    async askQuestion(input: AskInput): Promise<Asked> {
+        if (!this.deps.questions) return { kind: 'failed', result: { error: 'The question card could not be shown, so nothing was asked. Ask in one short sentence in words instead.' } };
+        return this.deps.questions.ask(input);
+    }
+
+    /**
+     * The person said or typed something in a bubble (#1661): a question card waiting for them is answered by it, "out
+     * loud" for a voice bot they spoke to. True when a card ended that way. Never throws.
+     */
+    async answerQuestionByMessage(botId: string, roomId: string, person: Asker, how: 'typed' | 'spoken'): Promise<boolean> {
+        return ((await this.deps.questions?.onPersonMessage(botId, roomId, person, how)) ?? 0) > 0;
+    }
+
     /** A reply only this person needs, never said aloud: the answer to a yes that never sends. Never throws. */
     async replyPrivately(botId: string, roomId: string, person: Asker, text: string): Promise<void> {
         try {
@@ -625,6 +657,7 @@ export class ToolApprovals {
      * and the replies only they saw come back on their screen, in the order they were made (#1658). Never throws.
      */
     async personBack(botId: string, roomId: string, person: Asker): Promise<void> {
+        await this.deps.questions?.personBack(botId, roomId, person);
         const key = JSON.stringify([botId, roomId, person.uuid]);
         for (const reply of (this.replies.get(key) ?? []).filter((kept) => this.now() - kept.at <= REPLY_KEPT_MS)) {
             await this.deps.nearby?.reply(botId, roomId, person, reply.text, reply.id).catch(() => undefined);
@@ -651,6 +684,8 @@ export class ToolApprovals {
      * Never throws.
      */
     async onPersonMessage(botId: string, roomId: string, person: Asker): Promise<void> {
+        // A question card waiting for them is answered by what they wrote (#1661); their message goes on to the bot as it is
+        await this.deps.questions?.onPersonMessage(botId, roomId, person, 'typed');
         const nearby = person.playerId !== undefined;
         const conversationKey = conversationKeyOf(roomId, nearby);
         void this.deps.orbit.touchGrants(botId, { requesterKey: person.uuid, conversationKey }).catch(() => undefined);

@@ -27,6 +27,7 @@ import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision } fr
 import { ToolPolicySource } from '../mcp/ToolPolicy';
 import type { ToolApprovals } from '../mcp/ToolApprovals';
 import { CONFIRM_SYSTEM, isConfirm, tapInstead } from '../mcp/NearbyWords';
+import { ASK_PERSON_TOOL, NEVER_ASK_RULE, askPersonDefinition, readQuestion, type QuestionAsked } from '../mcp/QuestionCard';
 import type { BotAsksPort } from '../mcp/NearbyAsks';
 import { appendStreamedChunk } from './EmotionParser';
 import { describeStep, resultOf, showsAsStep, type ToolStep } from './ToolSteps';
@@ -1014,7 +1015,10 @@ export class AIService {
             );
             // In a bubble, what is on an approval card is for one person only: nothing is said before a tool that asks, and
             // nothing from a card is repeated in the chat (#1658). Added at the end, after what the provider caches.
-            const systemPrompt = channel === 'world' && botClient && this.approvals && toolServerMap.size > 0 ? `${basePrompt}\n\n${NEARBY_ASK_RULE}` : basePrompt;
+            const nearbyRule = channel === 'world' && botClient && this.approvals && toolServerMap.size > 0 ? NEARBY_ASK_RULE : '';
+            // With "Asks which way to go" on Never the bot says its pick and starts (#1661)
+            const neverAsk = botId && this.approvals?.asksQuestions && (await this.approvals.settings(botId)).askWhichWay === 'never' ? NEVER_ASK_RULE : '';
+            const systemPrompt = [basePrompt, nearbyRule, neverAsk].filter(Boolean).join('\n\n');
             if (turn) turn.artifactTools = tools.some((tool) => writesArtifact(tool?.function?.name ?? ''));
 
             // Generate stream with tools
@@ -2961,6 +2965,13 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             });
         }
 
+        // Tool: ask which way to go on a card (#1661). Only for a signed-in person (a guest has no cards), with question cards
+        // set up, and not when the bot's setting is Never.
+        if ((botClient || channel === 'dm') && botId && asking?.signedIn && this.approvals?.asksQuestions) {
+            const way = (await this.approvals.settings(botId)).askWhichWay;
+            if (way !== 'never') tools.push(askPersonDefinition(way));
+        }
+
         // Tools: make, change, read and find live artifacts (game #1422). They need Orbit, which keeps them, and a chat to
         // put the card in: a bubble on the map or a direct message. Off unless BOT_ARTIFACTS_ENABLED=true.
         // Tools: find, open and send again files from earlier chats (#1508), with an Orbit that keeps them. They find
@@ -3617,6 +3628,16 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         );
                         break;
 
+                    case ASK_PERSON_TOOL:
+                        result = await this.askPerson(
+                            botId,
+                            typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
+                            playerId,
+                            botClient,
+                            spaceName
+                        );
+                        break;
+
                     case READ_WEB_PAGE_TOOL: {
                         const parsedArgs = typeof toolCall.arguments === 'string'
                             ? this.safeParseToolArgs(toolCall.arguments)
@@ -3688,6 +3709,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             if (!chat?.person.signedIn || !chat.person.identifier) return false;
             const person = { uuid: chat.person.identifier, name: chat.person.name, playerId };
             approvals.touch(botId, spaceName, person);
+            // A question card waiting for them is answered by what they typed or said (#1661): their message is the answer, so
+            // it goes on to the bot as it is
+            await approvals.answerQuestionByMessage(botId, spaceName, person, botClient.takeSpoken?.(spaceName, playerId) ? 'spoken' : 'typed');
             const label = approvals.waitingLabel(botId, spaceName, person);
             if (!label) return false;
             let yes = false;
@@ -3717,6 +3741,30 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     /** What the model is told when the gate did not let a tool run: the line the person can be told as it is. */
     private toolNotRun(verdict: Extract<GateDecision, { kind: 'refuse' }>): { error: string } {
         return { error: `${verdict.line} This was not done, and it cannot be done another way. Tell the person.` };
+    }
+
+    /**
+     * The model asks which way to go (#1661): a card with the choices, in a direct message or, in a bubble, to the person
+     * alone with one plain line for everyone. The reply ends there; their pick comes back as their next message. Never throws.
+     */
+    private async askPerson(botId: string | undefined, args: Record<string, unknown>, playerId: number | undefined, botClient?: BotClient, spaceName?: string): Promise<Record<string, unknown>> {
+        const inWords = 'A question card could not be shown here. Ask in one short sentence in words instead.';
+        const chat = botId && playerId !== undefined ? this.chatCallFor(botId, playerId, botClient, spaceName) : null;
+        if (!botId || !this.approvals || !chat || !chat.person.signedIn || !chat.person.identifier) return { error: inWords };
+        if ((await this.approvals.settings(botId)).askWhichWay === 'never') {
+            return { error: "This bot's settings say not to ask which way to go. Pick the best choice, say your pick in one short line and start." };
+        }
+        const read = readQuestion(args);
+        if ('why' in read) return { error: read.why };
+        const nearby = chat.chat.kind === 'nearby';
+        const asked = await this.approvals.askQuestion({
+            botId,
+            roomId: chat.chat.ref,
+            person: { uuid: chat.person.identifier, name: chat.person.name, ...(nearby && playerId !== undefined ? { playerId } : {}) },
+            asked: (read as { ok: true; asked: QuestionAsked }).asked,
+        });
+        // In a bubble the line everyone reads is the bot's whole reply (see the follow-up)
+        return asked.kind === 'waiting' && asked.line ? { ...asked.result, [SHARED_LINE]: asked.line } : asked.result;
     }
 
     /**

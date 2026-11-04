@@ -255,6 +255,8 @@ export function resultLine(result: unknown): string | undefined {
 
 export type Tap =
     | { action: 'decide'; option: AskDecision }
+    /** A pick on a question card (#1661): the ids of the choices tapped, never their words. */
+    | { action: 'pick'; choices: string[] }
     | { action: 'close' }
     | { action: 'moreTime' }
     | { action: 'reviewAgain' }
@@ -268,6 +270,13 @@ export interface ParsedTap {
 
 const DECISIONS: AskDecision[] = ['approve', 'approveAndRemember', 'decline'];
 
+/** The ids of a pick on a question card: one to four distinct "c1".."c4". Anything else is not a pick. */
+export function readPick(value: unknown): string[] | null {
+    if (!Array.isArray(value) || value.length < 1 || value.length > 4) return null;
+    if (!value.every((item) => typeof item === 'string' && /^c[1-4]$/.test(item))) return null;
+    return new Set(value).size === value.length ? (value as string[]) : null;
+}
+
 /** A `universe.ask.answer` event's content, or null when it isn't one. Only the card's id and revision come in: never content. */
 export function parseTap(content: unknown): ParsedTap | null {
     if (!isPlain(content) || content.v !== 1) return null;
@@ -278,6 +287,10 @@ export function parseTap(content: unknown): ParsedTap | null {
             return DECISIONS.includes(content.option as AskDecision)
                 ? { ask: content.ask, revision: content.revision, tap: { action: 'decide', option: content.option as AskDecision } }
                 : null;
+        case 'pick': {
+            const choices = readPick(content.choices);
+            return choices ? { ask: content.ask, revision: content.revision, tap: { action: 'pick', choices } } : null;
+        }
         case 'close':
         case 'moreTime':
         case 'reviewAgain':

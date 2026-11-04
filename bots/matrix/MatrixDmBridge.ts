@@ -286,6 +286,27 @@ export class MatrixDmBridge implements MatrixEventHandler {
         }
     }
 
+    /**
+     * The person picked on a question card in a direct message (#1661): the bot carries on with their pick exactly as it
+     * would with a message from them (access checks, steps, files and all). Never throws; a lost reply costs nothing,
+     * since the card already shows the pick and the person can write again.
+     */
+    async carryOnWith(roomId: string, person: Asker, text: string): Promise<void> {
+        if (!person.matrixUserId) return;
+        try {
+            await this.onMessage({
+                type: 'm.room.message',
+                room_id: roomId,
+                sender: person.matrixUserId,
+                event_id: `$pick-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
+                origin_server_ts: Date.now(),
+                content: { msgtype: 'm.text', body: text },
+            });
+        } catch (error: any) {
+            console.warn(`[MatrixDmBridge] Could not carry on after a pick in ${roomId}:`, error?.message ?? error);
+        }
+    }
+
     private botUserId(botId: string): string {
         return `@${BOT_LOCALPART_PREFIX}${botId}:${this.config.domain}`;
     }

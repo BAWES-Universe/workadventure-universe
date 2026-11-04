@@ -2282,6 +2282,42 @@ export class BotClient {
         this.asks = asks;
     }
 
+    /** When each person last said something out loud to this voice bot, so what reaches the AI next can be told from something typed (#1661). */
+    private readonly lastSpoken = new Map<string, number>();
+    /** A spoken line reaches the AI within moments; one older than this was followed by something typed. */
+    private static readonly SPOKEN_FRESH_MS = 20_000;
+
+    /** Remembers that this person just said something out loud (not typed). */
+    private noteSpoken(spaceName: string, playerId: number): void {
+        const key = `${spaceName}|${playerId}`;
+        this.lastSpoken.delete(key);
+        this.lastSpoken.set(key, Date.now());
+        if (this.lastSpoken.size > 500) this.lastSpoken.delete(this.lastSpoken.keys().next().value!);
+    }
+
+    /** Whether the line that just reached the AI from this person was said out loud and not typed. Asked once per line. */
+    takeSpoken(spaceName: string, playerId: number): boolean {
+        const key = `${spaceName}|${playerId}`;
+        const at = this.lastSpoken.get(key);
+        if (at === undefined) return false;
+        this.lastSpoken.delete(key);
+        return Date.now() - at <= BotClient.SPOKEN_FRESH_MS;
+    }
+
+    /**
+     * What a person picked on a card the bot showed them, handed to the bot as what they said (#1661): the bot carries on
+     * with it as it would with any message from them. It was checked when the card was shown; only a person in the bubble
+     * gets here.
+     */
+    answerFromCard(spaceName: string, playerId: number, text: string): boolean {
+        if (!this.behavior || !this.spaces.has(spaceName) || !this.inBubble(playerId)) return false;
+        this.behavior.onChatMessage(spaceName, text, playerId).catch((error) => {
+            console.error(`[Bot ${this.config.botId}] onChatMessage error for a card answer:`, error);
+            Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
+        });
+        return true;
+    }
+
     /** Whether this person is in a bubble the bot sees: a card is for people in one, and nobody else. */
     inBubble(playerId: number): boolean {
         return this.getBubbleUserIds(playerId) !== undefined;
@@ -3368,6 +3404,8 @@ export class BotClient {
                         if (spaceMessage.spoken) {
                             if (spaceMessage.spoken.botId !== this.config.botId) break;
                             if (this.voice?.acceptSpoken(spaceName, senderUserId, spaceMessage.spoken.turnId, spaceMessage.message) === 'duplicate') break;
+                            // Said out loud, not typed: a card waiting for an answer says so (#1661)
+                            this.noteSpoken(spaceName, senderId);
                         }
                         // With others in the bubble, a line not meant for the bot goes no further: it is not read, saved or
                         // answered, and the person is not even asked about (#1220). Before anything else is done with it.

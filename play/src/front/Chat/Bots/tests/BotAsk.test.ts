@@ -222,3 +222,103 @@ describe("the card a bot shows one person in nearby chat (#1658)", () => {
         });
     });
 });
+
+describe("a question card (#1661)", () => {
+    const QUESTION = {
+        v: 1,
+        kind: "question",
+        id: "q-1",
+        revision: 1,
+        title: "What should the launch party sound like?",
+        choices: [
+            { id: "c1", label: "Upbeat pop", line: "3 tracks, about 3 minutes each" },
+            { id: "c2", label: "Lo-fi background" },
+        ],
+        now: 1_000_000,
+        expiresAt: 1_000_000 + 600_000,
+        waitMinutes: 10,
+    };
+
+    it("reads the question and its choices, with no options and no lines", () => {
+        const ask = readBotAsk(BOT_CHAT_ID, notice(QUESTION), 50_000);
+        expect(ask).toMatchObject({
+            id: "q-1",
+            title: "What should the launch party sound like?",
+            options: [],
+            lines: [],
+            expiresAt: 650_000,
+        });
+        expect(ask?.question).toEqual({
+            multiple: false,
+            choices: [
+                { id: "c1", label: "Upbeat pop", line: "3 tracks, about 3 minutes each" },
+                { id: "c2", label: "Lo-fi background" },
+            ],
+        });
+    });
+
+    it("lets more than one choice tick only when the card says so", () => {
+        expect(readBotAsk(BOT_CHAT_ID, notice({ ...QUESTION, multiple: true }), 0)?.question?.multiple).toBe(true);
+        expect(readBotAsk(BOT_CHAT_ID, notice({ ...QUESTION, multiple: "yes" }), 0)?.question?.multiple).toBe(false);
+    });
+
+    it("is not a card with fewer than 2 choices, nor a choice with no name, and keeps at most 4", () => {
+        expect(readBotAsk(BOT_CHAT_ID, notice({ ...QUESTION, choices: [QUESTION.choices[0]] }), 0)).toBeUndefined();
+        expect(
+            readBotAsk(
+                BOT_CHAT_ID,
+                notice({ ...QUESTION, choices: [QUESTION.choices[0], { id: "c2", label: " " }] }),
+                0
+            )
+        ).toBeUndefined();
+        expect(readBotAsk(BOT_CHAT_ID, notice({ ...QUESTION, choices: undefined }), 0)).toBeUndefined();
+        const five = ["c1", "c2", "c3", "c4", "c5"].map((id) => ({ id, label: `Choice ${id}` }));
+        expect(readBotAsk(BOT_CHAT_ID, notice({ ...QUESTION, choices: five }), 0)?.question?.choices).toHaveLength(4);
+    });
+
+    it("ignores choices that repeat an id", () => {
+        const ask = readBotAsk(
+            BOT_CHAT_ID,
+            notice({ ...QUESTION, choices: [...QUESTION.choices, { id: "c1", label: "Again" }] }),
+            0
+        );
+        expect(ask?.question?.choices.map((choice) => choice.id)).toEqual(["c1", "c2"]);
+    });
+
+    it("reads how it ended: picked, typed, said out loud", () => {
+        expect(readBotAsk(BOT_CHAT_ID, notice({ ...QUESTION, answer: { picked: ["c2"] } }), 0)?.answer).toEqual({
+            picked: ["c2"],
+        });
+        expect(readBotAsk(BOT_CHAT_ID, notice({ ...QUESTION, answer: { typed: true } }), 0)?.answer).toEqual({
+            typed: true,
+        });
+        expect(readBotAsk(BOT_CHAT_ID, notice({ ...QUESTION, answer: { spoken: true } }), 0)?.answer).toEqual({
+            spoken: true,
+        });
+        expect(readBotAsk(BOT_CHAT_ID, notice({ ...QUESTION, answer: { picked: [] } }), 0)?.answer).toEqual({});
+    });
+
+    it("comes to the person in nearby chat as a private card", () => {
+        expect(readNearbyBotAsk(JSON.stringify(QUESTION), 0)).toMatchObject({ id: "q-1", private: true });
+    });
+
+    it("sends a pick as only the card, its revision and the ids", () => {
+        expect(botAskAnswerContent({ id: "q-1", revision: 1 }, { action: "pick", choices: ["c1", "c2"] })).toEqual({
+            v: 1,
+            ask: "q-1",
+            revision: 1,
+            action: "pick",
+            choices: ["c1", "c2"],
+        });
+        expect(JSON.parse(botAskTapJson({ action: "pick", choices: ["c2"] }))).toEqual({
+            action: "pick",
+            choices: ["c2"],
+        });
+    });
+
+    it("waits and ends like any card, so the chat pins it and the clock runs", () => {
+        const ask = readBotAsk(BOT_CHAT_ID, notice(QUESTION), 0)!;
+        expect(isWaiting(ask, 1000)).toBe(true);
+        expect(endedAsk(ask, 700_000).answer).toEqual({ expired: true });
+    });
+});
