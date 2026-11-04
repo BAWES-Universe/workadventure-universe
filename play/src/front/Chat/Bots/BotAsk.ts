@@ -275,9 +275,11 @@ export interface AskedMessage<M> {
 
 /** Every card in the chat, oldest first, kept up to date as the bot server changes them. */
 export function chatAsks<M extends MessageWithAsk>(messages: Readable<readonly M[]>): Readable<Array<AskedMessage<M>>> {
+    // The store is passed as a list of one: nearby chat's messages are an array that is also a store, and `derived` would
+    // take a bare one for a list of stores and subscribe to each message.
     return derived(
-        messages,
-        ($messages, set: (value: Array<AskedMessage<M>>) => void) => {
+        [messages],
+        ([$messages], set: (value: Array<AskedMessage<M>>) => void) => {
             const withAsk = $messages.filter(
                 (message): message is M & { ask: Readable<BotAsk | undefined> } => !!message.ask
             );
