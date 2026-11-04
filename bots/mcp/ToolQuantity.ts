@@ -29,22 +29,22 @@ const LIST_KEY = /^(prompts|inputs|texts|items|requests|descriptions|topics|lyri
 
 /** What the things are called, for the title ("Make 12 images"). The first one found in the key, then the tool's name, then its title. */
 const NOUNS: Array<[RegExp, string, string]> = [
-    [/image|picture|pic|photo|render/, 'image', 'images'],
-    [/poster/, 'poster', 'posters'],
-    [/logo/, 'logo', 'logos'],
-    [/icon/, 'icon', 'icons'],
-    [/illustration|drawing/, 'illustration', 'illustrations'],
-    [/sticker/, 'sticker', 'stickers'],
-    [/avatar/, 'avatar', 'avatars'],
-    [/thumbnail/, 'thumbnail', 'thumbnails'],
-    [/banner/, 'banner', 'banners'],
-    [/track|song|jingle|music|tune/, 'track', 'tracks'],
-    [/video|clip|animation/, 'video', 'videos'],
-    [/audio|sound|voice|speech/, 'audio file', 'audio files'],
-    [/slide|deck/, 'slide', 'slides'],
-    [/document|doc|draft|report/, 'document', 'documents'],
-    [/file/, 'file', 'files'],
-    [/design|mockup/, 'design', 'designs'],
+    [/^(?:image|picture|pic|photo|render)s?$/, 'image', 'images'],
+    [/^(?:poster)s?$/, 'poster', 'posters'],
+    [/^(?:logo)s?$/, 'logo', 'logos'],
+    [/^(?:icon)s?$/, 'icon', 'icons'],
+    [/^(?:illustration|drawing)s?$/, 'illustration', 'illustrations'],
+    [/^(?:sticker)s?$/, 'sticker', 'stickers'],
+    [/^(?:avatar)s?$/, 'avatar', 'avatars'],
+    [/^(?:thumbnail)s?$/, 'thumbnail', 'thumbnails'],
+    [/^(?:banner)s?$/, 'banner', 'banners'],
+    [/^(?:track|song|jingle|music|tune)s?$/, 'track', 'tracks'],
+    [/^(?:video|clip|animation)s?$/, 'video', 'videos'],
+    [/^(?:audio|sound|voice|speech)s?$/, 'audio file', 'audio files'],
+    [/^(?:slide|deck)s?$/, 'slide', 'slides'],
+    [/^(?:document|doc|draft|report)s?$/, 'document', 'documents'],
+    [/^(?:file)s?$/, 'file', 'files'],
+    [/^(?:design|mockup)s?$/, 'design', 'designs'],
 ];
 
 function wordsOf(text: string): string {

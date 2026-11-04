@@ -66,6 +66,15 @@ describe('quantityOf', () => {
         expect(quantityOf('generate_image', undefined, { prompt: 'make 50 posters' }, s).known).toBe(false);
     });
 
+    it('names things only from whole words, not from the middle of another word', () => {
+        expect(unitNames('topics').many).toBe('things');
+        expect(unitNames('invoice').many).toBe('things');
+        expect(unitNames('profile').many).toBe('things');
+        expect(unitNames('num_images')).toEqual({ one: 'image', many: 'images' });
+        expect(unitNames(undefined, 'generate_audio')).toEqual({ one: 'audio file', many: 'audio files' });
+        expect(unitNames(undefined, 'makeLogo')).toEqual({ one: 'logo', many: 'logos' });
+    });
+
     it('names the things from the tool\'s title when its names do not say', () => {
         expect(unitNames('x', 'run', 'Create a logo')).toEqual({ one: 'logo', many: 'logos' });
         expect(unitNames(undefined, 'run')).toEqual({ one: 'thing', many: 'things' });
