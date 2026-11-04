@@ -110,6 +110,14 @@ describe("MatrixChatMessage card", () => {
         expect(get(message.ask)?.expiresAt).toBe(700_000 + 600_000);
     });
 
+    it("stops asking once the card's message is removed", () => {
+        const message = new MatrixChatMessage(askEvent(notice()), fakeRoom(), false, true);
+        expect(get(message.ask)).toBeDefined();
+        message.markAsRemoved();
+        expect(get(message.ask)).toBeUndefined();
+        expect(get(message.isDeleted)).toBe(true);
+    });
+
     it("has no card on an ordinary reply", () => {
         const message = new MatrixChatMessage(askEvent({ msgtype: "m.text", body: "Hello" }), fakeRoom(), false, true);
         expect(get(message.ask)).toBeUndefined();

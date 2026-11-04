@@ -485,6 +485,8 @@ export class MatrixChatMessage implements ChatMessage {
 
     public markAsRemoved() {
         this.isDeleted.set(true);
+        // A removed card is no longer asking anything, so it leaves the waiting list at once
+        this.ask.set(undefined);
     }
 
     addReaction(reaction: string): Promise<void> {
