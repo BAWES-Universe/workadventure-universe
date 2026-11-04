@@ -723,6 +723,8 @@ message FriendSearchResult {
   string name = 2;
   repeated string universes = 3;
   string relationship = 4;
+  // Their chat ID, so the game can show their Woka; empty when unknown.
+  string chatId = 5;
 }
 
 message FriendSearchAnswer {

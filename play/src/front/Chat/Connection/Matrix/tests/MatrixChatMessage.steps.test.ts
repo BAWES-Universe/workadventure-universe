@@ -29,7 +29,8 @@ function stepsEvent(
         isDecryptionFailure: () => false,
         isRedacted: () => false,
         replacingEventId: () => (replacing ? "$edit" : undefined),
-        replacingEvent: () => (replacing ? { getOriginalContent: () => replacing } : null),
+        replacingEvent: () => (replacing ? { getOriginalContent: () => replacing, getTs: () => 171_000 } : null),
+        getTs: () => 161_000,
         replyEventId: undefined,
         on: () => {},
     } as unknown as MatrixEvent;
