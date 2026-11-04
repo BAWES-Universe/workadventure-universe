@@ -1468,6 +1468,8 @@ message BotVoiceStatusMessage {
   string botName = 2;
   string state = 3;            // "connecting" | "on" | "paused" (the bot says voice is unavailable)
   int32 followUpSeconds = 4;   // how long the bot keeps listening after it answers without its name; 0: the bot sends none
+  optional int32 repliesLeft = 5;  // spoken replies this person has left in their window (#1669); absent: the bot has no count
+  string repliesResetAt = 6;   // when their window ends, as an ISO time; empty: none is running or the bot doesn't know
 }
 
 /**

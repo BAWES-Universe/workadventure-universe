@@ -87,6 +87,7 @@ const say: BaseTranslation = {
         inMeeting: "In this meeting",
         statusConnecting: "Connecting",
         statusPaused: "Voice paused",
+        statusPausedUntil: "Voice paused until {time:string}",
         statusTapToHear: "Tap to hear",
         statusMicOff: "Your mic is off, so it can't hear you",
         attention: "With others here, use its name when you talk or type to it, like “{bot}, what do you think?”",
@@ -98,6 +99,10 @@ const say: BaseTranslation = {
         typeAndListen: { name: "Type and listen", hint: "You type, you hear them" },
         textOnly: { name: "Text only", hint: "No bot voice for you, chat as usual" },
         micUnchanged: "Your microphone with people doesn't change.",
+        /** What is left of the person's spoken replies, at the bottom of the menu (#1669). Said only when the bot told the count. */
+        allowanceLeft: "Up to {count:number} voice {{reply|replies}} left, then you keep chatting in text.",
+        allowanceMore: "More at {time:string}.",
+        allowanceUsedUp: "Your voice replies are used up for now. Keep chatting in text.",
     },
     tooltip: {
         description: {
