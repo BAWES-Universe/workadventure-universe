@@ -1578,6 +1578,7 @@ export class SocketManager implements ZoneEventListener {
                     results: results.map((result) => ({
                         uuid: result.uuid,
                         name: result.name ?? "",
+                        chatId: result.chatId ?? "",
                         universes: result.universes,
                         relationship: result.relationship,
                     })),

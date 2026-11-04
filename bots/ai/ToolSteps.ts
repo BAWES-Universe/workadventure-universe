@@ -153,6 +153,8 @@ export function tidyName(name: string): string {
 export function resultOf(id: string, result: unknown): ToolStepResult {
     if (result && typeof result === 'object' && !Array.isArray(result)) {
         const r = result as Record<string, unknown>;
+        // A card is waiting for someone's OK: nothing ran, so the step must not read "Used ..." (#1657)
+        if (r.status === 'waiting_for_ok') return { id, ok: false, note: 'Waiting for your OK. Nothing ran yet' };
         if (r.error || r.success === false || r.isError === true) {
             const why = typeof r.error === 'string' ? r.error : typeof r.message === 'string' ? r.message : undefined;
             // A tool server call that may have run is not a failure; a cancelled turn stays as it was

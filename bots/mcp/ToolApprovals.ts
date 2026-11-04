@@ -308,13 +308,22 @@ export class ToolApprovals {
         if (!action || action.requesterKey !== person.uuid || action.conversationKey !== conversationKeyOf(roomId, nearby)) return null;
         const wait = (await this.deps.orbit.cardSettings(botId)).cardWaitMinutes;
         const entry = await this.deps.tools.find(botId, action.toolName).catch(() => null);
+        // Whether the tool was never checked is not saved with the action: ask the gate again for a card that still waits,
+        // so its warning survives a restart. Whatever it can't tell, the card shows without the warning (as before).
+        const notReviewed =
+            action.status === 'waiting' && entry && entry.fingerprint === action.toolFingerprint
+                ? await this.deps.gate
+                      .decide(gateCall(botId, action.toolName, entry, person))
+                      .then((verdict) => verdict.kind === 'ask' && verdict.notReviewed)
+                      .catch(() => false)
+                : false;
         const facts: CardFacts = {
             action,
-            title: cardTitle(action.toolName),
+            title: cardTitle(action.toolName, entry?.title),
             ...(entry?.serverName ? { actsAs: entry.serverName } : {}),
             lines: argumentLines(action.arguments, entry?.inputSchema),
             offer: action.rememberScope ? { scope: action.rememberScope, phrase: '' } : null,
-            notReviewed: false,
+            notReviewed,
             waitMinutes: wait,
         };
         const card: Card = { botId, roomId, person, facts, waiting: action.status === 'waiting', nearby };

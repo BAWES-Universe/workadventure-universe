@@ -1,7 +1,8 @@
 <script lang="ts">
-    // Permissions: who may use the bot. Private bot closes it to everyone but the roles and people listed; each row
-    // opens that role's or person's No / Default / Yes screen; the line under them is what a person the owner has
-    // refused hears. Changes save on their own.
+    // Permissions: who may use the bot, and who may have it change, delete or send. Make private closes the bot to
+    // everyone but the roles and people listed (after a confirmation that says who is left); each row opens that role's
+    // or person's No / Default / Yes screen; the line under them is what a person the owner has refused hears.
+    // Changes save on their own.
     import { onDestroy } from "svelte";
     import LL from "../../../../../i18n/i18n-svelte";
     import type { BotData } from "../../types";
@@ -14,7 +15,8 @@
     import { REFUSAL_REPLY_MAX, ruleName, ruleSummary, type BotPermissions, type BotRule } from "../../accessModel";
     import PageGroup from "./PageGroup.svelte";
     import PageField from "./PageField.svelte";
-    import PageSwitch from "./PageSwitch.svelte";
+    import PageButton from "./PageButton.svelte";
+    import ConfirmSheet from "./ConfirmSheet.svelte";
     import { IconChevronRight, IconLock, IconPlus, IconUser } from "@wa-icons";
 
     export let bot: BotData;
@@ -37,22 +39,111 @@
         void loadBotPermissions(bot.id);
     }
 
-    function briefOf(permissions: BotPermissions | undefined, loadFailed: boolean): string {
+    /** "A", "A and B", "A, B and C" */
+    function names(list: string[]): string {
+        return list.length <= 1
+            ? list.join("")
+            : `${list.slice(0, -1).join(", ")} ${access.and()} ${list[list.length - 1]}`;
+    }
+
+    // The roles and people with rules of their own, and the ones such a rule says Yes to using the bot: on a Private
+    // bot only a Yes lets someone in
+    $: ruleNames = (data?.rules ?? []).map((rule) => ruleName(rule, access.someone()));
+    $: usingNames = (data?.rules ?? [])
+        .filter((rule) => rule.chat === "yes" || rule.dm === "yes" || rule.summon === "yes")
+        .map((rule) => ruleName(rule, access.someone()));
+
+    function briefOf(permissions: BotPermissions | undefined, loadFailed: boolean, ruleNames: string[]): string {
         if (loadFailed) return access.briefFailed();
         if (!permissions) return access.briefLoading();
-        const count = permissions.rules.length;
-        if (permissions.privateBot) {
-            return count > 0 ? access.briefPrivateRules({ count }) : access.briefPrivate();
-        }
-        return count > 0 ? access.briefOpenRules({ count }) : access.briefOpen();
+        if (ruleNames.length === 0) return permissions.privateBot ? access.briefPrivate() : access.briefOpen();
+        const shown =
+            ruleNames.length > 3
+                ? access.briefMore({ first: ruleNames[0], second: ruleNames[1], count: ruleNames.length - 2 })
+                : names(ruleNames);
+        return permissions.privateBot
+            ? access.briefPrivateRules({ names: shown })
+            : access.briefOpenRules({ names: shown });
     }
-    $: brief = briefOf(data, failed);
+    $: brief = briefOf(data, failed, ruleNames);
 
-    $: privateHint = !data?.privateBot
-        ? access.privateOffHint()
-        : data.rules.length === 0
-        ? access.privateOnEmptyHint()
-        : access.privateOnHint();
+    // Who can always use the bot, by name, so nobody reads "the owner" as being themselves
+    // When the person who made the bot also owns the universe, they are named once (as the owner)
+    $: owner = data?.universe?.ownerName || undefined;
+    $: maker = bot.createdBy?.name && bot.createdBy.name !== owner ? bot.createdBy.name : undefined;
+    $: universeName = data?.universe?.name;
+    $: alwaysNames =
+        owner && universeName
+            ? maker
+                ? access.alwaysNamesMaker({ maker, owner, universe: universeName })
+                : access.alwaysNamesOwner({ owner, universe: universeName })
+            : maker
+            ? access.alwaysNamesMakerOnly({ maker })
+            : access.alwaysNamesNobody();
+    $: alwaysLine =
+        owner && universeName
+            ? maker
+                ? access.alwaysMaker({ maker, owner, universe: universeName })
+                : access.alwaysOwner({ owner, universe: universeName })
+            : maker
+            ? access.alwaysMakerOnly({ maker })
+            : access.alwaysNobody();
+
+    // Which roles let the people in them have the bot change things, and delete or send. Admin always does and
+    // Orbit leaves it out of the roles it lists, so it is named first.
+    function toolsLineOf(permissions: BotPermissions | undefined): string {
+        if (!permissions) return "";
+        const admin = "Admin";
+        const roles = permissions.roles ?? [];
+        const change = [admin, ...roles.filter((role) => role.defaults.change).map((role) => role.name)];
+        const send = [admin, ...roles.filter((role) => role.defaults.deleteOrSend).map((role) => role.name)];
+        return [
+            access.toolsChange({ names: names(change) }),
+            access.toolsSend({ names: names(send) }),
+            access.toolsTap(),
+        ].join(" ");
+    }
+    $: toolsLine = toolsLineOf(data);
+
+    // Make private / Make public asks first: it says who can use the bot afterwards
+    let confirming: "private" | "public" | null = null;
+    $: confirmation = confirming && data ? confirmationOf(confirming, data) : undefined;
+
+    function confirmationOf(kind: "private" | "public", permissions: BotPermissions) {
+        const guests = access.guestsToo();
+        if (kind === "public") {
+            return {
+                title: access.makePublicTitle({ name: bot.name || access.thisBot() }),
+                lines: [
+                    { text: access.publicOpens({ guests }), bold: [guests] },
+                    ...(ruleNames.length ? [{ text: access.publicKeeps({ names: names(ruleNames) }), bold: [] }] : []),
+                ],
+                note: access.publicAgain(),
+                confirm: access.makePublic(),
+            };
+        }
+        const reply = permissions.refusalReply || access.replyPlaceholder();
+        const who = names(usingNames);
+        return {
+            title: access.makePrivateTitle({ name: bot.name || access.thisBot() }),
+            lines: [
+                usingNames.length
+                    ? { text: access.privateOnly({ names: who }), bold: [who] }
+                    : { text: access.privateNobody({ always: alwaysNames }), bold: [] },
+                { text: access.privateEveryoneElse({ guests, reply }), bold: [guests] },
+                ...(usingNames.length ? [{ text: alwaysLine, bold: [] }] : []),
+            ],
+            note: access.privateAgain(),
+            confirm: access.makePrivate(),
+        };
+    }
+
+    function confirmVisibility() {
+        if (!confirming) return;
+        const makePrivate = confirming === "private";
+        confirming = null;
+        void setPrivateBot(bot.id, makePrivate);
+    }
 
     function summaryOf(rule: BotRule): string {
         return ruleSummary(rule, {
@@ -63,6 +154,8 @@
                 dm: access.actions.dm(),
                 summon: access.actions.summon(),
                 manage: access.actions.manage(),
+                change: access.actions.changeShort(),
+                deleteOrSend: access.actions.deleteOrSendShort(),
             },
             allowsAndBlocks: (allows, blocks) => access.allowsAndBlocks({ allows, blocks }),
             blocksOnly: (blocks) => access.blocksOnly({ blocks }),
@@ -128,19 +221,31 @@
     {:else if !data}
         <p class="bp-m">{access.briefLoading()}</p>
     {:else}
-        <label class="bp-set" for="bot-private-{bot.id}">
+        <div class="bp-set" data-testid="bot-visibility">
             <span class="bp-tx">
-                <span class="bp-t">{access.privateBot()}</span>
-                <span class="bp-m">{privateHint}</span>
+                <span class="bp-t">{data.privateBot ? access.privateBot() : access.publicBot()}</span>
+                <span class="bp-m"
+                    >{!data.privateBot
+                        ? access.publicLine()
+                        : usingNames.length
+                        ? access.privateLine({ names: names(usingNames) })
+                        : access.privateEmptyLine({ always: alwaysNames })}</span
+                >
             </span>
-            <PageSwitch
-                checked={data.privateBot}
-                label={access.privateBot()}
-                id="bot-private-{bot.id}"
-                testId="bot-private"
-                onChange={(on) => setPrivateBot(bot.id, on)}
-            />
-        </label>
+            <PageButton
+                tall
+                testId="bot-visibility-change"
+                on:click={() => (confirming = data?.privateBot ? "public" : "private")}
+                >{data.privateBot ? access.makePublic() : access.makePrivate()}</PageButton
+            >
+        </div>
+
+        <div class="bp-set" data-testid="bot-access-tools-line">
+            <span class="bp-tx">
+                <span class="bp-t">{access.toolsTitle()}</span>
+                <span class="bp-m">{toolsLine}</span>
+            </span>
+        </div>
 
         {#each data.rules as rule (rule.id)}
             <button type="button" class="bp-rule" data-testid="bot-access-rule" on:click={() => onOpenRule(rule)}>
@@ -185,14 +290,26 @@
     {/if}
 </PageGroup>
 
+{#if confirmation}
+    <ConfirmSheet
+        title={confirmation.title}
+        lines={confirmation.lines}
+        note={confirmation.note}
+        cancelLabel={access.cancel()}
+        confirmLabel={confirmation.confirm}
+        testId="bot-visibility-sheet"
+        onCancel={() => (confirming = null)}
+        onConfirm={confirmVisibility}
+    />
+{/if}
+
 <style>
-    /* A setting with a switch: the whole row is the tap area, 44 px tall like the bot page's other rows */
+    /* A setting with its words on the left and, when it has one, its button on the right, 44 px tall */
     .bp-set {
         display: flex;
         align-items: center;
         gap: 10px;
         min-height: 44px;
-        cursor: pointer;
     }
     .bp-tx {
         display: flex;

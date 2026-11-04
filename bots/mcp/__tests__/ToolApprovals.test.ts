@@ -494,6 +494,29 @@ describe('every edit of a card carries the whole card (the game drops one that d
     });
 });
 
+describe('a card that waits, redrawn after a restart', () => {
+    it('keeps the warning for a tool nobody checked and the tool\'s own title', async () => {
+        const unchecked = setup({ verdict: { ...ASK, notReviewed: true } });
+        await unchecked.approvals.propose(input({ decision: { ...ASK, notReviewed: true } }));
+        const restarted = setup({ verdict: { ...ASK, notReviewed: true } });
+        restarted.orbit.actions = unchecked.orbit.actions;
+        await restarted.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'moreTime' }));
+        await settle();
+        expect(restarted.sent.length).toBeGreaterThan(0);
+        expect(field(restarted.sent.at(-1)!.content)).toMatchObject({ notReviewed: true, everyTime: true, title: 'Create issue' });
+    });
+
+    it('shows no warning for a checked tool, and none when the gate can not be asked', async () => {
+        await s.approvals.propose(input());
+        const restarted = setup();
+        restarted.orbit.actions = s.orbit.actions;
+        restarted.decide.mockRejectedValue(new Error('down'));
+        await restarted.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'moreTime' }));
+        await settle();
+        expect(field(restarted.sent.at(-1)!.content).notReviewed).toBeUndefined();
+    });
+});
+
 describe('Create, and allow more (approve and remember)', () => {
     it('saves the approval for the hours set, runs the call, and the card says how long it lasts', async () => {
         await s.approvals.propose(input());

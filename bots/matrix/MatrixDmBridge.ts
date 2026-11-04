@@ -18,6 +18,7 @@ import { ACCESS_CACHE_TTL_MS } from '../server/BotAccessGate';
 import { BotWokaAvatar } from './BotWokaAvatar';
 import { ARTIFACT_KEY, artifactDirectMessage } from '../ai/ArtifactTools';
 import { artifactIdOfCard } from '../ai/ArtifactReferences';
+import { audioFileNameFor } from '../utils/audioFileName';
 import { STEPS_KEY, type StepsField } from '../ai/ToolSteps';
 import { ANSWER_EVENT, parseTap, type ParsedTap } from '../mcp/ApprovalCard';
 import type { Asker, Outcome } from '../mcp/ToolApprovals';
@@ -275,7 +276,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 { matrixUserId: person.matrixUserId, uuid: person.uuid, name: person.name ?? null, isGuest: person.isGuest ?? false },
                 note,
                 [],
-                { roomId }
+                { roomId, note: true }
             );
             if (reply?.text && !reply.failed) {
                 await this.client.sendText(botUserId, roomId, reply.text);
@@ -1064,7 +1065,12 @@ export class MatrixDmBridge implements MatrixEventHandler {
         });
         const data = Buffer.from(response.data);
         const mimeType = item.mimeType || String(response.headers['content-type'] || 'application/octet-stream');
-        const filename = item.name || new URL(item.url).pathname.split('/').pop() || `${item.mediaType}`;
+        // A song ends as audio, so the game's card knows it (the "Open in player" row); another file keeps its own name
+        const filename =
+            (item.mediaType === 'audio' ? audioFileNameFor(item.url, mimeType.startsWith('audio/') ? mimeType : 'audio/mpeg', item.name) : undefined) ||
+            item.name ||
+            new URL(item.url).pathname.split('/').pop() ||
+            `${item.mediaType}`;
         const mxc = await this.client.uploadMedia(botUserId, data, mimeType, filename);
         const msgtype = { image: 'm.image', audio: 'm.audio', video: 'm.video', file: 'm.file' }[item.mediaType] ?? 'm.file';
         await this.client.sendMessage(botUserId, roomId, {

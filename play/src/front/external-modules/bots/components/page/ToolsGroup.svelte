@@ -8,6 +8,8 @@
     import { DEFAULT_TOOL_TIMEOUT_SECONDS, showsToolCalls, withShowToolCalls } from "../../behaviorModel";
     import BotMcpServersEditor from "../BotMcpServersEditor.svelte";
     import { shortName } from "../../modelPickerModel";
+    import { botToolsStore, loadBotToolSettings } from "../../stores/BotToolsStore";
+    import type { ToolsScreen } from "../../toolsModel";
     import PageGroup from "./PageGroup.svelte";
     import PageField from "./PageField.svelte";
     import PageChips from "./PageChips.svelte";
@@ -22,7 +24,7 @@
         modelCapFor,
         tokensLabel,
     } from "./replyLimits";
-    import { IconTool } from "@wa-icons";
+    import { IconChevronDown, IconTool } from "@wa-icons";
 
     export let bot: BotData;
     export let open: boolean;
@@ -34,9 +36,25 @@
     export let onToolCount: ((count: number) => void) | undefined = undefined;
     /** What "Runs on" offers (loaded by the Mind group): each choice's longest reply and steps. */
     export let aiOptions: BotAiOptions | null = null;
+    /** A server's row or Asking for approvals opens a screen of its own in place of the bot page */
+    export let onOpenScreen: (screen: ToolsScreen) => void;
 
     let servers: McpServer[] | undefined;
     $: if (servers) onToolCount?.(servers.length);
+
+    // Asking for approvals says what the bot does today on its row; shown with Orbit's default until it has answered
+    let settingsFor: string | undefined;
+    $: if (bot.id !== settingsFor) {
+        settingsFor = bot.id;
+        if (botApiService.isInitialized()) {
+            loadBotToolSettings(bot.id).catch((e) => console.error("[ToolsGroup] Failed to load approvals:", e));
+        }
+    }
+    $: approvals = $botToolsStore && $botToolsStore.botId === bot.id ? $botToolsStore.settings : undefined;
+    $: approvalsBrief =
+        approvals && approvals.askBeforeMaking === null
+            ? page.tools.approvals.briefNoLimit()
+            : page.tools.approvals.brief({ count: approvals?.askBeforeMaking ?? 5 });
 
     onMount(() => {
         // The group's one-line summary names the tools while it is closed
@@ -88,7 +106,23 @@
 </script>
 
 <PageGroup id="tools" icon={IconTool} title={page.tools.title()} {brief} {open} {onToggle}>
-    <BotMcpServersEditor botId={bot.id} onServers={(loaded) => (servers = loaded)} />
+    <BotMcpServersEditor
+        botId={bot.id}
+        onServers={(loaded) => (servers = loaded)}
+        onOpenServer={(serverId) => onOpenScreen({ kind: "server", serverId })}
+    />
+    <button
+        type="button"
+        class="bp-drill"
+        data-testid="bot-tools-approvals-row"
+        on:click={() => onOpenScreen({ kind: "approvals" })}
+    >
+        <span class="bp-dtx">
+            <b>{page.tools.approvals.title()}</b>
+            <span>{approvalsBrief}</span>
+        </span>
+        <span class="bp-chev"><IconChevronDown font-size="18" /></span>
+    </button>
     <PageField title={page.tools.patience()} hint={page.tools.patienceHint()}>
         <PageChips
             label={page.tools.patience()}
@@ -134,6 +168,57 @@
 </PageGroup>
 
 <style>
+    /* Asking for approvals: a title, one line under it and an arrow, like the rows around it; the whole row is one tap */
+    .bp-drill {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        min-height: 52px;
+        margin: 0;
+        padding: 6px 8px;
+        border: 0;
+        border-radius: 12px;
+        background: transparent;
+        font: inherit;
+        color: #fff;
+        text-align: start;
+        cursor: pointer;
+    }
+    @media (hover: hover) {
+        .bp-drill:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+    }
+    .bp-drill:focus-visible {
+        outline: 2px solid #a78bfa;
+        outline-offset: -2px;
+    }
+    .bp-dtx {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        min-width: 0;
+    }
+    .bp-dtx b {
+        font-size: 14px;
+        font-weight: 600;
+    }
+    .bp-dtx span {
+        font-size: 12.5px;
+        line-height: 1.3;
+        color: rgba(244, 242, 250, 0.64);
+    }
+    .bp-chev {
+        display: grid;
+        place-items: center;
+        flex: none;
+        color: rgba(244, 242, 250, 0.64);
+        transform: rotate(-90deg);
+    }
+    :global([dir="rtl"]) .bp-chev {
+        transform: rotate(90deg);
+    }
     /* Where the bot's model stops (Orbit #673): a quiet note under the chips, not a warning */
     .bp-stop {
         font-size: 12.5px;

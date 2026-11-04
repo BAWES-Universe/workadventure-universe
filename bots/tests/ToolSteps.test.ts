@@ -86,6 +86,7 @@ describe('ToolSteps', () => {
         expect(resultOf('a', [{ type: 'text' }])).toEqual({ id: 'a', ok: true });
         expect(resultOf('a', { success: false, message: 'Not allowed' })).toEqual({ id: 'a', ok: false, note: 'Not allowed' });
         expect(resultOf('a', { isError: true })).toEqual({ id: 'a', ok: false });
+        expect(resultOf('a', { status: 'waiting_for_ok', message: 'A card was shown.' })).toEqual({ id: 'a', ok: false, note: 'Waiting for your OK. Nothing ran yet' });
         expect(resultOf('a', { error: 'MCP tool error: quota at https://x.test/?key=abc reached' })).toEqual({
             id: 'a',
             ok: false,
