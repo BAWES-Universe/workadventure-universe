@@ -1,5 +1,6 @@
 import { get, writable } from "svelte/store";
 import type { SvelteComponent } from "svelte";
+import { CardAnswers } from "../../Components/ActionsMenu/cardAnswers";
 import type { ExtensionModule, ExtensionModuleOptions } from "../../ExternalModule/ExtensionModule";
 import { localUserStore } from "../../Connection/LocalUserStore";
 import { mapEditorActivated, userIsConnected } from "../../Stores/MenuStore";
@@ -824,200 +825,26 @@ const registeredActionsByUuid = new Map<string, WokaMenuAction[]>();
 let wokaMenuUnsubscriber: (() => void) | null = null;
 let lastProcessedMenu: { userUuid: string; actionCount: number } | null = null;
 
-// Emotions display tracking
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let emotionsComponentInstance: SvelteComponent<any> | null = null;
-let emotionsContainerElement: HTMLElement | null = null;
-let isInjectingEmotions = false; // Guard to prevent concurrent injections
-// Which injection holds the guard: one that was overtaken (the menu switched) must not release the next one's.
-let injectionId = 0;
-// The menu (by user uuid) the emotions display or its injection belongs to: another menu gets its own.
-let emotionsMenuUuid: string | null = null;
-
-/** Whether the woka menu still shows this user: a slower injection for someone else must not land in it. */
-function menuStillShows(userUuid: string): boolean {
-    return get(wokaMenuStore)?.userUuid === userUuid;
-}
-
-// Cleanup emotions display
-function cleanupEmotionsDisplay(): void {
-    // Destroy tracked component instance
-    if (emotionsComponentInstance) {
-        try {
-            // Svelte 4 destroy
-            emotionsComponentInstance.$destroy();
-        } catch {
-            // Fallback if destroy not available
-        }
-        emotionsComponentInstance = null;
-    }
-
-    // Remove ALL emotion containers from DOM (in case of duplicates)
-    const menuElement = document.querySelector('[data-testid="actions-menu"]');
-    if (menuElement) {
-        const allEmotionContainers = menuElement.querySelectorAll("[data-bot-emotions]");
-        allEmotionContainers.forEach((container) => {
-            if (container instanceof HTMLElement) {
-                container.remove();
-            }
-        });
-    }
-
-    // Also remove tracked container if it exists
-    if (emotionsContainerElement) {
-        try {
-            emotionsContainerElement.remove();
-        } catch {
-            // Already removed
-        }
-        emotionsContainerElement = null;
-    }
-    emotionsMenuUuid = null;
-}
-
-// Inject emotions display into WokaMenu for bots
-async function injectEmotionsIntoWokaMenu(menuData: WokaMenuData): Promise<void> {
-    // Only for bots
-    if (!menuData.userUuid?.startsWith("bot-")) {
-        return;
-    }
-
-    // Prevent concurrent injections
-    if (isInjectingEmotions) {
-        return;
-    }
-
-    const botId = menuData.userUuid.substring(4); // Remove "bot-" prefix
-    const currentUserUuid = localUserStore.getLocalUser()?.uuid;
-
-    if (!currentUserUuid) {
-        return;
-    }
-
-    // Set guard immediately to prevent concurrent calls
-    isInjectingEmotions = true;
-    const myInjection = ++injectionId;
-    const release = () => {
-        if (myInjection === injectionId) isInjectingEmotions = false;
-    };
-    emotionsMenuUuid = menuData.userUuid;
-    // Only the latest injection may add the display: the menu can close and reopen for the same bot meanwhile.
-    const stillMine = () => myInjection === injectionId && menuStillShows(menuData.userUuid);
-
-    try {
-        // Wait for DOM to render
-        await new Promise<void>((resolve) => {
-            setTimeout(() => resolve(), 100);
-        });
-
-        if (!stillMine()) return;
-        const menuElement = document.querySelector('[data-testid="actions-menu"]');
-        if (!menuElement) {
-            // Retry if menu not ready yet
-            release(); // Release guard before retry
-            setTimeout(() => {
-                if (menuStillShows(menuData.userUuid)) void injectEmotionsIntoWokaMenu(menuData);
-            }, 100);
-            return;
-        }
-
-        // Check if already injected (simple check - if any emotion container exists, return)
-        if (menuElement.querySelector("[data-bot-emotions]")) {
-            release(); // Release guard
-            return;
-        }
-
-        // Insertion point: the card's slot for extra content, inside the part that scrolls above the action buttons.
-        const extrasSlot = menuElement.querySelector("[data-woka-menu-extras]");
-
-        if (!extrasSlot) {
-            release(); // Release guard
-            return;
-        }
-
-        // Fetch emotions from API FIRST, before mounting component
-        // This prevents the visual "jump" from default values to actual values
-        // The service's own address: it is null when the configured one was refused, and then the tokens go nowhere.
-        const botServerUrl = botApiService.getBotServerUrl();
-        let emotionsData = null;
-
-        try {
-            if (!botServerUrl) throw new Error("No safe bot-server address");
-            const response = await fetch(`${botServerUrl}/api/bots/${botId}/emotions/${currentUserUuid}`, {
-                headers: await botApiService.getEmotionsHeaders(),
-            });
-            if (response.ok) {
-                const data = await response.json();
-                emotionsData = data.emotions;
-            }
-        } catch (error) {
-            console.error("[Bot Extension] Error fetching bot emotions:", error);
-        }
-
-        // The menu moved on (someone else, or closed and reopened) while the emotions loaded: they aren't this menu's.
-        if (!stillMine()) return;
-
-        // Create container for emotions display
-        const container = document.createElement("div");
-        container.setAttribute("data-bot-emotions", botId);
-        emotionsContainerElement = container;
-
-        extrasSlot.appendChild(container);
-
-        try {
-            // Dynamically import the component (Svelte 4 style)
-            const BotEmotionsDisplay = (await import("./components/BotEmotionsDisplay.svelte")).default;
-            // Switched while loading: the container is already gone with the old menu's display.
-            if (!stillMine()) return;
-
-            // Mount component with actual emotions (or null if fetch failed)
-            // This way tweened values initialize with correct values, no animation from defaults
-            const componentInstance = new BotEmotionsDisplay({
-                target: container,
-                props: {
-                    emotions: emotionsData,
-                    botName: menuData.wokaName || "Bot",
-                    loading: false, // Already fetched, not loading
-                },
-            });
-            emotionsComponentInstance = componentInstance;
-        } catch (error) {
-            console.error("[Bot Extension] Error mounting emotions component:", error);
-        }
-    } finally {
-        // Always release guard
-        release();
-    }
-}
-
 // Counts the menus opened, so an answer that arrives after the card was closed (or reopened) adds nothing to it
 let wokaMenuOpening = 0;
+const SUMMON_ANSWER = "bot-summon";
+
+// Whether Summon shows for you on a bot's card, kept for the session so the card opens at once the next time. Only a
+// real yes or no is kept: when it could not be found out, the next look asks again.
+const summonAnswers = new CardAnswers(
+    (botId: string) => botApiService.getBotAccess(botId, "summon", localUserStore.getLocalUser()?.uuid),
+    (answer) => (answer.allowed === null ? 0 : Infinity)
+);
 
 function setupWokaMenuHook() {
     if (wokaMenuUnsubscriber) return; // Already set up
 
     wokaMenuUnsubscriber = wokaMenuStore.subscribe((menuData: WokaMenuData | undefined) => {
-        // When menu is cleared, cleanup emotions display
+        // When the menu is cleared, an answer still on its way adds nothing
         if (!menuData) {
             lastProcessedMenu = null;
             wokaMenuOpening++;
-
-            isInjectingEmotions = false; // Reset guard
-            injectionId++;
-            void cleanupEmotionsDisplay();
             return;
-        }
-
-        // The menu now shows someone else (the card switched without closing): the previous bot's emotions go.
-        if (emotionsMenuUuid !== null && emotionsMenuUuid !== menuData.userUuid) {
-            isInjectingEmotions = false;
-            injectionId++;
-            cleanupEmotionsDisplay();
-        }
-
-        // Inject emotions display for bots
-        if (menuData.userUuid?.startsWith("bot-")) {
-            void injectEmotionsIntoWokaMenu(menuData);
         }
 
         // Only process if this is a fresh menu initialization
@@ -1041,27 +868,32 @@ function setupWokaMenuHook() {
                 // Check if "Summon" action already exists (safety check)
                 const hasSummon = menuData.actions.some((a) => a.actionName === "Summon");
                 if (!hasSummon) {
+                    // The card holds its buttons back until this is answered, so Summon never appears late
+                    const isBotCard = menuData.userUuid.startsWith("bot-");
+                    if (isBotCard) wokaMenuStore.expect(menuData.userUuid, SUMMON_ANSWER);
                     // Use microtask to add actions after current execution completes
                     // This prevents the subscription from firing again in the same tick
                     void Promise.resolve().then(async () => {
-                        // A person the owner has refused does not get a Summon button. When it cannot be found out
-                        // (a guest, Orbit not answering) the button shows, and the real answer comes when it is used.
-                        if (menuData.userUuid.startsWith("bot-")) {
-                            const access = await botApiService.getBotAccess(
-                                menuData.userUuid.substring(4),
-                                "summon",
-                                localUserStore.getLocalUser()?.uuid
-                            );
-                            if (access.allowed === false) return;
-                        }
-                        if (opening !== wokaMenuOpening) return;
-                        actions.forEach((action: WokaMenuAction) => {
-                            // Double-check menu is still valid before adding
-                            const currentMenu = get(wokaMenuStore);
-                            if (currentMenu && currentMenu.userUuid === menuData.userUuid) {
-                                wokaMenuStore.addAction(action);
+                        try {
+                            // A person the owner has refused does not get a Summon button. When it cannot be found out
+                            // (a guest, Orbit not answering) the button shows, and the real answer comes when it is used.
+                            if (isBotCard) {
+                                const access = await summonAnswers.get(menuData.userUuid.substring(4));
+                                if (access.allowed === false) return;
                             }
-                        });
+                            if (opening !== wokaMenuOpening) return;
+                            actions.forEach((action: WokaMenuAction) => {
+                                // Double-check menu is still valid before adding
+                                const currentMenu = get(wokaMenuStore);
+                                if (currentMenu && currentMenu.userUuid === menuData.userUuid) {
+                                    wokaMenuStore.addAction(action);
+                                }
+                            });
+                        } finally {
+                            if (isBotCard && opening === wokaMenuOpening) {
+                                wokaMenuStore.settle(menuData.userUuid, SUMMON_ANSWER);
+                            }
+                        }
                     });
                 }
             }

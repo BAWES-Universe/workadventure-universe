@@ -17,6 +17,8 @@
     import NewBotView from "./components/NewBotView.svelte";
     import type { BotData } from "./types";
     import type { UsageScreen } from "./usageModel";
+    import type { ToolsScreen } from "./toolsModel";
+    import { botToolsStore, type BotToolsState } from "./stores/BotToolsStore";
     import { botUsageStore, type BotUsageState } from "./stores/BotUsageStore";
     import {
         botEditorModeStore,
@@ -806,6 +808,19 @@
     let editingAdvanced = false;
     // And Usage's screens: who uses it, what it ran on, its limits
     let usageScreen: UsageScreen | null = null;
+    // And Tools' screens: a server, one of its headings, Asking for approvals. Back from a heading returns to its server.
+    let toolsScreen: ToolsScreen | null = null;
+    // The store is passed in (not read inside) so the panel title is worked out again when a server is renamed
+    function toolsScreenTitle(screen: ToolsScreen, botId: string, store: BotToolsState | undefined): string {
+        const tools = $LL.mapEditor.edit.bots.page.tools;
+        if (screen.kind === "approvals") return tools.approvals.title();
+        const held = store && store.botId === botId ? store : undefined;
+        const server = held?.servers?.find((one) => one.id === screen.serverId)?.name ?? "";
+        return screen.kind === "server" ? server : `${server} · ${tools.headings[screen.heading].title()}`;
+    }
+    function backFromTools(screen: ToolsScreen): ToolsScreen | null {
+        return screen.kind === "heading" ? { kind: "server", serverId: screen.serverId } : null;
+    }
     function usageScreenTitle(screen: UsageScreen, name: string): string {
         const usage = $LL.mapEditor.edit.bots.page.usage;
         return screen === "people"
@@ -863,6 +878,22 @@
                   label: $LL.mapEditor.edit.bots.page.companion.back({ name: selectedBot.name ?? "" }),
                   title: usageScreenTitle(usageScreen, selectedBot.name || "Bot"),
                   subtitle: usageScreenSubtitle(usageScreen, $botUsageStore, selectedBot.id),
+              }
+            : currentMode === "detail" && selectedBot && toolsScreen
+            ? {
+                  onBack: () => toolsScreen && (toolsScreen = backFromTools(toolsScreen)),
+                  label:
+                      toolsScreen.kind === "heading"
+                          ? $LL.mapEditor.edit.bots.page.companion.back({
+                                name: toolsScreenTitle(
+                                    { kind: "server", serverId: toolsScreen.serverId },
+                                    selectedBot.id,
+                                    $botToolsStore
+                                ),
+                            })
+                          : $LL.mapEditor.edit.bots.page.companion.back({ name: selectedBot.name ?? "" }),
+                  title: toolsScreenTitle(toolsScreen, selectedBot.id, $botToolsStore),
+                  subtitle: selectedBot.name || undefined,
               }
             : currentMode === "detail" && selectedBot && editingAdvanced
             ? {
@@ -1021,6 +1052,7 @@
                 bind:addingRule
                 bind:editingAdvanced
                 bind:usageScreen
+                bind:toolsScreen
                 bot={selectedBot}
                 onSave={handleSave}
                 onDelete={handleDelete}
