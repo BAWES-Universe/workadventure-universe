@@ -334,6 +334,14 @@ describe('Create (approve)', () => {
         expect(s.run).toHaveBeenCalledTimes(1);
     });
 
+    it('does not run an approved, unstarted call because of a stale tap that said no', async () => {
+        await s.approvals.propose(input());
+        s.orbit.actions.set('act_1', { ...s.orbit.actions.get('act_1')!, status: 'approved', revision: 2 });
+        await s.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'decide', option: 'decline' }));
+        await settle();
+        expect(s.run).not.toHaveBeenCalled();
+    });
+
     it('says nothing was done when the claim itself fails, and does not call the tool', async () => {
         await s.approvals.propose(input());
         s.orbit.claim = (async () => {
@@ -436,6 +444,15 @@ describe('Review again', () => {
         await s.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 2, { action: 'reviewAgain' }));
         expect(s.orbit.actions.get('act_2')).toMatchObject({ status: 'waiting', arguments: ARGS, toolFingerprint: 'fp-1' });
         expect(field(s.sent.at(-1)!.content)).toMatchObject({ id: 'act_2', revision: 1 });
+        expect(s.run).not.toHaveBeenCalled();
+    });
+
+    it('still shows a card when a remembered approval now covers the call, so the tap is never silent', async () => {
+        await s.approvals.propose(input());
+        await s.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'close' }));
+        s.orbit.grants.push({ id: 'g1', toolName: 'create_issue', fixed: { team: 'WEB' } });
+        await s.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 2, { action: 'reviewAgain' }));
+        expect(s.orbit.actions.get('act_2')).toMatchObject({ status: 'waiting' });
         expect(s.run).not.toHaveBeenCalled();
     });
 

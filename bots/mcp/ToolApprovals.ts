@@ -79,6 +79,8 @@ export interface ProposeInput {
     entry: ToolServerEntry;
     args: Record<string, unknown>;
     decision: Extract<GateDecision, { kind: 'ask' }>;
+    /** Always show a card, even when a remembered approval covers the call (the person tapped Review again). */
+    cardOnly?: boolean;
 }
 
 export type Proposed =
@@ -135,7 +137,7 @@ export class ToolApprovals {
             arguments: args,
         };
         try {
-            if (!decision.notReviewed && decision.heading !== 'deletesOrSends') {
+            if (!input.cardOnly && !decision.notReviewed && decision.heading !== 'deletesOrSends') {
                 const grant = await this.deps.orbit.findGrant(botId, base);
                 if (grant) return { kind: 'run' };
             }
@@ -249,7 +251,7 @@ export class ToolApprovals {
                         decision: option,
                         ...(option === 'approveAndRemember' ? { idleMinutes: GRANT_IDLE_MINUTES, absoluteMinutes: GRANT_ABSOLUTE_MINUTES } : {}),
                     });
-                    if (answer.outcome === 'already_decided' && answer.action.status === 'approved') {
+                    if (answer.outcome === 'already_decided' && answer.action.status === 'approved' && option !== 'decline') {
                         // Approved, but nobody started it: the answer to an earlier tap was lost, or this server restarted in between.
                         // Orbit lets one dispatcher win, so starting it here again can't run it twice.
                         card.waiting = false;
@@ -316,7 +318,7 @@ export class ToolApprovals {
             await this.deps.cards.say(botId, roomId, why);
             return;
         }
-        const proposed = await this.propose({ botId, roomId, person, toolName: action.toolName, toolTitle: entry.title, entry, args: action.arguments, decision: verdict });
+        const proposed = await this.propose({ botId, roomId, person, toolName: action.toolName, toolTitle: entry.title, entry, args: action.arguments, decision: verdict, cardOnly: true });
         if (proposed.kind === 'failed') await this.deps.cards.say(botId, roomId, "I couldn't show the card. Try again in a moment.");
     }
 
