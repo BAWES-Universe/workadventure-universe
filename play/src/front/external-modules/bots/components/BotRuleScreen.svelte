@@ -11,6 +11,8 @@
     export let ruleId: string;
     /** The rule is gone (removed here, or by someone else): the page it came from is shown again */
     export let onClose: () => void;
+    /** Mock: the bot's name, so every line names it instead of saying "it" */
+    export let botName = "the bot";
 
     $: access = $LL.mapEditor.edit.bots.page.access;
     $: state = $botPermissionsStore;
@@ -28,6 +30,9 @@
     ];
 
     function titleOf(action: RuleAction): string {
+        if (!liveView && action === "change") return "Have this bot change things";
+        if (!liveView && action === "send") return "Have this bot delete or send";
+        if (!liveView && action === "manage") return "Manage this bot";
         return action === "chat"
             ? access.actions.chat()
             : action === "dm"
@@ -42,6 +47,17 @@
     }
 
     function hintOf(action: RuleAction): string {
+        if (!liveView) {
+            const mock: Partial<Record<RuleAction, string>> = {
+                chat: "In this bot's bubble on the map",
+                dm: "One to one with this bot, from anywhere. Needs sign-in",
+                summon: "Bring this bot to you, anywhere in this bot's room",
+                change: "With this bot's tools under Makes new things and Changes things, like adding a Linear issue",
+                send: "With this bot's tools under Deletes or sends out, like sending an email or deleting a page",
+                manage: "Change what this bot says and where this bot stands",
+            };
+            if (mock[action]) return mock[action] as string;
+        }
         return action === "chat"
             ? access.actions.chatHint()
             : action === "dm"
@@ -60,6 +76,7 @@
         if (!rule || !data) return "";
         const found = defaultFor(action, rule, data.roles);
         if (!found) return access.defaultPerson();
+        if (!liveView) return found.allowed && found.from ? `Default here means Yes, from ${found.from}` : "Default here means No";
         return found.allowed && found.from ? access.defaultYes({ from: found.from }) : access.defaultNo();
     }
 
@@ -85,7 +102,7 @@
             {:else}
                 <span class="br-ico" aria-hidden="true"><IconUser font-size="20" /></span>
             {/if}
-            <span class="br-name">{access.ruleFor({ name })}</span>
+            <span class="br-name">{liveView ? access.ruleFor({ name }) : `${name}'s rules for ${botName}`}</span>
         </div>
 
         {#each shownActions as action (action)}
@@ -110,7 +127,13 @@
             <button type="button" class="br-btn" disabled={removing} data-testid="bot-rule-remove" on:click={remove}>
                 {access.remove({ name })}
             </button>
-            <span class="br-m">{access.removeHint()}</span>
+            <span class="br-m"
+                >{liveView
+                    ? access.removeHint()
+                    : rule.role
+                    ? `${name} then goes back to the ${name} role's settings in Orbit`
+                    : `${name} then goes back to what ${name}'s roles allow`}</span
+            >
         </div>
     </div>
 {/if}

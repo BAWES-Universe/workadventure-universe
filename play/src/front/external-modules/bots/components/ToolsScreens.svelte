@@ -83,11 +83,11 @@
         send: "Deletes or sends out",
     };
     /** What the picked choice does, said under it so it never reads as a tab */
-    const RUN_SAYS: Record<ToolRun, string> = {
-        run: "Uses them without asking anyone.",
-        ask: "Shows the person a card and waits for their tap, every time.",
-        off: "Never uses them.",
-    };
+    $: RUN_SAYS = {
+        run: "This bot uses these tools without asking anyone.",
+        ask: "This bot shows the person chatting a card and waits for their OK, every time.",
+        off: "This bot never uses these tools.",
+    } as Record<ToolRun, string>;
     const KIND_HINT: Record<ToolKind, string> = {
         look: "Reads and finds things. Changes nothing.",
         make: "Makes something new, like an image or a song",
@@ -107,9 +107,9 @@
         servers = servers;
     }
     function fromLine(target: McpServer, tool: KindedTool): string {
-        if (tool.changedSince && !tool.reviewedBy) return `Changed since ${tool.changedSince} confirmed it · not confirmed yet`;
+        if (tool.changedSince && !tool.reviewedBy) return `Changed since ${tool.changedSince} confirmed ${tool.title} · not confirmed yet`;
         if (tool.from === "you") return `Moved here by ${tool.reviewedBy ?? viewerName}`;
-        const suggested = tool.from === "server" ? `Suggested by ${target.name}` : "Suggested from its description";
+        const suggested = tool.from === "server" ? `Suggested by ${target.name}` : "Suggested by the tool's own description";
         return tool.reviewedBy ? `${suggested} · Confirmed by ${tool.reviewedBy}` : suggested;
     }
     function move(target: McpServer, tool: KindedTool, kind: ToolKind) {
@@ -153,8 +153,8 @@
 
 {#if current.k === "asking"}
     <div class="ts" data-testid="tools-asking">
-        <p class="ts-lead">Before {botName} changes, deletes or sends something with its tools, it shows the person a card and waits for their tap. These set how long it waits and when else it asks.</p>
-        <PageField title="Waits for a tap" hint="If nobody answers the card, it does nothing and says so">
+        <p class="ts-lead">Before this bot changes, deletes or sends something, this bot shows the person chatting a card and waits for their OK. Here you set how long this bot waits, and when else this bot asks.</p>
+        <PageField title="Waits for a tap" hint="If nobody answers the card in time, this bot does nothing and says so in the chat">
             <PageChips
                 label="Waits for a tap"
                 options={[{ value: 5, label: "5 min" }, { value: 10, label: "10 min" }, { value: 30, label: "30 min" }]}
@@ -172,7 +172,7 @@
         </PageField>
         <PageField
             title="Asks which way to go"
-            hint="Before a long or costly job that could go very different ways. Otherwise it picks and says what it picked."
+            hint="Before a long or costly job that could go very different ways. Otherwise this bot picks one and says which."
         >
             <PageChips
                 label="Asks which way to go"
@@ -182,16 +182,16 @@
             />
         </PageField>
         <div class="ts-sec">“Allow more”</div>
-        <p class="ts-m">A card can offer “allow more of the same in this chat”. It ends when the person leaves, or:</p>
-        <PageField title="When they're quiet for" hint="They send nothing in that chat for this long">
+        <p class="ts-m">A card can offer “allow more of the same in this chat”, so the person chatting isn't asked each time. That ends when they leave the chat, or:</p>
+        <PageField title="When the person is quiet for" hint="The person sends nothing in that chat for this long">
             <PageChips
-                label="When they're quiet for"
+                label="When the person is quiet for"
                 options={[{ value: 30, label: "30 min" }, { value: 60, label: "1 hour" }, { value: 120, label: "2 hours" }]}
                 value={quiet}
                 onPick={(v) => (quiet = v)}
             />
         </PageField>
-        <PageField title="After at most" hint="Even in a busy chat">
+        <PageField title="After at most" hint="Even if the person keeps chatting">
             <PageChips
                 label="After at most"
                 options={[{ value: 4, label: "4 hours" }, { value: 8, label: "8 hours" }, { value: 24, label: "24 hours" }]}
@@ -256,29 +256,31 @@
                             ? "Not checked yet"
                             : changed.length && changed.length === unconfirmed.length
                             ? `${changed.length} tool changed`
-                            : `Check what ${unconfirmed.length === 1 ? "this tool does" : `these ${unconfirmed.length} tools do`}`}
+                            : `Check what ${unconfirmed.length === 1 ? `${unconfirmed[0].title} does` : `${server.name}'s ${unconfirmed.length} tools do`}`}
                     </div>
                     <div class="ts-m">
                         {#if legacy}
-                            Added before tools had headings. In text chat its tools still run right away for everyone who
-                            can chat with the bot, and voice can't use them. Look over the headings below, then confirm.
+                            {server.name} was added before tools had headings. In text chat, {server.name}'s tools still run
+                            right away for everyone who can chat with this bot, and voice can't use them. Look over the four
+                            headings on this page, then confirm.
                         {:else if changed.length && changed.length === unconfirmed.length}
                             {server.name} changed what {changed.map((t) => t.title).join(", ")} says it does: “{changed[0]
-                                .description}”. Until you confirm it again, only people who manage this bot can use it, and
-                            every use asks first.
+                                .description}”. Until someone confirms {changed[0].title} again, only people who manage
+                            this bot can use {changed[0].title}, and every use asks first.
                         {:else}
-                            Each tool below sits where {server.name} or its description suggests. Until you confirm, only
-                            people who manage this bot can use them, and every use asks first.
+                            Each {server.name} tool sits under the heading that {server.name} or the tool's own description
+                            suggests. Until someone confirms, only people who manage this bot can use these tools, and every
+                            use asks first.
                         {/if}
                     </div>
                     <button type="button" class="ts-accept" on:click={() => server && confirmAll(server)}
-                        >{legacy || unconfirmed.length > 1 ? "Confirm all tools" : "Confirm it"}</button
+                        >{legacy || unconfirmed.length > 1 ? "Confirm all tools" : `Confirm ${unconfirmed[0]?.title ?? "the tool"}`}</button
                     >
                 </div>
             {/if}
             <p class="ts-lead">
-                {server.name}'s {tools.length} tools are sorted by what they do. For each kind, pick whether {botName}
-                uses them right away, asks first, or never.
+                {server.name}'s {tools.length} tools are sorted by what they do. For each heading, pick whether {botName}
+                uses those tools right away, asks first, or never.
             </p>
             <label class="ts-search">
                 <IconSearch font-size="16" />
@@ -291,7 +293,7 @@
             </label>
             {#if search.trim()}
                 {@const found = tools.filter((t) => matches(t, search))}
-                <div class="ts-m">{found.length} of {tools.length} tools match. Tap one to see where it sits and move it.</div>
+                <div class="ts-m">{found.length} of {tools.length} tools match. Tap a tool to see its heading and move it.</div>
                 <div class="ts-list">
                     {#each found as tool (tool.name)}
                         {@const opened = openTool === tool.name}
@@ -303,7 +305,7 @@
                             </button>
                             {#if opened}
                                 <div class="ts-move">
-                                    <span class="ts-m">What this tool does</span>
+                                    <span class="ts-m">Move {tool.title} under</span>
                                     <PageChips
                                         label="What {tool.title} does"
                                         options={KINDS.map((k) => ({ value: k, label: KIND_TITLE[k] }))}
@@ -387,7 +389,7 @@
             <div class="ts-field">
                 <div class="ts-ct">{list.length} tools <span class="ts-count">from {server.name}</span></div>
                 <div class="ts-m">
-                    Tap a tool to move it under another heading, like {KIND_TITLE[kind === "change" ? "send" : "change"]}. It then
+                    Tap a tool to move it under another heading, like {KIND_TITLE[kind === "change" ? "send" : "change"]}. The tool then
                     follows that heading's choice.
                 </div>
             </div>
@@ -404,7 +406,7 @@
                         </button>
                         {#if opened}
                             <div class="ts-move">
-                                <span class="ts-m">What this tool does</span>
+                                <span class="ts-m">Move {tool.title} under</span>
                                 <PageChips
                                     label="What {tool.title} does"
                                     options={KINDS.map((k) => ({ value: k, label: KIND_TITLE[k] }))}

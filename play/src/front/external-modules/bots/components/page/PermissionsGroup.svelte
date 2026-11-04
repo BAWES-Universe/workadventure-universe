@@ -47,7 +47,14 @@
         }
         return count > 0 ? access.briefOpenRules({ count }) : access.briefOpen();
     }
-    $: brief = liveView ? briefOf(data, failed) : briefOf(data, failed).replace(/^Open to everyone/, "Public").replace(/^Open/, "Public");
+    // Mock: the brief names who has their own rules instead of a bare count
+    $: ruleNames = (data?.rules ?? []).map((r) => ruleName(r, access.someone()));
+    $: shortNames = ruleNames.length > 3 ? `${ruleNames.slice(0, 2).join(", ")} and ${ruleNames.length - 2} more` : names2(ruleNames);
+    $: brief = liveView
+        ? briefOf(data, failed)
+        : !data
+        ? briefOf(data, failed)
+        : `${data.privateBot ? "Private" : "Public"}${ruleNames.length ? ` · own rules for ${shortNames}` : ""}`;
 
     // Mock: Make public / Make private, each with a confirmation that says who gains or loses access
     let confirming: "private" | "public" | null = null;
@@ -61,7 +68,8 @@
     // universe's name and its owner's name from Orbit with the permissions.
     const universe = { name: "Nova", owner: "Layla" };
     $: maker = (bot as { createdBy?: { name?: string } }).createdBy?.name;
-    $: alwaysLine = `${maker ? `${maker}, who made it, ` : ""}${universe.owner}, who owns ${universe.name}, and ${universe.name}'s Admins can always use it.`;
+    $: alwaysLine = `${maker ? `${maker} made this bot and ` : ""}${universe.owner} owns ${universe.name}, so they can always use this bot, and so can ${universe.name}'s Admins.`;
+    $: alwaysShort = `${maker ? `${maker} (made this bot), ` : ""}${universe.owner} (owns ${universe.name}) and ${universe.name}'s Admins`;
     function confirmVisibility() {
         if (!confirming) return;
         void setPrivateBot(bot.id, confirming === "private");
@@ -83,9 +91,9 @@
         if (!permissions) return "";
         const change = permissions.roles.filter((r) => r.defaults.change).map((r) => r.name);
         const send = permissions.roles.filter((r) => r.defaults.send).map((r) => r.name);
-        const a = change.length ? `${names(change)} can have it change things.` : "Nobody can have it change things yet.";
-        const b = send.length ? ` ${names(send)} can also have it delete or send.` : " Nobody can have it delete or send yet.";
-        return a + b + " A role or person below can be set differently.";
+        const a = change.length ? `${names(change)} can have this bot change things.` : "Nobody can have this bot change things yet.";
+        const b = send.length ? ` ${names(send)} can also have this bot delete or send.` : " Nobody can have this bot delete or send yet.";
+        return a + b + " Tap a role or person to set them differently.";
     }
     $: toolsLine = toolsLineOf(data);
 
@@ -185,10 +193,10 @@
                     <span class="bp-t">{data.privateBot ? "Private bot" : "Public bot"}</span>
                     <span class="bp-m"
                         >{data.privateBot
-                            ? data.rules.length
-                                ? "Only the roles and people below can use it"
-                                : `Only ${maker ?? "its maker"}, ${universe.owner} and ${universe.name}'s Admins, until you add someone`
-                            : "Everyone who can reach it can use it, guests too"}</span
+                            ? listed.length
+                                ? `Only ${names2(listed)} can use this bot`
+                                : `Only ${maker ? `${maker}, ` : ""}${universe.owner} and ${universe.name}'s Admins can use this bot until you add someone`
+                            : "Anyone who can enter this bot's room can use this bot, guests too"}</span
                     >
                 </span>
                 <PageButton testId="bot-visibility-change" on:click={() => (confirming = data?.privateBot ? "public" : "private")}
@@ -226,7 +234,10 @@
             {access.add()}
         </button>
 
-        <PageField title={access.reply()} hint={access.replyHint()}>
+        <PageField
+            title={liveView ? access.reply() : "Reply to people who can't use this bot"}
+            hint={liveView ? access.replyHint() : "This bot sends these words once to each person who isn't allowed. What they type never reaches this bot's AI."}
+        >
             <textarea
                 class="bp-text"
                 rows="2"
@@ -257,20 +268,27 @@
             {#if confirming === "private"}
                 <ul>
                     {#if listed.length}
-                        <li>Only the roles and people you've added can use it: <b>{names2(listed)}</b>, each with their own rules.</li>
+                        <li>Only <b>{names2(listed)}</b> will be able to use this bot, each with the rules set for them.</li>
                     {:else}
-                        <li>Nobody's been added yet, so until you add a role or person, only the people below can use it.</li>
+                        <li>No roles or people are added yet, so only {alwaysShort} will be able to use this bot.</li>
                     {/if}
-                    <li>Everyone else, guests too, can't. They get your reply: “{data.refusalReply || access.replyPlaceholder()}”</li>
-                    <li>{alwaysLine}</li>
+                    <li>
+                        Everyone else, <b>guests too</b>, won't be able to chat with, DM or summon this bot. This bot answers
+                        them with: “{data.refusalReply || access.replyPlaceholder()}”
+                    </li>
+                    {#if listed.length}<li>{alwaysLine}</li>{/if}
                 </ul>
+                <p class="bp-sheet-m">You can make this bot public again any time.</p>
             {:else}
                 <ul>
-                    <li>Everyone who can reach it can chat with it, DM it and summon it, <b>guests too</b>.</li>
-                    <li>The roles and people below keep their own rules.</li>
+                    <li>
+                        Anyone who can enter this bot's room, <b>guests too</b>, will be able to chat with and summon this bot.
+                        Anyone signed in can also DM this bot.
+                    </li>
+                    {#if ruleNames.length}<li>{names2(ruleNames)} keep the rules set for them.</li>{/if}
                 </ul>
+                <p class="bp-sheet-m">You can make this bot private again any time.</p>
             {/if}
-            <p class="bp-sheet-m">You can change this back any time.</p>
             <div class="bp-sheet-btns">
                 <PageButton tall on:click={() => (confirming = null)}>Cancel</PageButton>
                 <PageButton tall go testId="bot-visibility-confirm" on:click={confirmVisibility}
