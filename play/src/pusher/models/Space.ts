@@ -167,7 +167,12 @@ export class Space implements SpaceForSpaceConnectionInterface {
     public handleUnwatch(watcher: Socket) {
         const spaceUser = this._localConnectedUserWithSpaceUser.get(watcher);
         if (!spaceUser) {
-            throw new Error("spaceUser not found");
+            // The front may send a removeSpaceFilterMessage after the socket already left the space
+            // (e.g. the userStore is unsubscribed after leaveSpaceQuery or a server-initiated leave).
+            // Leaving the space (SpaceToBackForwarder.unregisterUser) already removed the watcher and
+            // the "notify" registration, so there is nothing left to clean up: ignore the message.
+            debug(`${this.name} : filter removal ignored for ${watcher.getUserData().userId} (not in space)`);
+            return;
         }
         this._localWatchers.delete(spaceUser.spaceUserId);
         this.forwarder.deleteUserFromNotify(spaceUser);
