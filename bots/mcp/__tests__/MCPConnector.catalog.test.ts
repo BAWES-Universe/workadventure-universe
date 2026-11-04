@@ -93,6 +93,15 @@ describe('reading a server’s whole list', () => {
 });
 
 describe('saving the list to Orbit', () => {
+    it('after a Test server whose save failed, the next read saves the list again', async () => {
+        http.put.mockRejectedValueOnce(new Error('orbit down'));
+        pages = [answer([tool('a')]), answer([tool('a')])];
+        expect(await MCPConnector.refreshServerTools('bot-1', 'srv-1', ORBIT, 'admin')).toMatchObject({ read: true, saved: { result: 'skipped' } });
+        await discover();
+        await vi.waitFor(() => expect(saved).toHaveLength(1));
+        expect(listCalls).toHaveLength(2);
+    });
+
     it('tries to save the list again on the next read when Orbit did not get it, not only when the cache runs out', async () => {
         http.put.mockRejectedValueOnce(new Error('orbit down'));
         pages = [answer([tool('a')]), answer([tool('a')])];

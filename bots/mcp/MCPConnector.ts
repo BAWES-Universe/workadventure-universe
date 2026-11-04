@@ -778,6 +778,8 @@ export class MCPConnector {
         const { tools, titles } = this.toDefinitions(raw);
         toolListCache.set(`${botId}:${server.id}`, { tools, titles, raw, cachedAt: Date.now(), serverId: server.id });
         const saved = await this.saveListToOrbit(botId, server, raw, { adminApiUrl, adminApiToken }, suggest);
+        // Orbit did not get it: the next read tries to save it again
+        if (saved.result === 'skipped') toolListCache.delete(`${botId}:${server.id}`);
         return { read: true, tools: raw.length, saved };
     }
 
