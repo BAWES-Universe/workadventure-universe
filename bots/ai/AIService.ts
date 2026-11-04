@@ -683,7 +683,9 @@ export class AIService {
         toolTimeoutSeconds?: number | null,
         homeRoomUrl?: string,
         peopleInRoom?: string[] | null,
-        isRetry = false
+        isRetry = false,
+        // True only when this is what a person said to the bot: a greeting, an arrival or a goodbye is the bot's own prompt
+        personSaid = false
     ): AsyncGenerator<AIStreamChunk> {
         const turn: TurnFacts = { artifactTools: false, artifactSaved: false, guard: false };
         const hearing = spaceName !== undefined && botClient !== undefined ? { spaceName, botClient } : undefined;
@@ -692,7 +694,7 @@ export class AIService {
         const attempt = (text: string, retry: boolean, facts: TurnFacts) =>
             this.generateTurn(botId, playerId, text, chatInstructions, providerId, spaceName, conversationContext, botClient, adminApiService, abortSignal, images, channel, toolTimeoutSeconds, homeRoomUrl, peopleInRoom, retry, facts);
         // A card waits for this person in the bubble (#1658): a yes never sends, and anything else closes it
-        if (!isRetry && channel === 'world' && botClient && spaceName && playerId !== undefined && (await this.whileCardWaits(botId, playerId, message, providerId, spaceName, botClient))) {
+        if (personSaid && !isRetry && channel === 'world' && botClient && spaceName && playerId !== undefined && (await this.whileCardWaits(botId, playerId, message, providerId, spaceName, botClient))) {
             yield { content: '', done: true } as AIStreamChunk;
             return;
         }

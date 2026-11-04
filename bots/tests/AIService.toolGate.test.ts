@@ -286,6 +286,23 @@ describe('what a person says while their card waits in a bubble (#1658)', () => 
     }
     const ask = (service: AIService, text: string) => service['whileCardWaits']('b1', 7, text, 'prov', 'room#bubble', bubble as never);
 
+    it("looks at a waiting card only for what a person said, never for the bot's own greeting or goodbye", async () => {
+        const service = new AIService(null!, null!, '');
+        const wait = vi.spyOn(service as never, 'whileCardWaits').mockResolvedValue(false as never);
+        vi.spyOn(service as never, 'generateTurn').mockImplementation((async function* () {
+            yield { content: '', done: true };
+        }) as never);
+        const botClient = { releaseSpeech: () => undefined, holdSpeech: () => undefined };
+        const run = async (personSaid: boolean) => {
+            const stream = service.generateBotResponseStream('b1', 7, 'Say hello', '', 'prov', 'room#bubble', '', botClient as never, undefined, undefined, undefined, 'world', undefined, undefined, undefined, false, personSaid);
+            for await (const chunk of stream) void chunk;
+        };
+        await run(false);
+        expect(wait).not.toHaveBeenCalled();
+        await run(true);
+        expect(wait).toHaveBeenCalledTimes(1);
+    });
+
     it('answers a yes to them alone, never sends, and ends the turn', async () => {
         const { service, approvals } = waitingService('Send email', 'CONFIRM');
         expect(await ask(service, 'Yes, send it')).toBe(true);

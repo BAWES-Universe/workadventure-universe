@@ -321,6 +321,20 @@ describe('what the person says while the card waits', () => {
         expect(s.orbit.actions.get('act_1')!.status).toBe('waiting');
     });
 
+    it('does not hold how a card ended back after Review again said the line that asks', async () => {
+        await proposeSaid(input());
+        await s.approvals.handleTap('b1', SPACE, KHALID, tap('act_1', 1, { action: 'close' }));
+        await settle();
+        await s.approvals.handleTap('b1', SPACE, KHALID, tap('act_1', 2, { action: 'reviewAgain' }));
+        await settle();
+        const shown = s.lines.length;
+        expect(s.lines.at(-1)).toBe('Khalid, I need your OK to send an email for you.');
+        await s.approvals.handleTap('b1', SPACE, KHALID, tap('act_2', 1, { action: 'close' }));
+        await settle();
+        expect(s.lines).toHaveLength(shown + 1);
+        expect(s.lines.at(-1)).toBe("Khalid, I didn't send the email.");
+    });
+
     it("tells the label of the main button while a card waits, for the answer to a yes that never sends", async () => {
         expect(s.approvals.waitingLabel('b1', SPACE, KHALID)).toBeUndefined();
         await proposeSaid(input());

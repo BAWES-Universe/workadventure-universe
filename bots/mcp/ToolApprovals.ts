@@ -432,7 +432,11 @@ export class ToolApprovals {
         const proposed = await this.propose({ botId, roomId, person, toolName: action.toolName, toolTitle: entry.title, entry, args: action.arguments, decision: verdict, cardOnly: true });
         if (proposed.kind === 'failed') await this.tell(botId, roomId, person, "I couldn't show the card. Try again in a moment.");
         // In a bubble there is no reply to carry the line, so it is said here
-        else if (proposed.kind === 'waiting' && proposed.line) await this.say(card, proposed.line);
+        else if (proposed.kind === 'waiting' && proposed.line) {
+            await this.say(card, proposed.line);
+            // This is the line that asks, so what comes after it may be said
+            if (proposed.lineId) this.askLineSaid([proposed.lineId]);
+        }
     }
 
     /* ------------------------------------- running ------------------------------------- */
