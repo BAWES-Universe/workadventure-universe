@@ -8,19 +8,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@sentry/node', () => ({ captureException: vi.fn() }));
 
 import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall } from '../ToolGate';
-import { ToolPolicyUnavailable, type ServerPolicy, type ToolSetting } from '../ToolPolicy';
+import { ToolPolicyUnavailable, type PolicyTool, type ServerPolicy, type ToolSetting } from '../ToolPolicy';
 import type { ToolHeading } from '../ToolCatalog';
 
 const SETTINGS: Record<ToolHeading, ToolSetting> = { looksUp: 'rightAway', makesNew: 'rightAway', changesThings: 'asksFirst', deletesOrSends: 'asksFirst' };
 
-function policy(overrides: Partial<ServerPolicy> & { tools?: Array<[string, Partial<ServerPolicy['tools'] extends Map<string, infer T> ? T : never>]> } = {}): ServerPolicy {
-    const tools = new Map(
-        (overrides.tools ?? []).map(([name, tool]) => [
-            name,
-            { name, fingerprint: 'fp', heading: 'looksUp' as ToolHeading | null, suggestedHeading: null, confirmed: true, ...tool },
-        ])
+function policy(overrides: Partial<Omit<ServerPolicy, 'tools'>> & { tools?: Array<[string, Partial<PolicyTool>]> } = {}): ServerPolicy {
+    const { tools: given = [], ...rest } = overrides;
+    const tools = new Map<string, PolicyTool>(
+        given.map(([name, tool]) => [name, { name, fingerprint: 'fp', heading: 'looksUp', suggestedHeading: null, confirmed: true, ...tool }])
     );
-    return { serverId: 's1', state: 'confirmed', policyRevision: 7, settings: SETTINGS, ...overrides, tools } as ServerPolicy;
+    return { serverId: 's1', state: 'confirmed', policyRevision: 7, settings: SETTINGS, ...rest, tools };
 }
 
 const MEMBER = { signedIn: true, identifier: 'mishari' };
