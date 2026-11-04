@@ -53,6 +53,8 @@ export interface MatrixDmApprovals {
     handleTap(botId: string, roomId: string, person: Asker, tap: ParsedTap): Promise<void>;
     /** The person wrote to the bot: remembered approvals last longer and cards still waiting for them close. Never throws. */
     onPersonMessage(botId: string, roomId: string, person: Asker): Promise<void>;
+    /** The person's message starts a new request: what the last one made no longer counts against it (#1662). Never throws. */
+    newRequest?(botId: string, roomId: string, person: Asker): void;
 }
 
 export interface MatrixDmBridgeDeps {
@@ -652,9 +654,17 @@ export class MatrixDmBridge implements MatrixEventHandler {
         const user = access.user!;
         // Something typed instead of tapping closes the person's waiting cards (a typed "yes" never approves) and keeps
         // their remembered approvals alive (#1657)
+        const asker = { uuid: user.uuid, name: user.name, matrixUserId: event.sender, isGuest: user.isGuest };
+        // A message answered late is still a new request: what the last one made doesn't count against it. Counted before
+        // anything is awaited, so the reply can never start on the old count
+        try {
+            this.deps.approvals?.newRequest?.(botId, event.room_id, asker);
+        } catch {
+            // Never in the way of the reply
+        }
         if (!catchUp) {
             // It never throws; a slow Orbit holds the answer back only for a moment (the cards close with the next message)
-            const closing = this.deps.approvals?.onPersonMessage(botId, event.room_id, { uuid: user.uuid, name: user.name, matrixUserId: event.sender, isGuest: user.isGuest });
+            const closing = this.deps.approvals?.onPersonMessage(botId, event.room_id, asker);
             if (closing) await withinMs(closing, APPROVALS_WAIT_MS);
         }
         // Chats started before bots had pictures get theirs with the next message; after that this costs nothing.
