@@ -71,6 +71,8 @@ const OrbitFriendSearch = z.object({
         z.object({
             uuid: z.string(),
             name: z.string().nullable(),
+            // Missing from an Orbit that does not send it yet.
+            chatId: z.string().nullable().optional(),
             universes: z.array(z.string()),
             relationship: z.string(),
         })
