@@ -125,6 +125,19 @@ const ONLY_DIRECT = 'I only take direct messages.';
  * Turns Matrix events for bot accounts into replies. A bot joins a direct chat when someone allowed to reach its room
  * invites it, answers each message there with DmReplyService, and leaves when the person leaves.
  */
+/** How long a message waits for the person's waiting cards to be closed before the bot answers anyway. */
+const APPROVALS_WAIT_MS = 2_000;
+
+/** Waits for a promise, but no longer than `ms`. The promise keeps going; what it settles with is not used. */
+async function withinMs(work: Promise<unknown>, ms: number): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+        await Promise.race([work.catch(() => undefined), new Promise<void>((resolve) => (timer = setTimeout(resolve, ms)))]);
+    } finally {
+        if (timer) clearTimeout(timer);
+    }
+}
+
 export class MatrixDmBridge implements MatrixEventHandler {
     private roomBots = new Map<string, string>();
     private botNames = new Map<string, string>();
@@ -233,6 +246,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
         if (members && (members.size !== 2 || !members.has(event.sender))) return;
         const access = await this.access(botId, event.sender);
         if (!mayChat(access)) return;
+        // A bot that is resting does nothing on a tap either; a config that can't be read doesn't count as on
+        const config = await this.deps.getBotConfig(botId).catch(() => null);
+        if (!config || config.enabled === false) return;
         const user = access.user!;
         await this.deps.approvals.handleTap(botId, event.room_id, { uuid: user.uuid, name: user.name, matrixUserId: event.sender, isGuest: user.isGuest }, tap);
     }
@@ -614,7 +630,11 @@ export class MatrixDmBridge implements MatrixEventHandler {
         const user = access.user!;
         // Something typed instead of tapping closes the person's waiting cards (a typed "yes" never approves) and keeps
         // their remembered approvals alive (#1657)
-        if (!catchUp) await this.deps.approvals?.onPersonMessage(botId, event.room_id, { uuid: user.uuid, name: user.name, matrixUserId: event.sender, isGuest: user.isGuest });
+        if (!catchUp) {
+            // It never throws; a slow Orbit holds the answer back only for a moment (the cards close with the next message)
+            const closing = this.deps.approvals?.onPersonMessage(botId, event.room_id, { uuid: user.uuid, name: user.name, matrixUserId: event.sender, isGuest: user.isGuest });
+            if (closing) await withinMs(closing, APPROVALS_WAIT_MS);
+        }
         // Chats started before bots had pictures get theirs with the next message; after that this costs nothing.
         void this.avatars?.update(this.botUserId(botId), config);
         if (config.enabled === false) {

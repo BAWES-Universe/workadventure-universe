@@ -115,6 +115,7 @@ const NO_CARD_RESULT = { error: "The card asking for the person's OK could not b
 export class ToolApprovals {
     private readonly cards = new Map<string, Card>();
     private readonly dispatching = new Set<string>();
+    private readonly proposing = new Map<string, Promise<Proposed>>();
     private readonly now: () => number;
 
     constructor(private readonly deps: ApprovalDeps) {
@@ -125,6 +126,18 @@ export class ToolApprovals {
 
     /** A call the gate says needs an OK: a remembered approval that covers it, or a card. Never throws. */
     async propose(input: ProposeInput): Promise<Proposed> {
+        // The same call asked for twice at the same moment (a model repeating itself in one round) is one question
+        const key = JSON.stringify([input.botId, input.roomId, input.person.uuid, input.toolName, input.args, input.decision.fingerprint, input.decision.heading, input.decision.notReviewed, !!input.cardOnly]);
+        const running = this.proposing.get(key);
+        if (running) return running;
+        const run = this.proposeNow(input).finally(() => {
+            if (this.proposing.get(key) === run) this.proposing.delete(key);
+        });
+        this.proposing.set(key, run);
+        return run;
+    }
+
+    private async proposeNow(input: ProposeInput): Promise<Proposed> {
         const { botId, roomId, person, entry, toolName, args, decision } = input;
         const base = {
             requesterKey: person.uuid,

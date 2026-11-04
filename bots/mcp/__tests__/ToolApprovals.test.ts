@@ -346,6 +346,14 @@ describe('Create (approve)', () => {
         expect(s.orbit.actions.size).toBe(2);
     });
 
+    it('shows one card for the same call asked twice at the very same moment', async () => {
+        const [a, b] = await Promise.all([s.approvals.propose(input()), s.approvals.propose(input())]);
+        expect(a.kind).toBe('waiting');
+        expect(b.kind).toBe('waiting');
+        expect(s.orbit.actions.size).toBe(1);
+        expect(s.sent).toHaveLength(1);
+    });
+
     it('does not run an approved, unstarted call because of a stale tap that said no', async () => {
         await s.approvals.propose(input());
         s.orbit.actions.set('act_1', { ...s.orbit.actions.get('act_1')!, status: 'approved', revision: 2 });

@@ -2491,6 +2491,26 @@ describe('MatrixDmBridge cards for tools that ask first (#1657)', () => {
         expect(approvals.onPersonMessage).toHaveBeenCalledWith(BOT, ROOM, { uuid: 'uuid-alice', name: 'Alice', matrixUserId: ALICE, isGuest: false });
     });
 
+    it('does nothing on a tap when the bot is resting', async () => {
+        deps.getBotConfig.mockResolvedValue({ botId: BOT, name: 'Guide', enabled: false, aiProviderRef: 'p' } as never);
+        await bridge.onEvent(tapEvent(DECIDE));
+        expect(approvals.handleTap).not.toHaveBeenCalled();
+    });
+
+    it('does not hold the answer long when closing the waiting cards is slow', async () => {
+        vi.useFakeTimers();
+        try {
+            approvals.onPersonMessage.mockImplementation(() => new Promise(() => undefined));
+            deps.reply.mockResolvedValue({ text: 'ok', media: [] });
+            const handled = bridge.onEvent(message('hello'));
+            await vi.advanceTimersByTimeAsync(2_500);
+            await handled;
+            expect(deps.reply).toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it("does not tell the cards when someone else wrote or the bot's own notices come in", async () => {
         await bridge.onEvent(message('hi', BOB));
         await bridge.onEvent({ ...message('card', BOT_USER), content: { msgtype: 'm.notice', body: 'card' } });
