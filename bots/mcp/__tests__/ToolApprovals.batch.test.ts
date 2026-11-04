@@ -125,6 +125,15 @@ describe('the card before making more than the limit', () => {
         expect(s.approvals.reserveMake('b1', ROOM, SARA, 1, 5)).toEqual({ ok: false, soFar: 12 });
     });
 
+    it('does not count the batch when the tool proved it made nothing', async () => {
+        s.run.mockResolvedValueOnce({ error: 'The server refused it.', outcome: 'not_sent' } as never);
+        await s.approvals.propose({ botId: 'b1', roomId: ROOM, person: SARA, toolName: 'make_posters', entry: ENTRY, args: ARGS, decision: ASK, batch: over });
+        await s.approvals.handleTap('b1', ROOM, SARA, { ask: 'act_1', revision: 1, tap: { action: 'decide', option: 'approve' } });
+        await settle();
+        expect(s.run).toHaveBeenCalledTimes(1);
+        expect(s.approvals.madeSoFar('b1', ROOM, SARA)).toBe(0);
+    });
+
     it('makes nothing and counts nothing when the person says don\'t', async () => {
         await s.approvals.propose({ botId: 'b1', roomId: ROOM, person: SARA, toolName: 'make_posters', entry: ENTRY, args: ARGS, decision: ASK, batch: over });
         await s.approvals.handleTap('b1', ROOM, SARA, { ask: 'act_1', revision: 1, tap: { action: 'decide', option: 'decline' } });

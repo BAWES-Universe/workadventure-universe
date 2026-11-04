@@ -500,10 +500,13 @@ export class ToolApprovals {
             }
 
             started = true;
-            // What this tap lets be made counts in the request, so a later step doesn't ask again for the same ones
-            if (card.batch && (card.batch.kind === 'over' || card.batch.kind === 'part')) this.made.add(this.countKey(botId, roomId, person), card.batch.count);
             const result = await this.deps.tools.run(botId, entry, action.toolName, action.arguments, person.uuid);
             const outcome = outcomeOf(result);
+            // What this tap let be made counts in the request, so a later step doesn't ask again for the same ones. A call that
+            // proved it made nothing counts for nothing.
+            if (card.batch && (card.batch.kind === 'over' || card.batch.kind === 'part') && (outcome === 'succeeded' || outcome === 'uncertain')) {
+                this.made.add(this.countKey(botId, roomId, person), card.batch.count);
+            }
             if (outcome === 'succeeded') {
                 const line = resultLine(result);
                 return void (await finish('succeeded', line ? { result: line } : {}, 'done', line));
@@ -665,6 +668,11 @@ export class ToolApprovals {
     /** Whether `count` more fit under the limit for this person's request; if so they are counted now. Otherwise how many were made so far. */
     reserveMake(botId: string, roomId: string, person: Asker, count: number, limit: number): { ok: true } | { ok: false; soFar: number } {
         return this.made.reserve(this.countKey(botId, roomId, person), count, limit);
+    }
+
+    /** Takes back a reservation for things that proved not to be made. */
+    releaseMake(botId: string, roomId: string, person: Asker, count: number): void {
+        this.made.release(this.countKey(botId, roomId, person), count);
     }
 
     /** How many things this person's request has made so far. */

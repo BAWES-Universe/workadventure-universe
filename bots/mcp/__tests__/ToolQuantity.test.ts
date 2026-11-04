@@ -9,17 +9,17 @@ const schema = (properties: Record<string, unknown>) => ({ type: 'object', prope
 describe('quantityOf', () => {
     it('reads a count the tool declares', () => {
         const s = schema({ prompt: { type: 'string' }, num_images: { type: 'integer' } });
-        expect(quantityOf('generate', undefined, { prompt: 'a', num_images: 12 }, s)).toEqual({ known: true, count: 12, unit: 'images' });
+        expect(quantityOf('generate', undefined, { prompt: 'a', num_images: 12 }, s)).toMatchObject({ known: true, count: 12, unit: 'images', names: { one: 'image', many: 'images' } });
     });
 
     it('reads a count sent as a string, and names one thing in the singular', () => {
         const s = schema({ n: { type: 'integer' } });
-        expect(quantityOf('make_poster', undefined, { n: '1' }, s)).toEqual({ known: true, count: 1, unit: 'poster' });
+        expect(quantityOf('make_poster', undefined, { n: '1' }, s)).toMatchObject({ known: true, count: 1, unit: 'poster', names: { one: 'poster', many: 'posters' } });
     });
 
     it('uses the tool\'s own default when the count is left out', () => {
         const s = schema({ prompt: { type: 'string' }, n: { type: 'integer', default: 4 } });
-        expect(quantityOf('generate_image', undefined, { prompt: 'a' }, s)).toEqual({ known: true, count: 4, unit: 'images' });
+        expect(quantityOf('generate_image', undefined, { prompt: 'a' }, s)).toMatchObject({ known: true, count: 4, unit: 'images' });
     });
 
     it('does not know when the count is left out and has no default', () => {
@@ -41,12 +41,12 @@ describe('quantityOf', () => {
 
     it('counts a list one thing for each entry', () => {
         const s = schema({ prompts: { type: 'array', items: { type: 'string' } } });
-        expect(quantityOf('generate_images', undefined, { prompts: ['a', 'b', 'c'] }, s)).toEqual({ known: true, count: 3, unit: 'images' });
+        expect(quantityOf('generate_images', undefined, { prompts: ['a', 'b', 'c'] }, s)).toMatchObject({ known: true, count: 3, unit: 'images' });
     });
 
     it('multiplies a list by the count and the variations of each', () => {
         const s = schema({ prompts: { type: 'array' }, n: { type: 'integer' }, variations: { type: 'integer' } });
-        expect(quantityOf('generate_image', undefined, { prompts: ['a', 'b'], n: 2, variations: 3 }, s)).toEqual({ known: true, count: 12, unit: 'images' });
+        expect(quantityOf('generate_image', undefined, { prompts: ['a', 'b'], n: 2, variations: 3 }, s)).toMatchObject({ known: true, count: 12, unit: 'images', names: { one: 'image', many: 'images' } });
     });
 
     it('never reads a number out of the words of a prompt', () => {
@@ -79,6 +79,15 @@ describe('MakeCounts', () => {
         const counts = new MakeCounts();
         const results = [counts.reserve('k', 4, 5), counts.reserve('k', 4, 5)];
         expect(results.filter((result) => result.ok)).toHaveLength(1);
+    });
+
+    it('takes back what proved not to be made', () => {
+        const counts = new MakeCounts();
+        counts.reserve('k', 5, 5);
+        counts.release('k', 5);
+        expect(counts.soFar('k')).toBe(0);
+        counts.release('nobody', 3);
+        expect(counts.soFar('nobody')).toBe(0);
     });
 
     it('starts again for a new request, and keeps requests apart', () => {

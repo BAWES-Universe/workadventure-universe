@@ -26,7 +26,7 @@ import type { ToolSuggester } from '../mcp/ToolCatalog';
 import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision } from '../mcp/ToolGate';
 import { ToolPolicySource } from '../mcp/ToolPolicy';
 import type { ToolApprovals } from '../mcp/ToolApprovals';
-import { cardTitle } from '../mcp/ApprovalCard';
+import { cardTitle, outcomeOf } from '../mcp/ApprovalCard';
 import { quantityOf, type BatchKind } from '../mcp/ToolQuantity';
 import { CONFIRM_SYSTEM, isConfirm, tapInstead } from '../mcp/NearbyWords';
 import { ASK_PERSON_TOOL, NEVER_ASK_RULE, askPersonDefinition, readQuestion, type QuestionAsked } from '../mcp/QuestionCard';
@@ -3672,15 +3672,20 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     result = asked.result;
                                     break;
                                 }
-                            } else if (verdict.heading === 'makesNew') {
+                            }
+                            let release: (() => void) | undefined;
+                            if (verdict.kind === 'run' && verdict.heading === 'makesNew') {
                                 // Runs right away, until a request would make more than the bot's limit (#1662)
                                 const counted = await this.checkHowMany(botId!, toolCall.name, mcpServerConfig, parsedArgs, verdict, playerId, botClient, spaceName);
                                 if (counted.kind === 'result') {
                                     result = counted.result;
                                     break;
                                 }
+                                release = counted.release;
                             }
                             result = await this.callMcpTool(mcpServerConfig, toolCall.name, parsedArgs, playerUuid, abortSignal, toolTimeoutSeconds);
+                            // A call that proved it made nothing doesn't count toward the limit
+                            if (release && ['failed', 'notSent'].includes(outcomeOf(result))) release();
                         } else {
                             // Log unknown tool for debugging
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -3715,11 +3720,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         if (!approvals) return false;
         try {
             const chat = this.chatCallFor(botId, playerId, botClient, spaceName);
+            // Whatever anyone says, a guest too, starts a new request: what the last one made doesn't count against it (#1662)
+            if (chat) approvals.newRequest(botId, spaceName, { uuid: chat.person.identifier || `guest:${playerId}`, name: chat.person.name, playerId });
             if (!chat?.person.signedIn || !chat.person.identifier) return false;
             const person = { uuid: chat.person.identifier, name: chat.person.name, playerId };
             approvals.touch(botId, spaceName, person);
-            // Whatever they said starts a new request: what the last one made doesn't count against it (#1662)
-            approvals.newRequest(botId, spaceName, person);
             // A question card waiting for them is answered by what they typed or said (#1661): their message is the answer, so
             // it goes on to the bot as it is
             await approvals.answerQuestionByMessage(botId, spaceName, person, botClient.takeSpoken?.(spaceName, playerId) ? 'spoken' : 'typed');
@@ -3793,7 +3798,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         playerId: number | undefined,
         botClient?: BotClient,
         spaceName?: string
-    ): Promise<{ kind: 'run' } | { kind: 'result'; result: unknown }> {
+    ): Promise<{ kind: 'run'; release?: () => void } | { kind: 'result'; result: unknown }> {
         const approvals = this.approvals;
         if (!approvals || playerId === undefined || verdict.policyRevision === undefined || !verdict.fingerprint) return { kind: 'run' };
         try {
@@ -3812,17 +3817,16 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             } else {
                 if (quantity.count === 0) return { kind: 'run' };
                 const reserved = approvals.reserveMake(botId, chat.chat.ref, person, quantity.count, limit);
-                if (!('soFar' in reserved)) return { kind: 'run' };
+                if (!('soFar' in reserved)) return { kind: 'run', release: () => approvals.releaseMake(botId, chat.chat.ref, person, quantity.count) };
                 if (!canAsk) {
                     return {
                         kind: 'result',
                         result: { error: `This would make ${quantity.count} ${quantity.unit}, more than the ${limit} this bot makes without asking, so it needs the person's OK first and it was not done. Tell them to message you directly and ask again there.` },
                     };
                 }
-                const names = { one: quantity.unit.replace(/s$/, ''), many: quantity.unit };
                 batch =
                     reserved.soFar > 0
-                        ? { kind: 'part', count: quantity.count, unit: quantity.unit, limit, soFar: reserved.soFar, names }
+                        ? { kind: 'part', count: quantity.count, unit: quantity.unit, limit, soFar: reserved.soFar, names: quantity.names }
                         : { kind: 'over', count: quantity.count, unit: quantity.unit, limit };
             }
             const decision = { kind: 'ask' as const, heading: 'makesNew' as const, notReviewed: false, policyRevision: verdict.policyRevision, fingerprint: verdict.fingerprint };

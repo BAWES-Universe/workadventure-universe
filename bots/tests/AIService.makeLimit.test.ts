@@ -31,6 +31,7 @@ function setup(options: { limit?: number | null; verdict?: unknown; mem?: unknow
         propose,
         settings: async () => ({ cardWaitMinutes: 10, askWhichWay: 'rarely', askBeforeMaking: options.limit === undefined ? 5 : options.limit }),
         reserveMake: (_b: string, _r: string, person: { uuid: string }, count: number, limit: number) => counts.reserve(person.uuid, count, limit),
+        releaseMake: (_b: string, _r: string, person: { uuid: string }, count: number) => counts.release(person.uuid, count),
     } as never);
     return { service, propose, counts };
 }
@@ -69,6 +70,36 @@ describe('making new things', () => {
         expect((await call(service, 'make_images', { prompt: 'a', n: 4 }))[0].result).toBe('done');
         await call(service, 'make_images', { prompt: 'b', n: 2 });
         expect(propose).toHaveBeenCalledWith(expect.objectContaining({ batch: { kind: 'part', count: 2, unit: 'images', limit: 5, soFar: 4, names: { one: 'image', many: 'images' } } }));
+    });
+
+    it('names one image in the singular and the rest in the plural when a request pauses part-way', async () => {
+        vi.spyOn(MCPConnector, 'executeToolCall').mockResolvedValue('done' as never);
+        const { service, propose } = setup();
+        await call(service, 'make_images', { prompt: 'a', n: 5 });
+        await call(service, 'make_images', { prompt: 'b', n: 1 });
+        const batch = (propose.mock.calls[0] as unknown as [{ batch: { names: unknown } }])[0].batch;
+        expect(batch.names).toEqual({ one: 'image', many: 'images' });
+    });
+
+    it('does not count a call that proved it made nothing', async () => {
+        const execute = vi.spyOn(MCPConnector, 'executeToolCall');
+        const { service, propose, counts } = setup();
+        execute.mockResolvedValueOnce({ error: 'The server refused it.', outcome: 'not_sent' } as never);
+        await call(service, 'make_images', { prompt: 'a', n: 5 });
+        expect(counts.soFar('uuid-sara')).toBe(0);
+        // The five that did not get made still fit
+        execute.mockResolvedValueOnce('done' as never);
+        const [again] = await call(service, 'make_images', { prompt: 'a', n: 5 });
+        expect(again.result).toBe('done');
+        expect(propose).not.toHaveBeenCalled();
+    });
+
+    it('keeps counting a call that may have made things', async () => {
+        const execute = vi.spyOn(MCPConnector, 'executeToolCall');
+        const { service, counts } = setup();
+        execute.mockResolvedValueOnce({ error: 'No answer came back.' } as never);
+        await call(service, 'make_images', { prompt: 'a', n: 5 });
+        expect(counts.soFar('uuid-sara')).toBe(5);
     });
 
     it('makes one image right away', async () => {

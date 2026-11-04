@@ -11,7 +11,7 @@
 
 export type Quantity =
     /** The call makes this many, named by `unit` ("images"). */
-    | { known: true; count: number; unit: string }
+    | { known: true; count: number; unit: string; names: { one: string; many: string } }
     /** The tool does not say how many one call makes. */
     | { known: false; unit: string };
 
@@ -132,7 +132,7 @@ export function quantityOf(toolName: string, toolTitle: string | undefined, args
     const names = unitNames(unitKey, toolName, toolTitle);
     if (!found || unknownCount) return { known: false, unit: names.many };
     const total = (list ?? 1) * (count ?? 1) * (times ?? 1);
-    return { known: true, count: total, unit: unitFor(total, names) };
+    return { known: true, count: total, unit: unitFor(total, names), names };
 }
 
 /* ---------------------------------------- so far in this request ---------------------------------------- */
@@ -181,6 +181,13 @@ export class MakeCounts {
             if (oldest === undefined) break;
             this.counts.delete(oldest);
         }
+    }
+
+    /** Takes back things that were counted but proved not to be made (the tool failed before making anything). */
+    release(key: string, count: number): void {
+        const kept = this.counts.get(key);
+        if (!kept) return;
+        kept.made = Math.max(0, kept.made - count);
     }
 
     /** The person asked for something new: the count starts again. */
