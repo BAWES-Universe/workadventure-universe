@@ -211,6 +211,19 @@
             >
         </div>
     {/if}
+    {#if docked && open && ask.othersSee}
+        <!-- Nearby chat: the card is the asker's only; everyone else in the bubble gets one line that names the action -->
+        <span class="ask-others" dir="auto" data-testid="botAskOthersSee"
+            ><IconUsers />Instead of this card, {ask.othersSee.names} {ask.othersSee.names.includes(" and ")
+                ? ask.othersSee.spoken
+                    ? "hear and see"
+                    : "see"
+                : ask.othersSee.spoken
+                  ? "hears and sees"
+                  : "sees"}:
+            “{ask.othersSee.line}”</span
+        >
+    {/if}
     {#if ask.notReviewed && open}
         <span class="ask-who" dir="auto"
             ><IconAlertTriangle />Nobody has confirmed this tool yet, so only people who manage {botName} can use the tool
@@ -252,6 +265,22 @@
         display: flex;
         align-items: flex-start;
         gap: 4px;
+    }
+    .ask-others {
+        display: flex;
+        align-items: flex-start;
+        gap: 6px;
+        padding-top: 10px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        font-size: 13px;
+        line-height: 1.4;
+        color: rgba(255, 255, 255, 0.62);
+    }
+    .ask-others :global(svg) {
+        flex: none;
+        width: 16px;
+        height: 16px;
+        margin-top: 1px;
     }
     .ask-from {
         font-size: 12px;
