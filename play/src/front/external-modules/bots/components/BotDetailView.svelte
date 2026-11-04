@@ -29,6 +29,7 @@
     import { botUsageStore } from "../stores/BotUsageStore";
     import { UNIVERSE_AI_REF } from "../mindModel";
     import type { UsageScreen } from "../usageModel";
+    import type { ToolsScreen } from "../toolsModel";
     import BotWokaPicker from "./BotWokaPicker.svelte";
     import BotCompanionPicker from "./BotCompanionPicker.svelte";
     import BotRuleScreen from "./BotRuleScreen.svelte";
@@ -47,6 +48,9 @@
     import UsageGroup from "./page/UsageGroup.svelte";
     import MakerAskedCard from "./page/MakerAskedCard.svelte";
     import BotUsageScreen from "./BotUsageScreen.svelte";
+    import BotToolsServerScreen from "./BotToolsServerScreen.svelte";
+    import BotToolsHeadingScreen from "./BotToolsHeadingScreen.svelte";
+    import BotToolsApprovalsScreen from "./BotToolsApprovalsScreen.svelte";
     import { IconAdjustmentsHorizontal, IconCurrentLocation, IconPaw, IconPencil } from "@wa-icons";
 
     export let bot: BotData | null = null;
@@ -74,6 +78,8 @@
     export let editingAdvanced = false;
     /** One of Usage's screens: who uses the bot, what it ran on, its limits */
     export let usageScreen: UsageScreen | null = null;
+    /** One of Tools' screens: a server, one of its headings, or Asking for approvals */
+    export let toolsScreen: ToolsScreen | null = null;
     $: telemetryState = $botTelemetryStore && $botTelemetryStore.botId === bot?.id ? $botTelemetryStore : undefined;
     $: telemetryLocked = telemetryState?.data?.universeHides === true;
     $: advancedBrief = !telemetryState
@@ -122,6 +128,7 @@
             addingRule = false;
             editingAdvanced = false;
             usageScreen = null;
+            toolsScreen = null;
         }
     }
 
@@ -239,6 +246,7 @@
             addingRule = false;
             editingAdvanced = false;
             usageScreen = null;
+            toolsScreen = null;
             toolBaseline = undefined;
             toolAdded = false;
             askedNow = false;
@@ -598,6 +606,18 @@
     <BotRuleScreen botId={currentBot.id} ruleId={editingRuleId} onClose={() => (editingRuleId = null)} />
 {:else if currentBot && usageScreen}
     <BotUsageScreen bot={currentBot} screen={usageScreen} />
+{:else if currentBot && toolsScreen?.kind === "server"}
+    {@const serverId = toolsScreen.serverId}
+    <BotToolsServerScreen
+        bot={currentBot}
+        {serverId}
+        onOpenHeading={(heading) => (toolsScreen = { kind: "heading", serverId, heading })}
+        onGone={() => (toolsScreen = null)}
+    />
+{:else if currentBot && toolsScreen?.kind === "heading"}
+    <BotToolsHeadingScreen bot={currentBot} serverId={toolsScreen.serverId} heading={toolsScreen.heading} />
+{:else if currentBot && toolsScreen?.kind === "approvals"}
+    <BotToolsApprovalsScreen bot={currentBot} />
 {:else if currentBot && editingAdvanced}
     <div class="bot-page" data-testid="bot-advanced">
         {#if telemetryState?.data}
@@ -714,6 +734,7 @@
                 wide={!$mobileLayoutStore}
                 {onToolCount}
                 {aiOptions}
+                onOpenScreen={(screen) => (toolsScreen = screen)}
             />
             {#if askLimit && currentBot}
                 <LimitSuggestion

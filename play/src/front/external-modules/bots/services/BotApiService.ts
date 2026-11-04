@@ -13,6 +13,14 @@ import { freshOrbitAccessToken, type GameTokenHolder } from "../../admin-api/orb
 import type { PushOverview, PushSettings } from "../../../Notification/Push/PushSettings";
 import { ChatPusherSchema, type ChatPusher, type PushActivityReport } from "../../../Notification/Push/PushChat";
 import { readBotUsage, type BotUsage, type UsageRange } from "../usageModel";
+import {
+    readBotToolSettings,
+    readServerTools,
+    type BotToolSettings,
+    type Heading,
+    type ServerTools,
+    type Setting,
+} from "../toolsModel";
 import { classifySummonFailure, type SummonResult } from "./summonFailure";
 
 interface AuthError extends Error {
@@ -1557,6 +1565,62 @@ export class BotApiService {
         });
         return response.json();
     }
+
+    /** One server's tools with where each sits, who confirmed it, and the choice under each heading (Orbit #738) */
+    async getMcpServerTools(botId: string, serverId: string): Promise<ServerTools> {
+        const response = await this.fetch(
+            `/api/bots/${encodeURIComponent(botId)}/mcp-servers/${encodeURIComponent(serverId)}/tools`
+        );
+        return readServerTools(await response.json());
+    }
+
+    /** Move one tool under another heading. It follows that heading's choice from then on. */
+    async moveMcpTool(botId: string, serverId: string, toolId: string, heading: Heading): Promise<ServerTools> {
+        const response = await this.fetch(
+            `/api/bots/${encodeURIComponent(botId)}/mcp-servers/${encodeURIComponent(
+                serverId
+            )}/tools/${encodeURIComponent(toolId)}`,
+            { method: "PATCH", body: JSON.stringify({ heading }) }
+        );
+        return readServerTools(await response.json());
+    }
+
+    /** Confirm all of a server's tools, as the list looked when the person saw it (Orbit refuses if it moved since) */
+    async confirmMcpTools(botId: string, serverId: string, policyRevision: number): Promise<ServerTools> {
+        const response = await this.fetch(
+            `/api/bots/${encodeURIComponent(botId)}/mcp-servers/${encodeURIComponent(serverId)}/tools/confirm`,
+            { method: "POST", body: JSON.stringify({ policyRevision }) }
+        );
+        return readServerTools(await response.json());
+    }
+
+    /** What the bot does under each heading on one server; only the headings sent change */
+    async saveMcpServerSettings(
+        botId: string,
+        serverId: string,
+        change: Partial<Record<Heading, Setting>>
+    ): Promise<ServerTools> {
+        const response = await this.fetch(
+            `/api/bots/${encodeURIComponent(botId)}/mcp-servers/${encodeURIComponent(serverId)}/policy`,
+            { method: "PUT", body: JSON.stringify(change) }
+        );
+        return readServerTools(await response.json());
+    }
+
+    /** Asking for approvals: how long a card waits, and when the bot asks beyond a tool's heading (Orbit #738) */
+    async getBotToolSettings(botId: string): Promise<BotToolSettings> {
+        const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/tool-settings`);
+        return readBotToolSettings(await response.json());
+    }
+
+    /** Only what is sent changes. Answers with all of it. */
+    async saveBotToolSettings(botId: string, change: Partial<BotToolSettings>): Promise<BotToolSettings> {
+        const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/tool-settings`, {
+            method: "PUT",
+            body: JSON.stringify(change),
+        });
+        return readBotToolSettings(await response.json());
+    }
 }
 
 // ─── MCP Server Types ─────────────────────────────────────────────────────────────
@@ -1570,6 +1634,8 @@ export interface McpServer {
     oauthConnected?: boolean;
     headers?: Record<string, string>;
     enabled: boolean;
+    /** An old server whose tools nobody has checked yet: it works in text as it did (Orbit #738) */
+    notCheckedYet?: boolean;
     lastTestedAt?: string | null;
     lastTestResult?: {
         success: boolean;
