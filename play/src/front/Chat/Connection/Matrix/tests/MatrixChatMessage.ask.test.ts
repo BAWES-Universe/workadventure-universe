@@ -97,10 +97,17 @@ describe("MatrixChatMessage card", () => {
 
     it("takes an edit only from the bot that sent the card", () => {
         const message = new MatrixChatMessage(askEvent(notice()), fakeRoom(), false, true);
-        message.modifyAsk("@someone:matrix.test", notice({ option: "approve" }));
+        message.modifyAsk("@someone:matrix.test", notice({ option: "approve" }), 500_000);
         expect(get(message.ask)?.answer).toBeUndefined();
-        message.modifyAsk(BOT, notice({ option: "approve" }));
+        message.modifyAsk(BOT, notice({ option: "approve" }), 500_000);
         expect(get(message.ask)?.answer).toEqual({ option: "approve" });
+    });
+
+    it("counts a live edit's time from when it reached this device", () => {
+        const message = new MatrixChatMessage(askEvent(notice()), fakeRoom(), false, true);
+        const more = { ...notice(), "universe.ask": { ...field(), now: 2_000_000, expiresAt: 2_600_000, revision: 2 } };
+        message.modifyAsk(BOT, more, 700_000);
+        expect(get(message.ask)?.expiresAt).toBe(700_000 + 600_000);
     });
 
     it("has no card on an ordinary reply", () => {

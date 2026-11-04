@@ -550,7 +550,7 @@ export class MatrixChatRoom
                 this.messages.get(event_id)?.modifyContent(newBody);
                 // A bot's steps line (#1545) is one notice the bot server keeps updating
                 this.messages.get(event_id)?.modifySteps(event.getSender(), newContent);
-                this.messages.get(event_id)?.modifyAsk(event.getSender(), newContent);
+                this.messages.get(event_id)?.modifyAsk(event.getSender(), newContent, event.localTimestamp);
                 // A pinned message loaded on its own, outside the loaded conversation, gets the edit too.
                 this.detachedMessages.get(event_id)?.modifyContent(newBody);
             }

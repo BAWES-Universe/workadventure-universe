@@ -10,6 +10,7 @@ import {
     isWaiting,
     nextAskChange,
     readBotAsk,
+    shownAskPosition,
     type BotAsk,
 } from "../BotAsk";
 
@@ -132,6 +133,17 @@ describe("when a card waits and when it closes", () => {
         expect(nextAskChange([ask, later], ask.expiresAt - 60_000)).toBe(ask.expiresAt);
         expect(nextAskChange([{ ...ask, answer: { closed: true } }], 0)).toBeUndefined();
         expect(nextAskChange([], 0)).toBeUndefined();
+    });
+});
+
+describe("which waiting card is on show", () => {
+    it("is the oldest unless the person paged to another that still waits", () => {
+        expect(shownAskPosition(["a", "b", "c"], undefined)).toBe(0);
+        expect(shownAskPosition(["a", "b", "c"], "b")).toBe(1);
+        // The card paged to ended: back to the oldest, and a card that arrives later does not take its place
+        expect(shownAskPosition(["a", "c"], "b")).toBe(0);
+        expect(shownAskPosition(["a", "c", "d"], "b")).toBe(0);
+        expect(shownAskPosition([], "b")).toBe(0);
     });
 });
 

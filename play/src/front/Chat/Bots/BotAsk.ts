@@ -210,6 +210,15 @@ export function nextAskChange(asks: readonly BotAsk[], now: number): number | un
     return next;
 }
 
+/**
+ * Which waiting card is on show: the one the person paged to while it still waits, otherwise the oldest. Kept by the
+ * card, not its place in the line, so a card that ends never leaves the next one that arrives in the wrong place.
+ */
+export function shownAskPosition(waitingIds: readonly string[], pagedToId: string | undefined): number {
+    const at = pagedToId === undefined ? -1 : waitingIds.indexOf(pagedToId);
+    return at >= 0 ? at : 0;
+}
+
 /** A phone's chat sheet that does not cover the screen: one slim bar instead of the whole card. */
 export function askBarFits(sheetLayout: boolean, rest: "peek" | "half" | "full" | number): boolean {
     if (!sheetLayout) return false;

@@ -462,10 +462,13 @@ export class MatrixChatMessage implements ChatMessage {
         if (steps) this.steps.set(steps);
     }
 
-    /** An update of a bot's card (#1657): only its own sender can change it. */
-    public modifyAsk(sender: string | undefined, newContent: Record<string, unknown> | undefined) {
+    /**
+     * An update of a bot's card (#1657): only its own sender can change it. `receivedAt` is when the edit reached this
+     * device, so an edit caught up on after a sleep does not give a card time it no longer has.
+     */
+    public modifyAsk(sender: string | undefined, newContent: Record<string, unknown> | undefined, receivedAt: number) {
         if (!sender || sender !== this.event.getSender()) return;
-        const ask = readBotAsk(sender, newContent, Date.now());
+        const ask = readBotAsk(sender, newContent, receivedAt);
         if (ask) this.ask.set(ask);
     }
 

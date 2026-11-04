@@ -41,6 +41,7 @@
         closesSoon,
         isWaiting,
         nextAskChange,
+        shownAskPosition,
         type BotAsk,
         type BotAskTap,
     } from "../../Bots/BotAsk";
@@ -454,8 +455,11 @@
         askTimer = setTimeout(tickAskClock, Math.min(at - Date.now() + 50, 2 ** 31 - 1));
     }
     // Which waiting card is on show: the oldest, unless the person paged to another
-    let askIndex = 0;
-    $: shownAskIndex = Math.min(askIndex, Math.max(waitingAsks.length - 1, 0));
+    let pagedToAskId: string | undefined;
+    $: shownAskIndex = shownAskPosition(
+        waitingAsks.map((entry) => entry.message.id),
+        pagedToAskId
+    );
     $: shownAsk = waitingAsks[shownAskIndex];
     $: queuedSoonIndex = waitingAsks.findIndex((entry, i) => i !== shownAskIndex && closesSoon(entry.ask, askNow));
     $: askCompact = askBarFits($chatSheetLayoutStore, $chatSheetSnapStore);
@@ -1338,9 +1342,11 @@
                             : undefined}
                         compact={askCompact}
                         onTap={tapAsk}
-                        onPrevious={() => (askIndex = Math.max(shownAskIndex - 1, 0))}
-                        onNext={() => (askIndex = Math.min(shownAskIndex + 1, waitingAsks.length - 1))}
-                        onShowQueued={() => (askIndex = queuedSoonIndex)}
+                        onPrevious={() => (pagedToAskId = waitingAsks[Math.max(shownAskIndex - 1, 0)]?.message.id)}
+                        onNext={() =>
+                            (pagedToAskId =
+                                waitingAsks[Math.min(shownAskIndex + 1, waitingAsks.length - 1)]?.message.id)}
+                        onShowQueued={() => (pagedToAskId = waitingAsks[queuedSoonIndex]?.message.id)}
                         onOpen={() => chatSheetSnapStore.set("full")}
                     />
                 {/if}
