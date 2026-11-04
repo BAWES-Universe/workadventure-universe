@@ -210,6 +210,22 @@ describe('when Orbit can not be asked', () => {
         const gate = new ToolGate({ read: async () => served } as never, { check: vi.fn() } as never, { canManageBotTools: async () => Promise.reject(new Error('down')) });
         expect(await gate.decide(call({ person: MANAGER }))).toMatchObject({ kind: 'refuse', why: 'cannot_check' });
     });
+
+    it('does not make every call that follows wait for an Orbit that is not answering about who manages the bot', async () => {
+        const served = policy({ tools: [['tool', { confirmed: false, heading: null }]] });
+        const clock = { now: 1_000 };
+        const canManageBotTools = vi.fn(async () => Promise.reject(new Error('down')));
+        const gate = new ToolGate({ read: async () => served } as never, { check: vi.fn() } as never, { canManageBotTools } as never, () => clock.now);
+        expect(await gate.decide(call({ person: MANAGER }))).toMatchObject({ kind: 'refuse', why: 'cannot_check' });
+        clock.now += 1_000;
+        expect(await gate.decide(call({ person: MANAGER }))).toMatchObject({ kind: 'refuse', why: 'cannot_check' });
+        expect(canManageBotTools).toHaveBeenCalledTimes(1);
+        // Once the pause is over it asks again, and takes the answer when Orbit is back
+        clock.now += 10_000;
+        canManageBotTools.mockResolvedValueOnce(true as never);
+        await gate.decide(call({ person: MANAGER }));
+        expect(canManageBotTools).toHaveBeenCalledTimes(2);
+    });
 });
 
 describe('offers', () => {
