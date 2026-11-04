@@ -26,6 +26,7 @@ function serviceWith(settings: Partial<CardSettings> = {}, options: { questions?
         askQuestion,
         answerQuestionByMessage,
         touch: () => undefined,
+        newRequest: () => undefined,
         waitingLabel: () => undefined,
         onPersonMessage: async () => undefined,
     };

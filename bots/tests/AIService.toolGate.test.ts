@@ -273,6 +273,7 @@ describe('what a person says while their card waits in a bubble (#1658)', () => 
         const service = new AIService(null!, null!, '');
         const approvals = {
             touch: vi.fn(),
+            newRequest: vi.fn(),
             waitingLabel: vi.fn(() => label),
             answerQuestionByMessage: vi.fn(async () => false),
             replyPrivately: vi.fn(async () => undefined),
@@ -316,6 +317,21 @@ describe('what a person says while their card waits in a bubble (#1658)', () => 
         expect(await ask(service, 'Make it the 21st instead')).toBe(false);
         expect(approvals.onPersonMessage).toHaveBeenCalledWith('b1', 'room#bubble', person);
         expect(approvals.replyPrivately).not.toHaveBeenCalled();
+    });
+
+    it('starts a new count of what the request makes with whatever they say (#1662)', async () => {
+        const { service, approvals } = waitingService(undefined as never, 'OTHER');
+        await ask(service, 'just the first 5');
+        expect(approvals.newRequest).toHaveBeenCalledWith('b1', 'room#bubble', person);
+    });
+
+    it('starts a new count for a guest too, who has no card to wait for', async () => {
+        const service = new AIService(null!, null!, '');
+        const approvals = { touch: vi.fn(), newRequest: vi.fn(), waitingLabel: vi.fn(), answerQuestionByMessage: vi.fn(), onPersonMessage: vi.fn() };
+        service.useApprovals(approvals as never);
+        const guest = { isVoiceBot: () => false, getPersonForArtifacts: () => ({ signedIn: false, identifier: null, name: 'Guest' }) };
+        expect(await service['whileCardWaits']('b1', 7, 'make 6 more', 'prov', 'room#bubble', guest as never)).toBe(false);
+        expect(approvals.newRequest).toHaveBeenCalledWith('b1', 'room#bubble', { uuid: 'guest:7', name: 'Guest', playerId: 7 });
     });
 
     it('does not take a slow or failed answer for a yes', async () => {

@@ -2443,7 +2443,7 @@ describe('MatrixDmBridge cards for tools that ask first (#1657)', () => {
     beforeEach(async () => {
         client = makeClient();
         deps = makeDeps();
-        approvals = { handleTap: vi.fn(async () => undefined), onPersonMessage: vi.fn(async () => undefined) };
+        approvals = { handleTap: vi.fn(async () => undefined), onPersonMessage: vi.fn(async () => undefined), newRequest: vi.fn() };
         deps.approvals = approvals;
         bridge = new MatrixDmBridge(config, client as never, deps);
         await bridge.onEvent(invite());
@@ -2500,6 +2500,38 @@ describe('MatrixDmBridge cards for tools that ask first (#1657)', () => {
         await bridge.onEvent(message('actually, make it WEB-2'));
         expect(order).toEqual(['cards', 'reply']);
         expect(approvals.onPersonMessage).toHaveBeenCalledWith(BOT, ROOM, { uuid: 'uuid-alice', name: 'Alice', matrixUserId: ALICE, isGuest: false });
+    });
+
+    it('starts a new request for a message before the bot answers it', async () => {
+        const order: string[] = [];
+        approvals.newRequest.mockImplementation(() => void order.push('count'));
+        deps.reply.mockImplementation(async () => {
+            order.push('reply');
+            return { text: 'ok', media: [] };
+        });
+        await bridge.onEvent(message('live one'));
+        expect(order).toEqual(['count', 'reply']);
+        expect(approvals.newRequest).toHaveBeenCalledWith(BOT, ROOM, { uuid: 'uuid-alice', name: 'Alice', matrixUserId: ALICE, isGuest: false });
+    });
+
+    it('starts a new request also for a message a resting bot answers late, and leaves the cards alone', async () => {
+        const order: string[] = [];
+        approvals.newRequest.mockImplementation(() => void order.push('count'));
+        deps.reply.mockImplementation(async () => {
+            order.push('reply');
+            return { text: 'ok', media: [] };
+        });
+        const resting = { botId: BOT, name: 'Guide', enabled: false, aiProviderRef: 'p' };
+        deps.getBotConfig.mockResolvedValue(resting as never);
+        await bridge.onEvent(message('are you there?'));
+        approvals.newRequest.mockClear();
+        approvals.onPersonMessage.mockClear();
+        order.length = 0;
+        deps.getBotConfig.mockResolvedValue({ ...resting, enabled: true } as never);
+        await bridge.checkWaiting();
+        expect(order).toEqual(['count', 'reply']);
+        expect(approvals.newRequest).toHaveBeenCalledWith(BOT, ROOM, { uuid: 'uuid-alice', name: 'Alice', matrixUserId: ALICE, isGuest: false });
+        expect(approvals.onPersonMessage).not.toHaveBeenCalled();
     });
 
     it('does nothing on a tap when the bot is resting', async () => {

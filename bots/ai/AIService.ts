@@ -26,6 +26,8 @@ import type { ToolSuggester } from '../mcp/ToolCatalog';
 import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision } from '../mcp/ToolGate';
 import { ToolPolicySource } from '../mcp/ToolPolicy';
 import type { ToolApprovals } from '../mcp/ToolApprovals';
+import { cardTitle, outcomeOf } from '../mcp/ApprovalCard';
+import { quantityOf, type BatchKind } from '../mcp/ToolQuantity';
 import { CONFIRM_SYSTEM, isConfirm, tapInstead } from '../mcp/NearbyWords';
 import { ASK_PERSON_TOOL, NEVER_ASK_RULE, askPersonDefinition, readQuestion, type QuestionAsked } from '../mcp/QuestionCard';
 import type { BotAsksPort } from '../mcp/NearbyAsks';
@@ -3681,7 +3683,19 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     break;
                                 }
                             }
+                            let release: (() => void) | undefined;
+                            if (verdict.kind === 'run' && verdict.heading === 'makesNew') {
+                                // Runs right away, until a request would make more than the bot's limit (#1662)
+                                const counted = await this.checkHowMany(botId!, toolCall.name, mcpServerConfig, parsedArgs, verdict, playerId, botClient, spaceName);
+                                if (counted.kind === 'result') {
+                                    result = counted.result;
+                                    break;
+                                }
+                                release = counted.release;
+                            }
                             result = await this.callMcpTool(mcpServerConfig, toolCall.name, parsedArgs, playerUuid, abortSignal, toolTimeoutSeconds);
+                            // A call that proved it made nothing doesn't count toward the limit
+                            if (release && ['failed', 'notSent'].includes(outcomeOf(result))) release();
                         } else {
                             // Log unknown tool for debugging
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -3716,6 +3730,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         if (!approvals) return false;
         try {
             const chat = this.chatCallFor(botId, playerId, botClient, spaceName);
+            // Whatever anyone says, a guest too, starts a new request: what the last one made doesn't count against it (#1662)
+            if (chat) approvals.newRequest(botId, spaceName, { uuid: chat.person.identifier || `guest:${playerId}`, name: chat.person.name, playerId });
             if (!chat?.person.signedIn || !chat.person.identifier) return false;
             const person = { uuid: chat.person.identifier, name: chat.person.name, playerId };
             approvals.touch(botId, spaceName, person);
@@ -3783,6 +3799,69 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     }
 
     /**
+     * A tool that makes new things runs right away until a request would make more than the bot's "Asks before making
+     * more than" number (#1662). Then one card shows the total and one tap makes the lot. How many comes only from what
+     * the tool declares about its inputs; a tool that doesn't say asks every time while a limit is set. With nobody to
+     * ask (a guest), a call that doesn't say how many runs as before, and a known amount over the limit is not run.
+     */
+    private async checkHowMany(
+        botId: string,
+        toolName: string,
+        entry: ToolServerEntry,
+        args: Record<string, unknown>,
+        verdict: Extract<GateDecision, { kind: 'run' }>,
+        playerId: number | undefined,
+        botClient?: BotClient,
+        spaceName?: string
+    ): Promise<{ kind: 'run'; release?: () => void } | { kind: 'result'; result: unknown }> {
+        const approvals = this.approvals;
+        if (!approvals || playerId === undefined || verdict.policyRevision === undefined || !verdict.fingerprint) return { kind: 'run' };
+        try {
+            const limit = (await approvals.settings(botId)).askBeforeMaking;
+            if (limit === null) return { kind: 'run' };
+            const chat = this.chatCallFor(botId, playerId, botClient, spaceName);
+            if (!chat) return { kind: 'run' };
+            const canAsk = chat.person.signedIn && !!chat.person.identifier;
+            const nearby = chat.chat.kind === 'nearby';
+            const person = { uuid: chat.person.identifier || `guest:${playerId}`, name: chat.person.name, ...(nearby ? { playerId } : {}) };
+            const quantity = quantityOf(toolName, entry.title, args, entry.inputSchema);
+            let batch: BatchKind;
+            if (!quantity.known) {
+                if (!canAsk) {
+                    // A tool that says nothing about how many runs as it did. A count that was given but cannot be read as a number
+                    // is not a tool saying nothing: nobody can tell it is under the limit, and a guest can't be asked
+                    if (!('unreadable' in quantity && quantity.unreadable)) return { kind: 'run' };
+                    return {
+                        kind: 'result',
+                        result: { error: `The number asked for could not be read, so it cannot be checked against the ${limit} this bot makes without asking, and it was not done. Ask for a whole number, or tell them to message you directly and ask again there.` },
+                    };
+                }
+                batch = { kind: 'unknown', toolTitle: cardTitle(toolName, entry.title), ...(entry.serverName ? { serverName: entry.serverName } : {}) };
+            } else {
+                if (quantity.count === 0) return { kind: 'run' };
+                const reserved = approvals.reserveMake(botId, chat.chat.ref, person, quantity.count, limit);
+                if (!('soFar' in reserved)) return { kind: 'run', release: () => approvals.releaseMake(botId, chat.chat.ref, person, quantity.count, reserved.epoch) };
+                if (!canAsk) {
+                    return {
+                        kind: 'result',
+                        result: { error: `This would make ${quantity.count} ${quantity.unit}, more than the ${limit} this bot makes without asking, so it needs the person's OK first and it was not done. Tell them to message you directly and ask again there.` },
+                    };
+                }
+                batch =
+                    reserved.soFar > 0
+                        ? { kind: 'part', count: quantity.count, unit: quantity.unit, limit, soFar: reserved.soFar, names: quantity.names }
+                        : { kind: 'over', count: quantity.count, unit: quantity.unit, limit };
+            }
+            const decision = { kind: 'ask' as const, heading: 'makesNew' as const, notReviewed: false, policyRevision: verdict.policyRevision, fingerprint: verdict.fingerprint };
+            return await this.askForOk(botId, toolName, entry, args, decision, playerId, botClient, spaceName, batch);
+        } catch (error) {
+            // Never in the way of the tool: a check that failed is the tool as it was before this card
+            console.warn('[AIService] Could not count what a tool makes:', error instanceof Error ? error.message : error);
+            return { kind: 'run' };
+        }
+    }
+
+    /**
      * A call that needs the person's OK (#1657). In a direct message the card is shown and the call waits there: the
      * model hears that it is waiting, and the reply ends. A remembered approval that covers the call lets it run now.
      * Anywhere else there is no card to show, so it is not run and the person is told to ask in a direct message.
@@ -3795,7 +3874,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         decision: Extract<GateDecision, { kind: 'ask' }>,
         playerId: number | undefined,
         botClient?: BotClient,
-        spaceName?: string
+        spaceName?: string,
+        batch?: BatchKind
     ): Promise<{ kind: 'run' } | { kind: 'result'; result: unknown }> {
         const chat = playerId !== undefined ? this.chatCallFor(botId, playerId, botClient, spaceName) : null;
         if (!this.approvals || !chat || !chat.person.signedIn || !chat.person.identifier) {
@@ -3812,6 +3892,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             entry,
             args,
             decision,
+            ...(batch ? { batch } : {}),
         });
         if (proposed.kind === 'run') return { kind: 'run' };
         // The line everyone in the bubble reads travels with the result: it is the bot's whole reply (see the follow-up)
