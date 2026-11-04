@@ -185,7 +185,8 @@ export function buildAsk(facts: CardFacts, now: number, answer?: AskAnswer): Ask
         ...(everyTime ? { everyTime: true } : {}),
         ...(facts.notReviewed ? { notReviewed: true } : {}),
         ...(facts.checkAt ? { checkAt: facts.checkAt } : {}),
-        expiresAt: Date.parse(facts.action.reviewExpiresAt),
+        // A number the game can count from, whatever Orbit sent: a card without a usable end would be dropped there
+        expiresAt: Number.isFinite(Date.parse(facts.action.reviewExpiresAt)) ? Date.parse(facts.action.reviewExpiresAt) : now,
         now,
         waitMinutes: facts.waitMinutes,
         ...(answer ? { answer } : {}),
