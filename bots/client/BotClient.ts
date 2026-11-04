@@ -391,15 +391,20 @@ export class BotClient {
                 return false;
             }
         }
-        const verdict = await this.chatVerdict(gate, this.behavior.getPersonForAccess(senderId));
+        return this.chatAllowed(gate, spaceName, senderId);
+    }
+
+    /** Orbit's answer for this person, with the owner's line said once per visit when it is a no. */
+    private async chatAllowed(gate: BotAccessGate, spaceName: string, personId: number): Promise<boolean> {
+        const verdict = await this.chatVerdict(gate, this.behavior!.getPersonForAccess(personId));
         if (verdict.kind === 'allowed') {
-            this.toldNoChat.delete(senderId);
+            this.toldNoChat.delete(personId);
             return true;
         }
         if (verdict.kind === 'refused') {
-            const toldAt = this.toldNoChat.get(senderId);
+            const toldAt = this.toldNoChat.get(personId);
             if (toldAt !== undefined && Date.now() - toldAt < BotClient.TOLD_NO_CHAT_FOR_MS) return false;
-            this.toldNoChat.set(senderId, Date.now());
+            this.toldNoChat.set(personId, Date.now());
         }
         this.sendChatMessage(spaceName, verdict.line);
         return false;
@@ -2289,6 +2294,45 @@ export class BotClient {
         this.asks = asks;
     }
 
+    /** When each person last said something out loud to this voice bot, so what reaches the AI next can be told from something typed (#1661). */
+    private readonly lastSpoken = new Map<string, number>();
+    /** A spoken line reaches the AI within moments; one older than this was followed by something typed. */
+    private static readonly SPOKEN_FRESH_MS = 20_000;
+
+    /** Remembers that this person just said something out loud (not typed). */
+    private noteSpoken(spaceName: string, playerId: number): void {
+        const key = `${spaceName}|${playerId}`;
+        this.lastSpoken.delete(key);
+        this.lastSpoken.set(key, Date.now());
+        if (this.lastSpoken.size > 500) this.lastSpoken.delete(this.lastSpoken.keys().next().value!);
+    }
+
+    /** Whether the line that just reached the AI from this person was said out loud and not typed. Asked once per line. */
+    takeSpoken(spaceName: string, playerId: number): boolean {
+        const key = `${spaceName}|${playerId}`;
+        const at = this.lastSpoken.get(key);
+        if (at === undefined) return false;
+        this.lastSpoken.delete(key);
+        return Date.now() - at <= BotClient.SPOKEN_FRESH_MS;
+    }
+
+    /**
+     * What a person picked on a card the bot showed them, handed to the bot as what they said (#1661): the bot carries on
+     * with it as it would with any message from them. Only a person in the bubble gets here, and Orbit's chat answer for
+     * them is asked again, as for a message.
+     */
+    async answerFromCard(spaceName: string, playerId: number, text: string): Promise<boolean> {
+        if (!this.behavior || !this.spaces.has(spaceName) || !this.inBubble(playerId)) return false;
+        // The owner may have limited who can chat with the bot since the card was shown: a tap is held to it like a message
+        if (this.isMeetingSpace(spaceName)) return false;
+        if (this.accessGate && !(await this.chatAllowed(this.accessGate, spaceName, playerId))) return false;
+        this.behavior.onChatMessage(spaceName, text, playerId).catch((error) => {
+            console.error(`[Bot ${this.config.botId}] onChatMessage error for a card answer:`, error);
+            Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
+        });
+        return true;
+    }
+
     /** Whether this person is in a bubble the bot sees: a card is for people in one, and nobody else. */
     inBubble(playerId: number): boolean {
         return this.getBubbleUserIds(playerId) !== undefined;
@@ -3379,6 +3423,9 @@ export class BotClient {
                         if (spaceMessage.spoken) {
                             if (spaceMessage.spoken.botId !== this.config.botId) break;
                             if (this.voice?.acceptSpoken(spaceName, senderUserId, spaceMessage.spoken.turnId, spaceMessage.message) === 'duplicate') break;
+                        } else {
+                            // Typed: whatever was said out loud before is not what this answers (#1661)
+                            this.lastSpoken.delete(`${spaceName}|${senderId}`);
                         }
                         // With others in the bubble, a line not meant for the bot goes no further: it is not read, saved or
                         // answered, and the person is not even asked about (#1220). Before anything else is done with it.
@@ -3389,6 +3436,8 @@ export class BotClient {
                         if (!(await this.mayChat(spaceName, senderId, message))) {
                             break;
                         }
+                        // Said out loud, not typed, to this bot and let through: a card waiting for an answer says so (#1661)
+                        if (spaceMessage.spoken) this.noteSpoken(spaceName, senderId);
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                             console.log(`[Bot ${this.config.botId}] Calling behavior.onChatMessage: "${spaceMessage.message}" from ${senderName} (userId: ${senderId})`);
                         }

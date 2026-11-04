@@ -475,7 +475,10 @@
         }
     }
     $: botPlaceholder = shownAsk
-        ? $LL.chat.botAsk.typeSomethingElse()
+        ? // A question only picks a direction, so what the person types is their answer (#1661); an approval card's is something else
+          shownAsk.ask.question
+            ? $LL.chat.botAsk.typeYourOwnAnswer()
+            : $LL.chat.botAsk.typeSomethingElse()
         : botState === "resting"
         ? $LL.chat.botStatus.restingPlaceholder()
         : botState === "unready"

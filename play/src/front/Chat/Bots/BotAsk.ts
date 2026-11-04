@@ -30,6 +30,14 @@ export interface BotAskLine {
     text: string;
 }
 
+/** One choice on a question card (#1661): a short name and, under it, one short line. */
+export interface BotAskChoice {
+    /** What a tap names ("c1".."c4"), never the words. */
+    id: string;
+    label: string;
+    line?: string;
+}
+
 /** How a card ended, as the bot server wrote it. A card that is still waiting has none. */
 export interface BotAskAnswer {
     /** Which option was tapped. */
@@ -42,6 +50,10 @@ export interface BotAskAnswer {
     unknown?: boolean;
     /** The person typed something else, so nothing was done. */
     typed?: boolean;
+    /** A question card: the ids of the choices the person picked. */
+    picked?: string[];
+    /** A question card: the person answered out loud to a voice bot. */
+    spoken?: boolean;
     /** The person closed the card with X, so nothing was done. */
     closed?: boolean;
     /** Nobody answered in time, so nothing was done. */
@@ -59,6 +71,11 @@ export interface BotAsk {
     /** The exact content: team, title, description... */
     lines: BotAskLine[];
     options: BotAskOption[];
+    /**
+     * A question card (#1661): `title` is the question and these are its choices (2 to 4), with no options and no lines.
+     * A choice only picks a direction, so what the person types or says counts as the answer too.
+     */
+    question?: { choices: BotAskChoice[]; multiple: boolean };
     /** Deletes and sends out: the bot asks every time, so "allow more" is never offered. */
     everyTime?: boolean;
     /** Nobody has confirmed the tool yet: only people who manage the bot get this far. */
@@ -110,10 +127,36 @@ function parseOptions(value: unknown): BotAskOption[] {
     return options;
 }
 
+const CHOICES_MAX = 4;
+const CHOICE_LABEL_MAX = 60;
+const CHOICE_LINE_MAX = 100;
+
+function parseChoices(value: unknown): BotAskChoice[] {
+    if (!Array.isArray(value)) return [];
+    const choices: BotAskChoice[] = [];
+    for (const raw of value.slice(0, CHOICES_MAX)) {
+        if (!raw || typeof raw !== "object") continue;
+        const { id, label, line } = raw as Record<string, unknown>;
+        const name = clip(label, CHOICE_LABEL_MAX);
+        const key = clip(id, 20);
+        if (!key || !name || choices.some((choice) => choice.id === key)) continue;
+        const text = clip(line, CHOICE_LINE_MAX);
+        choices.push(text ? { id: key, label: name, line: text } : { id: key, label: name });
+    }
+    return choices;
+}
+
 function parseAnswer(value: unknown): BotAskAnswer | undefined {
     if (!value || typeof value !== "object") return undefined;
     const o = value as Record<string, unknown>;
     const answer: BotAskAnswer = {};
+    if (Array.isArray(o.picked)) {
+        const picked = o.picked.filter(
+            (id): id is string => typeof id === "string" && id.length > 0 && id.length <= 20
+        );
+        if (picked.length > 0) answer.picked = picked.slice(0, CHOICES_MAX);
+    }
+    if (o.spoken === true) answer.spoken = true;
     if (DECISIONS.includes(o.option as BotAskDecision)) answer.option = o.option as BotAskDecision;
     const allowedMore = clip(o.allowedMore, TEXT_MAX);
     if (allowedMore) answer.allowedMore = allowedMore;
@@ -172,11 +215,14 @@ export function readNearbyBotAsk(body: string, receivedAt: number): BotAsk | und
 function parseAskField(field: unknown, receivedAt: number): BotAsk | undefined {
     if (!field || typeof field !== "object") return undefined;
     const o = field as Record<string, unknown>;
-    if (o.v !== 1 || o.kind !== "approval") return undefined;
+    if (o.v !== 1 || (o.kind !== "approval" && o.kind !== "question")) return undefined;
     const id = clip(o.id, 200);
     const title = clip(o.title, TITLE_MAX);
-    const options = parseOptions(o.options);
-    if (!id || !title || options.length === 0) return undefined;
+    const isQuestion = o.kind === "question";
+    const options = isQuestion ? [] : parseOptions(o.options);
+    // A question card needs 2 to 4 choices to be a question at all
+    const choices = isQuestion ? parseChoices(o.choices) : [];
+    if (!id || !title || (isQuestion ? choices.length < 2 : options.length === 0)) return undefined;
     if (typeof o.revision !== "number" || !Number.isInteger(o.revision) || o.revision < 0) return undefined;
     if (typeof o.expiresAt !== "number" || typeof o.now !== "number") return undefined;
     const waitMinutes = typeof o.waitMinutes === "number" && o.waitMinutes > 0 ? Math.round(o.waitMinutes) : 10;
@@ -186,9 +232,10 @@ function parseAskField(field: unknown, receivedAt: number): BotAsk | undefined {
         revision: o.revision,
         title,
         actsAs: clip(o.actsAs, ACTS_AS_MAX),
-        lines: parseLines(o.lines),
+        lines: isQuestion ? [] : parseLines(o.lines),
         // "Allow more" is never offered where the bot asks every time
         options: everyTime ? options.filter((option) => option.id !== "approveAndRemember") : options,
+        question: isQuestion ? { choices, multiple: o.multiple === true } : undefined,
         everyTime: everyTime || undefined,
         notReviewed: o.notReviewed === true || undefined,
         checkAt: parseCheckAt(o.checkAt),
@@ -248,6 +295,8 @@ export function askBarFits(sheetLayout: boolean, rest: "peek" | "half" | "full" 
 /** What a tap sends: only which card and which revision it saw, and what was tapped. */
 export type BotAskTap =
     | { action: "decide"; option: BotAskDecision }
+    /** A pick on a question card: the ids of the choices, never their words. */
+    | { action: "pick"; choices: string[] }
     | { action: "close" }
     | { action: "moreTime" }
     | { action: "reviewAgain" }

@@ -63,11 +63,25 @@ export type ClaimAnswer =
     | { claimed: true; action: SavedAction; attemptId: string }
     | { claimed: false; reason: string; action?: SavedAction };
 
+/** How often a bot asks "which way should I go?" on a card (#1661): Orbit's `askWhichWay`. */
+export type AskWhichWay = 'rarely' | 'beforeBiggerJobs' | 'never';
+export const ASK_WHICH_WAY: readonly AskWhichWay[] = ['rarely', 'beforeBiggerJobs', 'never'];
+
 /** The bot's own limits for asking (Orbit #738). */
 export interface CardSettings {
     cardWaitMinutes: number;
+    /** Question cards before big jobs. Recommended: rarely. */
+    askWhichWay: AskWhichWay;
+    /** Asks before making more than this many things in one request; null is no limit. Recommended: 5. */
+    askBeforeMaking: number | null;
 }
 export const DEFAULT_CARD_WAIT_MINUTES = 10;
+export const DEFAULT_ASK_BEFORE_MAKING = 5;
+export const DEFAULT_CARD_SETTINGS: CardSettings = {
+    cardWaitMinutes: DEFAULT_CARD_WAIT_MINUTES,
+    askWhichWay: 'rarely',
+    askBeforeMaking: DEFAULT_ASK_BEFORE_MAKING,
+};
 
 const TIMEOUT_MS = 8_000;
 const SETTINGS_FRESH_MS = 30_000;
@@ -190,15 +204,27 @@ export class OrbitActions {
         const known = this.settings.get(key);
         if (known && this.now() - known.at < SETTINGS_FRESH_MS) return known.value;
         const side = this.orbit();
-        let value: CardSettings = known?.value ?? { cardWaitMinutes: DEFAULT_CARD_WAIT_MINUTES };
+        let value: CardSettings = known?.value ?? { ...DEFAULT_CARD_SETTINGS };
         if (side) {
             try {
                 const response = await axios.get(`${side.adminApiUrl}/api/bots/${encodeURIComponent(botId)}/tool-settings`, {
                     headers: { Authorization: `Bearer ${side.adminApiToken}` },
                     timeout: TIMEOUT_MS,
                 });
-                const minutes = response.data?.cardWaitMinutes;
-                if (typeof minutes === 'number' && minutes > 0 && minutes <= 24 * 60) value = { cardWaitMinutes: Math.round(minutes) };
+                const data = response.data ?? {};
+                const minutes = data.cardWaitMinutes;
+                // Each setting on its own: one Orbit sent wrongly keeps the recommended value, the others still count
+                value = {
+                    cardWaitMinutes: typeof minutes === 'number' && minutes > 0 && minutes <= 24 * 60 ? Math.round(minutes) : value.cardWaitMinutes,
+                    askWhichWay: ASK_WHICH_WAY.includes(data.askWhichWay) ? data.askWhichWay : value.askWhichWay,
+                    // null is "No limit", a real answer; a missing or odd one keeps the last value
+                    askBeforeMaking:
+                        data.askBeforeMaking === null
+                            ? null
+                            : typeof data.askBeforeMaking === 'number' && Number.isInteger(data.askBeforeMaking) && data.askBeforeMaking >= 1 && data.askBeforeMaking <= 1000
+                              ? data.askBeforeMaking
+                              : value.askBeforeMaking,
+                };
             } catch {
                 // the recommended wait, or the last one Orbit gave
             }

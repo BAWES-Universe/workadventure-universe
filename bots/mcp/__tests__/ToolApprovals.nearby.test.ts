@@ -118,7 +118,7 @@ function setup(options: { write?: (prompt: string) => string | null | Promise<st
         nearby: {
             card: async (_bot, _space, person, ask) => {
                 if (options.cardFails) throw new Error('not in the bubble');
-                cards.push({ person, ask });
+                cards.push({ person, ask: ask as AskField });
             },
             reply: async (_bot, _space, person, text, id) => void replies.push({ person, text, id }),
             say: async (_bot, _space, line) => void lines.push(line),
