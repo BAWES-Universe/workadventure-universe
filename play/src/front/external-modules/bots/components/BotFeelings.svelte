@@ -84,7 +84,7 @@
                         {#each [row.bot, row.you] as value, i (i)}
                             <td>
                                 {#if value !== undefined && (row.type !== "anger" || value > 5)}
-                                    <span class="word" style:color={tone(value, row.type)}>{word(value, row.type)}</span>
+                                    <span class="word">{word(value, row.type)}</span>
                                     <span class="meter"
                                         ><i style:width="{value}%" style:background={tone(value, row.type)} /></span
                                     >
