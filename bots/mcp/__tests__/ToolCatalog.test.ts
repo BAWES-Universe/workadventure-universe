@@ -250,4 +250,18 @@ describe('saving the list to Orbit', () => {
         expect(a).toBe(b);
         expect(http.put).toHaveBeenCalledTimes(1);
     });
+
+    it('does not hand a newer, different list the save of the older one', async () => {
+        http.get.mockResolvedValue({ data: { tools: [] } });
+        http.put.mockResolvedValue(saved());
+        const newer = [...raw, tool('c')];
+        const [a, b] = await Promise.all([
+            syncCatalog({ orbit: ORBIT, botId: 'bot1', serverId: 'diff', server: SERVER, raw }),
+            syncCatalog({ orbit: ORBIT, botId: 'bot1', serverId: 'diff', server: SERVER, raw: newer }),
+        ]);
+        expect(a).not.toBe(b);
+        expect(http.put).toHaveBeenCalledTimes(2);
+        const lastBody = http.put.mock.calls[1][1] as { tools: Array<{ name: string }> };
+        expect(lastBody.tools.map((t) => t.name)).toEqual(['a', 'b', 'c']);
+    });
 });

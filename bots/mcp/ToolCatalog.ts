@@ -332,7 +332,7 @@ export async function saveCatalog(orbit: OrbitConnection, botId: string, serverI
 }
 
 /** Saves of the same server at once share one run. */
-const inFlight = new Map<string, Promise<SyncResult>>();
+const inFlight = new Map<string, { list: string; run: Promise<SyncResult> }>();
 
 export type SyncResult = { result: 'saved'; saved: SavedCatalog; tools: number } | { result: 'unchanged'; tools: number } | { result: 'skipped'; reason: string };
 
@@ -349,9 +349,13 @@ export function syncCatalog(args: {
     ask?: ToolSuggester;
 }): Promise<SyncResult> {
     const key = `${args.botId}:${args.serverId}`;
+    const list = JSON.stringify(args.raw);
     const running = inFlight.get(key);
-    if (running) return running;
+    // The same list already being saved is that save; a different one waits for it, then saves its own
+    if (running && running.list === list) return running.run;
+    const before = running ? running.run.then(() => undefined) : Promise.resolve();
     const run = (async (): Promise<SyncResult> => {
+        await before;
         let known: KnownTool[];
         try {
             known = await readSavedCatalog(args.orbit, args.botId, args.serverId);
@@ -365,7 +369,9 @@ export function syncCatalog(args: {
         } catch (error) {
             return { result: 'skipped', reason: `could not save the list: ${(error as Error)?.message ?? error}` };
         }
-    })().finally(() => inFlight.delete(key));
-    inFlight.set(key, run);
+    })().finally(() => {
+        if (inFlight.get(key)?.run === run) inFlight.delete(key);
+    });
+    inFlight.set(key, { list, run });
     return run;
 }
