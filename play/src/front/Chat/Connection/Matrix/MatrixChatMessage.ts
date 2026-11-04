@@ -7,6 +7,7 @@ import { MapStore } from "@workadventure/store-utils";
 import { readBotStatusNote, type BotStatusNote } from "../../Bots/BotChatStatus";
 import { readBotRoomLink, type BotRoomLink } from "../../Bots/BotRoomLink";
 import { readBotReplyLimit, type BotReplyLimit } from "../../Bots/BotReplyLimit";
+import { readBotAsk, type BotAsk } from "../../Bots/BotAsk";
 import { readArtifactField, type ArtifactCard } from "../../../Artifacts/artifactCard";
 import { readBotSteps, type BotSteps } from "../../Bots/BotSteps";
 import type { ChatMessage, ChatMessageContent, ChatMessageType, ChatUser, SharedFileInfo } from "../ChatConnection";
@@ -62,6 +63,8 @@ export class MatrixChatMessage implements ChatMessage {
     readonly roomLink: BotRoomLink | undefined;
     readonly replyLimit: BotReplyLimit | undefined;
     readonly artifact: ArtifactCard | undefined;
+    /** A card a bot's notice asks one answer with (#1657): the bot server edits the same notice as the card ends. */
+    readonly ask: Writable<BotAsk | undefined>;
     /** A bot's steps line (#1545): the bot server updates this one message while the bot works. */
     readonly steps: Writable<BotSteps | undefined>;
     readonly canReact = writable(true);
@@ -85,6 +88,7 @@ export class MatrixChatMessage implements ChatMessage {
         );
         this.artifact = readArtifactField(event.getSender(), event.getOriginalContent());
         this.steps = writable(readBotSteps(event.getSender(), this.stepsContent()));
+        this.ask = writable(readBotAsk(event.getSender(), this.stepsContent(), this.latestContentReceivedAt()));
         this.date = event.getDate();
         this.sender = this.getSender();
         this.isMyMessage = this.room.client.getUserId() === event.getSender();
@@ -431,11 +435,41 @@ export class MatrixChatMessage implements ChatMessage {
         return original;
     }
 
+    /**
+     * When, on this device's clock, the notice's latest content arrived: an edit that gave a card more time carries its
+     * own times, so they count from when the edit was written, not from the first notice.
+     */
+    private latestContentReceivedAt(): number {
+        const sent = this.event.localTimestamp;
+        // Only a notice can be a card, so other messages skip the look at their edits
+        if (this.event.getOriginalContent().msgtype !== "m.notice") return sent;
+        const replaceTs: unknown = this.event.getUnsigned()["m.relations"]?.["m.replace"]?.origin_server_ts;
+        const editedAt =
+            typeof replaceTs === "number"
+                ? replaceTs
+                : this.event.replacingEventId()
+                ? this.event.replacingEvent()?.getTs()
+                : undefined;
+        if (typeof editedAt !== "number") return sent;
+        // The gap between the two clocks is the same for both events: this event's time here against its time there
+        return editedAt + (sent - this.event.getTs());
+    }
+
     /** An update of a bot's steps line: only its own sender can change it. */
     public modifySteps(sender: string | undefined, newContent: Record<string, unknown> | undefined) {
         if (!sender || sender !== this.event.getSender()) return;
         const steps = readBotSteps(sender, newContent);
         if (steps) this.steps.set(steps);
+    }
+
+    /**
+     * An update of a bot's card (#1657): only its own sender can change it. `receivedAt` is when the edit reached this
+     * device, so an edit caught up on after a sleep does not give a card time it no longer has.
+     */
+    public modifyAsk(sender: string | undefined, newContent: Record<string, unknown> | undefined, receivedAt: number) {
+        if (!sender || sender !== this.event.getSender()) return;
+        const ask = readBotAsk(sender, newContent, receivedAt);
+        if (ask) this.ask.set(ask);
     }
 
     public modifyContent(newContent: string) {
@@ -451,6 +485,8 @@ export class MatrixChatMessage implements ChatMessage {
 
     public markAsRemoved() {
         this.isDeleted.set(true);
+        // A removed card is no longer asking anything, so it leaves the waiting list at once
+        this.ask.set(undefined);
     }
 
     addReaction(reaction: string): Promise<void> {

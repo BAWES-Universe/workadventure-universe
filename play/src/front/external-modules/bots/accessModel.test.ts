@@ -19,7 +19,14 @@ import {
 const text: RuleSummaryText = {
     blocked: "Blocked",
     follows: "Follows the roles",
-    action: { chat: "Chat nearby", dm: "Direct messages", summon: "Summon", manage: "Manage" },
+    action: {
+        chat: "Chat nearby",
+        dm: "Direct messages",
+        summon: "Summon",
+        manage: "Manage",
+        change: "Change things",
+        deleteOrSend: "Delete or send",
+    },
     allowsAndBlocks: (allows, blocks) => `${allows} · ${blocks} blocked`,
     blocksOnly: (blocks) => `${blocks} blocked`,
 };
@@ -35,6 +42,8 @@ function rule(partial: Partial<BotRule> = {}): BotRule {
         dm: "default",
         summon: "default",
         manage: "default",
+        change: "default",
+        deleteOrSend: "default",
         ...partial,
     };
 }
@@ -46,7 +55,7 @@ const roles: BotRole[] = [
         name: "Everyone",
         color: "",
         builtIn: true,
-        defaults: { chat: true, dm: false, summon: false, manage: false },
+        defaults: { chat: true, dm: false, summon: false, manage: false, change: false, deleteOrSend: false },
     },
     {
         id: "role-member",
@@ -54,7 +63,7 @@ const roles: BotRole[] = [
         name: "Member",
         color: "",
         builtIn: true,
-        defaults: { chat: true, dm: true, summon: true, manage: false },
+        defaults: { chat: true, dm: true, summon: true, manage: false, change: true, deleteOrSend: false },
     },
     {
         id: "role-editor",
@@ -62,7 +71,7 @@ const roles: BotRole[] = [
         name: "Editor",
         color: "",
         builtIn: true,
-        defaults: { chat: true, dm: true, summon: true, manage: true },
+        defaults: { chat: true, dm: true, summon: true, manage: true, change: true, deleteOrSend: true },
     },
 ];
 
@@ -72,6 +81,35 @@ describe("reading what Orbit sends", () => {
         expect(read?.chat).toBe("default");
         expect(read?.summon).toBe("no");
         expect(read?.manage).toBe("default");
+        expect(read?.change).toBe("default");
+        expect(read?.deleteOrSend).toBe("default");
+    });
+
+    it("reads changing, deleting and sending from a rule and from what a role gives", () => {
+        const read = readRule({ id: "r1", roleId: "x", change: "yes", deleteOrSend: "no" });
+        expect(read).toMatchObject({ change: "yes", deleteOrSend: "no" });
+        const permissions = readPermissions({
+            roles: [{ id: "a", name: "Editor", defaults: { chat: true, change: true, deleteOrSend: false } }],
+        });
+        expect(permissions.roles[0].defaults).toMatchObject({
+            chat: true,
+            change: true,
+            deleteOrSend: false,
+            manage: false,
+        });
+    });
+
+    it("reads the universe and its owner by name, and none from an older Orbit", () => {
+        expect(readPermissions({ universe: { name: "Nova", ownerName: "Layla" } }).universe).toEqual({
+            name: "Nova",
+            ownerName: "Layla",
+        });
+        expect(readPermissions({ universe: { name: "Nova", ownerName: null } }).universe).toEqual({
+            name: "Nova",
+            ownerName: null,
+        });
+        expect(readPermissions({}).universe).toBeUndefined();
+        expect(readPermissions({ universe: { ownerName: "Layla" } }).universe).toBeUndefined();
     });
 
     it("drops a rule without an id and keeps the others", () => {
@@ -116,10 +154,12 @@ describe("rows", () => {
     it("sees a row that says Default everywhere as saying nothing", () => {
         expect(saysNothing(rule())).toBe(true);
         expect(saysNothing(rule({ dm: "no" }))).toBe(false);
+        expect(saysNothing(rule({ deleteOrSend: "yes" }))).toBe(false);
+        expect(saysNothing(rule({ change: "no" }))).toBe(false);
     });
 
     it("shows direct messages next to nearby chat", () => {
-        expect(SHOWN_ACTIONS).toEqual(["chat", "dm", "summon", "manage"]);
+        expect(SHOWN_ACTIONS).toEqual(["chat", "dm", "summon", "change", "deleteOrSend", "manage"]);
     });
 });
 
@@ -139,11 +179,28 @@ describe("what a row says", () => {
     it("says it follows the roles when it changes nothing", () => {
         expect(ruleSummary(rule(), text)).toBe("Follows the roles");
     });
+    it("names changing, deleting and sending like the other things", () => {
+        expect(ruleSummary(rule({ change: "yes", deleteOrSend: "yes" }), text)).toBe("Change things, Delete or send");
+        expect(ruleSummary(rule({ chat: "yes", deleteOrSend: "no" }), text)).toBe(
+            "Chat nearby · Delete or send blocked"
+        );
+    });
 });
 
 describe("what Default comes to", () => {
     it("is what the role gives, named", () => {
         expect(defaultFor("manage", rule({ roleId: "role-editor" }), roles)).toEqual({ allowed: true, from: "Editor" });
+    });
+    it("is what the role gives for changing, and for deleting and sending", () => {
+        expect(defaultFor("change", rule({ roleId: "role-member" }), roles)).toEqual({ allowed: true, from: "Member" });
+        expect(defaultFor("deleteOrSend", rule({ roleId: "role-member" }), roles)).toEqual({
+            allowed: false,
+            from: null,
+        });
+        expect(defaultFor("deleteOrSend", rule({ roleId: "role-editor" }), roles)).toEqual({
+            allowed: true,
+            from: "Editor",
+        });
     });
     it("falls back to what Everyone gives, since everyone has Everyone's permissions", () => {
         expect(defaultFor("chat", rule({ roleId: "role-editor" }), [roles[0]])).toEqual({
