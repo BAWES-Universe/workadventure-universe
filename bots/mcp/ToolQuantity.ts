@@ -21,9 +21,9 @@ const isPlain = (value: unknown): value is Record<string, unknown> => !!value &&
 const squash = (key: string) => key.toLowerCase().replace(/[^a-z0-9]/g, '');
 
 /** Keys that name how many to make. */
-const COUNT_KEY = /^(n|count|num|number|quantity|qty|batchsize|numimages|numoutputs|numresults|numitems|numtracks|numsongs|numvideos|numsamples|numgenerations|numfiles|numcopies|numberof[a-z]+|nsamples|nimages|samples|copies|imagecount|outputcount|trackcount)$/;
+const COUNT_KEY = /^(n|count|quantity|qty|batchsize|numimages|numoutputs|numresults|numitems|numtracks|numsongs|numvideos|numsamples|numgenerations|numfiles|numcopies|numberof(images|outputs|results|items|tracks|songs|videos|samples|generations|files|copies|posters|pictures|logos|icons|drafts|documents|slides|designs|clips)|nsamples|nimages|copies|imagecount|outputcount|trackcount)$/;
 /** Keys that name how many versions of each to make: they multiply. */
-const TIMES_KEY = /^(variants|variations|versions|numvariants|numvariations|numversions|outputsperprompt|samplesperprompt|imagesperprompt|perprompt)$/;
+const TIMES_KEY = /^(variants|variations|versions|numvariants|numvariations|numversions|numberofvariations|numberofvariants|numberofversions|outputsperprompt|samplesperprompt|imagesperprompt|perprompt)$/;
 /** Keys that hold a list with one thing made for each entry. */
 const LIST_KEY = /^(prompts|inputs|texts|items|requests|descriptions|topics|lyrics|queries|ideas|titles|captions|scenes|slides)$/;
 

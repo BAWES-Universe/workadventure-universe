@@ -23,7 +23,7 @@ import type { ToolServerEntry } from './MCPConnector';
 import { DEFAULT_CARD_SETTINGS, OrbitActionsUnavailable, type CardSettings, type OrbitActions, type SavedAction } from './OrbitActions';
 import type { QuestionField } from './QuestionCard';
 import { QuestionCards, type Asked, type AskInput } from './QuestionCards';
-import { batchWords, MakeCounts, type BatchKind } from './ToolQuantity';
+import { batchWords, MakeCounts, quantityOf, type BatchKind } from './ToolQuantity';
 
 /** How long a remembered approval lasts. Recommended values; the bot server's owner can change them. */
 export const GRANT_IDLE_MINUTES = Math.max(1, Number(process.env.BOT_GRANT_IDLE_MINUTES) || 60);
@@ -494,7 +494,9 @@ export class ToolApprovals {
             if (!entry || !verdict) return void (await finish('notSent', { result: 'The tool changed since, so nothing was done.' }, 'failed'));
             if (verdict.kind === 'refuse') return void (await finish('notSent', { result: verdict.line }, 'failed'));
             // A card before making more than the limit comes from a tool that runs right away, so its verdict is a run
-            const judged = verdict.kind === 'ask' ? verdict.policyRevision : card.batch && verdict.kind === 'run' ? verdict.policyRevision : undefined;
+            // (read from the saved action, so a card this process rebuilt after a restart is held to it too)
+            const madeNew = action.heading === 'makesNew' && verdict.kind === 'run';
+            const judged = verdict.kind === 'ask' ? verdict.policyRevision : madeNew ? verdict.policyRevision : undefined;
             if (judged !== undefined && judged !== action.policyRevision) {
                 return void (await finish('notSent', { result: 'The settings changed since, so nothing was done.' }, 'failed'));
             }
@@ -504,8 +506,9 @@ export class ToolApprovals {
             const outcome = outcomeOf(result);
             // What this tap let be made counts in the request, so a later step doesn't ask again for the same ones. A call that
             // proved it made nothing counts for nothing.
-            if (card.batch && (card.batch.kind === 'over' || card.batch.kind === 'part') && (outcome === 'succeeded' || outcome === 'uncertain')) {
-                this.made.add(this.countKey(botId, roomId, person), card.batch.count);
+            if (madeNew && (outcome === 'succeeded' || outcome === 'uncertain')) {
+                const quantity = quantityOf(action.toolName, entry.title, action.arguments, entry.inputSchema);
+                if (quantity.known) this.made.add(this.countKey(botId, roomId, person), quantity.count);
             }
             if (outcome === 'succeeded') {
                 const line = resultLine(result);

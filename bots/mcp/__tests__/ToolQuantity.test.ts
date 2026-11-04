@@ -49,6 +49,18 @@ describe('quantityOf', () => {
         expect(quantityOf('generate_image', undefined, { prompts: ['a', 'b'], n: 2, variations: 3 }, s)).toMatchObject({ known: true, count: 12, unit: 'images', names: { one: 'image', many: 'images' } });
     });
 
+    it('does not take other numbers for how many are made', () => {
+        const s = schema({ prompt: { type: 'string' }, number_of_seconds: { type: 'integer' }, number_of_steps: { type: 'integer' }, number: { type: 'string' }, num: { type: 'integer' } });
+        expect(quantityOf('generate_image', undefined, { prompt: 'a', number_of_seconds: 30, number_of_steps: 20, number: '+96550000000', num: 3 }, s).known).toBe(false);
+        const withCount = schema({ n: { type: 'integer' }, number_of_steps: { type: 'integer' } });
+        expect(quantityOf('generate_image', undefined, { n: 2, number_of_steps: 40 }, withCount)).toMatchObject({ known: true, count: 2 });
+    });
+
+    it('multiplies by a number of variations', () => {
+        const s = schema({ n: { type: 'integer' }, number_of_variations: { type: 'integer' } });
+        expect(quantityOf('generate_image', undefined, { n: 2, number_of_variations: 3 }, s)).toMatchObject({ known: true, count: 6 });
+    });
+
     it('never reads a number out of the words of a prompt', () => {
         const s = schema({ prompt: { type: 'string' } });
         expect(quantityOf('generate_image', undefined, { prompt: 'make 50 posters' }, s).known).toBe(false);

@@ -125,6 +125,24 @@ describe('the card before making more than the limit', () => {
         expect(s.approvals.reserveMake('b1', ROOM, SARA, 1, 5)).toEqual({ ok: false, soFar: 12 });
     });
 
+    it('holds a card rebuilt after a restart to the same checks and counts, with no memory of the card', async () => {
+        await s.approvals.propose({ botId: 'b1', roomId: ROOM, person: SARA, toolName: 'make_posters', entry: ENTRY, args: ARGS, decision: ASK, batch: over });
+        // A new process: it holds no cards, only what Orbit saved
+        const fresh = setup({ kind: 'run', heading: 'makesNew', policyRevision: 4, fingerprint: 'fp-1' });
+        fresh.orbit.actions = s.orbit.actions;
+        await fresh.approvals.handleTap('b1', ROOM, SARA, { ask: 'act_1', revision: 1, tap: { action: 'decide', option: 'approve' } });
+        await settle();
+        expect(fresh.run).toHaveBeenCalledTimes(1);
+        expect(fresh.approvals.madeSoFar('b1', ROOM, SARA)).toBe(12);
+        // And a changed setting stops it, as for a card it still held
+        const changed = setup({ kind: 'run', heading: 'makesNew', policyRevision: 9, fingerprint: 'fp-1' });
+        await s.approvals.propose({ botId: 'b1', roomId: ROOM, person: SARA, toolName: 'make_posters', entry: ENTRY, args: { ...ARGS, prompt: 'other' }, decision: ASK, batch: over });
+        changed.orbit.actions = s.orbit.actions;
+        await changed.approvals.handleTap('b1', ROOM, SARA, { ask: 'act_2', revision: 1, tap: { action: 'decide', option: 'approve' } });
+        await settle();
+        expect(changed.run).not.toHaveBeenCalled();
+    });
+
     it('does not count the batch when the tool proved it made nothing', async () => {
         s.run.mockResolvedValueOnce({ error: 'The server refused it.', outcome: 'not_sent' } as never);
         await s.approvals.propose({ botId: 'b1', roomId: ROOM, person: SARA, toolName: 'make_posters', entry: ENTRY, args: ARGS, decision: ASK, batch: over });
