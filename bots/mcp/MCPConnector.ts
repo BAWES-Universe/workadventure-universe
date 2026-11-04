@@ -719,7 +719,11 @@ export class MCPConnector {
                 for (const toolDef of toolDefs) {
                     addUniqueTool(toolDef, server, titles[toolDef.function.name], rawByName.get(toolDef.function.name));
                 }
-                MCPConnector.saveListToOrbit(botId, server, raw, { adminApiUrl, adminApiToken }, options.suggest);
+                const cachedAt = toolListCache.get(cacheKey)?.cachedAt;
+                void MCPConnector.saveListToOrbit(botId, server, raw, { adminApiUrl, adminApiToken }, options.suggest).then((outcome) => {
+                    // Orbit did not get the list: forget it here too, so the next read tries to save it again (not in an hour)
+                    if (outcome.result === 'skipped' && toolListCache.get(cacheKey)?.cachedAt === cachedAt) toolListCache.delete(cacheKey);
+                });
             } else {
                 console.warn(
                     `[MCPConnector] Server ${server.name} (${server.id}) returned no tools or invalid response`
