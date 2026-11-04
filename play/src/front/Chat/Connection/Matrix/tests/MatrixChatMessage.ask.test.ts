@@ -23,6 +23,7 @@ function askEvent(
         getId: () => "$ask",
         getDate: () => new Date(161_000),
         localTimestamp: 101_000,
+        getTs: () => 161_000,
         getSender: () => BOT,
         getOriginalContent: () => content,
         getUnsigned: () => unsigned,
@@ -79,6 +80,19 @@ describe("MatrixChatMessage card", () => {
         const bundled = { "m.relations": { "m.replace": { content: { "m.new_content": notice({ closed: true }) } } } };
         const message = new MatrixChatMessage(askEvent(notice(), bundled), fakeRoom(), false, true);
         expect(get(message.ask)?.answer).toEqual({ closed: true });
+    });
+
+    it("counts an edited card's time from when the edit was written, not from the first notice", () => {
+        // The first notice was written at 161_000 on the server (101_000 here); "More time" at 461_000 (so 401_000 here)
+        const more = { ...notice(), "universe.ask": { ...field(), now: 2_000_000, expiresAt: 2_600_000, revision: 2 } };
+        const bundled = {
+            "m.relations": {
+                "m.replace": { origin_server_ts: 461_000, content: { "m.new_content": more } },
+            },
+        };
+        const message = new MatrixChatMessage(askEvent(notice(), bundled), fakeRoom(), false, true);
+        expect(get(message.ask)?.revision).toBe(2);
+        expect(get(message.ask)?.expiresAt).toBe(401_000 + 600_000);
     });
 
     it("takes an edit only from the bot that sent the card", () => {

@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { onDestroy } from "svelte";
     import { endedAsk, closesSoon, type BotAsk, type BotAskDecision, type BotAskTap } from "../../Bots/BotAsk";
     import LL from "../../../../i18n/i18n-svelte";
     import {
@@ -42,8 +43,14 @@
     let sending = false;
     let failed = false;
     let seen: BotAsk | undefined;
+    // A sent tap waits for the bot server's edit of the card. If none comes (the bot is resting, the tap was refused),
+    // the card lets the person try again rather than staying shut.
+    const EDIT_WAIT_MS = 10_000;
+    let editTimer: ReturnType<typeof setTimeout> | undefined;
+    onDestroy(() => clearTimeout(editTimer));
     $: if (ask !== seen) {
         seen = ask;
+        clearTimeout(editTimer);
         showAll = false;
         sending = false;
         failed = false;
@@ -70,10 +77,16 @@
         onTap(tapped, action)
             .then((sent) => {
                 // A sent tap waits for the bot server's edit of the card, which brings a new card in; a failed one can be retried
-                if (!sent && tapped === ask) {
+                if (tapped !== ask) return;
+                if (!sent) {
                     sending = false;
                     failed = true;
+                    return;
                 }
+                editTimer = setTimeout(() => {
+                    sending = false;
+                    failed = true;
+                }, EDIT_WAIT_MS);
             })
             .catch(() => {
                 sending = false;

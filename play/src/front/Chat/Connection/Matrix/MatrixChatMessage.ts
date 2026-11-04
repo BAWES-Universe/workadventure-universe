@@ -88,7 +88,7 @@ export class MatrixChatMessage implements ChatMessage {
         );
         this.artifact = readArtifactField(event.getSender(), event.getOriginalContent());
         this.steps = writable(readBotSteps(event.getSender(), this.stepsContent()));
-        this.ask = writable(readBotAsk(event.getSender(), this.stepsContent(), event.localTimestamp));
+        this.ask = writable(readBotAsk(event.getSender(), this.stepsContent(), this.latestContentReceivedAt()));
         this.date = event.getDate();
         this.sender = this.getSender();
         this.isMyMessage = this.room.client.getUserId() === event.getSender();
@@ -433,6 +433,26 @@ export class MatrixChatMessage implements ChatMessage {
             if (replaced && typeof replaced === "object") return replaced as Record<string, unknown>;
         }
         return original;
+    }
+
+    /**
+     * When, on this device's clock, the notice's latest content arrived: an edit that gave a card more time carries its
+     * own times, so they count from when the edit was written, not from the first notice.
+     */
+    private latestContentReceivedAt(): number {
+        const sent = this.event.localTimestamp;
+        // Only a notice can be a card, so other messages skip the look at their edits
+        if (this.event.getOriginalContent().msgtype !== "m.notice") return sent;
+        const replaceTs: unknown = this.event.getUnsigned()["m.relations"]?.["m.replace"]?.origin_server_ts;
+        const editedAt =
+            typeof replaceTs === "number"
+                ? replaceTs
+                : this.event.replacingEventId()
+                ? this.event.replacingEvent()?.getTs()
+                : undefined;
+        if (typeof editedAt !== "number") return sent;
+        // The gap between the two clocks is the same for both events: this event's time here against its time there
+        return editedAt + (sent - this.event.getTs());
     }
 
     /** An update of a bot's steps line: only its own sender can change it. */

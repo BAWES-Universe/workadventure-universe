@@ -113,6 +113,22 @@ describe("the card a bot shows before it changes something", () => {
         expect(onTap).toHaveBeenCalledTimes(2);
     });
 
+    it("lets the person try again when the bot server never answers a sent tap", async () => {
+        vi.useFakeTimers();
+        try {
+            await show(ask(), { docked: true });
+            await click(target.querySelector('[data-option="approve"]'));
+            await vi.advanceTimersByTimeAsync(1);
+            expect((target.querySelector('[data-option="decline"]') as HTMLButtonElement).disabled).toBe(true);
+            await vi.advanceTimersByTimeAsync(10_000);
+            await tick();
+            expect((target.querySelector('[data-option="decline"]') as HTMLButtonElement).disabled).toBe(false);
+            expect(byId("botAskSendFailed")).not.toBeNull();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it("makes the whole details box the button, folded to start", async () => {
         await show(ask(), { docked: true });
         const box = byId("botAskDetails") as HTMLButtonElement;
