@@ -27,6 +27,8 @@ export const GRANT_IDLE_MINUTES = Math.max(1, Number(process.env.BOT_GRANT_IDLE_
 export const GRANT_ABSOLUTE_MINUTES = Math.max(GRANT_IDLE_MINUTES, Number(process.env.BOT_GRANT_ABSOLUTE_MINUTES) || 8 * 60);
 
 const MAX_CARDS = 2000;
+/** The longest how a card ended waits for the line that says the bot asks (a reply that never says it must not hold it back). */
+const ASK_LINE_WAIT_MS = 20_000;
 
 /**
  * Where the card goes in nearby chat and voice (#1658): to the person who asked and nobody else. What everyone reads, and a
@@ -107,7 +109,7 @@ export type Proposed =
     /** A remembered approval covers this call: run it now. */
     | { kind: 'run' }
     /** The card is shown. What the model is told; in a bubble also the line everyone reads, for the bot to say as its reply. */
-    | { kind: 'waiting'; result: Record<string, unknown>; line?: string }
+    | { kind: 'waiting'; result: Record<string, unknown>; line?: string; lineId?: string }
     /** The card could not be shown, so nothing was done. What the model is told. */
     | { kind: 'failed'; result: Record<string, unknown> };
 
@@ -128,6 +130,11 @@ interface Card {
     timer?: ReturnType<typeof setTimeout>;
     /** How the card ended, as it was last drawn. */
     lastAnswer?: AskAnswer;
+    /** The line that says the bot asks has not been said yet: how it ended is said after it, never before. */
+    askLine?: Promise<void>;
+    askLineSaid?: () => void;
+    /** The line that says the bot asks has been said (or waited for as long as it will be). */
+    askLineDone?: boolean;
     /** The person wrote again and Orbit is being asked to close it: a new call is not folded into it. */
     closing?: boolean;
 }
@@ -222,6 +229,18 @@ export class ToolApprovals {
                 waitMinutes: wait,
             };
             const card: Card = { botId, roomId, person, facts, waiting: true, nearby };
+            if (nearby) {
+                // Said before the card can be tapped: how it ends is never said ahead of the line that asks
+                card.askLine = new Promise<void>((resolve) => {
+                    const done = () => {
+                        card.askLineDone = true;
+                        resolve();
+                    };
+                    card.askLineSaid = done;
+                    const timer = setTimeout(done, ASK_LINE_WAIT_MS);
+                    timer.unref?.();
+                });
+            }
             try {
                 card.eventId = await this.sendCard(card, buildAsk(facts, this.now()), false);
             } catch (error) {
@@ -235,7 +254,7 @@ export class ToolApprovals {
             this.scheduleExpiry(action.id, card);
             // One line for everyone: the bot needs an OK, or it changed what it asks (the person said something else)
             const moment: Moment = this.takeChange(botId, roomId, person.uuid, toolName) ? 'changed' : 'ask';
-            return { kind: 'waiting', result: WAITING_NEARBY_RESULT, line: await this.lineFor(card, moment) };
+            return { kind: 'waiting', result: WAITING_NEARBY_RESULT, line: await this.lineFor(card, moment), lineId: action.id };
         } catch (error) {
             console.warn(`[ToolApprovals] Could not ask for an OK for ${toolName}:`, errorText(error));
             return { kind: 'failed', result: NO_CARD_RESULT };
@@ -537,7 +556,13 @@ export class ToolApprovals {
         if (!card.nearby || card.said) return;
         card.said = true;
         clearTimeout(card.timer);
-        await this.say(card, await this.lineFor(card, moment));
+        const sayIt = async () => this.say(card, await this.lineFor(card, moment));
+        // Never ahead of the line that says the bot asks: if that is not said yet, this follows it and the tap is not held up
+        if (card.askLine && !card.askLineDone) {
+            void card.askLine.then(sayIt).catch(() => undefined);
+            return;
+        }
+        await sayIt();
     }
 
     /** After an approved action ran: a direct message's bot says how it ended in its own words; a bubble gets one plain line. */
@@ -546,6 +571,11 @@ export class ToolApprovals {
         // What the tool said stays on the card: the line holds only the title. A call that may have run says nothing it can't know.
         if (outcome.state === 'done') await this.endLine(card, 'sent');
         else if (outcome.state === 'failed') await this.endLine(card, 'notDone');
+    }
+
+    /** The line that says the bot asks was said: what comes after it may be said now. */
+    askLineSaid(ids: readonly string[]): void {
+        for (const id of ids) this.cards.get(id)?.askLineSaid?.();
     }
 
     private takeChange(botId: string, roomId: string, personUuid: string, toolName: string): boolean {

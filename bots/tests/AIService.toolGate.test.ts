@@ -209,10 +209,10 @@ describe('a call that needs the OK, in a bubble (#1658)', () => {
     it('shows the card to the person alone, runs nothing, and carries the line everyone reads', async () => {
         const execute = vi.spyOn(MCPConnector, 'executeToolCall').mockResolvedValue('done' as never);
         const waiting = { status: 'waiting_for_ok', message: 'A card was shown.' };
-        const { service, propose } = bubbleService({ kind: 'waiting', result: waiting, line: 'Khalid, I need your OK to remove something.' });
+        const { service, propose } = bubbleService({ kind: 'waiting', result: waiting, line: 'Khalid, I need your OK to remove something.', lineId: 'act_1' });
         const [result] = await callRemove(service, person());
         expect(execute).not.toHaveBeenCalled();
-        expect(result.result).toEqual({ ...waiting, sharedLine: 'Khalid, I need your OK to remove something.' });
+        expect(result.result).toEqual({ ...waiting, sharedLine: 'Khalid, I need your OK to remove something.', sharedLineId: 'act_1' });
         expect(propose).toHaveBeenCalledWith(
             expect.objectContaining({ botId: 'b1', roomId: 'room#bubble', person: { uuid: 'uuid-khalid', name: 'Khalid', playerId: 7 }, toolName: 'remove', args: { id: '7' } })
         );
@@ -241,6 +241,17 @@ describe('a call that needs the OK, in a bubble (#1658)', () => {
         const [result] = await callRemove(service, person());
         expect(execute).not.toHaveBeenCalled();
         expect(result.result.error).toContain('could not be shown');
+    });
+
+    it('tells the cards once their asking line was said, so how they end is said after it', async () => {
+        const { service } = bubbleService({ kind: 'run' });
+        const lineSaid = vi.fn();
+        service.useApprovals({ askLineSaid: lineSaid } as never);
+        const chunks = service['saySharedLine']('Khalid, I need your OK to remove something.', ['act_1']);
+        await chunks.next();
+        expect(lineSaid).not.toHaveBeenCalled();
+        for await (const chunk of chunks) void chunk;
+        expect(lineSaid).toHaveBeenCalledWith(['act_1']);
     });
 
     it('says only the line, with no tokens spent, as the reply after a card was shown', async () => {
