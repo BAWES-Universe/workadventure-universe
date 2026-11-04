@@ -25,6 +25,7 @@ import { MCPConnector, toolTimeoutMs, type ToolServerEntry } from '../mcp/MCPCon
 import type { ToolSuggester } from '../mcp/ToolCatalog';
 import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision } from '../mcp/ToolGate';
 import { ToolPolicySource } from '../mcp/ToolPolicy';
+import type { ToolApprovals } from '../mcp/ToolApprovals';
 import { appendStreamedChunk } from './EmotionParser';
 import { describeStep, resultOf, showsAsStep, type ToolStep } from './ToolSteps';
 import { jsonrepair } from 'jsonrepair';
@@ -187,6 +188,8 @@ export class AIService {
     private mapDataService?: MapDataService;
     /** The one check right before a tool server's tool runs, and before the model is offered it (#1656). */
     private toolGate: ToolGate;
+    /** The card a tool that asks first shows in a direct message (#1657). Without it such a call is not run. */
+    private approvals?: ToolApprovals;
 
     constructor(
         conversationMemory: ConversationMemory,
@@ -208,6 +211,64 @@ export class AIService {
      */
     useAccessGate(gate: BotAccessGate): void {
         this.toolGate = this.buildToolGate(gate);
+    }
+
+    /** The tool gate this service checks calls with, for what shows the cards and runs what a tap approved. */
+    get gate(): ToolGate {
+        return this.toolGate;
+    }
+
+    useApprovals(approvals: ToolApprovals): void {
+        this.approvals = approvals;
+    }
+
+    /** The tool server entry for a tool of this bot as it is now, or null. Read from the cached list: no model is asked. */
+    async findToolEntry(botId: string, toolName: string): Promise<ToolServerEntry | null> {
+        const adminApiToken = this.adminApiService?.['adminApiToken'];
+        if (!adminApiToken) return null;
+        const found = await MCPConnector.discoverToolsWithMapping(botId, this.adminApiUrl, adminApiToken, process.env.BOT_SERVICE_TOKEN || '');
+        return found.toolServerMap.get(toolName) ?? null;
+    }
+
+    /** Runs a tool call a person approved on a card (#1657), the way a reply would, with the bot's own Patience. */
+    async runApprovedTool(botId: string, entry: ToolServerEntry, toolName: string, args: Record<string, unknown>, playerUuid: string, toolTimeoutSeconds?: number | null): Promise<unknown> {
+        return this.callMcpTool(entry, toolName, args, playerUuid, undefined, toolTimeoutSeconds);
+    }
+
+    /** One call to a tool server's tool, and what comes back made ready for the bot: blobs uploaded, errors as results. */
+    private async callMcpTool(
+        entry: ToolServerEntry,
+        toolName: string,
+        args: Record<string, unknown>,
+        playerUuid: string | undefined,
+        abortSignal?: AbortSignal,
+        toolTimeoutSeconds?: number | null
+    ): Promise<any> {
+        try {
+            const rawResult = await MCPConnector.executeToolCall(
+                entry.serverId,
+                entry.serverUrl,
+                toolName,
+                args,
+                entry.authType,
+                entry.authConfig,
+                entry.headers,
+                playerUuid,
+                abortSignal,
+                toolTimeoutMs(toolTimeoutSeconds)
+            );
+            // Process MCP resource blobs (base64 binary data) by uploading to CDN
+            // and returning CDN URLs so the AI can use send_image/send_audio/etc.
+            if (Array.isArray(rawResult)) {
+                const processed = await this.processMcpResourceContent(rawResult);
+                return processed.content;
+            }
+            return rawResult;
+        } catch (mcpError: any) {
+            console.error(`[AIService] Error executing MCP tool ${toolName}:`, mcpError);
+            Sentry.captureException(mcpError instanceof Error ? mcpError : new Error(String(mcpError)));
+            return { error: `MCP tool error: ${mcpError.message || 'Unknown error'}` };
+        }
     }
 
     private buildToolGate(access: BotAccessGate): ToolGate {
@@ -3525,45 +3586,28 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         // Check if this is an MCP tool (not a hardcoded one)
                         const mcpServerConfig = toolServerMap?.get(toolCall.name);
                         if (mcpServerConfig) {
-                            try {
-                                // One check right before the call starts (#1656): the model's list is only a convenience
-                                const verdict = botId
-                                    ? await this.toolGate.decide(
-                                          this.gateCallFor(botId, toolCall.name, mcpServerConfig, this.gatePerson(botId, playerId, botClient, spaceName), botClient)
-                                      )
-                                    : ({ kind: 'refuse', why: 'cannot_check', line: CANNOT_CHECK_TOOL_LINE } as GateDecision);
-                                if (verdict.kind !== 'run') {
-                                    result = this.toolNotRun(verdict);
+                            // One check right before the call starts (#1656): the model's list is only a convenience
+                            const verdict = botId
+                                ? await this.toolGate.decide(
+                                      this.gateCallFor(botId, toolCall.name, mcpServerConfig, this.gatePerson(botId, playerId, botClient, spaceName), botClient)
+                                  )
+                                : ({ kind: 'refuse', why: 'cannot_check', line: CANNOT_CHECK_TOOL_LINE } as GateDecision);
+                            const parsedArgs = typeof toolCall.arguments === 'string'
+                                ? this.safeParseToolArgs(toolCall.arguments)
+                                : toolCall.arguments || {};
+                            if (verdict.kind === 'refuse') {
+                                result = this.toolNotRun(verdict);
+                                break;
+                            }
+                            if (verdict.kind === 'ask') {
+                                // A card in a direct message asks for the OK; the call waits there, not here (#1657)
+                                const asked = await this.askForOk(botId!, toolCall.name, mcpServerConfig, parsedArgs, verdict, playerId, botClient);
+                                if (asked.kind === 'result') {
+                                    result = asked.result;
                                     break;
                                 }
-                                const parsedArgs = typeof toolCall.arguments === 'string'
-                                    ? this.safeParseToolArgs(toolCall.arguments)
-                                    : toolCall.arguments || {};
-                                const rawResult = await MCPConnector.executeToolCall(
-                                    mcpServerConfig.serverId,
-                                    mcpServerConfig.serverUrl,
-                                    toolCall.name,
-                                    parsedArgs,
-                                    mcpServerConfig.authType,
-                                    mcpServerConfig.authConfig,
-                                    mcpServerConfig.headers,
-                                    playerUuid,
-                                    abortSignal,
-                                    toolTimeoutMs(toolTimeoutSeconds)
-                                );
-                                // Process MCP resource blobs (base64 binary data) by uploading to CDN
-                                // and returning CDN URLs so the AI can use send_image/send_audio/etc.
-                                if (Array.isArray(rawResult)) {
-                                    const processed = await this.processMcpResourceContent(rawResult);
-                                    result = processed.content;
-                                } else {
-                                    result = rawResult;
-                                }
-                            } catch (mcpError: any) {
-                                console.error(`[AIService] Error executing MCP tool ${toolCall.name}:`, mcpError);
-                                Sentry.captureException(mcpError instanceof Error ? mcpError : new Error(String(mcpError)));
-                                result = { error: `MCP tool error: ${mcpError.message || 'Unknown error'}` };
                             }
+                            result = await this.callMcpTool(mcpServerConfig, toolCall.name, parsedArgs, playerUuid, abortSignal, toolTimeoutSeconds);
                         } else {
                             // Log unknown tool for debugging
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -3588,13 +3632,40 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         return Promise.all(toolPromises);
     }
 
+    /** What the model is told when the gate did not let a tool run: the line the person can be told as it is. */
+    private toolNotRun(verdict: Extract<GateDecision, { kind: 'refuse' }>): { error: string } {
+        return { error: `${verdict.line} This was not done, and it cannot be done another way. Tell the person.` };
+    }
+
     /**
-     * What the model is told when the gate did not let a tool run. A refusal is a line the person can be told as it is.
-     * A tool that needs an OK waits for a card, and a card needs a direct message to be shown in.
+     * A call that needs the person's OK (#1657). In a direct message the card is shown and the call waits there: the
+     * model hears that it is waiting, and the reply ends. A remembered approval that covers the call lets it run now.
+     * Anywhere else there is no card to show, so it is not run and the person is told to ask in a direct message.
      */
-    private toolNotRun(verdict: Exclude<GateDecision, { kind: 'run' }>): { error: string } {
-        if (verdict.kind === 'refuse') return { error: `${verdict.line} This was not done, and it cannot be done another way. Tell the person.` };
-        return { error: 'This needs the person\'s OK first and it was not done. Tell them to message you directly and ask again there.' };
+    private async askForOk(
+        botId: string,
+        toolName: string,
+        entry: ToolServerEntry,
+        args: Record<string, unknown>,
+        decision: Extract<GateDecision, { kind: 'ask' }>,
+        playerId: number | undefined,
+        botClient?: BotClient
+    ): Promise<{ kind: 'run' } | { kind: 'result'; result: unknown }> {
+        const chat = playerId !== undefined && !botClient ? this.chatCallFor(botId, playerId) : null;
+        if (!this.approvals || !chat || chat.chat.kind !== 'dm' || !chat.person.signedIn || !chat.person.identifier) {
+            return { kind: 'result', result: { error: "This needs the person's OK first and it was not done. Tell them to message you directly and ask again there." } };
+        }
+        const proposed = await this.approvals.propose({
+            botId,
+            roomId: chat.chat.ref,
+            person: { uuid: chat.person.identifier, name: chat.person.name },
+            toolName,
+            ...(entry.title ? { toolTitle: entry.title } : {}),
+            entry,
+            args,
+            decision,
+        });
+        return proposed.kind === 'run' ? { kind: 'run' } : { kind: 'result', result: proposed.result };
     }
 
     /**

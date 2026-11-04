@@ -18,7 +18,9 @@ import { AdminApiService } from './AdminApiService';
 import { BotRegistry } from './BotRegistry';
 import { movementLogger } from '../utils/MovementLogger';
 import { DmReplyService, type DmRoomLink } from './DmReplyService';
-import { readMatrixConfig } from '../matrix/MatrixConfig';
+import { botMatrixId, readMatrixConfig } from '../matrix/MatrixConfig';
+import { OrbitActions } from '../mcp/OrbitActions';
+import { ToolApprovals } from '../mcp/ToolApprovals';
 import { verifyMatrixRegistration } from '../matrix/verifyMatrixRegistration';
 import { MatrixAppServiceClient } from '../matrix/MatrixAppServiceClient';
 import { MatrixDmBridge } from '../matrix/MatrixDmBridge';
@@ -72,7 +74,31 @@ async function setupMatrix(): Promise<void> {
     const matrixClient = new MatrixAppServiceClient(matrixConfig);
     if (!(await verifyMatrixRegistration(matrixClient, matrixConfig))) return;
     const dmReplyService = new DmReplyService(botManager);
+    // The card a bot shows before a tool that asks first runs (#1657): in the person's direct message, saved in Orbit
+    const aiService = botManager.getAIService();
+    const botUser = (botId: string) => botMatrixId(matrixConfig.domain, botId) ?? '';
+    const approvals = new ToolApprovals({
+        orbit: new OrbitActions(() => {
+            const serviceToken = process.env.BOT_SERVICE_TOKEN;
+            return ADMIN_API_URL && ADMIN_API_TOKEN && serviceToken ? { adminApiUrl: ADMIN_API_URL, adminApiToken: ADMIN_API_TOKEN, serviceToken } : null;
+        }),
+        cards: {
+            send: (botId, roomId, content) => matrixClient.sendMessage(botUser(botId), roomId, content),
+            say: async (botId, roomId, text) => void (await matrixClient.sendText(botUser(botId), roomId, text)),
+        },
+        gate: aiService.gate,
+        tools: {
+            find: (botId, toolName) => aiService.findToolEntry(botId, toolName),
+            run: async (botId, entry, toolName, args, playerUuid) => {
+                const config = await dmReplyService.getBotConfig(botId).catch(() => null);
+                return aiService.runApprovedTool(botId, entry, toolName, args, playerUuid, config?.toolTimeoutSeconds);
+            },
+        },
+        followUp: (outcome) => matrixBridge?.sayHowItEnded(outcome) ?? Promise.resolve(),
+    });
+    aiService.useApprovals(approvals);
     matrixBridge = new MatrixDmBridge(matrixConfig, matrixClient, {
+        approvals,
         getBotConfig: (botId, fresh) => dmReplyService.getBotConfig(botId, fresh),
         checkAccess: (botId, chatId) => adminApiService.checkDmAccess(botId, chatId),
         reply: (botId, person, text, attachments, hooks) => dmReplyService.reply(botId, person, text, attachments, hooks),

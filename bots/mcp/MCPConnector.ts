@@ -74,6 +74,8 @@ export interface ToolServerEntry {
     serverName?: string;
     /** What the tool is right now: its definition, the server's address and the account it uses (#1654). */
     fingerprint?: string;
+    /** The tool's inputs as the server described them, for showing the details of a call on a card in their order (#1657). */
+    inputSchema?: unknown;
 }
 
 // ---------------------------------------------------------------------------
@@ -677,6 +679,7 @@ export class MCPConnector {
                     headers: server.headers,
                     serverName: server.name,
                     ...(raw ? { fingerprint: fingerprintTool(raw, server) } : {}),
+                    ...(raw?.inputSchema !== undefined ? { inputSchema: raw.inputSchema } : {}),
                     ...(title ? { title } : {}),
                 });
             }

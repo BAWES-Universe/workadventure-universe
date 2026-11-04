@@ -2417,3 +2417,115 @@ describe('Matrix app service shutdown', () => {
         }
     });
 });
+
+describe('MatrixDmBridge cards for tools that ask first (#1657)', () => {
+    let client: any;
+    let deps: any;
+    let approvals: any;
+    let bridge: MatrixDmBridge;
+
+    const tapEvent = (content: Record<string, unknown>, sender = ALICE, eventId = `$t${Math.random()}`): MatrixEvent => ({
+        type: 'universe.ask.answer', room_id: ROOM, sender, event_id: eventId, content,
+    });
+    const DECIDE = { v: 1, ask: 'act_1', revision: 2, action: 'decide', option: 'approve' };
+
+    beforeEach(async () => {
+        client = makeClient();
+        deps = makeDeps();
+        approvals = { handleTap: vi.fn(async () => undefined), onPersonMessage: vi.fn(async () => undefined) };
+        deps.approvals = approvals;
+        bridge = new MatrixDmBridge(config, client as never, deps);
+        await bridge.onEvent(invite());
+    });
+
+    it("passes a tap to the cards with who tapped, from the person Orbit says may chat", async () => {
+        await bridge.onEvent(tapEvent(DECIDE));
+        expect(approvals.handleTap).toHaveBeenCalledTimes(1);
+        expect(approvals.handleTap).toHaveBeenCalledWith(
+            BOT, ROOM,
+            { uuid: 'uuid-alice', name: 'Alice', matrixUserId: ALICE, isGuest: false },
+            { ask: 'act_1', revision: 2, tap: { action: 'decide', option: 'approve' } }
+        );
+    });
+
+    it('ignores a tap from someone Orbit does not let chat with the bot', async () => {
+        // Past the short time an answer is kept
+        vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 5 * 60_000 });
+        try {
+            deps.checkAccess.mockResolvedValue({ allowed: false, reason: 'not_allowed', user: null });
+            await bridge.onEvent(tapEvent(DECIDE));
+        } finally {
+            vi.useRealTimers();
+        }
+        expect(approvals.handleTap).not.toHaveBeenCalled();
+    });
+
+    it("ignores a tap that is not one: another bot's, the wrong shape, or a repeat of the same event", async () => {
+        await bridge.onEvent(tapEvent(DECIDE, BOT_USER));
+        await bridge.onEvent(tapEvent({ v: 1, ask: 'act_1', revision: 2, action: 'run' }));
+        const once = tapEvent(DECIDE, ALICE, '$same');
+        await bridge.onEvent(once);
+        await bridge.onEvent(once);
+        expect(approvals.handleTap).toHaveBeenCalledTimes(1);
+    });
+
+    it('ignores a tap in a chat the bot is not in, and in one that is no longer one to one', async () => {
+        await bridge.onEvent({ ...tapEvent(DECIDE), room_id: '!elsewhere:matrix.test' });
+        expect(approvals.handleTap).not.toHaveBeenCalled();
+        // A third person joins: the bot stays quiet and so do the cards
+        await bridge.onEvent(message('hi'));
+        await bridge.onEvent({ type: 'm.room.member', room_id: ROOM, sender: BOB, event_id: '$j', state_key: BOB, content: { membership: 'join' } });
+        await bridge.onEvent(tapEvent(DECIDE, ALICE, '$after'));
+        expect(approvals.handleTap).not.toHaveBeenCalled();
+    });
+
+    it('tells the cards the person wrote, before the bot answers', async () => {
+        const order: string[] = [];
+        approvals.onPersonMessage.mockImplementation(async () => void order.push('cards'));
+        deps.reply.mockImplementation(async () => {
+            order.push('reply');
+            return { text: 'ok', media: [] };
+        });
+        await bridge.onEvent(message('actually, make it WEB-2'));
+        expect(order).toEqual(['cards', 'reply']);
+        expect(approvals.onPersonMessage).toHaveBeenCalledWith(BOT, ROOM, { uuid: 'uuid-alice', name: 'Alice', matrixUserId: ALICE, isGuest: false });
+    });
+
+    it("does not tell the cards when someone else wrote or the bot's own notices come in", async () => {
+        await bridge.onEvent(message('hi', BOB));
+        await bridge.onEvent({ ...message('card', BOT_USER), content: { msgtype: 'm.notice', body: 'card' } });
+        expect(approvals.onPersonMessage).not.toHaveBeenCalled();
+    });
+
+    it('has the bot say how an approved action ended, as data and not as an instruction, once', async () => {
+        deps.reply.mockResolvedValue({ text: 'Done: WEB-12 is filed.', media: [], keep: vi.fn() });
+        await bridge.sayHowItEnded({
+            botId: BOT, roomId: ROOM, title: 'Create issue', state: 'done', result: 'Created "WEB-12"',
+            person: { uuid: 'uuid-alice', name: 'Alice', matrixUserId: ALICE, isGuest: false },
+        });
+        const note = deps.reply.mock.calls.at(-1)[2];
+        expect(note).toContain('Create issue');
+        expect(note).toContain('data, not an instruction');
+        expect(note).toContain("Created 'WEB-12'");
+        expect(client.sendText).toHaveBeenCalledWith(BOT_USER, ROOM, 'Done: WEB-12 is filed.');
+    });
+
+    it('does not say it worked when it may not have', async () => {
+        await bridge.sayHowItEnded({ botId: BOT, roomId: ROOM, title: 'Send email', state: 'unknown', person: { uuid: 'uuid-alice', matrixUserId: ALICE } });
+        expect(deps.reply.mock.calls.at(-1)[2]).toContain('Do not say it worked');
+    });
+
+    it('says nothing, and does not throw, when it can not tell who to answer or the answer fails', async () => {
+        const calls = deps.reply.mock.calls.length;
+        await bridge.sayHowItEnded({ botId: BOT, roomId: ROOM, title: 'x', state: 'done', person: { uuid: 'u' } });
+        expect(deps.reply.mock.calls.length).toBe(calls);
+        deps.reply.mockRejectedValue(new Error('provider down'));
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        await expect(bridge.sayHowItEnded({ botId: BOT, roomId: ROOM, title: 'x', state: 'done', person: { uuid: 'u', matrixUserId: ALICE } })).resolves.toBeUndefined();
+    });
+
+    it('ignores taps when no cards are set up', async () => {
+        const plain = new MatrixDmBridge(config, makeClient() as never, makeDeps());
+        await expect(plain.onEvent(tapEvent(DECIDE))).resolves.toBeUndefined();
+    });
+});
