@@ -395,6 +395,105 @@ describe('Create (approve)', () => {
     });
 });
 
+/** What the game needs in every card it is given (game #1792): without all of it, it drops the edit. */
+function expectWholeCard(content: Record<string, any>, firstEventId: string) {
+    expect(content.msgtype).toBe('m.notice');
+    expect(content['m.relates_to']).toEqual({ rel_type: 'm.replace', event_id: firstEventId });
+    expect(String(content.body).startsWith('* ')).toBe(true);
+    const outer = content['m.new_content'];
+    expect(outer.msgtype).toBe('m.notice');
+    const card = outer[ASK_KEY];
+    expect(card.v).toBe(1);
+    expect(card.kind).toBe('approval');
+    expect(typeof card.id).toBe('string');
+    expect(card.id.length).toBeGreaterThan(0);
+    expect(typeof card.title).toBe('string');
+    expect(card.title.length).toBeGreaterThan(0);
+    expect(Number.isInteger(card.revision) && card.revision >= 0).toBe(true);
+    expect(Number.isFinite(card.expiresAt)).toBe(true);
+    expect(Number.isFinite(card.now)).toBe(true);
+    expect(card.waitMinutes).toBeGreaterThan(0);
+    expect(Array.isArray(card.lines)).toBe(true);
+    expect(card.options.length).toBeGreaterThan(0);
+    for (const option of card.options) {
+        expect(['approve', 'approveAndRemember', 'decline']).toContain(option.id);
+        expect(option.label.length).toBeGreaterThan(0);
+    }
+}
+
+describe('every edit of a card carries the whole card (the game drops one that does not)', () => {
+    const scenarios: Array<[string, (t: Setup) => Promise<void>]> = [
+        ['approved and done', async (t) => void (await t.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'decide', option: 'approve' })))],
+        ['approved with allow more', async (t) => void (await t.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'decide', option: 'approveAndRemember' })))],
+        ['declined', async (t) => void (await t.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'decide', option: 'decline' })))],
+        ['closed with X', async (t) => void (await t.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'close' })))],
+        ['more time', async (t) => void (await t.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'moreTime' })))],
+        ['ask me again', async (t) => void (await t.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'askAgain' })))],
+        ['typed something else', async (t) => void (await t.approvals.onPersonMessage('b1', ROOM, SARA))],
+        [
+            'the claim is lost',
+            async (t) => {
+                t.orbit.claim = (async (_bot: string, id: string) => ({ claimed: false as const, reason: 'stale', action: { ...t.orbit.actions.get(id)!, status: 'closed' as const, closedReason: 'expired' as const, revision: 5 } })) as never;
+                await t.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'decide', option: 'approve' }));
+            },
+        ],
+        [
+            'the claim fails',
+            async (t) => {
+                t.orbit.claim = (async () => {
+                    throw new Error('down');
+                }) as never;
+                await t.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'decide', option: 'approve' }));
+            },
+        ],
+        [
+            'the tool fails',
+            async (t) => {
+                t.run.mockResolvedValue({ error: 'Tool error', outcome: 'failed' });
+                await t.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'decide', option: 'approve' }));
+            },
+        ],
+        [
+            'the tool gives no proof either way',
+            async (t) => {
+                t.run.mockResolvedValue({ error: 'timed out' });
+                await t.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'decide', option: 'approve' }));
+            },
+        ],
+        [
+            'the tool changed since',
+            async (t) => {
+                t.find.mockResolvedValue({ ...ENTRY, fingerprint: 'other' });
+                await t.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'decide', option: 'approve' }));
+            },
+        ],
+    ];
+
+    it.each(scenarios)('%s', async (_name, act) => {
+        await s.approvals.propose(input());
+        const first = s.sent[0];
+        await act(s);
+        await settle();
+        await settle();
+        const edits = s.sent.slice(1);
+        expect(edits.length).toBeGreaterThan(0);
+        for (const edit of edits) expectWholeCard(edit.content, first.eventId);
+    });
+
+    it('also when Orbit gives no usable end time, and when the card is rebuilt after a restart', async () => {
+        await s.approvals.propose(input());
+        s.orbit.actions.set('act_1', { ...s.orbit.actions.get('act_1')!, reviewExpiresAt: 'not a date' });
+        const restarted = setup();
+        restarted.orbit.actions = s.orbit.actions;
+        await restarted.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'close' }));
+        await settle();
+        expect(restarted.sent.length).toBeGreaterThan(0);
+        // The first card was sent by the other process, so this one starts a notice: whole as well
+        const card = field(restarted.sent[0].content);
+        expect(Number.isFinite(card.expiresAt)).toBe(true);
+    });
+});
+
 describe('Create, and allow more (approve and remember)', () => {
     it('saves the approval for the hours set, runs the call, and the card says how long it lasts', async () => {
         await s.approvals.propose(input());
@@ -512,6 +611,24 @@ describe('typing something else', () => {
         expect(s.orbit.actions.get('act_2')!.closedReason).toBe('superseded');
         const ended = s.sent.slice(2).map((s2) => field(s2.content));
         expect(ended.map((card) => card.answer)).toEqual([{ typed: true }, { typed: true }]);
+    });
+
+    it('does not fold a repeated call into a card that is being closed because the person wrote again', async () => {
+        await s.approvals.propose(input());
+        const real = s.orbit.supersede.bind(s.orbit);
+        let release: () => void = () => undefined;
+        s.orbit.supersede = (async (...args: Parameters<typeof real>) => {
+            await new Promise<void>((resolve) => (release = resolve));
+            return real(...args);
+        }) as never;
+        const closing = s.approvals.onPersonMessage('b1', ROOM, SARA);
+        await settle();
+        // The reply went on while Orbit was slow, and the model asks for the same thing again
+        await s.approvals.propose(input());
+        expect(s.orbit.actions.size).toBe(2);
+        release();
+        await closing;
+        expect(s.orbit.actions.get('act_1')!.closedReason).toBe('superseded');
     });
 
     it('keeps their remembered approvals alive', async () => {
