@@ -170,9 +170,8 @@
     .word {
         display: block;
         font-weight: 600;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+        /* On a narrow phone card a long word ("Getting to know") wraps instead of being cut off */
+        overflow-wrap: anywhere;
     }
     .meter {
         display: block;
