@@ -104,6 +104,8 @@ export interface ArtifactSummary {
     kind: ArtifactKind;
     makerName: string;
     version: number;
+    /** Set when this artifact is a copy; a change to another bot's artifact answers with the bot's own copy (Orbit #800). */
+    copiedFromId?: string | null;
 }
 
 export interface ArtifactVersionSummary {
@@ -936,7 +938,7 @@ export class AdminApiService {
     async checkVoiceAllowance(
         botId: string,
         input: { userId: string; isGuest: boolean; turnId: string }
-    ): Promise<{ allowed: true } | { allowed: false; resetsAt: string } | null> {
+    ): Promise<{ allowed: true; left?: number; resetsAt?: string } | { allowed: false; resetsAt: string } | null> {
         if (!this.isConfigured()) return null;
         const botServiceToken = process.env.BOT_SERVICE_TOKEN;
         if (!botServiceToken) return null;
@@ -946,13 +948,46 @@ export class AdminApiService {
                 input,
                 { headers: { Authorization: `Bearer ${botServiceToken}` }, timeout: 5000 }
             );
-            const body = response.data as Partial<{ allowed: boolean; resetsAt: string }>;
-            if (body?.allowed === true) return { allowed: true };
+            const body = response.data as Partial<{ allowed: boolean; resetsAt: string; left: number }>;
+            if (body?.allowed === true) {
+                // What is left comes with a yes from an Orbit that counts it; an Orbit from before sends only the yes
+                const left = typeof body.left === 'number' && Number.isInteger(body.left) && body.left >= 0 ? body.left : undefined;
+                const resetsAt = typeof body.resetsAt === 'string' && !Number.isNaN(Date.parse(body.resetsAt)) ? body.resetsAt : undefined;
+                return left === undefined ? { allowed: true } : { allowed: true, left, resetsAt };
+            }
             if (body?.allowed === false && typeof body.resetsAt === 'string' && !Number.isNaN(Date.parse(body.resetsAt))) return { allowed: false, resetsAt: body.resetsAt };
             return null;
         } catch (error) {
             const msg = (axios.isAxiosError(error) && error.response?.status) || (error as Error)?.message || 'Unknown error';
             console.warn(`[AdminApiService] Voice allowance check failed, the reply stays in text: ${msg}`);
+            return null;
+        }
+    }
+
+    /**
+     * How many spoken replies a person has left (#1669, Orbit voice-allowance/left), counting nothing and starting no window.
+     * `left` is null when Orbit can't name the person; `resetsAt` is null while no window is running. Null when Orbit can't be
+     * asked or is from before this existed: the Voice menu then says nothing about what is left.
+     */
+    async voiceRepliesLeft(botId: string, input: { userId: string; isGuest: boolean }): Promise<{ left: number | null; resetsAt: string | null } | null> {
+        if (!this.isConfigured()) return null;
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!botServiceToken) return null;
+        try {
+            const response = await axios.post(
+                `${this.adminApiUrl}/api/bots/${encodeURIComponent(botId)}/voice-allowance/left`,
+                input,
+                { headers: { Authorization: `Bearer ${botServiceToken}` }, timeout: 5000 }
+            );
+            const body = response.data as Partial<{ left: number | null; resetsAt: string | null }>;
+            // Anything but an answer in this shape is an Orbit that doesn't know the question
+            if (!body || typeof body !== 'object') return null;
+            const left = typeof body?.left === 'number' && Number.isInteger(body.left) && body.left >= 0 ? body.left : null;
+            const resetsAt = typeof body?.resetsAt === 'string' && !Number.isNaN(Date.parse(body.resetsAt)) ? body.resetsAt : null;
+            return { left, resetsAt };
+        } catch (error) {
+            const msg = (axios.isAxiosError(error) && error.response?.status) || (error as Error)?.message || 'Unknown error';
+            console.warn(`[AdminApiService] Asking what is left of the spoken replies failed: ${msg}`);
             return null;
         }
     }

@@ -52,6 +52,7 @@ import { captureServerEvent } from '../ai/PostHogClient';
 import { BotAttention, followUpSeconds } from './BotAttention';
 import { isBotSpaceUser, type BotAsksPort } from '../mcp/NearbyAsks';
 import type { PrivateEventPusherToFront } from '@workadventure/messages';
+import { audioFileNameFor } from '../utils/audioFileName';
 
 // Get the secret key from environment - must match pusher's SECRET_KEY
 const SECRET_KEY = process.env.SECRET_KEY || 'default-secret-key';
@@ -1850,12 +1851,18 @@ export class BotClient {
     async sendAudio(spaceName: string, url: string, asker?: number, mimeType?: string): Promise<string> {
         const mimeHint = mimeType || this.inferMimeFromExt(url);
         try {
-            const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
-            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, undefined, undefined, asker)) {
+            const { location, mimeType: uploadedType } = await this.uploadMedia(url, mimeHint);
+            // A song with no usable name would show as a plain player: give it one that ends as audio.
+            // When nothing says which audio type it is (a stored link is a bare id, with no type), mp3 is the common one,
+            // and the message still goes out as audio, not as a file the card would not play.
+            const audioType = [mimeHint, uploadedType].find((one) => one?.startsWith('audio/')) ?? 'audio/mpeg';
+            const fileName = audioFileNameFor(location, audioType);
+            const sentType = uploadedType.startsWith('audio/') ? uploadedType : audioType;
+            if (!this.sendMediaMessage(spaceName, location, 'audio', sentType, undefined, fileName, asker)) {
                 const err = new Error(`Bot is not in space ${spaceName} — cannot send audio`);
                 (err as any)._cdnUrl = location;
-                (err as any)._mediaType = mediaType;
-                (err as any)._mimeType = mimeType;
+                (err as any)._mediaType = 'audio';
+                (err as any)._mimeType = sentType;
                 throw err;
             }
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -2633,7 +2640,7 @@ export class BotClient {
                             reason: draft.reason ?? '',
                         },
                     }),
-                sendStatus: (spaceName, receiverUserId, status) =>
+                sendStatus: (spaceName, receiverUserId, status, left) =>
                     this.sendPrivateEvent(spaceName, receiverUserId, {
                         $case: 'botVoiceStatus',
                         botVoiceStatus: {
@@ -2642,6 +2649,9 @@ export class BotClient {
                             state: status,
                             // How long, after answering someone, the bot goes on listening to them without its name
                             followUpSeconds: this.attention.followUpSeconds,
+                            // The spoken replies this person has left, when Orbit said (#1669)
+                            repliesLeft: left?.count,
+                            repliesResetAt: left?.resetsAt ?? '',
                         },
                     }),
             },
@@ -2670,6 +2680,7 @@ export class BotClient {
         this.speech = new BotSpeech(this.voice, voiceReplyLimits());
         // With others in the bubble, a spoken turn is the bot's only when it was said to the bot (#1220)
         this.voice.hears = (spaceName, personId, text) => this.attention.hears(spaceName, BotClient.playerIdOf(personId), text);
+        this.voice.playerIdOf = (personId) => BotClient.playerIdOf(personId);
         this.voice.onAudience = (spaceName) => this.speech?.audience(spaceName);
         this.voice.onUnplayed = (spaceName, segmentId) => this.speech?.unplayed(spaceName, segmentId);
         this.voice.onHeard = (spaceName, segmentId) => this.speech?.heard(spaceName, segmentId);

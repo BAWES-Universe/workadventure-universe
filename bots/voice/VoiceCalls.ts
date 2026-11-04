@@ -25,7 +25,7 @@
 import type { PrivateEventPusherToFront, SpaceUser } from '@workadventure/messages';
 import type { FromWorker, ProviderPart, ToWorker, VoiceDraft, VoiceMode, VoiceSignal, VoiceStatus } from './protocol';
 import type { SpeechTurn, TurnDecision } from './BotSpeech';
-import type { TurnGate } from './VoiceAllowance';
+import type { RepliesLeft, TurnGate } from './VoiceAllowance';
 import type { VoiceLink } from './VoiceLink';
 import { VOICE_BOT_TAG } from './VoiceBotTag';
 import type { ActiveVoice, PartProvider, VoiceSettings } from './VoiceSettings';
@@ -40,8 +40,11 @@ export interface GameSide {
     sendStart(spaceName: string, receiverUserId: string): void;
     /** Shows one person, and only them, what the bot hears them say (see handleSpeech). */
     sendDraft(spaceName: string, receiverUserId: string, draft: VoiceDraft): void;
-    /** Tells one person where their audio with the bot stands (see VoiceStatus): the game draws its Voice button from it. */
-    sendStatus(spaceName: string, receiverUserId: string, status: VoiceStatus): void;
+    /**
+     * Tells one person where their audio with the bot stands (see VoiceStatus): the game draws its Voice button from it. With
+     * `left`, the spoken replies they have left, which the Voice menu says at the bottom (#1669).
+     */
+    sendStatus(spaceName: string, receiverUserId: string, status: VoiceStatus, left?: RepliesLeft): void;
 }
 
 interface Call {
@@ -144,6 +147,13 @@ export class VoiceCalls {
     private readonly modes = new Map<string, VoiceMode>();
     /** The last status each person was told, so only a change is sent. */
     private readonly told = new Map<string, VoiceStatus>();
+    /** What each person has left of their spoken replies, as far as Orbit said (#1669), and what they were last told of it. */
+    private readonly left = new Map<string, RepliesLeft>();
+    private readonly toldLeft = new Map<string, string>();
+    /** People whose count is being asked for, so a person arriving twice asks once. */
+    private readonly refreshing = new Set<string>();
+    /** The numeric player id in a space user id, or 0: how a person in this bubble is found among those the bot knows by number. */
+    playerIdOf?: (spaceUserId: string) => number;
     /** Where each person's audio really stands, whatever they were told: the button shows paused while another voice bot is here (#1670). */
     private readonly actual = new Map<string, VoiceStatus>();
     /** The other voice bots in each space, by space user id. While there is one, this bot answers in text and says nothing out loud. */
@@ -312,9 +322,52 @@ export class VoiceCalls {
         this.actual.set(key, status);
         // With two voice bots in the bubble neither speaks: the button shows paused, and what is true comes back with one bot
         const shown = this.crowded(spaceName) ? 'paused' : status;
-        if (this.told.get(key) === shown) return;
+        const left = this.left.get(key);
+        const leftSignature = left ? `${left.count}|${left.resetsAt ?? ''}` : '';
+        if (this.told.get(key) === shown && (this.toldLeft.get(key) ?? '') === leftSignature) return;
+        const arrived = shown === 'on' && this.told.get(key) !== 'on';
         this.told.set(key, shown);
-        this.game.sendStatus(spaceName, personId, shown);
+        this.toldLeft.set(key, leftSignature);
+        this.game.sendStatus(spaceName, personId, shown, left);
+        // Someone whose voice just came on is told what they have left before their first spoken reply
+        if (arrived) this.refreshLeft(spaceName, personId);
+    }
+
+    /**
+     * What a person has left of their spoken replies (#1669) is told along with their status. With `send` false it is only kept, for a
+     * status that is about to be sent (voice paused for them).
+     */
+    private noteLeft(spaceName: string, personId: string, left: RepliesLeft, send: boolean): void {
+        const key = callKey(spaceName, personId);
+        this.left.set(key, left);
+        if (!send || !this.told.has(key)) return;
+        this.tell(spaceName, personId, this.actual.get(key) ?? 'connecting');
+    }
+
+    /**
+     * Asks Orbit what a person has left, when voice comes on for them and after a reply of theirs was given back, counting nothing. Only
+     * when Universe AI pays for part of this bot's voice: on the maker's own keys nobody's allowance is used, so there is nothing to say.
+     */
+    private refreshLeft(spaceName: string, personId: string): void {
+        const { gate, settings, playerIdOf } = this;
+        if (!gate?.leftForPlayer || !settings || !playerIdOf) return;
+        const key = callKey(spaceName, personId);
+        if (this.refreshing.has(key)) return;
+        this.refreshing.add(key);
+        void (async () => {
+            try {
+                const active = await settings.active();
+                if ('reason' in active || (active.providers.recognition.owner && active.providers.speech.owner)) return;
+                const playerId = playerIdOf(personId);
+                const left = playerId ? await gate.leftForPlayer?.(playerId) : null;
+                // They may have left in the meantime
+                if (left && this.told.has(key)) this.noteLeft(spaceName, personId, left, true);
+            } catch {
+                // What is left is a courtesy: the menu just says less
+            } finally {
+                this.refreshing.delete(key);
+            }
+        })();
     }
 
     /** Whether another voice bot is in this space: two voice bots would talk over each other, so both answer in text (#1670). */
@@ -378,6 +431,8 @@ export class VoiceCalls {
         for (const key of this.joined.keys()) if (key.startsWith(`${spaceName}\n`)) this.joined.delete(key);
         for (const key of this.modes.keys()) if (key.startsWith(`${spaceName}\n`)) this.modes.delete(key);
         for (const key of this.told.keys()) if (key.startsWith(`${spaceName}\n`)) this.told.delete(key);
+        for (const key of this.left.keys()) if (key.startsWith(`${spaceName}\n`)) this.left.delete(key);
+        for (const key of this.toldLeft.keys()) if (key.startsWith(`${spaceName}\n`)) this.toldLeft.delete(key);
         for (const key of this.actual.keys()) if (key.startsWith(`${spaceName}\n`)) this.actual.delete(key);
         this.talking.delete(spaceName);
         this.lastSpeechAt.delete(spaceName);
@@ -477,6 +532,8 @@ export class VoiceCalls {
         this.live.delete(callKey(spaceName, spaceUserId));
         this.modes.delete(callKey(spaceName, spaceUserId));
         this.told.delete(callKey(spaceName, spaceUserId));
+        this.left.delete(callKey(spaceName, spaceUserId));
+        this.toldLeft.delete(callKey(spaceName, spaceUserId));
         this.pausedFor.delete(callKey(spaceName, spaceUserId));
         this.actual.delete(callKey(spaceName, spaceUserId));
         if (this.roster.get(spaceName)?.delete(spaceUserId)) this.rosterChanged(spaceName);
@@ -937,6 +994,10 @@ export class VoiceCalls {
                 // The gate never throws; if it does, the reply stays in text
             }
             if (this.bubbles.get(spaceName) !== bubble) return { action: 'text' };
+            // What Orbit said is left goes with the status the person is about to get (paused, or back on)
+            const left = this.gate.leftOf?.(turn);
+            const who = this.spaceUserFor(spaceName, turn).personId;
+            if (left && who) this.noteLeft(spaceName, who, left, verdict === 'yes');
             if (verdict !== 'yes') {
                 this.log(`voice: ${spaceName} answers in text this time (${verdict === 'no' ? 'the allowance for spoken replies is used' : 'the allowance could not be settled'})`);
                 if (verdict === 'no') this.pause(spaceName, turn);
@@ -952,8 +1013,20 @@ export class VoiceCalls {
     }
 
     /** A reply that was allowed will not be spoken after all (see BotSpeech): what was counted for it is given back, in the background. */
-    unspoken(_spaceName: string, turn: SpeechTurn): void {
-        void this.gate?.release(turn).catch(() => undefined);
+    unspoken(spaceName: string, turn: SpeechTurn): void {
+        const gate = this.gate;
+        if (!gate) return;
+        const who = this.spaceUserFor(spaceName, turn).personId;
+        // The place given back is told to the person once it is
+        void gate
+            .release(turn)
+            .then((released) => (released && who && this.told.has(callKey(spaceName, who)) ? this.refreshLeftAfterRelease(spaceName, who) : undefined))
+            .catch(() => undefined);
+    }
+
+    private refreshLeftAfterRelease(spaceName: string, personId: string): void {
+        // Only a person who was counted has a count to correct
+        if (this.left.has(callKey(spaceName, personId))) this.refreshLeft(spaceName, personId);
     }
 
     /** The person a turn is for, in the bubble's roster, when the bot knows who it is and they are still there. */
@@ -1044,6 +1117,8 @@ export class VoiceCalls {
         this.lastSpeechAt.clear();
         this.modes.clear();
         this.told.clear();
+        this.left.clear();
+        this.toldLeft.clear();
         this.pausedFor.clear();
         this.actual.clear();
         this.otherVoiceBots.clear();

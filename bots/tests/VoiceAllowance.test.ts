@@ -36,6 +36,8 @@ function bot(options: { owners?: { recognition: boolean; speech: boolean }; peop
     const people = options.people ?? { 7: { userId: 'uuid-room_7', isGuest: false } };
     const sent: ToWorker[] = [];
     const statuses: string[] = [];
+    /** What each status told the person they have left, as "person:status:count|time" (only the ones that said). */
+    const lefts: string[] = [];
     const lines: string[] = [];
     const logs: string[] = [];
     let handlers!: LinkHandlers;
@@ -46,9 +48,18 @@ function bot(options: { owners?: { recognition: boolean; speech: boolean }; peop
         sendDisconnect: () => undefined,
         sendStart: () => undefined,
         sendDraft: () => undefined,
-        sendStatus: (_space, to, status) => statuses.push(`${to}:${status}`),
+        sendStatus: (_space, to, status, left) => {
+            statuses.push(`${to}:${status}`);
+            if (left) lefts.push(`${to}:${status}:${left.count}|${left.resetsAt ?? ''}`);
+        },
     };
-    const state = { active: speakingNow(owners) as ActiveVoice, answers: [] as Answer[], fallback: { allowed: true } as Answer };
+    const state = {
+        active: speakingNow(owners) as ActiveVoice,
+        answers: [] as Answer[],
+        fallback: { allowed: true } as Answer,
+        /** What Orbit says someone has left when asked with nothing counted. */
+        left: { left: 25, resetsAt: null } as { left: number | null; resetsAt: string | null } | null,
+    };
     const settings: VoiceSettings = {
         active: async () => state.active,
         sessionSettings: async () => ({
@@ -61,20 +72,25 @@ function bot(options: { owners?: { recognition: boolean; speech: boolean }; peop
     const orbit = {
         checkVoiceAllowance: vi.fn(async (_botId: string, _input: { userId: string; isGuest: boolean; turnId: string }) => (state.answers.length ? state.answers.shift()! : state.fallback)),
         releaseVoiceReply: vi.fn(async (_botId: string, _input: { turnId: string }): Promise<boolean | null> => true),
+        voiceRepliesLeft: vi.fn(async (_botId: string, _input: { userId: string; isGuest: boolean }): Promise<{ left: number | null; resetsAt: string | null } | null> => state.left),
     };
     const gate = new OrbitTurnGate('sam', orbit, (playerId) => people[playerId] ?? null, (m) => logs.push(m), async () => undefined);
     const calls = new VoiceCalls('sam', game, (h) => ((handlers = h), link), (m) => logs.push(m), settings, gate);
+    calls.playerIdOf = (spaceUserId) => Number(spaceUserId.split('_')[1]) || 0;
     calls.onPaused = (space) => lines.push(`${space}:${pausedLine('Sam')}`);
     const speech = new BotSpeech(calls, DEFAULT_REPLY_LIMITS);
     calls.onAudience = (space) => speech.audience(space);
     calls.onUnplayed = (space, segmentId) => speech.unplayed(space, segmentId);
     calls.onHeard = (space, segmentId) => speech.heard(space, segmentId);
     calls.onSessionEnded = (space) => speech.sessionEnded(space);
+    /** Everyone who has connected, as the space lists them. */
+    const present = new Set<string>();
     const t = {
-        sent, statuses, lines, logs, orbit, state, calls, speech,
+        sent, statuses, lefts, lines, logs, orbit, state, calls, speech,
         says: () => (sent.filter((m) => m.type === 'bot.say') as Extract<ToWorker, { type: 'bot.say' }>[]).map((m) => m.text),
         async connect(who = 'room_7') {
-            calls.spaceUsers(SPACE, [{ spaceUserId: who, uuid: `uuid-${who}`, tags: [], name: who } as never]);
+            present.add(who);
+            calls.spaceUsers(SPACE, [...present].map((id) => ({ spaceUserId: id, uuid: `uuid-${id}`, tags: [], name: id }) as never));
             calls.handlePrivateEvent({
                 spaceName: SPACE,
                 receiverUserId: BOT_SPACE_ID,
@@ -82,7 +98,7 @@ function bot(options: { owners?: { recognition: boolean; speech: boolean }; peop
                 spaceEvent: { event: { $case: 'webRtcStartMessage', webRtcStartMessage: { userId: who, initiator: false } } },
             } as never);
             await flush();
-            const lane = sent.find((m) => m.type === 'lane.open') as Extract<ToWorker, { type: 'lane.open' }>;
+            const lane = [...sent].reverse().find((m) => m.type === 'lane.open' && m.participantId === who) as Extract<ToWorker, { type: 'lane.open' }>;
             handlers.onMessage({ type: 'participant.join', sessionId: lane.sessionId, participantId: who, epoch: lane.epoch } as FromWorker);
         },
         /** The worker says the person's audio is connected again (a reconnect). */
@@ -427,7 +443,160 @@ describe('the gate', () => {
         const logs: string[] = [];
         const gate = new OrbitTurnGate('sam', orbit, () => ({ userId: 'u', isGuest: false }), (m) => logs.push(m), async () => undefined);
         await gate.mayUniverseAiSpeak({ turnId: 't', playerId: 7 });
-        await expect(gate.release({ turnId: 't', playerId: 7 })).resolves.toBeUndefined();
+        await expect(gate.release({ turnId: 't', playerId: 7 })).resolves.toBe(false);
         expect(logs).toHaveLength(1);
+    });
+});
+
+describe('what a person has left', () => {
+    const RESET = '2026-11-02T13:00:00.000Z';
+
+    it('is told to the person when their voice comes on, before any spoken reply, counting nothing', async () => {
+        const b = bot();
+        await b.connect();
+        await flush();
+        expect(b.orbit.voiceRepliesLeft).toHaveBeenCalledWith('sam', { userId: 'uuid-room_7', isGuest: false });
+        expect(b.orbit.checkVoiceAllowance).not.toHaveBeenCalled();
+        // No window is running yet: the count comes with no time
+        expect(b.lefts).toEqual(['room_7:on:25|']);
+    });
+
+    it("goes with the status of a reply that is allowed: how many are left after it, and when the window ends", async () => {
+        const b = bot();
+        await b.connect();
+        b.state.fallback = { allowed: true, left: 17, resetsAt: RESET };
+        await b.say(reply(1), 'Hello there.');
+        expect(b.says()).toEqual(['Hello there.']);
+        expect(b.lefts.slice(-1)).toEqual([`room_7:on:17|${RESET}`]);
+    });
+
+    it('goes with the paused status of a reply that is turned down, in one message: none left until the window ends', async () => {
+        const b = bot();
+        await b.connect();
+        await flush();
+        b.lefts.length = 0;
+        b.state.fallback = { allowed: false, resetsAt: RESET };
+        await b.say(reply(1));
+        expect(b.lefts).toEqual([`room_7:paused:0|${RESET}`]);
+        expect(b.lines).toHaveLength(1);
+    });
+
+    it('is only told again when it changed', async () => {
+        const b = bot();
+        await b.connect();
+        await flush();
+        b.state.fallback = { allowed: true, left: 17, resetsAt: RESET };
+        await b.say(reply(1));
+        await b.say(reply(2));
+        // The second answer says the same: nothing new to tell
+        expect(b.lefts.filter((l) => l.endsWith(`17|${RESET}`))).toHaveLength(1);
+        b.state.fallback = { allowed: true, left: 16, resetsAt: RESET };
+        await b.say(reply(3));
+        expect(b.lefts.slice(-1)).toEqual([`room_7:on:16|${RESET}`]);
+    });
+
+    it('is told to each person alone: a guest with 3 and a member with 25', async () => {
+        const b = bot({ people: { 7: { userId: 'uuid-room_7', isGuest: false }, 8: { userId: 'uuid-room_8', isGuest: true } } });
+        b.state.left = null;
+        await b.connect('room_7');
+        await b.connect('room_8');
+        await flush();
+        b.state.answers = [{ allowed: true, left: 2, resetsAt: RESET }, { allowed: true, left: 24, resetsAt: RESET }];
+        await b.say(reply(1, 8));
+        // The first reply has been heard: the next one is free to be said
+        b.workerSays({ type: 'playback.progress', segmentId: b.sent.filter((m) => m.type === 'bot.say').map((m) => (m as { segmentId: string }).segmentId)[0], playedMs: 1800, totalMs: 1800, finished: true, interrupted: false, reason: 'completed' }, 'room_8');
+        await flush();
+        await b.say(reply(2, 7));
+        expect(b.lefts).toEqual([`room_8:on:2|${RESET}`, `room_7:on:24|${RESET}`]);
+    });
+
+    it('says nothing when Orbit has no count (an Orbit from before, or it cannot be asked)', async () => {
+        const b = bot();
+        b.state.left = null;
+        await b.connect();
+        b.state.fallback = { allowed: true };
+        await b.say(reply(1), 'Hello there.');
+        expect(b.says()).toEqual(['Hello there.']);
+        expect(b.lefts).toEqual([]);
+        // Orbit can't name the person: no count either
+        b.state.left = { left: null, resetsAt: null };
+        b.rejoin();
+        await flush();
+        expect(b.lefts).toEqual([]);
+    });
+
+    it("says nothing when the maker's own keys pay for both jobs: nobody's allowance is used", async () => {
+        const b = bot({ owners: { recognition: true, speech: true } });
+        await b.connect();
+        await flush();
+        expect(b.orbit.voiceRepliesLeft).not.toHaveBeenCalled();
+        expect(b.lefts).toEqual([]);
+    });
+
+    it('is told again once a counted reply that was never heard is given back', async () => {
+        const b = bot();
+        await b.connect();
+        b.state.fallback = { allowed: true, left: 10, resetsAt: RESET };
+        await b.say(reply(1), 'Hello there.');
+        b.lefts.length = 0;
+        b.state.left = { left: 11, resetsAt: RESET };
+        b.calls.unspoken(SPACE, { turnId: reply(1), playerId: 7 } as never);
+        await flush();
+        expect(b.lefts).toEqual([`room_7:on:11|${RESET}`]);
+    });
+
+    it('is forgotten when the person leaves, so a later visit starts from what Orbit says then', async () => {
+        const b = bot();
+        await b.connect();
+        b.state.fallback = { allowed: true, left: 10, resetsAt: RESET };
+        await b.say(reply(1), 'Hello there.');
+        b.calls.spaceUserLeft(SPACE, 'room_7');
+        b.lefts.length = 0;
+        b.state.left = { left: 25, resetsAt: null };
+        await b.connect();
+        await flush();
+        expect(b.lefts).toEqual(['room_7:on:25|']);
+    });
+});
+
+describe('the allowance gate and what is left', () => {
+    const turn = { turnId: 't1', playerId: 7 } as never;
+
+    it("reads what an answer said is left once, and not for an Orbit from before", async () => {
+        const orbit: AllowanceOrbit = {
+            checkVoiceAllowance: vi.fn(async () => ({ allowed: true as const, left: 4, resetsAt: '2026-11-02T13:00:00.000Z' })),
+            releaseVoiceReply: vi.fn(async () => true),
+        };
+        const gate = new OrbitTurnGate('sam', orbit, () => ({ userId: 'u', isGuest: false }));
+        expect(await gate.mayUniverseAiSpeak(turn)).toBe('yes');
+        expect(gate.leftOf(turn)).toEqual({ count: 4, resetsAt: '2026-11-02T13:00:00.000Z' });
+        expect(gate.leftOf(turn)).toBeUndefined();
+        // An Orbit from before answers a bare yes
+        (orbit.checkVoiceAllowance as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ allowed: true });
+        expect(await gate.mayUniverseAiSpeak({ turnId: 't2', playerId: 7 } as never)).toBe('yes');
+        expect(gate.leftOf({ turnId: 't2', playerId: 7 } as never)).toBeUndefined();
+        // And has no way to say what is left without counting
+        expect(await gate.leftForPlayer(7)).toBeNull();
+    });
+
+    it('reads none left from a no', async () => {
+        const orbit: AllowanceOrbit = {
+            checkVoiceAllowance: vi.fn(async () => ({ allowed: false as const, resetsAt: '2026-11-02T13:00:00.000Z' })),
+            releaseVoiceReply: vi.fn(async () => true),
+        };
+        const gate = new OrbitTurnGate('sam', orbit, () => ({ userId: 'u', isGuest: true }));
+        expect(await gate.mayUniverseAiSpeak(turn)).toBe('no');
+        expect(gate.leftOf(turn)).toEqual({ count: 0, resetsAt: '2026-11-02T13:00:00.000Z' });
+    });
+
+    it('asks what is left of the person it is for, and has no answer for nobody or an Orbit that fails', async () => {
+        const voiceRepliesLeft = vi.fn(async () => ({ left: 3, resetsAt: null }));
+        const orbit: AllowanceOrbit = { checkVoiceAllowance: vi.fn(), releaseVoiceReply: vi.fn(), voiceRepliesLeft } as never;
+        const gate = new OrbitTurnGate('sam', orbit, (id) => (id === 7 ? { userId: 'u7', isGuest: true } : null));
+        expect(await gate.leftForPlayer(7)).toEqual({ count: 3, resetsAt: undefined });
+        expect(voiceRepliesLeft).toHaveBeenCalledWith('sam', { userId: 'u7', isGuest: true });
+        expect(await gate.leftForPlayer(8)).toBeNull();
+        voiceRepliesLeft.mockRejectedValueOnce(new Error('down'));
+        expect(await gate.leftForPlayer(7)).toBeNull();
     });
 });

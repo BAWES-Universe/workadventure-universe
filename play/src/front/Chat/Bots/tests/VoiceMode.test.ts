@@ -5,6 +5,7 @@ import {
     choiceHearsBot,
     choiceSpeaksToBot,
     parseBotVoiceStatus,
+    voiceAllowanceLine,
     voiceButtonState,
     voiceModeOf,
 } from "../VoiceMode";
@@ -62,6 +63,72 @@ describe("what a bot says about its voice", () => {
         expect(
             parseBotVoiceStatus({ botId: "b-1", state: "on", followUpSeconds: seconds }, "Nora")?.followUpSeconds
         ).toBe(0);
+    });
+});
+
+describe("what a bot says is left of a person's spoken replies (#1669)", () => {
+    const at = "2026-11-02T13:00:00.000Z";
+    const parse = (extra: object) => parseBotVoiceStatus({ botId: "b-1", state: "on", ...extra }, "Nora");
+
+    it("is read with the end of the window, as a time", () => {
+        expect(parse({ repliesLeft: 18, repliesResetAt: at })).toMatchObject({
+            repliesLeft: 18,
+            repliesResetAt: Date.parse(at),
+        });
+        // None left is a count too, not a missing one
+        expect(parse({ repliesLeft: 0, repliesResetAt: at })?.repliesLeft).toBe(0);
+    });
+
+    it("is none when the bot has no count, and a time with no count is dropped", () => {
+        expect(parse({})).toMatchObject({ repliesLeft: undefined, repliesResetAt: undefined });
+        expect(parse({ repliesResetAt: at })).toMatchObject({ repliesLeft: undefined, repliesResetAt: undefined });
+    });
+
+    it.each([-1, 2.5, 1e9, Number.NaN, "5", null])("takes a count of %s as none", (count) => {
+        expect(parse({ repliesLeft: count, repliesResetAt: at })).toMatchObject({
+            repliesLeft: undefined,
+            repliesResetAt: undefined,
+        });
+    });
+
+    it.each(["", "soon", 5, null])("takes %s as no end time", (time) => {
+        expect(parse({ repliesLeft: 3, repliesResetAt: time })).toMatchObject({
+            repliesLeft: 3,
+            repliesResetAt: undefined,
+        });
+    });
+
+    describe("what the menu says", () => {
+        const now = Date.parse("2026-11-02T10:00:00.000Z");
+        const later = Date.parse(at);
+
+        it("says how many are left, with the time more come when a window is running", () => {
+            expect(voiceAllowanceLine({ repliesLeft: 18, repliesResetAt: later }, now)).toEqual({
+                kind: "left",
+                count: 18,
+                resetsAt: later,
+            });
+            expect(voiceAllowanceLine({ repliesLeft: 25, repliesResetAt: undefined }, now)).toEqual({
+                kind: "left",
+                count: 25,
+                resetsAt: undefined,
+            });
+        });
+
+        it("says they are used up when none is left", () => {
+            expect(voiceAllowanceLine({ repliesLeft: 0, repliesResetAt: later }, now)).toEqual({
+                kind: "used_up",
+                resetsAt: later,
+            });
+        });
+
+        it("says nothing without a count, or once the window it counted has ended", () => {
+            expect(voiceAllowanceLine({ repliesLeft: undefined, repliesResetAt: undefined }, now)).toEqual({
+                kind: "none",
+            });
+            expect(voiceAllowanceLine({ repliesLeft: 0, repliesResetAt: later }, later + 1)).toEqual({ kind: "none" });
+            expect(voiceAllowanceLine({ repliesLeft: 4, repliesResetAt: later }, later)).toEqual({ kind: "none" });
+        });
     });
 });
 

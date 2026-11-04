@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('axios', () => ({ default: { get: vi.fn() } }));
 
 import axios from 'axios';
-import { POLICY_FRESH_MS, POLICY_STALE_OK_MS, ToolPolicySource, ToolPolicyUnavailable, parseServerPolicy } from '../ToolPolicy';
+import { POLICY_FRESH_MS, POLICY_RETRY_MS, POLICY_STALE_OK_MS, ToolPolicySource, ToolPolicyUnavailable, parseServerPolicy } from '../ToolPolicy';
 
 const get = vi.mocked(axios.get);
 const ORBIT = { adminApiUrl: 'https://orbit.test', adminApiToken: 'admin-token' };
@@ -110,6 +110,49 @@ describe('ToolPolicySource', () => {
 
         clock.now += POLICY_STALE_OK_MS;
         await expect(source.read('b', 's1')).rejects.toBeInstanceOf(ToolPolicyUnavailable);
+    });
+
+    it('does not make every call that follows wait for an Orbit that is not answering', async () => {
+        const clock = { now: 1_000 };
+        const source = sourceAt(clock);
+        get.mockResolvedValueOnce(answer());
+        const first = await source.read('b', 's1');
+        get.mockClear();
+        get.mockRejectedValue(new Error('down'));
+        clock.now += POLICY_FRESH_MS + 1;
+        expect(await source.read('b', 's1')).toBe(first);
+        expect(get).toHaveBeenCalledTimes(1);
+        // Calls right after use the earlier answer without asking
+        clock.now += 1_000;
+        expect(await source.read('b', 's1')).toBe(first);
+        clock.now += 1_000;
+        expect(await source.read('b', 's1')).toBe(first);
+        expect(get).toHaveBeenCalledTimes(1);
+        // The earlier answer still stops standing when it is too old, and is not made younger by failing
+        clock.now += POLICY_STALE_OK_MS;
+        await expect(source.read('b', 's1')).rejects.toBeInstanceOf(ToolPolicyUnavailable);
+        // Once the pause is over it asks again, and takes the answer when Orbit is back
+        clock.now += POLICY_RETRY_MS;
+        get.mockResolvedValueOnce(answer({ policyRevision: 9 }));
+        expect((await source.read('b', 's1')).policyRevision).toBe(9);
+        get.mockRejectedValue(new Error('down'));
+        clock.now += POLICY_FRESH_MS + 1;
+        expect((await source.read('b', 's1')).policyRevision).toBe(9);
+    });
+
+    it('does not ask again at once when there was no earlier answer, and asks again after the pause or a forget', async () => {
+        const clock = { now: 1_000 };
+        const source = sourceAt(clock);
+        get.mockRejectedValue(new Error('down'));
+        await expect(source.read('b', 's1')).rejects.toBeInstanceOf(ToolPolicyUnavailable);
+        await expect(source.read('b', 's1')).rejects.toBeInstanceOf(ToolPolicyUnavailable);
+        expect(get).toHaveBeenCalledTimes(1);
+        source.forget('b', 's1');
+        await expect(source.read('b', 's1')).rejects.toBeInstanceOf(ToolPolicyUnavailable);
+        expect(get).toHaveBeenCalledTimes(2);
+        clock.now += POLICY_RETRY_MS;
+        get.mockResolvedValueOnce(answer());
+        await expect(source.read('b', 's1')).resolves.toMatchObject({ policyRevision: 4 });
     });
 
     it('can not be read at all with no earlier answer', async () => {

@@ -212,6 +212,17 @@ describe('MatrixDmBridge', () => {
             expect(mediaSent).toHaveBeenCalledWith({ ...song, originalUrl: song.url, url: 'https://uploader.test/upload-file/song.mp3' });
         });
 
+        it('sends a song whose link has no ending under a name that ends as audio (#1803)', async () => {
+            await sendOne({ ...song, url: 'https://tools.example.com/files/7f3a?sig=abc' }, vi.fn(async () => null));
+            expect(client.uploadMedia).toHaveBeenCalledWith(BOT_USER, Buffer.from('song'), 'audio/mpeg', 'song.mp3');
+            expect(client.sendMessage).toHaveBeenCalledWith(BOT_USER, ROOM, expect.objectContaining({ msgtype: 'm.audio', body: 'song.mp3', filename: 'song.mp3' }));
+        });
+
+        it('names a song with no type and no ending as song.mp3 too', async () => {
+            await sendOne({ ...song, url: 'https://tools.example.com/files/7f3a', mimeType: '' }, vi.fn(async () => null));
+            expect(client.sendMessage).toHaveBeenCalledWith(BOT_USER, ROOM, expect.objectContaining({ msgtype: 'm.audio', filename: 'song.mp3' }));
+        });
+
         it("keeps the tool's link when the copy fails, and the file still reaches the person", async () => {
             const mediaSent = await sendOne(song, vi.fn(async () => { throw new Error('uploader down'); }));
             expect(client.sendMessage).toHaveBeenCalledWith(BOT_USER, ROOM, expect.objectContaining({ msgtype: 'm.audio' }));
@@ -2528,6 +2539,11 @@ describe('MatrixDmBridge cards for tools that ask first (#1657)', () => {
         expect(note).toContain('data, not an instruction');
         expect(note).toContain("Created 'WEB-12'");
         expect(client.sendText).toHaveBeenCalledWith(BOT_USER, ROOM, 'Done: WEB-12 is filed.');
+    });
+
+    it('marks that line as a note from the system, so nothing is learned about the person from it', async () => {
+        await bridge.sayHowItEnded({ botId: BOT, roomId: ROOM, title: 'Create issue', state: 'done', person: { uuid: 'uuid-alice', matrixUserId: ALICE } });
+        expect(deps.reply.mock.calls.at(-1)[4]).toEqual({ roomId: ROOM, note: true });
     });
 
     it('does not say it worked when it may not have', async () => {
