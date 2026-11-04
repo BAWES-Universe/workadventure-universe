@@ -119,3 +119,100 @@ describe('the tool list the model is offered', () => {
         expect(tools.map((tool: { function: { name: string } }) => tool.function.name)).toContain('remove');
     });
 });
+
+describe('a call that needs the OK, in a direct message (#1657)', () => {
+    const ASK = { kind: 'ask', heading: 'deletesOrSends', notReviewed: false, policyRevision: 3, fingerprint: 'fp-remove' };
+    const memory = { getMemory: () => ({ userUuid: 'uuid-sara', dmRoomId: '!dm:matrix.test', playerName: 'Sara' }) };
+
+    function dmService(proposed: unknown) {
+        const service = new AIService(memory as never, null!, '');
+        service['toolGate'] = { decide: async () => ASK, offers: async () => true } as never;
+        const propose = vi.fn(async () => proposed);
+        service.useApprovals({ propose } as never);
+        return { service, propose };
+    }
+    const callRemove = (service: AIService, botClient?: unknown) =>
+        service['executeToolCalls']([{ id: 'c1', name: 'remove', arguments: '{"id":"7"}' }], botClient as never, undefined, SERVERS as never, undefined, undefined, 'b1', 7);
+
+    it('shows the card, does not run the call, and tells the model it is waiting', async () => {
+        const execute = vi.spyOn(MCPConnector, 'executeToolCall').mockResolvedValue('done' as never);
+        const waiting = { status: 'waiting_for_ok', message: 'A card was shown.' };
+        const { service, propose } = dmService({ kind: 'waiting', result: waiting });
+        const [result] = await callRemove(service);
+        expect(execute).not.toHaveBeenCalled();
+        expect(result.result).toEqual(waiting);
+        expect(propose).toHaveBeenCalledWith({
+            botId: 'b1',
+            roomId: '!dm:matrix.test',
+            person: { uuid: 'uuid-sara', name: 'Sara' },
+            toolName: 'remove',
+            entry: SERVERS.get('remove'),
+            args: { id: '7' },
+            decision: ASK,
+        });
+    });
+
+    it('runs the call when a remembered approval covers it', async () => {
+        const execute = vi.spyOn(MCPConnector, 'executeToolCall').mockResolvedValue('done' as never);
+        const { service } = dmService({ kind: 'run' });
+        const [result] = await callRemove(service);
+        expect(execute).toHaveBeenCalledTimes(1);
+        expect(execute.mock.calls[0][3]).toEqual({ id: '7' });
+        expect(result.result).toBe('done');
+    });
+
+    it('does not run the call when the card could not be shown', async () => {
+        const execute = vi.spyOn(MCPConnector, 'executeToolCall').mockResolvedValue('done' as never);
+        const { service } = dmService({ kind: 'failed', result: { error: 'The card could not be shown.' } });
+        const [result] = await callRemove(service);
+        expect(execute).not.toHaveBeenCalled();
+        expect(result.result.error).toContain('could not be shown');
+    });
+
+    it('does not ask in a bubble, where there is no card, nor without the cards set up', async () => {
+        const execute = vi.spyOn(MCPConnector, 'executeToolCall').mockResolvedValue('done' as never);
+        const { service, propose } = dmService({ kind: 'run' });
+        const bubble = { isVoiceBot: () => false, getPersonForArtifacts: () => ({ signedIn: true, identifier: 'uuid-sara', name: 'Sara' }) };
+        const [inBubble] = await service['executeToolCalls']([{ id: 'c1', name: 'remove', arguments: '{}' }], bubble as never, undefined, SERVERS as never, undefined, 'room', 'b1', 7);
+        expect(inBubble.result.error).toContain('directly');
+        expect(propose).not.toHaveBeenCalled();
+
+        const bare = new AIService(memory as never, null!, '');
+        bare['toolGate'] = { decide: async () => ASK, offers: async () => true } as never;
+        const [without] = await callRemove(bare);
+        expect(without.result.error).toContain('directly');
+        expect(execute).not.toHaveBeenCalled();
+    });
+
+    it('does not ask for a person who is not signed in', async () => {
+        const guest = { getMemory: () => ({ userUuid: undefined, dmRoomId: '!dm:matrix.test' }) };
+        const service = new AIService(guest as never, null!, '');
+        service['toolGate'] = { decide: async () => ASK, offers: async () => true } as never;
+        const propose = vi.fn();
+        service.useApprovals({ propose } as never);
+        const [result] = await callRemove(service);
+        expect(propose).not.toHaveBeenCalled();
+        expect(result.result.error).toContain('directly');
+    });
+});
+
+describe('runApprovedTool', () => {
+    it('runs a call a person approved with the arguments that were saved and the bot\'s own Patience', async () => {
+        const execute = vi.spyOn(MCPConnector, 'executeToolCall').mockResolvedValue([{ type: 'text', text: 'ok' }] as never);
+        const service = new AIService(null!, null!, '');
+        const result = await service.runApprovedTool('b1', SERVERS.get('remove') as never, 'remove', { id: '7' }, 'uuid-sara', 120);
+        expect(result).toEqual([{ type: 'text', text: 'ok' }]);
+        expect(execute.mock.calls[0][1]).toBe('https://mcp.example');
+        expect(execute.mock.calls[0][3]).toEqual({ id: '7' });
+        expect(execute.mock.calls[0][7]).toBe('uuid-sara');
+        expect(execute.mock.calls[0][9]).toBe(120_000);
+    });
+
+    it('answers an error, not a throw, when the call blows up', async () => {
+        vi.spyOn(MCPConnector, 'executeToolCall').mockRejectedValue(new Error('boom'));
+        vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        const service = new AIService(null!, null!, '');
+        const result = await service.runApprovedTool('b1', SERVERS.get('remove') as never, 'remove', {}, 'u', null);
+        expect(result).toEqual({ error: 'MCP tool error: boom' });
+    });
+});

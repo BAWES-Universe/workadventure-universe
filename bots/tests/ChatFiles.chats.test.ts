@@ -61,7 +61,46 @@ async function dmService(options: { parsed?: ParsedFile; add?: () => Promise<unk
 const attachment = { url: UPLOADED, mimeType: 'application/pdf', mediaType: 'file' as const, name: 'plan.pdf', sizeBytes: 1200 };
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+describe('words that wait behind an answer (#1159)', () => {
+    it('never answers a note the system wrote together with what a person typed', async () => {
+        const { service } = await dmService();
+        Object.assign(service, { queues: new Map(), waiting: new Map() });
+        const release: Array<() => void> = [];
+        const calls: Array<{ text: string; note: boolean }> = [];
+        (service as any).replyNow = vi.fn((_b: string, _p: unknown, text: string, _a: unknown, hooks: { note?: boolean }) => {
+            calls.push({ text, note: !!hooks.note });
+            return new Promise((resolve) => release.push(() => resolve({ text: '', media: [] })));
+        });
+        const first = service.reply(BOT, person, 'hi', [], { roomId: '!room' });
+        const second = service.reply(BOT, person, 'the note', [], { roomId: '!room', note: true });
+        const third = service.reply(BOT, person, 'and this', [], { roomId: '!room' });
+        const fourth = service.reply(BOT, person, 'one more', [], { roomId: '!room' });
+        let settled = false;
+        const all = Promise.all([first, second, third, fourth]).then(() => (settled = true));
+        for (let i = 0; i < 20 && !settled; i++) {
+            release.splice(0).forEach((fn) => fn());
+            await flush();
+        }
+        await all;
+        expect(calls).toEqual([
+            { text: 'hi', note: false },
+            { text: 'the note', note: true },
+            { text: 'and this\none more', note: false },
+        ]);
+    });
+});
+
 describe('a file in a direct message (#1508)', () => {
+    it('learns nothing about the person from a note the system wrote about a card they tapped', async () => {
+        const { service } = await dmService();
+        const learn = vi.spyOn((service as any).conversationMemory, 'extractPersonalInfo');
+        const learned = () => learn.mock.calls.map((call) => call[2]);
+        await (service as any).replyNow(BOT, person, 'my name is Mallory', [], { roomId: '!room' });
+        expect(learned()).toContain('my name is Mallory');
+        await (service as any).replyNow(BOT, person, '[The person approved "Create issue" on the card.] my name is Eve', [], { roomId: '!room', note: true });
+        expect(learned().some((text: string) => text.includes('Eve'))).toBe(false);
+    });
+
     it('keeps a note in the history in place of "[sent a file]", and gives it its id once Orbit has one', async () => {
         const { service, admin, history, seen } = await dmService();
         const reply = await (service as any).replyNow(BOT, person, 'see this', [attachment], { roomId: '!room' });

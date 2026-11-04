@@ -229,7 +229,9 @@ export class ConversationMemory {
         playerId: number,
         message: string,
         sender: 'bot' | 'person',
-        spaceName?: string
+        spaceName?: string,
+        /** False for a line the system wrote in the person's turn (about a card they tapped): nothing is learned about them from it. */
+        learn = true
     ): void {
         const memory = this.getOrCreateMemory(botId, playerId);
         const now = Date.now();
@@ -265,7 +267,7 @@ export class ConversationMemory {
         // This provides more accurate sentiment analysis from the AI
         
         // Extract personal information (birthday, name, preferences, facts)
-        if (sender === 'person') {
+        if (sender === 'person' && learn) {
             this.extractPersonalInfo(botId, playerId, withoutFileNotes(message));
         }
     }
