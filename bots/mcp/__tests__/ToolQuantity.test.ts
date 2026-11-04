@@ -66,6 +66,16 @@ describe('quantityOf', () => {
         expect(quantityOf('generate_image', undefined, { n: 2, number_of_variations: 3 }, s)).toMatchObject({ known: true, count: 6 });
     });
 
+    it('says a count that was given but is not a usable number was unreadable, and a tool that gives none was not', () => {
+        const s = schema({ n: { type: 'integer' }, prompt: { type: 'string' } });
+        expect(quantityOf('generate_image', undefined, { prompt: 'a', n: 1_000_000 }, s)).toMatchObject({ known: false, unreadable: true });
+        expect(quantityOf('generate_image', undefined, { prompt: 'a', n: -3 }, s)).toMatchObject({ known: false, unreadable: true });
+        expect(quantityOf('generate_image', undefined, { prompt: 'a', n: 2.5 }, s)).toMatchObject({ known: false, unreadable: true });
+        expect(quantityOf('generate_image', undefined, { prompt: 'a', n: 'lots' }, s)).toMatchObject({ known: false, unreadable: true });
+        expect(quantityOf('generate_image', undefined, { prompt: 'a' }, s).known).toBe(false);
+        expect('unreadable' in quantityOf('generate_image', undefined, { prompt: 'a' }, s)).toBe(false);
+    });
+
     it('never reads a number out of the words of a prompt', () => {
         const s = schema({ prompt: { type: 'string' } });
         expect(quantityOf('generate_image', undefined, { prompt: 'make 50 posters' }, s).known).toBe(false);
@@ -78,6 +88,16 @@ describe('quantityOf', () => {
         expect(unitNames('num_images')).toEqual({ one: 'image', many: 'images' });
         expect(unitNames(undefined, 'generate_audio')).toEqual({ one: 'audio file', many: 'audio files' });
         expect(unitNames(undefined, 'makeLogo')).toEqual({ one: 'logo', many: 'logos' });
+    });
+
+    it('names what comes out of a tool that says what goes in and what comes out', () => {
+        expect(unitNames(undefined, 'image_to_video')).toEqual({ one: 'video', many: 'videos' });
+        expect(unitNames(undefined, 'text_to_speech')).toEqual({ one: 'audio file', many: 'audio files' });
+        expect(unitNames(undefined, 'convertImageIntoLogo')).toEqual({ one: 'logo', many: 'logos' });
+        // Nothing after the "to" that names a thing: the words before it do
+        expect(unitNames(undefined, 'add_image_to_queue')).toEqual({ one: 'image', many: 'images' });
+        // Several nouns and no "to": the first one said
+        expect(unitNames(undefined, 'poster_maker_logo')).toEqual({ one: 'poster', many: 'posters' });
     });
 
     it('names the things from the tool\'s title when its names do not say', () => {

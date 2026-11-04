@@ -3827,7 +3827,15 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             const quantity = quantityOf(toolName, entry.title, args, entry.inputSchema);
             let batch: BatchKind;
             if (!quantity.known) {
-                if (!canAsk) return { kind: 'run' };
+                if (!canAsk) {
+                    // A tool that says nothing about how many runs as it did. A count that was given but cannot be read as a number
+                    // is not a tool saying nothing: nobody can tell it is under the limit, and a guest can't be asked
+                    if (!('unreadable' in quantity && quantity.unreadable)) return { kind: 'run' };
+                    return {
+                        kind: 'result',
+                        result: { error: `The number asked for could not be read, so it cannot be checked against the ${limit} this bot makes without asking, and it was not done. Ask for a whole number, or tell them to message you directly and ask again there.` },
+                    };
+                }
                 batch = { kind: 'unknown', toolTitle: cardTitle(toolName, entry.title), ...(entry.serverName ? { serverName: entry.serverName } : {}) };
             } else {
                 if (quantity.count === 0) return { kind: 'run' };

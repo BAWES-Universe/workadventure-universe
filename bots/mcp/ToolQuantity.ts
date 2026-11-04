@@ -12,8 +12,8 @@
 export type Quantity =
     /** The call makes this many, named by `unit` ("images"). */
     | { known: true; count: number; unit: string; names: { one: string; many: string } }
-    /** The tool does not say how many one call makes. */
-    | { known: false; unit: string };
+    /** The tool does not say how many one call makes. `unreadable` when the call did give a count that is not a usable number. */
+    | { known: false; unit: string; unreadable?: boolean };
 
 const isPlain = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 
@@ -54,14 +54,27 @@ function wordsOf(text: string): string {
         .toLowerCase();
 }
 
-/** The things' name in the singular and plural, or the plain "thing(s)" when nothing in the names says. */
+/** The first noun in these words, in the order they are said. */
+function nounIn(words: string[]): { one: string; many: string } | null {
+    for (const word of words) {
+        for (const [pattern, one, many] of NOUNS) {
+            if (pattern.test(word)) return { one, many };
+        }
+    }
+    return null;
+}
+
+/**
+ * The things' name in the singular and plural, or the plain "thing(s)" when nothing in the names says. A name that says
+ * what goes in and what comes out ("image_to_video") is read for what comes out: the words after the last "to".
+ */
 export function unitNames(...sources: Array<string | undefined>): { one: string; many: string } {
     for (const source of sources) {
         if (!source) continue;
         const words = wordsOf(source).split(' ');
-        for (const [pattern, one, many] of NOUNS) {
-            if (words.some((word) => pattern.test(word))) return { one, many };
-        }
+        const toAt = Math.max(words.lastIndexOf('to'), words.lastIndexOf('into'));
+        const found = (toAt >= 0 ? nounIn(words.slice(toAt + 1)) : null) ?? nounIn(words);
+        if (found) return found;
     }
     return { one: 'thing', many: 'things' };
 }
@@ -88,6 +101,7 @@ export function quantityOf(toolName: string, toolTitle: string | undefined, args
     let found = false;
     let unitKey: string | undefined;
     let unknownCount = false;
+    let unreadable = false;
 
     // A key the tool declares or the call sent, whichever is there
     const keys = [...new Set([...declared, ...Object.keys(args)])];
@@ -121,6 +135,7 @@ export function quantityOf(toolName: string, toolTitle: string | undefined, args
         const value = wholeNumber(args[key]);
         if (value === null) {
             unknownCount = true;
+            unreadable = true;
             continue;
         }
         found = true;
@@ -130,7 +145,7 @@ export function quantityOf(toolName: string, toolTitle: string | undefined, args
     }
 
     const names = unitNames(unitKey, toolName, toolTitle);
-    if (!found || unknownCount) return { known: false, unit: names.many };
+    if (!found || unknownCount) return { known: false, unit: names.many, ...(unreadable ? { unreadable: true } : {}) };
     const total = (list ?? 1) * (count ?? 1) * (times ?? 1);
     return { known: true, count: total, unit: unitFor(total, names), names };
 }

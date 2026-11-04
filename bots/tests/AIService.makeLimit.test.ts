@@ -148,6 +148,16 @@ describe('making new things', () => {
         expect(propose).not.toHaveBeenCalled();
     });
 
+    it('does not run a count nobody can read for a person nobody can ask', async () => {
+        const execute = vi.spyOn(MCPConnector, 'executeToolCall').mockResolvedValue('done' as never);
+        const guest = { getMemory: () => ({ userUuid: undefined, dmRoomId: '!dm:matrix.test' }) };
+        const { service, propose } = setup({ mem: guest });
+        const [huge] = await call(service, 'make_images', { prompt: 'a', n: 1_000_000 });
+        expect(huge.result.error).toContain('could not be read');
+        expect(execute).not.toHaveBeenCalled();
+        expect(propose).not.toHaveBeenCalled();
+    });
+
     it('lets the tool run when the count can not be checked', async () => {
         const execute = vi.spyOn(MCPConnector, 'executeToolCall').mockResolvedValue('done' as never);
         const { service } = setup();
