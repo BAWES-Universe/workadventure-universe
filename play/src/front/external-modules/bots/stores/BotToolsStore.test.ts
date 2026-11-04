@@ -15,6 +15,7 @@ import type { ServerTools } from "../toolsModel";
 import {
     botToolsStore,
     chooseSetting,
+    confirmAllTools,
     loadBotToolSettings,
     loadServerTools,
     saveBotToolSettings,
@@ -107,5 +108,20 @@ describe("the Tools store (game #1655)", () => {
             askWhichWay: "never",
             cardWaitMinutes: 10,
         });
+    });
+
+    it("reads the list again when Confirm all is refused, so the next tap sends the new revision", async () => {
+        setServers("botA", []);
+        mocks.getMcpServerTools.mockResolvedValueOnce(server(1));
+        await loadServerTools("botA", "s1");
+
+        mocks.confirmMcpTools.mockRejectedValueOnce(new Error("The list changed"));
+        mocks.getMcpServerTools.mockResolvedValueOnce(server(4));
+        await expect(confirmAllTools("botA", "s1")).rejects.toThrow("The list changed");
+        expect(get(botToolsStore)?.tools.s1.policyRevision).toBe(4);
+
+        mocks.confirmMcpTools.mockResolvedValueOnce(server(5));
+        await confirmAllTools("botA", "s1");
+        expect(mocks.confirmMcpTools).toHaveBeenLastCalledWith("botA", "s1", 4);
     });
 });

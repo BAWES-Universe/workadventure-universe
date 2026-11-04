@@ -128,7 +128,9 @@
             addingRule = false;
             editingAdvanced = false;
             usageScreen = null;
-            toolsScreen = null;
+            // The Tools screens stay while Escape is pressed in a field or with the server form open: that Escape is for them
+            const inField = e.target instanceof HTMLElement && e.target.closest("input, textarea, select") !== null;
+            if (!inField && !document.querySelector("[data-mcp-modal]")) toolsScreen = null;
         }
     }
 

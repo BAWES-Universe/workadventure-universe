@@ -759,6 +759,7 @@
     <!-- svelte-ignore a11y-click-events-have-key-events -->
     <div
         role="presentation"
+        data-mcp-modal
         class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
         tabindex="-1"
         on:click={closeModal}

@@ -72,7 +72,15 @@ export async function confirmAllTools(botId: string, serverId: string): Promise<
     current = botId;
     const shown = forBot(botId).tools[serverId];
     if (!shown) return;
-    take(botId, await botApiService.confirmMcpTools(botId, serverId, shown.policyRevision));
+    try {
+        take(botId, await botApiService.confirmMcpTools(botId, serverId, shown.policyRevision));
+    } catch (error) {
+        // Orbit says no when the list moved since: read it again so the next tap confirms what is on screen
+        await loadServerTools(botId, serverId).catch((loadError) =>
+            console.error("[BotToolsStore] Failed to read the tools again:", loadError)
+        );
+        throw error;
+    }
 }
 
 /** Change one heading's choice in what is held, leaving every other heading and the revision as they are */
