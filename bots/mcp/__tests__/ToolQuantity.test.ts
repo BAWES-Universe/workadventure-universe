@@ -171,6 +171,15 @@ describe('MakeCounts', () => {
         now += 7 * 60 * 60_000;
         expect(counts.soFar('k')).toBe(0);
     });
+
+    it('keeps a bounded number of people even when requests only start and nothing is made', () => {
+        const counts = new MakeCounts();
+        for (let i = 0; i < 5200; i++) counts.reset(`person-${i}`);
+        // the oldest are forgotten, the newest remembered
+        expect((counts as unknown as { counts: Map<string, unknown> }).counts.size).toBeLessThanOrEqual(5000);
+        expect(counts.epochOf('person-5199')).toBe(1);
+        expect(counts.epochOf('person-0')).toBe(0);
+    });
 });
 
 describe('batchWords', () => {

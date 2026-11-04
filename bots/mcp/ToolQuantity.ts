@@ -206,6 +206,11 @@ export class MakeCounts {
         const kept = this.kept(key);
         this.counts.delete(key);
         this.counts.set(key, { made: (kept?.made ?? 0) + count, at: this.now(), epoch: kept?.epoch ?? 0 });
+        this.trim();
+    }
+
+    /** Keeps the map from growing for ever: the longest-quiet people are forgotten first. */
+    private trim(): void {
         while (this.counts.size > MAX_KEPT) {
             const oldest = this.counts.keys().next().value;
             if (oldest === undefined) break;
@@ -227,6 +232,7 @@ export class MakeCounts {
         this.counts.delete(key);
         // The request is remembered (with nothing made) so what a slow tool reports later is told apart from this one
         this.counts.set(key, { made: 0, at: this.now(), epoch: (kept?.epoch ?? 0) + 1 });
+        this.trim();
     }
 }
 
