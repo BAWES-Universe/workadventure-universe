@@ -2530,6 +2530,11 @@ describe('MatrixDmBridge cards for tools that ask first (#1657)', () => {
         expect(client.sendText).toHaveBeenCalledWith(BOT_USER, ROOM, 'Done: WEB-12 is filed.');
     });
 
+    it('marks that line as a note from the system, so nothing is learned about the person from it', async () => {
+        await bridge.sayHowItEnded({ botId: BOT, roomId: ROOM, title: 'Create issue', state: 'done', person: { uuid: 'uuid-alice', matrixUserId: ALICE } });
+        expect(deps.reply.mock.calls.at(-1)[4]).toEqual({ roomId: ROOM, note: true });
+    });
+
     it('does not say it worked when it may not have', async () => {
         await bridge.sayHowItEnded({ botId: BOT, roomId: ROOM, title: 'Send email', state: 'unknown', person: { uuid: 'uuid-alice', matrixUserId: ALICE } });
         expect(deps.reply.mock.calls.at(-1)[2]).toContain('Do not say it worked');

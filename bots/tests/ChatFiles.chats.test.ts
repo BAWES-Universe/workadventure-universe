@@ -62,6 +62,16 @@ const attachment = { url: UPLOADED, mimeType: 'application/pdf', mediaType: 'fil
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe('a file in a direct message (#1508)', () => {
+    it('learns nothing about the person from a note the system wrote about a card they tapped', async () => {
+        const { service } = await dmService();
+        const learn = vi.spyOn((service as any).conversationMemory, 'extractPersonalInfo');
+        const learned = () => learn.mock.calls.map((call) => call[2]);
+        await (service as any).replyNow(BOT, person, 'my name is Mallory', [], { roomId: '!room' });
+        expect(learned()).toContain('my name is Mallory');
+        await (service as any).replyNow(BOT, person, '[The person approved "Create issue" on the card.] my name is Eve', [], { roomId: '!room', note: true });
+        expect(learned().some((text: string) => text.includes('Eve'))).toBe(false);
+    });
+
     it('keeps a note in the history in place of "[sent a file]", and gives it its id once Orbit has one', async () => {
         const { service, admin, history, seen } = await dmService();
         const reply = await (service as any).replyNow(BOT, person, 'see this', [attachment], { roomId: '!room' });

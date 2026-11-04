@@ -275,7 +275,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 { matrixUserId: person.matrixUserId, uuid: person.uuid, name: person.name ?? null, isGuest: person.isGuest ?? false },
                 note,
                 [],
-                { roomId }
+                { roomId, note: true }
             );
             if (reply?.text && !reply.failed) {
                 await this.client.sendText(botUserId, roomId, reply.text);

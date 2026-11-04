@@ -73,6 +73,8 @@ export interface DmReplyHooks {
     roomId?: string;
     /** The artifacts the person pointed at by replying to a card (game #1781): the bot may open those even when another bot made them. */
     pointedArtifactIds?: string[];
+    /** A line from the system about something the person did (a card they tapped), not words they typed: nothing is learned about them from it. */
+    note?: boolean;
 }
 
 export interface DmReply {
@@ -348,8 +350,8 @@ export class DmReplyService extends BaseBehavior {
             lastSaid.spaceName === DM_SPACE_NAME &&
             sameFiles;
         if (!alreadyKept) {
-            memory.addMessage(botId, playerId, original, 'person', DM_SPACE_NAME);
-            memory.extractPersonalInfo(botId, playerId, text);
+            memory.addMessage(botId, playerId, original, 'person', DM_SPACE_NAME, !hooks.note);
+            if (!hooks.note) memory.extractPersonalInfo(botId, playerId, text);
             noted?.keep();
         }
         // A first message creates the memory after the uuid was set, so it starts as "temp-<id>": name it now, before
