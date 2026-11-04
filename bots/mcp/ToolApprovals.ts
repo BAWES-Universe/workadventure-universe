@@ -266,6 +266,8 @@ export class ToolApprovals {
                         decision: option,
                         ...(option === 'approveAndRemember' ? { idleMinutes: GRANT_IDLE_MINUTES, absoluteMinutes: GRANT_ABSOLUTE_MINUTES } : {}),
                     });
+                    // A 409 that is not an answer about this action (no action in it) is a tap that did not count
+                    if (!answer.action) return void (await this.deps.cards.say(botId, roomId, "I couldn't record that. Tap again in a moment."));
                     if (answer.outcome === 'already_decided' && answer.action.status === 'approved' && option !== 'decline') {
                         // Approved, but nobody started it: the answer to an earlier tap was lost, or this server restarted in between.
                         // Orbit lets one dispatcher win, so starting it here again can't run it twice.

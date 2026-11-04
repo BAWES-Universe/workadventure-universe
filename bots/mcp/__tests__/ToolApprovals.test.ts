@@ -354,6 +354,15 @@ describe('Create (approve)', () => {
         expect(s.run).not.toHaveBeenCalled();
     });
 
+    it('says the tap did not count when Orbit answers a 409 that is not about the action', async () => {
+        await s.approvals.propose(input());
+        s.orbit.decide = (async () => ({ outcome: 'already_decided' })) as never;
+        await s.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'decide', option: 'approve' }));
+        await settle();
+        expect(s.run).not.toHaveBeenCalled();
+        expect(s.said.at(-1)).toContain('Tap again');
+    });
+
     it('says nothing was done when the claim itself fails, and does not call the tool', async () => {
         await s.approvals.propose(input());
         s.orbit.claim = (async () => {
