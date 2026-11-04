@@ -129,6 +129,15 @@ describe("the card a bot shows before it changes something", () => {
         }
     });
 
+    it("says so when Review again could not be sent on a card that already ended", async () => {
+        onTap.mockResolvedValue(false);
+        await show(ask({ answer: { closed: true } }));
+        await click(byId("botAskReviewAgain"));
+        await tick();
+        expect(byId("botAskSendFailed")).not.toBeNull();
+        expect((byId("botAskReviewAgain") as HTMLButtonElement).disabled).toBe(false);
+    });
+
     it("makes the whole details box the button, folded to start", async () => {
         await show(ask(), { docked: true });
         const box = byId("botAskDetails") as HTMLButtonElement;

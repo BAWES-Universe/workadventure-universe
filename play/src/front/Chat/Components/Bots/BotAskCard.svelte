@@ -240,11 +240,6 @@
                     >
                 </div>
             {/if}
-            {#if failed}
-                <span class="ask-warn" role="status" data-testid="botAskSendFailed"
-                    ><IconAlertTriangle />{$LL.chat.botAsk.sendFailed()}</span
-                >
-            {/if}
         {:else if picked}
             <span class="ask-done" dir="auto"><IconCheck />{$LL.chat.botAsk.picked({ label: picked.label })}</span>
             {#if answer?.allowedMore}
@@ -299,6 +294,12 @@
                     on:click={() => tap({ action: "reviewAgain" })}>{$LL.chat.botAsk.reviewAgain()}</button
                 >
             </div>
+        {/if}
+        <!-- A tap on an ended card (Review again, Ask me again) can fail too, so this shows in every state -->
+        {#if failed}
+            <span class="ask-warn" role="status" data-testid="botAskSendFailed"
+                ><IconAlertTriangle />{$LL.chat.botAsk.sendFailed()}</span
+            >
         {/if}
         {#if shown.notReviewed && open}
             <span class="ask-who" dir="auto" data-testid="botAskNotReviewed"
