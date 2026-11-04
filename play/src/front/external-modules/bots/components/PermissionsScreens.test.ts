@@ -264,6 +264,18 @@ describe("the Permissions screens", () => {
         expect(sheetText()).toContain("This bot answers them with: “Sorry, I can't chat with you.”");
     });
 
+    it("names the person once when they made the bot and own the universe", async () => {
+        await open(permissions({ universe: { name: "Nova", ownerName: "Layla" } }));
+        mount({ bot: { ...bot, name: "Linear SH", createdBy: { id: "u1", name: "Layla" } } });
+        await settle();
+        byTestId("bot-visibility-change")[0].click();
+        await settle();
+        expect(sheetText()).toContain(
+            "No roles or people are added yet, so only Layla and Nova's Admins will be able to use this bot."
+        );
+        expect(sheetText()).not.toContain("Layla, Layla");
+    });
+
     it("asks before making the bot public, and says guests can use it too", async () => {
         await open(permissions({ privateBot: true, rules: [rule({ chat: "yes" })] }));
         mocks.saveBotPermissions.mockResolvedValue(permissions());

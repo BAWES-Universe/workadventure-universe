@@ -68,8 +68,9 @@
     $: brief = briefOf(data, failed, ruleNames);
 
     // Who can always use the bot, by name, so nobody reads "the owner" as being themselves
-    $: maker = bot.createdBy?.name || undefined;
+    // When the person who made the bot also owns the universe, they are named once (as the owner)
     $: owner = data?.universe?.ownerName || undefined;
+    $: maker = bot.createdBy?.name && bot.createdBy.name !== owner ? bot.createdBy.name : undefined;
     $: universeName = data?.universe?.name;
     $: alwaysNames =
         owner && universeName
