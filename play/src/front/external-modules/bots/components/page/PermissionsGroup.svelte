@@ -15,6 +15,7 @@
     import PageGroup from "./PageGroup.svelte";
     import PageField from "./PageField.svelte";
     import PageSwitch from "./PageSwitch.svelte";
+    import PageButton from "./PageButton.svelte";
     import { IconChevronRight, IconLock, IconPlus, IconUser } from "@wa-icons";
 
     export let bot: BotData;
@@ -46,7 +47,21 @@
         }
         return count > 0 ? access.briefOpenRules({ count }) : access.briefOpen();
     }
-    $: brief = briefOf(data, failed);
+    $: brief = liveView ? briefOf(data, failed) : briefOf(data, failed).replace(/^Open to everyone/, "Public").replace(/^Open/, "Public");
+
+    // Mock: Make public / Make private, each with a confirmation that says who gains or loses access
+    let confirming: "private" | "public" | null = null;
+    $: listed = (data?.rules ?? [])
+        .filter((r) => !(["chat", "dm", "summon"] as const).every((a) => r[a] === "no"))
+        .map((r) => ruleName(r, access.someone()));
+    function names2(list: string[]): string {
+        return list.length <= 1 ? list.join("") : `${list.slice(0, -1).join(", ")} and ${list[list.length - 1]}`;
+    }
+    function confirmVisibility() {
+        if (!confirming) return;
+        void setPrivateBot(bot.id, confirming === "private");
+        confirming = null;
+    }
 
     $: privateHint = !data?.privateBot
         ? access.privateOffHint()
@@ -145,6 +160,7 @@
     {:else if !data}
         <p class="bp-m">{access.briefLoading()}</p>
     {:else}
+{#if liveView}
         <label class="bp-set" for="bot-private-{bot.id}">
             <span class="bp-tx">
                 <span class="bp-t">{access.privateBot()}</span>
@@ -158,6 +174,23 @@
                 onChange={(on) => setPrivateBot(bot.id, on)}
             />
         </label>
+        {:else}
+            <div class="bp-set bp-info" data-testid="bot-visibility">
+                <span class="bp-tx">
+                    <span class="bp-t">{data.privateBot ? "Private bot" : "Public bot"}</span>
+                    <span class="bp-m"
+                        >{data.privateBot
+                            ? data.rules.length
+                                ? "Only the roles and people below can use it"
+                                : "Only you and the admins, until you add someone"
+                            : "Everyone who can reach it can use it, guests too"}</span
+                    >
+                </span>
+                <PageButton testId="bot-visibility-change" on:click={() => (confirming = data?.privateBot ? "public" : "private")}
+                    >{data.privateBot ? "Make public" : "Make private"}</PageButton
+                >
+            </div>
+        {/if}
 
         {#if !liveView}
             <div class="bp-set bp-info" data-testid="bot-access-tools-line">
@@ -211,6 +244,38 @@
     {/if}
 </PageGroup>
 
+{#if confirming && data}
+    <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+    <div class="bp-sheet-bg" data-testid="bot-visibility-sheet" on:click|self={() => (confirming = null)}>
+        <div class="bp-sheet" role="dialog" aria-modal="true" aria-labelledby="bp-sheet-title">
+            <h3 id="bp-sheet-title">{confirming === "private" ? `Make ${bot.name} private?` : `Make ${bot.name} public?`}</h3>
+            {#if confirming === "private"}
+                <ul>
+                    {#if listed.length}
+                        <li>Only the roles and people you've added can use it: <b>{names2(listed)}</b>, each with their own rules.</li>
+                    {:else}
+                        <li>Nobody you've added yet, so only you and the admins can use it until you add a role or person.</li>
+                    {/if}
+                    <li>Everyone else, guests too, can't. They get your reply: “{data.refusalReply || access.replyPlaceholder()}”</li>
+                    <li>Its maker, the Universe owner and Admin always can.</li>
+                </ul>
+            {:else}
+                <ul>
+                    <li>Everyone who can reach it can chat with it, DM it and summon it, <b>guests too</b>.</li>
+                    <li>The roles and people below keep their own rules.</li>
+                </ul>
+            {/if}
+            <p class="bp-sheet-m">You can change this back any time.</p>
+            <div class="bp-sheet-btns">
+                <PageButton tall on:click={() => (confirming = null)}>Cancel</PageButton>
+                <PageButton tall go testId="bot-visibility-confirm" on:click={confirmVisibility}
+                    >{confirming === "private" ? "Make private" : "Make public"}</PageButton
+                >
+            </div>
+        </div>
+    </div>
+{/if}
+
 <style>
     /* A setting with a switch: the whole row is the tap area, 44 px tall like the bot page's other rows */
     .bp-set {
@@ -219,6 +284,61 @@
         gap: 10px;
         min-height: 44px;
         cursor: pointer;
+    }
+    .bp-sheet-bg {
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+        background: rgba(5, 4, 10, 0.72);
+    }
+    :global(body.desk) .bp-sheet-bg {
+        align-items: center;
+    }
+    .bp-sheet {
+        width: 100%;
+        max-width: 440px;
+        padding: 20px 18px calc(18px + env(safe-area-inset-bottom));
+        border-radius: 20px 20px 0 0;
+        background: #15121f;
+        color: #f4f2fa;
+    }
+    :global(body.desk) .bp-sheet {
+        border-radius: 20px;
+    }
+    .bp-sheet h3 {
+        margin: 0 0 10px;
+        font: inherit;
+        font-size: 18px;
+        font-weight: 700;
+        text-transform: none;
+        letter-spacing: 0;
+    }
+    .bp-sheet ul {
+        margin: 0;
+        padding-left: 18px;
+        font-size: 14px;
+        line-height: 1.45;
+        color: rgba(244, 242, 250, 0.78);
+    }
+    .bp-sheet li {
+        margin: 6px 0;
+    }
+    .bp-sheet b {
+        color: #fff;
+    }
+    .bp-sheet-m {
+        margin: 10px 0 0;
+        font-size: 13px;
+        color: rgba(244, 242, 250, 0.56);
+    }
+    .bp-sheet-btns {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        margin-top: 16px;
     }
     .bp-info {
         cursor: default;

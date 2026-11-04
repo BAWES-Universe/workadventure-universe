@@ -189,8 +189,11 @@ const roles = [
 const rule = (id: string, r: (typeof roles)[number], v: Record<string, string>) => ({ id, roleId: r.id, userId: null, role: { key: r.key, name: r.name, color: r.color }, person: null, ...v });
 const D = new URLSearchParams(location.search).get("d");
 const permissions = readPermissions({
-    privateBot: false, refusalReply: null, dailyReplyCap: null, roles,
-    rules: [rule("x1", roles[4], D === "live" ? { dm: "yes" } : { change: "yes", send: "yes" }), rule("x2", roles[3], { summon: "no" })],
+    privateBot: new URLSearchParams(location.search).get("priv") === "1", refusalReply: null, dailyReplyCap: null, roles,
+    rules: [
+        rule("x1", roles[4], D === "live" ? { dm: "yes" } : { change: "yes", send: "yes" }),
+        { id: "x2", roleId: null, userId: "omar", role: null, person: { name: "Omar" }, chat: "default", dm: "default", summon: "no", manage: "default", change: "default", send: "default" },
+    ],
 });
 const base: Record<string, unknown> = {
     onInitialize: (cb?: () => void) => { cb?.(); return () => {}; },
