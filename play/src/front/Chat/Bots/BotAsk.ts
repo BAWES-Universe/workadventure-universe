@@ -65,6 +65,8 @@ export interface BotAsk {
     notReviewed?: boolean;
     /** Where to look when the outcome could not be confirmed. */
     checkAt?: { label: string; url: string };
+    /** Only the person who asked sees this card: it came to them alone in nearby chat (#1658), not in a direct message. */
+    private?: boolean;
     /** When the card closes, on THIS device's clock. */
     expiresAt: number;
     /** How long a card waits, for "No answer in 10 min". */
@@ -149,7 +151,25 @@ export function readBotAsk(
     receivedAt: number
 ): BotAsk | undefined {
     if (!content || !botIdFromChatId(sender) || content.msgtype !== "m.notice") return undefined;
-    const field = content[BOT_ASK_KEY];
+    return parseAskField(content[BOT_ASK_KEY], receivedAt);
+}
+
+/**
+ * The card a bot sent one person in nearby chat (#1658): the same field a direct message's notice carries, as JSON in a
+ * private event. Who sent it is checked by the caller (only the bot itself, about itself). Only this person sees it.
+ */
+export function readNearbyBotAsk(body: string, receivedAt: number): BotAsk | undefined {
+    let field: unknown;
+    try {
+        field = JSON.parse(body);
+    } catch {
+        return undefined;
+    }
+    const ask = parseAskField(field, receivedAt);
+    return ask ? { ...ask, private: true } : undefined;
+}
+
+function parseAskField(field: unknown, receivedAt: number): BotAsk | undefined {
     if (!field || typeof field !== "object") return undefined;
     const o = field as Record<string, unknown>;
     if (o.v !== 1 || o.kind !== "approval") return undefined;
@@ -232,6 +252,11 @@ export type BotAskTap =
     | { action: "moreTime" }
     | { action: "reviewAgain" }
     | { action: "askAgain" };
+
+/** A tap as the private event to a bot in nearby chat carries it (#1658): the same words, as JSON. */
+export function botAskTapJson(tap: BotAskTap): string {
+    return JSON.stringify(tap);
+}
 
 export function botAskAnswerContent(ask: Pick<BotAsk, "id" | "revision">, tap: BotAskTap): Record<string, unknown> {
     return { v: 1, ask: ask.id, revision: ask.revision, ...tap };

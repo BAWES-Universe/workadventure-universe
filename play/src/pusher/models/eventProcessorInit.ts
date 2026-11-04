@@ -167,3 +167,31 @@ eventProcessor.registerPrivateEventProcessor("voiceModeChoice", (event, _sender,
     }
     return event;
 });
+
+// The card a bot shows one person in nearby chat (#1658), or a reply only that person needs: only a bot may send it, and
+// only about itself.
+eventProcessor.registerPrivateEventProcessor("botAsk", (event, sender) => {
+    if (event.$case !== "botAsk") {
+        throw new Error("Invalid event type");
+    }
+    const uuid = sender?.uuid ?? "";
+    if (!sender || !(sender.tags.includes("bot") || uuid.startsWith("bot-"))) {
+        throw new Error("Only a bot can send a card");
+    }
+    if (uuid.startsWith("bot-") && event.botAsk.botId !== uuid.slice("bot-".length)) {
+        throw new Error("A bot can only send its own card");
+    }
+    return event;
+});
+
+// A tap on a bot's card goes to that bot and to nobody else (#1658).
+eventProcessor.registerPrivateEventProcessor("botAskAnswer", (event, _sender, receiver) => {
+    if (event.$case !== "botAskAnswer") {
+        throw new Error("Invalid event type");
+    }
+    const uuid = receiver?.uuid ?? "";
+    if (!receiver || !(receiver.tags.includes("bot") || uuid.startsWith("bot-"))) {
+        throw new Error("A tap on a card can only be sent to a bot");
+    }
+    return event;
+});

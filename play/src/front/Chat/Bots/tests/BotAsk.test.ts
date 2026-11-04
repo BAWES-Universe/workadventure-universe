@@ -10,6 +10,8 @@ import {
     isWaiting,
     nextAskChange,
     readBotAsk,
+    readNearbyBotAsk,
+    botAskTapJson,
     shownAskPosition,
     type BotAsk,
 } from "../BotAsk";
@@ -191,5 +193,32 @@ describe("chatAsks", () => {
         expect(get(asks)[0].ask.answer).toEqual({ closed: true });
         messages.set([]);
         expect(get(asks)).toEqual([]);
+    });
+});
+
+describe("the card a bot shows one person in nearby chat (#1658)", () => {
+    it("reads the same card a direct message's notice carries, as theirs alone", () => {
+        const ask = readNearbyBotAsk(JSON.stringify(FIELD), 5_000_000);
+        expect(ask).toMatchObject({ id: "act_1", revision: 3, title: "Create a Linear issue", private: true });
+        // The time is counted from when this device got it
+        expect(ask?.expiresAt).toBe(5_000_000 + 600_000);
+    });
+
+    it("a card in a direct message is not marked as private", () => {
+        expect(readBotAsk(BOT_CHAT_ID, notice(FIELD), 5_000_000)?.private).toBeUndefined();
+    });
+
+    it("ignores what is not a card", () => {
+        expect(readNearbyBotAsk("not json", 0)).toBeUndefined();
+        expect(readNearbyBotAsk("null", 0)).toBeUndefined();
+        expect(readNearbyBotAsk(JSON.stringify({ ...FIELD, kind: "question" }), 0)).toBeUndefined();
+        expect(readNearbyBotAsk(JSON.stringify({ ...FIELD, options: [] }), 0)).toBeUndefined();
+    });
+
+    it("sends a tap as the same words, as JSON", () => {
+        expect(JSON.parse(botAskTapJson({ action: "decide", option: "approve" }))).toEqual({
+            action: "decide",
+            option: "approve",
+        });
     });
 });

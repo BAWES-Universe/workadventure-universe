@@ -26,6 +26,8 @@ import type { ToolSuggester } from '../mcp/ToolCatalog';
 import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision } from '../mcp/ToolGate';
 import { ToolPolicySource } from '../mcp/ToolPolicy';
 import type { ToolApprovals } from '../mcp/ToolApprovals';
+import { CONFIRM_SYSTEM, isConfirm, tapInstead } from '../mcp/NearbyWords';
+import type { BotAsksPort } from '../mcp/NearbyAsks';
 import { appendStreamedChunk } from './EmotionParser';
 import { describeStep, resultOf, showsAsStep, type ToolStep } from './ToolSteps';
 import { jsonrepair } from 'jsonrepair';
@@ -139,6 +141,17 @@ type ResolvedProvider =
     | { resting: true; line: string };
 
 /** Refs that only Orbit can resolve for a bot: Universe AI (follows the Default) and a person's own key (`key-…`). */
+/**
+ * The key a tool result carries when the bot showed a card to one person in a bubble (#1658): the one plain line everyone
+ * reads is the bot's whole reply, so what the model might add never goes out.
+ */
+const SHARED_LINE = 'sharedLine';
+/** Telling a yes from anything else is one short word from the bot's own AI; a slow one counts as not a yes. */
+const CONFIRM_TIMEOUT_MS = 4000;
+const NEARBY_ASK_RULE =
+    'Other people can read this chat. Some tools ask the person for an OK on a card only they see before they change, delete or send something. ' +
+    'Before you call a tool, write nothing first. Never repeat what is on a card (names, subjects, amounts, wording) in your reply or later to anyone else. ' +
+    'When a tool says a card was shown, write nothing more.';
 const UNIVERSE_AI_REF = 'universe-ai';
 const OWN_KEY_PREFIX = 'key-';
 const needsBotRoute = (ref: string): boolean => ref === UNIVERSE_AI_REF || ref.startsWith(OWN_KEY_PREFIX);
@@ -190,6 +203,7 @@ export class AIService {
     private toolGate: ToolGate;
     /** The card a tool that asks first shows in a direct message (#1657). Without it such a call is not run. */
     private approvals?: ToolApprovals;
+    private nearbyAsks?: BotAsksPort;
 
     constructor(
         conversationMemory: ConversationMemory,
@@ -216,6 +230,19 @@ export class AIService {
     /** The tool gate this service checks calls with, for what shows the cards and runs what a tap approved. */
     get gate(): ToolGate {
         return this.toolGate;
+    }
+
+    /** Where taps on cards in nearby chat and people coming back to a bubble are sent (#1658). */
+    useNearbyAsks(asks: BotAsksPort): void {
+        this.nearbyAsks = asks;
+    }
+
+    /** The same, for a bot's client, which looks it up each time so it need not be set before the bot spawns. */
+    asksPort(): BotAsksPort {
+        return {
+            tap: (bot, spaceName, playerId, answer) => this.nearbyAsks?.tap(bot, spaceName, playerId, answer),
+            personBack: (bot, spaceName, playerId) => this.nearbyAsks?.personBack(bot, spaceName, playerId),
+        };
     }
 
     useApprovals(approvals: ToolApprovals): void {
@@ -651,6 +678,11 @@ export class AIService {
         if (!isRetry) hearing?.botClient.releaseSpeech(hearing.spaceName, playerId);
         const attempt = (text: string, retry: boolean, facts: TurnFacts) =>
             this.generateTurn(botId, playerId, text, chatInstructions, providerId, spaceName, conversationContext, botClient, adminApiService, abortSignal, images, channel, toolTimeoutSeconds, homeRoomUrl, peopleInRoom, retry, facts);
+        // A card waits for this person in the bubble (#1658): a yes never sends, and anything else closes it
+        if (!isRetry && channel === 'world' && botClient && spaceName && playerId !== undefined && (await this.whileCardWaits(botId, playerId, message, providerId, spaceName, botClient))) {
+            yield { content: '', done: true } as AIStreamChunk;
+            return;
+        }
         let said = '';
         let done: AIStreamChunk | null = null;
         for await (const chunk of attempt(message, isRetry, turn)) {
@@ -946,7 +978,7 @@ export class AIService {
             // Build system prompt. Order matters for provider prompt caching
             // (issue #1333): see ai/systemPrompt.ts.
             // The ends of the parts that stay the same from message to message are where the Claude provider marks its cache
-            const { prompt: systemPrompt, cacheEnds: promptCacheEnds } = buildSystemPromptWithEnds({
+            const { prompt: basePrompt, cacheEnds: promptCacheEnds } = buildSystemPromptWithEnds({
                 chatInstructions,
                 mapContextInfo,
                 conversationContext,
@@ -974,6 +1006,9 @@ export class AIService {
                 providerId,
                 this.gatePerson(botId, playerId, botClient, spaceName)
             );
+            // In a bubble, what is on an approval card is for one person only: nothing is said before a tool that asks, and
+            // nothing from a card is repeated in the chat (#1658). Added at the end, after what the provider caches.
+            const systemPrompt = channel === 'world' && botClient && this.approvals && toolServerMap.size > 0 ? `${basePrompt}\n\n${NEARBY_ASK_RULE}` : basePrompt;
             if (turn) turn.artifactTools = tools.some((tool) => writesArtifact(tool?.function?.name ?? ''));
 
             // Generate stream with tools
@@ -1476,6 +1511,8 @@ export class AIService {
                             // pass it): the first round reads the cap from this chunk, later rounds from the previous round's last chunk
                             const replyCutOff = !!(followUpIterations === 1 ? chunk.metadata?.truncated : lastFollowUpDoneChunk?.metadata?.truncated);
                             const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia);
+                            // A card went to one person alone (#1658): the line everyone reads is the whole reply, said instead of the model's own words
+                            const sharedLine = toolResults.map((tr) => (tr.result as Record<string, unknown> | undefined)?.[SHARED_LINE]).filter((line): line is string => typeof line === 'string' && !!line).join(' ');
                             // Which tool made each file, and what it was asked for, for the bot's list of files (#1508)
                             this.noteMadeMedia(pendingToolCalls, toolResults);
                             // The steps line marks each shown call done or failed before the bot carries on (#1545)
@@ -1573,7 +1610,7 @@ export class AIService {
                                 const errorStatusBefore = followUpErrorStatus;
                                 const errorTextBefore = errorText;
                                 let refusedForLength = false;
-                                for await (const resultChunk of this.meteredStream(
+                                for await (const resultChunk of sharedLine ? this.saySharedLine(sharedLine) : this.meteredStream(
                                     ledger,
                                     providerId,
                                     systemPrompt,
@@ -3601,7 +3638,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             }
                             if (verdict.kind === 'ask') {
                                 // A card in a direct message asks for the OK; the call waits there, not here (#1657)
-                                const asked = await this.askForOk(botId!, toolCall.name, mcpServerConfig, parsedArgs, verdict, playerId, botClient);
+                                const asked = await this.askForOk(botId!, toolCall.name, mcpServerConfig, parsedArgs, verdict, playerId, botClient, spaceName);
                                 if (asked.kind === 'result') {
                                     result = asked.result;
                                     break;
@@ -3632,6 +3669,45 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         return Promise.all(toolPromises);
     }
 
+    /**
+     * The person said or wrote something in a bubble (#1658). While one of their cards waits: a plain yes is answered for
+     * them alone (a yes never sends, only the tap does) and the turn ends there, never said aloud; anything else closes the
+     * card, as in a direct message, and the turn goes on. True when the turn is over. Never throws.
+     */
+    private async whileCardWaits(botId: string, playerId: number, message: string, providerId: string, spaceName: string, botClient: BotClient): Promise<boolean> {
+        const approvals = this.approvals;
+        if (!approvals) return false;
+        try {
+            const chat = this.chatCallFor(botId, playerId, botClient, spaceName);
+            if (!chat?.person.signedIn || !chat.person.identifier) return false;
+            const person = { uuid: chat.person.identifier, name: chat.person.name, playerId };
+            approvals.touch(botId, spaceName, person);
+            const label = approvals.waitingLabel(botId, spaceName, person);
+            if (!label) return false;
+            let yes = false;
+            try {
+                yes = isConfirm(await this.quickGenerate(providerId, CONFIRM_SYSTEM, message.slice(0, 300), botId, CONFIRM_TIMEOUT_MS));
+            } catch {
+                // Not knowing is not a yes: the card closes and the person asks again
+            }
+            if (yes) {
+                await approvals.replyPrivately(botId, spaceName, person, tapInstead(label));
+                return true;
+            }
+            await approvals.onPersonMessage(botId, spaceName, person);
+            return false;
+        } catch (error) {
+            console.warn('[AIService] Could not tell what a person said while their card waits:', error instanceof Error ? error.message : error);
+            return false;
+        }
+    }
+
+    /** The reply after a card was shown in a bubble: only the line everyone reads (#1658), as if the model had written it. */
+    private async *saySharedLine(line: string): AsyncGenerator<AIStreamChunk> {
+        yield { content: line, done: false, metadata: undefined };
+        yield { content: '', done: true, metadata: { tokensUsed: 0, promptTokens: 0, completionTokens: 0 } } as AIStreamChunk;
+    }
+
     /** What the model is told when the gate did not let a tool run: the line the person can be told as it is. */
     private toolNotRun(verdict: Extract<GateDecision, { kind: 'refuse' }>): { error: string } {
         return { error: `${verdict.line} This was not done, and it cannot be done another way. Tell the person.` };
@@ -3649,23 +3725,28 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         args: Record<string, unknown>,
         decision: Extract<GateDecision, { kind: 'ask' }>,
         playerId: number | undefined,
-        botClient?: BotClient
+        botClient?: BotClient,
+        spaceName?: string
     ): Promise<{ kind: 'run' } | { kind: 'result'; result: unknown }> {
-        const chat = playerId !== undefined && !botClient ? this.chatCallFor(botId, playerId) : null;
-        if (!this.approvals || !chat || chat.chat.kind !== 'dm' || !chat.person.signedIn || !chat.person.identifier) {
+        const chat = playerId !== undefined ? this.chatCallFor(botId, playerId, botClient, spaceName) : null;
+        if (!this.approvals || !chat || !chat.person.signedIn || !chat.person.identifier) {
             return { kind: 'result', result: { error: "This needs the person's OK first and it was not done. Tell them to message you directly and ask again there." } };
         }
+        // In a bubble the card goes to the person who asked alone, and everyone reads one line (#1658)
+        const nearby = chat.chat.kind === 'nearby';
         const proposed = await this.approvals.propose({
             botId,
             roomId: chat.chat.ref,
-            person: { uuid: chat.person.identifier, name: chat.person.name },
+            person: { uuid: chat.person.identifier, name: chat.person.name, ...(nearby && playerId !== undefined ? { playerId } : {}) },
             toolName,
             ...(entry.title ? { toolTitle: entry.title } : {}),
             entry,
             args,
             decision,
         });
-        return proposed.kind === 'run' ? { kind: 'run' } : { kind: 'result', result: proposed.result };
+        if (proposed.kind === 'run') return { kind: 'run' };
+        // The line everyone in the bubble reads travels with the result: it is the bot's whole reply (see the follow-up)
+        return { kind: 'result', result: proposed.kind === 'waiting' && proposed.line ? { ...proposed.result, [SHARED_LINE]: proposed.line } : proposed.result };
     }
 
     /**

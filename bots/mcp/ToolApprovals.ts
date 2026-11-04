@@ -17,6 +17,7 @@
  * is shown again as a new notice instead of being edited.
  */
 import { askEdit, askNotice, argumentLines, buildAsk, cardTitle, outcomeOf, rememberOffer, resultLine, type AskAnswer, type AskDecision, type AskField, type CardFacts, type ParsedTap } from './ApprovalCard';
+import { acceptLine, fallbackLine, nameForLine, WORDS_SYSTEM, wordsPrompt, type Moment } from './NearbyWords';
 import type { GateCall, GateDecision, ToolGate } from './ToolGate';
 import type { ToolServerEntry } from './MCPConnector';
 import { OrbitActionsUnavailable, type OrbitActions, type SavedAction } from './OrbitActions';
@@ -26,6 +27,21 @@ export const GRANT_IDLE_MINUTES = Math.max(1, Number(process.env.BOT_GRANT_IDLE_
 export const GRANT_ABSOLUTE_MINUTES = Math.max(GRANT_IDLE_MINUTES, Number(process.env.BOT_GRANT_ABSOLUTE_MINUTES) || 8 * 60);
 
 const MAX_CARDS = 2000;
+
+/**
+ * Where the card goes in nearby chat and voice (#1658): to the person who asked and nobody else. What everyone reads, and a
+ * voice bot says aloud, is one plain line (`say`); the card, its endings and replies only they need go to them alone.
+ */
+export interface NearbySurface {
+    /** The card, or the card as it ended, to this person alone. Throws when the person is no longer in the bubble. */
+    card(botId: string, spaceName: string, person: Asker, ask: AskField): Promise<void>;
+    /** A reply only this person needs: shown to them alone and never said aloud. Its id is the same each time it is sent again. */
+    reply(botId: string, spaceName: string, person: Asker, text: string, id: string): Promise<void>;
+    /** One line everyone in the bubble reads, and hears from a voice bot. */
+    say(botId: string, spaceName: string, line: string): Promise<void>;
+    /** The extra AI reply that words a line from the tool's title and the name only. Null when it fails. */
+    write(botId: string, system: string, prompt: string): Promise<string | null>;
+}
 
 /** Where the card goes: the person's direct message with the bot. */
 export interface CardSurface {
@@ -47,6 +63,8 @@ export interface Asker {
     /** Their chat ID and whether they are a guest, when a tap in the chat told us (a reply to them needs both). */
     matrixUserId?: string;
     isGuest?: boolean;
+    /** Set when the person is in a bubble with the bot (nearby chat and voice): the card then reaches only them (#1658). */
+    playerId?: number;
 }
 
 /** What the bot says once an approved action ended, so the person hears what happened in the bot's own words. */
@@ -63,6 +81,8 @@ export interface Outcome {
 export interface ApprovalDeps {
     orbit: OrbitActions;
     cards: CardSurface;
+    /** Nearby chat and voice. Without it a call that asks first in a bubble is not run. */
+    nearby?: NearbySurface;
     gate: Pick<ToolGate, 'decide'>;
     tools: ToolRunner;
     /** The bot tells the person how an approved action ended. Never throws. */
@@ -86,8 +106,8 @@ export interface ProposeInput {
 export type Proposed =
     /** A remembered approval covers this call: run it now. */
     | { kind: 'run' }
-    /** The card is shown. What the model is told. */
-    | { kind: 'waiting'; result: Record<string, unknown> }
+    /** The card is shown. What the model is told; in a bubble also the line everyone reads, for the bot to say as its reply. */
+    | { kind: 'waiting'; result: Record<string, unknown>; line?: string }
     /** The card could not be shown, so nothing was done. What the model is told. */
     | { kind: 'failed'; result: Record<string, unknown> };
 
@@ -100,6 +120,14 @@ interface Card {
     eventId?: string;
     /** Whether the action still waits for a tap. */
     waiting: boolean;
+    /** In a bubble (#1658): the card went to the person alone, and its ending is one line for everyone. */
+    nearby: boolean;
+    /** The line for how it ended has been said, so no ending is said twice. */
+    said?: boolean;
+    /** Says "no answer" for a card nobody answered in a bubble. */
+    timer?: ReturnType<typeof setTimeout>;
+    /** How the card ended, as it was last drawn. */
+    lastAnswer?: AskAnswer;
 }
 
 const WAITING_RESULT = {
@@ -109,6 +137,14 @@ const WAITING_RESULT = {
         'and do not ask again or call the tool again: wait for them to tap. If they type something else instead, the card closes and nothing is done.',
 };
 
+/** The same, in a bubble: the line everyone reads is the bot's whole reply, and nothing from the card goes in it. */
+const WAITING_NEARBY_RESULT = {
+    status: 'waiting_for_ok',
+    message:
+        "A card asking for the person's OK was shown to them alone, and the chat was told in one line. Nothing was done yet. " +
+        'Write nothing more about it: other people can read this chat, and the card is private. Do not call the tool again.',
+};
+
 /** What the model is told when a card could not be shown: no OK, no action. */
 const NO_CARD_RESULT = { error: "The card asking for the person's OK could not be shown, so this was not done. Tell them to try again in a moment." };
 
@@ -116,6 +152,13 @@ export class ToolApprovals {
     private readonly cards = new Map<string, Card>();
     private readonly dispatching = new Set<string>();
     private readonly proposing = new Map<string, Promise<Proposed>>();
+    /** A person's card in a bubble that closed because they said something else: a new card for the same tool is a change (#1658). */
+    private readonly changing = new Map<string, number>();
+    /** The replies only a person saw in a bubble, kept a while so they come back with the person after a reload (#1658). */
+    private readonly replies = new Map<string, Array<{ id: string; text: string; at: number }>>();
+    private replyCount = 0;
+    /** People who allowed more in a bubble, so their messages there keep it alive without asking Orbit every time. */
+    private readonly remembering = new Set<string>();
     private readonly now: () => number;
 
     constructor(private readonly deps: ApprovalDeps) {
@@ -139,9 +182,11 @@ export class ToolApprovals {
 
     private async proposeNow(input: ProposeInput): Promise<Proposed> {
         const { botId, roomId, person, entry, toolName, args, decision } = input;
+        const nearby = person.playerId !== undefined;
+        if (nearby && !this.deps.nearby) return { kind: 'failed', result: NO_CARD_RESULT };
         const base = {
             requesterKey: person.uuid,
-            conversationKey: conversationKeyOf(roomId),
+            conversationKey: conversationKeyOf(roomId, nearby),
             connectionRef: entry.serverId,
             toolName,
             heading: decision.heading,
@@ -152,7 +197,7 @@ export class ToolApprovals {
         try {
             // The same call asked for again while its card still waits (a turn asked again, or the model repeating itself)
             // is that card: no second card, so one tap can never run it twice
-            if (this.findWaiting(botId, roomId, person.uuid, toolName, args, decision)) return { kind: 'waiting', result: WAITING_RESULT };
+            if (this.findWaiting(botId, roomId, person.uuid, toolName, args, decision)) return { kind: 'waiting', result: nearby ? WAITING_NEARBY_RESULT : WAITING_RESULT };
             if (!input.cardOnly && !decision.notReviewed && decision.heading !== 'deletesOrSends') {
                 const grant = await this.deps.orbit.findGrant(botId, base);
                 if (grant) return { kind: 'run' };
@@ -174,9 +219,9 @@ export class ToolApprovals {
                 notReviewed: decision.notReviewed,
                 waitMinutes: wait,
             };
-            const card: Card = { botId, roomId, person, facts, waiting: true };
+            const card: Card = { botId, roomId, person, facts, waiting: true, nearby };
             try {
-                card.eventId = await this.deps.cards.send(botId, roomId, askNotice(buildAsk(facts, this.now())));
+                card.eventId = await this.sendCard(card, buildAsk(facts, this.now()), false);
             } catch (error) {
                 // No card, no OK: the saved action is closed so a tap can never find it
                 console.warn(`[ToolApprovals] Could not show the card for ${toolName}:`, errorText(error));
@@ -184,7 +229,11 @@ export class ToolApprovals {
                 return { kind: 'failed', result: NO_CARD_RESULT };
             }
             this.keep(action.id, card);
-            return { kind: 'waiting', result: WAITING_RESULT };
+            if (!nearby) return { kind: 'waiting', result: WAITING_RESULT };
+            this.scheduleExpiry(action.id, card);
+            // One line for everyone: the bot needs an OK, or it changed what it asks (the person said something else)
+            const moment: Moment = this.takeChange(botId, roomId, person.uuid, toolName) ? 'changed' : 'ask';
+            return { kind: 'waiting', result: WAITING_NEARBY_RESULT, line: await this.lineFor(card, moment) };
         } catch (error) {
             console.warn(`[ToolApprovals] Could not ask for an OK for ${toolName}:`, errorText(error));
             return { kind: 'failed', result: NO_CARD_RESULT };
@@ -216,13 +265,15 @@ export class ToolApprovals {
     /** Redraws the card at the action's revision with how it ended (or none, while it waits). */
     private async redraw(id: string, card: Card, action: SavedAction | undefined, answer?: AskAnswer): Promise<void> {
         if (action) card.facts = { ...card.facts, action };
+        // What it ended with, for a person who comes back to the bubble (#1658)
+        card.lastAnswer = answer;
         const ask: AskField = buildAsk(card.facts, this.now(), answer);
         try {
             if (card.eventId) {
-                await this.deps.cards.send(card.botId, card.roomId, askEdit(card.eventId, ask));
+                await this.sendCard(card, ask, true);
             } else {
                 // This process did not send the card (it restarted since): the ended card goes in as a new notice
-                card.eventId = await this.deps.cards.send(card.botId, card.roomId, askNotice(ask));
+                card.eventId = await this.sendCard(card, ask, false);
             }
         } catch (error) {
             console.warn(`[ToolApprovals] Could not update the card ${id}:`, errorText(error));
@@ -232,7 +283,8 @@ export class ToolApprovals {
     /** The card for an action this process has not seen, from what Orbit saved. */
     private async rebuild(botId: string, roomId: string, person: Asker, id: string): Promise<{ card: Card; action: SavedAction } | null> {
         const action = await this.deps.orbit.read(botId, id);
-        if (!action || action.requesterKey !== person.uuid || action.conversationKey !== conversationKeyOf(roomId)) return null;
+        const nearby = person.playerId !== undefined;
+        if (!action || action.requesterKey !== person.uuid || action.conversationKey !== conversationKeyOf(roomId, nearby)) return null;
         const wait = (await this.deps.orbit.cardSettings(botId)).cardWaitMinutes;
         const entry = await this.deps.tools.find(botId, action.toolName).catch(() => null);
         const facts: CardFacts = {
@@ -244,7 +296,7 @@ export class ToolApprovals {
             notReviewed: false,
             waitMinutes: wait,
         };
-        const card: Card = { botId, roomId, person, facts, waiting: action.status === 'waiting' };
+        const card: Card = { botId, roomId, person, facts, waiting: action.status === 'waiting', nearby };
         this.keep(id, card);
         return { card, action };
     }
@@ -280,7 +332,7 @@ export class ToolApprovals {
                         ...(option === 'approveAndRemember' ? { idleMinutes: GRANT_IDLE_MINUTES, absoluteMinutes: GRANT_ABSOLUTE_MINUTES } : {}),
                     });
                     // A 409 that is not an answer about this action (no action in it) is a tap that did not count
-                    if (!answer.action) return void (await this.deps.cards.say(botId, roomId, "I couldn't record that. Tap again in a moment."));
+                    if (!answer.action) return void (await this.tell(botId, roomId, person, "I couldn't record that. Tap again in a moment."));
                     if (answer.outcome === 'already_decided' && answer.action.status === 'approved' && option !== 'decline') {
                         // Approved, but nobody started it: the answer to an earlier tap was lost, or this server restarted in between.
                         // Orbit lets one dispatcher win, so starting it here again can't run it twice.
@@ -290,8 +342,12 @@ export class ToolApprovals {
                     }
                     if (answer.outcome !== 'decided') return void (await this.redrawFor(id, card, answer.action));
                     card.waiting = false;
-                    if (option === 'decline') return void (await this.redraw(id, card, answer.action, { option: 'decline' }));
+                    if (option === 'decline') {
+                        await this.redraw(id, card, answer.action, { option: 'decline' });
+                        return void (await this.endLine(card, 'notDone'));
+                    }
                     const allowedMore = option === 'approveAndRemember' && answer.grantId ? allowedMoreLine() : undefined;
+                    if (allowedMore && card.nearby) this.remembering.add(JSON.stringify([botId, roomId, person.uuid]));
                     // The tap is recorded; running it takes as long as the tool does, so it does not hold the chat
                     void this.dispatch(id, card, answer.action, option, allowedMore);
                     return;
@@ -299,15 +355,19 @@ export class ToolApprovals {
                 case 'close': {
                     const answer = await orbit.cancel(botId, id, { actorKey, revision: tap.revision });
                     card.waiting = false;
-                    if (answer.outcome === 'changed') await this.redraw(id, card, answer.action, { closed: true });
-                    else if (answer.action) await this.redrawFor(id, card, answer.action);
+                    if (answer.outcome === 'changed') {
+                        await this.redraw(id, card, answer.action, { closed: true });
+                        await this.endLine(card, 'notDone');
+                    } else if (answer.action) await this.redrawFor(id, card, answer.action);
                     return;
                 }
                 case 'moreTime': {
                     const wait = (await orbit.cardSettings(botId)).cardWaitMinutes;
                     const answer = await orbit.extend(botId, id, { actorKey, revision: tap.revision, reviewMinutes: wait });
-                    if (answer.outcome === 'changed') await this.redraw(id, card, answer.action);
-                    else if (answer.outcome === 'no_more_time') await this.deps.cards.say(botId, roomId, 'This card cannot wait any longer. Tap Review again, or ask me again.');
+                    if (answer.outcome === 'changed') {
+                        await this.redraw(id, card, answer.action);
+                        this.scheduleExpiry(id, card);
+                    } else if (answer.outcome === 'no_more_time') await this.tell(botId, roomId, person, 'This card cannot wait any longer. Tap Review again, or ask me again.');
                     else if (answer.action) await this.redrawFor(id, card, answer.action);
                     return;
                 }
@@ -324,7 +384,7 @@ export class ToolApprovals {
         } catch (error) {
             console.warn(`[ToolApprovals] Could not take the tap on ${tap.ask}:`, errorText(error));
             if (error instanceof OrbitActionsUnavailable) {
-                await this.deps.cards.say(botId, roomId, "I couldn't record that. Tap again in a moment.").catch(() => undefined);
+                await this.tell(botId, roomId, person, "I couldn't record that. Tap again in a moment.").catch(() => undefined);
             }
         }
     }
@@ -345,11 +405,13 @@ export class ToolApprovals {
         const verdict = stale ? null : await this.deps.gate.decide(gateCall(botId, action.toolName, entry, person));
         if (!entry || !verdict || verdict.kind !== 'ask') {
             const why = verdict?.kind === 'refuse' ? verdict.line : 'That changed since, so I need you to ask me again.';
-            await this.deps.cards.say(botId, roomId, why);
+            await this.tell(botId, roomId, person, why);
             return;
         }
         const proposed = await this.propose({ botId, roomId, person, toolName: action.toolName, toolTitle: entry.title, entry, args: action.arguments, decision: verdict, cardOnly: true });
-        if (proposed.kind === 'failed') await this.deps.cards.say(botId, roomId, "I couldn't show the card. Try again in a moment.");
+        if (proposed.kind === 'failed') await this.tell(botId, roomId, person, "I couldn't show the card. Try again in a moment.");
+        // In a bubble there is no reply to carry the line, so it is said here
+        else if (proposed.kind === 'waiting' && proposed.line) await this.say(card, proposed.line);
     }
 
     /* ------------------------------------- running ------------------------------------- */
@@ -379,7 +441,7 @@ export class ToolApprovals {
                     return null;
                 });
                 await this.redraw(id, card, done ?? action, { ...picked, ...answer });
-                if (followUp) await this.deps.followUp?.({ botId, roomId, person, title, state: followUp, ...(result ? { result } : {}) }).catch(() => undefined);
+                if (followUp) await this.afterRun(card, { botId, roomId, person, title, state: followUp, ...(result ? { result } : {}) });
             };
 
             // The checks that count are the ones right before the call: the tool, the person and the settings as they are now
@@ -408,7 +470,7 @@ export class ToolApprovals {
                 const claimed = attempt as { attemptId: string; action: SavedAction } | null;
                 const done = claimed ? await this.deps.orbit.finish(botId, id, { attemptId: claimed.attemptId, outcome: 'notSent' }).catch(() => null) : null;
                 await this.redraw(id, card, done ?? claimed?.action, { ...picked, result: "I couldn't start this, so nothing was done. Ask me again." }).catch(() => undefined);
-                await this.deps.followUp?.({ botId, roomId, person, title, state: 'failed', result: "It couldn't be started, so nothing was done." }).catch(() => undefined);
+                await this.afterRun(card, { botId, roomId, person, title, state: 'failed', result: "It couldn't be started, so nothing was done." });
                 return;
             }
             // It may have started: never send it again, and tell the person to check
@@ -416,6 +478,166 @@ export class ToolApprovals {
         } finally {
             this.dispatching.delete(id);
             card.waiting = false;
+        }
+    }
+
+    /* ------------------------------- nearby chat and voice ------------------------------- */
+
+    /** Shows the card, or the card as it ended: in a direct message the notice, in a bubble the person alone (#1658). */
+    private async sendCard(card: Card, ask: AskField, edit: boolean): Promise<string> {
+        if (card.nearby) {
+            if (!this.deps.nearby) throw new Error('Nearby cards are not set up');
+            await this.deps.nearby.card(card.botId, card.roomId, card.person, ask);
+            // The game changes the card it has by its id, so the id is all that says it was sent
+            return ask.id;
+        }
+        const content = edit && card.eventId ? askEdit(card.eventId, ask) : askNotice(ask);
+        return this.deps.cards.send(card.botId, card.roomId, content);
+    }
+
+    /** A short plain line to the person alone: in a direct message in the chat, in a bubble a reply only they see. */
+    private async tell(botId: string, roomId: string, person: Asker, text: string): Promise<void> {
+        if (person.playerId !== undefined) {
+            const id = `r${Date.now().toString(36)}${(this.replyCount++).toString(36)}`;
+            const key = JSON.stringify([botId, roomId, person.uuid]);
+            const kept = (this.replies.get(key) ?? []).filter((reply) => this.now() - reply.at <= REPLY_KEPT_MS).slice(-(REPLIES_KEPT - 1));
+            this.replies.set(key, [...kept, { id, text, at: this.now() }]);
+            if (this.replies.size > MAX_CARDS) this.replies.delete(this.replies.keys().next().value as string);
+            return void (await this.deps.nearby?.reply(botId, roomId, person, text, id));
+        }
+        await this.deps.cards.say(botId, roomId, text);
+    }
+
+    /** One line everyone in the bubble reads and, from a voice bot, hears. Never throws. */
+    private async say(card: Card, line: string): Promise<void> {
+        try {
+            await this.deps.nearby?.say(card.botId, card.roomId, line);
+        } catch (error) {
+            console.warn(`[ToolApprovals] Could not say a line in ${card.roomId}:`, errorText(error));
+        }
+    }
+
+    /** The line for a moment: worded by one short extra AI reply that gets only the title and the name, else the title as it is. */
+    private async lineFor(card: Card, moment: Moment): Promise<string> {
+        const name = nameForLine(card.person.name);
+        const title = card.facts.title;
+        let written: string | null = null;
+        try {
+            written = acceptLine(await this.deps.nearby?.write(card.botId, WORDS_SYSTEM, wordsPrompt(moment, name, title)), name, card.facts.lines.map((line) => line.text), title);
+        } catch {
+            written = null;
+        }
+        return written ?? fallbackLine(moment, name, title);
+    }
+
+    /** How a card ended, for everyone in the bubble, once. The card itself already says it to the person who asked. */
+    private async endLine(card: Card, moment: Extract<Moment, 'sent' | 'notDone'>): Promise<void> {
+        if (!card.nearby || card.said) return;
+        card.said = true;
+        clearTimeout(card.timer);
+        await this.say(card, await this.lineFor(card, moment));
+    }
+
+    /** After an approved action ran: a direct message's bot says how it ended in its own words; a bubble gets one plain line. */
+    private async afterRun(card: Card, outcome: Outcome): Promise<void> {
+        if (!card.nearby) return void (await this.deps.followUp?.(outcome).catch(() => undefined));
+        // What the tool said stays on the card: the line holds only the title. A call that may have run says nothing it can't know.
+        if (outcome.state === 'done') await this.endLine(card, 'sent');
+        else if (outcome.state === 'failed') await this.endLine(card, 'notDone');
+    }
+
+    private takeChange(botId: string, roomId: string, personUuid: string, toolName: string): boolean {
+        const key = changeKey(botId, roomId, personUuid, toolName);
+        const at = this.changing.get(key);
+        this.changing.delete(key);
+        return at !== undefined && this.now() - at <= CHANGE_WINDOW_MS;
+    }
+
+    /** A card nobody answers in a bubble ends on its own: the card says so, and everyone reads one line. */
+    private scheduleExpiry(id: string, card: Card): void {
+        if (!card.nearby) return;
+        clearTimeout(card.timer);
+        const wait = Date.parse(card.facts.action.reviewExpiresAt) - this.now() + 1500;
+        const timer = setTimeout(() => void this.expire(id, card), Math.min(Math.max(wait, 1000), 2 ** 31 - 1));
+        timer.unref?.();
+        card.timer = timer;
+    }
+
+    private async expire(id: string, card: Card): Promise<void> {
+        if (!card.waiting) return;
+        try {
+            const action = await this.deps.orbit.read(card.botId, id);
+            if (!action) return;
+            if (action.status === 'waiting' && Date.parse(action.reviewExpiresAt) > this.now()) {
+                // More time was given (from another device, or after a restart)
+                card.facts = { ...card.facts, action };
+                this.scheduleExpiry(id, card);
+                return;
+            }
+            if (action.status !== 'waiting' && action.closedReason !== 'expired') {
+                // Someone answered it meanwhile: the card shows what it is now
+                await this.redrawFor(id, card, action);
+                return;
+            }
+            card.waiting = false;
+            await this.redraw(id, card, { ...action, revision: action.revision + 1 }, { expired: true });
+            await this.endLine(card, 'notDone');
+        } catch (error) {
+            console.warn(`[ToolApprovals] Could not end the card ${id} that nobody answered:`, errorText(error));
+        }
+    }
+
+    /**
+     * The person said something in a bubble while a card waits for them (#1658): the label of its main button when what
+     * they said is a yes, which never sends (only the tap does), else nothing. Nothing to answer when no card waits.
+     */
+    waitingLabel(botId: string, roomId: string, person: Asker): string | undefined {
+        const card = this.waitingOf(botId, roomId, person)[0];
+        return card?.facts.title ? cardOptionLabel(card) : undefined;
+    }
+
+    /** The cards of this person that still wait in this bubble, oldest first. */
+    private waitingOf(botId: string, roomId: string, person: Asker): Card[] {
+        return [...this.cards.values()].filter(
+            (card) => card.nearby && card.waiting && card.botId === botId && card.roomId === roomId && card.person.uuid === person.uuid && Date.parse(card.facts.action.reviewExpiresAt) > this.now()
+        );
+    }
+
+    /** A reply only this person needs, never said aloud: the answer to a yes that never sends. Never throws. */
+    async replyPrivately(botId: string, roomId: string, person: Asker, text: string): Promise<void> {
+        try {
+            await this.tell(botId, roomId, person, text);
+        } catch (error) {
+            console.warn(`[ToolApprovals] Could not reply privately in ${roomId}:`, errorText(error));
+        }
+    }
+
+    /** The person wrote in a bubble where they allowed more: what they allowed lasts another stretch. Quiet when they allowed nothing. */
+    touch(botId: string, roomId: string, person: Asker): void {
+        if (!this.remembering.has(JSON.stringify([botId, roomId, person.uuid]))) return;
+        void this.deps.orbit.touchGrants(botId, { requesterKey: person.uuid, conversationKey: conversationKeyOf(roomId, true) }).catch(() => undefined);
+    }
+
+    /**
+     * The person is in the bubble again (they reloaded, or walked back): the cards that wait for them, the ones that ended
+     * and the replies only they saw come back on their screen, in the order they were made (#1658). Never throws.
+     */
+    async personBack(botId: string, roomId: string, person: Asker): Promise<void> {
+        const key = JSON.stringify([botId, roomId, person.uuid]);
+        for (const reply of (this.replies.get(key) ?? []).filter((kept) => this.now() - kept.at <= REPLY_KEPT_MS)) {
+            await this.deps.nearby?.reply(botId, roomId, person, reply.text, reply.id).catch(() => undefined);
+        }
+        const mine = [...this.cards.entries()].filter(([, card]) => card.nearby && card.botId === botId && card.roomId === roomId && card.person.uuid === person.uuid);
+        for (const [id, card] of mine) {
+            try {
+                const waiting = card.waiting && Date.parse(card.facts.action.reviewExpiresAt) > this.now();
+                const ask = buildAsk(card.facts, this.now(), waiting ? undefined : card.lastAnswer ?? (card.waiting ? { expired: true } : undefined));
+                if (!waiting && !ask.answer) continue;
+                card.person = { ...card.person, playerId: person.playerId };
+                await this.deps.nearby?.card(botId, roomId, card.person, ask);
+            } catch (error) {
+                console.warn(`[ToolApprovals] Could not show the card ${id} again:`, errorText(error));
+            }
         }
     }
 
@@ -427,7 +649,8 @@ export class ToolApprovals {
      * Never throws.
      */
     async onPersonMessage(botId: string, roomId: string, person: Asker): Promise<void> {
-        const conversationKey = conversationKeyOf(roomId);
+        const nearby = person.playerId !== undefined;
+        const conversationKey = conversationKeyOf(roomId, nearby);
         void this.deps.orbit.touchGrants(botId, { requesterKey: person.uuid, conversationKey }).catch(() => undefined);
         const waiting = [...this.cards.entries()].filter(([, card]) => card.waiting && card.botId === botId && card.roomId === roomId && card.person.uuid === person.uuid);
         try {
@@ -436,6 +659,8 @@ export class ToolApprovals {
             for (const [id, card] of waiting) {
                 if (!closed.has(id)) continue;
                 card.waiting = false;
+                // In a bubble, a new card for the same tool soon after is a change, and everyone reads it as one (#1658)
+                if (nearby) this.changing.set(changeKey(botId, roomId, person.uuid, card.facts.action.toolName), this.now());
                 await this.redraw(id, card, { ...card.facts.action, status: 'closed', closedReason: 'superseded', revision: card.facts.action.revision + 1 }, { typed: true });
             }
         } catch (error) {
@@ -446,7 +671,22 @@ export class ToolApprovals {
 
 /* -------------------------------------- helpers -------------------------------------- */
 
-const conversationKeyOf = (roomId: string) => `dm:${roomId}`;
+/** A direct message's room, or a bubble's space: a card belongs to one or the other, never both. */
+const conversationKeyOf = (roomId: string, nearby = false) => `${nearby ? 'near' : 'dm'}:${roomId}`;
+
+const changeKey = (botId: string, roomId: string, personUuid: string, toolName: string) => JSON.stringify([botId, roomId, personUuid, toolName]);
+
+/** The replies only a person saw come back with them after a reload for this long, and this many. */
+const REPLY_KEPT_MS = 2 * 60 * 60_000;
+const REPLIES_KEPT = 10;
+
+/** The words on a card's main button: what the person taps to go ahead. */
+function cardOptionLabel(card: Card): string | undefined {
+    return buildAsk(card.facts, Date.now()).options.find((option) => option.id === 'approve')?.label;
+}
+
+/** How long after a person said something else a new card for the same tool still reads as a change. */
+const CHANGE_WINDOW_MS = 5 * 60_000;
 
 function randomKey(): string {
     return `card-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;

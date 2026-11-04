@@ -434,7 +434,8 @@
     $: shownBotState = botHeaderState(botState, lastBotNote?.state);
     // Cards the bot asks one answer with (#1657), in a direct message with a bot. The oldest waiting card is pinned above the
     // message box until it is answered, closed or runs out; the chat keeps the ones that ended, where they were asked.
-    $: askStore = partnerBotId && messages ? chatAsks(messages) : readable([]);
+    // And in nearby chat (#1658), where a bot shows the card to the person who asked and nobody else.
+    $: askStore = (partnerBotId || room.id === "proximity") && messages ? chatAsks(messages) : readable([]);
     let askNow = Date.now();
     let askTimer: ReturnType<typeof setTimeout> | undefined;
     $: waitingAsks = $askStore.filter((entry) => isWaiting(entry.ask, askNow));
@@ -1293,6 +1294,15 @@
                             />
                             {#if entry.message.stoppedBySpeech}
                                 <StoppedBySpeechNote stopped={entry.message.stoppedBySpeech} />
+                            {/if}
+                            {#if "privateReply" in entry.message && entry.message.privateReply}
+                                <!-- A reply a bot wrote for this person alone, never said aloud (#1658) -->
+                                <div
+                                    class="flex items-center gap-1.5 px-4 pb-2 text-xs text-white/60"
+                                    data-testid="botPrivateReplyNote"
+                                >
+                                    <IconLock font-size="14" />{$LL.chat.botAsk.onlyYouSeeReply()}
+                                </div>
                             {/if}
                             {#if "stoppedOnLeave" in entry.message && entry.message.stoppedOnLeave}
                                 <div class="px-4 pb-2 text-xs italic text-white/45" data-testid="proximityStoppedNote">

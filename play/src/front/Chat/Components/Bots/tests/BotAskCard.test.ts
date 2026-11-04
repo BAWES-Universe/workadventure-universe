@@ -279,4 +279,25 @@ describe("the card a bot shows before it changes something", () => {
             expect(byId("botAskOption")).toBeNull();
         });
     });
+
+    it("says only the person who asked sees a card that came to them alone in nearby chat, while it waits (#1658)", async () => {
+        await show(ask({ private: true }), { docked: true });
+        expect(byId("botAskPrivate")?.textContent).toContain("Only you see this card");
+    });
+
+    it("shows no such line on a card in a direct message", async () => {
+        await show(ask(), { docked: true });
+        expect(byId("botAskPrivate")).toBeNull();
+    });
+
+    it("drops the line once the card ended, and says 'said' where the person may have spoken", async () => {
+        await show(ask({ private: true, answer: { typed: true } }));
+        expect(byId("botAskPrivate")).toBeNull();
+        expect(text()).toContain("You said something else, so nothing was done");
+    });
+
+    it("keeps 'typed' in a direct message", async () => {
+        await show(ask({ answer: { typed: true } }));
+        expect(text()).toContain("You typed something else, so nothing was done");
+    });
 });
