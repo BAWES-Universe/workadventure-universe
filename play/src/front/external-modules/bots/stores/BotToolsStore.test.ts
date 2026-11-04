@@ -1,0 +1,111 @@
+import { get } from "svelte/store";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+    getMcpServerTools: vi.fn(),
+    moveMcpTool: vi.fn(),
+    confirmMcpTools: vi.fn(),
+    saveMcpServerSettings: vi.fn(),
+    getBotToolSettings: vi.fn(),
+    saveBotToolSettings: vi.fn(),
+}));
+vi.mock("../services/BotApiService", () => ({ botApiService: mocks }));
+
+import type { ServerTools } from "../toolsModel";
+import {
+    botToolsStore,
+    chooseSetting,
+    loadBotToolSettings,
+    loadServerTools,
+    saveBotToolSettings,
+    setServers,
+} from "./BotToolsStore";
+
+const server = (revision: number, settings: Partial<ServerTools["settings"]> = {}): ServerTools => ({
+    serverId: "s1",
+    state: "confirmed",
+    policyRevision: revision,
+    settings: {
+        looksUp: "rightAway",
+        makesNew: "rightAway",
+        changesThings: "asksFirst",
+        deletesOrSends: "asksFirst",
+        ...settings,
+    },
+    tools: [],
+});
+
+function later<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+        resolve = res;
+        reject = rej;
+    });
+    return { promise, resolve, reject };
+}
+
+describe("the Tools store (game #1655)", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        botToolsStore.set(undefined);
+    });
+
+    it("lets go of a late answer for a bot whose page has closed", async () => {
+        const slow = later<ServerTools>();
+        mocks.getMcpServerTools.mockReturnValueOnce(slow.promise);
+        const first = loadServerTools("botA", "s1");
+        setServers("botB", []);
+        slow.resolve(server(1));
+        await first;
+        expect(get(botToolsStore)?.botId).toBe("botB");
+        expect(get(botToolsStore)?.tools).toEqual({});
+    });
+
+    it("puts back only the heading that failed, not a different one changed meanwhile", async () => {
+        setServers("botA", []);
+        mocks.getMcpServerTools.mockResolvedValueOnce(server(1));
+        await loadServerTools("botA", "s1");
+
+        const failing = later<ServerTools>();
+        mocks.saveMcpServerSettings.mockReturnValueOnce(failing.promise);
+        mocks.saveMcpServerSettings.mockResolvedValueOnce(server(2, { looksUp: "off" }));
+
+        const first = chooseSetting("botA", "s1", "makesNew", "off").catch(() => undefined);
+        await chooseSetting("botA", "s1", "looksUp", "off");
+        failing.reject(new Error("no"));
+        await first;
+
+        const settings = get(botToolsStore)?.tools.s1.settings;
+        expect(settings?.makesNew).toBe("rightAway");
+        expect(settings?.looksUp).toBe("off");
+        expect(get(botToolsStore)?.tools.s1.policyRevision).toBe(2);
+    });
+
+    it("keeps a different approval setting changed meanwhile when one save fails", async () => {
+        mocks.getBotToolSettings.mockResolvedValueOnce({
+            askBeforeMaking: 5,
+            askWhichWay: "rarely",
+            cardWaitMinutes: 10,
+        });
+        await loadBotToolSettings("botA");
+
+        const failing = later<never>();
+        mocks.saveBotToolSettings.mockReturnValueOnce(failing.promise);
+        mocks.saveBotToolSettings.mockResolvedValueOnce({
+            askBeforeMaking: 5,
+            askWhichWay: "never",
+            cardWaitMinutes: 10,
+        });
+        const first = saveBotToolSettings("botA", { cardWaitMinutes: 30 }).catch(() => undefined);
+        await saveBotToolSettings("botA", { askWhichWay: "never" });
+        failing.reject(new Error("no"));
+        await first;
+
+        expect(get(botToolsStore)?.settings).toEqual({
+            askBeforeMaking: 5,
+            askWhichWay: "never",
+            cardWaitMinutes: 10,
+        });
+    });
+});

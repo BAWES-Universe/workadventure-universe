@@ -18,7 +18,7 @@
     import type { BotData } from "./types";
     import type { UsageScreen } from "./usageModel";
     import type { ToolsScreen } from "./toolsModel";
-    import { botToolsStore } from "./stores/BotToolsStore";
+    import { botToolsStore, type BotToolsState } from "./stores/BotToolsStore";
     import { botUsageStore, type BotUsageState } from "./stores/BotUsageStore";
     import {
         botEditorModeStore,
@@ -810,10 +810,11 @@
     let usageScreen: UsageScreen | null = null;
     // And Tools' screens: a server, one of its headings, Asking for approvals. Back from a heading returns to its server.
     let toolsScreen: ToolsScreen | null = null;
-    function toolsScreenTitle(screen: ToolsScreen, botId: string): string {
+    // The store is passed in (not read inside) so the panel title is worked out again when a server is renamed
+    function toolsScreenTitle(screen: ToolsScreen, botId: string, store: BotToolsState | undefined): string {
         const tools = $LL.mapEditor.edit.bots.page.tools;
         if (screen.kind === "approvals") return tools.approvals.title();
-        const held = $botToolsStore && $botToolsStore.botId === botId ? $botToolsStore : undefined;
+        const held = store && store.botId === botId ? store : undefined;
         const server = held?.servers?.find((one) => one.id === screen.serverId)?.name ?? "";
         return screen.kind === "server" ? server : `${server} · ${tools.headings[screen.heading].title()}`;
     }
@@ -886,11 +887,12 @@
                           ? $LL.mapEditor.edit.bots.page.companion.back({
                                 name: toolsScreenTitle(
                                     { kind: "server", serverId: toolsScreen.serverId },
-                                    selectedBot.id
+                                    selectedBot.id,
+                                    $botToolsStore
                                 ),
                             })
                           : $LL.mapEditor.edit.bots.page.companion.back({ name: selectedBot.name ?? "" }),
-                  title: toolsScreenTitle(toolsScreen, selectedBot.id),
+                  title: toolsScreenTitle(toolsScreen, selectedBot.id, $botToolsStore),
                   subtitle: selectedBot.name || undefined,
               }
             : currentMode === "detail" && selectedBot && editingAdvanced

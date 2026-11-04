@@ -365,10 +365,12 @@
                 // Update existing server
                 const updated = await botApiService.updateBotMcpServer(botId, editingServer.id, data);
                 servers = servers.map((s) => (s.id === updated.id ? updated : s));
+                setServers(botId, servers);
             } else {
                 // Create new server
                 const created = await botApiService.createBotMcpServer(botId, data);
                 servers = [...servers, created];
+                setServers(botId, servers);
             }
 
             closeModal();
