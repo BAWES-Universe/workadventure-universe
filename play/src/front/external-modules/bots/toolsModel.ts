@@ -36,6 +36,10 @@ export interface ServerTools {
     policyRevision: number;
     settings: Record<Heading, Setting>;
     tools: ServerTool[];
+    /** The server has more tools than Orbit keeps, so `tools` is only its first ones (Orbit #801) */
+    truncated: boolean;
+    /** How many tools the server has, when the bot server read them all; null when it only knew there were more */
+    totalSeen: number | null;
 }
 
 export interface BotToolSettings {
@@ -101,6 +105,7 @@ export function readServerTools(raw: unknown): ServerTools {
         throw new Error("Orbit answered with something the game does not understand");
     }
     const settings = obj(o.settings);
+    const tools = o.tools.map(readTool).filter((tool): tool is ServerTool => tool !== undefined);
     return {
         serverId: o.serverId,
         state: o.state === "notCheckedYet" || o.state === "confirmed" ? o.state : "notConfirmedYet",
@@ -111,7 +116,14 @@ export function readServerTools(raw: unknown): ServerTools {
             changesThings: setting(settings.changesThings, DEFAULT_SETTINGS.changesThings),
             deletesOrSends: setting(settings.deletesOrSends, DEFAULT_SETTINGS.deletesOrSends),
         },
-        tools: o.tools.map(readTool).filter((tool): tool is ServerTool => tool !== undefined),
+        tools,
+        // An older Orbit sends neither field: the list reads as whole
+        truncated: o.truncated === true,
+        // A count that is not more than what is listed cannot be right, so it reads as not known
+        totalSeen:
+            o.truncated === true && Number.isInteger(o.totalSeen) && (o.totalSeen as number) > tools.length
+                ? (o.totalSeen as number)
+                : null,
     };
 }
 

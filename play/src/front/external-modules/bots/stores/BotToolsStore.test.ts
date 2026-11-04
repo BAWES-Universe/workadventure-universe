@@ -35,6 +35,8 @@ const server = (revision: number, settings: Partial<ServerTools["settings"]> = {
         ...settings,
     },
     tools: [],
+    truncated: false,
+    totalSeen: null,
 });
 
 function later<T>() {
