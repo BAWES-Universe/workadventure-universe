@@ -799,8 +799,8 @@ export class ToolApprovals {
     async onPersonMessage(botId: string, roomId: string, person: Asker): Promise<void> {
         // A question card waiting for them is answered by what they wrote (#1661); their message goes on to the bot as it is
         await this.deps.questions?.onPersonMessage(botId, roomId, person, 'typed');
-        // A new message is a new request: what the last one made doesn't count against it (#1662)
-        this.newRequest(botId, roomId, person);
+        // The new message started a new request (`newRequest`) before this, by whoever got the message: it is not done here,
+        // where a slow card redraw would clear the count of a reply that has already begun (#1662)
         const nearby = person.playerId !== undefined;
         const conversationKey = conversationKeyOf(roomId, nearby);
         void this.deps.orbit.touchGrants(botId, { requesterKey: person.uuid, conversationKey }).catch(() => undefined);

@@ -187,11 +187,17 @@ describe('the card before making more than the limit', () => {
 });
 
 describe('what a request has made', () => {
-    it('starts again when the person writes a new message', async () => {
+    it('starts again when the person writes a new message', () => {
         s.approvals.reserveMake('b1', ROOM, SARA, 5, 5);
-        await s.approvals.onPersonMessage('b1', ROOM, SARA);
+        s.approvals.newRequest('b1', ROOM, SARA);
         expect(s.approvals.madeSoFar('b1', ROOM, SARA)).toBe(0);
         expect(s.approvals.reserveMake('b1', ROOM, SARA, 5, 5)).toEqual({ ok: true });
+    });
+
+    it('is not started again by the cards being told, which can finish after the reply began', async () => {
+        s.approvals.reserveMake('b1', ROOM, SARA, 5, 5);
+        await s.approvals.onPersonMessage('b1', ROOM, SARA);
+        expect(s.approvals.madeSoFar('b1', ROOM, SARA)).toBe(5);
     });
 
     it('is kept apart for each person, bot and chat', () => {
