@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => ({
         getBotPermissions: vi.fn(() => Promise.resolve({ rules: [], everyone: { canChat: true } })),
         getBotTelemetry: vi.fn(() => Promise.resolve({ on: true, universeHides: false })),
         getBotMcpServers: vi.fn(() => Promise.resolve([])),
+        // The Voice group is left out for someone Orbit doesn't let manage the bot's voice
+        getBotVoice: vi.fn(() => Promise.reject(Object.assign(new Error("Forbidden"), { status: 403 }))),
         updateBot: vi.fn((id: string, data: object) => Promise.resolve({ id, ...data })),
     },
 }));
