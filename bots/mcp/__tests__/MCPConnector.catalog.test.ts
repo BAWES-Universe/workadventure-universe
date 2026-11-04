@@ -64,12 +64,19 @@ describe('reading a server’s whole list', () => {
         expect(listCalls).toEqual([undefined, { cursor: 'p2' }, { cursor: 'p3' }]);
     });
 
-    it('stops at a cursor that does not move on, and keeps what came before a page that fails', async () => {
+    it('stops at a cursor that does not move on', async () => {
         pages = [answer([tool('a')], 'same'), answer([tool('b')], 'same')];
         expect((await discover()).tools.map((t) => t.function.name)).toEqual(['a', 'b']);
-        MCPConnector.clearCache();
+    });
+
+    it('keeps and saves nothing of a list when a later page fails, so a half-read list is never taken for the whole', async () => {
         pages = [answer([tool('a')], 'p2'), { data: { jsonrpc: '2.0', id: '1', error: { message: 'boom' } } } as never];
-        expect((await discover()).tools.map((t) => t.function.name)).toEqual(['a']);
+        expect((await discover()).tools).toEqual([]);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(saved).toHaveLength(0);
+        // The next read, when the server answers fully, is the one kept
+        pages = [answer([tool('a')], 'p2'), answer([tool('b')])];
+        expect((await discover()).tools.map((t) => t.function.name)).toEqual(['a', 'b']);
     });
 
     it('gives each tool a fingerprint and its server’s name, and the fingerprint moves when the tool does', async () => {
