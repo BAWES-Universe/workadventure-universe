@@ -262,6 +262,7 @@ describe('what a person says while their card waits in a bubble (#1658)', () => 
         const service = new AIService(null!, null!, '');
         const approvals = {
             touch: vi.fn(),
+            newRequest: vi.fn(),
             waitingLabel: vi.fn(() => label),
             answerQuestionByMessage: vi.fn(async () => false),
             replyPrivately: vi.fn(async () => undefined),
@@ -288,6 +289,12 @@ describe('what a person says while their card waits in a bubble (#1658)', () => 
         expect(await ask(service, 'Make it the 21st instead')).toBe(false);
         expect(approvals.onPersonMessage).toHaveBeenCalledWith('b1', 'room#bubble', person);
         expect(approvals.replyPrivately).not.toHaveBeenCalled();
+    });
+
+    it('starts a new count of what the request makes with whatever they say (#1662)', async () => {
+        const { service, approvals } = waitingService(undefined as never, 'OTHER');
+        await ask(service, 'just the first 5');
+        expect(approvals.newRequest).toHaveBeenCalledWith('b1', 'room#bubble', person);
     });
 
     it('does not take a slow or failed answer for a yes', async () => {

@@ -72,7 +72,7 @@ describe('a server that was never checked', () => {
 describe('a confirmed tool', () => {
     it('runs right away when its heading is Right away', async () => {
         const { gate } = gateFor(policy({ tools: [['tool', { heading: 'looksUp' }]] }));
-        expect(await gate.decide(call())).toEqual({ kind: 'run' });
+        expect(await gate.decide(call())).toMatchObject({ kind: 'run', heading: 'looksUp', policyRevision: 7 });
     });
 
     it('asks first when its heading asks first, and names the heading, revision and tool as it is', async () => {

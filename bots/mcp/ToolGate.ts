@@ -31,7 +31,8 @@ import { ToolPolicySource } from './ToolPolicy';
 export type GateRefusal = 'cannot_check' | 'not_confirmed' | 'changed' | 'off' | 'no_permission' | 'voice_unchecked';
 
 export type GateDecision =
-    | { kind: 'run' }
+    /** Go ahead. A confirmed tool also says what it is (its heading, the settings it was judged under), for a check on how many it makes. */
+    | { kind: 'run'; heading?: ToolHeading; policyRevision?: number; fingerprint?: string }
     | {
           kind: 'ask';
           heading: ToolHeading;
@@ -138,7 +139,7 @@ export class ToolGate {
         if (setting === 'asksFirst') {
             return { kind: 'ask', heading, notReviewed: false, policyRevision: policy.policyRevision, fingerprint: tool.fingerprint };
         }
-        return { kind: 'run' };
+        return { kind: 'run', heading, policyRevision: policy.policyRevision, fingerprint: tool.fingerprint };
     }
 
     /** Null when the person has what the heading needs; otherwise the refusal. */

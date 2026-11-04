@@ -23,6 +23,7 @@ import type { ToolServerEntry } from './MCPConnector';
 import { DEFAULT_CARD_SETTINGS, OrbitActionsUnavailable, type CardSettings, type OrbitActions, type SavedAction } from './OrbitActions';
 import type { QuestionField } from './QuestionCard';
 import type { Asked, AskInput, QuestionCards } from './QuestionCards';
+import { batchWords, MakeCounts, type BatchKind } from './ToolQuantity';
 
 /** How long a remembered approval lasts. Recommended values; the bot server's owner can change them. */
 export const GRANT_IDLE_MINUTES = Math.max(1, Number(process.env.BOT_GRANT_IDLE_MINUTES) || 60);
@@ -105,6 +106,8 @@ export interface ProposeInput {
     decision: Extract<GateDecision, { kind: 'ask' }>;
     /** Always show a card, even when a remembered approval covers the call (the person tapped Review again). */
     cardOnly?: boolean;
+    /** The card is the one before making more than the bot's limit (#1662): its own words, and nothing is remembered from it. */
+    batch?: BatchKind;
 }
 
 export type Proposed =
@@ -134,6 +137,10 @@ interface Card {
     lastAnswer?: AskAnswer;
     /** The person wrote again and Orbit is being asked to close it: a new call is not folded into it. */
     closing?: boolean;
+    /** The card before making more than the limit (#1662), kept so Review again shows the same one. */
+    batch?: BatchKind;
+    /** What a bubble's lines call this card when its title holds an amount: the tool's own title. */
+    lineTitle?: string;
 }
 
 const WAITING_RESULT = {
@@ -165,10 +172,13 @@ export class ToolApprovals {
     private replyCount = 0;
     /** People who allowed more in a bubble, so their messages there keep it alive without asking Orbit every time. */
     private readonly remembering = new Set<string>();
+    /** How many things each request has made so far (#1662). */
+    private readonly made: MakeCounts;
     private readonly now: () => number;
 
     constructor(private readonly deps: ApprovalDeps) {
         this.now = deps.now ?? Date.now;
+        this.made = new MakeCounts(this.now);
     }
 
     /* ------------------------------------ the card ------------------------------------ */
@@ -176,7 +186,7 @@ export class ToolApprovals {
     /** A call the gate says needs an OK: a remembered approval that covers it, or a card. Never throws. */
     async propose(input: ProposeInput): Promise<Proposed> {
         // The same call asked for twice at the same moment (a model repeating itself in one round) is one question
-        const key = JSON.stringify([input.botId, input.roomId, input.person.uuid, input.toolName, input.args, input.decision.fingerprint, input.decision.heading, input.decision.notReviewed, !!input.cardOnly]);
+        const key = JSON.stringify([input.botId, input.roomId, input.person.uuid, input.toolName, input.args, input.decision.fingerprint, input.decision.heading, input.decision.notReviewed, !!input.cardOnly, input.batch ?? null]);
         const running = this.proposing.get(key);
         if (running) return running;
         const run = this.proposeNow(input).finally(() => {
@@ -204,12 +214,14 @@ export class ToolApprovals {
             // The same call asked for again while its card still waits (a turn asked again, or the model repeating itself)
             // is that card: no second card, so one tap can never run it twice
             if (this.findWaiting(botId, roomId, person.uuid, toolName, args, decision)) return { kind: 'waiting', result: nearby ? WAITING_NEARBY_RESULT : WAITING_RESULT };
-            if (!input.cardOnly && !decision.notReviewed && decision.heading !== 'deletesOrSends') {
+            // Making more than the limit is asked every time: nothing allowed before covers it
+            if (!input.cardOnly && !input.batch && !decision.notReviewed && decision.heading !== 'deletesOrSends') {
                 const grant = await this.deps.orbit.findGrant(botId, base);
                 if (grant) return { kind: 'run' };
             }
             const wait = (await this.deps.orbit.cardSettings(botId)).cardWaitMinutes;
-            const offer = rememberOffer(args, decision.heading, decision.notReviewed);
+            const offer = input.batch ? null : rememberOffer(args, decision.heading, decision.notReviewed);
+            const words = input.batch ? batchWords(input.batch) : null;
             const action = await this.deps.orbit.create(botId, {
                 ...base,
                 proposalKey: randomKey(),
@@ -218,14 +230,15 @@ export class ToolApprovals {
             });
             const facts: CardFacts = {
                 action,
-                title: cardTitle(toolName, input.toolTitle),
+                title: words ? cardTitle(words.title) : cardTitle(toolName, input.toolTitle),
                 ...(entry.serverName ? { actsAs: entry.serverName } : {}),
-                lines: argumentLines(args, entry.inputSchema),
+                lines: [...(words?.lines ?? []), ...argumentLines(args, entry.inputSchema)],
                 offer,
                 notReviewed: decision.notReviewed,
                 waitMinutes: wait,
+                ...(words ? { buttons: { approve: words.approve, decline: words.decline } } : {}),
             };
-            const card: Card = { botId, roomId, person, facts, waiting: true, nearby };
+            const card: Card = { botId, roomId, person, facts, waiting: true, nearby, ...(input.batch ? { batch: input.batch, lineTitle: cardTitle(toolName, input.toolTitle) } : {}) };
             try {
                 card.eventId = await this.sendCard(card, buildAsk(facts, this.now()), false);
             } catch (error) {
@@ -412,13 +425,29 @@ export class ToolApprovals {
         if (!action || action.requesterKey !== person.uuid || action.status !== 'closed' || action.closedReason === 'declined') return;
         const entry = await this.deps.tools.find(botId, action.toolName);
         const stale = !entry || entry.fingerprint !== action.toolFingerprint;
-        const verdict = stale ? null : await this.deps.gate.decide(gateCall(botId, action.toolName, entry, person));
-        if (!entry || !verdict || verdict.kind !== 'ask') {
-            const why = verdict?.kind === 'refuse' ? verdict.line : 'That changed since, so I need you to ask me again.';
+        const checked = stale ? null : await this.deps.gate.decide(gateCall(botId, action.toolName, entry, person));
+        // A card before making more than the limit comes from a tool that runs right away: it asks again as it did
+        const decision: GateDecision | null =
+            card.batch && checked?.kind === 'run' && checked.heading === 'makesNew' && checked.policyRevision !== undefined && checked.fingerprint
+                ? { kind: 'ask', heading: 'makesNew', notReviewed: false, policyRevision: checked.policyRevision, fingerprint: checked.fingerprint }
+                : checked;
+        if (!entry || !decision || decision.kind !== 'ask') {
+            const why = decision?.kind === 'refuse' ? decision.line : 'That changed since, so I need you to ask me again.';
             await this.tell(botId, roomId, person, why);
             return;
         }
-        const proposed = await this.propose({ botId, roomId, person, toolName: action.toolName, toolTitle: entry.title, entry, args: action.arguments, decision: verdict, cardOnly: true });
+        const proposed = await this.propose({
+            botId,
+            roomId,
+            person,
+            toolName: action.toolName,
+            toolTitle: entry.title,
+            entry,
+            args: action.arguments,
+            decision,
+            cardOnly: true,
+            ...(card.batch ? { batch: card.batch } : {}),
+        });
         if (proposed.kind === 'failed') await this.tell(botId, roomId, person, "I couldn't show the card. Try again in a moment.");
         // In a bubble there is no reply to carry the line, so it is said here
         else if (proposed.kind === 'waiting' && proposed.line) await this.say(card, proposed.line);
@@ -459,11 +488,15 @@ export class ToolApprovals {
             const verdict = entry && entry.fingerprint === action.toolFingerprint ? await this.deps.gate.decide(gateCall(botId, action.toolName, entry, person)) : null;
             if (!entry || !verdict) return void (await finish('notSent', { result: 'The tool changed since, so nothing was done.' }, 'failed'));
             if (verdict.kind === 'refuse') return void (await finish('notSent', { result: verdict.line }, 'failed'));
-            if (verdict.kind === 'ask' && verdict.policyRevision !== action.policyRevision) {
+            // A card before making more than the limit comes from a tool that runs right away, so its verdict is a run
+            const judged = verdict.kind === 'ask' ? verdict.policyRevision : card.batch && verdict.kind === 'run' ? verdict.policyRevision : undefined;
+            if (judged !== undefined && judged !== action.policyRevision) {
                 return void (await finish('notSent', { result: 'The settings changed since, so nothing was done.' }, 'failed'));
             }
 
             started = true;
+            // What this tap lets be made counts in the request, so a later step doesn't ask again for the same ones
+            if (card.batch && (card.batch.kind === 'over' || card.batch.kind === 'part')) this.made.add(this.countKey(botId, roomId, person), card.batch.count);
             const result = await this.deps.tools.run(botId, entry, action.toolName, action.arguments, person.uuid);
             const outcome = outcomeOf(result);
             if (outcome === 'succeeded') {
@@ -530,7 +563,7 @@ export class ToolApprovals {
     /** The line for a moment: worded by one short extra AI reply that gets only the title and the name, else the title as it is. */
     private async lineFor(card: Card, moment: Moment): Promise<string> {
         const name = nameForLine(card.person.name);
-        const title = card.facts.title;
+        const title = card.lineTitle ?? card.facts.title;
         let written: string | null = null;
         try {
             written = acceptLine(await this.deps.nearby?.write(card.botId, WORDS_SYSTEM, wordsPrompt(moment, name, title)), name, card.facts.lines.map((line) => line.text), title);
@@ -618,6 +651,27 @@ export class ToolApprovals {
         return this.deps.orbit.cardSettings(botId).catch(() => ({ ...DEFAULT_CARD_SETTINGS }));
     }
 
+    /* ----------------------------- how many a request has made (#1662) ----------------------------- */
+
+    private countKey(botId: string, roomId: string, person: Asker): string {
+        return JSON.stringify([botId, conversationKeyOf(roomId, person.playerId !== undefined), person.uuid]);
+    }
+
+    /** Whether `count` more fit under the limit for this person's request; if so they are counted now. Otherwise how many were made so far. */
+    reserveMake(botId: string, roomId: string, person: Asker, count: number, limit: number): { ok: true } | { ok: false; soFar: number } {
+        return this.made.reserve(this.countKey(botId, roomId, person), count, limit);
+    }
+
+    /** How many things this person's request has made so far. */
+    madeSoFar(botId: string, roomId: string, person: Asker): number {
+        return this.made.soFar(this.countKey(botId, roomId, person));
+    }
+
+    /** The person asked for something new: what the last request made is not counted against this one. */
+    newRequest(botId: string, roomId: string, person: Asker): void {
+        this.made.reset(this.countKey(botId, roomId, person));
+    }
+
     /** Whether question cards are set up here at all. */
     get asksQuestions(): boolean {
         return !!this.deps.questions;
@@ -686,6 +740,8 @@ export class ToolApprovals {
     async onPersonMessage(botId: string, roomId: string, person: Asker): Promise<void> {
         // A question card waiting for them is answered by what they wrote (#1661); their message goes on to the bot as it is
         await this.deps.questions?.onPersonMessage(botId, roomId, person, 'typed');
+        // A new message is a new request: what the last one made doesn't count against it (#1662)
+        this.newRequest(botId, roomId, person);
         const nearby = person.playerId !== undefined;
         const conversationKey = conversationKeyOf(roomId, nearby);
         void this.deps.orbit.touchGrants(botId, { requesterKey: person.uuid, conversationKey }).catch(() => undefined);

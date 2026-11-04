@@ -146,14 +146,20 @@ function declineLabel(title: string): string {
     return /^[A-Za-z]{3,}$/.test(first) && title.split(/\s+/).length > 1 ? `Don't ${first.toLowerCase()}` : "Don't do it";
 }
 
-export function cardOptions(title: string, offer: RememberOffer | null): Array<{ id: AskDecision; label: string }> {
-    const approve = clip(title, LABEL_MAX);
+/** Words for the two buttons that are not the title: the card before making more than the limit (#1662) says its own. */
+export interface ButtonWords {
+    approve: string;
+    decline: string;
+}
+
+export function cardOptions(title: string, offer: RememberOffer | null, words?: ButtonWords): Array<{ id: AskDecision; label: string }> {
+    const approve = clip(words?.approve ?? title, LABEL_MAX);
     const options: Array<{ id: AskDecision; label: string }> = [{ id: 'approve', label: approve }];
     if (offer) {
         const withPhrase = offer.phrase ? `${approve}, and allow more with ${offer.phrase} in this chat` : `${approve}, and allow more like this in this chat`;
         options.push({ id: 'approveAndRemember', label: withPhrase.length <= LABEL_MAX ? withPhrase : clip(`${approve}, and allow more like this in this chat`, LABEL_MAX) });
     }
-    options.push({ id: 'decline', label: declineLabel(title) });
+    options.push({ id: 'decline', label: clip(words?.decline ?? declineLabel(title), LABEL_MAX) });
     return options;
 }
 
@@ -168,6 +174,8 @@ export interface CardFacts {
     notReviewed: boolean;
     waitMinutes: number;
     checkAt?: { label: string; url: string };
+    /** Its own button words, for the card before a bot makes more than its limit (#1662). */
+    buttons?: ButtonWords;
 }
 
 /** The `universe.ask` field for an action as it stands. `answer` is set once the card has ended. */
@@ -181,7 +189,7 @@ export function buildAsk(facts: CardFacts, now: number, answer?: AskAnswer): Ask
         title: facts.title,
         ...(facts.actsAs ? { actsAs: clip(facts.actsAs, 120) } : {}),
         lines: facts.lines,
-        options: cardOptions(facts.title, everyTime ? null : facts.offer),
+        options: cardOptions(facts.title, everyTime ? null : facts.offer, facts.buttons),
         ...(everyTime ? { everyTime: true } : {}),
         ...(facts.notReviewed ? { notReviewed: true } : {}),
         ...(facts.checkAt ? { checkAt: facts.checkAt } : {}),
