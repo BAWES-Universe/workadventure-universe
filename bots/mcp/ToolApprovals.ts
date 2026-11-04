@@ -322,6 +322,9 @@ export class ToolApprovals {
         const { botId, roomId, person } = card;
         const picked: AskAnswer = { option, ...(allowedMore ? { allowedMore } : {}) };
         const title = card.facts.title;
+        // Set right before the tool is called: until then, whatever stops this run, the tool did not run
+        let started = false;
+        let attempt: { attemptId: string; action: SavedAction } | null = null;
         try {
             const claim = await this.deps.orbit.claim(botId, id);
             if (!claim.claimed) {
@@ -330,6 +333,7 @@ export class ToolApprovals {
                 return;
             }
             const action = claim.action;
+            attempt = { attemptId: claim.attemptId, action };
             const finish = async (outcome: Parameters<OrbitActions['finish']>[2]['outcome'], answer: AskAnswer, followUp?: Outcome['state'], result?: string) => {
                 const done = await this.deps.orbit.finish(botId, id, { attemptId: claim.attemptId, outcome }).catch((error) => {
                     console.warn(`[ToolApprovals] Could not tell Orbit how ${id} ended:`, errorText(error));
@@ -348,6 +352,7 @@ export class ToolApprovals {
                 return void (await finish('notSent', { result: 'The settings changed since, so nothing was done.' }, 'failed'));
             }
 
+            started = true;
             const result = await this.deps.tools.run(botId, entry, action.toolName, action.arguments, person.uuid);
             const outcome = outcomeOf(result);
             if (outcome === 'succeeded') {
@@ -359,6 +364,14 @@ export class ToolApprovals {
             return void (await finish(outcome, { result: why }, 'failed', why));
         } catch (error) {
             console.warn(`[ToolApprovals] Running ${id} stopped:`, errorText(error));
+            if (!started) {
+                // Stopped before the tool was called: nothing was done, and Orbit is told if it had handed the call out
+                const claimed = attempt as { attemptId: string; action: SavedAction } | null;
+                const done = claimed ? await this.deps.orbit.finish(botId, id, { attemptId: claimed.attemptId, outcome: 'notSent' }).catch(() => null) : null;
+                await this.redraw(id, card, done ?? claimed?.action, { ...picked, result: "I couldn't start this, so nothing was done. Ask me again." }).catch(() => undefined);
+                await this.deps.followUp?.({ botId, roomId, person, title, state: 'failed', result: "It couldn't be started, so nothing was done." }).catch(() => undefined);
+                return;
+            }
             // It may have started: never send it again, and tell the person to check
             await this.redraw(id, card, undefined, { ...picked, unknown: true }).catch(() => undefined);
         } finally {
@@ -378,8 +391,8 @@ export class ToolApprovals {
         const conversationKey = conversationKeyOf(roomId);
         void this.deps.orbit.touchGrants(botId, { requesterKey: person.uuid, conversationKey }).catch(() => undefined);
         const waiting = [...this.cards.entries()].filter(([, card]) => card.waiting && card.botId === botId && card.roomId === roomId && card.person.uuid === person.uuid);
-        if (waiting.length === 0) return;
         try {
+            // Orbit closes every card of theirs still waiting here, also ones this server no longer holds (after a restart)
             const closed = new Set(await this.deps.orbit.supersede(botId, { requesterKey: person.uuid, conversationKey }));
             for (const [id, card] of waiting) {
                 if (!closed.has(id)) continue;

@@ -312,6 +312,20 @@ describe('Create (approve)', () => {
         expect(s.outcomes[0]).toMatchObject({ state: 'failed', result: 'Tool error: no such team' });
     });
 
+    it('says nothing was done when the claim itself fails, and does not call the tool', async () => {
+        await s.approvals.propose(input());
+        s.orbit.claim = (async () => {
+            throw new Error('timeout');
+        }) as never;
+        await s.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'decide', option: 'approve' }));
+        await settle();
+        expect(s.run).not.toHaveBeenCalled();
+        const answer = field(s.sent.at(-1)!.content).answer!;
+        expect(answer.unknown).toBeUndefined();
+        expect(answer.result).toContain('nothing was done');
+        expect(s.outcomes[0]).toMatchObject({ state: 'failed' });
+    });
+
     it('shows what the action is now when the claim is lost', async () => {
         await s.approvals.propose(input());
         s.orbit.claim = (async (_bot: string, id: string) => ({ claimed: false as const, reason: 'stale', action: { ...s.orbit.actions.get(id)!, status: 'closed' as const, closedReason: 'stale' as const, revision: 5 } })) as never;
@@ -437,10 +451,12 @@ describe('typing something else', () => {
         expect(s.orbit.touched).toBe(1);
     });
 
-    it('asks Orbit nothing to close when no card waits', async () => {
-        const supersede = vi.spyOn(s.orbit, 'supersede');
-        await s.approvals.onPersonMessage('b1', ROOM, SARA);
-        expect(supersede).not.toHaveBeenCalled();
+    it('still has Orbit close their waiting cards when this server no longer holds them (after a restart)', async () => {
+        await s.approvals.propose(input());
+        const restarted = setup();
+        restarted.orbit.actions = s.orbit.actions;
+        await restarted.approvals.onPersonMessage('b1', ROOM, SARA);
+        expect(s.orbit.actions.get('act_1')!.closedReason).toBe('superseded');
     });
 
     it("leaves another person's cards and other chats alone", async () => {
