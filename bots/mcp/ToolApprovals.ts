@@ -249,6 +249,13 @@ export class ToolApprovals {
                         decision: option,
                         ...(option === 'approveAndRemember' ? { idleMinutes: GRANT_IDLE_MINUTES, absoluteMinutes: GRANT_ABSOLUTE_MINUTES } : {}),
                     });
+                    if (answer.outcome === 'already_decided' && answer.action.status === 'approved') {
+                        // Approved, but nobody started it: the answer to an earlier tap was lost, or this server restarted in between.
+                        // Orbit lets one dispatcher win, so starting it here again can't run it twice.
+                        card.waiting = false;
+                        void this.dispatch(id, card, answer.action, 'approve');
+                        return;
+                    }
                     if (answer.outcome !== 'decided') return void (await this.redrawFor(id, card, answer.action));
                     card.waiting = false;
                     if (option === 'decline') return void (await this.redraw(id, card, answer.action, { option: 'decline' }));

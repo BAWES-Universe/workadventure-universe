@@ -312,6 +312,28 @@ describe('Create (approve)', () => {
         expect(s.outcomes[0]).toMatchObject({ state: 'failed', result: 'Tool error: no such team' });
     });
 
+    it('runs an approved call that nobody started when the person taps again after a lost answer, once', async () => {
+        await s.approvals.propose(input());
+        const real = s.orbit.decide.bind(s.orbit);
+        let first = true;
+        s.orbit.decide = (async (...args: Parameters<typeof real>) => {
+            const answer = await real(...args);
+            if (first) {
+                first = false;
+                throw new Error('answer lost');
+            }
+            return answer;
+        }) as never;
+        await s.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'decide', option: 'approve' }));
+        await settle();
+        expect(s.run).not.toHaveBeenCalled();
+        await s.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'decide', option: 'approve' }));
+        await settle();
+        await s.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'decide', option: 'approve' }));
+        await settle();
+        expect(s.run).toHaveBeenCalledTimes(1);
+    });
+
     it('says nothing was done when the claim itself fails, and does not call the tool', async () => {
         await s.approvals.propose(input());
         s.orbit.claim = (async () => {
