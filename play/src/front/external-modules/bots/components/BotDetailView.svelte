@@ -606,7 +606,12 @@
         }}
     />
 {:else if currentBot && editingRuleId}
-    <BotRuleScreen botId={currentBot.id} ruleId={editingRuleId} onClose={() => (editingRuleId = null)} />
+    <BotRuleScreen
+        botId={currentBot.id}
+        botName={currentBot.name}
+        ruleId={editingRuleId}
+        onClose={() => (editingRuleId = null)}
+    />
 {:else if currentBot && usageScreen}
     <BotUsageScreen bot={currentBot} screen={usageScreen} />
 {:else if currentBot && toolsScreen?.kind === "server"}

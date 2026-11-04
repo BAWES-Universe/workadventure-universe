@@ -51,6 +51,8 @@ function rule(partial: Partial<BotRule> = {}): BotRule {
         dm: "default",
         summon: "default",
         manage: "default",
+        change: "default",
+        deleteOrSend: "default",
         ...partial,
     };
 }
