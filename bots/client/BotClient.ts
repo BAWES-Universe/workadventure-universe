@@ -50,6 +50,7 @@ import { OrbitTurnGate, pausedLine } from '../voice/VoiceAllowance';
 import { pausedAtCapacityEvent } from '../voice/VoiceLoad';
 import { captureServerEvent } from '../ai/PostHogClient';
 import { BotAttention, followUpSeconds } from './BotAttention';
+import { audioFileNameFor } from '../utils/audioFileName';
 
 // Get the secret key from environment - must match pusher's SECRET_KEY
 const SECRET_KEY = process.env.SECRET_KEY || 'default-secret-key';
@@ -1842,7 +1843,9 @@ export class BotClient {
         const mimeHint = mimeType || this.inferMimeFromExt(url);
         try {
             const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
-            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, undefined, undefined, asker)) {
+            // A song with no usable name would show as a plain player: give it one that ends as audio
+            const fileName = audioFileNameFor(location, [mimeHint, mimeType].find((one) => one?.startsWith('audio/')));
+            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, undefined, fileName, asker)) {
                 const err = new Error(`Bot is not in space ${spaceName} — cannot send audio`);
                 (err as any)._cdnUrl = location;
                 (err as any)._mediaType = mediaType;

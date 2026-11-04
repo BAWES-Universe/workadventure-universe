@@ -232,6 +232,61 @@ describe("an audio file in chat", () => {
         expect(vi.mocked(openSongInPlayer).mock.calls[0]?.[0].key).toBe(listed?.key);
     });
 
+    it("opens a song a bot sent with no file name, by the name its link ends with (#1803)", async () => {
+        vi.mocked(openSongInPlayer).mockClear();
+        const holder = document.createElement("div");
+        target.appendChild(holder);
+        shown.push(
+            new MessageAudioFile({
+                target: holder,
+                props: {
+                    content: readable(content({ url: "https://uploader.test/upload-file/Desert%20Drive.mp3?sig=1" })),
+                },
+                context: new Map([
+                    [MESSAGE_SENDER_CONTEXT, { name: "Imagine [Music]", isMine: false, messageId: "$song" }],
+                ]),
+            })
+        );
+        await tick();
+
+        expect(holder.querySelector("[data-testid=audioOpenInPlayer]")?.textContent?.trim()).toBe("Open in player");
+        expect(visibleText()).toContain("MP3");
+        (holder.querySelector("[data-testid=audioOpenInPlayer]") as HTMLButtonElement).click();
+        expect(vi.mocked(openSongInPlayer).mock.calls[0]?.[0].name).toBe("Desert Drive.mp3");
+    });
+
+    it("shows no player row for a link with no audio ending, or for a voice note with an audio link", async () => {
+        const holder = document.createElement("div");
+        target.appendChild(holder);
+        shown.push(
+            new MessageAudioFile({
+                target: holder,
+                props: { content: readable(content({ url: "https://uploader.test/upload-file/7f3a?sig=1" })) },
+            })
+        );
+        const voice = document.createElement("div");
+        target.appendChild(voice);
+        shown.push(
+            new MessageAudioFile({
+                target: voice,
+                props: {
+                    content: readable(
+                        content({
+                            url: "https://uploader.test/upload-file/note.ogg",
+                            isVoice: true,
+                            voiceDuration: 5,
+                            voiceWaveform: [0.2, 0.5],
+                        })
+                    ),
+                },
+            })
+        );
+        await tick();
+
+        expect(holder.querySelector("[data-testid=audioOpenInPlayer]")).toBeNull();
+        expect(voice.querySelector("[data-testid=audioOpenInPlayer]")).toBeNull();
+    });
+
     it("has no player button for a voice note, or for a file that couldn't be fetched", async () => {
         const voice = await show("Voice message", {
             isVoice: true,

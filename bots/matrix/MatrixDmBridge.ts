@@ -18,6 +18,7 @@ import { ACCESS_CACHE_TTL_MS } from '../server/BotAccessGate';
 import { BotWokaAvatar } from './BotWokaAvatar';
 import { ARTIFACT_KEY, artifactDirectMessage } from '../ai/ArtifactTools';
 import { artifactIdOfCard } from '../ai/ArtifactReferences';
+import { audioFileNameFor } from '../utils/audioFileName';
 import { STEPS_KEY, type StepsField } from '../ai/ToolSteps';
 
 /** The field of a reply that names the bot's room: the game shows a card under it to go there. */
@@ -974,7 +975,12 @@ export class MatrixDmBridge implements MatrixEventHandler {
         });
         const data = Buffer.from(response.data);
         const mimeType = item.mimeType || String(response.headers['content-type'] || 'application/octet-stream');
-        const filename = item.name || new URL(item.url).pathname.split('/').pop() || `${item.mediaType}`;
+        // A song ends as audio, so the game's card knows it (the "Open in player" row); another file keeps its own name
+        const filename =
+            (item.mediaType === 'audio' ? audioFileNameFor(item.url, mimeType, item.name) : undefined) ||
+            item.name ||
+            new URL(item.url).pathname.split('/').pop() ||
+            `${item.mediaType}`;
         const mxc = await this.client.uploadMedia(botUserId, data, mimeType, filename);
         const msgtype = { image: 'm.image', audio: 'm.audio', video: 'm.video', file: 'm.file' }[item.mediaType] ?? 'm.file';
         await this.client.sendMessage(botUserId, roomId, {
