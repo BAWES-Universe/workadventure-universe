@@ -613,6 +613,24 @@ describe('typing something else', () => {
         expect(ended.map((card) => card.answer)).toEqual([{ typed: true }, { typed: true }]);
     });
 
+    it('does not fold a repeated call into a card that is being closed because the person wrote again', async () => {
+        await s.approvals.propose(input());
+        const real = s.orbit.supersede.bind(s.orbit);
+        let release: () => void = () => undefined;
+        s.orbit.supersede = (async (...args: Parameters<typeof real>) => {
+            await new Promise<void>((resolve) => (release = resolve));
+            return real(...args);
+        }) as never;
+        const closing = s.approvals.onPersonMessage('b1', ROOM, SARA);
+        await settle();
+        // The reply went on while Orbit was slow, and the model asks for the same thing again
+        await s.approvals.propose(input());
+        expect(s.orbit.actions.size).toBe(2);
+        release();
+        await closing;
+        expect(s.orbit.actions.get('act_1')!.closedReason).toBe('superseded');
+    });
+
     it('keeps their remembered approvals alive', async () => {
         await s.approvals.onPersonMessage('b1', ROOM, SARA);
         expect(s.orbit.touched).toBe(1);

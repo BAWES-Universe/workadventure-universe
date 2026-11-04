@@ -100,6 +100,8 @@ interface Card {
     eventId?: string;
     /** Whether the action still waits for a tap. */
     waiting: boolean;
+    /** The person wrote again and Orbit is being asked to close it: a new call is not folded into it. */
+    closing?: boolean;
 }
 
 const WAITING_RESULT = {
@@ -195,7 +197,7 @@ export class ToolApprovals {
         const wanted = JSON.stringify(args);
         for (const card of this.cards.values()) {
             const action = card.facts.action;
-            if (!card.waiting || card.botId !== botId || card.roomId !== roomId || card.person.uuid !== requesterKey) continue;
+            if (!card.waiting || card.closing || card.botId !== botId || card.roomId !== roomId || card.person.uuid !== requesterKey) continue;
             if (action.toolName !== toolName || action.toolFingerprint !== decision.fingerprint || action.heading !== decision.heading || card.facts.notReviewed !== decision.notReviewed) continue;
             if (!(Date.parse(action.reviewExpiresAt) > this.now())) continue;
             if (JSON.stringify(action.arguments) === wanted) return card;
@@ -430,15 +432,21 @@ export class ToolApprovals {
         const conversationKey = conversationKeyOf(roomId);
         void this.deps.orbit.touchGrants(botId, { requesterKey: person.uuid, conversationKey }).catch(() => undefined);
         const waiting = [...this.cards.entries()].filter(([, card]) => card.waiting && card.botId === botId && card.roomId === roomId && card.person.uuid === person.uuid);
+        for (const [, card] of waiting) card.closing = true;
         try {
             // Orbit closes every card of theirs still waiting here, also ones this server no longer holds (after a restart)
             const closed = new Set(await this.deps.orbit.supersede(botId, { requesterKey: person.uuid, conversationKey }));
             for (const [id, card] of waiting) {
-                if (!closed.has(id)) continue;
+                if (!closed.has(id)) {
+                    card.closing = false;
+                    continue;
+                }
                 card.waiting = false;
                 await this.redraw(id, card, { ...card.facts.action, status: 'closed', closedReason: 'superseded', revision: card.facts.action.revision + 1 }, { typed: true });
             }
         } catch (error) {
+            // Not closed as far as anyone knows: these cards still wait
+            for (const [, card] of waiting) card.closing = false;
             console.warn(`[ToolApprovals] Could not close the waiting cards in ${roomId}:`, errorText(error));
         }
     }
