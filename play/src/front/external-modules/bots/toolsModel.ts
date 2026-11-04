@@ -47,6 +47,10 @@ export interface BotToolSettings {
     askBeforeMaking: number | null;
     askWhichWay: "rarely" | "beforeBiggerJobs" | "never";
     cardWaitMinutes: number;
+    /** "Allow more of the same in this chat" ends after this long without the person's messages (Orbit #803) */
+    allowMoreIdleMinutes: number;
+    /** ...and after this long at most, even while they keep chatting */
+    allowMoreMaxMinutes: number;
 }
 
 export const ASK_BEFORE_MAKING_CHOICES: ReadonlyArray<number | null> = [3, 5, 10, null];
@@ -56,6 +60,22 @@ export const ASK_WHICH_WAY_CHOICES: ReadonlyArray<BotToolSettings["askWhichWay"]
     "never",
 ];
 export const CARD_WAIT_CHOICES: readonly number[] = [5, 10, 30];
+export const ALLOW_MORE_IDLE_CHOICES: readonly number[] = [30, 60, 120];
+export const ALLOW_MORE_MAX_CHOICES: readonly number[] = [240, 480, 1440];
+export const DEFAULT_ALLOW_MORE_IDLE_MINUTES = 60;
+export const DEFAULT_ALLOW_MORE_MAX_MINUTES = 480;
+
+/** One remembered approval that is still alive: someone was allowed more of the same in a chat with this bot (Orbit #803, #805) */
+export interface AllowedMore {
+    id: string;
+    /** Their name, or null when Orbit does not know them */
+    name: string | null;
+    isGuest: boolean;
+    /** The tool's own title, else its name */
+    tool: string;
+    /** What stays as approved, in words ("WEB"): empty when nothing is worth saying */
+    fixed: string;
+}
 
 /** The screens the Tools group opens in place of the bot page. A tool with no heading yet sits under "unsorted". */
 export type ToolsScreen =
@@ -136,7 +156,42 @@ export function readBotToolSettings(raw: unknown): BotToolSettings {
             o.askBeforeMaking === null ? null : typeof o.askBeforeMaking === "number" ? o.askBeforeMaking : 5,
         askWhichWay: way,
         cardWaitMinutes: wait,
+        allowMoreIdleMinutes:
+            typeof o.allowMoreIdleMinutes === "number" ? o.allowMoreIdleMinutes : DEFAULT_ALLOW_MORE_IDLE_MINUTES,
+        allowMoreMaxMinutes:
+            typeof o.allowMoreMaxMinutes === "number" ? o.allowMoreMaxMinutes : DEFAULT_ALLOW_MORE_MAX_MINUTES,
     };
+}
+
+/** What each remembered approval stays fixed on, in words: the values that are places or choices, never the text of anything */
+function fixedWords(scope: unknown): string {
+    const fixed = obj(obj(scope).fixed);
+    const words = Object.values(fixed)
+        .filter((value) => typeof value === "string" || typeof value === "number" || typeof value === "boolean")
+        .map(String)
+        .filter((word) => word.trim() !== "");
+    const line = words.join(" · ");
+    return line.length > 40 ? `${line.slice(0, 39)}…` : line;
+}
+
+/** Orbit's list of who is allowed more right now. A row that does not make sense is left out, never a broken page. */
+export function readAllowedMore(raw: unknown): AllowedMore[] {
+    const o = obj(raw);
+    if (!Array.isArray(o.grants)) return [];
+    const rows: AllowedMore[] = [];
+    for (const item of o.grants) {
+        const g = obj(item);
+        if (typeof g.id !== "string" || typeof g.toolName !== "string") continue;
+        const person = obj(g.person);
+        rows.push({
+            id: g.id,
+            name: str(person.name)?.trim() || null,
+            isGuest: person.isGuest === true,
+            tool: str(g.toolTitle)?.trim() || g.toolName,
+            fixed: fixedWords(g.scope),
+        });
+    }
+    return rows;
 }
 
 /** Where a tool sits: what a person chose, or else what was suggested. Null when neither. */

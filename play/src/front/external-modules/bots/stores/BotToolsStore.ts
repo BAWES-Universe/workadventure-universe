@@ -3,7 +3,7 @@
 // approvals) all show this one answer, so going back and forth between them never asks Orbit again for what is here.
 import { get, writable } from "svelte/store";
 import { botApiService, type McpServer } from "../services/BotApiService";
-import type { BotToolSettings, Heading, ServerTools, Setting } from "../toolsModel";
+import type { AllowedMore, BotToolSettings, Heading, ServerTools, Setting } from "../toolsModel";
 
 export interface BotToolsState {
     botId: string;
@@ -114,6 +114,16 @@ export async function chooseSetting(botId: string, serverId: string, heading: He
         if (before) withSetting(botId, serverId, heading, before);
         throw error;
     }
+}
+
+/** Who is allowed more right now, read fresh each time the page opens (it changes as people chat) */
+export function loadAllowedMore(botId: string): Promise<AllowedMore[]> {
+    return botApiService.getAllowedMore(botId);
+}
+
+/** End all: every remembered approval of this bot ends. Answers how many ended. */
+export function endAllowedMore(botId: string): Promise<number> {
+    return botApiService.endAllowedMore(botId);
 }
 
 export async function loadBotToolSettings(botId: string): Promise<void> {

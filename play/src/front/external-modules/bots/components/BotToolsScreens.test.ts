@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
     saveMcpServerSettings: vi.fn(),
     getBotToolSettings: vi.fn(),
     saveBotToolSettings: vi.fn(),
+    getAllowedMore: vi.fn(),
+    endAllowedMore: vi.fn(),
 }));
 
 vi.mock("../services/BotApiService", () => ({ botApiService: mocks }));
@@ -379,7 +381,17 @@ describe("the bot page's Tools screens (game #1655)", () => {
     });
 
     describe("Asking for approvals", () => {
-        const settings: BotToolSettings = { askBeforeMaking: 5, askWhichWay: "rarely", cardWaitMinutes: 10 };
+        const settings: BotToolSettings = {
+            askBeforeMaking: 5,
+            askWhichWay: "rarely",
+            cardWaitMinutes: 10,
+            allowMoreIdleMinutes: 60,
+            allowMoreMaxMinutes: 480,
+        };
+        beforeEach(() => {
+            mocks.getAllowedMore.mockReset().mockResolvedValue([]);
+            mocks.endAllowedMore.mockReset();
+        });
 
         async function mountApprovals() {
             const component = new BotToolsApprovalsScreen({ target, props: { bot } });
@@ -423,6 +435,85 @@ describe("the bot page's Tools screens (game #1655)", () => {
             );
             expect(target.querySelector("[role=alert]")?.textContent).toContain("Forbidden");
             expect(picked("Waits for a tap")).toBe("10 min");
+        });
+
+        it("shows how long “allow more” waits for the person and lasts at most, with the recommended ones picked", async () => {
+            mocks.getBotToolSettings.mockResolvedValue(settings);
+            await mountApprovals();
+            expect(target.textContent).toContain("Allow more");
+            expect(picked("When the person is quiet for")).toBe("1 hour");
+            expect(picked("After at most")).toBe("8 hours");
+            const labels = (name: string) =>
+                [
+                    ...(target.querySelector(`[role=radiogroup][aria-label="${name}"]`)?.querySelectorAll("button") ??
+                        []),
+                ].map((b) => b.textContent?.trim());
+            expect(labels("When the person is quiet for")).toEqual(["30 min", "1 hour", "2 hours"]);
+            expect(labels("After at most")).toEqual(["4 hours", "8 hours", "24 hours"]);
+        });
+
+        it("saves only the allow-more time that was picked", async () => {
+            mocks.getBotToolSettings.mockResolvedValue(settings);
+            mocks.saveBotToolSettings.mockResolvedValue({ ...settings, allowMoreMaxMinutes: 1440 });
+            await mountApprovals();
+            await click(
+                [...target.querySelectorAll<HTMLButtonElement>("button")].find(
+                    (b) => b.textContent?.trim() === "24 hours"
+                ) ?? null
+            );
+            expect(mocks.saveBotToolSettings).toHaveBeenCalledWith("b1", { allowMoreMaxMinutes: 1440 });
+            expect(picked("After at most")).toBe("24 hours");
+        });
+
+        it("says nobody is allowed more right now, with no End all", async () => {
+            mocks.getBotToolSettings.mockResolvedValue(settings);
+            await mountApprovals();
+            expect(byTestId("bot-tools-allowed-more")?.textContent).toContain("Allowed more right now");
+            expect(byTestId("bot-tools-allowed-more")?.textContent).toContain("Nobody right now");
+            expect(byTestId("bot-tools-end-all")).toBeNull();
+        });
+
+        it("lists who is allowed more right now and ends them all with End all", async () => {
+            mocks.getBotToolSettings.mockResolvedValue(settings);
+            mocks.getAllowedMore.mockResolvedValue([
+                { id: "g1", name: "Khalid", isGuest: false, tool: "Create issue", fixed: "WEB" },
+                { id: "g2", name: null, isGuest: true, tool: "Create issue", fixed: "" },
+                { id: "g3", name: null, isGuest: false, tool: "Create issue", fixed: "MAP" },
+            ]);
+            mocks.endAllowedMore.mockResolvedValue(3);
+            await mountApprovals();
+            const rows = [...target.querySelectorAll("[data-testid=bot-tools-allowed-row]")].map((r) => r.textContent);
+            expect(rows).toEqual([
+                "Khalid: Create issue, more with WEB",
+                "A guest: more Create issue",
+                "Someone: Create issue, more with MAP",
+            ]);
+            await click(byTestId("bot-tools-end-all"));
+            expect(mocks.endAllowedMore).toHaveBeenCalledWith("b1");
+            expect(target.querySelectorAll("[data-testid=bot-tools-allowed-row]")).toHaveLength(0);
+            expect(byTestId("bot-tools-allowed-more")?.textContent).toContain("Nobody right now");
+            expect(byTestId("bot-tools-end-all")).toBeNull();
+        });
+
+        it("keeps the list and says so when End all fails", async () => {
+            mocks.getBotToolSettings.mockResolvedValue(settings);
+            mocks.getAllowedMore.mockResolvedValue([
+                { id: "g1", name: "Khalid", isGuest: false, tool: "Create issue", fixed: "WEB" },
+            ]);
+            mocks.endAllowedMore.mockRejectedValue(new Error("Forbidden"));
+            await mountApprovals();
+            await click(byTestId("bot-tools-end-all"));
+            expect(target.querySelector("[role=alert]")?.textContent).toContain("Forbidden");
+            expect(target.querySelectorAll("[data-testid=bot-tools-allowed-row]")).toHaveLength(1);
+        });
+
+        it("leaves the list out when Orbit can't say, and the settings still show", async () => {
+            mocks.getBotToolSettings.mockResolvedValue(settings);
+            mocks.getAllowedMore.mockRejectedValue(new Error("down"));
+            vi.spyOn(console, "error").mockImplementation(() => undefined);
+            await mountApprovals();
+            expect(byTestId("bot-tools-allowed-more")).toBeNull();
+            expect(picked("After at most")).toBe("8 hours");
         });
     });
 });
