@@ -34,6 +34,17 @@
     import BotStatusNoteCard from "../Bots/BotStatusNoteCard.svelte";
     import BotReplyLimitCard from "../Bots/BotReplyLimitCard.svelte";
     import VoiceDraftCard from "../Bots/VoiceDraftCard.svelte";
+    import BotAskCard from "../Bots/BotAskCard.svelte";
+    import {
+        askBarFits,
+        chatAsks,
+        closesSoon,
+        isWaiting,
+        nextAskChange,
+        type BotAsk,
+        type BotAskTap,
+    } from "../../Bots/BotAsk";
+    import { chatSheetLayoutStore, chatSheetSnapStore } from "../../ChatSheetStore";
     import { cardToShow } from "../../Bots/BotVoiceDraft";
     import {
         PERSON_COLOUR_CONTEXT,
@@ -420,12 +431,51 @@
         botStatusCache.learn(partnerBotId, lastNoteAvailability, noteWrittenAt);
     }
     $: shownBotState = botHeaderState(botState, lastBotNote?.state);
-    $: botPlaceholder =
-        botState === "resting"
-            ? $LL.chat.botStatus.restingPlaceholder()
-            : botState === "unready"
-            ? $LL.chat.botStatus.unreadyPlaceholder()
-            : undefined;
+    // Cards the bot asks one answer with (#1657), in a direct message with a bot. The oldest waiting card is pinned above the
+    // message box until it is answered, closed or runs out; the chat keeps the ones that ended, where they were asked.
+    $: askStore = partnerBotId && messages ? chatAsks(messages) : readable([]);
+    let askNow = Date.now();
+    let askTimer: ReturnType<typeof setTimeout> | undefined;
+    $: waitingAsks = $askStore.filter((entry) => isWaiting(entry.ask, askNow));
+    $: askById = new Map($askStore.map((entry) => [entry.message.id, entry.ask]));
+    $: wakeAtAskChange(
+        nextAskChange(
+            $askStore.map((entry) => entry.ask),
+            askNow
+        )
+    );
+    function tickAskClock() {
+        askNow = Date.now();
+    }
+    function wakeAtAskChange(at: number | undefined) {
+        clearTimeout(askTimer);
+        askTimer = undefined;
+        if (at === undefined) return;
+        askTimer = setTimeout(tickAskClock, Math.min(at - Date.now() + 50, 2 ** 31 - 1));
+    }
+    // Which waiting card is on show: the oldest, unless the person paged to another
+    let askIndex = 0;
+    $: shownAskIndex = Math.min(askIndex, Math.max(waitingAsks.length - 1, 0));
+    $: shownAsk = waitingAsks[shownAskIndex];
+    $: queuedSoonIndex = waitingAsks.findIndex((entry, i) => i !== shownAskIndex && closesSoon(entry.ask, askNow));
+    $: askCompact = askBarFits($chatSheetLayoutStore, $chatSheetSnapStore);
+    async function tapAsk(ask: BotAsk, tap: BotAskTap): Promise<boolean> {
+        if (!room.answerBotAsk) return false;
+        try {
+            await room.answerBotAsk(ask, tap);
+            return true;
+        } catch (error) {
+            console.error("Could not send the answer to a bot's card", error);
+            return false;
+        }
+    }
+    $: botPlaceholder = shownAsk
+        ? $LL.chat.botAsk.typeSomethingElse()
+        : botState === "resting"
+        ? $LL.chat.botStatus.restingPlaceholder()
+        : botState === "unready"
+        ? $LL.chat.botStatus.unreadyPlaceholder()
+        : undefined;
     // The bot's account is out of the room and the bot is gone: say so once, as for a person leaving.
     $: botLeftLine =
         botLeft && botClosed
@@ -920,6 +970,7 @@
         if (redrawFrame !== undefined) cancelAnimationFrame(redrawFrame);
         clearTimeout(fileDragTimer);
         clearTimeout(replyLimitTimer);
+        clearTimeout(askTimer);
         document.removeEventListener("dragenter", onMapFileDragCapture, true);
         document.removeEventListener("dragover", onMapFileDragCapture, true);
         document.removeEventListener("drop", onMapFileDragCapture, true);
@@ -1216,6 +1267,18 @@
                             {#if shownReplyLimits.has(entry.message.id)}
                                 <BotReplyLimitCard replyLimit={entry.message.replyLimit} />
                             {/if}
+                        {:else if askById.has(entry.message.id)}
+                            <!-- A waiting card is pinned above the message box, so the chat never repeats it. Once it
+                                 ended, it moves into the chat where it was asked, as it ended. -->
+                            {@const asked = askById.get(entry.message.id)}
+                            {#if asked && !waitingAsks.some((waiting) => waiting.message.id === entry.message.id)}
+                                <BotAskCard
+                                    ask={asked}
+                                    botName={entry.message.sender?.username ?? $roomName}
+                                    now={askNow}
+                                    onTap={tapAsk}
+                                />
+                            {/if}
                         {:else if entry.message.botStatus}
                             <BotStatusNoteCard note={entry.message.botStatus} />
                         {:else}
@@ -1263,6 +1326,24 @@
                     {$LL.chat.botStatus.closed()}
                 </div>
             {:else}
+                {#if shownAsk}
+                    <BotAskCard
+                        docked
+                        ask={shownAsk.ask}
+                        botName={shownAsk.message.sender?.username ?? $roomName}
+                        now={askNow}
+                        position={{ at: shownAskIndex + 1, total: waitingAsks.length }}
+                        queuedClosingSoon={queuedSoonIndex >= 0
+                            ? { at: queuedSoonIndex + 1, total: waitingAsks.length }
+                            : undefined}
+                        compact={askCompact}
+                        onTap={tapAsk}
+                        onPrevious={() => (askIndex = Math.max(shownAskIndex - 1, 0))}
+                        onNext={() => (askIndex = Math.min(shownAskIndex + 1, waitingAsks.length - 1))}
+                        onShowQueued={() => (askIndex = queuedSoonIndex)}
+                        onOpen={() => chatSheetSnapStore.set("full")}
+                    />
+                {/if}
                 {#if voiceDraftCard}
                     <!-- One card at most: with two voice bots in a bubble, the one addressed last -->
                     <VoiceDraftCard

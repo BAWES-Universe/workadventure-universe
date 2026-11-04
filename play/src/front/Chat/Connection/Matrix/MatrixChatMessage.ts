@@ -7,6 +7,7 @@ import { MapStore } from "@workadventure/store-utils";
 import { readBotStatusNote, type BotStatusNote } from "../../Bots/BotChatStatus";
 import { readBotRoomLink, type BotRoomLink } from "../../Bots/BotRoomLink";
 import { readBotReplyLimit, type BotReplyLimit } from "../../Bots/BotReplyLimit";
+import { readBotAsk, type BotAsk } from "../../Bots/BotAsk";
 import { readArtifactField, type ArtifactCard } from "../../../Artifacts/artifactCard";
 import { readBotSteps, type BotSteps } from "../../Bots/BotSteps";
 import type { ChatMessage, ChatMessageContent, ChatMessageType, ChatUser, SharedFileInfo } from "../ChatConnection";
@@ -62,6 +63,8 @@ export class MatrixChatMessage implements ChatMessage {
     readonly roomLink: BotRoomLink | undefined;
     readonly replyLimit: BotReplyLimit | undefined;
     readonly artifact: ArtifactCard | undefined;
+    /** A card a bot's notice asks one answer with (#1657): the bot server edits the same notice as the card ends. */
+    readonly ask: Writable<BotAsk | undefined>;
     /** A bot's steps line (#1545): the bot server updates this one message while the bot works. */
     readonly steps: Writable<BotSteps | undefined>;
     readonly canReact = writable(true);
@@ -85,6 +88,7 @@ export class MatrixChatMessage implements ChatMessage {
         );
         this.artifact = readArtifactField(event.getSender(), event.getOriginalContent());
         this.steps = writable(readBotSteps(event.getSender(), this.stepsContent()));
+        this.ask = writable(readBotAsk(event.getSender(), this.stepsContent(), event.localTimestamp));
         this.date = event.getDate();
         this.sender = this.getSender();
         this.isMyMessage = this.room.client.getUserId() === event.getSender();
@@ -436,6 +440,13 @@ export class MatrixChatMessage implements ChatMessage {
         if (!sender || sender !== this.event.getSender()) return;
         const steps = readBotSteps(sender, newContent);
         if (steps) this.steps.set(steps);
+    }
+
+    /** An update of a bot's card (#1657): only its own sender can change it. */
+    public modifyAsk(sender: string | undefined, newContent: Record<string, unknown> | undefined) {
+        if (!sender || sender !== this.event.getSender()) return;
+        const ask = readBotAsk(sender, newContent, Date.now());
+        if (ask) this.ask.set(ask);
     }
 
     public modifyContent(newContent: string) {
