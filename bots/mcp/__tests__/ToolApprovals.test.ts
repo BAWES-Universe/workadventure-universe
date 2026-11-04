@@ -38,8 +38,9 @@ class FakeOrbit {
         this.actions.set(action.id, next);
         return next;
     }
+    allowMore: { allowMoreIdleMinutes?: number; allowMoreMaxMinutes?: number } = {};
     async cardSettings() {
-        return { cardWaitMinutes: this.wait };
+        return { cardWaitMinutes: this.wait, ...this.allowMore };
     }
     async create(_bot: string, input: Record<string, any>) {
         this.check();
@@ -529,6 +530,17 @@ describe('Create, and allow more (approve and remember)', () => {
         expect(answer.allowedMore).toBe(allowedMoreLine());
         expect(answer.allowedMore).toContain('1 hour');
         expect(answer.allowedMore).toContain('8 hours');
+    });
+
+    it("uses the bot's own allow-more times, for the saved approval and for the words on the card", async () => {
+        s.orbit.allowMore = { allowMoreIdleMinutes: 120, allowMoreMaxMinutes: 1440 };
+        await s.approvals.propose(input());
+        await s.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'decide', option: 'approveAndRemember' }));
+        await settle();
+        expect(s.orbit.decisionExtra).toEqual({ idleMinutes: 120, absoluteMinutes: 1440 });
+        const line = field(s.sent.at(-1)!.content).answer!.allowedMore;
+        expect(line).toContain('2 hours');
+        expect(line).toContain('24 hours');
     });
 
     it('is ended by Ask me again, and the next call asks', async () => {
