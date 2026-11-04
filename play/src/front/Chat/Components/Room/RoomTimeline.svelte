@@ -1257,13 +1257,7 @@
                                 <BotReplyLimitCard replyLimit={entry.message.replyLimit} />
                             {/if}
                         {:else if "ask" in entry.message && entry.message.ask && askPlacement === "pinned" && waitingAsks.includes(entry.message.ask)}
-                            <div class="ask-record" data-testid="botAskRecord">
-                                <IconClock />
-                                <span
-                                    >{entry.message.sender?.username ?? $roomName} is waiting for your answer below:
-                                    <b>{entry.message.ask.title}</b></span
-                                >
-                            </div>
+                            <!-- Mock 3: nothing here while the card waits, so the chat never repeats the pinned card -->
                         {:else if "ask" in entry.message && entry.message.ask}
                             <!-- Answered, closed or gone: the card moves into the chat where it was asked -->
                             <BotAskCard

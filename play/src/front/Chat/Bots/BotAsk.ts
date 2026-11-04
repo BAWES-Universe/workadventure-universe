@@ -40,6 +40,8 @@ export interface BotAsk {
     asker: string;
     askerName: string;
     expiresAt: number;
+    /** Mock: how long the card waited, for the line after it closes unanswered */
+    waitMin?: number;
     /** Once answered or gone: which option, or typed, or expired. After an option ran: its result line, or that the
      * outcome couldn't be confirmed. */
     answer?: { option?: string; picked?: string[]; spoken?: boolean; allowedMore?: string; typed?: boolean; expired?: boolean; closed?: boolean; result?: string; unknown?: boolean };

@@ -7,7 +7,6 @@
         IconChevronLeft,
         IconChevronRight,
         IconClock,
-        IconEye,
         IconLock,
         IconUsers,
         IconX,
@@ -65,9 +64,7 @@
             <b class="ask-title" dir="auto">{ask.title}</b>
             {#if ask.actsAs}
                 <span class="ask-acts" dir="auto"
-                    >Uses {ask.actsAs}{ask.everyTime ? " · asks every time" : ""}{ask.notReviewed
-                        ? " · not confirmed yet"
-                        : ""}</span
+                    >Uses {ask.actsAs} account{ask.everyTime ? ` · ${botName} asks before every delete or send` : ""}</span
                 >
             {/if}
         </div>
@@ -135,7 +132,7 @@
         {/if}
         {#if closingSoon}
             <div class="ask-row">
-                <span class="ask-who"><IconClock />Closes in 1 min</span>
+                <span class="ask-who"><IconClock />This card closes in 1 min</span>
                 <button type="button" class="ask-small" disabled={!mine} data-testid="botAskMoreTime">More time</button>
             </div>
         {/if}
@@ -151,8 +148,8 @@
         {/if}
         {#if ask.answer?.unknown}
             <span class="ask-warn" dir="auto"
-                ><IconAlertTriangle />{botName} couldn't confirm it worked. Check {ask.checkAt?.label ?? "it"} before trying
-                again.</span
+                ><IconAlertTriangle />{ask.checkAt?.label ?? "The app"} gave no answer, so {botName} can't tell if “{ask.title}” worked.
+                Check {ask.checkAt?.label ?? "the app"} before trying again.</span
             >
             {#if ask.checkAt}
                 <a class="ask-small" href={ask.checkAt.url} target="_blank" rel="noreferrer">Open {ask.checkAt.label}</a>
@@ -166,12 +163,12 @@
         <span class="ask-who">You typed something else, so nothing was done</span>
     {:else if ask.answer?.closed}
         <div class="ask-row">
-            <span class="ask-who"><IconX />You closed it, so nothing was done</span>
+            <span class="ask-who"><IconX />You closed this card, so nothing was done</span>
             <button type="button" class="ask-small" disabled={!mine} data-testid="botAskReviewAgain">Review again</button>
         </div>
     {:else}
         <div class="ask-row">
-            <span class="ask-who"><IconClock />No answer, so nothing was done</span>
+            <span class="ask-who"><IconClock />No answer in {ask.waitMin ?? 10} min, so nothing was done</span>
             <button type="button" class="ask-small" disabled={!mine} data-testid="botAskReviewAgain">Review again</button>
         </div>
     {/if}
@@ -185,10 +182,12 @@
                 >{replyTo === "bot" ? "Talk to everyone" : "Reply privately"}</button
             >
         </div>
-    {:else}
-        <span class="ask-who">
-            <IconEye />Only you see this
-        </span>
+    {/if}
+    {#if ask.notReviewed && open}
+        <span class="ask-who" dir="auto"
+            ><IconAlertTriangle />Nobody has confirmed this tool yet, so only people who manage {botName} can use the tool
+            for now.</span
+        >
     {/if}
 </div>
 {/if}
