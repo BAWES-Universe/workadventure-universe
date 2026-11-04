@@ -211,18 +211,9 @@
             >
         </div>
     {/if}
-    {#if docked && open && ask.othersSee}
-        <!-- Nearby chat: the card is the asker's only; everyone else in the bubble gets one line that names the action -->
-        <span class="ask-others" dir="auto" data-testid="botAskOthersSee"
-            ><IconUsers />Instead of this card, {ask.othersSee.names} {ask.othersSee.names.includes(" and ")
-                ? ask.othersSee.spoken
-                    ? "hear and see"
-                    : "see"
-                : ask.othersSee.spoken
-                  ? "hears and sees"
-                  : "sees"}:
-            “{ask.othersSee.line}”</span
-        >
+    {#if docked && open && ask.nearby}
+        <!-- Nearby chat: everyone reads the bot's message about the card; the card is the asker's only -->
+        <span class="ask-others" data-testid="botAskOnlyYou"><IconLock />Only you see this card</span>
     {/if}
     {#if ask.notReviewed && open}
         <span class="ask-who" dir="auto"

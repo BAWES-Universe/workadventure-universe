@@ -42,8 +42,8 @@ export interface BotAsk {
     asker: string;
     askerName: string;
     expiresAt: number;
-    /** Nearby chat: who else is in the bubble, and the one line they get instead of this card. */
-    othersSee?: { names: string; line: string; spoken?: boolean };
+    /** Nearby chat: everyone reads the bot's message about the card, and only the asker gets the card. */
+    nearby?: boolean;
     /** Mock: how long the card waited, for the line after it closes unanswered */
     waitMin?: number;
     /** Once answered or gone: which option, or typed, or expired. After an option ran: its result line, or that the
