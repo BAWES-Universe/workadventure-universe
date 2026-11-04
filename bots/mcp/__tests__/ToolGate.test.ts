@@ -186,6 +186,12 @@ describe('a tool nobody confirmed', () => {
         await gate.decide(call({ person: MANAGER }));
         expect(canManageBotTools).toHaveBeenCalledTimes(1);
     });
+
+    it('asks Orbit once when several tools are judged at the same moment', async () => {
+        const { gate, canManageBotTools } = gateFor(unconfirmed());
+        await Promise.all([gate.decide(call({ person: MANAGER })), gate.decide(call({ person: MANAGER })), gate.decide(call({ person: MANAGER }))]);
+        expect(canManageBotTools).toHaveBeenCalledTimes(1);
+    });
 });
 
 describe('when Orbit can not be asked', () => {

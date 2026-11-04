@@ -570,8 +570,9 @@ export class MCPConnector {
     }
 
     /**
-     * Every tool a server lists, page after page (`nextCursor`), as the server gave them. Null when the first page brings
-     * nothing usable; a later page that fails keeps what came before it.
+     * Every tool a server lists, page after page (`nextCursor`), as the server gave them. Null when any page brings
+     * nothing usable: a half-read list is never kept or saved to Orbit as if it were the whole one, so the tools of the
+     * pages that were not read can't look removed or unconfirmed. The next read tries again.
      */
     private static async listAllTools(server: McpServerConfig): Promise<RawTool[] | null> {
         const tools: RawTool[] = [];
@@ -586,7 +587,7 @@ export class MCPConnector {
                 server.headers
             );
             if (!response || !response.result || !Array.isArray(response.result.tools)) {
-                return page === 0 ? null : tools;
+                return null;
             }
             for (const item of response.result.tools) {
                 const tool = toRawTool(item);
