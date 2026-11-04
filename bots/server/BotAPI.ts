@@ -1218,6 +1218,33 @@ export class BotAPI {
             }
         });
 
+        // Read a tool server's whole list now and save it to Orbit with a suggested heading per tool (#1654): the game calls
+        // it when a server is connected and on Test server. A suggestion is only that; a person confirms each tool in Orbit.
+        this.app.post('/api/bots/:botId/mcp-servers/:serverId/refresh-tools', requireManager, async (req: BotAPIRequest, res: Response) => {
+            try {
+                const { botId, serverId } = req.params;
+                const admin = this.botManager.getAdminApiService();
+                if (!admin.isConfigured()) {
+                    res.status(503).json({ error: 'The admin API is not configured' });
+                    return;
+                }
+                const config = await admin.getBotConfiguration(botId);
+                const outcome = await this.botManager.getAIService().refreshServerTools(botId, serverId, config?.aiProviderRef, admin);
+                if (!outcome) {
+                    res.status(404).json({ error: 'No such tool server' });
+                    return;
+                }
+                if (!outcome.read) {
+                    res.status(502).json({ error: outcome.reason });
+                    return;
+                }
+                res.json({ tools: outcome.tools, saved: outcome.saved.result });
+            } catch (error: any) {
+                console.error('[BotAPI] Error refreshing the tools of a server:', error);
+                res.status(500).json({ error: 'Could not read the tools' });
+            }
+        });
+
         // Metrics endpoints
         // Get current metrics for a bot (from buffer)
         this.app.get('/api/bots/:botId/metrics/current', requireManager, async (req: BotAPIRequest, res: Response) => {
