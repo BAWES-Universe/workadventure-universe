@@ -131,7 +131,7 @@ describe("eventProcessorInit", () => {
     describe("botVoiceStatus", () => {
         const status = {
             $case: "botVoiceStatus" as const,
-            botVoiceStatus: { botId: "b-1", botName: "Nora", state: "on", followUpSeconds: 0 },
+            botVoiceStatus: { botId: "b-1", botName: "Nora", state: "on", followUpSeconds: 0, repliesResetAt: "" },
         };
         const person = spaceUser("room_7", []);
 

@@ -1,10 +1,11 @@
 <script lang="ts">
     import { createEventDispatcher } from "svelte";
-    import LL from "../../../../i18n/i18n-svelte";
+    import LL, { locale } from "../../../../i18n/i18n-svelte";
     import Woka from "../../Woka/Woka.svelte";
     import { requestedMicrophoneState } from "../../../Stores/MediaStore";
     import { voiceChoiceStore, type VoiceBotView, type VoiceSpaceView } from "../../../Chat/Bots/VoiceBots";
-    import { choiceSpeaksToBot, type VoiceChoice } from "../../../Chat/Bots/VoiceMode";
+    import { choiceSpeaksToBot, voiceAllowanceLine, type VoiceChoice } from "../../../Chat/Bots/VoiceMode";
+    import { replyLimitTime } from "../../../Chat/Bots/BotReplyLimit";
     import {
         IconAlignLeft,
         IconCheck,
@@ -40,11 +41,31 @@
 
     $: pictureStore = bot.picture;
 
+    // What is left of this person's spoken replies (#1669), as the bot told it. Read when the menu opens: a count is only true until its window ends.
+    const openedAt = Date.now();
+    $: allowance = voiceAllowanceLine(bot, openedAt);
+    const timeOf = (at: number | undefined, language: string): string | undefined =>
+        at === undefined ? undefined : replyLimitTime(new Date(at).toISOString(), language);
+    $: allowanceTime = timeOf(allowance.kind === "none" ? undefined : allowance.resetsAt, $locale);
+    $: allowanceText =
+        allowance.kind === "left"
+            ? [
+                  $LL.say.voice.allowanceLeft({ count: allowance.count }),
+                  allowanceTime ? $LL.say.voice.allowanceMore({ time: allowanceTime }) : "",
+              ]
+                  .filter(Boolean)
+                  .join(" ")
+            : allowance.kind === "used_up"
+            ? $LL.say.voice.allowanceUsedUp()
+            : "";
+
     // The top line: where the bot's voice stands when something needs saying, otherwise who is here.
     $: micOff = choiceSpeaksToBot($voiceChoiceStore) && !$requestedMicrophoneState;
     $: status =
         bot.state === "paused"
-            ? $LL.say.voice.statusPaused()
+            ? allowance.kind === "used_up" && allowanceTime
+                ? $LL.say.voice.statusPausedUntil({ time: allowanceTime })
+                : $LL.say.voice.statusPaused()
             : bot.state === "connecting"
             ? $LL.say.voice.statusConnecting()
             : soundBlocked
@@ -155,9 +176,9 @@
         {/each}
     </div>
 
-    <!-- What is always true, one line. The allowance (#1669) adds its own line above this one. -->
+    <!-- What is left of the person's spoken replies (#1669) when the bot told it, then what is always true -->
     <div class="foot" data-testid="voice-menu-foot">
-        <p>{$LL.say.voice.micUnchanged()}</p>
+        <p>{allowanceText ? allowanceText + " " : ""}{$LL.say.voice.micUnchanged()}</p>
     </div>
 </div>
 

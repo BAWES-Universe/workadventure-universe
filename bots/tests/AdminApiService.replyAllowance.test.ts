@@ -78,6 +78,18 @@ describe('asking Orbit whether a reply may be spoken (#1669)', () => {
         expect(await service.checkVoiceAllowance('bot-1', SPEAK)).toEqual({ allowed: false, resetsAt: '2026-11-02T13:00:00.000Z' });
     });
 
+    it('passes on what is left with a yes, and only when it is a count', async () => {
+        answer = { status: 200, body: JSON.stringify({ allowed: true, left: 17, resetsAt: '2026-11-02T13:00:00.000Z' }) };
+        expect(await service.checkVoiceAllowance('bot-1', SPEAK)).toEqual({ allowed: true, left: 17, resetsAt: '2026-11-02T13:00:00.000Z' });
+        for (const bad of [{ left: -1 }, { left: 2.5 }, { left: '3' }, { left: null }]) {
+            answer = { status: 200, body: JSON.stringify({ allowed: true, resetsAt: '2026-11-02T13:00:00.000Z', ...bad }) };
+            expect(await service.checkVoiceAllowance('bot-1', SPEAK)).toEqual({ allowed: true });
+        }
+        // A time that is not one is dropped, the count stays
+        answer = { status: 200, body: JSON.stringify({ allowed: true, left: 4, resetsAt: 'soon' }) };
+        expect(await service.checkVoiceAllowance('bot-1', SPEAK)).toEqual({ allowed: true, left: 4, resetsAt: undefined });
+    });
+
     it('is null, so the reply stays in text, when Orbit cannot be asked or does not know the question', async () => {
         answer = { status: 404, body: '{"error":"Not found"}' };
         expect(await service.checkVoiceAllowance('bot-1', SPEAK)).toBeNull();
@@ -92,6 +104,29 @@ describe('asking Orbit whether a reply may be spoken (#1669)', () => {
     it('asks for a greeting when told it is one', async () => {
         await service.checkReplyAllowance('bot-1', { ...ASK, greeting: true });
         expect(asked.body).toEqual({ ...ASK, greeting: true });
+    });
+});
+
+describe('asking Orbit what is left of a person\'s spoken replies (#1669)', () => {
+    const WHO = { userId: 'wa-sara', isGuest: false };
+
+    it('asks with the service token and who it is for, and reads the count and the end of the window', async () => {
+        answer = { status: 200, body: JSON.stringify({ left: 18, resetsAt: '2026-11-02T13:00:00.000Z' }) };
+        expect(await service.voiceRepliesLeft('bot-1', WHO)).toEqual({ left: 18, resetsAt: '2026-11-02T13:00:00.000Z' });
+        expect(asked).toEqual({ url: '/api/bots/bot-1/voice-allowance/left', auth: 'Bearer service-token', body: WHO });
+        answer = { status: 200, body: JSON.stringify({ left: 25, resetsAt: null }) };
+        expect(await service.voiceRepliesLeft('bot-1', WHO)).toEqual({ left: 25, resetsAt: null });
+        answer = { status: 200, body: JSON.stringify({ left: null, resetsAt: null }) };
+        expect(await service.voiceRepliesLeft('bot-1', WHO)).toEqual({ left: null, resetsAt: null });
+    });
+
+    it('reads a count it cannot trust as none, and is null, never throwing, when Orbit cannot be asked or is from before this', async () => {
+        answer = { status: 200, body: JSON.stringify({ left: -3, resetsAt: 'soon' }) };
+        expect(await service.voiceRepliesLeft('bot-1', WHO)).toEqual({ left: null, resetsAt: null });
+        for (const bad of [{ status: 404, body: '{"error":"Not found"}' }, { status: 500, body: '{}' }, { status: 200, body: 'nonsense' }]) {
+            answer = bad;
+            expect(await service.voiceRepliesLeft('bot-1', WHO)).toBeNull();
+        }
     });
 });
 

@@ -2538,7 +2538,7 @@ export class BotClient {
                             reason: draft.reason ?? '',
                         },
                     }),
-                sendStatus: (spaceName, receiverUserId, status) =>
+                sendStatus: (spaceName, receiverUserId, status, left) =>
                     this.sendPrivateEvent(spaceName, receiverUserId, {
                         $case: 'botVoiceStatus',
                         botVoiceStatus: {
@@ -2547,6 +2547,9 @@ export class BotClient {
                             state: status,
                             // How long, after answering someone, the bot goes on listening to them without its name
                             followUpSeconds: this.attention.followUpSeconds,
+                            // The spoken replies this person has left, when Orbit said (#1669)
+                            repliesLeft: left?.count,
+                            repliesResetAt: left?.resetsAt ?? '',
                         },
                     }),
             },
@@ -2575,6 +2578,7 @@ export class BotClient {
         this.speech = new BotSpeech(this.voice, voiceReplyLimits());
         // With others in the bubble, a spoken turn is the bot's only when it was said to the bot (#1220)
         this.voice.hears = (spaceName, personId, text) => this.attention.hears(spaceName, BotClient.playerIdOf(personId), text);
+        this.voice.playerIdOf = (personId) => BotClient.playerIdOf(personId);
         this.voice.onAudience = (spaceName) => this.speech?.audience(spaceName);
         this.voice.onUnplayed = (spaceName, segmentId) => this.speech?.unplayed(spaceName, segmentId);
         this.voice.onHeard = (spaceName, segmentId) => this.speech?.heard(spaceName, segmentId);

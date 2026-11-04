@@ -60,6 +60,9 @@ export interface VoiceBotView {
     state: VoiceBotState;
     /** Seconds the bot keeps listening without its name after it answers; 0: the bot says none. */
     followUpSeconds: number;
+    /** The spoken replies this person has left, and when their window ends (ms): what the Voice menu says at the bottom (#1669). */
+    repliesLeft: number | undefined;
+    repliesResetAt: number | undefined;
 }
 
 export interface VoiceSpaceView {
@@ -108,6 +111,8 @@ export function computeVoiceView(
             // Until the bot says, its voice is on its way
             state: status?.state ?? "connecting",
             followUpSeconds: status?.followUpSeconds ?? 0,
+            repliesLeft: status?.repliesLeft,
+            repliesResetAt: status?.repliesResetAt,
         });
     }
     if (!meIncluded) people++;
