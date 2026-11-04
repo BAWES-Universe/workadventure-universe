@@ -133,7 +133,7 @@ describe("the bot page's Tools group: longest reply and steps (Orbit #666)", () 
         const onChange = vi.fn();
         const component = new ToolsGroup({
             target,
-            props: { bot, open: true, onToggle: vi.fn(), onChange, aiOptions },
+            props: { bot, open: true, onToggle: vi.fn(), onChange, aiOptions, onOpenScreen: vi.fn() },
         });
         destroy = () => component.$destroy();
         await tick();
@@ -223,7 +223,7 @@ describe("a model that writes less than the key allows (Orbit #673)", () => {
     async function mount(bot: BotData, aiOptions: BotAiOptions) {
         const component = new ToolsGroup({
             target,
-            props: { bot, open: true, onToggle: vi.fn(), onChange: vi.fn(), aiOptions },
+            props: { bot, open: true, onToggle: vi.fn(), onChange: vi.fn(), aiOptions, onOpenScreen: vi.fn() },
         });
         destroy = () => component.$destroy();
         await tick();
