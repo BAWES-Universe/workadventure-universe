@@ -24,8 +24,8 @@ const squash = (key: string) => key.toLowerCase().replace(/[^a-z0-9]/g, '');
 const COUNT_KEY = /^(n|count|quantity|qty|batchsize|numimages|numoutputs|numresults|numitems|numtracks|numsongs|numvideos|numsamples|numgenerations|numfiles|numcopies|numberof(images|outputs|results|items|tracks|songs|videos|samples|generations|files|copies|posters|pictures|logos|icons|drafts|documents|slides|designs|clips)|nsamples|nimages|copies|imagecount|outputcount|trackcount)$/;
 /** Keys that name how many versions of each to make: they multiply. */
 const TIMES_KEY = /^(variants|variations|versions|numvariants|numvariations|numversions|numberofvariations|numberofvariants|numberofversions|outputsperprompt|samplesperprompt|imagesperprompt|perprompt)$/;
-/** Keys that hold a list with one thing made for each entry. */
-const LIST_KEY = /^(prompts|inputs|texts|items|requests|descriptions|topics|lyrics|queries|ideas|titles|captions|scenes|slides)$/;
+/** Keys that hold a list with one thing made for each entry. Only names that mean "one each": a list of items or topics may as well make one thing from them all. */
+const LIST_KEY = /^(prompts|descriptions|lyrics|captions|ideas)$/;
 
 /** What the things are called, for the title ("Make 12 images"). The first one found in the key, then the tool's name, then its title. */
 const NOUNS: Array<[RegExp, string, string]> = [

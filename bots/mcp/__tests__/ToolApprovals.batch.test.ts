@@ -99,6 +99,14 @@ describe('the card before making more than the limit', () => {
         expect(card.lines).toEqual([{ label: 'Prompt', text: 'Poster, neon arcade style' }, { label: 'N', text: '12' }]);
     });
 
+    it('keeps the tool\'s own title as it is for a tool that does not say how many', async () => {
+        const unknown = { kind: 'unknown', toolTitle: 'Text-to-image ElevenLabs', serverName: 'Poster Studio' } as const;
+        await s.approvals.propose({ botId: 'b1', roomId: ROOM, person: SARA, toolName: 'make_image', toolTitle: 'Text-to-image ElevenLabs', entry: ENTRY, args: { prompt: 'a' }, decision: ASK, batch: unknown });
+        const card = field(s.sent[0]);
+        expect(card.title).toBe('Text-to-image ElevenLabs');
+        expect(card.options[0].label).toBe('Text-to-image ElevenLabs');
+    });
+
     it('is asked every time: no remembered approval covers it and none is offered', async () => {
         await s.approvals.propose({ botId: 'b1', roomId: ROOM, person: SARA, toolName: 'make_posters', entry: ENTRY, args: ARGS, decision: ASK, batch: over });
         expect(s.orbit.grantLookups).toBe(0);

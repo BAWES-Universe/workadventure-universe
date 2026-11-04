@@ -44,6 +44,11 @@ describe('quantityOf', () => {
         expect(quantityOf('generate_images', undefined, { prompts: ['a', 'b', 'c'] }, s)).toMatchObject({ known: true, count: 3, unit: 'images' });
     });
 
+    it('does not take any list for one thing made from each entry', () => {
+        const s = schema({ items: { type: 'array' }, topics: { type: 'array' }, scenes: { type: 'array' } });
+        expect(quantityOf('make_report', undefined, { items: ['a', 'b', 'c'], topics: ['x', 'y'], scenes: ['1', '2'] }, s).known).toBe(false);
+    });
+
     it('multiplies a list by the count and the variations of each', () => {
         const s = schema({ prompts: { type: 'array' }, n: { type: 'integer' }, variations: { type: 'integer' } });
         expect(quantityOf('generate_image', undefined, { prompts: ['a', 'b'], n: 2, variations: 3 }, s)).toMatchObject({ known: true, count: 12, unit: 'images', names: { one: 'image', many: 'images' } });

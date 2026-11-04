@@ -230,7 +230,7 @@ export class ToolApprovals {
             });
             const facts: CardFacts = {
                 action,
-                title: words ? cardTitle(words.title) : cardTitle(toolName, input.toolTitle),
+                title: cardTitle(toolName, words ? words.title : input.toolTitle),
                 ...(entry.serverName ? { actsAs: entry.serverName } : {}),
                 lines: [...(words?.lines ?? []), ...argumentLines(args, entry.inputSchema)],
                 offer,
