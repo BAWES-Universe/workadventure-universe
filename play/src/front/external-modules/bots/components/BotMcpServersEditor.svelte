@@ -7,7 +7,7 @@
         type McpServerTestResult,
     } from "../services/BotApiService";
     import LL from "../../../../i18n/i18n-svelte";
-    import { botToolsStore, loadAllServerTools, setServers } from "../stores/BotToolsStore";
+    import { beginBot, botToolsStore, loadAllServerTools, setServers } from "../stores/BotToolsStore";
     import { toCheck } from "../toolsModel";
     import PageButton from "./page/PageButton.svelte";
     import { IconChevronDown, IconPlus, IconTool } from "@wa-icons";
@@ -110,6 +110,8 @@
 
         isLoading = true;
         loadError = null;
+        // Claim the Tools store now, not when the answer lands: a slow answer for a bot left behind must not take it back
+        beginBot(botId);
 
         try {
             servers = await botApiService.getBotMcpServers(botId);

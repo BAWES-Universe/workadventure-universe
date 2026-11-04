@@ -13,6 +13,7 @@ vi.mock("../services/BotApiService", () => ({ botApiService: mocks }));
 
 import type { ServerTools } from "../toolsModel";
 import {
+    beginBot,
     botToolsStore,
     chooseSetting,
     confirmAllTools,
@@ -56,6 +57,7 @@ describe("the Tools store (game #1655)", () => {
         const slow = later<ServerTools>();
         mocks.getMcpServerTools.mockReturnValueOnce(slow.promise);
         const first = loadServerTools("botA", "s1");
+        beginBot("botB");
         setServers("botB", []);
         slow.resolve(server(1));
         await first;
@@ -64,6 +66,7 @@ describe("the Tools store (game #1655)", () => {
     });
 
     it("puts back only the heading that failed, not a different one changed meanwhile", async () => {
+        beginBot("botA");
         setServers("botA", []);
         mocks.getMcpServerTools.mockResolvedValueOnce(server(1));
         await loadServerTools("botA", "s1");
@@ -111,6 +114,7 @@ describe("the Tools store (game #1655)", () => {
     });
 
     it("reads the list again when Confirm all is refused, so the next tap sends the new revision", async () => {
+        beginBot("botA");
         setServers("botA", []);
         mocks.getMcpServerTools.mockResolvedValueOnce(server(1));
         await loadServerTools("botA", "s1");
@@ -123,5 +127,13 @@ describe("the Tools store (game #1655)", () => {
         mocks.confirmMcpTools.mockResolvedValueOnce(server(5));
         await confirmAllTools("botA", "s1");
         expect(mocks.confirmMcpTools).toHaveBeenLastCalledWith("botA", "s1", 4);
+    });
+
+    it("does not let a slow server list for a bot left behind take the store back", () => {
+        beginBot("botA");
+        beginBot("botB");
+        setServers("botB", []);
+        setServers("botA", []);
+        expect(get(botToolsStore)?.botId).toBe("botB");
     });
 });

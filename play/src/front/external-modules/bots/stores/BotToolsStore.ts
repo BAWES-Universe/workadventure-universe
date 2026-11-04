@@ -24,6 +24,11 @@ function forBot(botId: string): BotToolsState {
     return held && held.botId === botId ? held : { botId, servers: undefined, tools: {}, settings: undefined };
 }
 
+/** A page for this bot opened or acted: from now on only its answers are kept. Call it when the request starts, never when an answer lands. */
+export function beginBot(botId: string): void {
+    current = botId;
+}
+
 /** Write for a bot only while it is still the bot being looked at */
 function put(botId: string, next: BotToolsState): void {
     if (current === botId) botToolsStore.set(next);
@@ -39,23 +44,27 @@ function take(botId: string, answer: ServerTools): void {
 
 /** The bot's servers, as the list has just loaded them: tools of a server that is gone are let go */
 export function setServers(botId: string, servers: McpServer[]): void {
-    current = botId;
     const held = forBot(botId);
     const ids = new Set(servers.map((server) => server.id));
     const tools = Object.fromEntries(Object.entries(held.tools).filter(([id]) => ids.has(id)));
     put(botId, { ...held, servers, tools });
 }
 
-export async function loadServerTools(botId: string, serverId: string): Promise<void> {
-    current = botId;
+/** Read a server's tools without claiming the page: the list that asks for them already did when it started */
+async function readServerTools(botId: string, serverId: string): Promise<void> {
     take(botId, await botApiService.getMcpServerTools(botId, serverId));
+}
+
+export async function loadServerTools(botId: string, serverId: string): Promise<void> {
+    beginBot(botId);
+    await readServerTools(botId, serverId);
 }
 
 /** Every server's tools, for the "3 to check" a row says. A server whose tools can't be read keeps its plain row. */
 export async function loadAllServerTools(botId: string, servers: McpServer[]): Promise<void> {
     await Promise.all(
         servers.map((server) =>
-            loadServerTools(botId, server.id).catch((error) =>
+            readServerTools(botId, server.id).catch((error) =>
                 console.error("[BotToolsStore] Failed to load a server's tools:", error)
             )
         )
