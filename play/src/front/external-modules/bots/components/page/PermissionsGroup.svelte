@@ -57,6 +57,11 @@
     function names2(list: string[]): string {
         return list.length <= 1 ? list.join("") : `${list.slice(0, -1).join(", ")} and ${list[list.length - 1]}`;
     }
+    // Mock: who can always use the bot, by name, so nobody reads "the owner" as themselves. The build gets the
+    // universe's name and its owner's name from Orbit with the permissions.
+    const universe = { name: "Nova", owner: "Layla" };
+    $: maker = (bot as { createdBy?: { name?: string } }).createdBy?.name;
+    $: alwaysLine = `${maker ? `${maker}, who made it, ` : ""}${universe.owner}, who owns ${universe.name}, and ${universe.name}'s Admins can always use it.`;
     function confirmVisibility() {
         if (!confirming) return;
         void setPrivateBot(bot.id, confirming === "private");
@@ -182,7 +187,7 @@
                         >{data.privateBot
                             ? data.rules.length
                                 ? "Only the roles and people below can use it"
-                                : "Only you and the admins, until you add someone"
+                                : `Only ${maker ?? "its maker"}, ${universe.owner} and ${universe.name}'s Admins, until you add someone`
                             : "Everyone who can reach it can use it, guests too"}</span
                     >
                 </span>
@@ -254,10 +259,10 @@
                     {#if listed.length}
                         <li>Only the roles and people you've added can use it: <b>{names2(listed)}</b>, each with their own rules.</li>
                     {:else}
-                        <li>Nobody you've added yet, so only you and the admins can use it until you add a role or person.</li>
+                        <li>Nobody's been added yet, so until you add a role or person, only the people below can use it.</li>
                     {/if}
                     <li>Everyone else, guests too, can't. They get your reply: “{data.refusalReply || access.replyPlaceholder()}”</li>
-                    <li>Its maker, the Universe owner and Admin always can.</li>
+                    <li>{alwaysLine}</li>
                 </ul>
             {:else}
                 <ul>
