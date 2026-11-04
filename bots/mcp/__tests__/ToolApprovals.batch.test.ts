@@ -133,6 +133,20 @@ describe('the card before making more than the limit', () => {
         expect(s.approvals.reserveMake('b1', ROOM, SARA, 1, 5)).toEqual({ ok: false, soFar: 12 });
     });
 
+    it('counts what a slow tool made in the request it was for, not in one the person started meanwhile', async () => {
+        let finish: (value: unknown) => void = () => undefined;
+        s.run.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)) as never);
+        await s.approvals.propose({ botId: 'b1', roomId: ROOM, person: SARA, toolName: 'make_posters', entry: ENTRY, args: ARGS, decision: ASK, batch: over });
+        const tapped = s.approvals.handleTap('b1', ROOM, SARA, { ask: 'act_1', revision: 1, tap: { action: 'decide', option: 'approve' } });
+        await settle();
+        // The person writes again while the tool still runs
+        s.approvals.newRequest('b1', ROOM, SARA);
+        finish([{ type: 'text', text: 'Made 12 posters' }]);
+        await tapped;
+        await settle();
+        expect(s.approvals.madeSoFar('b1', ROOM, SARA)).toBe(0);
+    });
+
     it('holds a card rebuilt after a restart to the same checks and counts, with no memory of the card', async () => {
         await s.approvals.propose({ botId: 'b1', roomId: ROOM, person: SARA, toolName: 'make_posters', entry: ENTRY, args: ARGS, decision: ASK, batch: over });
         // A new process: it holds no cards, only what Orbit saved
@@ -191,7 +205,7 @@ describe('what a request has made', () => {
         s.approvals.reserveMake('b1', ROOM, SARA, 5, 5);
         s.approvals.newRequest('b1', ROOM, SARA);
         expect(s.approvals.madeSoFar('b1', ROOM, SARA)).toBe(0);
-        expect(s.approvals.reserveMake('b1', ROOM, SARA, 5, 5)).toEqual({ ok: true });
+        expect(s.approvals.reserveMake('b1', ROOM, SARA, 5, 5)).toEqual({ ok: true, epoch: 1 });
     });
 
     it('is not started again by the cards being told, which can finish after the reply began', async () => {

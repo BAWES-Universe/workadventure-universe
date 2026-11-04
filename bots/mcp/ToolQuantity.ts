@@ -161,36 +161,51 @@ const MAX_KEPT = 5000;
  * starts a new count. Kept in this process, like the cards themselves.
  */
 export class MakeCounts {
-    private readonly counts = new Map<string, { made: number; at: number }>();
+    private readonly counts = new Map<string, { made: number; at: number; epoch: number }>();
 
     constructor(private readonly now: () => number = Date.now) {}
 
-    soFar(key: string): number {
+    private kept(key: string): { made: number; at: number; epoch: number } | undefined {
         const kept = this.counts.get(key);
-        if (!kept) return 0;
+        if (!kept) return undefined;
         if (this.now() - kept.at > IDLE_MS) {
+            // Forgotten after a long quiet: what comes next is a new request
             this.counts.delete(key);
-            return 0;
+            return undefined;
         }
-        return kept.made;
+        return kept;
+    }
+
+    soFar(key: string): number {
+        return this.kept(key)?.made ?? 0;
+    }
+
+    /**
+     * Which request this is: it changes each time the person asks for something new. Taken with a reservation, so what is
+     * counted or taken back later (a tool can run for minutes) lands on the request it was for and never on a newer one.
+     */
+    epochOf(key: string): number {
+        return this.kept(key)?.epoch ?? 0;
     }
 
     /**
      * Makes room for `count` more under the limit, all at once: calls started in the same moment can't each find room
-     * for themselves. True when it fits (and is counted now); false with how many were made so far when it does not.
+     * for themselves. True when it fits (and is counted now, with the request it was counted for); false with how many were
+     * made so far when it does not.
      */
-    reserve(key: string, count: number, limit: number): { ok: true } | { ok: false; soFar: number } {
+    reserve(key: string, count: number, limit: number): { ok: true; epoch: number } | { ok: false; soFar: number } {
         const made = this.soFar(key);
         if (made + count > limit) return { ok: false, soFar: made };
         this.add(key, count);
-        return { ok: true };
+        return { ok: true, epoch: this.epochOf(key) };
     }
 
-    /** Counts things that were made (a tap on a card approved them). */
-    add(key: string, count: number): void {
-        const made = this.soFar(key);
+    /** Counts things that were made (a tap on a card approved them). With `epoch`, only while that request is still the current one. */
+    add(key: string, count: number, epoch?: number): void {
+        if (epoch !== undefined && epoch !== this.epochOf(key)) return;
+        const kept = this.kept(key);
         this.counts.delete(key);
-        this.counts.set(key, { made: made + count, at: this.now() });
+        this.counts.set(key, { made: (kept?.made ?? 0) + count, at: this.now(), epoch: kept?.epoch ?? 0 });
         while (this.counts.size > MAX_KEPT) {
             const oldest = this.counts.keys().next().value;
             if (oldest === undefined) break;
@@ -198,16 +213,20 @@ export class MakeCounts {
         }
     }
 
-    /** Takes back things that were counted but proved not to be made (the tool failed before making anything). */
-    release(key: string, count: number): void {
-        const kept = this.counts.get(key);
+    /** Takes back things that were counted but proved not to be made (the tool failed before making anything). Only from the request they were counted for. */
+    release(key: string, count: number, epoch?: number): void {
+        const kept = this.kept(key);
         if (!kept) return;
+        if (epoch !== undefined && epoch !== kept.epoch) return;
         kept.made = Math.max(0, kept.made - count);
     }
 
-    /** The person asked for something new: the count starts again. */
+    /** The person asked for something new: the count starts again, as a new request. */
     reset(key: string): void {
+        const kept = this.counts.get(key);
         this.counts.delete(key);
+        // The request is remembered (with nothing made) so what a slow tool reports later is told apart from this one
+        this.counts.set(key, { made: 0, at: this.now(), epoch: (kept?.epoch ?? 0) + 1 });
     }
 }
 

@@ -31,7 +31,7 @@ function setup(options: { limit?: number | null; verdict?: unknown; mem?: unknow
         propose,
         settings: async () => ({ cardWaitMinutes: 10, askWhichWay: 'rarely', askBeforeMaking: options.limit === undefined ? 5 : options.limit }),
         reserveMake: (_b: string, _r: string, person: { uuid: string }, count: number, limit: number) => counts.reserve(person.uuid, count, limit),
-        releaseMake: (_b: string, _r: string, person: { uuid: string }, count: number) => counts.release(person.uuid, count),
+        releaseMake: (_b: string, _r: string, person: { uuid: string }, count: number, epoch?: number) => counts.release(person.uuid, count, epoch),
     } as never);
     return { service, propose, counts };
 }

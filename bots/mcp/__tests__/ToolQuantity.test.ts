@@ -109,8 +109,8 @@ describe('quantityOf', () => {
 describe('MakeCounts', () => {
     it('lets things through up to the limit and counts them', () => {
         const counts = new MakeCounts();
-        expect(counts.reserve('k', 3, 5)).toEqual({ ok: true });
-        expect(counts.reserve('k', 2, 5)).toEqual({ ok: true });
+        expect(counts.reserve('k', 3, 5)).toEqual({ ok: true, epoch: 0 });
+        expect(counts.reserve('k', 2, 5)).toEqual({ ok: true, epoch: 0 });
         expect(counts.reserve('k', 1, 5)).toEqual({ ok: false, soFar: 5 });
         expect(counts.soFar('k')).toBe(5);
     });
@@ -143,6 +143,25 @@ describe('MakeCounts', () => {
         counts.reset('a');
         expect(counts.soFar('a')).toBe(0);
         expect(counts.soFar('b')).toBe(2);
+    });
+
+    it('puts what a slow tool reports on the request it was for, never on a newer one', () => {
+        const counts = new MakeCounts();
+        const first = counts.reserve('k', 5, 5);
+        if (!first.ok) throw new Error('should fit');
+        // The person writes again while the tool still runs
+        counts.reset('k');
+        counts.add('k', 5, first.epoch);
+        counts.release('k', 5, first.epoch);
+        expect(counts.soFar('k')).toBe(0);
+        // The new request counts its own, and a late report from the old one still cannot take it back
+        const second = counts.reserve('k', 3, 5);
+        if (!second.ok) throw new Error('should fit');
+        expect(second.epoch).toBe(first.epoch + 1);
+        counts.release('k', 3, first.epoch);
+        expect(counts.soFar('k')).toBe(3);
+        counts.release('k', 3, second.epoch);
+        expect(counts.soFar('k')).toBe(0);
     });
 
     it('forgets what a request made after a long quiet', () => {

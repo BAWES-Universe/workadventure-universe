@@ -534,13 +534,15 @@ export class ToolApprovals {
             }
 
             started = true;
+            // The request this tap belongs to, taken before the tool runs: a person who writes again meanwhile starts a new one
+            const requestEpoch = this.made.epochOf(this.countKey(botId, roomId, person));
             const result = await this.deps.tools.run(botId, entry, action.toolName, action.arguments, person.uuid);
             const outcome = outcomeOf(result);
             // What this tap let be made counts in the request, so a later step doesn't ask again for the same ones. A call that
             // proved it made nothing counts for nothing.
             if (madeNew && (outcome === 'succeeded' || outcome === 'uncertain')) {
                 const quantity = quantityOf(action.toolName, entry.title, action.arguments, entry.inputSchema);
-                if (quantity.known) this.made.add(this.countKey(botId, roomId, person), quantity.count);
+                if (quantity.known) this.made.add(this.countKey(botId, roomId, person), quantity.count, requestEpoch);
             }
             if (outcome === 'succeeded') {
                 const line = resultLine(result);
@@ -712,13 +714,13 @@ export class ToolApprovals {
     }
 
     /** Whether `count` more fit under the limit for this person's request; if so they are counted now. Otherwise how many were made so far. */
-    reserveMake(botId: string, roomId: string, person: Asker, count: number, limit: number): { ok: true } | { ok: false; soFar: number } {
+    reserveMake(botId: string, roomId: string, person: Asker, count: number, limit: number): { ok: true; epoch: number } | { ok: false; soFar: number } {
         return this.made.reserve(this.countKey(botId, roomId, person), count, limit);
     }
 
     /** Takes back a reservation for things that proved not to be made. */
-    releaseMake(botId: string, roomId: string, person: Asker, count: number): void {
-        this.made.release(this.countKey(botId, roomId, person), count);
+    releaseMake(botId: string, roomId: string, person: Asker, count: number, epoch?: number): void {
+        this.made.release(this.countKey(botId, roomId, person), count, epoch);
     }
 
     /** How many things this person's request has made so far. */

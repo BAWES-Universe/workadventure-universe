@@ -3840,7 +3840,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             } else {
                 if (quantity.count === 0) return { kind: 'run' };
                 const reserved = approvals.reserveMake(botId, chat.chat.ref, person, quantity.count, limit);
-                if (!('soFar' in reserved)) return { kind: 'run', release: () => approvals.releaseMake(botId, chat.chat.ref, person, quantity.count) };
+                if (!('soFar' in reserved)) return { kind: 'run', release: () => approvals.releaseMake(botId, chat.chat.ref, person, quantity.count, reserved.epoch) };
                 if (!canAsk) {
                     return {
                         kind: 'result',
