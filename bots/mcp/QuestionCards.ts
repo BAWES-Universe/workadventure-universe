@@ -55,8 +55,8 @@ export interface QuestionDeps {
     nearby?: NearbySurface;
     /** How long a card waits, in minutes (the bot's own setting). */
     waitMinutes(botId: string): Promise<number>;
-    /** The person picked: the bot carries on. Never throws. */
-    picked(picked: QuestionPicked): Promise<void>;
+    /** The person picked: the bot carries on. False when the bot could not take it on (the person left the bubble): the card waits again. Never throws. */
+    picked(picked: QuestionPicked): Promise<boolean | void>;
     now?: () => number;
 }
 
@@ -278,9 +278,18 @@ export class QuestionCards {
         card.answer = { picked: pickedChoices(field, ids).map((choice) => choice.id) };
         card.revision += 1;
         await this.redraw(id, card);
-        await this.deps
+        const taken = await this.deps
             .picked({ botId: card.botId, roomId: card.roomId, person: card.person, nearby: card.nearby, text: answerText(field, ids) })
             .catch((error) => console.warn(`[QuestionCards] Could not take the pick on ${id} on to the bot:`, errorText(error)));
+        if (taken !== false) return;
+        // The bot never got the pick (the person left the bubble, or chat is closed to them now): the question is still open
+        // until its time is up, so a card that says "picked" for an answer nobody heard is not left behind
+        if (card.waiting || card.expiresAt <= this.now()) return;
+        card.waiting = true;
+        card.answer = undefined;
+        card.revision += 1;
+        this.schedule(id, card);
+        await this.redraw(id, card);
     }
 
     /* ------------------------------- the person writes or speaks ------------------------------- */

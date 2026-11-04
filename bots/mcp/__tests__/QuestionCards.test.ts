@@ -17,7 +17,7 @@ const asked = {
     before: 'make the music',
 };
 
-function setup(options: { cardFails?: boolean; nearbyMissing?: boolean } = {}) {
+function setup(options: { cardFails?: boolean; nearbyMissing?: boolean; pickNotTaken?: boolean } = {}) {
     let clock = 1_000_000;
     const sent: Array<Record<string, any>> = [];
     const nearbyCards: Array<{ person: Asker; ask: QuestionField }> = [];
@@ -45,7 +45,10 @@ function setup(options: { cardFails?: boolean; nearbyMissing?: boolean } = {}) {
                   },
               }),
         waitMinutes: async () => 10,
-        picked: async (picked) => void picks.push(picked),
+        picked: async (picked) => {
+            picks.push(picked);
+            return options.pickNotTaken ? false : undefined;
+        },
         now: () => clock,
     });
     const field = (n = sent.length - 1) => sent[n]['m.new_content']?.['universe.ask'] ?? sent[n]['universe.ask'];
@@ -121,6 +124,30 @@ describe('a tap', () => {
         expect(s.picks[0].text).toBe(`My answer to your question "${asked.question}": Upbeat pop (3 tracks, about 3 minutes each). Go ahead with that.`);
         expect(s.picks[0].nearby).toBe(false);
         expect(s.picks[0].person.matrixUserId).toBe('@khalid:chat');
+    });
+
+    it('a pick the bot could not take on (the person left the bubble) leaves the question open to be answered again', async () => {
+        const s = setup({ pickNotTaken: true });
+        await show(s);
+        const id = s.field().id;
+        await s.cards.handleTap('b1', '!dm', khalid, s.tap(id, 1, { action: 'pick', choices: ['c1'] }));
+        // Drawn as picked, then as waiting again with the whole card
+        expect(s.field(1)).toMatchObject({ revision: 2, answer: { picked: ['c1'] } });
+        expect(s.field()).toMatchObject({ revision: 3 });
+        expect(s.field().answer).toBeUndefined();
+        expect(s.cards.hasWaiting('b1', '!dm', khalid)).toBe(true);
+    });
+
+    it('a pick the bot could not take on after the question timed out stays as it ended', async () => {
+        const s = setup({ pickNotTaken: true });
+        await show(s);
+        const id = s.field().id;
+        // Time runs out while the pick is on its way
+        const pick = s.cards.handleTap('b1', '!dm', khalid, s.tap(id, 1, { action: 'pick', choices: ['c1'] }));
+        s.advance(60 * 60_000);
+        await pick;
+        expect(s.field()).toMatchObject({ answer: { picked: ['c1'] } });
+        expect(s.cards.hasWaiting('b1', '!dm', khalid)).toBe(false);
     });
 
     it('two taps at once are one answer', async () => {
