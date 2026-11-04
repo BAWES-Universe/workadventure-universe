@@ -104,6 +104,8 @@ export interface ArtifactSummary {
     kind: ArtifactKind;
     makerName: string;
     version: number;
+    /** Set when this artifact is a copy; a change to another bot's artifact answers with the bot's own copy (Orbit #800). */
+    copiedFromId?: string | null;
 }
 
 export interface ArtifactVersionSummary {
