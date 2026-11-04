@@ -49,9 +49,9 @@
             : action === "summon"
             ? access.actions.summonHint()
             : action === "change"
-            ? "Create or edit things with its tools, like a Linear issue or a post"
+            ? "Use its tools under Makes new things and Changes things, like adding a Linear issue"
             : action === "send"
-            ? "Delete things, or send email and messages outside Universe, with its tools"
+            ? "Use its tools under Deletes or sends out, like sending an email or deleting a page"
             : access.actions.manageHint();
     }
 
@@ -62,6 +62,10 @@
         if (!found) return access.defaultPerson();
         return found.allowed && found.from ? access.defaultYes({ from: found.from }) : access.defaultNo();
     }
+
+    // Mock (d=live): today's screen, before the two rows
+    const liveView = new URLSearchParams(location.search).get("d") === "live";
+    $: shownActions = liveView ? SHOWN_ACTIONS.filter((a) => a !== "change" && a !== "send") : SHOWN_ACTIONS;
 
     let removing = false;
     async function remove() {
@@ -84,7 +88,7 @@
             <span class="br-name">{access.ruleFor({ name })}</span>
         </div>
 
-        {#each SHOWN_ACTIONS as action (action)}
+        {#each shownActions as action (action)}
             <div class="br-field">
                 <span class="br-t">{titleOf(action)}</span>
                 <span class="br-m">{hintOf(action)}</span>

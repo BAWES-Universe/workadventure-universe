@@ -181,19 +181,16 @@ const role = (id: string, key: string, name: string, color: string, builtIn: boo
 const all = { chat: true, dm: true, summon: true, manage: true, change: true, send: true };
 const roles = [
     role("r-admin", "admin", "Admin", "#F87171", true, all),
-    role("r-eng", "engineering", "Engineering", "#34D399", false, { chat: false, dm: false, summon: false, manage: false, change: true, send: false }),
     role("r-editor", "editor", "Editor", "#60A5FA", true, { chat: false, dm: false, summon: false, manage: true, change: true, send: true }),
     role("r-member", "member", "Member", "#A78BFA", true, { chat: false, dm: false, summon: false, manage: false, change: true, send: false }),
     role("r-everyone", "everyone", "Everyone", "#A3A3B5", true, { chat: true, dm: true, summon: true, manage: false, change: false, send: false }),
+    role("r-eng", "engineering", "Engineering", "#34D399", false, { chat: false, dm: false, summon: false, manage: false, change: false, send: false }),
 ];
 const rule = (id: string, r: (typeof roles)[number], v: Record<string, string>) => ({ id, roleId: r.id, userId: null, role: { key: r.key, name: r.name, color: r.color }, person: null, ...v });
+const D = new URLSearchParams(location.search).get("d");
 const permissions = readPermissions({
     privateBot: false, refusalReply: null, dailyReplyCap: null, roles,
-    rules: [
-        ...(call === "2b"
-            ? [rule("x3", roles[4], { change: "yes", send: "yes" })]
-            : [rule("x1", roles[1], { send: "yes" }), rule("x2", roles[3], { change: "no" })]),
-    ],
+    rules: [rule("x1", roles[4], D === "live" ? { dm: "yes" } : { change: "yes", send: "yes" }), rule("x2", roles[3], { summon: "no" })],
 });
 const base: Record<string, unknown> = {
     onInitialize: (cb?: () => void) => { cb?.(); return () => {}; },

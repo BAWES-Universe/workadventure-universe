@@ -54,6 +54,21 @@
         ? access.privateOnEmptyHint()
         : access.privateOnHint();
 
+    // Mock (d=live hides it): who the roles let have the bot use its tools, so the starting point isn't hidden
+    const liveView = new URLSearchParams(location.search).get("d") === "live";
+    function names(list: string[]): string {
+        return list.length <= 1 ? list.join("") : `${list.slice(0, -1).join(", ")} and ${list[list.length - 1]}`;
+    }
+    function toolsLineOf(permissions: BotPermissions | undefined): string {
+        if (!permissions) return "";
+        const change = permissions.roles.filter((r) => r.defaults.change).map((r) => r.name);
+        const send = permissions.roles.filter((r) => r.defaults.send).map((r) => r.name);
+        const a = change.length ? `${names(change)} can have it change things.` : "Nobody can have it change things yet.";
+        const b = send.length ? ` ${names(send)} can also have it delete or send.` : " Nobody can have it delete or send yet.";
+        return a + b + " A role or person below can be set differently.";
+    }
+    $: toolsLine = toolsLineOf(data);
+
     function summaryOf(rule: BotRule): string {
         return ruleSummary(rule, {
             blocked: access.blocked(),
@@ -144,6 +159,15 @@
             />
         </label>
 
+        {#if !liveView}
+            <div class="bp-set bp-info" data-testid="bot-access-tools-line">
+                <span class="bp-tx">
+                    <span class="bp-t">Changing, deleting and sending</span>
+                    <span class="bp-m">{toolsLine}</span>
+                </span>
+            </div>
+        {/if}
+
         {#each data.rules as rule (rule.id)}
             <button type="button" class="bp-rule" data-testid="bot-access-rule" on:click={() => onOpenRule(rule)}>
                 {#if rule.role}
@@ -195,6 +219,9 @@
         gap: 10px;
         min-height: 44px;
         cursor: pointer;
+    }
+    .bp-info {
+        cursor: default;
     }
     .bp-tx {
         display: flex;
