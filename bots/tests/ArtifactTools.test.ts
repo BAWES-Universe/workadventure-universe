@@ -129,6 +129,28 @@ describe('change_artifact', () => {
         expect(vi.mocked(ctx.admin.changeArtifact).mock.calls[0][2]).not.toHaveProperty('edits');
     });
 
+    it("tells the model that another bot's artifact is not changed itself, but saved as its own copy (Orbit #800)", () => {
+        const [, change] = artifactToolDefinitions();
+        expect(change.function.description).toContain('never changed itself');
+        expect(change.function.description).toContain('new copy of your own');
+    });
+
+    it("returns Orbit's copy as the card and names the original, when another bot's artifact was changed (Orbit #800)", async () => {
+        const copy = { id: 'art-9', title: 'Quests board', kind: 'app' as const, makerName: 'Pixel', version: 1, copiedFromId: 'art-1' };
+        const ctx = context({ changeArtifact: vi.fn(async () => ({ artifact: copy, version: { number: 1, summary: null }, hidden: false })) as never });
+        const run = await runArtifactTool('change_artifact', { id: 'art-1', content: '<p>x</p>' }, ctx);
+        expect(run.result).toMatchObject({ success: true, id: 'art-9', version: 1, copiedFrom: 'art-1' });
+        expect(run.card).toMatchObject({ id: 'art-9', version: 1 });
+        const line = formatArtifactResult('change_artifact', run.result);
+        expect(line).toContain("another bot's");
+        expect(line).toContain('id art-9');
+        expect(line).toContain('the original is unchanged');
+        // Its own artifact still changes in place: same id, no copy line
+        const own = await runArtifactTool('change_artifact', { id: 'art-1', content: '<p>x</p>' }, context());
+        expect(own.result).not.toHaveProperty('copiedFrom');
+        expect(formatArtifactResult('change_artifact', own.result)).toContain('it is version 2 now');
+    });
+
     it('wants an id and either edits or a file, and sends nothing otherwise', async () => {
         const ctx = context();
         expect((await runArtifactTool('change_artifact', { edits: [{ old: 'a', new: 'b' }] }, ctx)).result).toHaveProperty('error');
