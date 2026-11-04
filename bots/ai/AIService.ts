@@ -147,6 +147,13 @@ type ResolvedProvider =
  * reads is the bot's whole reply, so what the model might add never goes out.
  */
 const SHARED_LINE = 'sharedLine';
+/** With it, the cards whose "the bot asks" line this is, so what comes after is said after it. */
+const SHARED_LINE_ID = 'sharedLineId';
+
+export function sharedLineIdsOf(toolResults: ReadonlyArray<{ result?: unknown }>): string[] {
+    const ids = toolResults.map((tr) => (tr.result as Record<string, unknown> | undefined)?.[SHARED_LINE_ID]).filter((id): id is string => typeof id === 'string' && !!id);
+    return [...new Set(ids)];
+}
 
 /** The one line everyone in a bubble reads for the calls of a round: each line once, even when the same call was made twice at the same moment. */
 export function sharedLineOf(toolResults: ReadonlyArray<{ result?: unknown }>): string {
@@ -677,7 +684,9 @@ export class AIService {
         toolTimeoutSeconds?: number | null,
         homeRoomUrl?: string,
         peopleInRoom?: string[] | null,
-        isRetry = false
+        isRetry = false,
+        // True only when this is what a person said to the bot: a greeting, an arrival or a goodbye is the bot's own prompt
+        personSaid = false
     ): AsyncGenerator<AIStreamChunk> {
         const turn: TurnFacts = { artifactTools: false, artifactSaved: false, guard: false };
         const hearing = spaceName !== undefined && botClient !== undefined ? { spaceName, botClient } : undefined;
@@ -686,7 +695,7 @@ export class AIService {
         const attempt = (text: string, retry: boolean, facts: TurnFacts) =>
             this.generateTurn(botId, playerId, text, chatInstructions, providerId, spaceName, conversationContext, botClient, adminApiService, abortSignal, images, channel, toolTimeoutSeconds, homeRoomUrl, peopleInRoom, retry, facts);
         // A card waits for this person in the bubble (#1658): a yes never sends, and anything else closes it
-        if (!isRetry && channel === 'world' && botClient && spaceName && playerId !== undefined && (await this.whileCardWaits(botId, playerId, message, providerId, spaceName, botClient))) {
+        if (personSaid && !isRetry && channel === 'world' && botClient && spaceName && playerId !== undefined && (await this.whileCardWaits(botId, playerId, message, providerId, spaceName, botClient))) {
             yield { content: '', done: true } as AIStreamChunk;
             return;
         }
@@ -1523,6 +1532,7 @@ export class AIService {
                             const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia);
                             // A card went to one person alone (#1658): the line everyone reads is the whole reply, said instead of the model's own words
                             const sharedLine = sharedLineOf(toolResults);
+                            const sharedLineIds = sharedLineIdsOf(toolResults);
                             // Which tool made each file, and what it was asked for, for the bot's list of files (#1508)
                             this.noteMadeMedia(pendingToolCalls, toolResults);
                             // The steps line marks each shown call done or failed before the bot carries on (#1545)
@@ -1620,7 +1630,7 @@ export class AIService {
                                 const errorStatusBefore = followUpErrorStatus;
                                 const errorTextBefore = errorText;
                                 let refusedForLength = false;
-                                for await (const resultChunk of sharedLine ? this.saySharedLine(sharedLine) : this.meteredStream(
+                                for await (const resultChunk of sharedLine ? this.saySharedLine(sharedLine, sharedLineIds) : this.meteredStream(
                                     ledger,
                                     providerId,
                                     systemPrompt,
@@ -3733,9 +3743,14 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     }
 
     /** The reply after a card was shown in a bubble: only the line everyone reads (#1658), as if the model had written it. */
-    private async *saySharedLine(line: string): AsyncGenerator<AIStreamChunk> {
-        yield { content: line, done: false, metadata: undefined };
-        yield { content: '', done: true, metadata: { tokensUsed: 0, promptTokens: 0, completionTokens: 0 } } as AIStreamChunk;
+    private async *saySharedLine(line: string, cardIds: readonly string[] = []): AsyncGenerator<AIStreamChunk> {
+        try {
+            yield { content: line, done: false, metadata: undefined };
+            yield { content: '', done: true, metadata: { tokensUsed: 0, promptTokens: 0, completionTokens: 0 } } as AIStreamChunk;
+        } finally {
+            // Said (or the reply ended before it could be): how the card ends may be said after it now
+            this.approvals?.askLineSaid(cardIds);
+        }
     }
 
     /** What the model is told when the gate did not let a tool run: the line the person can be told as it is. */
@@ -3800,7 +3815,13 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         });
         if (proposed.kind === 'run') return { kind: 'run' };
         // The line everyone in the bubble reads travels with the result: it is the bot's whole reply (see the follow-up)
-        return { kind: 'result', result: proposed.kind === 'waiting' && proposed.line ? { ...proposed.result, [SHARED_LINE]: proposed.line } : proposed.result };
+        return {
+            kind: 'result',
+            result:
+                proposed.kind === 'waiting' && proposed.line
+                    ? { ...proposed.result, [SHARED_LINE]: proposed.line, ...(proposed.lineId ? { [SHARED_LINE_ID]: proposed.lineId } : {}) }
+                    : proposed.result,
+        };
     }
 
     /**

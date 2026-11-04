@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { get, writable } from "svelte/store";
+import { SearchableArrayStore } from "@workadventure/store-utils";
 import {
     BOT_ASK_ANSWER_EVENT,
     askBarFits,
@@ -193,6 +194,21 @@ describe("chatAsks", () => {
         expect(get(asks)[0].ask.answer).toEqual({ closed: true });
         messages.set([]);
         expect(get(asks)).toEqual([]);
+    });
+
+    it("reads nearby chat's message list, which is an array and a store at once", () => {
+        // Nearby chat keeps its messages in a SearchableArrayStore. A bare array is read as a list of stores by `derived`,
+        // so every message was asked to subscribe and the chat stopped drawing.
+        const messages = new SearchableArrayStore<
+            string,
+            { id: string; ask?: ReturnType<typeof writable<BotAsk | undefined>> }
+        >((item) => item.id);
+        messages.push({ id: "m1" });
+        const asks = chatAsks(messages);
+        expect(get(asks)).toEqual([]);
+        const card = writable<BotAsk | undefined>(readNearbyBotAsk(JSON.stringify(FIELD), 0));
+        messages.push({ id: "m2", ask: card });
+        expect(get(asks).map((entry) => [entry.message.id, entry.ask.id])).toEqual([["m2", "act_1"]]);
     });
 });
 

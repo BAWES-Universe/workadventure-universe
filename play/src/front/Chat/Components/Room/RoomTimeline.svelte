@@ -435,7 +435,7 @@
     // Cards the bot asks one answer with (#1657), in a direct message with a bot. The oldest waiting card is pinned above the
     // message box until it is answered, closed or runs out; the chat keeps the ones that ended, where they were asked.
     // And in nearby chat (#1658), where a bot shows the card to the person who asked and nobody else.
-    $: askStore = (partnerBotId || room.id === "proximity") && messages ? chatAsks(messages) : readable([]);
+    $: askStore = (partnerBotId || proximityRoom) && messages ? chatAsks(messages) : readable([]);
     let askNow = Date.now();
     let askTimer: ReturnType<typeof setTimeout> | undefined;
     $: waitingAsks = $askStore.filter((entry) => isWaiting(entry.ask, askNow));

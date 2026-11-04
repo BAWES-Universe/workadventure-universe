@@ -147,9 +147,16 @@ beforeEach(() => {
 });
 afterEach(() => vi.useRealTimers());
 
+/** Proposes, then says the line that asks, as the bot's reply does: what comes after it may be said now. */
+async function proposeSaid(input: Parameters<ToolApprovals['propose']>[0]) {
+    const proposed = await s.approvals.propose(input);
+    if (proposed.kind === 'waiting' && proposed.lineId) s.approvals.askLineSaid([proposed.lineId]);
+    return proposed;
+}
+
 describe('the card in a bubble', () => {
     it('goes to the person who asked, as the same card, saved for a bubble and never as a direct message', async () => {
-        const result = await s.approvals.propose(input());
+        const result = await proposeSaid(input());
         expect(result.kind).toBe('waiting');
         expect(s.dmSent).toHaveLength(0);
         expect(s.cards).toHaveLength(1);
@@ -161,7 +168,7 @@ describe('the card in a bubble', () => {
     });
 
     it('tells the model one plain line for everyone to read is the whole reply, with nothing from the card in it', async () => {
-        const result = (await s.approvals.propose(input())) as { kind: 'waiting'; result: { status: string; message: string }; line?: string };
+        const result = (await proposeSaid(input())) as { kind: 'waiting'; result: { status: string; message: string }; line?: string };
         expect(result.result.status).toBe('waiting_for_ok');
         expect(result.result.message).toContain('Write nothing more');
         expect(result.line).toBe('Khalid, I need your OK to send an email for you.');
@@ -173,14 +180,14 @@ describe('the card in a bubble', () => {
 
     it('is not shown to a person who is not in the bubble: nothing is done and the saved action is closed', async () => {
         s = setup({ cardFails: true });
-        const result = await s.approvals.propose(input());
+        const result = await proposeSaid(input());
         expect(result.kind).toBe('failed');
         expect(s.orbit.actions.get('act_1')!.status).toBe('closed');
     });
 
     it('asks again for nothing it already shows: the same call twice is one card', async () => {
-        await s.approvals.propose(input());
-        const again = await s.approvals.propose(input());
+        await proposeSaid(input());
+        const again = await proposeSaid(input());
         expect(again.kind).toBe('waiting');
         expect(s.cards).toHaveLength(1);
     });
@@ -195,19 +202,19 @@ describe('the line everyone reads', () => {
     it("is the title as it is when the extra AI reply fails or does not fit, never anything from the card", async () => {
         for (const write of [() => null, () => 'Khalid, I will email fahad@example.com about the launch!', () => 'Sure thing', () => { throw new Error('timeout'); }, () => '']) {
             s = setup({ write });
-            const result = (await s.approvals.propose(input())) as { line?: string };
+            const result = (await proposeSaid(input())) as { line?: string };
             expect(result.line).toBe('Khalid, I need your OK for Send email.');
         }
     });
 
     it('has no name to start with when the person has none', async () => {
         s = setup({ write: () => null });
-        const result = (await s.approvals.propose(input({ person: { uuid: 'uuid-khalid', name: null, playerId: 7 } }))) as { line?: string };
+        const result = (await proposeSaid(input({ person: { uuid: 'uuid-khalid', name: null, playerId: 7 } }))) as { line?: string };
         expect(result.line).toBe('I need your OK for Send email.');
     });
 
     it('says the email went out once it ran, for everyone, with what the tool said only on the card', async () => {
-        await s.approvals.propose(input());
+        await proposeSaid(input());
         await s.approvals.handleTap('b1', SPACE, KHALID, tap('act_1', 1, { action: 'decide', option: 'approve' }));
         await settle();
         expect(s.run).toHaveBeenCalledTimes(1);
@@ -218,17 +225,40 @@ describe('the line everyone reads', () => {
     });
 
     it("says it didn't send after Don't send, after X and after no answer, so nobody can tell which", async () => {
-        await s.approvals.propose(input());
+        await proposeSaid(input());
         await s.approvals.handleTap('b1', SPACE, KHALID, tap('act_1', 1, { action: 'decide', option: 'decline' }));
-        await s.approvals.propose(input({ args: { ...ARGS, subject: 'Other' } }));
+        await proposeSaid(input({ args: { ...ARGS, subject: 'Other' } }));
         await s.approvals.handleTap('b1', SPACE, KHALID, tap('act_2', 1, { action: 'close' }));
         expect(s.lines).toEqual(["Khalid, I didn't send the email.", "Khalid, I didn't send the email."]);
         expect(s.run).not.toHaveBeenCalled();
     });
 
+    it('says how it ended only after the line that asks, even when the person taps first', async () => {
+        const proposed = await s.approvals.propose(input());
+        await s.approvals.handleTap('b1', SPACE, KHALID, tap('act_1', 1, { action: 'decide', option: 'decline' }));
+        await settle();
+        expect(s.lines).toEqual([]);
+        s.approvals.askLineSaid([(proposed as { lineId?: string }).lineId!]);
+        await settle();
+        expect(s.lines).toEqual(["Khalid, I didn't send the email."]);
+    });
+
+    it('does not hold how it ended back for ever when the line that asks is never said', async () => {
+        vi.useFakeTimers();
+        try {
+            await s.approvals.propose(input());
+            const tapped = s.approvals.handleTap('b1', SPACE, KHALID, tap('act_1', 1, { action: 'close' }));
+            await vi.advanceTimersByTimeAsync(21_000);
+            await tapped;
+            expect(s.lines).toEqual(["Khalid, I didn't send the email."]);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('says it once when nobody answers, and the card ends as closed for lack of an answer', async () => {
         vi.useFakeTimers();
-        await s.approvals.propose(input());
+        await proposeSaid(input());
         s.clock.now = Date.parse('2026-11-04T12:10:30.000Z');
         // Orbit still has it waiting, past its time
         await vi.advanceTimersByTimeAsync(11 * 60_000);
@@ -241,7 +271,7 @@ describe('the line everyone reads', () => {
 
     it('waits longer when the person asks for more time', async () => {
         vi.useFakeTimers();
-        await s.approvals.propose(input());
+        await proposeSaid(input());
         await s.approvals.handleTap('b1', SPACE, KHALID, tap('act_1', 1, { action: 'moreTime' }));
         s.clock.now = Date.parse('2026-11-04T12:10:30.000Z');
         await vi.advanceTimersByTimeAsync(11 * 60_000);
@@ -251,7 +281,7 @@ describe('the line everyone reads', () => {
 
     it('says nothing it cannot know when the call may have run', async () => {
         s = setup({ write: fits, runResult: { error: 'no answer', outcome: 'unknown' } });
-        await s.approvals.propose(input());
+        await proposeSaid(input());
         await s.approvals.handleTap('b1', SPACE, KHALID, tap('act_1', 1, { action: 'decide', option: 'approve' }));
         await settle();
         expect(s.lines).toEqual([]);
@@ -259,7 +289,7 @@ describe('the line everyone reads', () => {
 
     it("says it didn't when the call failed", async () => {
         s = setup({ write: fits, runResult: { error: 'refused', outcome: 'failed' } });
-        await s.approvals.propose(input());
+        await proposeSaid(input());
         await s.approvals.handleTap('b1', SPACE, KHALID, tap('act_1', 1, { action: 'decide', option: 'approve' }));
         await settle();
         expect(s.lines).toEqual(["Khalid, I didn't send the email."]);
@@ -268,32 +298,46 @@ describe('the line everyone reads', () => {
 
 describe('what the person says while the card waits', () => {
     it('closes the card as something else said, and a new card for the same tool reads as a change', async () => {
-        await s.approvals.propose(input());
+        await proposeSaid(input());
         await s.approvals.onPersonMessage('b1', SPACE, KHALID);
         expect(s.cards.at(-1)!.ask.answer).toEqual({ typed: true });
-        const result = (await s.approvals.propose(input({ args: { ...ARGS, body: 'Hi Fahad, it moves three weeks.' } }))) as { line?: string };
+        const result = (await proposeSaid(input({ args: { ...ARGS, body: 'Hi Fahad, it moves three weeks.' } }))) as { line?: string };
         expect(result.line).toBe('Khalid, I changed the email and need your OK again.');
         expect(s.written.at(-1)!.prompt).toContain('changed what you were going to do');
         expect(s.cards.at(-1)!.ask.id).toBe('act_2');
     });
 
     it('reads a new card long after as a new ask, not a change', async () => {
-        await s.approvals.propose(input());
+        await proposeSaid(input());
         await s.approvals.onPersonMessage('b1', SPACE, KHALID);
         s.clock.now += 10 * 60_000;
-        const result = (await s.approvals.propose(input({ args: { ...ARGS, subject: 'Other' } }))) as { line?: string };
+        const result = (await proposeSaid(input({ args: { ...ARGS, subject: 'Other' } }))) as { line?: string };
         expect(result.line).toBe('Khalid, I need your OK to send an email for you.');
     });
 
     it("keeps one card per tool: another person's words never close it", async () => {
-        await s.approvals.propose(input());
+        await proposeSaid(input());
         await s.approvals.onPersonMessage('b1', SPACE, { uuid: 'uuid-sara', name: 'Sara', playerId: 4 });
         expect(s.orbit.actions.get('act_1')!.status).toBe('waiting');
     });
 
+    it('does not hold how a card ended back after Review again said the line that asks', async () => {
+        await proposeSaid(input());
+        await s.approvals.handleTap('b1', SPACE, KHALID, tap('act_1', 1, { action: 'close' }));
+        await settle();
+        await s.approvals.handleTap('b1', SPACE, KHALID, tap('act_1', 2, { action: 'reviewAgain' }));
+        await settle();
+        const shown = s.lines.length;
+        expect(s.lines.at(-1)).toBe('Khalid, I need your OK to send an email for you.');
+        await s.approvals.handleTap('b1', SPACE, KHALID, tap('act_2', 1, { action: 'close' }));
+        await settle();
+        expect(s.lines).toHaveLength(shown + 1);
+        expect(s.lines.at(-1)).toBe("Khalid, I didn't send the email.");
+    });
+
     it("tells the label of the main button while a card waits, for the answer to a yes that never sends", async () => {
         expect(s.approvals.waitingLabel('b1', SPACE, KHALID)).toBeUndefined();
-        await s.approvals.propose(input());
+        await proposeSaid(input());
         expect(s.approvals.waitingLabel('b1', SPACE, KHALID)).toBe('Send email');
         expect(s.approvals.waitingLabel('b1', SPACE, { uuid: 'uuid-sara', name: 'Sara', playerId: 4 })).toBeUndefined();
         await s.approvals.replyPrivately('b1', SPACE, KHALID, 'Tap Send email on the card to go ahead.');
@@ -305,7 +349,7 @@ describe('what the person says while the card waits', () => {
 
 describe('a tap in a bubble', () => {
     it('runs the saved call once, only for the person who asked', async () => {
-        await s.approvals.propose(input());
+        await proposeSaid(input());
         await s.approvals.handleTap('b1', SPACE, { uuid: 'uuid-sara', name: 'Sara', playerId: 4 }, tap('act_1', 1, { action: 'decide', option: 'approve' }));
         await settle();
         expect(s.run).not.toHaveBeenCalled();
@@ -317,14 +361,14 @@ describe('a tap in a bubble', () => {
     });
 
     it('never shows a bubble card to a direct message or the other way round', async () => {
-        await s.approvals.propose(input());
+        await proposeSaid(input());
         // The same card id from a direct message with the same person does nothing
         await s.approvals.handleTap('b1', '!dm:matrix.test', { uuid: 'uuid-khalid', name: 'Khalid', matrixUserId: '@k:matrix.test' }, tap('act_1', 1, { action: 'close' }));
         expect(s.orbit.actions.get('act_1')!.status).toBe('waiting');
     });
 
     it('ends what allow more remembered in the bubble, not in a direct message, on Ask me again', async () => {
-        await s.approvals.propose(input({ decision: { ...ASK, heading: 'changesThings' } }));
+        await proposeSaid(input({ decision: { ...ASK, heading: 'changesThings' } }));
         await s.approvals.handleTap('b1', SPACE, KHALID, tap('act_1', 1, { action: 'decide', option: 'approveAndRemember' }));
         await settle();
         await s.approvals.handleTap('b1', SPACE, KHALID, tap('act_1', 2, { action: 'askAgain' }));
@@ -333,7 +377,7 @@ describe('a tap in a bubble', () => {
     });
 
     it('keeps what allow more remembered alive when the person writes in the bubble', async () => {
-        await s.approvals.propose(input({ decision: { ...ASK, heading: 'changesThings' } }));
+        await proposeSaid(input({ decision: { ...ASK, heading: 'changesThings' } }));
         s.approvals.touch('b1', SPACE, KHALID);
         expect(s.orbit.touched).toEqual([]);
         await s.approvals.handleTap('b1', SPACE, KHALID, tap('act_1', 1, { action: 'decide', option: 'approveAndRemember' }));
@@ -346,7 +390,7 @@ describe('a tap in a bubble', () => {
 
 describe('a person who comes back to the bubble', () => {
     it('gets the card that still waits again, as the same card', async () => {
-        await s.approvals.propose(input());
+        await proposeSaid(input());
         s.cards.length = 0;
         await s.approvals.personBack('b1', SPACE, { uuid: 'uuid-khalid', name: 'Khalid', playerId: 12 });
         expect(s.cards).toHaveLength(1);
@@ -356,7 +400,7 @@ describe('a person who comes back to the bubble', () => {
     });
 
     it('gets a card that ended as it ended, and the replies only they saw, once each', async () => {
-        await s.approvals.propose(input());
+        await proposeSaid(input());
         await s.approvals.replyPrivately('b1', SPACE, KHALID, 'Tap Send email on the card to go ahead.');
         await s.approvals.handleTap('b1', SPACE, KHALID, tap('act_1', 1, { action: 'close' }));
         s.cards.length = 0;
@@ -368,14 +412,14 @@ describe('a person who comes back to the bubble', () => {
     });
 
     it("gives nobody else's cards or replies", async () => {
-        await s.approvals.propose(input());
+        await proposeSaid(input());
         s.cards.length = 0;
         await s.approvals.personBack('b1', SPACE, { uuid: 'uuid-sara', name: 'Sara', playerId: 4 });
         expect(s.cards).toHaveLength(0);
     });
 
     it('every card it sends is the whole card, so the game never drops it', async () => {
-        await s.approvals.propose(input());
+        await proposeSaid(input());
         await s.approvals.handleTap('b1', SPACE, KHALID, tap('act_1', 1, { action: 'close' }));
         await s.approvals.personBack('b1', SPACE, { uuid: 'uuid-khalid', name: 'Khalid', playerId: 12 });
         for (const { ask } of s.cards) {
