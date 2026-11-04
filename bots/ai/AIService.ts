@@ -20,7 +20,8 @@ import { AIProviderRegistry } from './AIProviderRegistry';
 import { sortToolsByName } from './toolOrder';
 import type { MapDataService } from '../server/MapDataService';
 import * as Sentry from '@sentry/node';
-import { MCPConnector, toolTimeoutMs } from '../mcp/MCPConnector';
+import { MCPConnector, toolTimeoutMs, type ToolServerEntry } from '../mcp/MCPConnector';
+import type { ToolSuggester } from '../mcp/ToolCatalog';
 import { appendStreamedChunk } from './EmotionParser';
 import { describeStep, resultOf, showsAsStep, type ToolStep } from './ToolSteps';
 import { jsonrepair } from 'jsonrepair';
@@ -40,6 +41,8 @@ export type InterruptionAction = 'update' | 'cancel' | 'answer' | 'queue';
  * upstream call rather than leaving it dangling (see the call sites).
  */
 const QUICK_LLM_TIMEOUT_MS = 3000;
+/** Suggesting a heading for every tool of a server reads a whole list, so it gets longer (#1654). */
+const TOOL_SUGGEST_TIMEOUT_MS = 30_000;
 /** How long a reply waits for the newest-files line (#1508) before it goes on without it. */
 const RECENT_FILES_WAIT_MS = 2000;
 /** Files remembered with the tool that made them, until they are sent. */
@@ -851,7 +854,7 @@ export class AIService {
             const isQwenModel = config.model.toLowerCase().includes('qwen');
 
             // Define tools for function calling
-            const { tools, toolServerMap } = await this.buildTools(botId, botClient, adminApiService || this.adminApiService, channel);
+            const { tools, toolServerMap } = await this.buildTools(botId, botClient, adminApiService || this.adminApiService, channel, providerId);
             if (turn) turn.artifactTools = tools.some((tool) => writesArtifact(tool?.function?.name ?? ''));
 
             // Generate stream with tools
@@ -2617,9 +2620,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     /**
      * Build tool definitions for function calling
      */
-    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService, channel: 'world' | 'dm' = 'world'): Promise<{ tools: any[]; toolServerMap: Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string>; title?: string }> }> {
+    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService, channel: 'world' | 'dm' = 'world', providerId?: string): Promise<{ tools: any[]; toolServerMap: Map<string, ToolServerEntry> }> {
         const tools: any[] = [];
-        const toolServerMap = new Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string>; title?: string }>();
+        const toolServerMap = new Map<string, ToolServerEntry>();
 
         if (botClient) {
             // Tool: Get people on the map
@@ -2813,7 +2816,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     botId,
                     this.adminApiUrl,
                     adminApiService['adminApiToken'],
-                    process.env.BOT_SERVICE_TOKEN || ''
+                    process.env.BOT_SERVICE_TOKEN || '',
+                    { suggest: this.toolSuggesterFor(providerId, botId) }
                 );
                 const mcpTools = mcpResult.tools;
 
@@ -2845,6 +2849,25 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         }
 
         return { tools, toolServerMap };
+    }
+
+    /**
+     * The small model that suggests a heading for a tool the server's own labels leave open (#1654): the bot's own provider,
+     * given longer than the quick calls because it reads a whole list at once. None without a provider.
+     */
+    toolSuggesterFor(providerId: string | undefined, botId: string | undefined): ToolSuggester | undefined {
+        if (!providerId || !botId) return undefined;
+        return (system, user) => this.quickGenerate(providerId, system, user, botId, TOOL_SUGGEST_TIMEOUT_MS);
+    }
+
+    /**
+     * Reads one server's whole tool list now and saves it to Orbit with a suggested heading per tool (#1654): when a server
+     * is connected and on Test server. Null when the bot has no such server.
+     */
+    refreshServerTools(botId: string, serverId: string, providerId: string | undefined, adminApiService?: AdminApiService) {
+        const admin = adminApiService || this.adminApiService;
+        if (!admin) return Promise.resolve(null);
+        return MCPConnector.refreshServerTools(botId, serverId, this.adminApiUrl, admin['adminApiToken'], this.toolSuggesterFor(providerId, botId));
     }
 
     /** Orbit keeps files in this bot's chats (it served their limits), so the file tools can be offered and run. */
@@ -3076,7 +3099,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         toolCalls: ToolCall[],
         botClient?: BotClient,
         adminApiService?: AdminApiService,
-        toolServerMap?: Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string>; title?: string }>,
+        toolServerMap?: Map<string, ToolServerEntry>,
         playerUuid?: string,
         spaceName?: string,
         botId?: string,
@@ -4483,7 +4506,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     private async runBoundedProviderCall<T>(
         providerId: string,
         call: (provider: AIProvider, config: AIProviderConfig, signal: AbortSignal) => Promise<T>,
-        botId?: string
+        botId?: string,
+        timeoutMs: number = QUICK_LLM_TIMEOUT_MS
     ): Promise<T | undefined> {
         let timeoutId: ReturnType<typeof setTimeout> | undefined;
         let lookupTimeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -4501,7 +4525,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             const provider = this.providerRegistry.getOrCreateProvider(config);
             if (!provider) return undefined;
             const controller = new AbortController();
-            timeoutId = setTimeout(() => controller.abort(), QUICK_LLM_TIMEOUT_MS);
+            timeoutId = setTimeout(() => controller.abort(), timeoutMs);
             return await call(provider, config, controller.signal);
         } catch {
             // Timeout abort or provider error — the caller decides the fallback.
@@ -4569,14 +4593,15 @@ Return JSON: { "action": "...", "message": "what to say as a followup" }`;
      * Returns '' on failure so callers stay silent rather than fall back to
      * hardcoded text.
      */
-    async quickGenerate(providerId: string, systemPrompt: string, userPrompt: string, botId?: string): Promise<string> {
+    async quickGenerate(providerId: string, systemPrompt: string, userPrompt: string, botId?: string, timeoutMs?: number): Promise<string> {
         // Same bounded-abort pattern as quickClassify: the overflow ack runs in
         // the interruption-routing path — a slow provider must not delay it for
         // the provider's own (30s+) timeout, and the call must actually be
         // cancelled at the deadline, not left dangling.
         const result = await this.runBoundedProviderCall(providerId, (provider, config, signal) =>
             provider.generate(systemPrompt, userPrompt, config, undefined, signal),
-            botId
+            botId,
+            timeoutMs
         );
         return (result?.content || '').trim();
     }

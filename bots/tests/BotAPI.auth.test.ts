@@ -27,13 +27,17 @@ const botManager = {
     updateBot: vi.fn(),
     summonBot: vi.fn(),
     getAccessGate: vi.fn(),
+    getAdminApiService: vi.fn(),
+    getAIService: vi.fn(),
 };
+const aiService = { refreshServerTools: vi.fn() };
 const adminApiService = {
     validateSessionToken: vi.fn(),
     canSessionManageBot: vi.fn(),
     getBotConfigurations: vi.fn(),
     getAvailableAIProviders: vi.fn(),
     getBotConfiguration: vi.fn(),
+    isConfigured: vi.fn(),
     saveBotConfiguration: vi.fn(),
     deleteBotConfiguration: vi.fn(),
 };
@@ -64,6 +68,11 @@ beforeEach(() => {
     botManager.despawnBot.mockResolvedValue(undefined);
     botManager.updateBot.mockResolvedValue({ updated: true, changes: [] });
     botManager.summonBot.mockResolvedValue({ x: 40, y: 50 });
+    botManager.getAdminApiService.mockReturnValue(adminApiService);
+    botManager.getAIService.mockReturnValue(aiService);
+    adminApiService.isConfigured.mockReturnValue(true);
+    adminApiService.getBotConfiguration.mockResolvedValue({ botId: 'b1', aiProviderRef: 'deepseek' });
+    aiService.refreshServerTools.mockResolvedValue({ read: true, tools: 4, saved: { result: 'saved' } });
 });
 
 function post(path: string, body: unknown, session?: string) {
@@ -547,5 +556,37 @@ describe('saving a bot onto one of the person\'s own AI keys (#374)', () => {
         expect(response.status).toBe(400);
         expect(await response.json()).toEqual({ error: 'That key isn’t lent to this universe.' });
         expect(botManager.updateBot).not.toHaveBeenCalled();
+    });
+});
+
+describe('reading a tool server’s whole list (#1654)', () => {
+    const path = '/api/bots/b1/mcp-servers/srv-1/refresh-tools';
+
+    it('refuses without an Orbit session, and for a person who cannot manage the bot', async () => {
+        expect((await post(path, {})).status).toBe(401);
+        adminApiService.canSessionManageBot.mockResolvedValue(false);
+        expect((await post(path, {}, SESSION)).status).toBe(403);
+        expect(aiService.refreshServerTools).not.toHaveBeenCalled();
+    });
+
+    it('reads the list with the bot’s own model for suggestions, and says how many tools and whether Orbit has them', async () => {
+        const response = await post(path, {}, SESSION);
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ tools: 4, saved: 'saved' });
+        expect(aiService.refreshServerTools).toHaveBeenCalledWith('b1', 'srv-1', 'deepseek', adminApiService);
+    });
+
+    it('is a 404 for a server the bot does not have and a 502 when the server does not answer', async () => {
+        aiService.refreshServerTools.mockResolvedValue(null);
+        expect((await post(path, {}, SESSION)).status).toBe(404);
+        aiService.refreshServerTools.mockResolvedValue({ read: false, reason: 'The server did not answer with a list of tools' });
+        const response = await post(path, {}, SESSION);
+        expect(response.status).toBe(502);
+        expect(await response.json()).toEqual({ error: 'The server did not answer with a list of tools' });
+    });
+
+    it('is a 503 when the admin API is not set up', async () => {
+        adminApiService.isConfigured.mockReturnValue(false);
+        expect((await post(path, {}, SESSION)).status).toBe(503);
     });
 });
