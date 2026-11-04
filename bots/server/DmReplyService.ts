@@ -120,7 +120,7 @@ const MAX_LAST_FILES = 500;
 export class DmReplyService extends BaseBehavior {
     private queues = new Map<string, Promise<unknown>>();
     /** Per chat, the words that wait behind the answer in progress, to be answered together once it is done. */
-    private waiting = new Map<string, { texts: string[]; pointed: string[]; answer: Promise<DmReply | null> }>();
+    private waiting = new Map<string, { texts: string[]; pointed: string[]; note: boolean; answer: Promise<DmReply | null> }>();
     private playerIds = new Map<string, number>();
     private nextPlayerId = -1;
     private loadedBots = new Set<string>();
@@ -157,7 +157,8 @@ export class DmReplyService extends BaseBehavior {
         // One reply at a time (#1159): messages that come in while the bot is answering wait, and the ones that are
         // only words get one answer together. A message with a file is answered on its own, as before.
         const waiting = this.waiting.get(key);
-        if (waiting && attachments.length === 0) {
+        // A note the system wrote is never answered together with what a person typed: the two are kept and learned from differently
+        if (waiting && attachments.length === 0 && waiting.note === !!hooks.note) {
             waiting.texts.push(text);
             // A card replied to in a message that waits is pointed at by the one answer that covers it (game #1781)
             waiting.pointed.push(...(hooks.pointedArtifactIds ?? []));
@@ -168,7 +169,7 @@ export class DmReplyService extends BaseBehavior {
             }));
         }
         const previous = this.queues.get(key);
-        const batch = { texts: [text], pointed: [...(hooks.pointedArtifactIds ?? [])] } as { texts: string[]; pointed: string[]; answer: Promise<DmReply | null> };
+        const batch = { texts: [text], pointed: [...(hooks.pointedArtifactIds ?? [])], note: !!hooks.note } as { texts: string[]; pointed: string[]; note: boolean; answer: Promise<DmReply | null> };
         const next = (previous ?? Promise.resolve())
             .catch(() => undefined)
             .then(() => {
