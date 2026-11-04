@@ -180,6 +180,11 @@ describe('a tool nobody confirmed', () => {
         expect(await gate.decide(call({ fingerprint: 'new', person: MANAGER }))).toMatchObject({ kind: 'ask', notReviewed: true, fingerprint: 'new' });
     });
 
+    it('does not let a manager try a tool whose heading is turned off', async () => {
+        const { gate } = gateFor(policy({ settings: { ...SETTINGS, deletesOrSends: 'off' }, tools: [['tool', { confirmed: false, heading: null }]] }));
+        expect(await gate.decide(call({ person: MANAGER }))).toMatchObject({ kind: 'refuse', why: 'off' });
+    });
+
     it('keeps who manages for a short while, not asking Orbit for every call', async () => {
         const { gate, canManageBotTools } = gateFor(unconfirmed());
         await gate.decide(call({ person: MANAGER }));

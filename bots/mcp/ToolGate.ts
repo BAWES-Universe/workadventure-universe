@@ -120,6 +120,8 @@ export class ToolGate {
             if (!call.person.signedIn || !call.person.identifier || !(await this.managesTools(call.botId, call.person.identifier))) return waits;
             // A manager may try a tool nobody confirmed. Their permissions still count, and the card comes every time.
             const heading = tool?.heading ?? tool?.suggestedHeading ?? 'deletesOrSends';
+            // Off holds for managers too: a heading turned off lets nothing under it through, reviewed or not
+            if (policy.settings[heading] === 'off') return refusal('off', `${nameOf(call)} is turned off for this bot.`);
             const refused = await this.missingPermission(call, heading);
             if (refused) return refused;
             if (!call.fingerprint) return waits;
