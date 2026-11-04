@@ -75,6 +75,7 @@ const refusal = (why: GateRefusal, line: string): GateDecision => ({ kind: 'refu
 
 export class ToolGate {
     private readonly managers = new Map<string, { can: boolean; at: number }>();
+    private readonly askingManagers = new Map<string, Promise<boolean>>();
     private lastReportAt = 0;
 
     constructor(
@@ -148,19 +149,30 @@ export class ToolGate {
         return refusal('no_permission', verdict.line);
     }
 
-    private async managesTools(botId: string, identifier: string): Promise<boolean> {
+    private managesTools(botId: string, identifier: string): Promise<boolean> {
         const key = `${botId}|${identifier}`;
         const known = this.managers.get(key);
-        if (known && this.now() - known.at < MANAGER_CACHE_MS) return known.can;
-        const can = await this.orbit.canManageBotTools(botId, identifier);
-        this.managers.delete(key);
-        this.managers.set(key, { can, at: this.now() });
-        while (this.managers.size > MAX_REMEMBERED_MANAGERS) {
-            const oldest = this.managers.keys().next().value;
-            if (oldest === undefined) break;
-            this.managers.delete(oldest);
-        }
-        return can;
+        if (known && this.now() - known.at < MANAGER_CACHE_MS) return Promise.resolve(known.can);
+        // Tools judged at the same moment share one question to Orbit
+        const pending = this.askingManagers.get(key);
+        if (pending) return pending;
+        const question = this.orbit
+            .canManageBotTools(botId, identifier)
+            .then((can) => {
+                this.managers.delete(key);
+                this.managers.set(key, { can, at: this.now() });
+                while (this.managers.size > MAX_REMEMBERED_MANAGERS) {
+                    const oldest = this.managers.keys().next().value;
+                    if (oldest === undefined) break;
+                    this.managers.delete(oldest);
+                }
+                return can;
+            })
+            .finally(() => {
+                this.askingManagers.delete(key);
+            });
+        this.askingManagers.set(key, question);
+        return question;
     }
 
     private report(error: unknown): void {
