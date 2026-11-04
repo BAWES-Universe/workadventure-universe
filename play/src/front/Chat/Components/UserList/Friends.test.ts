@@ -164,6 +164,32 @@ describe("savedLook", () => {
     });
 });
 
+describe("a People search result", () => {
+    const wokas = new Map([["@shahd:chat", "shahd-woka"]]);
+    const colourOf = (chatId: string | undefined, name: string) => `colour-of-${name}`;
+    const found = { uuid: "u1", name: "Shahd", chatId: "@shahd:chat", universes: ["Bawes"], relationship: "none" };
+
+    it("shows the person's saved Woka once Orbit has drawn it, on the colour of their name", () => {
+        expect(savedLook(found, wokas, colourOf)).toEqual({ picture: "shahd-woka", color: "colour-of-Shahd" });
+    });
+
+    it("keeps the default Woka for someone Orbit has no picture for, or whose answer has no chat ID", () => {
+        expect(savedLook({ ...found, chatId: "@unknown:chat" }, wokas, colourOf).picture).toBe(undefined);
+        expect(savedLook({ ...found, chatId: "" }, wokas, colourOf).picture).toBe(undefined);
+    });
+
+    it("asks Orbit once for each result the world isn't drawing, and never twice for the same person", () => {
+        const results = [
+            found,
+            { ...found, uuid: "here", name: "Here", chatId: "@here:chat" },
+            { ...found, uuid: "nochat", name: "No chat", chatId: "" },
+        ];
+        const asked = new Set<string>();
+        expect(chatIdsToAsk(results, (uuid) => uuid === "here", asked)).toEqual(["@shahd:chat"]);
+        expect(chatIdsToAsk(results, (uuid) => uuid === "here", asked)).toEqual([]);
+    });
+});
+
 describe("chatIdsToAsk", () => {
     const people = [
         { uuid: "here", name: "Here", chatId: "@here:chat" },

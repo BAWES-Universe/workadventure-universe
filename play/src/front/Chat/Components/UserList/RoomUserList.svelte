@@ -37,7 +37,7 @@
     import FriendRequests from "./FriendRequests.svelte";
     import FriendFaces from "./FriendFaces.svelte";
     import UniverseSearch from "./UniverseSearch.svelte";
-    import type { WorldSighting } from "./Friends";
+    import type { ListedPerson, WorldSighting } from "./Friends";
     import { chatIdsToAsk, otherWorldFaces, placeFriends, savedLook } from "./Friends";
     import { friendNoticeStore } from "./FriendActions";
     import { IconChevronDown, IconMapPin } from "@wa-icons";
@@ -253,13 +253,29 @@
         wokas: Map<string, PictureStore>,
         colours: Map<string, string>
     ): (uuid: string) => Look {
-        return (uuid) => {
-            const person = sightings.get(uuid)?.person;
-            if (person) return { picture: person.primary.pictureStore, color: person.primary.color ?? undefined };
-            return savedLook(listed.get(uuid), wokas, (chatId, name) => personColour(colours, chatId, name));
-        };
+        return (uuid) => lookOfPerson(sightings, listed.get(uuid), uuid, wokas, colours);
+    }
+    function lookOfPerson(
+        sightings: typeof worldSightings,
+        listed: ListedPerson | undefined,
+        uuid: string,
+        wokas: Map<string, PictureStore>,
+        colours: Map<string, string>
+    ): Look {
+        const person = sightings.get(uuid)?.person;
+        if (person) return { picture: person.primary.pictureStore, color: person.primary.color ?? undefined };
+        return savedLook(listed, wokas, (chatId, name) => personColour(colours, chatId, name));
     }
     $: lookOf = looks(worldSightings, friendsByUuid, $wokaByChatId, $colourByChatId);
+    // The same look for a search result, which isn't on the friends list: its own chat ID, from Orbit's answer.
+    function looksOfFound(
+        sightings: typeof worldSightings,
+        wokas: Map<string, PictureStore>,
+        colours: Map<string, string>
+    ): (person: ListedPerson) => Look {
+        return (person) => lookOfPerson(sightings, person, person.uuid, wokas, colours);
+    }
+    $: lookOfFound = looksOfFound(worldSightings, $wokaByChatId, $colourByChatId);
     // Asked once per person while People is open, only for those shown: the Friends or Requests view, or the faces.
     const askedChatIds = new Set<string>();
     $: for (const chatId of chatIdsToAsk(
@@ -429,7 +445,12 @@
             {/if}
 
             {#if isSearching && $friendsEnabledStore}
-                <UniverseSearch query={$chatSearchBarValue.trim()} nothingHere={nothingMatches} />
+                <UniverseSearch
+                    query={$chatSearchBarValue.trim()}
+                    nothingHere={nothingMatches}
+                    lookOf={lookOfFound}
+                    inWorld={(uuid) => worldSightings.has(uuid)}
+                />
             {:else if nothingMatches}
                 <p class="m-0 px-4 py-6 text-center text-sm text-white/50" data-testid="peopleNoResults">
                     {$LL.chat.oneList.noResultsPeople()}
