@@ -79,8 +79,9 @@ class FakeOrbit {
     async touchGrants(_bot: string, input: { conversationKey: string }) {
         this.touched.push(input.conversationKey);
     }
-    async revokeGrants() {
-        return undefined;
+    revoked: string[] = [];
+    async revokeGrants(_bot: string, input: { conversationKey: string }) {
+        this.revoked.push(input.conversationKey);
     }
 }
 
@@ -320,6 +321,15 @@ describe('a tap in a bubble', () => {
         // The same card id from a direct message with the same person does nothing
         await s.approvals.handleTap('b1', '!dm:matrix.test', { uuid: 'uuid-khalid', name: 'Khalid', matrixUserId: '@k:matrix.test' }, tap('act_1', 1, { action: 'close' }));
         expect(s.orbit.actions.get('act_1')!.status).toBe('waiting');
+    });
+
+    it('ends what allow more remembered in the bubble, not in a direct message, on Ask me again', async () => {
+        await s.approvals.propose(input({ decision: { ...ASK, heading: 'changesThings' } }));
+        await s.approvals.handleTap('b1', SPACE, KHALID, tap('act_1', 1, { action: 'decide', option: 'approveAndRemember' }));
+        await settle();
+        await s.approvals.handleTap('b1', SPACE, KHALID, tap('act_1', 2, { action: 'askAgain' }));
+        await settle();
+        expect(s.orbit.revoked).toEqual([`near:${SPACE}`]);
     });
 
     it('keeps what allow more remembered alive when the person writes in the bubble', async () => {

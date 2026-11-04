@@ -376,7 +376,7 @@ export class ToolApprovals {
                 case 'reviewAgain':
                     return void (await this.reviewAgain(id, card));
                 case 'askAgain': {
-                    await orbit.revokeGrants(botId, { requesterKey: actorKey, conversationKey: conversationKeyOf(roomId), reason: 'ask_again' });
+                    await orbit.revokeGrants(botId, { requesterKey: actorKey, conversationKey: conversationKeyOf(roomId, card.nearby), reason: 'ask_again' });
                     const action = card.facts.action;
                     // Same card, without "allow more": the next call asks again
                     await this.redraw(id, card, { ...action, revision: action.revision + 1 }, { option: 'approveAndRemember' });

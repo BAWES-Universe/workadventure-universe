@@ -3,7 +3,7 @@
  * through never reaches the tool server, and the model is not offered a tool this person can't use.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AIService } from '../ai/AIService';
+import { AIService, sharedLineOf } from '../ai/AIService';
 import { MCPConnector } from '../mcp/MCPConnector';
 
 vi.mock('../client/BotClient', () => ({ BotClient: vi.fn() }));
@@ -308,6 +308,17 @@ describe('what a person says while their card waits in a bubble (#1658)', () => 
         const guest = { getPersonForArtifacts: () => ({ signedIn: false, identifier: null, name: 'Guest' }) };
         expect(await service['whileCardWaits']('b1', 7, 'yes', 'prov', 'room#bubble', guest as never)).toBe(false);
         expect(quick).not.toHaveBeenCalled();
+    });
+});
+
+describe('the line everyone reads for a round of calls (#1658)', () => {
+    it('says each line once when the same call was asked twice at the same moment', () => {
+        const same = { result: { status: 'waiting_for_ok', sharedLine: 'Khalid, I need your OK to remove something.' } };
+        expect(sharedLineOf([same, same])).toBe('Khalid, I need your OK to remove something.');
+    });
+
+    it('joins different lines and skips calls with none', () => {
+        expect(sharedLineOf([{ result: { sharedLine: 'One.' } }, { result: 'done' }, { result: { sharedLine: 'Two.' } }, { result: undefined }])).toBe('One. Two.');
     });
 });
 

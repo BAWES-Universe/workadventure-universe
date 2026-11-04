@@ -146,6 +146,12 @@ type ResolvedProvider =
  * reads is the bot's whole reply, so what the model might add never goes out.
  */
 const SHARED_LINE = 'sharedLine';
+
+/** The one line everyone in a bubble reads for the calls of a round: each line once, even when the same call was made twice at the same moment. */
+export function sharedLineOf(toolResults: ReadonlyArray<{ result?: unknown }>): string {
+    const lines = toolResults.map((tr) => (tr.result as Record<string, unknown> | undefined)?.[SHARED_LINE]).filter((line): line is string => typeof line === 'string' && !!line);
+    return [...new Set(lines)].join(' ');
+}
 /** Telling a yes from anything else is one short word from the bot's own AI; a slow one counts as not a yes. */
 const CONFIRM_TIMEOUT_MS = 4000;
 const NEARBY_ASK_RULE =
@@ -1512,7 +1518,7 @@ export class AIService {
                             const replyCutOff = !!(followUpIterations === 1 ? chunk.metadata?.truncated : lastFollowUpDoneChunk?.metadata?.truncated);
                             const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia);
                             // A card went to one person alone (#1658): the line everyone reads is the whole reply, said instead of the model's own words
-                            const sharedLine = toolResults.map((tr) => (tr.result as Record<string, unknown> | undefined)?.[SHARED_LINE]).filter((line): line is string => typeof line === 'string' && !!line).join(' ');
+                            const sharedLine = sharedLineOf(toolResults);
                             // Which tool made each file, and what it was asked for, for the bot's list of files (#1508)
                             this.noteMadeMedia(pendingToolCalls, toolResults);
                             // The steps line marks each shown call done or failed before the bot carries on (#1545)
