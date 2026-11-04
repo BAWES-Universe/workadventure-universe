@@ -390,15 +390,20 @@ export class BotClient {
                 return false;
             }
         }
-        const verdict = await this.chatVerdict(gate, this.behavior.getPersonForAccess(senderId));
+        return this.chatAllowed(gate, spaceName, senderId);
+    }
+
+    /** Orbit's answer for this person, with the owner's line said once per visit when it is a no. */
+    private async chatAllowed(gate: BotAccessGate, spaceName: string, personId: number): Promise<boolean> {
+        const verdict = await this.chatVerdict(gate, this.behavior!.getPersonForAccess(personId));
         if (verdict.kind === 'allowed') {
-            this.toldNoChat.delete(senderId);
+            this.toldNoChat.delete(personId);
             return true;
         }
         if (verdict.kind === 'refused') {
-            const toldAt = this.toldNoChat.get(senderId);
+            const toldAt = this.toldNoChat.get(personId);
             if (toldAt !== undefined && Date.now() - toldAt < BotClient.TOLD_NO_CHAT_FOR_MS) return false;
-            this.toldNoChat.set(senderId, Date.now());
+            this.toldNoChat.set(personId, Date.now());
         }
         this.sendChatMessage(spaceName, verdict.line);
         return false;
@@ -2306,11 +2311,14 @@ export class BotClient {
 
     /**
      * What a person picked on a card the bot showed them, handed to the bot as what they said (#1661): the bot carries on
-     * with it as it would with any message from them. It was checked when the card was shown; only a person in the bubble
-     * gets here.
+     * with it as it would with any message from them. Only a person in the bubble gets here, and Orbit's chat answer for
+     * them is asked again, as for a message.
      */
-    answerFromCard(spaceName: string, playerId: number, text: string): boolean {
+    async answerFromCard(spaceName: string, playerId: number, text: string): Promise<boolean> {
         if (!this.behavior || !this.spaces.has(spaceName) || !this.inBubble(playerId)) return false;
+        // The owner may have limited who can chat with the bot since the card was shown: a tap is held to it like a message
+        if (this.isMeetingSpace(spaceName)) return false;
+        if (this.accessGate && !(await this.chatAllowed(this.accessGate, spaceName, playerId))) return false;
         this.behavior.onChatMessage(spaceName, text, playerId).catch((error) => {
             console.error(`[Bot ${this.config.botId}] onChatMessage error for a card answer:`, error);
             Sentry.captureException(error instanceof Error ? error : new Error(String(error)));

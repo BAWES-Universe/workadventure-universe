@@ -22,7 +22,7 @@ import type { GateCall, GateDecision, ToolGate } from './ToolGate';
 import type { ToolServerEntry } from './MCPConnector';
 import { DEFAULT_CARD_SETTINGS, OrbitActionsUnavailable, type CardSettings, type OrbitActions, type SavedAction } from './OrbitActions';
 import type { QuestionField } from './QuestionCard';
-import type { Asked, AskInput, QuestionCards } from './QuestionCards';
+import { QuestionCards, type Asked, type AskInput } from './QuestionCards';
 import { batchWords, MakeCounts, type BatchKind } from './ToolQuantity';
 
 /** How long a remembered approval lasts. Recommended values; the bot server's owner can change them. */
@@ -330,6 +330,11 @@ export class ToolApprovals {
         try {
             // A question card is not an action Orbit keeps: its taps are the question cards' own (#1661)
             if (await this.deps.questions?.handleTap(botId, roomId, person, tap)) return;
+            // A question card this process no longer holds (it restarted, or dropped it) is not an approval Orbit can read: the
+            // person is told, and only that
+            if (QuestionCards.isQuestionId(tap.ask)) {
+                return void (await this.tell(botId, roomId, person, 'That question is no longer open. Ask me again.'));
+            }
             // A pick belongs to a question card, never to an approval
             if (tap.tap.action === 'pick') return;
             let card = this.cards.get(tap.ask);

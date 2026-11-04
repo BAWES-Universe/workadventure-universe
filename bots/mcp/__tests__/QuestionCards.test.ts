@@ -91,6 +91,22 @@ describe('showing the card in a direct message', () => {
     });
 });
 
+describe('two questions in the same round', () => {
+    it('are one card: the second finds the first still being shown', async () => {
+        const s = setup();
+        const [first, second] = await Promise.all([show(s), show(s)]);
+        expect(s.sent).toHaveLength(1);
+        expect(first.kind).toBe('waiting');
+        expect(second.kind).toBe('waiting');
+    });
+
+    it('asked at the same moment for two different people are two cards', async () => {
+        const s = setup();
+        await Promise.all([show(s, khalid), show(s, sara)]);
+        expect(s.sent).toHaveLength(2);
+    });
+});
+
 describe('a tap', () => {
     it('picks one choice: the card ends as picked and the bot goes on with the pick as the person said it', async () => {
         const s = setup();

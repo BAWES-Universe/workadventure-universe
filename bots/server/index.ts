@@ -99,7 +99,7 @@ const questions = new QuestionCards({
     // The bot goes on with the pick in the background: the tap that brought it is not held until the job is done
     picked: async ({ botId, roomId, person, nearby, text }) => {
         if (nearby) {
-            if (person.playerId !== undefined) botManager.getBot(botId)?.answerFromCard(roomId, person.playerId, text);
+            if (person.playerId !== undefined) void botManager.getBot(botId)?.answerFromCard(roomId, person.playerId, text).catch(() => undefined);
             return;
         }
         void matrixBridge?.carryOnWith(roomId, person, text);
