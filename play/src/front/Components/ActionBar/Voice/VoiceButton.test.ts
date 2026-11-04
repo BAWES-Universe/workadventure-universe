@@ -41,10 +41,14 @@ vi.mock("../../../../i18n/i18n-svelte", async () => {
                 const text = path.reduce<unknown>((node, key) => (node as Record<string, unknown>)[key], {
                     say,
                 }) as string;
-                return text.replace(/\{(\w+)(?::\w+)?\}/g, (_all, key: string) => String(args?.[key]));
+                return text
+                    .replace(/\{\{([^|}]+)\|([^}]+)\}\}/g, (_all, one: string, other: string) =>
+                        args?.count === 1 ? one : other
+                    )
+                    .replace(/\{(\w+)(?::\w+)?\}/g, (_all, key: string) => String(args?.[key]));
             },
         });
-    return { default: readable(walk([])) };
+    return { default: readable(walk([])), locale: readable("en-US") };
 });
 
 import type { SpaceInterface, SpaceUserExtended } from "../../../Space/SpaceInterface";
@@ -77,11 +81,11 @@ function fakeSpace() {
         space,
         join: (...others: SpaceUserExtended[]) =>
             users.set(new Map([user("me"), ...others].map((u) => [u.spaceUserId, u]))),
-        say: (state: string, followUpSeconds = 0) =>
+        say: (state: string, followUpSeconds = 0, extra: object = {}) =>
             statuses.next({
                 $case: "botVoiceStatus",
                 sender: nora,
-                botVoiceStatus: { botId: "1", botName: "Nora", state, followUpSeconds },
+                botVoiceStatus: { botId: "1", botName: "Nora", state, followUpSeconds, ...extra },
             }),
     };
 }
@@ -317,6 +321,58 @@ describe("the Voice button", () => {
             t.say("paused");
             await settle();
             expect(status()).toBe("Voice paused");
+        });
+
+        describe("what is left of the spoken replies (#1669)", () => {
+            const MIC = "Your microphone with people doesn't change.";
+            const status = () => target.querySelector("[data-testid=voice-menu-status]")?.textContent?.trim();
+            const foot = () => target.querySelector("[data-testid=voice-menu-foot]")?.textContent?.trim();
+            const inAnHour = () => new Date(Date.now() + 60 * 60 * 1000).toISOString();
+
+            it("says how many are left and when more come, above the line that is always true", async () => {
+                t.say("on", 0, { repliesLeft: 18, repliesResetAt: inAnHour() });
+                button().click();
+                await settle();
+                expect(foot()).toMatch(/^Up to 18 voice replies left, then you keep chatting in text\. More at .+\. /);
+                expect(foot()?.endsWith(MIC)).toBe(true);
+                expect(status()).toBe("In your bubble");
+            });
+
+            it("says 'reply' for one, and keeps to the count the bot gives next while the menu is open", async () => {
+                t.say("on", 0, { repliesLeft: 1, repliesResetAt: inAnHour() });
+                button().click();
+                await settle();
+                expect(foot()).toContain("Up to 1 voice reply left,");
+                t.say("on", 0, { repliesLeft: 7, repliesResetAt: inAnHour() });
+                await settle();
+                expect(foot()).toContain("Up to 7 voice replies left,");
+            });
+
+            it("says no time for a count with no window running", async () => {
+                t.say("on", 0, { repliesLeft: 25 });
+                button().click();
+                await settle();
+                expect(foot()).toBe(`Up to 25 voice replies left, then you keep chatting in text. ${MIC}`);
+            });
+
+            it("says the replies are used up, and the voice paused until the time they come back", async () => {
+                t.say("paused", 0, { repliesLeft: 0, repliesResetAt: inAnHour() });
+                button().click();
+                await settle();
+                expect(status()).toMatch(/^Voice paused until .+/);
+                expect(foot()).toBe(`Your voice replies are used up for now. Keep chatting in text. ${MIC}`);
+            });
+
+            it("says nothing about them when the bot has no count, or the window it counted has ended", async () => {
+                t.say("on");
+                button().click();
+                await settle();
+                expect(foot()).toBe(MIC);
+                t.say("paused", 0, { repliesLeft: 0, repliesResetAt: new Date(Date.now() - 1000).toISOString() });
+                await settle();
+                expect(status()).toBe("Voice paused");
+                expect(foot()).toBe(MIC);
+            });
         });
 
         it("goes when the bot does", async () => {

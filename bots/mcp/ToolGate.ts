@@ -66,6 +66,8 @@ const PERMISSION_FOR: Partial<Record<ToolHeading, 'change' | 'deleteOrSend'>> = 
 /** Who manages a bot is kept this long, so a chat does not ask Orbit for every call. */
 const MANAGER_CACHE_MS = 30_000;
 const MAX_REMEMBERED_MANAGERS = 2_000;
+/** After Orbit fails to say who manages a bot, the calls that follow are refused at once for this long instead of each waiting out its timeout. */
+const MANAGER_RETRY_MS = 10_000;
 const REPORT_EVERY_MS = 60_000;
 
 export const CANNOT_CHECK_TOOL_LINE = "I can't check that tool right now. Try again soon.";
@@ -77,6 +79,7 @@ const refusal = (why: GateRefusal, line: string): GateDecision => ({ kind: 'refu
 export class ToolGate {
     private readonly managers = new Map<string, { can: boolean; at: number }>();
     private readonly askingManagers = new Map<string, Promise<boolean>>();
+    private readonly managerFailures = new Map<string, { error: unknown; at: number }>();
     private lastReportAt = 0;
 
     constructor(
@@ -156,12 +159,15 @@ export class ToolGate {
         const key = `${botId}|${identifier}`;
         const known = this.managers.get(key);
         if (known && this.now() - known.at < MANAGER_CACHE_MS) return Promise.resolve(known.can);
+        const failed = this.managerFailures.get(key);
+        if (failed && this.now() - failed.at < MANAGER_RETRY_MS) return Promise.reject(failed.error);
         // Tools judged at the same moment share one question to Orbit
         const pending = this.askingManagers.get(key);
         if (pending) return pending;
         const question = this.orbit
             .canManageBotTools(botId, identifier)
             .then((can) => {
+                this.managerFailures.delete(key);
                 this.managers.delete(key);
                 this.managers.set(key, { can, at: this.now() });
                 while (this.managers.size > MAX_REMEMBERED_MANAGERS) {
@@ -170,6 +176,15 @@ export class ToolGate {
                     this.managers.delete(oldest);
                 }
                 return can;
+            }, (error: unknown) => {
+                this.managerFailures.delete(key);
+                this.managerFailures.set(key, { error, at: this.now() });
+                while (this.managerFailures.size > MAX_REMEMBERED_MANAGERS) {
+                    const oldest = this.managerFailures.keys().next().value;
+                    if (oldest === undefined) break;
+                    this.managerFailures.delete(oldest);
+                }
+                throw error;
             })
             .finally(() => {
                 this.askingManagers.delete(key);

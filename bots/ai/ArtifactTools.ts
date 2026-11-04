@@ -137,10 +137,11 @@ export function artifactToolDefinitions(
             function: {
                 name: CHANGE_ARTIFACT_TOOL,
                 description:
-                    'Change an artifact you made for this person, or one made in this chat ("make the buttons bigger", "add a tab"). It also works on another bot\'s artifact when the person sent you its link or replied to its card. Send small edits, not ' +
+                    'Change an artifact you made for this person ("make the buttons bigger", "add a tab"). Another bot\'s artifact (one made in this chat, or one the person sent you the link of or replied to the card of) is never changed itself: ' +
+                    'your change is saved as a new copy of your own, with the change in it, and you are told its new id; use that id for any further change. Send small edits, not ' +
                     'the whole file: each edit names a piece of the current file and what it becomes, and the piece must appear exactly once ' +
-                    '(or set all to true to replace every place). Read it first if you do not have its current text. Every change becomes a ' +
-                    'new version and the older ones are kept. Send the whole new file in "content" only when most of it changes. If the ' +
+                    '(or set all to true to replace every place). Read it first if you do not have its current text. Every change to your own ' +
+                    'becomes a new version and the older ones are kept. Send the whole new file in "content" only when most of it changes. If the ' +
                     'person is not allowed to ask for changes you will be told: say so kindly. The songs, images and videos it carries stay ' +
                     'unless you drop them; to add or replace one, pass it in media (a new one with an existing name takes its place). ' +
                     'Call it silently, then say in one short line what changed.',
@@ -528,8 +529,18 @@ export async function runArtifactTool(name: string, args: Record<string, unknown
                     baseVersion: argVersion(args.baseVersion),
                     ...(dropMedia ? { dropMedia } : {}),
                 }, context.saveTimeoutMs, media.uploads);
+                // Another bot's artifact is never written into: Orbit answers with a copy of this bot's own, with a new id (Orbit #800)
+                const copied = changed.artifact.id !== id;
                 return {
-                    result: { success: true, id: changed.artifact.id, title: changed.artifact.title, version: changed.version.number, ...mediaNames(changed.version), ...renamedLine(media.renames, pointed) },
+                    result: {
+                        success: true,
+                        id: changed.artifact.id,
+                        title: changed.artifact.title,
+                        version: changed.version.number,
+                        ...(copied ? { copiedFrom: id } : {}),
+                        ...mediaNames(changed.version),
+                        ...renamedLine(media.renames, pointed),
+                    },
                     card: cardOf(changed.artifact, changed.version.number),
                 };
             }
@@ -590,6 +601,9 @@ export function formatArtifactResult(name: string, result: Record<string, unknow
         case MAKE_ARTIFACT_TOOL:
             return `${name}: Made "${result.title}" (id ${result.id}), version ${result.version}.${mediaLine(result)} It is in the chat as a card they can tap to open. Say in one short line what you made. Do NOT paste its code, an address or the id.`;
         case CHANGE_ARTIFACT_TOOL:
+            if (typeof result.copiedFrom === 'string') {
+                return `${name}: That artifact is another bot's, so it was left as it is and your change is in a new copy of your own: "${result.title}" (id ${result.id}), version ${result.version}. Use id ${result.id} for any further change; the original is unchanged.${mediaLine(result)} The copy is in the chat as a card. Say in one short line that you made your own copy with the change and left the original as it was. Do NOT paste its code, an address or the id.`;
+            }
             return `${name}: Changed "${result.title}" (id ${result.id}); it is version ${result.version} now, and the older versions are kept.${mediaLine(result)} The new version is in the chat as a card. Say in one short line what changed. Do NOT paste its code, an address or the id.`;
         case READ_ARTIFACT_TOOL: {
             // Markers inside the file cannot close the block

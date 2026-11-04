@@ -37,6 +37,8 @@ export interface ServerPolicy {
 export const POLICY_FRESH_MS = 5_000;
 /** When Orbit can't be asked, an answer this old still stands. After it, nothing is let through. */
 export const POLICY_STALE_OK_MS = 10 * 60_000;
+/** After Orbit failed to answer, it is not asked again for this long: calls that follow don't each wait out its timeout. */
+export const POLICY_RETRY_MS = 10_000;
 const POLICY_TIMEOUT_MS = 5_000;
 const MAX_REMEMBERED_SERVERS = 2_000;
 
@@ -77,6 +79,8 @@ export class ToolPolicyUnavailable extends Error {
 export class ToolPolicySource {
     private readonly known = new Map<string, { policy: ServerPolicy; at: number }>();
     private readonly asking = new Map<string, Promise<ServerPolicy>>();
+    /** When Orbit last failed to answer about a server, so the calls that follow don't each wait for it. */
+    private readonly failedAt = new Map<string, number>();
 
     constructor(
         private readonly orbit: () => OrbitConnection | null,
@@ -88,17 +92,37 @@ export class ToolPolicySource {
         const key = `${botId}|${serverId}`;
         const known = this.known.get(key);
         if (known && this.now() - known.at < POLICY_FRESH_MS) return known.policy;
+        const failed = this.failedAt.get(key);
+        // Orbit just failed to answer: don't wait for it again, the earlier answer stands as long as it may (or nothing does)
+        if (failed !== undefined && this.now() - failed < POLICY_RETRY_MS) {
+            if (known && this.now() - known.at < POLICY_STALE_OK_MS) return known.policy;
+            throw new ToolPolicyUnavailable();
+        }
         try {
-            return await this.ask(key, botId, serverId);
+            const policy = await this.ask(key, botId, serverId);
+            this.failedAt.delete(key);
+            return policy;
         } catch (error) {
+            this.noteFailure(key);
             if (known && this.now() - known.at < POLICY_STALE_OK_MS) return known.policy;
             throw error instanceof ToolPolicyUnavailable ? error : new ToolPolicyUnavailable(error);
+        }
+    }
+
+    private noteFailure(key: string): void {
+        this.failedAt.delete(key);
+        this.failedAt.set(key, this.now());
+        while (this.failedAt.size > MAX_REMEMBERED_SERVERS) {
+            const oldest = this.failedAt.keys().next().value;
+            if (oldest === undefined) break;
+            this.failedAt.delete(oldest);
         }
     }
 
     /** Forget what was read, so the next read asks Orbit (after a card was answered, say). */
     forget(botId: string, serverId: string): void {
         this.known.delete(`${botId}|${serverId}`);
+        this.failedAt.delete(`${botId}|${serverId}`);
     }
 
     private ask(key: string, botId: string, serverId: string): Promise<ServerPolicy> {

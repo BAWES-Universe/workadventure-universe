@@ -36,6 +36,7 @@ import {
 } from "../../Stores/ChatStore";
 import { selectedRoomStore } from "../../Stores/SelectRoomStore";
 import { isBotUser, mapExtendedSpaceUserToChatUser } from "../../UserProvider/ChatUserMapper";
+import { fileNameOfLink } from "../../../FileViewer/fileKinds";
 import { parseBotReplyLimit, type BotReplyLimit } from "../../Bots/BotReplyLimit";
 import { botAskTapJson, readNearbyBotAsk, type BotAsk, type BotAskTap } from "../../Bots/BotAsk";
 import {
@@ -164,15 +165,6 @@ function stopSteps(message: ProximityChatMessage): void {
 /** Bot replies remembered so a voice bot can mark one cut short; a person never talks over one that old. */
 const MAX_BOT_REPLIES_KEPT = 64;
 
-function fileNameOfUrl(url: string): string {
-    const lastSegment = url.split("?")[0].split("#")[0].split("/").pop() ?? "";
-    try {
-        return decodeURIComponent(lastSegment) || "file";
-    } catch {
-        return lastSegment || "file";
-    }
-}
-
 export class ProximityChatMessage implements ChatMessage {
     isQuotedMessage: boolean | undefined;
     quotedMessage: ChatMessage | undefined;
@@ -249,7 +241,7 @@ export class ProximityChatMessage implements ChatMessage {
         const content = get(this.content);
         if (!content.url) return undefined;
         return {
-            name: content.filename || fileNameOfUrl(content.url),
+            name: content.filename || fileNameOfLink(content.url),
             size: undefined,
             voice: content.isVoice === true,
         };
