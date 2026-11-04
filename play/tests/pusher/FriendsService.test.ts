@@ -96,6 +96,33 @@ describe("FriendsService", () => {
         });
     });
 
+    it("reads a search answer with a chat ID, and from an Orbit that does not send one yet", async () => {
+        const http = {
+            get: vi.fn(() =>
+                Promise.resolve({
+                    data: {
+                        results: [
+                            {
+                                uuid: "bob",
+                                name: "Bob",
+                                chatId: "@bob:chat",
+                                universes: ["Bawes"],
+                                relationship: "none",
+                            },
+                            { uuid: "old", name: "Old", universes: [], relationship: "none" },
+                            { uuid: "nochat", name: "No chat", chatId: null, universes: [], relationship: "none" },
+                        ],
+                    },
+                })
+            ),
+            post: vi.fn(),
+            put: vi.fn(),
+        };
+        const service = new FriendsService("https://orbit.test", "token", http);
+        const { results } = await service.search("alice", "bo");
+        expect(results.map((result) => result.chatId)).toEqual(["@bob:chat", undefined, null]);
+    });
+
     it("asks Orbit how two players stand", async () => {
         const http = {
             get: vi.fn(() =>

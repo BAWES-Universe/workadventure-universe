@@ -7,6 +7,7 @@ import type { BotRoomLink } from "../Bots/BotRoomLink";
 import type { BotReplyLimit } from "../Bots/BotReplyLimit";
 import type { BotSteps } from "../Bots/BotSteps";
 import type { ArtifactCard } from "../../Artifacts/artifactCard";
+import type { BotAsk, BotAskTap } from "../Bots/BotAsk";
 import type { RoomConnection } from "../../Connection/RoomConnection";
 import type { PictureStore } from "../../Stores/PictureStore";
 import type { HeldRole } from "../Roles/WorldRoles";
@@ -106,6 +107,8 @@ export interface ChatRoom {
         galleryUrls?: string[]
     ) => void;
     readonly sendFiles: (files: FileList) => Promise<void>;
+    /** Taps on a bot's card (#1657): sends only the card's id and revision and what was tapped. Direct messages with bots. */
+    readonly answerBotAsk?: (ask: Pick<BotAsk, "id" | "revision">, tap: BotAskTap) => Promise<void>;
     readonly setTimelineAsRead: () => void;
     readonly hasPreviousMessage: Readable<boolean>;
     readonly loadMorePreviousMessages: () => Promise<void>;
@@ -208,6 +211,9 @@ export interface ChatMessage {
     stoppedBySpeech?: Readable<boolean>;
     /** Set when a bot's direct message carries an artifact it made: drawn as a card the person taps to open. */
     artifact?: ArtifactCard;
+    /** Set when a bot's direct message is a card that waits for one answer (#1657): pinned above the message box while
+     * it waits, then drawn in the chat as it ended. The bot server edits the same notice. */
+    ask?: Readable<BotAsk | undefined>;
     /** Set when a bot's notice is the steps line of its reply (#1545): drawn as a quiet line that updates in place. */
     steps?: Readable<BotSteps | undefined>;
     /** Whether reactions on this message reach the other people in the chat. */
