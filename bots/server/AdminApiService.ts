@@ -208,8 +208,11 @@ export interface BotFilesFound {
     hidden: boolean;
 }
 
-/** What people do with a bot, as Orbit's check names it. */
-export type BotAccessAction = 'chat' | 'dm' | 'summon';
+/**
+ * What people do with a bot, as Orbit's check names it. `change` and `deleteOrSend` are the two permissions a bot's tool
+ * needs to change things or to delete or send something (Orbit #737, game #1656).
+ */
+export type BotAccessAction = 'chat' | 'dm' | 'summon' | 'change' | 'deleteOrSend';
 
 /** Who is asking: a signed-in person is named by their uuid or email, a guest only by being a guest. */
 export interface BotAccessPerson {
@@ -1274,6 +1277,34 @@ export class AdminApiService {
             throw new Error('Orbit answered the bot access check with something unexpected');
         }
         return answer;
+    }
+
+    /**
+     * Whether this person may manage the bot's tools (Manage bots for it). Such a person may try a tool that is not
+     * confirmed yet, with a card every time (game #1656). A guest or an unknown person is not one. Throws when Orbit
+     * can't answer, so the caller can tell "no" from "could not check". Uses BOT_SERVICE_TOKEN.
+     */
+    async canManageBotTools(botId: string, identifier: string): Promise<boolean> {
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!botServiceToken) {
+            throw new Error('BOT_SERVICE_TOKEN environment variable is not set');
+        }
+        const response: AxiosResponse<{ canManage?: unknown }> = await axios.post(
+            resolveAdminApiEndpoint(this.adminApiUrl, `api/bots/${encodeURIComponent(botId)}/tool-manager`),
+            { identifier },
+            {
+                headers: {
+                    Authorization: `Bearer ${botServiceToken}`,
+                    'Content-Type': 'application/json',
+                    'Cache-Control': 'no-store',
+                },
+                timeout: BOT_ACCESS_TIMEOUT_MS,
+            }
+        );
+        if (typeof response.data?.canManage !== 'boolean') {
+            throw new Error('Orbit answered the tool manager check with something unexpected');
+        }
+        return response.data.canManage;
     }
 
     /**

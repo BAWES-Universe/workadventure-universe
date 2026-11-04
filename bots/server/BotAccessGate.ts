@@ -38,6 +38,8 @@ function refusalLine(action: BotAccessAction, botName: string | undefined, answe
     const owner = botName || 'The bot';
     if (action === 'chat') return answer.reply || answer.reason || `${owner}'s owner limits who can chat with it.`;
     if (action === 'summon') return answer.reason || `${owner}'s owner limits who can summon it.`;
+    if (action === 'change') return answer.reason || `You can't have ${owner} change things here.`;
+    if (action === 'deleteOrSend') return answer.reason || `You can't have ${owner} delete or send things here.`;
     return answer.reason || `You can't message ${owner} now.`;
 }
 

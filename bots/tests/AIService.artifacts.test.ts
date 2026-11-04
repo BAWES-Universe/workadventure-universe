@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AIService } from '../ai/AIService';
 import type { TurnMedia } from '../ai/ArtifactMedia';
 import { MCPConnector } from '../mcp/MCPConnector';
+import { openToolGate } from './helpers/openToolGate';
 
 vi.mock('../client/BotClient', () => ({ BotClient: vi.fn() }));
 
@@ -39,7 +40,7 @@ function botClient() {
 }
 
 function service(memory?: Record<string, unknown>) {
-    const ai = new AIService(null!, null!, '');
+    const ai = openToolGate(new AIService(null!, null!, ''));
     (ai as unknown as { conversationMemory: unknown }).conversationMemory = { getMemory: () => memory };
     return ai;
 }
@@ -48,7 +49,7 @@ const make = { id: 't1', name: 'make_artifact', arguments: JSON.stringify({ titl
 
 describe('artifact tools in AIService', () => {
     it('offers them in a bubble and in a direct message when Orbit is set up, and not otherwise', async () => {
-        const ai = new AIService(null!, null!, '');
+        const ai = openToolGate(new AIService(null!, null!, ''));
         const names = async (client: unknown, orbit: unknown, channel: 'world' | 'dm') =>
             (await ai['buildTools']('bot1', client as never, orbit as never, channel)).tools.map((tool: { function: { name: string } }) => tool.function.name);
         const artifactNames = ['make_artifact', 'change_artifact', 'read_artifact', 'list_artifacts'];

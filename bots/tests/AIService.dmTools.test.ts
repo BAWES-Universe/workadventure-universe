@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AIService, READ_WEB_PAGE_TOOL } from "../ai/AIService";
 import { MCPConnector } from "../mcp/MCPConnector";
+import { openToolGate } from './helpers/openToolGate';
 
 vi.mock("../client/BotClient", () => ({ BotClient: vi.fn() }));
 
@@ -8,7 +9,7 @@ afterEach(() => vi.restoreAllMocks());
 
 describe("tools in a direct message", () => {
     it("offers read_web_page in a direct message, which has no bot client, and not to other callers without one", async () => {
-        const service = new AIService(null!, null!, "");
+        const service = openToolGate(new AIService(null!, null!, ""));
         const names = async (channel?: "world" | "dm") =>
             (await service["buildTools"](undefined, undefined, undefined, channel)).tools.map(
                 (tool: { function: { name: string } }) => tool.function.name
@@ -18,7 +19,7 @@ describe("tools in a direct message", () => {
     });
 
     it("gives an MCP tool the bot's own Patience when there is no bot client", async () => {
-        const service = new AIService(null!, null!, "");
+        const service = openToolGate(new AIService(null!, null!, ""));
         const execute = vi.spyOn(MCPConnector, "executeToolCall").mockResolvedValue("ok" as never);
         const servers = new Map([["lookup", { serverId: "s1", serverUrl: "https://mcp.example", authType: "none" }]]);
         await service["executeToolCalls"](
@@ -28,7 +29,7 @@ describe("tools in a direct message", () => {
             servers,
             undefined,
             undefined,
-            undefined,
+            "b1",
             undefined,
             undefined,
             300

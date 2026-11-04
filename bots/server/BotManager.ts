@@ -216,6 +216,9 @@ export class BotManager {
             );
         }
 
+        // The tool gate asks Orbit who may change, delete or send through the same gate, so its answers are kept once
+        this.aiService.useAccessGate(this.accessGate);
+
         // Initialize test runner and conversation replay (DEVELOPMENT ONLY)
         // These are only created in development to keep production lightweight
         if (isDevelopment) {
