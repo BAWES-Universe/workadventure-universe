@@ -93,6 +93,17 @@ describe('reading a server’s whole list', () => {
 });
 
 describe('saving the list to Orbit', () => {
+    it('tries to save the list again on the next read when Orbit did not get it, not only when the cache runs out', async () => {
+        http.put.mockRejectedValueOnce(new Error('orbit down'));
+        pages = [answer([tool('a')]), answer([tool('a')])];
+        await discover();
+        await vi.waitFor(() => expect(http.put).toHaveBeenCalledTimes(1));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        await discover();
+        await vi.waitFor(() => expect(saved).toHaveLength(1));
+        expect(listCalls).toHaveLength(2);
+    });
+
     it('saves the list with a suggested heading each time it is read fresh, not from the cache', async () => {
         pages = [answer([tool('look', { annotations: { readOnlyHint: true } }), tool('post')])];
         const suggest = vi.fn().mockResolvedValue('{"post":"changesThings"}');
