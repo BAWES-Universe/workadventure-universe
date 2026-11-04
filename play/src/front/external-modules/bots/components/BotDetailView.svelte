@@ -39,6 +39,7 @@
     import BehaviorGroup from "./page/BehaviorGroup.svelte";
     import MindGroup from "./page/MindGroup.svelte";
     import SayGroup from "./page/SayGroup.svelte";
+    import VoiceGroup from "./page/VoiceGroup.svelte";
     import ToolsGroup from "./page/ToolsGroup.svelte";
     import PermissionsGroup from "./page/PermissionsGroup.svelte";
     import LimitSuggestion from "./page/LimitSuggestion.svelte";
@@ -721,6 +722,7 @@
                 onOptions={takeAiOptions}
             />
             <SayGroup bot={currentBot} open={openGroup === "say"} onToggle={toggleGroup} onChange={apply} />
+            <VoiceGroup bot={currentBot} open={openGroup === "voice"} onToggle={toggleGroup} />
             <BehaviorGroup
                 bot={currentBot}
                 open={openGroup === "behavior"}
