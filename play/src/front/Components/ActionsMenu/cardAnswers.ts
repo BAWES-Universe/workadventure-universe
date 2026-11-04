@@ -1,6 +1,12 @@
 /**
- * Answers a person's card waits for (Orbit's membership button, a bot's Summon), kept per person for the session so
- * a card opened again shows its buttons at once (#1790). One question per person at a time: a second look while the
+ * How long a card's answer is trusted. Short on purpose: a permission or button changed in Orbit must show the next
+ * time a card opens, and this only spares asking twice when a card is opened again straight away.
+ */
+export const CARD_ANSWER_KEPT_MS = 20 * 1000;
+
+/**
+ * Answers a person's card waits for (Orbit's membership button, a bot's Summon), kept for a few seconds so a card
+ * opened again straight away does not ask twice (#1790). One question per person at a time: a second look while the
  * first is on its way shares its answer.
  */
 export class CardAnswers<T> {
@@ -9,12 +15,12 @@ export class CardAnswers<T> {
 
     /**
      * @param ask Finds the answer out.
-     * @param keptFor How long (ms) an answer stays: forever by default. A "nothing" that may only mean Orbit did not
-     *   answer is worth keeping for less.
+     * @param keptFor How long (ms) an answer stays: CARD_ANSWER_KEPT_MS by default. An answer that may only mean Orbit
+     *   did not answer is worth keeping for less, or not at all.
      */
     constructor(
         private ask: (key: string) => Promise<T>,
-        private keptFor: (value: T) => number = () => Infinity,
+        private keptFor: (value: T) => number = () => CARD_ANSWER_KEPT_MS,
         private now: () => number = Date.now
     ) {}
 

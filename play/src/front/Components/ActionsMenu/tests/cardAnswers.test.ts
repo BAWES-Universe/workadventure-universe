@@ -1,14 +1,39 @@
 import { describe, expect, it, vi } from "vitest";
-import { CardAnswers } from "../cardAnswers";
+import { CARD_ANSWER_KEPT_MS, CardAnswers } from "../cardAnswers";
 
 describe("card answers", () => {
-    it("asks once per person and gives the kept answer the next time", async () => {
+    it("keeps an answer for under half a minute only, so a change in Orbit shows the next time a card opens", () => {
+        expect(CARD_ANSWER_KEPT_MS).toBeGreaterThan(0);
+        expect(CARD_ANSWER_KEPT_MS).toBeLessThan(30 * 1000);
+    });
+
+    it("asks once per person while the answer is fresh", async () => {
+        let now = 0;
         const ask = vi.fn().mockResolvedValue("yes");
-        const answers = new CardAnswers<string>(ask);
+        const answers = new CardAnswers<string>(ask, undefined, () => now);
         expect(await answers.get("sara")).toBe("yes");
+        now = CARD_ANSWER_KEPT_MS - 1;
         expect(await answers.get("sara")).toBe("yes");
         expect(ask).toHaveBeenCalledTimes(1);
         await answers.get("omar");
+        expect(ask).toHaveBeenCalledTimes(2);
+    });
+
+    it("shows what changed in Orbit the next time a card opens after the answer has gone stale", async () => {
+        let now = 0;
+        const ask = vi.fn().mockResolvedValueOnce("yes").mockResolvedValueOnce("no");
+        const answers = new CardAnswers<string>(ask, undefined, () => now);
+        expect(await answers.get("sara")).toBe("yes");
+        now = CARD_ANSWER_KEPT_MS;
+        expect(await answers.get("sara")).toBe("no");
+        expect(ask).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not keep an answer that is worth keeping for no time", async () => {
+        const ask = vi.fn().mockResolvedValue(null);
+        const answers = new CardAnswers<null>(ask, () => 0);
+        await answers.get("sara");
+        await answers.get("sara");
         expect(ask).toHaveBeenCalledTimes(2);
     });
 
@@ -54,7 +79,7 @@ describe("card answers", () => {
 
     it("forgets an answer on request", async () => {
         const ask = vi.fn().mockResolvedValue("yes");
-        const answers = new CardAnswers<string>(ask);
+        const answers = new CardAnswers<string>(ask, undefined, () => 0);
         await answers.get("sara");
         answers.forget("sara");
         await answers.get("sara");

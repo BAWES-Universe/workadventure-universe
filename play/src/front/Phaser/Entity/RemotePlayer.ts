@@ -24,7 +24,7 @@ import { isBotUser } from "../../Chat/UserProvider/ChatUserMapper";
 import { botIdFromChatId } from "../../Chat/Bots/BotChatStatus";
 import { botDmAccessCache } from "../../Chat/Bots/BotStatusStore";
 import { friendMenuAction } from "../../Chat/Components/UserList/FriendMenuAction";
-import { CardAnswers } from "../../Components/ActionsMenu/cardAnswers";
+import { CardAnswers, CARD_ANSWER_KEPT_MS } from "../../Components/ActionsMenu/cardAnswers";
 import { addMembershipCardButton } from "./MembershipCardButton";
 import { IconClock, IconMessage, IconPlanet, IconUserCircle, IconUserCog, IconUsersPlus, IconWalk } from "@wa-icons";
 
@@ -32,17 +32,14 @@ import { IconClock, IconMessage, IconPlanet, IconUserCircle, IconUserCog, IconUs
 const MEMBERSHIP_ANSWER = "membership";
 const BOT_MESSAGE_ANSWER = "bot-message";
 
-/** How long "no membership button" is trusted: Orbit gives the same answer when it could not be reached. */
-const NO_MEMBERSHIP_BUTTON_KEPT_MS = 60 * 1000;
-
 /**
- * What the membership button says for each person in each universe, kept for the session so a card opens at once the
- * next time (#1790). Orbit answers for the universe of the room you are in, so the key holds both. A button is kept;
- * "none" is asked again after a minute, since it may only mean Orbit did not answer.
+ * What the membership button says for each person in each universe, kept only for a few seconds, so a button changed in
+ * Orbit shows the next time a card opens (#1790). Orbit answers for the universe of the room you are in, so the key
+ * holds both.
  */
 const membershipAnswers = new CardAnswers(
     (key: string) => botApiService.getMembershipButton(key.slice(key.indexOf("\0") + 1)),
-    (button) => (button === null ? NO_MEMBERSHIP_BUTTON_KEPT_MS : Infinity)
+    () => CARD_ANSWER_KEPT_MS
 );
 const membershipKey = (userUuid: string) => `${botApiService.getRoomId() ?? ""}\0${userUuid}`;
 
