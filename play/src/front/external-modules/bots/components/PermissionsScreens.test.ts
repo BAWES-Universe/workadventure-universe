@@ -31,7 +31,7 @@ const roles: BotRole[] = [
         name: "Everyone",
         color: "#999999",
         builtIn: true,
-        defaults: { chat: true, dm: false, summon: false, manage: false },
+        defaults: { chat: true, dm: false, summon: false, manage: false, change: false, deleteOrSend: false },
     },
     {
         id: "role-member",
@@ -39,7 +39,7 @@ const roles: BotRole[] = [
         name: "Member",
         color: "#3b82f6",
         builtIn: true,
-        defaults: { chat: true, dm: true, summon: true, manage: false },
+        defaults: { chat: true, dm: true, summon: true, manage: false, change: true, deleteOrSend: false },
     },
 ];
 
@@ -54,6 +54,8 @@ function rule(partial: Partial<BotRule> = {}): BotRule {
         dm: "default",
         summon: "default",
         manage: "default",
+        change: "default",
+        deleteOrSend: "default",
         ...partial,
     };
 }
@@ -105,7 +107,7 @@ describe("the Permissions screens", () => {
         await loadBotPermissions("b1");
     }
 
-    it("says a bot nobody limited is open to everyone", async () => {
+    it("says a bot nobody limited is public", async () => {
         mocks.getBotPermissions.mockResolvedValue(permissions());
         const component = new PermissionsGroup({
             target,
@@ -114,7 +116,14 @@ describe("the Permissions screens", () => {
         destroy = () => component.$destroy();
         await settle();
         expect(text()).toContain("Permissions");
-        expect(text()).toContain("Open to everyone");
+        expect(text()).toContain("Public");
+        component.$set({ open: true });
+        await settle();
+        expect(byTestId("bot-visibility")[0].textContent).toContain("Public bot");
+        expect(byTestId("bot-visibility")[0].textContent).toContain(
+            "Anyone who can enter this bot's room can use this bot, guests too"
+        );
+        expect(byTestId("bot-visibility-change")[0].textContent?.trim()).toBe("Make private");
     });
 
     it("lists each row with what it says, and a tap opens that row", async () => {
@@ -133,15 +142,148 @@ describe("the Permissions screens", () => {
         expect(onOpenRule).toHaveBeenCalledWith(expect.objectContaining({ id: "r1" }));
     });
 
-    it("saves the Private bot switch, and says so on a bot with nobody added", async () => {
-        await open(permissions({ privateBot: true }));
+    function mount(extra: Record<string, unknown> = {}) {
         const component = new PermissionsGroup({
             target,
-            props: { bot, open: true, onToggle: vi.fn(), onOpenRule: vi.fn(), onAdd: vi.fn() },
+            props: { bot, open: true, onToggle: vi.fn(), onOpenRule: vi.fn(), onAdd: vi.fn(), ...extra },
         });
         destroy = () => component.$destroy();
+        return component;
+    }
+
+    const sheet = () => document.querySelector<HTMLElement>("[data-testid=bot-visibility-sheet]");
+    const sheetText = () => sheet()?.textContent?.replace(/\s+/g, " ").trim() ?? "";
+
+    it("says on a Private bot with nobody added who can always use it, by name", async () => {
+        await open(permissions({ privateBot: true, universe: { name: "Nova", ownerName: "Layla" } }));
+        mount({ bot: { ...bot, createdBy: { id: "u1", name: "Sara" } } });
         await settle();
-        expect(text()).toContain("Only you and the admins, until you add someone");
+        expect(byTestId("bot-visibility")[0].textContent).toContain("Private bot");
+        expect(text()).toContain("Only Sara, Layla and Nova's Admins can use this bot until you add someone");
+        expect(byTestId("bot-visibility-change")[0].textContent?.trim()).toBe("Make public");
+    });
+
+    it("names the roles and people who can use a Private bot, and the ones with own rules in the brief", async () => {
+        await open(
+            permissions({
+                privateBot: true,
+                rules: [
+                    rule({ chat: "yes", dm: "yes", summon: "yes" }),
+                    rule({
+                        id: "r2",
+                        roleId: null,
+                        userId: "u2",
+                        role: null,
+                        person: { name: "Omar" },
+                        chat: "yes",
+                        summon: "no",
+                    }),
+                    rule({ id: "r3", roleId: "role-everyone", role: { key: "everyone", name: "Everyone", color: "" } }),
+                ],
+            })
+        );
+        mount();
+        await settle();
+        expect(text()).toContain("Private · own rules for Member, Omar and Everyone");
+        // Everyone's row says Default everywhere: on a Private bot that lets nobody in
+        expect(byTestId("bot-visibility")[0].textContent).toContain("Only Member and Omar can use this bot");
+    });
+
+    it("says which roles allow changing, and deleting or sending, with Admin always one of them", async () => {
+        await open(permissions());
+        mount();
+        await settle();
+        const line = byTestId("bot-access-tools-line")[0].textContent?.replace(/\s+/g, " ") ?? "";
+        expect(line).toContain("Changing, deleting and sending");
+        expect(line).toContain("Admin and Member can have this bot change things.");
+        expect(line).toContain("Admin can also have this bot delete or send.");
+        expect(line).toContain("Tap a role or person to set them differently.");
+    });
+
+    it("shows a row's changing and deleting or sending in its line", async () => {
+        await open(permissions({ rules: [rule({ change: "yes", deleteOrSend: "yes" })] }));
+        mount();
+        await settle();
+        expect(byTestId("bot-access-rule")[0].textContent).toContain("Change things, Delete or send");
+    });
+
+    it("asks before making the bot private, naming who is left, and saves only on the button", async () => {
+        await open(
+            permissions({
+                rules: [rule({ chat: "yes" })],
+                refusalReply: "Not today.",
+                universe: { name: "Nova", ownerName: "Layla" },
+            })
+        );
+        mocks.saveBotPermissions.mockResolvedValue(permissions({ privateBot: true }));
+        mount({ bot: { ...bot, name: "Linear SH", createdBy: { id: "u1", name: "Sara" } } });
+        await settle();
+        byTestId("bot-visibility-change")[0].click();
+        await settle();
+        expect(sheetText()).toContain("Make Linear SH private?");
+        expect(sheetText()).toContain("Only Member will be able to use this bot, each with the rules set for them.");
+        expect(sheetText()).toContain(
+            "Everyone else, guests too, won't be able to chat with, DM or summon this bot. This bot answers them with: “Not today.”"
+        );
+        expect(sheetText()).toContain(
+            "Sara made this bot and Layla owns Nova, so they can always use this bot, and so can Nova's Admins."
+        );
+        expect(sheetText()).toContain("You can make this bot public again any time.");
+        expect(mocks.saveBotPermissions).not.toHaveBeenCalled();
+
+        document.querySelector<HTMLElement>("[data-testid=bot-visibility-sheet-cancel]")?.click();
+        await settle();
+        expect(sheet()).toBeNull();
+        expect(mocks.saveBotPermissions).not.toHaveBeenCalled();
+
+        byTestId("bot-visibility-change")[0].click();
+        await settle();
+        document.querySelector<HTMLElement>("[data-testid=bot-visibility-sheet-confirm]")?.click();
+        await settle();
+        expect(mocks.saveBotPermissions).toHaveBeenCalledWith("b1", { privateBot: true });
+        expect(sheet()).toBeNull();
+    });
+
+    it("says what the bot answers with by default, and who is left when nobody was added", async () => {
+        await open(permissions({ universe: { name: "Nova", ownerName: "Layla" } }));
+        mount({ bot: { ...bot, name: "Linear SH", createdBy: { id: "u1", name: "Sara" } } });
+        await settle();
+        byTestId("bot-visibility-change")[0].click();
+        await settle();
+        expect(sheetText()).toContain(
+            "No roles or people are added yet, so only Sara, Layla and Nova's Admins will be able to use this bot."
+        );
+        expect(sheetText()).toContain("This bot answers them with: “Sorry, I can't chat with you.”");
+    });
+
+    it("asks before making the bot public, and says guests can use it too", async () => {
+        await open(permissions({ privateBot: true, rules: [rule({ chat: "yes" })] }));
+        mocks.saveBotPermissions.mockResolvedValue(permissions());
+        mount({ bot: { ...bot, name: "Linear SH" } });
+        await settle();
+        byTestId("bot-visibility-change")[0].click();
+        await settle();
+        expect(sheetText()).toContain("Make Linear SH public?");
+        expect(sheetText()).toContain(
+            "Anyone who can enter this bot's room, guests too, will be able to chat with and summon this bot. Anyone signed in can also DM this bot."
+        );
+        expect(sheetText()).toContain("Member keep the rules set for them.");
+        expect(sheetText()).toContain("You can make this bot private again any time.");
+        document.querySelector<HTMLElement>("[data-testid=bot-visibility-sheet-confirm]")?.click();
+        await settle();
+        expect(mocks.saveBotPermissions).toHaveBeenCalledWith("b1", { privateBot: false });
+    });
+
+    it("leaves the sheet with Escape and changes nothing", async () => {
+        await open(permissions());
+        mount();
+        await settle();
+        byTestId("bot-visibility-change")[0].click();
+        await settle();
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+        await settle();
+        expect(sheet()).toBeNull();
+        expect(mocks.saveBotPermissions).not.toHaveBeenCalled();
     });
 
     it("shows why a change was refused, in Orbit's words", async () => {
@@ -170,7 +312,7 @@ describe("the Permissions screens", () => {
         mocks.getBotPermissions.mockResolvedValue(permissions());
         byTestId("bot-access-retry")[0].click();
         await settle();
-        expect(text()).toContain("Private bot");
+        expect(text()).toContain("Public bot");
     });
 
     it("keeps a typed refusal line with the bot it was typed for when the page moves to another bot", async () => {
@@ -226,14 +368,17 @@ describe("the Permissions screens", () => {
     it("shows No / Default / Yes with what Default comes to, and saves a tap", async () => {
         await open(permissions({ rules: [rule()] }));
         mocks.saveBotRule.mockResolvedValue(rule({ summon: "no" }));
-        const component = new BotRuleScreen({ target, props: { botId: "b1", ruleId: "r1", onClose: vi.fn() } });
+        const component = new BotRuleScreen({
+            target,
+            props: { botId: "b1", botName: "Linear SH", ruleId: "r1", onClose: vi.fn() },
+        });
         destroy = () => component.$destroy();
         await settle();
-        expect(text()).toContain("Member's rules for this bot");
+        expect(text()).toContain("Member's rules for Linear SH");
         expect(text()).toContain("Direct messages");
-        expect(text()).toContain("From anywhere, one to one. Needs sign-in");
-        expect(text()).toContain("Default: Yes, from Member");
-        expect(text()).toContain("Default: No");
+        expect(text()).toContain("One to one with this bot, from anywhere. Needs sign-in");
+        expect(text()).toContain("Default here means Yes, from Member");
+        expect(text()).toContain("Default here means No");
         // Summon is the third group of three choices, after nearby chat and direct messages; No is its first
         byTestId("bot-rule-no")[2].click();
         await settle();
@@ -241,11 +386,59 @@ describe("the Permissions screens", () => {
         expect(get(botPermissionsStore)?.data?.rules[0].summon).toBe("no");
     });
 
+    it("shows the two rows for changing, and deleting or sending, between Summon and Manage, and saves them", async () => {
+        await open(permissions({ rules: [rule()] }));
+        mocks.saveBotRule.mockResolvedValue(rule({ deleteOrSend: "yes" }));
+        const component = new BotRuleScreen({
+            target,
+            props: { botId: "b1", botName: "Linear SH", ruleId: "r1", onClose: vi.fn() },
+        });
+        destroy = () => component.$destroy();
+        await settle();
+        const titles = [...target.querySelectorAll(".br-t")].map((node) => node.textContent);
+        expect(titles).toEqual([
+            "Chat nearby",
+            "Direct messages",
+            "Summon",
+            "Have this bot change things",
+            "Have this bot delete or send",
+            "Manage this bot",
+        ]);
+        expect(text()).toContain(
+            "With this bot's tools under Makes new things and Changes things, like adding a Linear issue"
+        );
+        expect(text()).toContain(
+            "With this bot's tools under Deletes or sends out, like sending an email or deleting a page"
+        );
+        expect(text()).toContain("Member then goes back to the Member role's settings in Orbit");
+        // Member's role gives changing but not deleting or sending, so Default means Yes for one and No for the other
+        const defaults = byTestId("bot-rule-default-line").map((line) => line.textContent);
+        expect(defaults[3]).toBe("Default here means Yes, from Member");
+        expect(defaults[4]).toBe("Default here means No");
+        byTestId("bot-rule-yes")[4].click();
+        await settle();
+        expect(mocks.saveBotRule).toHaveBeenCalledWith("b1", { roleId: "role-member" }, { deleteOrSend: "yes" });
+    });
+
+    it("says a person goes back to what their roles allow", async () => {
+        await open(
+            permissions({ rules: [rule({ roleId: null, userId: "u2", role: null, person: { name: "Omar" } })] })
+        );
+        const component = new BotRuleScreen({
+            target,
+            props: { botId: "b1", botName: "Linear SH", ruleId: "r1", onClose: vi.fn() },
+        });
+        destroy = () => component.$destroy();
+        await settle();
+        expect(text()).toContain("Omar's rules for Linear SH");
+        expect(text()).toContain("Omar then goes back to what Omar's roles allow");
+    });
+
     it("closes itself when its row is gone, and removes only after a tap", async () => {
         await open(permissions({ rules: [rule()] }));
         mocks.deleteBotRule.mockResolvedValue(undefined);
         const onClose = vi.fn();
-        const component = new BotRuleScreen({ target, props: { botId: "b1", ruleId: "r1", onClose } });
+        const component = new BotRuleScreen({ target, props: { botId: "b1", botName: "Nora", ruleId: "r1", onClose } });
         destroy = () => component.$destroy();
         await settle();
         expect(onClose).not.toHaveBeenCalled();

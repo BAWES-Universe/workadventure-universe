@@ -11,6 +11,8 @@
     export let ruleId: string;
     /** The rule is gone (removed here, or by someone else): the page it came from is shown again */
     export let onClose: () => void;
+    /** The bot's name, so the screen's title says which bot the rules are for */
+    export let botName = "";
 
     $: access = $LL.mapEditor.edit.bots.page.access;
     $: state = $botPermissionsStore;
@@ -34,6 +36,10 @@
             ? access.actions.dm()
             : action === "summon"
             ? access.actions.summon()
+            : action === "change"
+            ? access.actions.change()
+            : action === "deleteOrSend"
+            ? access.actions.deleteOrSend()
             : access.actions.manage();
     }
 
@@ -44,6 +50,10 @@
             ? access.actions.dmHint()
             : action === "summon"
             ? access.actions.summonHint()
+            : action === "change"
+            ? access.actions.changeHint()
+            : action === "deleteOrSend"
+            ? access.actions.deleteOrSendHint()
             : access.actions.manageHint();
     }
 
@@ -73,7 +83,7 @@
             {:else}
                 <span class="br-ico" aria-hidden="true"><IconUser font-size="20" /></span>
             {/if}
-            <span class="br-name">{access.ruleFor({ name })}</span>
+            <span class="br-name">{access.ruleFor({ name, bot: botName || access.thisBot() })}</span>
         </div>
 
         {#each SHOWN_ACTIONS as action (action)}
@@ -98,7 +108,7 @@
             <button type="button" class="br-btn" disabled={removing} data-testid="bot-rule-remove" on:click={remove}>
                 {access.remove({ name })}
             </button>
-            <span class="br-m">{access.removeHint()}</span>
+            <span class="br-m">{rule.role ? access.removeHint({ name }) : access.removePersonHint({ name })}</span>
         </div>
     </div>
 {/if}
