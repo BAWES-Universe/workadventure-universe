@@ -334,6 +334,18 @@ describe('Create (approve)', () => {
         expect(s.run).toHaveBeenCalledTimes(1);
     });
 
+    it('shows one card for the same call asked twice while it waits, such as a turn asked again', async () => {
+        const first = await s.approvals.propose(input());
+        const again = await s.approvals.propose(input());
+        expect(first.kind).toBe('waiting');
+        expect(again.kind).toBe('waiting');
+        expect(s.orbit.actions.size).toBe(1);
+        expect(s.sent).toHaveLength(1);
+        // A different call is its own card
+        await s.approvals.propose(input({ args: { team: 'IOS', title: 'x' } }));
+        expect(s.orbit.actions.size).toBe(2);
+    });
+
     it('does not run an approved, unstarted call because of a stale tap that said no', async () => {
         await s.approvals.propose(input());
         s.orbit.actions.set('act_1', { ...s.orbit.actions.get('act_1')!, status: 'approved', revision: 2 });

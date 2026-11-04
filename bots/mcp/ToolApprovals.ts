@@ -137,6 +137,9 @@ export class ToolApprovals {
             arguments: args,
         };
         try {
+            // The same call asked for again while its card still waits (a turn asked again, or the model repeating itself)
+            // is that card: no second card, so one tap can never run it twice
+            if (this.findWaiting(botId, roomId, person.uuid, toolName, args, decision)) return { kind: 'waiting', result: WAITING_RESULT };
             if (!input.cardOnly && !decision.notReviewed && decision.heading !== 'deletesOrSends') {
                 const grant = await this.deps.orbit.findGrant(botId, base);
                 if (grant) return { kind: 'run' };
@@ -173,6 +176,18 @@ export class ToolApprovals {
             console.warn(`[ToolApprovals] Could not ask for an OK for ${toolName}:`, errorText(error));
             return { kind: 'failed', result: NO_CARD_RESULT };
         }
+    }
+
+    private findWaiting(botId: string, roomId: string, requesterKey: string, toolName: string, args: Record<string, unknown>, decision: Extract<GateDecision, { kind: 'ask' }>): Card | undefined {
+        const wanted = JSON.stringify(args);
+        for (const card of this.cards.values()) {
+            const action = card.facts.action;
+            if (!card.waiting || card.botId !== botId || card.roomId !== roomId || card.person.uuid !== requesterKey) continue;
+            if (action.toolName !== toolName || action.toolFingerprint !== decision.fingerprint || action.heading !== decision.heading || card.facts.notReviewed !== decision.notReviewed) continue;
+            if (!(Date.parse(action.reviewExpiresAt) > this.now())) continue;
+            if (JSON.stringify(action.arguments) === wanted) return card;
+        }
+        return undefined;
     }
 
     private keep(id: string, card: Card): void {
