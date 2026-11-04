@@ -368,11 +368,14 @@
                 const updated = await botApiService.updateBotMcpServer(botId, editingServer.id, data);
                 servers = servers.map((s) => (s.id === updated.id ? updated : s));
                 setServers(botId, servers);
+                // Editing a server can change what its tools are allowed to do: read them again
+                void loadAllServerTools(botId, [updated]);
             } else {
                 // Create new server
                 const created = await botApiService.createBotMcpServer(botId, data);
                 servers = [...servers, created];
                 setServers(botId, servers);
+                void loadAllServerTools(botId, [created]);
             }
 
             closeModal();
