@@ -1108,6 +1108,9 @@ const mapEditor: BaseTranslation = {
                     notChecked: "Not checked yet",
                     toCheck: "{count:number} to check",
                     sorted: "{server:string}'s {tools:string} are sorted by what they do. For each heading, pick whether {bot:string} uses those tools right away, asks first, or never.",
+                    cutOf: "Showing the first {shown:number} of {total:number} tools",
+                    cutFirst: "Showing the first {shown:number} tools",
+                    cutWhy: "{shown:number} is the most Orbit keeps for one server, so {bot:string} uses these and none of the rest.",
                     notSortedYet: "{server:string} has no tools sorted yet. Tap Test server to read them.",
                     search: "Search all {count:number} {server:string} tool{{s}}",
                     searchMatches:

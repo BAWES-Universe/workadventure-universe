@@ -104,6 +104,8 @@ function answer(over: Partial<ServerTools> = {}): ServerTools {
                 suggestionSource: "server",
             }),
         ],
+        truncated: false,
+        totalSeen: null,
         ...over,
     };
 }
@@ -270,6 +272,47 @@ describe("the bot page's Tools screens (game #1655)", () => {
         mocks.getMcpServerTools.mockResolvedValue(answer({ state: "notCheckedYet" }));
         await mountServer();
         expect(byTestId("bot-tools-confirm")?.textContent).toContain("was added before tools were checked");
+    });
+
+    describe("a server with more tools than Orbit keeps (Orbit #801)", () => {
+        const cut = (count: number, over: Partial<ServerTools> = {}) =>
+            answer({
+                truncated: true,
+                tools: Array.from({ length: count }, (_, i) =>
+                    tool({ id: `c${i}`, name: `tool_${i}`, suggestedHeading: "looksUp", suggestionSource: "server" })
+                ),
+                ...over,
+            });
+
+        it("says the list is cut, how many the server has and why, with the number Orbit sent", async () => {
+            mocks.getMcpServerTools.mockResolvedValue(cut(500, { totalSeen: 731 }));
+            await mountServer();
+            const line = byTestId("bot-tools-cut")?.textContent ?? "";
+            expect(line).toContain("Showing the first 500 of 731 tools");
+            expect(line).toContain(
+                "500 is the most Orbit keeps for one server, so Linear SH uses these and none of the rest."
+            );
+        });
+
+        it("takes the number shown from the tools it got, not from a fixed 500", async () => {
+            mocks.getMcpServerTools.mockResolvedValue(cut(300, { totalSeen: 450 }));
+            await mountServer();
+            expect(byTestId("bot-tools-cut")?.textContent).toContain("Showing the first 300 of 450 tools");
+        });
+
+        it("still says it is cut when the server's count is not known", async () => {
+            mocks.getMcpServerTools.mockResolvedValue(cut(500));
+            await mountServer();
+            const line = byTestId("bot-tools-cut")?.textContent ?? "";
+            expect(line).toContain("Showing the first 500 tools");
+            expect(line).not.toMatch(/first 500 of/);
+        });
+
+        it("shows no line when the list is whole", async () => {
+            await mountServer();
+            expect(byTestId("bot-tools-cut")).toBeNull();
+            expect(target.textContent).not.toContain("Showing the first");
+        });
     });
 
     it("says to test the server when no tools have been read yet", async () => {

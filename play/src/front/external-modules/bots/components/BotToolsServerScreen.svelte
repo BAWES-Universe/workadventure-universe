@@ -143,6 +143,17 @@
         <p class="ts-line">
             {text.sorted({ server: serverName, tools: text.count({ count: tools.length }), bot: botName })}
         </p>
+        {#if data.truncated}
+            <!-- Never a silent cut: Orbit keeps the first tools only, and says how many the server has when it knows -->
+            <p class="ts-cut" data-testid="bot-tools-cut">
+                <b
+                    >{data.totalSeen
+                        ? text.cutOf({ shown: tools.length, total: data.totalSeen })
+                        : text.cutFirst({ shown: tools.length })}</b
+                >
+                <span>{text.cutWhy({ shown: tools.length, bot: botName })}</span>
+            </p>
+        {/if}
         <label class="ts-search">
             <IconSearch font-size="18" />
             <input
@@ -234,6 +245,20 @@
         font-size: 13px;
         line-height: 1.4;
         color: rgba(244, 242, 250, 0.72);
+    }
+    .ts-cut {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        margin: 0;
+        font-size: 12.5px;
+        line-height: 1.4;
+        color: rgba(244, 242, 250, 0.72);
+    }
+    .ts-cut b {
+        font-size: 13px;
+        font-weight: 600;
+        color: #fff;
     }
     .ts-check {
         display: flex;

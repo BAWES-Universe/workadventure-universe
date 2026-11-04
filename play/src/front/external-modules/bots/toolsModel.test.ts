@@ -97,6 +97,20 @@ describe("the bot page's tool headings (game #1655, Orbit #738)", () => {
         expect(() => readServerTools({})).toThrow();
     });
 
+    it("reads whether the list is cut and how many tools the server has (Orbit #801)", () => {
+        const many = Array.from({ length: 500 }, (_, i) => ({ id: `t${i}`, name: `tool_${i}` }));
+        const read = (extra: object, tools: object[] = many) => readServerTools({ serverId: "s1", tools, ...extra });
+        expect(read({ truncated: true, totalSeen: 731 })).toMatchObject({ truncated: true, totalSeen: 731 });
+        expect(read({ truncated: true, totalSeen: null })).toMatchObject({ truncated: true, totalSeen: null });
+        // An older Orbit sends neither field, so the list reads as whole
+        expect(read({})).toMatchObject({ truncated: false, totalSeen: null });
+        // A count with no cut, or a count that is not more than what is listed, cannot be right: it reads as not known
+        expect(read({ truncated: false, totalSeen: 731 })).toMatchObject({ truncated: false, totalSeen: null });
+        expect(read({ truncated: true, totalSeen: 500 })).toMatchObject({ truncated: true, totalSeen: null });
+        expect(read({ truncated: true, totalSeen: 731.5 })).toMatchObject({ truncated: true, totalSeen: null });
+        expect(read({ truncated: "yes", totalSeen: "731" })).toMatchObject({ truncated: false, totalSeen: null });
+    });
+
     it("keeps a suggestion's source only when there is a suggestion", () => {
         const read = readServerTools({
             serverId: "s1",
