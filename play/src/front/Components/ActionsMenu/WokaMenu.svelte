@@ -67,7 +67,9 @@
     $: isMyOtherSession = !isSelf && !!userUuid && userUuid === localUserStore.getLocalUser()?.uuid;
 
     // What a bot's card says about it, asked when the card turns to it; its buttons wait for the answer
-    $: botInfo = botId ? botCardInfo(botId) : readable<BotCardInfo>({ loading: false });
+    // (opened again for the same bot, it asks again)
+    $: opening = wokaMenuData?.opening;
+    $: botInfo = botId ? botCardInfo(botId, opening) : readable<BotCardInfo>({ loading: false });
     $: botAvailability = botId ? botStatusCache.store(botId) : readable(undefined);
     $: feeling = botId && worldUser ? botFeeling(worldUser.spaceUserId) : readable(undefined);
 

@@ -890,7 +890,9 @@ function setupWokaMenuHook() {
                                 }
                             });
                         } finally {
-                            if (isBotCard) wokaMenuStore.settle(menuData.userUuid, SUMMON_ANSWER);
+                            if (isBotCard && opening === wokaMenuOpening) {
+                                wokaMenuStore.settle(menuData.userUuid, SUMMON_ANSWER);
+                            }
                         }
                     });
                 }

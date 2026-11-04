@@ -58,3 +58,13 @@ describe("the card waits for its answers before showing buttons", () => {
         expect(get(wokaMenuStore)?.pending).toEqual(["membership"]);
     });
 });
+
+describe("wokaMenuStore opening", () => {
+    it("counts each opening, so a card opened again for the same person can ask again", () => {
+        wokaMenuStore.initialize("Bot", 1, "bot-1", undefined);
+        const first = get(wokaMenuStore)?.opening;
+        wokaMenuStore.initialize("Bot", 1, "bot-1", undefined);
+        expect(get(wokaMenuStore)?.opening).toBe((first ?? 0) + 1);
+        wokaMenuStore.clear();
+    });
+});

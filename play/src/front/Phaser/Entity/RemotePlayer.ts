@@ -179,7 +179,7 @@ export class RemotePlayer extends Character implements ActivatableInterface {
         for (const action of this.getDefaultWokaMenuActions()) {
             wokaMenuStore.addAction(action);
         }
-        this.addBotMessageWhenAllowed();
+        this.addBotMessageWhenAllowed(this.cardOpening);
         void this.addMembershipAction(this.cardOpening);
 
         // Send the remote player clicked event to the iframe listener
@@ -217,7 +217,8 @@ export class RemotePlayer extends Character implements ActivatableInterface {
                 icons: { membership: IconPlanet, pending: IconClock, roles: IconUserCog },
             });
         } finally {
-            wokaMenuStore.settle(this.userUuid, MEMBERSHIP_ANSWER);
+            // An answer from an earlier opening must not end the wait of the one that is open now
+            if (opening === this.cardOpening) wokaMenuStore.settle(this.userUuid, MEMBERSHIP_ANSWER);
         }
     }
 
@@ -364,7 +365,7 @@ export class RemotePlayer extends Character implements ActivatableInterface {
      * A bot's card gets Message once Orbit says its owner lets you message it, the way Summon waits for its answer.
      * Bots get a chat id only while bot chats are on. A card closed or showing someone else by then gets nothing.
      */
-    private addBotMessageWhenAllowed(): void {
+    private addBotMessageWhenAllowed(opening: number): void {
         const chatID = this.getChatID();
         const botId = botIdFromChatId(chatID);
         if (!chatID || !botId || !get(userIsConnected)) return;
@@ -379,7 +380,9 @@ export class RemotePlayer extends Character implements ActivatableInterface {
                 wokaMenuStore.addAction(this.messageAction(chatID));
             })
             .catch((error) => console.error("[RemotePlayer] Could not check whether you may message this bot:", error))
-            .finally(() => wokaMenuStore.settle(this.userUuid, BOT_MESSAGE_ANSWER));
+            .finally(() => {
+                if (opening === this.cardOpening) wokaMenuStore.settle(this.userUuid, BOT_MESSAGE_ANSWER);
+            });
     }
 
     /**

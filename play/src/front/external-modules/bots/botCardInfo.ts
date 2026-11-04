@@ -62,9 +62,9 @@ async function emotionsOf(botId: string): Promise<BotEmotions | null | undefined
 /**
  * What a bot's card shows: its description and how it feels about you. The card holds its buttons back until both are
  * in (`loading`), then both show at once. When Orbit or the bot server stalls, the card stops waiting after the same
- * time as for its other answers and shows what it has.
+ * time as for its other answers and shows what it has. `_opening` only makes a card opened again for the same bot ask again.
  */
-export function botCardInfo(botId: string): Readable<BotCardInfo> {
+export function botCardInfo(botId: string, _opening?: number): Readable<BotCardInfo> {
     return readable<BotCardInfo>({ loading: true }, (set) => {
         let live = true;
         const timer = setTimeout(() => {

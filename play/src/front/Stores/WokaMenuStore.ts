@@ -30,6 +30,8 @@ export interface WokaMenuData {
      * once none is left, so no button appears later and moves the others (#1790).
      */
     pending: string[];
+    /** Counts the times a card was opened, so a card opened again for the same person asks for its answers again. */
+    opening: number;
 }
 
 /** An answer that never comes must not keep the buttons away: after this long the card shows what it has. */
@@ -43,6 +45,7 @@ function createWokaMenuStore() {
         for (const timer of timers.values()) clearTimeout(timer);
         timers.clear();
     };
+    let openings = 0;
     const timerKey = (userUuid: string, key: string) => `${userUuid}#${key}`;
 
     return {
@@ -57,6 +60,7 @@ function createWokaMenuStore() {
         ) => {
             forgetTimers();
             set({
+                opening: ++openings,
                 pending: [],
                 wokaName,
                 actions: new Array<WokaMenuAction>(),
