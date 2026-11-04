@@ -17,10 +17,12 @@ import { checkOutboundUrl, guardedLookup } from './outboundGuard';
 import {
     MAX_TOOLS_PER_SERVER,
     fingerprintTool,
+    keptTools,
     syncCatalog,
     toRawTool,
     type RawTool,
     type SyncResult,
+    type ToolListCut,
     type ToolSuggester,
 } from './ToolCatalog';
 
@@ -83,7 +85,12 @@ export interface ToolServerEntry {
 const toolListCache = new Map<string, CachedTools>();
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour
 export const REQUEST_TIMEOUT = 90_000; // 90 seconds
-/** A server's list is read page by page; this many pages at most (#1654). */
+/**
+ * A server's list is read page by page; this many pages at most (#1654). Only a guard against a server that never stops
+ * (or whose cursor loops): servers page at 50 to 100 tools, so 20 pages is 1,000 to 2,000 tools, well past the 500 that
+ * are kept (MAX_TOOLS_PER_SERVER), which leaves room to count a server that has somewhat more. A server that still has
+ * pages left after these is reported as cut, with no count.
+ */
 const MAX_TOOL_PAGES = 20;
 
 /** Bounds for a bot's own tool-call timeout ("Patience"), matching Orbit's validation. */
@@ -568,13 +575,17 @@ export class MCPConnector {
     }
 
     /**
-     * Every tool a server lists, page after page (`nextCursor`), as the server gave them. Null when any page brings
-     * nothing usable: a half-read list is never kept or saved to Orbit as if it were the whole one, so the tools of the
-     * pages that were not read can't look removed or unconfirmed. The next read tries again.
+     * Every tool a server lists, page after page (`nextCursor`), as the server gave them, and no more than are kept
+     * (MAX_TOOLS_PER_SERVER): the list the model gets is the list Orbit saves. When the server has more, `cut` says so, with
+     * how many it has when every page was read (null when pages were left, so there was no count to give); a server with
+     * exactly as many as are kept is not cut. Null when any page brings nothing usable: a half-read list is never kept or
+     * saved to Orbit as if it were the whole one, so the tools of the pages that were not read can't look removed or
+     * unconfirmed. The next read tries again.
      */
-    private static async listAllTools(server: McpServerConfig): Promise<RawTool[] | null> {
-        const tools: RawTool[] = [];
+    private static async listAllTools(server: McpServerConfig): Promise<{ tools: RawTool[]; cut: ToolListCut | null } | null> {
+        const all: RawTool[] = [];
         let cursor: string | undefined;
+        let moreLeft = false;
         for (let page = 0; page < MAX_TOOL_PAGES; page++) {
             const response = await jsonRpcRequest(
                 server.serverUrl,
@@ -589,13 +600,17 @@ export class MCPConnector {
             }
             for (const item of response.result.tools) {
                 const tool = toRawTool(item);
-                if (tool) tools.push(tool);
+                if (tool) all.push(tool);
             }
             const next = response.result.nextCursor;
-            if (typeof next !== 'string' || !next || next === cursor || tools.length >= MAX_TOOLS_PER_SERVER) break;
+            moreLeft = typeof next === 'string' && !!next && next !== cursor;
+            if (!moreLeft) break;
             cursor = next;
         }
-        return tools;
+        const tools = keptTools(all);
+        const total = new Set(all.map((tool) => tool.name)).size;
+        const cut: ToolListCut | null = moreLeft ? { total: null } : total > MAX_TOOLS_PER_SERVER ? { total } : null;
+        return { tools, cut };
     }
 
     /** A tool list as the model gets it, with the readable titles the servers gave. */
@@ -698,9 +713,10 @@ export class MCPConnector {
                 return;
             }
 
-            const raw = await MCPConnector.listAllTools(server);
+            const read = await MCPConnector.listAllTools(server);
 
-            if (raw) {
+            if (read) {
+                const raw = read.tools;
                 const { tools: toolDefs, titles } = MCPConnector.toDefinitions(raw);
 
                 // Cache the result
@@ -717,7 +733,7 @@ export class MCPConnector {
                     addUniqueTool(toolDef, server, titles[toolDef.function.name], rawByName.get(toolDef.function.name));
                 }
                 const cachedAt = toolListCache.get(cacheKey)?.cachedAt;
-                void MCPConnector.saveListToOrbit(botId, server, raw, { adminApiUrl, adminApiToken }, options.suggest).then((outcome) => {
+                void MCPConnector.saveListToOrbit(botId, server, raw, { adminApiUrl, adminApiToken }, options.suggest, read.cut).then((outcome) => {
                     // Orbit did not get the list: forget it here too, so the next read tries to save it again (not in an hour)
                     if (outcome.result === 'skipped' && toolListCache.get(cacheKey)?.cachedAt === cachedAt) toolListCache.delete(cacheKey);
                 });
@@ -749,9 +765,10 @@ export class MCPConnector {
         server: McpServerConfig,
         raw: readonly RawTool[],
         orbit: { adminApiUrl: string; adminApiToken: string },
-        ask?: ToolSuggester
+        ask?: ToolSuggester,
+        cut?: ToolListCut | null
     ): Promise<SyncResult> {
-        return syncCatalog({ orbit, botId, serverId: server.id, server, raw, ask }).then((outcome) => {
+        return syncCatalog({ orbit, botId, serverId: server.id, server, raw, cut, ask }).then((outcome) => {
             if (outcome.result === 'skipped') console.warn(`[MCPConnector] Tool list of ${server.name} (${server.id}) not saved: ${outcome.reason}`);
             else if (outcome.result === 'saved' && outcome.saved.changed.length > 0) {
                 console.log(`[MCPConnector] ${outcome.saved.changed.length} tool(s) of ${server.name} changed and wait to be confirmed again`);
@@ -773,11 +790,12 @@ export class MCPConnector {
     ): Promise<{ read: false; reason: string } | { read: true; tools: number; saved: SyncResult } | null> {
         const server = (await this.loadServers(botId, adminApiUrl, adminApiToken)).find((candidate) => candidate.id === serverId);
         if (!server) return null;
-        const raw = await this.listAllTools(server);
-        if (!raw) return { read: false, reason: 'The server did not answer with a list of tools' };
+        const read = await this.listAllTools(server);
+        if (!read) return { read: false, reason: 'The server did not answer with a list of tools' };
+        const raw = read.tools;
         const { tools, titles } = this.toDefinitions(raw);
         toolListCache.set(`${botId}:${server.id}`, { tools, titles, raw, cachedAt: Date.now(), serverId: server.id });
-        const saved = await this.saveListToOrbit(botId, server, raw, { adminApiUrl, adminApiToken }, suggest);
+        const saved = await this.saveListToOrbit(botId, server, raw, { adminApiUrl, adminApiToken }, suggest, read.cut);
         // Orbit did not get it: the next read tries to save it again
         if (saved.result === 'skipped') toolListCache.delete(`${botId}:${server.id}`);
         return { read: true, tools: raw.length, saved };
