@@ -186,9 +186,13 @@
             <span class="ask-result" dir="auto">{ask.answer.result}</span>
         {/if}
     {:else if ask.answer?.spoken}
-        <span class="ask-who">You said something else, so nothing was done</span>
+        <span class="ask-who"
+            >{ask.kind === "question" ? "You answered out loud" : "You said something else, so nothing was done"}</span
+        >
     {:else if ask.answer?.typed}
-        <span class="ask-who">You typed something else, so nothing was done</span>
+        <span class="ask-who"
+            >{ask.kind === "question" ? "You answered by typing" : "You typed something else, so nothing was done"}</span
+        >
     {:else if ask.answer?.closed}
         <div class="ask-row">
             <span class="ask-who"><IconX />You closed this card, so nothing was done</span>
