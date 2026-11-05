@@ -56,6 +56,8 @@ describe("clearStageState (the scene closes, e.g. a portal)", () => {
 
         expect(stopStreaming).toHaveBeenCalledTimes(1);
         expect(get(isSpeakerStore)).toBe(false);
+        // The next room must not bind to the Stage the player left
+        expect(get(currentLiveStreamingSpaceStore)).toBeUndefined();
     });
 
     it("also ends speaking from the audience, the audience flag and the waiting link", () => {

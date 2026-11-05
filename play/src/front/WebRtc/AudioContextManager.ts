@@ -47,7 +47,8 @@ class AudioContextManager {
     public async resumeAll(): Promise<void> {
         const resumes: Promise<void>[] = [];
         this.audioContexts.forEach((context) => {
-            if (context.state === "suspended") {
+            // Safari also reports "interrupted" (a call, the screen lock); the DOM typings of this TypeScript do not list it
+            if (context.state === "suspended" || (context.state as string) === "interrupted") {
                 resumes.push(context.resume());
             }
         });

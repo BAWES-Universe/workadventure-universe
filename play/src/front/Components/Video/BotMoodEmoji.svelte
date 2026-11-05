@@ -2,7 +2,7 @@
     import { onDestroy } from "svelte";
     import { backOut } from "svelte/easing";
     import { LL } from "../../../i18n/i18n-svelte";
-    import { WORK_EMOJI, type BotFeeling } from "../../Chat/Bots/BotMood";
+    import { MOOD_NAME, WORK_EMOJI, type BotFeeling } from "../../Chat/Bots/BotMood";
 
     /**
      * The emoji beside a bot's Woka (#1667). The mood pops in when the bot starts talking, bobs while it talks and
@@ -35,7 +35,12 @@
     $: mood = feeling?.mood && (talking || recent) ? feeling.mood : undefined;
     $: work = !mood && feeling?.work ? feeling.work : undefined;
     $: shown = mood ?? (work ? WORK_EMOJI[work] : undefined);
-    $: label = work ? $LL.video.botWorking({ work: $LL.video.botWork[work]() }) : mood ? $LL.video.botMood() : "";
+    $: moodName = mood ? MOOD_NAME[mood as keyof typeof MOOD_NAME] : undefined;
+    $: label = work
+        ? $LL.video.botWorking({ work: $LL.video.botWork[work]() })
+        : moodName
+        ? $LL.video.botMoods[moodName]()
+        : "";
 
     function reduced(): boolean {
         return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
