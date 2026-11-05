@@ -99,11 +99,11 @@ const someone = {
     tags: ["member"],
 } as unknown as SpaceUserExtended;
 
-const askField = (revision = 0, answer?: Record<string, unknown>) =>
+const askField = (revision = 0, answer?: Record<string, unknown>, id = "act-1") =>
     JSON.stringify({
         v: 1,
         kind: "approval",
-        id: "act-1",
+        id,
         revision,
         title: "Send an email",
         lines: [{ label: "To", text: "Fahad" }],
@@ -230,7 +230,7 @@ describe("ProximityChatRoom card and private replies from a bot (#1658)", () => 
 
     it("does not hand a card that still waits to the next map, where nothing could answer it, but hands one that ended", () => {
         emit(botAsk(nora));
-        emit(botAsk(nora, { id: "act-2", body: askField(1, { option: "approve" }), revision: 1 }));
+        emit(botAsk(nora, { id: "act-2", body: askField(1, { option: "approve" }, "act-2"), revision: 1 }));
         expect(cards()).toHaveLength(2);
         room.stashHistoryForNextScene();
         const spaceRegistry = {
