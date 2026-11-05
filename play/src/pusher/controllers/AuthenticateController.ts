@@ -807,18 +807,23 @@ export class AuthenticateController extends BaseHttpController {
             // once the provider has revoked the tokens: a renewal that got in while it was revoking must not be kept.
             renewedTokenMemo.forgetPlayer(authTokenData.identifier);
             if (authTokenData.accessToken == undefined) {
-                throw Error("Cannot log out, no access token found.");
-            }
-            try {
-                // TODO: change that to use end session endpoint
-                // Use post logout redirect and id token hint to redirect on the logut session endpoint of the OpenId provider
-                // https://openid.net/specs/openid-connect-session-1_0.html#RPLogout
-                await openIDClient.logoutUser(authTokenData.accessToken);
-                if (authTokenData.refreshToken) {
-                    await openIDClient.logoutUser(authTokenData.refreshToken);
+                // A guest (anonymous) token never held an OpenID session: there is nothing to revoke on the
+                // provider. The token is verified, so the usual redirect flow below still applies.
+                debug(
+                    `AuthenticateController => /logout of a guest token (${authTokenData.identifier}), no OpenID session to revoke`
+                );
+            } else {
+                try {
+                    // TODO: change that to use end session endpoint
+                    // Use post logout redirect and id token hint to redirect on the logut session endpoint of the OpenId provider
+                    // https://openid.net/specs/openid-connect-session-1_0.html#RPLogout
+                    await openIDClient.logoutUser(authTokenData.accessToken);
+                    if (authTokenData.refreshToken) {
+                        await openIDClient.logoutUser(authTokenData.refreshToken);
+                    }
+                } finally {
+                    renewedTokenMemo.forgetPlayer(authTokenData.identifier);
                 }
-            } finally {
-                renewedTokenMemo.forgetPlayer(authTokenData.identifier);
             }
 
             // if no redirect, redirect to playUri and connect user to the world

@@ -95,6 +95,26 @@ describe("GET /logout", () => {
         expect(res.redirectedTo).toBe(playUri);
     });
 
+    it("sends a guest whose token holds no OpenID session back to the map without touching the provider", async () => {
+        verifyJWTToken.mockReturnValue({ identifier: "guest" });
+
+        const res = await callLogout({ playUri, token: "header.payload.signature" });
+
+        expect(logoutUser).not.toHaveBeenCalled();
+        expect(res.redirectedTo).toBe(playUri);
+    });
+
+    it("keeps the redirect flow for a guest whose token holds no OpenID session", async () => {
+        verifyJWTToken.mockReturnValue({ identifier: "guest" });
+        const redirect = "https://auth.example.com/end-session";
+
+        const res = await callLogout({ playUri, token: "header.payload.signature", redirect });
+
+        expect(logoutUser).not.toHaveBeenCalled();
+        expect(res.cookies.playUri).toBe(playUri);
+        expect(res.redirectedTo).toBe(redirect);
+    });
+
     it("forgets the renewed tokens it remembered for that player, and no one else's", async () => {
         verifyJWTToken.mockReturnValue({ identifier: "u", accessToken: "access", refreshToken: "refresh" });
         const renew = vi.fn().mockResolvedValue({ authToken: "renewed", accessToken: "new-access", checked: {} });
