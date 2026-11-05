@@ -744,6 +744,9 @@ export class MCPConnector {
             const cached = toolListCache.get(cacheKey);
 
             if (cached && Date.now() < cached.cachedAt + CACHE_TTL) {
+                // A list in the cache was read from a server that answered: a mark taken from Orbit's list while its
+                // `ok` was still on the way is old
+                MCPConnector.health.ok(botId, server.id);
                 const rawByName = new Map(cached.raw.map((tool) => [tool.name, tool]));
                 for (const tool of cached.tools) {
                     addUniqueTool(tool, server, cached.titles[tool.function.name], rawByName.get(tool.function.name));

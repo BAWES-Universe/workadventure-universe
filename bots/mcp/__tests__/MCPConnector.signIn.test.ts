@@ -191,6 +191,16 @@ describe('a refused sign-in', () => {
         expect(reports.map((r) => r.body.state)).toEqual(['ok']);
     });
 
+    it('does not list a server as down from a mark Orbit has not cleared yet, when its tools were just read', async () => {
+        servers = [{ ...base, authConfig: TOKEN_A, signInLostAt: '2026-11-05T09:54:00.000Z' }];
+        await discover();
+        // Orbit still shows the mark (its `ok` is on the way): the next reply reads it from Orbit's list again
+        const { tools, issues } = await discover();
+        expect(listCalls).toBe(1);
+        expect(tools).toHaveLength(1);
+        expect(issues).toEqual([]);
+    });
+
     it('leaves other servers working', async () => {
         servers = [
             { ...base, authConfig: TOKEN_A },
