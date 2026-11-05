@@ -80,7 +80,7 @@ What the worker does around a connector, so it does not have to:
 * an unknown adapter, a throw, a dropped stream or a provider that goes quiet ends that turn in text with reason `provider`;
 * each call's outcome goes back to the bot server as `provider.ok` / `provider.failed` (`part`, `adapter`, the HTTP `status` when
   there was one, `rejected: true` when the key itself was refused), for it to forward to Orbit's health endpoint;
-* the key arrives as a `Secret` and is never logged, counted, or sent anywhere.
+* the key arrives as a `Secret` and is never logged, counted, or put in a report; it is sent only to the provider it belongs to, in that provider's request.
 
 ## Run
 
@@ -116,7 +116,7 @@ npm test
 |---|---|---|
 | `VOICE_WORKER_PORT` | `8830` | |
 | `VOICE_WORKER_HOST` | `127.0.0.1` | The Dockerfile sets `0.0.0.0`. |
-| `VOICE_WORKER_SECRET` | none | Bearer token the bot server must present. Set it whenever the port is reachable by others. |
+| `VOICE_WORKER_SECRET` | none | Bearer token the bot server must present. Required whenever `VOICE_WORKER_HOST` is not a loopback address (the Docker image listens on `0.0.0.0`): the worker refuses to start without it. |
 | `VOICE_MAX_LANES` | `200` | Audio connections alive at once. Over it, new ones are refused. |
 | `VOICE_MAX_SESSIONS_PER_BOT` | `64` | Bubbles one bot may have open. |
 | `VOICE_MAX_UTTERANCE_SECONDS` | `180` | The longest stretch of one person's speech taken, in seconds of audio. Past it the words are offered back to them, never sent. |
