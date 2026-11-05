@@ -686,6 +686,8 @@ message Friend {
   FriendPresence presence = 4;
   // ISO date of the last room they entered; empty when unknown or hidden.
   string lastSeenAt = 5;
+  // Their Woka (bottom layer first); empty when they have none to show and the game draws its default.
+  repeated CharacterTextureMessage characterTextures = 6;
 }
 
 message FriendRequest {
@@ -695,8 +697,10 @@ message FriendRequest {
   string sharedWorld = 3;
   // ISO date the request was sent.
   string at = 4;
-  // Their chat ID, so the game can show their Woka; empty when unknown.
+  // Not sent any more: a chat ID is built from the person's email, so a request never carries it.
   string chatId = 5;
+  // Their Woka (bottom layer first); empty when they have none to show and the game draws its default.
+  repeated CharacterTextureMessage characterTextures = 6;
 }
 
 message BlockedPerson {

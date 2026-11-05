@@ -27,6 +27,7 @@ function friend(name: string, sessions: FriendSession[] = [], extra: Partial<Fri
         name,
         chatId: `@${name}:chat`,
         lastSeenAt: "",
+        characterTextures: [],
         presence: {
             online: sessions.length > 0,
             locationHidden: false,
@@ -162,6 +163,27 @@ describe("savedLook", () => {
     it("gives nothing for someone not listed", () => {
         expect(savedLook(undefined, wokas, colourOf)).toEqual({});
     });
+
+    it("draws the layers Orbit sent, also for a request that has no chat ID", () => {
+        const layers = [{ id: "body", url: "https://assets.test/body.png" }];
+        const fromLayers = (person: { characterTextures?: readonly unknown[] }) =>
+            person.characterTextures?.length ? "layers-woka" : undefined;
+        expect(
+            savedLook({ uuid: "u4", name: "Layla", chatId: "", characterTextures: layers }, wokas, colourOf, fromLayers)
+        ).toEqual({ picture: "layers-woka", color: "colour-of-Layla" });
+        // Their layers win over a saved woka found by chat ID; without layers the saved one still shows
+        expect(
+            savedLook(
+                { uuid: "u1", name: "Shahd", chatId: "@shahd:chat", characterTextures: layers },
+                wokas,
+                colourOf,
+                fromLayers
+            ).picture
+        ).toBe("layers-woka");
+        expect(
+            savedLook({ uuid: "u1", name: "Shahd", chatId: "@shahd:chat" }, wokas, colourOf, fromLayers).picture
+        ).toBe("shahd-woka");
+    });
 });
 
 describe("a People search result", () => {
@@ -187,6 +209,16 @@ describe("a People search result", () => {
         const asked = new Set<string>();
         expect(chatIdsToAsk(results, (uuid) => uuid === "here", asked)).toEqual(["@shahd:chat"]);
         expect(chatIdsToAsk(results, (uuid) => uuid === "here", asked)).toEqual([]);
+    });
+});
+
+describe("chatIdsToAsk with layers", () => {
+    it("does not ask Orbit about someone whose Woka layers it already sent", () => {
+        const people = [
+            { uuid: "a", name: "A", chatId: "@a:chat", characterTextures: [{ id: "body", url: "https://x/body.png" }] },
+            { uuid: "b", name: "B", chatId: "@b:chat", characterTextures: [] },
+        ];
+        expect(chatIdsToAsk(people, () => false, new Set())).toEqual(["@b:chat"]);
     });
 });
 

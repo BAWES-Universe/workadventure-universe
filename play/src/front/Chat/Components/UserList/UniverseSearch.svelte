@@ -4,7 +4,7 @@
     import { LL } from "../../../../i18n/i18n-svelte";
     import { friendsStore, relationshipsStore } from "../../Stores/FriendsStore";
     import { requestChatPerson } from "../../Stores/ChatPeopleLookup";
-    import { storedWokaStore } from "../../Stores/StoredWokaStore";
+    import { createLayerPictures } from "./LayerPictures";
     import FriendAvatar from "./FriendAvatar.svelte";
     import { chatIdsToAsk } from "./Friends";
     import type { ListedPerson } from "./Friends";
@@ -35,20 +35,8 @@
     let latest = 0;
     const askedChatIds = new Set<string>();
 
-    /**
-     * The Woka Orbit sent with a result, as a picture. One store per person for as long as the same layers are shown,
-     * so the list does not redraw them.
-     */
-    const foundPictures = new Map<string, { layers: string; picture: ReturnType<typeof storedWokaStore> }>();
-    function foundPicture(result: FriendSearchResult) {
-        const layers = result.characterTextures.map((texture) => texture.url).join("|");
-        if (!layers) return undefined;
-        const known = foundPictures.get(result.uuid);
-        if (known?.layers === layers) return known.picture;
-        const picture = storedWokaStore(result.characterTextures);
-        foundPictures.set(result.uuid, { layers, picture });
-        return picture;
-    }
+    /** The Woka Orbit sent with a result, as a picture (one store per person while the same layers are shown). */
+    const foundPicture = createLayerPictures();
 
     // A new query forgets the last results: the button searches again.
     $: if (query !== searchedFor && search.status !== "idle") {

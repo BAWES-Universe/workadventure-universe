@@ -39,6 +39,7 @@
     import UniverseSearch from "./UniverseSearch.svelte";
     import type { ListedPerson, WorldSighting } from "./Friends";
     import { chatIdsToAsk, otherWorldFaces, placeFriends, savedLook } from "./Friends";
+    import { createLayerPictures } from "./LayerPictures";
     import { friendNoticeStore } from "./FriendActions";
     import { IconChevronDown, IconMapPin } from "@wa-icons";
 
@@ -264,8 +265,15 @@
     ): Look {
         const person = sightings.get(uuid)?.person;
         if (person) return { picture: person.primary.pictureStore, color: person.primary.color ?? undefined };
-        return savedLook(listed, wokas, (chatId, name) => personColour(colours, chatId, name));
+        return savedLook(
+            listed,
+            wokas,
+            (chatId, name) => personColour(colours, chatId, name),
+            (found) => layerPicture(found)
+        );
     }
+    // Orbit sends the Woka of friends and requests as layers, drawn as they are; a chat ID lookup is only the fallback.
+    const layerPicture = createLayerPictures();
     $: lookOf = looks(worldSightings, friendsByUuid, $wokaByChatId, $colourByChatId);
     // The same look for a search result, which isn't on the friends list: its own chat ID, from Orbit's answer.
     function looksOfFound(
