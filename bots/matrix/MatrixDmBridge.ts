@@ -21,6 +21,7 @@ import { artifactIdOfCard } from '../ai/ArtifactReferences';
 import { audioFileNameFor } from '../utils/audioFileName';
 import { STEPS_KEY, type StepsField } from '../ai/ToolSteps';
 import { ANSWER_EVENT, parseTap, type ParsedTap } from '../mcp/ApprovalCard';
+import { toolSignInContent } from '../mcp/ToolSignInCard';
 import type { Asker, Outcome } from '../mcp/ToolApprovals';
 
 /** The field of a reply that names the bot's room: the game shows a card under it to go there. */
@@ -779,6 +780,12 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 await this.client.sendText(botUserId, event.room_id, reply.text);
             }
             reply.keep?.();
+            if (reply.toolSignIn) {
+                // A tool's sign-in expired and this person manages the bot (#1819): the game draws the Reconnect card from it
+                await this.client
+                    .sendMessage(botUserId, event.room_id, toolSignInContent(reply.toolSignIn, await this.botName(botId, config)))
+                    .catch((error) => console.warn(`[MatrixDmBridge] Could not send the Reconnect card from bot ${botId}:`, error?.message ?? error));
+            }
             for (const card of reply.artifacts ?? []) {
                 // A live artifact the bot made or changed: the game shows a card to open it
                 const { body, field } = artifactDirectMessage(card);

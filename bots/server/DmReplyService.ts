@@ -17,6 +17,7 @@ import type { PendingMedia } from '../memory/ConversationMemory';
 import type { ArtifactCard } from '../ai/ArtifactTools';
 import { ReplySteps, type StepsField } from '../ai/ToolSteps';
 import type { ReplyLimitReached } from '../ai/types';
+import type { ToolSignInCard } from '../mcp/ToolSignInCard';
 import type { ParsedFile } from '../services/FileParser';
 import { withoutNoteIds, type ChatUpload } from '../services/ChatFiles';
 import { chatFileKeeper, sentMediaJob } from '../services/ChatFileKeeper';
@@ -93,6 +94,8 @@ export interface DmReply {
     artifacts?: ArtifactCard[];
     /** The person reached a reply limit (#1159): no AI was called, and the game shows the fixed card instead. */
     replyLimit?: ReplyLimitReached;
+    /** A tool's sign-in expired and this person manages the bot (#1819): the Reconnect card to send after the reply. */
+    toolSignIn?: ToolSignInCard;
     /**
      * This message waited behind an answer in progress and was answered together with the others that waited (#1159):
      * nothing is sent for it. True once that one answer was given, false when it failed or was a reply limit card.
@@ -379,6 +382,7 @@ export class DmReplyService extends BaseBehavior {
         let promptTokens = 0;
         let completionTokens = 0;
         let providerFailed = false;
+        let toolSignIn: ToolSignInCard | undefined;
         // The bot's own "Show tool calls" switch (#742) decides whether this reply shows its steps line (#1545)
         let steps: ReplySteps | undefined;
         let showSteps: boolean | undefined;
@@ -428,6 +432,10 @@ export class DmReplyService extends BaseBehavior {
                 }
                 if (chunk.toolStepResults) {
                     if (steps?.finish(chunk.toolStepResults)) await showStepsNow();
+                    continue;
+                }
+                if (chunk.toolSignIn) {
+                    toolSignIn = chunk.toolSignIn;
                     continue;
                 }
                 // A reply limit: nothing was said and nothing is remembered as said
@@ -545,7 +553,7 @@ export class DmReplyService extends BaseBehavior {
             const made = this.aiService?.madeFor(item.originalUrl, item.url) ?? null;
             void chatFileKeeper.keepAll(admin, [sentMediaJob({ ...item, mimeType: item.mimeType || null, caption: item.caption || null }, where, made)]);
         };
-        return { text: replyText, media, keep, mediaSent, ...(roomLink ? { roomLink } : {}), ...(artifacts.length ? { artifacts } : {}) };
+        return { text: replyText, media, keep, mediaSent, ...(roomLink ? { roomLink } : {}), ...(artifacts.length ? { artifacts } : {}), ...(toolSignIn ? { toolSignIn } : {}) };
     }
 
     /**

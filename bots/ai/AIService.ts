@@ -22,6 +22,8 @@ import { sortToolsByName } from './toolOrder';
 import type { MapDataService } from '../server/MapDataService';
 import * as Sentry from '@sentry/node';
 import { MCPConnector, toolTimeoutMs, type ToolServerEntry } from '../mcp/MCPConnector';
+import { toolIssueNote, type ToolIssue } from '../mcp/ToolSignIn';
+import { ToolSignInShown, toolSignInCard, type ToolSignInCard } from '../mcp/ToolSignInCard';
 import type { ToolSuggester } from '../mcp/ToolCatalog';
 import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision } from '../mcp/ToolGate';
 import { ToolPolicySource } from '../mcp/ToolPolicy';
@@ -301,6 +303,12 @@ export class AIService {
                 abortSignal,
                 toolTimeoutMs(toolTimeoutSeconds)
             );
+            // The tool server turned the sign-in away: Orbit is told, and the bot stops calling it (#1819)
+            const refused = (rawResult as { signInRefused?: unknown } | null)?.signInRefused;
+            if (typeof refused === 'number') {
+                const adminApiToken = this.adminApiService?.['adminApiToken'];
+                if (adminApiToken) MCPConnector.noteRefused(entry, { adminApiUrl: this.adminApiUrl, adminApiToken }, refused);
+            }
             // Process MCP resource blobs (base64 binary data) by uploading to CDN
             // and returning CDN URLs so the AI can use send_image/send_audio/etc.
             if (Array.isArray(rawResult)) {
@@ -1018,7 +1026,7 @@ export class AIService {
             const isQwenModel = config.model.toLowerCase().includes('qwen');
 
             // Define tools for function calling
-            const { tools, toolServerMap } = await this.buildTools(
+            const { tools, toolServerMap, issues: toolIssues } = await this.buildTools(
                 botId,
                 botClient,
                 adminApiService || this.adminApiService,
@@ -1026,12 +1034,15 @@ export class AIService {
                 providerId,
                 this.gatePerson(botId, playerId, botClient, spaceName)
             );
+            // A tool whose sign-in expired, or that did not answer: the bot is told which, and the people who manage it get the card (#1819)
+            const toolSignIn = await this.toolSignInFor(botId, toolIssues, channel, botClient, spaceName, playerId);
+            if (toolSignIn) yield { content: '', done: false, toolSignIn };
             // In a bubble, what is on an approval card is for one person only: nothing is said before a tool that asks, and
             // nothing from a card is repeated in the chat (#1658). Added at the end, after what the provider caches.
             const nearbyRule = channel === 'world' && botClient && this.approvals && toolServerMap.size > 0 ? NEARBY_ASK_RULE : '';
             // With "Asks which way to go" on Never the bot says its pick and starts (#1661)
             const neverAsk = botId && this.approvals?.asksQuestions && (await this.approvals.settings(botId)).askWhichWay === 'never' ? NEVER_ASK_RULE : '';
-            const systemPrompt = [basePrompt, nearbyRule, neverAsk].filter(Boolean).join('\n\n');
+            const systemPrompt = [basePrompt, nearbyRule, neverAsk, toolIssueNote(toolIssues)].filter(Boolean).join('\n\n');
             if (turn) turn.artifactTools = tools.some((tool) => writesArtifact(tool?.function?.name ?? ''));
 
             // Generate stream with tools
@@ -2800,9 +2811,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     /**
      * Build tool definitions for function calling
      */
-    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService, channel: 'world' | 'dm' = 'world', providerId?: string, asking?: BotAccessPerson): Promise<{ tools: any[]; toolServerMap: Map<string, ToolServerEntry> }> {
+    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService, channel: 'world' | 'dm' = 'world', providerId?: string, asking?: BotAccessPerson): Promise<{ tools: any[]; toolServerMap: Map<string, ToolServerEntry>; issues: ToolIssue[] }> {
         const tools: any[] = [];
         const toolServerMap = new Map<string, ToolServerEntry>();
+        let issues: ToolIssue[] = [];
 
         if (botClient) {
             // Tool: Get people on the map
@@ -3007,6 +3019,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     { suggest: this.toolSuggesterFor(providerId, botId) }
                 );
                 const mcpTools = mcpResult.tools;
+                issues = mcpResult.issues ?? [];
 
                 // Transfer tool→server mapping to the outer-scope map
                 for (const [key, value] of mcpResult.toolServerMap) {
@@ -3049,7 +3062,62 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             }
         }
 
-        return { tools, toolServerMap };
+        return { tools, toolServerMap, issues };
+    }
+
+    /** Who was shown a Reconnect card for which outage (#1819). */
+    private readonly signInShown = new ToolSignInShown();
+
+    /**
+     * The Reconnect card for the people who manage this bot when a tool server turned its sign-in away (#1819). In a
+     * bubble it goes to that person alone, as a private event, and is taken back once the sign-in is back. In a direct
+     * message the card is returned for the reply to send as a notice. Nobody else sees it; no one is shown a card on a
+     * guess about who manages the bot.
+     */
+    private async toolSignInFor(
+        botId: string | undefined,
+        issues: readonly ToolIssue[],
+        channel: 'world' | 'dm',
+        botClient: BotClient | undefined,
+        spaceName: string | undefined,
+        playerId: number | undefined
+    ): Promise<ToolSignInCard | undefined> {
+        if (!botId) return undefined;
+        try {
+            const person = this.gatePerson(botId, playerId, botClient, spaceName);
+            const card = toolSignInCard(issues);
+            const key = `${botId}|${channel}|${spaceName ?? ''}|${channel === 'world' ? playerId : person.signedIn ? person.identifier : ''}`;
+            const nearby = channel === 'world' && !!botClient && !!spaceName && playerId !== undefined;
+            if (!card) {
+                if (nearby && this.signInShown.cleared(key)) {
+                    botClient!.sendAskEvent(spaceName!, playerId!, {
+                        kind: 'signin',
+                        id: `signin-${botId}`,
+                        revision: Math.floor(Date.now() / 1000),
+                        body: JSON.stringify({ lost: [] }),
+                    });
+                } else {
+                    this.signInShown.cleared(key);
+                }
+                return undefined;
+            }
+            if (!person.signedIn || !person.identifier) return undefined;
+            if (!(await this.toolGate.canManage(botId, person.identifier))) return undefined;
+            if (!this.signInShown.shouldShow(key, card)) return undefined;
+            if (nearby) {
+                botClient!.sendAskEvent(spaceName!, playerId!, {
+                    kind: 'signin',
+                    id: `signin-${botId}`,
+                    revision: Math.floor(Date.now() / 1000),
+                    body: JSON.stringify(card),
+                });
+                return undefined;
+            }
+            return channel === 'dm' ? card : undefined;
+        } catch (error) {
+            console.warn('[AIService] Could not show the Reconnect card:', error instanceof Error ? error.message : error);
+            return undefined;
+        }
     }
 
     /**

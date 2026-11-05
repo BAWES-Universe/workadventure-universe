@@ -155,6 +155,15 @@ export class ToolGate {
         return refusal('no_permission', verdict.line);
     }
 
+    /** Whether this person manages the bot's tools (Manage bots for it). False when Orbit can't say: a card is not shown on a guess. */
+    async canManage(botId: string, identifier: string): Promise<boolean> {
+        try {
+            return await this.managesTools(botId, identifier);
+        } catch {
+            return false;
+        }
+    }
+
     private managesTools(botId: string, identifier: string): Promise<boolean> {
         const key = `${botId}|${identifier}`;
         const known = this.managers.get(key);

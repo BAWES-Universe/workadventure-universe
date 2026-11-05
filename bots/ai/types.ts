@@ -155,6 +155,8 @@ export interface ReplyLimitReached {
 }
 
 export interface AIStreamChunk {
+    /** A direct message's Reconnect card for the people who manage the bot (#1819): sent once before the reply. */
+    toolSignIn?: import('../mcp/ToolSignInCard').ToolSignInCard;
     content: string; // Token content (empty string if done)
     done: boolean; // Whether this is the final chunk
     /** Set on the only chunk of a reply stopped by a reply limit (#1159). */
