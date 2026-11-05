@@ -5,6 +5,16 @@ vi.mock("../../../../i18n/i18n-svelte", async () => {
     const { readable } = await import("svelte/store");
     const video = {
         botMood: () => "In a good mood",
+        botMoods: {
+            happy: () => "Happy",
+            content: () => "Content",
+            cheeky: () => "Cheeky",
+            puzzled: () => "Puzzled",
+            worried: () => "Worried",
+            unimpressed: () => "Unimpressed",
+            annoyed: () => "Annoyed",
+            waving: () => "Waving",
+        },
         botWorking: ({ work }: { work: string }) => `Working: ${work}`,
         botWork: { read: () => "reading", search: () => "searching", write: () => "writing" },
     };
@@ -60,7 +70,7 @@ describe("the emoji beside a bot's Woka (#1667)", () => {
         mount({ mood: "😄", moodSeq: 1 }, true);
         await tick();
         expect(emoji()?.textContent?.trim()).toBe("😄");
-        expect(emoji()?.getAttribute("aria-label")).toBe("In a good mood");
+        expect(emoji()?.getAttribute("aria-label")).toBe("Happy");
         expect(emoji()?.querySelector(".bob")).not.toBeNull();
     });
 
