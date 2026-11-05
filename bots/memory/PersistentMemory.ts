@@ -818,6 +818,7 @@ export class PersistentMemory extends ConversationMemory {
             artifactCalls: undefined,
             turnMedia: undefined,
             sentAgain: undefined,
+            cardsAgain: undefined,
         };
     }
 
