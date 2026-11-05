@@ -10,7 +10,7 @@ import type { SpaceUser } from '@workadventure/messages';
 import { ConversationMemory } from '../memory/ConversationMemory';
 import { movementLogger } from '../utils/MovementLogger';
 import { BotClient } from '../client/BotClient';
-import { parseEmotionsFromResponse, appendStreamedChunk, detectEmotionPrefixAtEnd } from '../ai/EmotionParser';
+import { parseEmotionsFromResponse, appendStreamedChunk, detectEmotionPrefixAtEnd, moodOf, WAVE_MOOD } from '../ai/EmotionParser';
 import { createBatchState, batchAppend, batchFlush } from '../ai/StreamBatcher';
 import type { BehaviorMoves } from './behaviorModel';
 import { distance, distanceToRoute, nearestPointInCircle, nearestStopIndex, nextStop } from './leash';
@@ -505,6 +505,9 @@ export class SocialBehavior extends BaseBehavior {
             }
             
             try {
+                // A greeting is the bot speaking first, not an answer to someone who spoke to it, so it deliberately does
+                // not open the follow-up window (game #1220 option b: in a group the person uses the bot's name, summons
+                // it, or follows up on an answer). `onAnswerFinished` is therefore not called from here.
                 // Stream greeting word-by-word so it appears incrementally,
                 // matching the follow-up streaming UX.
                 const responseId = crypto.randomUUID();
@@ -916,7 +919,13 @@ export class SocialBehavior extends BaseBehavior {
                 this.bot,
                 this.adminApiService,
                 abortSignal,
-                images
+                images,
+                'world',
+                undefined,
+                undefined,
+                undefined,
+                false,
+                true // a person said it
             ), spaceName, botId, playerId, abortSignal)) {
                 if (chunk.reset) {
                     if (abortSignal?.aborted) break;
@@ -1008,7 +1017,9 @@ export class SocialBehavior extends BaseBehavior {
                     
                     // Parse emotions from AI response (unified emotion system)
                     const parsedResponse = parseEmotionsFromResponse(fullMessage);
-                    let processedMessage = parsedResponse.cleanedResponse;
+                    // The bot judged that this person is done talking with it (#1670): their window ends and nothing is said, whatever was written
+                    const personDone = this.personIsDone(spaceName, playerId, parsedResponse.emotions);
+                    let processedMessage = personDone ? '' : parsedResponse.cleanedResponse;
                     
                     // Update emotions from AI analysis
                     if (parsedResponse.emotions && this.conversationMemory) {
@@ -1075,7 +1086,7 @@ export class SocialBehavior extends BaseBehavior {
                     // Send processed message via stream final chunk
                     if (processedMessage.trim()) {
                         // Send the final chunk with the complete cleaned message
-                        this.bot?.sendStreamMessage(spaceName, responseId, '', true, processedMessage);
+                        this.bot?.sendStreamMessage(spaceName, responseId, '', true, processedMessage, false, undefined, false, undefined, moodOf(parsedResponse.emotions));
 
                         // Store in memory
                         if (this.conversationMemory) {
@@ -1094,7 +1105,8 @@ export class SocialBehavior extends BaseBehavior {
                         }
                     } else {
                         // Response contained only emotion/control blocks — finalize with empty content to close bubble
-                        this.bot?.sendStreamMessage(spaceName, responseId, '', true, '');
+                        // A wave on the bot's box when the person said they are done; otherwise nothing to show
+                        this.bot?.sendStreamMessage(spaceName, responseId, '', true, '', false, undefined, false, undefined, personDone ? WAVE_MOOD : undefined);
                     }
                     break;
                 }
@@ -1259,7 +1271,7 @@ export class SocialBehavior extends BaseBehavior {
                     
                     if (cleanedMessage.trim()) {
                         // Send message to space - all followers in the space will receive it
-                        this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, cleanedMessage.trim());
+                        this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, cleanedMessage.trim(), false, undefined, false, undefined, moodOf(parsedResponse.emotions));
                         // Store in memory for the first follower (representative of the group)
                         this.conversationMemory?.addMessage(botId, followerPlayer.userId, cleanedMessage.trim(), 'bot', spaceName);
                     } else {
@@ -1428,7 +1440,7 @@ export class SocialBehavior extends BaseBehavior {
                     
                     if (cleanedMessage.trim()) {
                         // Send message to space - all followers in the space will receive it
-                        this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, cleanedMessage.trim());
+                        this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, cleanedMessage.trim(), false, undefined, false, undefined, moodOf(parsedResponse.emotions));
                         // Store in memory for the first follower (representative of the group)
                         this.conversationMemory?.addMessage(botId, followerPlayer.userId, cleanedMessage.trim(), 'bot', spaceName);
                     } else {
@@ -1575,7 +1587,7 @@ export class SocialBehavior extends BaseBehavior {
                     
                     if (cleanedMessage.trim()) {
                         if (this.bot && this.currentSpaceName === spaceName && this.activeConversations.has(playerId)) {
-                            this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, '', true, cleanedMessage.trim());
+                            this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, '', true, cleanedMessage.trim(), false, undefined, false, undefined, moodOf(parsedResponse.emotions));
                             this.conversationMemory?.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
                         }
                     } else {
@@ -1720,7 +1732,7 @@ export class SocialBehavior extends BaseBehavior {
                     // Send response
                     if (cleanedMessage.trim()) {
                         if (this.bot && this.currentSpaceName === spaceName && this.activeConversations.has(playerId)) {
-                            this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', true, cleanedMessage.trim());
+                            this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', true, cleanedMessage.trim(), false, undefined, false, undefined, moodOf(parsedResponse.emotions));
                             // Record bot's message in memory
                             this.conversationMemory?.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
                         }
@@ -1910,7 +1922,7 @@ export class SocialBehavior extends BaseBehavior {
                     // Send response
                     if (cleanedMessage.trim()) {
                         if (this.bot && this.currentSpaceName === spaceName && this.activeConversations.has(playerId)) {
-                            this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', true, cleanedMessage.trim());
+                            this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', true, cleanedMessage.trim(), false, undefined, false, undefined, moodOf(parsedResponse.emotions));
                             // Record bot's message in memory
                             this.conversationMemory?.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
                         }

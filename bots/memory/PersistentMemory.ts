@@ -814,9 +814,11 @@ export class PersistentMemory extends ConversationMemory {
             // The turn being answered belongs to the chat it is in, never to a copy in another one
             pendingArtifacts: undefined,
             dmRoomId: undefined,
+            pointedArtifacts: undefined,
             artifactCalls: undefined,
             turnMedia: undefined,
             sentAgain: undefined,
+            cardsAgain: undefined,
         };
     }
 

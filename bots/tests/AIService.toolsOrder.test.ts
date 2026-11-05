@@ -103,7 +103,7 @@ describe("AIService – cache-friendly request shape (issue #1333)", () => {
             getAvailableAIProviders: vi.fn().mockResolvedValue([]),
         };
         mockGenerateStream.mockImplementationOnce(plainStream);
-        const botClient: any = { getRoomUrl: () => "http://play/_/r/m.json" };
+        const botClient: any = { getRoomUrl: () => "http://play/_/r/m.json", holdSpeech: () => undefined, releaseSpeech: () => undefined };
         const svc = new AIService({ getMemory: vi.fn(() => ({ userUuid: "u" })), getPendingMediaNotice: vi.fn(() => "") }, admin, "http://admin.local");
         for await (const _ of svc.generateBotResponseStream("bot-7", 42, "hi", "You are Zed.", "p", "space-1", "", botClient, admin)) { /* drain */ }
         return mockGenerateStream.mock.calls[0];

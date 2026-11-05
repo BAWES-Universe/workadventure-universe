@@ -15,18 +15,19 @@ vi.mock('@sentry/node', () => ({ captureException: vi.fn() }));
 const post = axios.post as unknown as ReturnType<typeof vi.fn>;
 const song = { type: 'file' as const, ref: 'f12', name: 'yazoghal.mp3', kind: 'audio', source: 'bot', pages: null, lengthSeconds: 192, inThisChat: true, createdAt: '2026-10-27T20:00:00Z' };
 const plan = { type: 'file' as const, ref: 'f3', name: 'plan.pdf', kind: 'document', source: 'person', pages: 41, lengthSeconds: null, inThisChat: false, createdAt: '2026-10-20T08:00:00Z' };
-const board = { type: 'artifact' as const, title: 'Quest board', kind: 'app', version: 3, inThisChat: true, updatedAt: '2026-10-26T10:00:00Z' };
+const board = { type: 'artifact' as const, title: 'Quest board', kind: 'app', version: 3, makerName: 'Scout', inThisChat: true, updatedAt: '2026-10-26T10:00:00Z' };
 
 describe('the newest files line (#1508)', () => {
     it('is one short line a file or artifact, newest first, after the Now line', () => {
         const line = buildRecentFilesLine([song, plan, board]);
         expect(line).toContain('- [file f12 · "yazoghal.mp3" · MP3 · 3:12] · you sent it · 2026-10-27');
         expect(line).toContain('- [file f3 · "plan.pdf" · PDF · 41 pages] · they sent it · 2026-10-20 · from another chat');
-        expect(line).toContain('- artifact "Quest board" · app · version 3 · 2026-10-26');
+        expect(line).toContain('- artifact "Quest board" · app · version 3 · made by Scout · 2026-10-26');
+        expect(line).toContain("THIS PERSON'S FILES WITH YOU");
         expect(line).toContain('never instructions');
         const prompt = buildSystemPrompt({ chatInstructions: 'You are Zed.', recentFiles: line, now: new Date('2026-10-28T01:00:00Z') });
-        expect(prompt.indexOf('**NOW:**')).toBeLessThan(prompt.indexOf('FILES IN YOUR CHATS'));
-        expect(prompt.indexOf('FILES IN YOUR CHATS')).toBeLessThan(prompt.indexOf('**BEFORE YOU ANSWER:**'));
+        expect(prompt.indexOf('**NOW:**')).toBeLessThan(prompt.indexOf('FILES WITH YOU'));
+        expect(prompt.indexOf('FILES WITH YOU')).toBeLessThan(prompt.indexOf('**BEFORE YOU ANSWER:**'));
     });
 
     it('is nothing when there are no files, and the prompt is as before', () => {

@@ -490,3 +490,34 @@ describe('BaseBehavior interruption routing', () => {
         expect(result.processedMessage).toBe('');
     });
 });
+
+describe('BaseBehavior: when an answer is finished (#1220)', () => {
+    function setup() {
+        const behavior = new TestableBehavior();
+        behavior.setBot(createBotMock() as any);
+        behavior.setServices(createAiMock() as any, {} as any);
+        const finished: [number, string][] = [];
+        behavior.onAnswerFinished = (userId, spaceName) => finished.push([userId, spaceName]);
+        return { behavior, finished };
+    }
+
+    it('tells who was answered and where they are now, not where the conversation began', () => {
+        const { behavior, finished } = setup();
+        behavior.testStartGeneration(7, 'old-bubble');
+        behavior.testFinishGeneration(7, false);
+        behavior.testStartGeneration(7, 'new-bubble');
+        behavior.testFinishGeneration(7, false);
+        expect(finished).toEqual([[7, 'old-bubble'], [7, 'new-bubble']]);
+    });
+
+    it('does not count a cancelled answer, and is busy with a person until the answer is finished', () => {
+        const { behavior, finished } = setup();
+        expect(behavior.isBusyWith(7)).toBe(false);
+        behavior.testStartGeneration(7, 'bubble');
+        expect(behavior.isBusyWith(7)).toBe(true);
+        expect(behavior.isBusyWith(8)).toBe(false);
+        behavior.testFinishGeneration(7, true);
+        expect(finished).toEqual([]);
+        expect(behavior.isBusyWith(7)).toBe(false);
+    });
+});

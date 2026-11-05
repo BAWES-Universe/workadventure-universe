@@ -1094,8 +1094,12 @@ export class BotAPI {
                 const companionChanged = 'companionTextureId' in updatesToApply &&
                     (updatesToApply.companionTextureId ?? null) !== (existingConfig.companionTextureId ?? null);
 
-                // If name, texture or companion changed and bot is running, despawn and respawn immediately
-                if ((nameChanged || textureChanged || companionChanged) && this.botManager.getBot(botId)) {
+                // The voice tag is part of the bot's token, so turning voice on or off reconnects the bot too
+                const voiceChanged = 'voiceEnabled' in updatesToApply &&
+                    !!updatesToApply.voiceEnabled !== !!existingConfig.voiceEnabled;
+
+                // If name, texture, companion or voice changed and bot is running, despawn and respawn immediately
+                if ((nameChanged || textureChanged || companionChanged || voiceChanged) && this.botManager.getBot(botId)) {
                     console.log(`[BotAPI] Bot ${botId} name, texture or companion changed, respawning with new config`);
                     // Clear cached MCP tools so fresh tool definitions are fetched on respawn
                     MCPConnector.clearCache(botId);
@@ -1211,6 +1215,33 @@ export class BotAPI {
             } catch (error: any) {
                 console.error('[BotAPI] Error getting bot status:', error);
                 res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Read a tool server's whole list now and save it to Orbit with a suggested heading per tool (#1654): the game calls
+        // it when a server is connected and on Test server. A suggestion is only that; a person confirms each tool in Orbit.
+        this.app.post('/api/bots/:botId/mcp-servers/:serverId/refresh-tools', requireManager, async (req: BotAPIRequest, res: Response) => {
+            try {
+                const { botId, serverId } = req.params;
+                const admin = this.botManager.getAdminApiService();
+                if (!admin.isConfigured()) {
+                    res.status(503).json({ error: 'The admin API is not configured' });
+                    return;
+                }
+                const config = await admin.getBotConfiguration(botId);
+                const outcome = await this.botManager.getAIService().refreshServerTools(botId, serverId, config?.aiProviderRef, admin);
+                if (!outcome) {
+                    res.status(404).json({ error: 'No such tool server' });
+                    return;
+                }
+                if (!outcome.read) {
+                    res.status(502).json({ error: outcome.reason });
+                    return;
+                }
+                res.json({ tools: outcome.tools, saved: outcome.saved.result });
+            } catch (error: any) {
+                console.error('[BotAPI] Error refreshing the tools of a server:', error);
+                res.status(500).json({ error: 'Could not read the tools' });
             }
         });
 

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AIService } from '../ai/AIService';
 import type { TurnMedia } from '../ai/ArtifactMedia';
 import { MCPConnector } from '../mcp/MCPConnector';
+import { openToolGate } from './helpers/openToolGate';
 
 vi.mock('../client/BotClient', () => ({ BotClient: vi.fn() }));
 
@@ -39,7 +40,7 @@ function botClient() {
 }
 
 function service(memory?: Record<string, unknown>) {
-    const ai = new AIService(null!, null!, '');
+    const ai = openToolGate(new AIService(null!, null!, ''));
     (ai as unknown as { conversationMemory: unknown }).conversationMemory = { getMemory: () => memory };
     return ai;
 }
@@ -48,7 +49,7 @@ const make = { id: 't1', name: 'make_artifact', arguments: JSON.stringify({ titl
 
 describe('artifact tools in AIService', () => {
     it('offers them in a bubble and in a direct message when Orbit is set up, and not otherwise', async () => {
-        const ai = new AIService(null!, null!, '');
+        const ai = openToolGate(new AIService(null!, null!, ''));
         const names = async (client: unknown, orbit: unknown, channel: 'world' | 'dm') =>
             (await ai['buildTools']('bot1', client as never, orbit as never, channel)).tools.map((tool: { function: { name: string } }) => tool.function.name);
         const artifactNames = ['make_artifact', 'change_artifact', 'read_artifact', 'list_artifacts'];
@@ -91,6 +92,52 @@ describe('artifact tools in AIService', () => {
         );
         expect(memory.pendingArtifacts).toEqual([{ id: 'art-1', version: 1, title: 'Quests board', kind: 'app', maker: 'Scout' }]);
         expect(result.result).toMatchObject({ success: true });
+    });
+
+    it("opens another bot's artifact only for an id the person wrote or replied to, never one a bot said (game #1781)", async () => {
+        const mine = '0b7c1d2e-1111-4222-8333-944455556666';
+        const botSaid = '1c8d2e3f-2222-4333-9444-a55566667777';
+        const replied = '2d9e3f40-3333-4444-a555-b66677778888';
+        const memory: Record<string, unknown> = {
+            userUuid: 'uuid-9',
+            playerName: 'Alice',
+            dmRoomId: '!dm:matrix.test',
+            pendingArtifacts: [],
+            pointedArtifacts: [replied],
+            conversationHistory: [
+                { sender: 'person', message: `can you open https://orbit.example/a/${mine}` },
+                { sender: 'bot', message: `sure, also https://orbit.example/a/${botSaid}` },
+            ],
+        };
+        const orbit = admin({ readArtifact: vi.fn(async () => ({ artifact: summary, version: { number: 1, summary: null }, content: '<p>x</p>', hidden: false })) });
+        const read = { id: 't2', name: 'read_artifact', arguments: JSON.stringify({ id: mine }) };
+        await service(memory)['executeToolCalls']([read], undefined, orbit as never, undefined, 'uuid-9', 'matrix-dm', 'bot1', -3);
+        expect(orbit.readArtifact).toHaveBeenCalledWith(
+            mine,
+            expect.objectContaining({ botId: 'bot1', chat: { kind: 'dm', ref: '!dm:matrix.test' }, referencedArtifactIds: [replied, mine] }),
+            null
+        );
+    });
+
+    it('counts a pasted link only while it is inside the messages the bot reads (game #1781)', async () => {
+        const old = '0b7c1d2e-1111-4222-8333-944455556666';
+        const recent = '1c8d2e3f-2222-4333-9444-a55566667777';
+        const memory: Record<string, unknown> = {
+            userUuid: 'uuid-9',
+            playerName: 'Alice',
+            dmRoomId: '!dm:matrix.test',
+            pendingArtifacts: [],
+            conversationHistory: [
+                { sender: 'person', message: `https://orbit.example/a/${old}` },
+                { sender: 'bot', message: 'ok' },
+                { sender: 'person', message: `https://orbit.example/a/${recent}` },
+            ],
+        };
+        const ai = service(memory);
+        (ai as unknown as { conversationMemory: unknown }).conversationMemory = { getMemory: () => memory, windowFor: () => 2 };
+        const orbit = admin({ readArtifact: vi.fn(async () => ({ artifact: summary, version: { number: 1, summary: null }, content: '<p>x</p>', hidden: false })) });
+        await ai['executeToolCalls']([{ id: 't3', name: 'read_artifact', arguments: JSON.stringify({ id: old }) }], undefined, orbit as never, undefined, 'uuid-9', 'matrix-dm', 'bot1', -3);
+        expect(orbit.readArtifact).toHaveBeenCalledWith(old, expect.objectContaining({ referencedArtifactIds: [recent] }), null);
     });
 
     it('in a direct message with no room known: makes nothing', async () => {

@@ -142,7 +142,7 @@ describe("AIService and the provider's prompt cache", () => {
                 yield { content: "ok", done: false };
                 yield { content: "", done: true, metadata: { tokensUsed: 3, promptTokens: 2, completionTokens: 1 } };
             });
-            await run(new AIService(memory, admin, "http://admin.local"), admin, "Be a pirate.", { getRoomUrl: () => "https://play.example/@/uni/world/lobby" });
+            await run(new AIService(memory, admin, "http://admin.local"), admin, "Be a pirate.", { getRoomUrl: () => "https://play.example/@/uni/world/lobby", holdSpeech: () => undefined, releaseSpeech: () => undefined });
 
             expect(config.promptCacheEnds).toHaveLength(2);
             const [rules, room] = config.promptCacheEnds;
