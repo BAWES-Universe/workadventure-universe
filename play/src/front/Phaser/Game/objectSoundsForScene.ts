@@ -29,7 +29,20 @@ export function startObjectSounds(
     audioContainer.hidden = true;
     audioContainer.dataset.testid = "object-sounds";
     document.body.append(audioContainer);
-    const retryOnGesture = () => objectSounds.retry();
+    // The events that let a browser start a sound, as for the room music: iPhone counts a touch when the finger lifts
+    // (a pointerdown from a finger does not count there), a mouse when its button goes down.
+    const gestures = ["pointerdown", "pointerup", "touchend", "keydown"] as const;
+    const disarmGestures = () => {
+        for (const type of gestures) window.removeEventListener(type, retryOnGesture, { capture: true });
+    };
+    const retryOnGesture = (event: Event) => {
+        const pointerType = (event as PointerEvent).pointerType;
+        if (pointerType !== undefined && (event.type === "pointerdown") !== (pointerType === "mouse")) {
+            return;
+        }
+        disarmGestures();
+        objectSounds.retry();
+    };
     const objectSounds = new ObjectSounds(
         {
             objects: function* () {
@@ -70,8 +83,9 @@ export function startObjectSounds(
             },
             onNotAllowed: () => {
                 audioManagerVisibilityStore.set("visible");
-                window.addEventListener("pointerdown", retryOnGesture, { capture: true, once: true });
-                window.addEventListener("keydown", retryOnGesture, { capture: true, once: true });
+                for (const type of gestures) {
+                    window.addEventListener(type, retryOnGesture, { capture: true, passive: true });
+                }
             },
         },
         initial,
@@ -87,8 +101,7 @@ export function startObjectSounds(
             unsubscribeControls();
             retrySubscription.unsubscribe();
             entitiesSubscription.unsubscribe();
-            window.removeEventListener("pointerdown", retryOnGesture, { capture: true });
-            window.removeEventListener("keydown", retryOnGesture, { capture: true });
+            disarmGestures();
             objectSounds.destroy();
             audioContainer.remove();
         },

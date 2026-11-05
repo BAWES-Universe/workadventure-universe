@@ -3,10 +3,13 @@
     import Debug from "debug";
     import * as Sentry from "@sentry/svelte";
     import type { Readable } from "svelte/store";
+    import { watchBotAudio } from "../../../Chat/Bots/VoiceBots";
 
     export let streamStore: Readable<MediaStream | undefined>;
     export let outputDeviceId: string | undefined = undefined;
     export let isBlocked: Readable<boolean>;
+    /** Set when this is a voice bot's sound: the Voice button asks for a tap if the browser will not start it. */
+    export let voiceBotSpaceUserId: string | undefined = undefined;
 
     const debug = Debug("AudioStream");
 
@@ -77,6 +80,13 @@
 
     let destroyed = false;
 
+    let unwatchBotAudio: (() => void) | undefined;
+    function watchSound(element: HTMLAudioElement | undefined, botSpaceUserId: string | undefined) {
+        unwatchBotAudio?.();
+        unwatchBotAudio = element && botSpaceUserId ? watchBotAudio(botSpaceUserId, element) : undefined;
+    }
+    $: watchSound(audioElement, voiceBotSpaceUserId);
+
     $: stream = $streamStore ? $streamStore : undefined;
 
     $: if (audioElement && stream) {
@@ -104,6 +114,7 @@
 
     onDestroy(() => {
         destroyed = true;
+        unwatchBotAudio?.();
     });
 </script>
 

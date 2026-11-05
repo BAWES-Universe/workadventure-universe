@@ -2,7 +2,12 @@ import type { Readable, Unsubscriber } from "svelte/store";
 import { derived, get, writable } from "svelte/store";
 import type { Subscription } from "rxjs";
 import { userCanModerateCallsStore } from "../../Stores/GameStore";
-import { isListenerStore, isSpeakerStore } from "../../Stores/MediaStore";
+import {
+    clearAudienceTalking,
+    isListenerStore,
+    isSpeakerStore,
+    listenerWaitingMediaStore,
+} from "../../Stores/MediaStore";
 import { currentLiveStreamingSpaceStore } from "../../Stores/MegaphoneStore";
 import type { SpaceInterface, SpaceUserExtended } from "../SpaceInterface";
 import type { RaisedHand } from "./RaiseHandStore";
@@ -160,4 +165,27 @@ function bindPodiumSpace(space: SpaceInterface): () => void {
         pendingInvitesStore.set(new Set());
         broughtOnStageStore.set(new Set());
     };
+}
+
+/**
+ * The scene closes (a portal, a reconnect): area-leave handlers do not run, so a speaker would arrive in the next room
+ * still marked as one, broadcasting with nothing to turn it off. Stops what this player sends to a Stage and forgets
+ * every Stage and Audience flag, so the next room starts clean.
+ */
+export function clearStageState(): void {
+    if (get(isSpeakerStore) || get(speakingFromAudienceStore)) {
+        try {
+            get(currentLiveStreamingSpaceStore)?.stopStreaming();
+        } catch (e) {
+            console.warn("Could not stop streaming to the Stage while closing the scene", e);
+        }
+    }
+    speakingFromAudienceStore.set(undefined);
+    isSpeakerStore.set(false);
+    isListenerStore.set(false);
+    listenerWaitingMediaStore.set(undefined);
+    clearAudienceTalking();
+    speakInvitationStore.set(undefined);
+    pendingInvitesStore.set(new Set());
+    broughtOnStageStore.set(new Set());
 }

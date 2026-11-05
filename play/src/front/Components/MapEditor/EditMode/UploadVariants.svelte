@@ -204,7 +204,6 @@
             id: prefab.id,
             wholeUpload: false,
             pictureIds: [],
-            otherRoomWamUrls: [],
         });
         if ($mapEditorSelectedEntityPrefabStore?.id === prefab.id) mapEditorSelectedEntityPrefabStore.set(first);
     }

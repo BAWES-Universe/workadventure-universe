@@ -46,6 +46,19 @@ function createBrowserContext(): AudioContext | undefined {
     return Context ? new Context() : undefined;
 }
 
+let sharedContext: AudioContext | undefined;
+
+/**
+ * One Web Audio context for every player: the room music and each object's sound. iPhone starts a context only inside
+ * a tap, so a context made for each sound as the player walks into range would stay silent. The shared one, started
+ * by one tap, plays every later sound with its volume.
+ */
+function sharedBrowserContext(): AudioContext | undefined {
+    if (sharedContext && sharedContext.state !== "closed") return sharedContext;
+    sharedContext = createBrowserContext();
+    return sharedContext;
+}
+
 /** How long a host may take to answer the CORS check before the player stops waiting and treats it as unknown. */
 const CORS_CHECK_TIMEOUT_MS = 8000;
 
@@ -88,6 +101,8 @@ export class AudioPlayback {
     private context: AudioContext | undefined;
     private contextBlocked = false;
     private readonly gains = new WeakMap<HTMLAudioElement, GainNode>();
+    // This player's nodes in the shared context, disconnected on destroy so its elements can be freed.
+    private readonly nodes: AudioNode[] = [];
     // Web Audio needs CORS. false = this origin plays through a plain element (hardware volume only, as
     // before); it is asked again on every track, so a dropped connection only costs volume control briefly.
     private readonly originCors = new Map<string, boolean>();
@@ -113,7 +128,7 @@ export class AudioPlayback {
         private readonly createAudio: () => HTMLAudioElement = () => new Audio(),
         private readonly duration = 1600,
         private readonly audioContainer?: HTMLElement,
-        private readonly createContext: () => AudioContext | undefined = createBrowserContext,
+        private readonly createContext: () => AudioContext | undefined = sharedBrowserContext,
         private readonly checkCors: (url: string, signal: AbortSignal) => Promise<boolean> = hostAllowsCors
     ) {}
 
@@ -254,10 +269,13 @@ export class AudioPlayback {
         this.release(this.outgoing);
         this.current = this.outgoing = undefined;
         this.idleMedia.length = 0;
-        if (this.context) {
-            this.context.onstatechange = null;
+        const context = this.context;
+        if (context) {
+            // The context is shared with the other players: leave it running, only let go of this player's part.
+            context.removeEventListener("statechange", this.onContextState);
             if (typeof document !== "undefined") document.removeEventListener("visibilitychange", this.onVisible);
-            void this.context.close().catch(() => undefined);
+            for (const node of this.nodes) node.disconnect();
+            this.nodes.length = 0;
             this.context = undefined;
         }
         this.onState(undefined);
@@ -462,22 +480,7 @@ export class AudioPlayback {
         try {
             const context = this.createContext();
             if (!context) return undefined;
-            context.onstatechange = () => {
-                if (this.destroyed) return;
-                if (context.state === "running") {
-                    if (!this.contextBlocked) return;
-                    this.contextBlocked = false;
-                    if (this.current?.confirmed) this.onState("playing");
-                    return;
-                }
-                // Screen lock, a call or backgrounding silences the graph while the element keeps "playing".
-                const slot = this.current;
-                if (slot?.graph && slot.confirmed && this.canPlay() && !slot.media.paused) {
-                    this.contextBlocked = true;
-                    this.resumeContext();
-                    this.onState("not_allowed");
-                }
-            };
+            context.addEventListener("statechange", this.onContextState);
             this.context = context;
             if (typeof document !== "undefined") document.addEventListener("visibilitychange", this.onVisible);
         } catch {
@@ -485,6 +488,24 @@ export class AudioPlayback {
         }
         return this.context;
     }
+
+    private readonly onContextState = (): void => {
+        const context = this.context;
+        if (this.destroyed || !context) return;
+        if (context.state === "running") {
+            if (!this.contextBlocked) return;
+            this.contextBlocked = false;
+            if (this.current?.confirmed) this.onState("playing");
+            return;
+        }
+        // Screen lock, a call or backgrounding silences the graph while the element keeps "playing".
+        const slot = this.current;
+        if (slot?.graph && slot.confirmed && this.canPlay() && !slot.media.paused) {
+            this.contextBlocked = true;
+            this.resumeContext();
+            this.onState("not_allowed");
+        }
+    };
 
     private readonly onVisible = (): void => {
         if (document.visibilityState === "visible") this.resumeContext();
@@ -509,6 +530,7 @@ export class AudioPlayback {
             source.connect(gain);
             gain.connect(context.destination);
             this.gains.set(media, gain);
+            this.nodes.push(source, gain);
             return gain;
         } catch {
             // Back to plain playback exactly as before: CORS mode would stop a host without CORS from loading.

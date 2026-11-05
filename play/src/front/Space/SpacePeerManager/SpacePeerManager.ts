@@ -16,6 +16,7 @@ import { bindMuteEventsToSpace } from "../Utils/BindMuteEvents";
 import { bindRaiseHandEventsToSpace } from "../RaiseHand/BindRaiseHandEvents";
 import { myHandRaisedStore, registerConversationSpace } from "../RaiseHand/RaiseHandStore";
 import { holdAutoLowerHand } from "../RaiseHand/AutoLowerHand";
+import { trackVoiceSpace } from "../../Chat/Bots/VoiceBots";
 import { CommunicationType } from "../../Livekit/LivekitConnection";
 import { audioContextManager } from "../../WebRtc/AudioContextManager";
 import { DefaultCommunicationState } from "./DefaultCommunicationState";
@@ -232,6 +233,8 @@ export class SpacePeerManager {
         // A hand can be raised in a conversation (bubble or meeting room). Podiums are wired in PodiumStore.
         if (this.space.filterType === FilterType.ALL_USERS) {
             this.unsubscribes.push(registerConversationSpace(this.space));
+            // A voice bot in this bubble or meeting: its Voice button, and our choice of how to talk with it (#1666)
+            this.unsubscribes.push(trackVoiceSpace(this.space));
             this.unsubscribes.push(holdAutoLowerHand());
             this.unsubscribes.push(
                 this.handRaisedStore.subscribe((raised) => {

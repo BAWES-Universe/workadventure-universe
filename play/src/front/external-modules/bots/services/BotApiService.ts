@@ -13,6 +13,17 @@ import { freshOrbitAccessToken, type GameTokenHolder } from "../../admin-api/orb
 import type { PushOverview, PushSettings } from "../../../Notification/Push/PushSettings";
 import { ChatPusherSchema, type ChatPusher, type PushActivityReport } from "../../../Notification/Push/PushChat";
 import { readBotUsage, type BotUsage, type UsageRange } from "../usageModel";
+import {
+    readAllowedMore,
+    readBotToolSettings,
+    readServerTools,
+    type AllowedMore,
+    type BotToolSettings,
+    type Heading,
+    type ServerTools,
+    type Setting,
+} from "../toolsModel";
+import { readBotVoice, readVoiceChoices, type BotVoice, type FullVoiceProfile, type VoiceChoice } from "../voiceModel";
 import { classifySummonFailure, type SummonResult } from "./summonFailure";
 
 interface AuthError extends Error {
@@ -535,6 +546,115 @@ export class BotApiService {
         } catch {
             return null;
         }
+    }
+
+    /**
+     * A bot's voice for the people who manage it (Orbit #740, game #1668): on or off, the versions, the keys its maker
+     * lent here, what Universe AI starts from and the server's voice limits. Throws when Orbit can't say.
+     */
+    async getBotVoice(botId: string): Promise<BotVoice> {
+        return this.withPermissionsTimeout(async (signal) => {
+            const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/voice`, { signal });
+            return this.voiceAnswer(await response.json());
+        });
+    }
+
+    /** Voice on or off for one bot. Answers with how it stands; a 409 says why it can't be turned on. */
+    async setBotVoiceEnabled(botId: string, enabled: boolean): Promise<BotVoice> {
+        return this.withPermissionsTimeout(async (signal) => {
+            const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/voice`, {
+                method: "PUT",
+                body: JSON.stringify({ enabled }),
+                signal,
+            });
+            return this.voiceAnswer(await response.json());
+        });
+    }
+
+    /**
+     * Saves a finished voice profile as the next version the bot speaks with: the draft is replaced, then published
+     * (the page has no draft of its own, every change is a version). Answers with how it stands.
+     */
+    async saveBotVoice(botId: string, profile: FullVoiceProfile): Promise<BotVoice> {
+        return this.withPermissionsTimeout(async (signal) => {
+            const base = `/api/bots/${encodeURIComponent(botId)}/voice`;
+            await this.fetch(`${base}/draft`, { method: "PUT", body: JSON.stringify(profile), signal });
+            const response = await this.fetch(`${base}/publish`, { method: "POST", body: "{}", signal });
+            return this.voiceAnswer(await response.json());
+        });
+    }
+
+    /** The bot speaks with an earlier version again. Answers with how it stands. */
+    async rollbackBotVoice(botId: string, number: number): Promise<BotVoice> {
+        return this.withPermissionsTimeout(async (signal) => {
+            const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/voice/rollback`, {
+                method: "POST",
+                body: JSON.stringify({ number }),
+                signal,
+            });
+            return this.voiceAnswer(await response.json());
+        });
+    }
+
+    /** The speaking voices of one source, "universe-ai" or a lent key's id, from the voice company's free list. */
+    async getBotVoices(botId: string, source: string): Promise<VoiceChoice[]> {
+        return this.withPermissionsTimeout(async (signal) => {
+            const query = `part=speech&source=${encodeURIComponent(source)}`;
+            const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/voice/voices?${query}`, {
+                signal,
+            });
+            const voices = readVoiceChoices(await response.json());
+            if (!voices) throw new Error("Orbit answered with a voice list the game can't read.");
+            return voices;
+        });
+    }
+
+    /** A voice's sample that only Orbit can fetch (the company serves it with a key). The path is the list's own. */
+    async getBotVoicePreview(path: string): Promise<Blob> {
+        return this.withPermissionsTimeout(async (signal) => {
+            const response = await this.fetch(path, { signal });
+            return await response.blob();
+        });
+    }
+
+    /** "Check now" on a voice key that is Down: the next bot that needs it tries it without waiting. */
+    async checkVoiceKey(keyId: string): Promise<boolean> {
+        try {
+            await this.withPermissionsTimeout((signal) =>
+                this.fetch(`/api/me/voice-keys/${encodeURIComponent(keyId)}/check`, {
+                    method: "POST",
+                    body: "{}",
+                    signal,
+                })
+            );
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    /** The player's own voice keys with their company, lent or not (the page names a key that is no longer lent). */
+    async getMyVoiceKeys(): Promise<Array<{ id: string; adapter: string }> | null> {
+        try {
+            const response = await this.fetch("/api/me/voice-keys");
+            const data: unknown = await response.json();
+            const keys = typeof data === "object" && data !== null ? (data as { keys?: unknown }).keys : undefined;
+            if (!Array.isArray(keys)) return null;
+            return keys.flatMap((key: unknown) => {
+                const one = key as { id?: unknown; adapter?: unknown };
+                return typeof one?.id === "string" && typeof one.adapter === "string"
+                    ? [{ id: one.id, adapter: one.adapter }]
+                    : [];
+            });
+        } catch {
+            return null;
+        }
+    }
+
+    private voiceAnswer(data: unknown): BotVoice {
+        const voice = readBotVoice(data);
+        if (!voice) throw new Error("Orbit answered with voice settings the game can't read.");
+        return voice;
     }
 
     /**
@@ -1557,6 +1677,77 @@ export class BotApiService {
         });
         return response.json();
     }
+
+    /** One server's tools with where each sits, who confirmed it, and the choice under each heading (Orbit #738) */
+    async getMcpServerTools(botId: string, serverId: string): Promise<ServerTools> {
+        const response = await this.fetch(
+            `/api/bots/${encodeURIComponent(botId)}/mcp-servers/${encodeURIComponent(serverId)}/tools`
+        );
+        return readServerTools(await response.json());
+    }
+
+    /** Move one tool under another heading. It follows that heading's choice from then on. */
+    async moveMcpTool(botId: string, serverId: string, toolId: string, heading: Heading): Promise<ServerTools> {
+        const response = await this.fetch(
+            `/api/bots/${encodeURIComponent(botId)}/mcp-servers/${encodeURIComponent(
+                serverId
+            )}/tools/${encodeURIComponent(toolId)}`,
+            { method: "PATCH", body: JSON.stringify({ heading }) }
+        );
+        return readServerTools(await response.json());
+    }
+
+    /** Confirm all of a server's tools, as the list looked when the person saw it (Orbit refuses if it moved since) */
+    async confirmMcpTools(botId: string, serverId: string, policyRevision: number): Promise<ServerTools> {
+        const response = await this.fetch(
+            `/api/bots/${encodeURIComponent(botId)}/mcp-servers/${encodeURIComponent(serverId)}/tools/confirm`,
+            { method: "POST", body: JSON.stringify({ policyRevision }) }
+        );
+        return readServerTools(await response.json());
+    }
+
+    /** What the bot does under each heading on one server; only the headings sent change */
+    async saveMcpServerSettings(
+        botId: string,
+        serverId: string,
+        change: Partial<Record<Heading, Setting>>
+    ): Promise<ServerTools> {
+        const response = await this.fetch(
+            `/api/bots/${encodeURIComponent(botId)}/mcp-servers/${encodeURIComponent(serverId)}/policy`,
+            { method: "PUT", body: JSON.stringify(change) }
+        );
+        return readServerTools(await response.json());
+    }
+
+    /** Asking for approvals: how long a card waits, and when the bot asks beyond a tool's heading (Orbit #738) */
+    async getBotToolSettings(botId: string): Promise<BotToolSettings> {
+        const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/tool-settings`);
+        return readBotToolSettings(await response.json());
+    }
+
+    /** Only what is sent changes. Answers with all of it. */
+    async saveBotToolSettings(botId: string, change: Partial<BotToolSettings>): Promise<BotToolSettings> {
+        const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/tool-settings`, {
+            method: "PUT",
+            body: JSON.stringify(change),
+        });
+        return readBotToolSettings(await response.json());
+    }
+
+    /** Who is allowed more right now on this bot (Orbit #803): the remembered approvals that are still alive */
+    async getAllowedMore(botId: string): Promise<AllowedMore[]> {
+        const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/action-grants`);
+        return readAllowedMore(await response.json());
+    }
+
+    /** End all: every remembered approval of this bot ends, so the next change asks again. Answers how many ended. */
+    async endAllowedMore(botId: string): Promise<number> {
+        const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/action-grants/end-all`, {
+            method: "POST",
+        });
+        const ended = ((await response.json()) as { ended?: unknown } | null)?.ended;
+        return typeof ended === "number" ? ended : 0;
+    }
 }
 
 // ─── MCP Server Types ─────────────────────────────────────────────────────────────
@@ -1570,6 +1761,8 @@ export interface McpServer {
     oauthConnected?: boolean;
     headers?: Record<string, string>;
     enabled: boolean;
+    /** An old server whose tools nobody has checked yet: it works in text as it did (Orbit #738) */
+    notCheckedYet?: boolean;
     lastTestedAt?: string | null;
     lastTestResult?: {
         success: boolean;
