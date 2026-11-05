@@ -676,8 +676,9 @@ export class MCPConnector {
     ): Promise<{
         tools: McpToolDefinition[];
         toolServerMap: Map<string, ToolServerEntry>;
-        /** Servers that are not working for the bot right now: a refused sign-in, or no answer (#1819) */
-        issues: ToolIssue[];
+        /** Servers that are not working for the bot right now: a refused sign-in, or no answer (#1819). Left out when the
+         * server list could not be read: nothing is known then, and a card shown before stays as it is. */
+        issues?: ToolIssue[];
     }> {
         void botServiceToken;
         const toolServerMap = new Map<string, ToolServerEntry>();
@@ -699,6 +700,7 @@ export class MCPConnector {
                 Sentry.captureException(
                     error instanceof Error ? error : new Error(String(error))
                 );
+                return { tools: [], toolServerMap };
             }
             return { tools: [], toolServerMap, issues: [] };
         }

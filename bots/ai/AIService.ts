@@ -1042,7 +1042,7 @@ export class AIService {
             const nearbyRule = channel === 'world' && botClient && this.approvals && toolServerMap.size > 0 ? NEARBY_ASK_RULE : '';
             // With "Asks which way to go" on Never the bot says its pick and starts (#1661)
             const neverAsk = botId && this.approvals?.asksQuestions && (await this.approvals.settings(botId)).askWhichWay === 'never' ? NEVER_ASK_RULE : '';
-            const systemPrompt = [basePrompt, nearbyRule, neverAsk, toolIssueNote(toolIssues)].filter(Boolean).join('\n\n');
+            const systemPrompt = [basePrompt, nearbyRule, neverAsk, toolIssueNote(toolIssues ?? [])].filter(Boolean).join('\n\n');
             if (turn) turn.artifactTools = tools.some((tool) => writesArtifact(tool?.function?.name ?? ''));
 
             // Generate stream with tools
@@ -2811,10 +2811,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     /**
      * Build tool definitions for function calling
      */
-    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService, channel: 'world' | 'dm' = 'world', providerId?: string, asking?: BotAccessPerson): Promise<{ tools: any[]; toolServerMap: Map<string, ToolServerEntry>; issues: ToolIssue[] }> {
+    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService, channel: 'world' | 'dm' = 'world', providerId?: string, asking?: BotAccessPerson): Promise<{ tools: any[]; toolServerMap: Map<string, ToolServerEntry>; issues: ToolIssue[] | undefined }> {
         const tools: any[] = [];
         const toolServerMap = new Map<string, ToolServerEntry>();
-        let issues: ToolIssue[] = [];
+        // Undefined when the tool servers could not be asked: nothing is known then
+        let issues: ToolIssue[] | undefined = [];
 
         if (botClient) {
             // Tool: Get people on the map
@@ -3019,7 +3020,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     { suggest: this.toolSuggesterFor(providerId, botId) }
                 );
                 const mcpTools = mcpResult.tools;
-                issues = mcpResult.issues ?? [];
+                issues = mcpResult.issues;
 
                 // Transfer tool→server mapping to the outer-scope map
                 for (const [key, value] of mcpResult.toolServerMap) {
@@ -3058,6 +3059,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 }
             } catch (e) {
                 console.warn('[AIService] Failed to discover MCP tools:', e);
+                issues = undefined;
                 Sentry.captureException(e instanceof Error ? e : new Error(String(e)));
             }
         }
@@ -3076,13 +3078,14 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
      */
     private async toolSignInFor(
         botId: string | undefined,
-        issues: readonly ToolIssue[],
+        issues: readonly ToolIssue[] | undefined,
         channel: 'world' | 'dm',
         botClient: BotClient | undefined,
         spaceName: string | undefined,
         playerId: number | undefined
     ): Promise<ToolSignInCard | undefined> {
-        if (!botId) return undefined;
+        // The tool servers could not be asked: a card shown before stays as it is
+        if (!botId || !issues) return undefined;
         try {
             const person = this.gatePerson(botId, playerId, botClient, spaceName);
             const key = `${botId}|${channel}|${spaceName ?? ''}|${channel === 'world' ? playerId : person.signedIn ? person.identifier : ''}`;

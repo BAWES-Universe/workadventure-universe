@@ -160,7 +160,9 @@ export class ToolHealth {
         }
         // A no-answer after a refusal is still a refusal we have not seen cleared: keep the refusal
         if (entry && entry.state === 'expired' && state === 'no-answer') {
-            entry.checkedMs = now;
+            // A sign-in not tried yet (new, or a mark taken from Orbit) that met a server not answering is tried again
+            // after the short wait, not the long one
+            entry.checkedMs = entry.checkedMs === 0 ? now - Math.max(0, this.settings().recheckMs - this.settings().noAnswerRetryMs) : now;
             return false;
         }
         this.entries.set(key, {

@@ -147,6 +147,32 @@ describe('a sign-in that is refused again after it was changed', () => {
     });
 });
 
+describe('a new sign-in that meets a server not answering', () => {
+    it('is tried again after the short wait, not the long one', () => {
+        let now = 1_000_000;
+        const health = new ToolHealth(() => now, () => ({ recheckMs: 30 * MIN, noAnswerRetryMs: 5 * MIN }));
+        health.fail('bot', server(), 'expired');
+        // A new sign-in is tried at once; the server does not answer
+        const changed = server({ authConfig: '{"accessToken":"b"}' });
+        expect(health.shouldSkip('bot', changed)).toBe(false);
+        health.fail('bot', changed, 'no-answer');
+        now += 4 * MIN;
+        expect(health.shouldSkip('bot', changed)).toBe(true);
+        now += 2 * MIN;
+        expect(health.shouldSkip('bot', changed)).toBe(false);
+    });
+
+    it('keeps the long wait for a sign-in that was refused by the server itself', () => {
+        let now = 1_000_000;
+        const health = new ToolHealth(() => now, () => ({ recheckMs: 30 * MIN, noAnswerRetryMs: 5 * MIN }));
+        health.fail('bot', server(), 'expired');
+        now += 31 * MIN;
+        health.fail('bot', server(), 'no-answer');
+        now += 6 * MIN;
+        expect(health.shouldSkip('bot', server())).toBe(true);
+    });
+});
+
 describe('a failure that says nothing new, and reports on their way', () => {
     it('starts the wait over for a server already marked, so it is not asked at every reply', () => {
         let now = 1_000_000;

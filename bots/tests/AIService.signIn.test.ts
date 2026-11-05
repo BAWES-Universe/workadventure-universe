@@ -186,6 +186,19 @@ describe("AIService – a tool whose sign-in expired (#1819)", () => {
         expect(signInEvents(botClient)).toHaveLength(2);
     });
 
+    it("leaves a shown card as it is when the tool servers could not be asked", async () => {
+        found.issues = [EXPIRED];
+        const { svc, admin, botClient } = setup();
+        await reply(svc, admin, botClient);
+        found.issues = undefined as any;
+        await reply(svc, admin, botClient);
+        expect(signInEvents(botClient)).toHaveLength(1);
+        // Back, and still down: it was not forgotten, so it is not sent again
+        found.issues = [EXPIRED];
+        await reply(svc, admin, botClient);
+        expect(signInEvents(botClient)).toHaveLength(1);
+    });
+
     it("shows no card for a server that only did not answer", async () => {
         found.issues = [QUIET];
         const { svc, admin, botClient } = setup();

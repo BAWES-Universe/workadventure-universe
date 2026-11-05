@@ -201,6 +201,17 @@ describe('a refused sign-in', () => {
         expect(issues).toEqual([]);
     });
 
+    it('says nothing is known when the server list could not be read, and none when no servers are set', async () => {
+        http.get.mockImplementation(async () => {
+            throw httpError(502);
+        });
+        expect((await discover()).issues).toBeUndefined();
+        http.get.mockImplementation(async () => {
+            throw httpError(404);
+        });
+        expect((await discover()).issues).toEqual([]);
+    });
+
     it('leaves other servers working', async () => {
         servers = [
             { ...base, authConfig: TOKEN_A },
