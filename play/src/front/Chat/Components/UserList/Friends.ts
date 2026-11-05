@@ -183,28 +183,33 @@ export function lastSeenDay(iso: string | undefined, now: number, locale: string
 export interface ListedPerson {
     uuid: string;
     name: string;
+    /** Empty for a request: a chat ID is built from the person's email, so Orbit never sends it for one. */
     chatId: string;
+    /** Their Woka as Orbit draws it, bottom layer first; empty when they have none to show. */
+    characterTextures?: readonly { id: string; url: string }[];
 }
 
 /**
- * The woka and its background for someone the world isn't showing right now: their saved woka by chat ID (the world's
- * member list, else Orbit's), on the colour the game gives their name. Nothing for someone not listed.
+ * The woka and its background for someone the world isn't showing right now: the layers Orbit sent with them, else their
+ * saved woka by chat ID (the world's member list, else Orbit's), on the colour the game gives their name. Nothing for
+ * someone not listed.
  */
 export function savedLook<P>(
     person: ListedPerson | undefined,
     wokaByChatId: ReadonlyMap<string, P>,
-    colourOf: (chatId: string | undefined, name: string) => string | undefined
+    colourOf: (chatId: string | undefined, name: string) => string | undefined,
+    fromLayers: (person: ListedPerson) => P | undefined = () => undefined
 ): { picture?: P; color?: string } {
     if (!person) return {};
     return {
-        picture: person.chatId ? wokaByChatId.get(person.chatId) : undefined,
+        picture: fromLayers(person) ?? (person.chatId ? wokaByChatId.get(person.chatId) : undefined),
         color: colourOf(person.chatId || undefined, person.name),
     };
 }
 
 /**
  * The chat IDs to ask Orbit about among the people shown: not in this world (the world already draws them), with a
- * chat ID, and not asked yet. Marks them as asked.
+ * chat ID, without layers of their own (those are drawn as they are), and not asked yet. Marks them as asked.
  */
 export function chatIdsToAsk(
     people: readonly ListedPerson[],
@@ -213,7 +218,8 @@ export function chatIdsToAsk(
 ): string[] {
     const ask: string[] = [];
     for (const person of people) {
-        if (!person.chatId || asked.has(person.chatId) || inWorld(person.uuid)) continue;
+        if (!person.chatId || person.characterTextures?.length || asked.has(person.chatId) || inWorld(person.uuid))
+            continue;
         asked.add(person.chatId);
         ask.push(person.chatId);
     }

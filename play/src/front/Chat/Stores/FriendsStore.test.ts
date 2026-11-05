@@ -13,6 +13,7 @@ function list(names: string[] = []): FriendsListAnswer {
             uuid: `uuid-${name}`,
             name,
             chatId: "",
+            characterTextures: [],
             lastSeenAt: "",
             presence: { online: false, locationHidden: false, availabilityStatus: 0, sessions: [] },
         })),
@@ -162,8 +163,10 @@ describe("friendsStore", () => {
 describe("relationshipsOf", () => {
     it("reads each person's standing from the list", () => {
         const answer = list(["Sara"]);
-        answer.incoming = [{ uuid: "uuid-in", name: "In", chatId: "", sharedWorld: "", at: "" }];
-        answer.outgoing = [{ uuid: "uuid-out", name: "Out", chatId: "", sharedWorld: "", at: "" }];
+        answer.incoming = [{ uuid: "uuid-in", name: "In", chatId: "", characterTextures: [], sharedWorld: "", at: "" }];
+        answer.outgoing = [
+            { uuid: "uuid-out", name: "Out", chatId: "", characterTextures: [], sharedWorld: "", at: "" },
+        ];
         answer.blocked = [{ uuid: "uuid-b", name: "B" }];
         expect(Object.fromEntries(relationshipsOf(answer))).toEqual({
             "uuid-Sara": "friends",

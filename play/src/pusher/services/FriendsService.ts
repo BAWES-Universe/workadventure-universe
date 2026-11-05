@@ -32,6 +32,8 @@ export const OrbitFriendsList = z.object({
             uuid: z.string(),
             name: z.string().nullable(),
             chatId: z.string().nullable(),
+            // Their Woka layers, bottom first. Missing from an Orbit that does not send them yet.
+            characterTextures: z.array(z.object({ id: z.string(), url: z.string() })).optional(),
             shareLocation: z.boolean(),
             since: z.string().nullable(),
             lastSeenAt: z.string().nullable(),
@@ -41,8 +43,10 @@ export const OrbitFriendsList = z.object({
         z.object({
             uuid: z.string(),
             name: z.string().nullable(),
-            // Missing from an Orbit that does not send it yet.
+            // Orbit no longer sends it on a request (it is built from the person's email); an older Orbit still does.
             chatId: z.string().nullable().optional(),
+            // Their Woka layers, bottom first. Missing from an Orbit that does not send them yet.
+            characterTextures: z.array(z.object({ id: z.string(), url: z.string() })).optional(),
             sharedWorld: z.string().nullable(),
             requestedAt: z.string(),
         })
@@ -52,6 +56,7 @@ export const OrbitFriendsList = z.object({
             uuid: z.string(),
             name: z.string().nullable(),
             chatId: z.string().nullable().optional(),
+            characterTextures: z.array(z.object({ id: z.string(), url: z.string() })).optional(),
             sentAt: z.string(),
         })
     ),

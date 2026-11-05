@@ -153,6 +153,39 @@ describe("FriendsService", () => {
         expect(results.map((result) => result.characterTextures)).toEqual([layers, undefined]);
     });
 
+    it("reads the Woka layers of friends and requests, and a list from an Orbit that does not send them yet", async () => {
+        const layers = [{ id: "body", url: "https://assets.test/body.png" }];
+        const list = {
+            friends: [
+                {
+                    uuid: "f",
+                    name: "F",
+                    chatId: "@f:chat",
+                    characterTextures: layers,
+                    shareLocation: true,
+                    since: null,
+                    lastSeenAt: null,
+                },
+                { uuid: "g", name: "G", chatId: "@g:chat", shareLocation: true, since: null, lastSeenAt: null },
+            ],
+            incoming: [
+                { uuid: "i", name: "I", characterTextures: layers, sharedWorld: null, requestedAt: "2026-11-05" },
+            ],
+            outgoing: [
+                { uuid: "o", name: "O", characterTextures: layers, sentAt: "2026-11-05" },
+                { uuid: "p", name: "P", chatId: "@p:chat", sentAt: "2026-11-05" },
+            ],
+            blocked: [],
+        };
+        const http = { get: vi.fn(() => Promise.resolve({ data: list })), post: vi.fn(), put: vi.fn() };
+        const service = new FriendsService("https://orbit.test", "token", http);
+        const result = await service.getFriends("alice");
+        expect(result.friends.map((friend) => friend.characterTextures)).toEqual([layers, undefined]);
+        expect(result.incoming[0].characterTextures).toEqual(layers);
+        expect(result.incoming[0].chatId).toBeUndefined();
+        expect(result.outgoing.map((request) => request.characterTextures)).toEqual([layers, undefined]);
+    });
+
     it("asks Orbit how two players stand", async () => {
         const http = {
             get: vi.fn(() =>
