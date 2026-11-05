@@ -568,7 +568,8 @@ export async function runArtifactTool(name: string, args: Record<string, unknown
                     ...(dropMedia ? { dropMedia } : {}),
                 }, context.saveTimeoutMs, media.uploads);
                 // Another bot's artifact is never written into: Orbit answers with a copy of this bot's own, with a new id (Orbit #800)
-                const copied = changed.artifact.id !== id;
+                // Ids are compared without regard to case: a link pasted with a capital letter in it is the same artifact
+                const copied = changed.artifact.id.toLowerCase() !== id.toLowerCase();
                 return {
                     result: {
                         success: true,
