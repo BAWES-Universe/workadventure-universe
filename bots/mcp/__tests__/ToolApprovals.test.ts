@@ -303,6 +303,18 @@ describe('Create (approve)', () => {
         expect(s.run).toHaveBeenCalledTimes(1);
     });
 
+    it('tells Orbit it is not known how it ended, once, when the call throws after it may have started', async () => {
+        s.run.mockRejectedValueOnce(new Error('the settings could not be read'));
+        await s.approvals.propose(input());
+        await s.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'decide', option: 'approve' }));
+        await settle();
+        expect(s.run).toHaveBeenCalledTimes(1);
+        expect(s.orbit.finished).toEqual([{ id: 'act_1', outcome: 'uncertain' }]);
+        expect(field(s.sent.at(-1)!.content).answer).toEqual({ option: 'approve', unknown: true });
+        expect(s.outcomes).toHaveLength(1);
+        expect(s.outcomes[0].state).toBe('unknown');
+    });
+
     it('says when it did not work, and when it was proven not sent', async () => {
         s = setup({ runResult: { error: 'Tool error: no such team', outcome: 'failed' } });
         await s.approvals.propose(input());

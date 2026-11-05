@@ -84,7 +84,7 @@ export class NearbyAsks implements NearbySurface, BotAsksPort {
         }
         if (!tap || typeof tap !== 'object') return;
         // Only the card, the revision and what was tapped come in: never content
-        const parsed = parseTap({ v: 1, ask: answer.askId, revision: answer.revision, ...(tap as Record<string, unknown>) });
+        const parsed = parseTap({ ...(tap as Record<string, unknown>), v: 1, ask: answer.askId, revision: answer.revision });
         if (!parsed) return;
         void this.deps.approvals()?.handleTap(bot.getBotId(), spaceName, person, parsed);
     }

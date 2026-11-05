@@ -56,9 +56,9 @@ export interface WorkerLoad {
 
 /** The worker's /stats address, next to the bridge address the bot server already has. */
 export function workerStatsUrl(bridgeUrl: string): string {
-    const url = new URL(bridgeUrl);
+    // Resolved the way the bridge address is (next to it), so a worker behind a path prefix (wss://host/voice) is read there
+    const url = new URL('stats', bridgeUrl.endsWith('/') ? bridgeUrl : `${bridgeUrl}/`);
     url.protocol = url.protocol === 'wss:' ? 'https:' : 'http:';
-    url.pathname = '/stats';
     url.search = '';
     return url.toString();
 }

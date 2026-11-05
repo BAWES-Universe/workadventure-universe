@@ -81,6 +81,12 @@ describe('a tap from the game', () => {
         expect(approvals.handleTap).toHaveBeenCalledWith('b1', 'space', KHALID, { ask: 'act_1', revision: 2, tap: { action: 'decide', option: 'approve' } });
     });
 
+    it('takes the card and the revision from the envelope it arrived in, never from the tap itself', () => {
+        const { asks, bot, approvals } = setup();
+        asks.tap(bot as never, 'space', 7, { askId: 'act_1', revision: 2, tap: '{"v":1,"ask":"act_other","revision":9,"action":"decide","option":"approve"}' });
+        expect(approvals.handleTap).toHaveBeenCalledWith('b1', 'space', KHALID, { ask: 'act_1', revision: 2, tap: { action: 'decide', option: 'approve' } });
+    });
+
     it('does nothing for a guest, who has no cards', () => {
         const { asks, bot, approvals } = setup({ signedIn: false });
         asks.tap(bot as never, 'space', 7, { askId: 'act_1', revision: 2, tap: '{"action":"close"}' });

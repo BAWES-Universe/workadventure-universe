@@ -1469,11 +1469,10 @@ export class BotClient {
             this.voice?.spaceLeft(spaceName);
             this.speech?.spaceLeft(spaceName);
             this.attention.spaceLeft(spaceName);
+            const wasMeeting = this.isMeetingSpace(spaceName);
             await this.emitLeaveSpace(spaceName);
             this.spaces.delete(spaceName);
-            if (this.behavior) {
-                this.behavior.onSpaceLeft(spaceName);
-            }
+            this.afterSpaceLeft(spaceName, wasMeeting);
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[Bot ${this.config.botId}] Left space: ${spaceName}`);
             }
@@ -3673,6 +3672,20 @@ export class BotClient {
         });
     }
 
+    /**
+     * What follows a space that is left, whoever ended it (the bot, or the game with a leave request). A meeting room was
+     * never the behaviour's, and the bot showed as in a meeting while it stood there: it is plainly online again, or no
+     * bubble could form around it until it entered and left another meeting room.
+     */
+    private afterSpaceLeft(spaceName: string, wasMeeting: boolean): void {
+        if (!wasMeeting) {
+            this.behavior?.onSpaceLeft(spaceName);
+            return;
+        }
+        this.meeting?.spaceLeft(spaceName);
+        this.sendAvailability(AvailabilityStatus.ONLINE);
+    }
+
     private async handleLeaveSpaceRequest(request: LeaveSpaceRequestMessage): Promise<void> {
         try {
             // Unregister as a space watcher before leaving
@@ -3682,12 +3695,10 @@ export class BotClient {
             this.voice?.spaceLeft(request.spaceName);
             this.speech?.spaceLeft(request.spaceName);
             this.attention.spaceLeft(request.spaceName);
+            const wasMeeting = this.isMeetingSpace(request.spaceName);
             await this.emitLeaveSpace(request.spaceName);
             this.spaces.delete(request.spaceName);
-            if (this.behavior && !this.isMeetingSpace(request.spaceName)) {
-                this.behavior.onSpaceLeft(request.spaceName);
-            }
-            this.meeting?.spaceLeft(request.spaceName);
+            this.afterSpaceLeft(request.spaceName, wasMeeting);
         } catch (error) {
             console.error(`[Bot ${this.config.botId}] Error leaving space:`, error);
         }

@@ -116,6 +116,21 @@ describe('the fingerprint', () => {
         expect(stableJson({ b: 1, a: [2, { d: 1, c: 2 }] })).toBe('{"a":[2,{"c":2,"d":1}],"b":1}');
     });
 
+    it('stays the same when the service token is rotated, once TOOL_FINGERPRINT_KEY is set', () => {
+        vi.stubEnv('TOOL_FINGERPRINT_KEY', 'stable-key');
+        try {
+            vi.stubEnv('BOT_SERVICE_TOKEN', 'token-one');
+            const before = print();
+            vi.stubEnv('BOT_SERVICE_TOKEN', 'token-two');
+            expect(print()).toBe(before);
+            // Without its own key, the service token is the key as before
+            vi.stubEnv('TOOL_FINGERPRINT_KEY', '');
+            expect(print()).not.toBe(before);
+        } finally {
+            vi.unstubAllEnvs();
+        }
+    });
+
     it.each([
         ['its name', { ...base, name: 'save_issue2' }, SERVER],
         ['its title', { ...base, title: 'Save' }, SERVER],

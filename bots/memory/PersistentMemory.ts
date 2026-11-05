@@ -349,7 +349,9 @@ export class PersistentMemory extends ConversationMemory {
         playerId: number,
         message: string,
         sender: 'bot' | 'person',
-        spaceName?: string
+        spaceName?: string,
+        /** False for a line the system wrote in the person's turn: nothing is learned about them from it. */
+        learn = true
     ): void {
         // Get state before update
         const memory = this.getOrCreateMemory(botId, playerId);
@@ -368,7 +370,7 @@ export class PersistentMemory extends ConversationMemory {
         const oldImportantEventsCount = memory.relationship.importantEvents.length;
 
         // Call parent implementation (updates emotions, extracts personal info)
-        super.addMessage(botId, playerId, message, sender, spaceName);
+        super.addMessage(botId, playerId, message, sender, spaceName, learn);
 
         // Get updated state
         const updatedMemory = this.getOrCreateMemory(botId, playerId);
