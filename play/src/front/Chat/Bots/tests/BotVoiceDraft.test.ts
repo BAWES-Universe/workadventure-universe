@@ -167,6 +167,12 @@ describe("a line typed while still talking", () => {
         expect(applyDraftEvent(held, final("1", "  ")).toComposer).toBeUndefined();
     });
 
+    it("sends no line when the finished words are blank, and the draft goes", () => {
+        const change = applyDraftEvent([draft("1", "live", "one")], final("1", "   "));
+        expect(change).toEqual({ drafts: [] });
+        expect(applyDraftEvent([], final("1", "")).send).toBeUndefined();
+    });
+
     it("changes nothing when nothing is being said, and leaves words already offered back alone", () => {
         const drafts = [draft("1", "lost", "one two")];
         expect(afterTypedSend(drafts)).toBe(drafts);
