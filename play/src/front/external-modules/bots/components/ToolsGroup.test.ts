@@ -340,7 +340,10 @@ describe("the Tools group says a lost sign-in first on its line (#1819)", () => 
     }
 
     it("names the one server that needs signing in again", async () => {
-        const text = await brief([server("s1", "Tavily", { signInLostAt: "2026-11-05T09:54:00.000Z" }), server("s2", "Attio")]);
+        const text = await brief([
+            server("s1", "Tavily", { signInLostAt: "2026-11-05T09:54:00.000Z" }),
+            server("s2", "Attio"),
+        ]);
         expect(text).toContain("Tavily needs signing in again");
     });
 
