@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { isSafeAnalyticsId, keepPrivate, maskedNetworkRequest, withoutQueryOrHash } from "../AnalyticsPrivacy";
+import {
+    isEmailIdentity,
+    isSafeAnalyticsId,
+    keepPrivate,
+    maskedNetworkRequest,
+    withoutQueryOrHash,
+} from "../AnalyticsPrivacy";
 
 describe("isSafeAnalyticsId", () => {
     it("accepts Orbit's id and refuses an email, which is also the game's uuid for somebody signed in", () => {
@@ -50,6 +56,13 @@ describe("keepPrivate", () => {
         expect(event?.properties).toEqual({ source: "from [email] today", plain: "hello" });
     });
 
+    it("never edits who an event is from, and does not send an event from an email id", () => {
+        const fine = keepPrivate({ properties: { distinct_id: "orbit-id-1", $user_id: "orbit-id-1" } });
+        expect(fine?.properties).toEqual({ distinct_id: "orbit-id-1", $user_id: "orbit-id-1" });
+        expect(keepPrivate({ properties: { distinct_id: "sara@example.test" } })).toBeNull();
+        expect(keepPrivate({ properties: { distinct_id: "anon", $anon_distinct_id: "sara@example.test" } })).toBeNull();
+    });
+
     it("lets a missing event through", () => {
         expect(keepPrivate(null)).toBeNull();
     });
@@ -73,5 +86,13 @@ describe("maskedNetworkRequest", () => {
             responseBody: undefined,
             status: 200,
         });
+    });
+});
+
+describe("isEmailIdentity", () => {
+    it("tells an email id from Orbit's", () => {
+        expect(isEmailIdentity("sara@example.test")).toBe(true);
+        expect(isEmailIdentity("3f0c9d2e-8a41-4b6a-9d55-0c1e7a2b4f10")).toBe(false);
+        expect(isEmailIdentity(undefined)).toBe(false);
     });
 });

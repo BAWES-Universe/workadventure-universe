@@ -6,6 +6,8 @@
 const EMAIL = /[^\s@/?#]+@[^\s@/?#]+\.[^\s@/?#]+/g;
 /** Properties PostHog adds itself that hold a page address. */
 const ADDRESS_PROPERTIES = ["$current_url", "$referrer", "$initial_current_url", "$initial_referrer"];
+/** Who an event is from. These are never edited: an edited id would merge different people into one. */
+const IDENTITY_PROPERTIES = ["distinct_id", "$user_id", "$anon_distinct_id"];
 /** Properties that must never leave the browser, whatever put them there. */
 const FORBIDDEN_PROPERTIES = ["email", "$email", "uuid"];
 
@@ -35,12 +37,21 @@ function redact(properties: Record<string, unknown> | undefined): void {
     if (!properties) return;
     for (const key of FORBIDDEN_PROPERTIES) delete properties[key];
     for (const [key, value] of Object.entries(properties)) {
+        if (IDENTITY_PROPERTIES.includes(key)) continue;
         if (typeof value === "string" && ADDRESS_PROPERTIES.includes(key)) {
             properties[key] = withoutQueryOrHash(value);
         } else if (typeof value === "string" && value.includes("@")) {
             properties[key] = value.replace(EMAIL, "[email]");
         }
     }
+}
+
+/**
+ * Whether PostHog knows this browser by an email: earlier versions of the game identified people by their email, and
+ * PostHog keeps that id in the browser. Such a browser starts again as an anonymous one (see AnalyticsClient).
+ */
+export function isEmailIdentity(distinctId: string | null | undefined): boolean {
+    return typeof distinctId === "string" && distinctId.includes("@");
 }
 
 /**
@@ -51,6 +62,8 @@ export function keepPrivate<T extends { properties?: Record<string, unknown>; $s
     event: T | null
 ): T | null {
     if (!event) return event;
+    // An event from an email id is not sent at all (not edited: the same edit for everyone would merge them).
+    if (IDENTITY_PROPERTIES.some((key) => isEmailIdentity(event.properties?.[key] as string | undefined))) return null;
     redact(event.properties);
     redact(event.$set as Record<string, unknown> | undefined);
     redact(event.$set_once as Record<string, unknown> | undefined);

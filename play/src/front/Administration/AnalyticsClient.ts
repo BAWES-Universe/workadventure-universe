@@ -1,7 +1,13 @@
 import type { PostHog } from "posthog-js";
 import { POSTHOG_API_KEY, POSTHOG_URL } from "../Enum/EnvironmentVariable";
 import type { Emoji } from "../Stores/Utils/emojiSchema";
-import { isSafeAnalyticsId, keepPrivate, maskedNetworkRequest, withoutQueryOrHash } from "./AnalyticsPrivacy";
+import {
+    isEmailIdentity,
+    isSafeAnalyticsId,
+    keepPrivate,
+    maskedNetworkRequest,
+    withoutQueryOrHash,
+} from "./AnalyticsPrivacy";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare let window: any;
 
@@ -35,6 +41,9 @@ class AnalyticsClient {
                         maskCapturedNetworkRequestFn: (request) => maskedNetworkRequest(request),
                     },
                 });
+                // A browser an earlier version identified by email starts again as an anonymous one: PostHog keeps that
+                // id in the browser, and every event would carry it. Past events stay as they are.
+                if (isEmailIdentity(posthog.get_distinct_id())) posthog.reset();
                 //the posthog toolbar need a reference in window to be able to work
                 window.posthog = posthog;
                 return posthog;

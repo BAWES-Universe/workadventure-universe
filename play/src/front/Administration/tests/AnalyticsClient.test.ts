@@ -52,6 +52,22 @@ describe("AnalyticsClient", () => {
         expect(posthog.identify).not.toHaveBeenCalled();
     });
 
+    it("starts a browser that an earlier version identified by email again as an anonymous one", async () => {
+        vi.resetModules();
+        posthog.reset.mockClear();
+        posthog.get_distinct_id.mockReturnValue("sara@example.test");
+        await import("../AnalyticsClient");
+        await settled();
+        expect(posthog.reset).toHaveBeenCalledTimes(1);
+
+        vi.resetModules();
+        posthog.reset.mockClear();
+        posthog.get_distinct_id.mockReturnValue("anonymous-id");
+        await import("../AnalyticsClient");
+        await settled();
+        expect(posthog.reset).not.toHaveBeenCalled();
+    });
+
     it("sets PostHog up to mask text and inputs, record no console lines, and clean every event", async () => {
         await settled();
         const config = posthog.init.mock.calls[0][1];
