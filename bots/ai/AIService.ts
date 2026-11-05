@@ -21,6 +21,7 @@ import { AIProviderRegistry } from './AIProviderRegistry';
 import { sortToolsByName } from './toolOrder';
 import type { MapDataService } from '../server/MapDataService';
 import * as Sentry from '@sentry/node';
+import { sanitizedError } from '../utils/sanitizedError';
 import { MCPConnector, toolTimeoutMs, type ToolServerEntry } from '../mcp/MCPConnector';
 import type { ToolSuggester } from '../mcp/ToolCatalog';
 import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision } from '../mcp/ToolGate';
@@ -313,7 +314,7 @@ export class AIService {
             // Sentry keep what they are given: only the tool's name and the kind of error leave this function
             const kind = mcpError instanceof Error ? mcpError.name : 'Error';
             console.error(`[AIService] Error executing MCP tool ${toolName}: ${kind}`);
-            Sentry.captureException(new Error(`MCP tool ${toolName} failed (${kind})`), { tags: { area: 'bot-tools' } });
+            Sentry.captureException(sanitizedError(mcpError, `MCP tool ${toolName} failed (${kind})`), { tags: { area: 'bot-tools' } });
             return { error: `MCP tool error: ${mcpError.message || 'Unknown error'}` };
         }
     }

@@ -27,11 +27,11 @@ export const id: Check = (value) => {
     return typeof text === 'string' && ID.test(text) ? text : undefined;
 };
 
-const SPACE = /^[A-Za-z0-9!@][A-Za-z0-9_.:!#~/=@-]{0,199}$/;
+const SPACE = /^[A-Za-z0-9!@/_][A-Za-z0-9_.:!#~/=@-]{0,199}$/;
 
 /**
  * The name of a space (a room, a bubble, a direct-message room). Universe rooms have an "@" in them as a path part
- * ("@/universe/world"), so an "@" is kept when it stands on its own between "/", "." or ":" or the ends of the name,
+ * ("/@/universe/world"), so an "@" is kept when it stands on its own between "/", "." or ":" or the ends of the name,
  * and a name with an "@" inside a word (an email address) is left out.
  */
 export const spaceName: Check = (value) => {

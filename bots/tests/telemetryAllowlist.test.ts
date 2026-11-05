@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { sanitizedError } from "../utils/sanitizedError";
 import { allowed, AI_EVENT, spaceName, SERVER_EVENTS, errorClassOf, errorStatusOf, address, toolNames, id, label } from "../ai/telemetryAllowlist";
 
 const capture = vi.fn();
@@ -69,7 +70,7 @@ describe("the allowlist", () => {
     });
 
     it("keeps the space of a universe room, with its own @, and of a direct-message room, and drops one with an email in it", () => {
-        for (const room of ["@/acme/main/lobby", "acme.@/main/lobby", "https:@/x", "!abc123:matrix.example.com", "space-1", "@/acme/main/lobby.7f3a-bubble"]) {
+        for (const room of ["/@/acme/main/lobby#group-1#1730830000000", "/_/global/play.example.com/maps/town.tmj#g#1", "@/acme/main/lobby", "acme.@/main/lobby", "https:@/x", "!abc123:matrix.example.com", "space-1", "@/acme/main/lobby.7f3a-bubble"]) {
             expect(spaceName(room)).toBe(room);
         }
         for (const bad of ["a.b@example.com", "user@host:room", "@alice", "two words", "room@", "x@@y"]) {
@@ -87,6 +88,22 @@ describe("the allowlist", () => {
         expect(id("")).toBeUndefined();
         expect(label("deepseek-v4-flash")).toBe("deepseek-v4-flash");
         expect(label("my private universe")).toBeUndefined();
+    });
+});
+
+describe("sanitizedError", () => {
+    it("drops the original's words and keeps where it failed", () => {
+        const original = new Error(`no mailbox for ${WORDS}`);
+        const safe = sanitizedError(original, "MCP tool read_mail failed (Error)");
+        expect(safe.message).toBe("MCP tool read_mail failed (Error)");
+        expect(safe.stack).not.toContain("hunter2");
+        expect(safe.stack).not.toContain("example.com");
+        expect(safe.stack).toContain("telemetryAllowlist.test");
+        expect(safe.stack!.startsWith("Error: MCP tool read_mail failed (Error)\n")).toBe(true);
+    });
+
+    it("works for something that is not an error", () => {
+        expect(sanitizedError("boom " + WORDS, "x").stack).not.toContain("hunter2");
     });
 });
 

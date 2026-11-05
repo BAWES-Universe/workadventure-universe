@@ -12,6 +12,7 @@
 import axios from 'axios';
 import * as Sentry from '@sentry/node';
 import { decryptApiKey } from '../ai/encryption';
+import { sanitizedError } from '../utils/sanitizedError';
 import { linkExternalAbort } from '../ai/providers/abortUtils';
 import { checkOutboundUrl, guardedLookup } from './outboundGuard';
 import {
@@ -484,7 +485,7 @@ async function sendJsonRpc(
                 // No words from the answer or the error: they can quote what was asked of the tool (an email, a file)
                 `[MCPConnector] HTTP ${status || 'error'} on ${method} at ${sanitizedUrl}`
             );
-            Sentry.captureException(new Error(`MCPConnector HTTP ${status || 'error'} on ${method}`));
+            Sentry.captureException(sanitizedError(error, `MCPConnector HTTP ${status || 'error'} on ${method}`));
             // Invalidate session cache on HTTP errors for non-initialize methods.
             // Handles server restarts, session expiry, and stale session reuse
             // after bot respawn — without this, a dead session is retried for up
@@ -498,7 +499,7 @@ async function sendJsonRpc(
             // The error's words can quote what was asked of the tool: only the method and the kind of error are kept
             const kind = error instanceof Error ? error.name : 'Error';
             console.warn(`[MCPConnector] Error on ${method}: ${kind}`);
-            Sentry.captureException(new Error(`MCPConnector error on ${method} (${kind})`));
+            Sentry.captureException(sanitizedError(error, `MCPConnector error on ${method} (${kind})`));
         }
         return NOT_ANSWERED;
     } finally {
