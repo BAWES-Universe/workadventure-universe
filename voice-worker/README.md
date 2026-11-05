@@ -80,7 +80,7 @@ What the worker does around a connector, so it does not have to:
 * an unknown adapter, a throw, a dropped stream or a provider that goes quiet ends that turn in text with reason `provider`;
 * each call's outcome goes back to the bot server as `provider.ok` / `provider.failed` (`part`, `adapter`, the HTTP `status` when
   there was one, `rejected: true` when the key itself was refused), for it to forward to Orbit's health endpoint;
-* the key arrives as a `Secret` and is never logged, counted, or sent anywhere.
+* the key arrives as a `Secret` and is never logged, counted, or put in a report; it is sent only to the provider it belongs to, in that provider's request.
 
 ## Run
 
