@@ -6,7 +6,7 @@
  * The date line (issue #268) must survive the reorder.
  */
 import { describe, it, expect } from 'vitest';
-import { buildSystemPrompt, buildNowLine } from '../ai/systemPrompt';
+import { buildSystemPrompt, buildNowLine, END_FOLLOW_UP_RULE } from '../ai/systemPrompt';
 
 const INSTRUCTIONS = 'You are Zed, a grumpy guard.';
 const MAP = `\n\nCurrent Location Context (you are always here):\n- Universe: BAWES\n- World: Hub\n- Room: Lobby`;
@@ -134,5 +134,27 @@ describe('current day, date and time (issues #268 and #1333)', () => {
 
     it('tells the bot the history times are UTC so it can compare', () => {
         expect(buildNowLine(NOW)).toContain('The times in "Recent conversation" are UTC too');
+    });
+});
+
+describe('ending a follow-up (#1670)', () => {
+    const base = { chatInstructions: INSTRUCTIONS, mapContextInfo: MAP, now: NOW };
+
+    it('is only in the prompt of a bot that was asked for it', () => {
+        expect(buildSystemPrompt(base)).not.toContain('doneTalking');
+        expect(buildSystemPrompt({ ...base, endFollowUp: true })).toContain(END_FOLLOW_UP_RULE);
+    });
+
+    it('does not touch the fixed rules that providers cache', () => {
+        const plain = buildSystemPrompt(base);
+        const withRule = buildSystemPrompt({ ...base, endFollowUp: true });
+        const fixed = plain.indexOf('**NOW:**');
+        expect(withRule.slice(0, fixed)).toBe(plain.slice(0, fixed));
+    });
+
+    it('leaves it to the bot to tell a real stop from a quoted one, and never cancels work', () => {
+        expect(END_FOLLOW_UP_RULE).toContain('NO reply text');
+        expect(END_FOLLOW_UP_RULE).toContain('"stop the music"');
+        expect(END_FOLLOW_UP_RULE).toContain('never cancels');
     });
 });
