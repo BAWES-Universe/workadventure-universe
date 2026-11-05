@@ -1150,6 +1150,8 @@ export class ProximityChatRoom implements ChatRoom {
         const shown = this.askCards.get(ask.id);
         const shownMessage = shown ? this.messages.get(shown.messageId) : undefined;
         if (shown && shownMessage instanceof ProximityChatMessage && shownMessage.ask) {
+            // A card is the bot's own: another bot that uses the same card id cannot change it or take its taps
+            if (shown.messageId !== `${event.botId}-ask-${ask.id}`) return;
             // Only the bot's own newer word changes a card; an older one that arrives late is ignored
             const current = get(shownMessage.ask);
             if (current && ask.revision >= current.revision) shownMessage.ask.set(ask);
@@ -1416,7 +1418,11 @@ export class ProximityChatRoom implements ChatRoom {
      * next map gets a copy, with the stay you were in closed in it.
      */
     public stashHistoryForNextScene(): void {
-        const messages = Array.from(get(this.messages));
+        // A card still waiting for a pick cannot be answered on the next map (this room's cards stay behind with it), so it
+        // is not handed over, as when the person leaves a bubble. Cards that ended go with the chat.
+        const messages = Array.from(get(this.messages)).filter(
+            (message) => !(message instanceof ProximityChatMessage && message.ask && !get(message.ask)?.answer)
+        );
         const unsentDrafts = new Map(get(this._unsentDrafts));
         // Leaving the map ends the stay you're in: close it in the copy, so the next map never receives an open
         // stay that its own messages would fall into.

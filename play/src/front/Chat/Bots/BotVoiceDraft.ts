@@ -97,6 +97,8 @@ export function applyDraftEvent(drafts: BotVoiceDraft[], event: VoiceDraftEvent)
             // They typed a line meanwhile: these words are not sent, they go to the message box
             if (known?.state === "held") return held(drafts, known, event.text);
             if (known?.state === "lost") return { drafts };
+            // Nothing was heard: the draft goes, and no empty line is sent as the person's own
+            if (event.text.trim() === "") return { drafts: drafts.filter((draft) => draft !== known) };
             return {
                 drafts: drafts.filter((draft) => draft !== known),
                 send: { botId: event.botId, turnId: event.turnId, text: event.text },

@@ -12,6 +12,16 @@ const video: BaseTranslation = {
     showEveryone: "Show everyone ({count} more)",
     more: "more",
     botMood: "In a good mood",
+    botMoods: {
+        happy: "Happy",
+        content: "Content",
+        cheeky: "Cheeky",
+        puzzled: "Puzzled",
+        worried: "Worried",
+        unimpressed: "Unimpressed",
+        annoyed: "Annoyed",
+        waving: "Waving",
+    },
     botWorking: "Working: {work}",
     botWork: {
         read: "reading",

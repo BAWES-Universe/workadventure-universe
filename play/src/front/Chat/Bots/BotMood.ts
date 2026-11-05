@@ -13,6 +13,18 @@ export const WAVE_MOOD = "👋";
 /** The moods a bot can show. Anything else a sender puts in is not drawn. */
 export const BOT_MOODS = ["😄", "🙂", "😏", "😕", "😟", "😒", "😠", WAVE_MOOD] as const;
 
+/** What each mood is called, so the label for a screen reader matches the emoji (the words are in the video texts). */
+export const MOOD_NAME = {
+    "😄": "happy",
+    "🙂": "content",
+    "😏": "cheeky",
+    "😕": "puzzled",
+    "😟": "worried",
+    "😒": "unimpressed",
+    "😠": "annoyed",
+    [WAVE_MOOD]: "waving",
+} as const;
+
 export const WORK_EMOJI: Record<BotStepKind, string> = { read: "📖", search: "🔎", write: "✍️" };
 
 export interface BotFeeling {

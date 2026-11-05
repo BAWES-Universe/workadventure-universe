@@ -69,6 +69,9 @@ describe('where the load is read', () => {
     it('is /stats next to the bridge address', () => {
         expect(workerStatsUrl('ws://voice-worker:8830')).toBe('http://voice-worker:8830/stats');
         expect(workerStatsUrl('wss://voice.example/bridge?x=1')).toBe('https://voice.example/stats');
+        // A worker behind a path prefix is read under the same prefix as its bridge
+        expect(workerStatsUrl('wss://host.example/voice')).toBe('https://host.example/voice/stats');
+        expect(workerStatsUrl('wss://host.example/voice/')).toBe('https://host.example/voice/stats');
     });
 });
 

@@ -1,6 +1,6 @@
 import { get } from "svelte/store";
 import { describe, expect, it } from "vitest";
-import { botFeeling, forgetBotFeelings, setBotMood, setBotWork, WAVE_MOOD } from "../BotMood";
+import { BOT_MOODS, botFeeling, forgetBotFeelings, MOOD_NAME, setBotMood, setBotWork, WAVE_MOOD } from "../BotMood";
 import { parseBotSteps, workKindOf } from "../BotSteps";
 
 const field = (state: string, steps: object[]) => ({ v: 1, state, line: "x", startedAt: 1, steps });
@@ -70,5 +70,13 @@ describe("workKindOf", () => {
     it("is nothing once the line is done or stopped", () => {
         expect(workKindOf(parseBotSteps(field("done", [step("read", "done")]))!)).toBeUndefined();
         expect(workKindOf(parseBotSteps(field("stopped", [step("read", "failed")]))!)).toBeUndefined();
+    });
+});
+
+describe("what each mood is called (#1667)", () => {
+    it("names every mood a bot can show, each differently, so the label always matches the emoji", () => {
+        const names = BOT_MOODS.map((mood) => MOOD_NAME[mood]);
+        expect(names.every(Boolean)).toBe(true);
+        expect(new Set(names).size).toBe(BOT_MOODS.length);
     });
 });
