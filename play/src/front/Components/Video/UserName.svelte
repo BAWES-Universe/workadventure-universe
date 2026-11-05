@@ -25,8 +25,10 @@
     <span class="sr-only">{name}</span>
     {#if isCameraDisabled || isBlocked}
         <div class="absolute inset-0 z-30 flex items-center justify-center" style="image-rendering:pixelated">
-            <div class="h-2/3 aspect-square">
+            <div class="relative h-2/3 aspect-square">
                 <Woka src={$picture ?? ""} customWidth="100%" {grayscale} />
+                <!-- A bot's mood or work emoji (#1667), as on the larger layouts -->
+                <slot name="mood" />
             </div>
         </div>
     {/if}

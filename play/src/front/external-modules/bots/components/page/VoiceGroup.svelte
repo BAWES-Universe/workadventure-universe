@@ -277,7 +277,9 @@
         const known = lists[id];
         if (known) return Promise.resolve(known);
         const botId = bot.id;
-        listLoading[id] ??= botApiService
+        // One request per bot and source: the panel may move to another bot while one is on its way
+        const slot = `${botId}/${id}`;
+        listLoading[slot] ??= botApiService
             .getBotVoices(botId, id)
             .then((list) => {
                 // eslint-disable-next-line svelte/infinite-reactive-loop
@@ -290,9 +292,9 @@
                 throw e;
             })
             .finally(() => {
-                delete listLoading[id];
+                delete listLoading[slot];
             });
-        return listLoading[id];
+        return listLoading[slot];
     }
 
     // The voice on the card shows what its company says about it once the list is in; the card works without it
