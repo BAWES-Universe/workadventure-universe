@@ -14,7 +14,7 @@
     } from "../../../VoiceNote/VoiceNote";
     import { getMediaCaption } from "../MessageActions/messageActions";
     import { saveMessageFiles } from "../MessageActions/availableActions";
-    import { fileKindOf } from "../../../../FileViewer/fileKinds";
+    import { fileKindOf, fileNameOfLink } from "../../../../FileViewer/fileKinds";
     import { galleryFileKey } from "../Details/SharedItems";
     import { audioFileKind, audioFileTitle } from "./audioFileTitle";
     import { openSongInPlayer } from "./openSongInPlayer";
@@ -53,7 +53,8 @@
     $: duration = $content.voiceDuration ?? readDuration ?? playerDuration;
     // What a voice note has to say about itself is its shape. An audio file shows a title above its shape, and its
     // real name is kept for Download.
-    $: fileName = isVoice ? undefined : $content.filename?.trim() || $content.body?.trim() || undefined;
+    // A song a bot makes can arrive with no name: the link's own name stands in for it, as in the chat's Files list.
+    $: fileName = isVoice ? undefined : nameOf($content);
     $: title =
         audioFileTitle(fileName) ??
         (sender?.name ? $LL.chat.audioFile.from({ name: sender.name }) : $LL.chat.audioFile.untitled());
@@ -70,6 +71,22 @@
     $: if ($content.url && needsFile && $content.url !== shapeFor) readShape($content.url);
     $: progress = duration ? Math.min(1, current / duration) : 0;
     $: started = playing || current > 0;
+
+    /**
+     * The file's name: the sender's own, else a body that is an audio file name, else the link's name when it ends
+     * as an audio file, else the body as it is.
+     */
+    function nameOf(message: ChatMessageContent): string | undefined {
+        const given = message.filename?.trim();
+        if (given) return given;
+        const body = message.body?.trim();
+        if (body && fileKindOf(body) === "audio") return body;
+        if (message.url) {
+            const linked = fileNameOfLink(message.url);
+            if (fileKindOf(linked) === "audio") return linked;
+        }
+        return body || undefined;
+    }
 
     function readShape(url: string) {
         shapeFor = url;

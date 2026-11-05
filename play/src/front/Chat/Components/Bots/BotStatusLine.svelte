@@ -1,18 +1,11 @@
 <script lang="ts">
     import LL from "../../../../i18n/i18n-svelte";
     import type { BotAvailability } from "../../Bots/BotChatStatus";
-    import { botStatusColour } from "../../Bots/BotChatStatus";
 
-    /** The bot's state under its name in the chat header, with the same dot people get. */
+    /** The bot's state under its name in the chat header: plain grey words, like a person's; the dot is on its woka. */
     export let state: BotAvailability;
 </script>
 
-<span
-    class="inline-flex min-w-0 items-center gap-1.5 text-xs"
-    style="color:{botStatusColour(state)}"
-    data-testid="botStatusLine"
-    data-state={state}
->
-    <span class="h-1.5 w-1.5 shrink-0 rounded-full" style="background:{botStatusColour(state)}" />
+<span class="min-w-0 truncate text-xs text-white/60" data-testid="botStatusLine" data-state={state}>
     {$LL.chat.botStatus[state]()}
 </span>

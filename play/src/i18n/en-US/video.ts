@@ -11,6 +11,23 @@ const video: BaseTranslation = {
     click_and_drag_to_resize: "Click and drag to resize",
     showEveryone: "Show everyone ({count} more)",
     more: "more",
+    botMood: "In a good mood",
+    botMoods: {
+        happy: "Happy",
+        content: "Content",
+        cheeky: "Cheeky",
+        puzzled: "Puzzled",
+        worried: "Worried",
+        unimpressed: "Unimpressed",
+        annoyed: "Annoyed",
+        waving: "Waving",
+    },
+    botWorking: "Working: {work}",
+    botWork: {
+        read: "reading",
+        search: "searching",
+        write: "writing",
+    },
 };
 
 export default video;

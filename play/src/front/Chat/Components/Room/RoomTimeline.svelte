@@ -33,6 +33,20 @@
     import { nextReplyLimitExpiry, shownReplyLimitIds } from "../../Bots/BotReplyLimit";
     import BotStatusNoteCard from "../Bots/BotStatusNoteCard.svelte";
     import BotReplyLimitCard from "../Bots/BotReplyLimitCard.svelte";
+    import VoiceDraftCard from "../Bots/VoiceDraftCard.svelte";
+    import BotAskCard from "../Bots/BotAskCard.svelte";
+    import {
+        askBarFits,
+        chatAsks,
+        closesSoon,
+        isWaiting,
+        nextAskChange,
+        shownAskPosition,
+        type BotAsk,
+        type BotAskTap,
+    } from "../../Bots/BotAsk";
+    import { chatSheetLayoutStore, chatSheetSnapStore } from "../../ChatSheetStore";
+    import { cardToShow } from "../../Bots/BotVoiceDraft";
     import {
         PERSON_COLOUR_CONTEXT,
         NAME_BY_CHAT_ID_CONTEXT,
@@ -58,6 +72,7 @@
     import { isTouchScreen, SETTLE_CHECKS_MS } from "../../../Utils/ViewportGuard";
     import { ARTIFACT_CHAT_CONTEXT, type ArtifactChatOf } from "../../../Artifacts/artifactChatContext";
     import Message from "./Message.svelte";
+    import StoppedBySpeechNote from "./StoppedBySpeechNote.svelte";
     import {
         firstShowingIndex,
         keyboardClosed,
@@ -193,6 +208,22 @@
     $: roomName = room?.name;
     $: isEncrypted = room.isEncrypted;
     $: proximityRoom = room instanceof ProximityChatRoom ? room : undefined;
+    // What a voice bot hears this person say: above the message box, for them only (#1664)
+    $: voiceDrafts = proximityRoom ? proximityRoom.voiceDrafts : readable([]);
+    $: voiceDraftCard = cardToShow($voiceDrafts);
+    // Words they were still saying when they sent a typed line: into the message box, as Edit does
+    let voiceWordsSubscription: { unsubscribe(): void } | undefined;
+    $: {
+        voiceWordsSubscription?.unsubscribe();
+        voiceWordsSubscription = proximityRoom?.voiceWordsForComposer.subscribe((words) =>
+            messageInputBarRef?.putText(words)
+        );
+    }
+    onDestroy(() => voiceWordsSubscription?.unsubscribe());
+    function editVoiceDraft(turnId: string) {
+        const words = proximityRoom?.editVoiceDraft(turnId);
+        if (words !== undefined) messageInputBarRef?.putText(words);
+    }
     $: matrixRoom = room instanceof MatrixChatRoom ? room : undefined;
 
     // Counts the chat objects shown here: a chat can be made again under the same id (its type found out later, or a new
@@ -279,6 +310,7 @@
                 date: message.date,
                 senderKey: isNotice ? undefined : message.isMyMessage ? "me" : runSenderKey(message.sender),
                 isReply: message.quotedMessage !== undefined,
+                spoken: message.spoken === true,
             };
         })
     );
@@ -400,12 +432,58 @@
         botStatusCache.learn(partnerBotId, lastNoteAvailability, noteWrittenAt);
     }
     $: shownBotState = botHeaderState(botState, lastBotNote?.state);
-    $: botPlaceholder =
-        botState === "resting"
-            ? $LL.chat.botStatus.restingPlaceholder()
-            : botState === "unready"
-            ? $LL.chat.botStatus.unreadyPlaceholder()
-            : undefined;
+    // Cards the bot asks one answer with (#1657), in a direct message with a bot. The oldest waiting card is pinned above the
+    // message box until it is answered, closed or runs out; the chat keeps the ones that ended, where they were asked.
+    // And in nearby chat (#1658), where a bot shows the card to the person who asked and nobody else.
+    $: askStore = (partnerBotId || proximityRoom) && messages ? chatAsks(messages) : readable([]);
+    let askNow = Date.now();
+    let askTimer: ReturnType<typeof setTimeout> | undefined;
+    $: waitingAsks = $askStore.filter((entry) => isWaiting(entry.ask, askNow));
+    $: askById = new Map($askStore.map((entry) => [entry.message.id, entry.ask]));
+    $: wakeAtAskChange(
+        nextAskChange(
+            $askStore.map((entry) => entry.ask),
+            askNow
+        )
+    );
+    function tickAskClock() {
+        askNow = Date.now();
+    }
+    function wakeAtAskChange(at: number | undefined) {
+        clearTimeout(askTimer);
+        askTimer = undefined;
+        if (at === undefined) return;
+        askTimer = setTimeout(tickAskClock, Math.min(at - Date.now() + 50, 2 ** 31 - 1));
+    }
+    // Which waiting card is on show: the oldest, unless the person paged to another
+    let pagedToAskId: string | undefined;
+    $: shownAskIndex = shownAskPosition(
+        waitingAsks.map((entry) => entry.message.id),
+        pagedToAskId
+    );
+    $: shownAsk = waitingAsks[shownAskIndex];
+    $: queuedSoonIndex = waitingAsks.findIndex((entry, i) => i !== shownAskIndex && closesSoon(entry.ask, askNow));
+    $: askCompact = askBarFits($chatSheetLayoutStore, $chatSheetSnapStore);
+    async function tapAsk(ask: BotAsk, tap: BotAskTap): Promise<boolean> {
+        if (!room.answerBotAsk) return false;
+        try {
+            await room.answerBotAsk(ask, tap);
+            return true;
+        } catch (error) {
+            console.error("Could not send the answer to a bot's card", error);
+            return false;
+        }
+    }
+    $: botPlaceholder = shownAsk
+        ? // A question only picks a direction, so what the person types is their answer (#1661); an approval card's is something else
+          shownAsk.ask.question
+            ? $LL.chat.botAsk.typeYourOwnAnswer()
+            : $LL.chat.botAsk.typeSomethingElse()
+        : botState === "resting"
+        ? $LL.chat.botStatus.restingPlaceholder()
+        : botState === "unready"
+        ? $LL.chat.botStatus.unreadyPlaceholder()
+        : undefined;
     // The bot's account is out of the room and the bot is gone: say so once, as for a person leaving.
     $: botLeftLine =
         botLeft && botClosed
@@ -900,6 +978,7 @@
         if (redrawFrame !== undefined) cancelAnimationFrame(redrawFrame);
         clearTimeout(fileDragTimer);
         clearTimeout(replyLimitTimer);
+        clearTimeout(askTimer);
         document.removeEventListener("dragenter", onMapFileDragCapture, true);
         document.removeEventListener("dragover", onMapFileDragCapture, true);
         document.removeEventListener("drop", onMapFileDragCapture, true);
@@ -1004,6 +1083,7 @@
                             partner={$directPartner}
                             bot={partnerBotId !== undefined}
                             botState={shownBotState}
+                            botDotState={botState}
                             on:openProfile={() => openProfileRoomIdStore.set(room.id)}
                         />
                     {:else}
@@ -1195,6 +1275,18 @@
                             {#if shownReplyLimits.has(entry.message.id)}
                                 <BotReplyLimitCard replyLimit={entry.message.replyLimit} />
                             {/if}
+                        {:else if askById.has(entry.message.id)}
+                            <!-- A waiting card is pinned above the message box, so the chat never repeats it. Once it
+                                 ended, it moves into the chat where it was asked, as it ended. -->
+                            {@const asked = askById.get(entry.message.id)}
+                            {#if asked && !waitingAsks.some((waiting) => waiting.message.id === entry.message.id)}
+                                <BotAskCard
+                                    ask={asked}
+                                    botName={entry.message.sender?.username ?? $roomName}
+                                    now={askNow}
+                                    onTap={tapAsk}
+                                />
+                            {/if}
                         {:else if entry.message.botStatus}
                             <BotStatusNoteCard note={entry.message.botStatus} />
                         {:else}
@@ -1203,6 +1295,18 @@
                                 message={entry.message}
                                 runStart={place?.runStart ?? true}
                             />
+                            {#if entry.message.stoppedBySpeech}
+                                <StoppedBySpeechNote stopped={entry.message.stoppedBySpeech} />
+                            {/if}
+                            {#if "privateReply" in entry.message && entry.message.privateReply}
+                                <!-- A reply a bot wrote for this person alone, never said aloud (#1658) -->
+                                <div
+                                    class="flex items-center gap-1.5 px-4 pb-2 text-xs text-white/60"
+                                    data-testid="botPrivateReplyNote"
+                                >
+                                    <IconLock font-size="14" />{$LL.chat.botAsk.onlyYouSeeReply()}
+                                </div>
+                            {/if}
                             {#if "stoppedOnLeave" in entry.message && entry.message.stoppedOnLeave}
                                 <div class="px-4 pb-2 text-xs italic text-white/45" data-testid="proximityStoppedNote">
                                     {$LL.chat.session.stopped()}
@@ -1239,6 +1343,35 @@
                     {$LL.chat.botStatus.closed()}
                 </div>
             {:else}
+                {#if shownAsk}
+                    <BotAskCard
+                        docked
+                        ask={shownAsk.ask}
+                        botName={shownAsk.message.sender?.username ?? $roomName}
+                        now={askNow}
+                        position={{ at: shownAskIndex + 1, total: waitingAsks.length }}
+                        queuedClosingSoon={queuedSoonIndex >= 0
+                            ? { at: queuedSoonIndex + 1, total: waitingAsks.length }
+                            : undefined}
+                        compact={askCompact}
+                        onTap={tapAsk}
+                        onPrevious={() => (pagedToAskId = waitingAsks[Math.max(shownAskIndex - 1, 0)]?.message.id)}
+                        onNext={() =>
+                            (pagedToAskId =
+                                waitingAsks[Math.min(shownAskIndex + 1, waitingAsks.length - 1)]?.message.id)}
+                        onShowQueued={() => (pagedToAskId = waitingAsks[queuedSoonIndex]?.message.id)}
+                        onOpen={() => chatSheetSnapStore.set("full")}
+                    />
+                {/if}
+                {#if voiceDraftCard}
+                    <!-- One card at most: with two voice bots in a bubble, the one addressed last -->
+                    <VoiceDraftCard
+                        draft={voiceDraftCard}
+                        onEdit={editVoiceDraft}
+                        onSend={(turnId) => proximityRoom?.sendVoiceDraft(turnId)}
+                        onDiscard={(turnId) => proximityRoom?.discardVoiceDraft(turnId)}
+                    />
+                {/if}
                 {#key room.id}
                     <MessageInputBar
                         disabled={$shouldRetrySendingEvents}

@@ -184,6 +184,88 @@ describe("Nearby chat voice notes", () => {
         }
     });
 
+    it("sends a note's length and shape with it, and shows them on the sender's own bubble", () => {
+        room.sendMessage(
+            "",
+            "proximity",
+            true,
+            "https://uploader.test/upload-file/abc.m4a",
+            "file",
+            "audio/mp4",
+            undefined,
+            "Voice message.m4a",
+            undefined,
+            undefined,
+            { duration: 4.2, waveform: [0.1, 0.5, 1, 0.3] }
+        );
+
+        const sent = fake.space.emitPublicMessage.mock.calls[0][0].spaceMessage;
+        expect(sent.voiceDurationMs).toBe(4200);
+        expect(sent.voiceWaveform).toHaveLength(100);
+        expect(Math.max(...sent.voiceWaveform)).toBe(1024);
+        const content = get(last().content);
+        expect(content.voiceDuration).toBe(4.2);
+        expect(content.voiceWaveform?.length).toBeGreaterThan(0);
+        expect(Math.max(...(content.voiceWaveform ?? []))).toBe(1);
+    });
+
+    it("sends no shape with an audio file", () => {
+        room.sendMessage(
+            "",
+            "proximity",
+            true,
+            "https://uploader.test/upload-file/abc.mp3",
+            "file",
+            "audio/mpeg",
+            undefined,
+            "Interview.mp3",
+            undefined,
+            undefined,
+            { duration: 4, waveform: [1] }
+        );
+
+        const sent = fake.space.emitPublicMessage.mock.calls[0][0].spaceMessage;
+        expect(sent.voiceDurationMs).toBeUndefined();
+        expect(sent.voiceWaveform).toEqual([]);
+        expect(get(last().content).voiceWaveform).toBeUndefined();
+    });
+
+    it("shows the length and shape a received note carries, without reading its file", () => {
+        fake.emit("spaceMessage", {
+            sender: "room_3",
+            spaceMessage: {
+                message: "",
+                name: "Sara",
+                url: "https://uploader.test/upload-file/abc.m4a",
+                fileName: "Voice message.m4a",
+                voiceDurationMs: 3500,
+                voiceWaveform: [0, 512, 1024, 256],
+            },
+        });
+
+        const content = get(last().content);
+        expect(content.voiceDuration).toBe(3.5);
+        expect(content.voiceWaveform).toHaveLength(4);
+        expect(content.voiceWaveform?.[2]).toBe(1);
+    });
+
+    it("reads a received note without a shape from its file, as before", () => {
+        fake.emit("spaceMessage", {
+            sender: "room_3",
+            spaceMessage: {
+                message: "",
+                name: "Sara",
+                url: "https://uploader.test/upload-file/abc.m4a",
+                fileName: "Voice message.m4a",
+                voiceWaveform: [],
+            },
+        });
+
+        const content = get(last().content);
+        expect(content.voiceDuration).toBeUndefined();
+        expect(content.voiceWaveform).toBeUndefined();
+    });
+
     it("keeps an audio file with another name as an audio file", () => {
         fake.emit("spaceMessage", {
             sender: "room_3",

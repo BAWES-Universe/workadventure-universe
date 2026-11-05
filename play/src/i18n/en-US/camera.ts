@@ -26,6 +26,9 @@ const camera: BaseTranslation = {
         cameraBlocked: "Your browser blocked the camera",
         microphoneBlocked: "Your browser blocked the microphone.",
         blockedHint: "Allow it in the address bar, then try again.",
+        blockedHintIosApp: "Close Universe from the app switcher, open it again, then tap Try again.",
+        blockedHintIosBrowser:
+            "Tap aA in the address bar › Website Settings, allow Camera and Microphone, then tap Try again.",
         howToAllow: "How to allow",
         tryAgain: "Try again",
         back: "Back to your room",
@@ -37,6 +40,20 @@ const camera: BaseTranslation = {
         firefoxContent:
             'Please click the "Remember this decision" checkbox, if you don\'t want Firefox to keep asking you the authorization.',
         why: "So people you walk up to can see and hear you. You can turn them off at any time.",
+        iosTitle: "Camera is blocked",
+        iosWhy: "People can't see you. This takes about a minute.",
+        tryAgain: "Try again",
+        tryAgainDone: "Tried again. If iPhone didn't ask, follow step 2.",
+        steps: {
+            tryAgain: "Tap Try again. If iPhone asks, tap Allow.",
+            closeApp:
+                "Nothing asked? Close Universe: swipe up from the bottom edge, pause, flick Universe up. Open it and tap the camera button.",
+            settingsApp:
+                "Still blocked? Open Settings › Apps › Safari › Camera and choose Ask or Allow. Do the same for Microphone. Then repeat step 2.",
+            settingsTab:
+                "Still blocked? Tap aA in the address bar › Website Settings › Camera and choose Ask or Allow. Do the same for Microphone. Then reload the page.",
+            olderIphone: "Older iPhone: Settings › Safari.",
+        },
         allow: "Allow camera and mic",
         continue: "Continue without webcam",
         screen: {

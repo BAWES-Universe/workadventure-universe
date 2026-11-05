@@ -5,8 +5,8 @@
     import ImageWithFallback from "./ImageWithFallback.svelte";
 
     /**
-     * A friend's woka, the size of the People rows'. Friends outside this world have no woka here yet, so they get
-     * the default one; `dim` greys out someone offline.
+     * A friend's woka, the size of the People rows'. Someone the game has no picture for gets the default one;
+     * `dim` greys out someone offline.
      */
     export let picture: Readable<string | undefined> | undefined = undefined;
     export let color: string | undefined = undefined;
