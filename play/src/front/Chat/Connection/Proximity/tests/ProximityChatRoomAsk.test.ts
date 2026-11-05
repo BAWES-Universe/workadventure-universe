@@ -99,11 +99,11 @@ const someone = {
     tags: ["member"],
 } as unknown as SpaceUserExtended;
 
-const askField = (revision = 0, answer?: Record<string, unknown>) =>
+const askField = (revision = 0, answer?: Record<string, unknown>, id = "act-1") =>
     JSON.stringify({
         v: 1,
         kind: "approval",
-        id: "act-1",
+        id,
         revision,
         title: "Send an email",
         lines: [{ label: "To", text: "Fahad" }],
@@ -226,6 +226,30 @@ describe("ProximityChatRoom card and private replies from a bot (#1658)", () => 
     it("cannot send a tap for a card it never showed", async () => {
         await expect(room.answerBotAsk({ id: "nope", revision: 0 }, { action: "close" })).rejects.toThrow();
         expect(fake.space.emitPrivateMessage).not.toHaveBeenCalled();
+    });
+
+    it("does not hand a card that still waits to the next map, where nothing could answer it, but hands one that ended", () => {
+        emit(botAsk(nora));
+        emit(botAsk(nora, { id: "act-2", body: askField(1, { option: "approve" }, "act-2"), revision: 1 }));
+        expect(cards()).toHaveLength(2);
+        room.stashHistoryForNextScene();
+        const spaceRegistry = {
+            joinSpace: () => Promise.resolve(fake.space as unknown as SpaceInterface),
+            leaveSpace: () => Promise.resolve(),
+        } as unknown as SpaceRegistryInterface;
+        const next = new ProximityChatRoom(
+            "room_9",
+            spaceRegistry,
+            { newChatMessageWritingStatusStream: new Subject() },
+            { getPlayers: () => new Map() } as unknown as RemotePlayersRepository,
+            { playBubbleInSound: vi.fn(), playBubbleOutSound: vi.fn() },
+            () => undefined
+        );
+        const carried = [...next.messages] as ProximityChatMessage[];
+        const carriedCards = carried.filter((message) => message.ask);
+        expect(carriedCards).toHaveLength(1);
+        expect(get(carriedCards[0].ask!)?.answer).toEqual({ option: "approve" });
+        next.destroy();
     });
 
     it("counts the card as unread, as any message that arrives", () => {

@@ -1416,7 +1416,11 @@ export class ProximityChatRoom implements ChatRoom {
      * next map gets a copy, with the stay you were in closed in it.
      */
     public stashHistoryForNextScene(): void {
-        const messages = Array.from(get(this.messages));
+        // A card still waiting for a pick cannot be answered on the next map (this room's cards stay behind with it), so it
+        // is not handed over, as when the person leaves a bubble. Cards that ended go with the chat.
+        const messages = Array.from(get(this.messages)).filter(
+            (message) => !(message instanceof ProximityChatMessage && message.ask && !get(message.ask)?.answer)
+        );
         const unsentDrafts = new Map(get(this._unsentDrafts));
         // Leaving the map ends the stay you're in: close it in the copy, so the next map never receives an open
         // stay that its own messages would fall into.
