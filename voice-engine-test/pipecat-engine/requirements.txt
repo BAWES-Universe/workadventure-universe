@@ -1,0 +1,4 @@
+# Pinned for the voice engine test. Install: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+# Everything else (aiortc, av, numpy, onnxruntime, soxr, ...) comes in as a dependency of pipecat-ai[webrtc,silero].
+pipecat-ai[webrtc,silero]==1.15.0
+soundfile==0.13.1
