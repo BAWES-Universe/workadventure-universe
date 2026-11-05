@@ -756,9 +756,10 @@ export class MCPConnector {
 
             if (read) {
                 // It answers: any mark it had is gone, and Orbit is told
-                if (MCPConnector.health.ok(botId, server.id) || server.signInLostAt || server.noAnswerAt) {
-                    void reportToolState(orbit, botId, server.id, 'ok', new Date().toISOString());
-                }
+                const told =
+                    MCPConnector.health.ok(botId, server.id) || server.signInLostAt || server.noAnswerAt
+                        ? reportToolState(orbit, botId, server.id, 'ok', new Date().toISOString())
+                        : undefined;
                 const raw = read.tools;
                 const { tools: toolDefs, titles } = MCPConnector.toDefinitions(raw);
 
@@ -771,6 +772,11 @@ export class MCPConnector {
                     serverId: server.id,
                 });
 
+                // Orbit did not hear it: forget the list, so the next read goes to the server again and tells Orbit again
+                // (Orbit's own mark brings it back)
+                void told?.then((ok) => {
+                    if (!ok) toolListCache.delete(cacheKey);
+                });
                 const rawByName = new Map(raw.map((tool) => [tool.name, tool]));
                 for (const toolDef of toolDefs) {
                     addUniqueTool(toolDef, server, titles[toolDef.function.name], rawByName.get(toolDef.function.name));
@@ -890,12 +896,17 @@ export class MCPConnector {
             return { read: false, reason: 'The server did not answer with a list of tools' };
         }
         // It answers: any mark it had is gone, and Orbit is told
-        if (this.health.ok(botId, server.id) || server.signInLostAt || server.noAnswerAt) {
-            void reportToolState(orbit, botId, server.id, 'ok', new Date().toISOString());
-        }
+        const told =
+            this.health.ok(botId, server.id) || server.signInLostAt || server.noAnswerAt
+                ? reportToolState(orbit, botId, server.id, 'ok', new Date().toISOString())
+                : undefined;
         const raw = read.tools;
         const { tools, titles } = this.toDefinitions(raw);
         toolListCache.set(`${botId}:${server.id}`, { tools, titles, raw, cachedAt: Date.now(), serverId: server.id });
+        // Orbit did not hear it: the next read goes to the server again and tells Orbit again
+        void told?.then((ok) => {
+            if (!ok) toolListCache.delete(`${botId}:${server.id}`);
+        });
         const saved = await this.saveListToOrbit(botId, server, raw, { adminApiUrl, adminApiToken }, suggest, read.cut);
         // Orbit did not get it: the next read tries to save it again
         if (saved.result === 'skipped') toolListCache.delete(`${botId}:${server.id}`);

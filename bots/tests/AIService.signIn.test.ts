@@ -176,6 +176,16 @@ describe("AIService – a tool whose sign-in expired (#1819)", () => {
         expect(signInEvents(botClient)).toHaveLength(1);
     });
 
+    it("shows the card again at the next reply when it did not get out", async () => {
+        found.issues = [EXPIRED];
+        const { svc, admin, botClient } = setup();
+        botClient.sendAskEvent.mockReturnValueOnce(false);
+        await reply(svc, admin, botClient);
+        await reply(svc, admin, botClient);
+        await reply(svc, admin, botClient);
+        expect(signInEvents(botClient)).toHaveLength(2);
+    });
+
     it("shows no card for a server that only did not answer", async () => {
         found.issues = [QUIET];
         const { svc, admin, botClient } = setup();

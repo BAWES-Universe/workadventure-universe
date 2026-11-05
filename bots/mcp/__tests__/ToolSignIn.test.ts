@@ -248,6 +248,14 @@ describe('the Reconnect card', () => {
         expect(content[TOOL_SIGNIN_KEY]).toEqual({ lost: toolSignInCard(issues)!.lost });
     });
 
+    it('shows again at the next reply when the card did not get out', () => {
+        const shown = new ToolSignInShown();
+        const card = toolSignInCard(issues)!;
+        expect(shown.shouldShow('k', card)).toBe(true);
+        shown.forget('k');
+        expect(shown.shouldShow('k', card)).toBe(true);
+    });
+
     it('shows once per outage and chat, again when the outage changes, and takes itself back once', () => {
         const shown = new ToolSignInShown();
         const one = toolSignInCard([issues[0]])!;

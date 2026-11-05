@@ -171,6 +171,26 @@ describe('a refused sign-in', () => {
         expect(reports.map((r) => r.body.state)).toEqual(['ok']);
     });
 
+    it('tells Orbit again at the next read when it did not hear that the server answers', async () => {
+        servers = [{ ...base, authConfig: TOKEN_A, signInLostAt: '2026-11-05T09:54:00.000Z' }];
+        let orbitUp = false;
+        http.put.mockImplementation(async (url: string, body: Record<string, unknown>) => {
+            if (!url.endsWith('/sign-in')) return { data: { added: [], changed: [], removed: [] } };
+            if (!orbitUp) throw new Error('Orbit is down');
+            reports.push({ url, body });
+            return { data: { changed: true } };
+        });
+        await discover();
+        await flush();
+        expect(reports).toEqual([]);
+        orbitUp = true;
+        await discover();
+        await flush();
+        // The list was read from the server again (not from the cache), and Orbit has it now
+        expect(listCalls).toBe(2);
+        expect(reports.map((r) => r.body.state)).toEqual(['ok']);
+    });
+
     it('leaves other servers working', async () => {
         servers = [
             { ...base, authConfig: TOKEN_A },

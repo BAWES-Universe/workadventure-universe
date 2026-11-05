@@ -3110,12 +3110,14 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             if (!card) return undefined;
             if (!this.signInShown.shouldShow(key, card)) return undefined;
             if (nearby) {
-                botClient!.sendAskEvent(spaceName!, playerId!, {
+                const sent = botClient!.sendAskEvent(spaceName!, playerId!, {
                     kind: 'signin',
                     id: `signin-${botId}`,
                     revision: Math.floor(Date.now() / 1000),
                     body: JSON.stringify(card),
                 });
+                // The person is not in the space (any more): they are shown the card when they are next here
+                if (!sent) this.signInShown.forget(key);
                 return undefined;
             }
             return channel === 'dm' ? card : undefined;

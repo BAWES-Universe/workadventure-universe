@@ -68,6 +68,11 @@ export class ToolSignInShown {
         return true;
     }
 
+    /** The card did not get out: the next reply shows it again. */
+    forget(key: string): void {
+        this.shown.delete(key);
+    }
+
     /** The outage is over: true when a card was shown here and should now be taken back. */
     cleared(key: string): boolean {
         return this.shown.delete(key);
