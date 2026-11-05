@@ -107,6 +107,7 @@ import { providerErrorText } from './providers/ownKeyHttp';
 export { ROOM_CARD_MARK } from './systemPrompt';
 import {
     artifactMarker,
+    artifactCardAgain,
     artifactToolDefinitions,
     artifactsEnabled,
     formatArtifactResult,
@@ -771,6 +772,7 @@ export class AIService {
             const memory = this.conversationMemory?.getMemory(botId, playerId);
             memory?.artifactCalls?.clear();
             memory?.sentAgain?.clear();
+            memory?.cardsAgain?.clear();
         }
         // This turn's media (#1510): what the person sent with this message; its tools add theirs as they run. The turn
         // holds its own list, so a turn that a newer message replaced can't add to the newer one's
@@ -3104,7 +3106,46 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             // One look through Universe AI's vision, never for a bot on a person's own key (as for images people send)
             ...(source === 'own-key' ? {} : { look: (url: string) => this.describeImagesViaDefaultVision([url], abortSignal) }),
             send: (file, url) => this.sendFileAgain(file, url, { botClient, spaceName, botId, playerId }),
+            ...(artifactsEnabled() ? { sendArtifact: (id: string) => this.sendArtifactCardAgain(id, { botClient, admin, spaceName, botId, playerId }) } : {}),
         });
+    }
+
+    /**
+     * An artifact's card put in this chat again (#1815), for someone who just came or to bring it down the chat: its latest
+     * version, nothing saved. Orbit's read check decides whether this bot may show it here (game #1781). Once a turn, as a
+     * file sent again is. Never throws.
+     */
+    private async sendArtifactCardAgain(
+        id: string,
+        where: { botClient?: BotClient; admin: AdminApiService; spaceName?: string; botId: string; playerId: number }
+    ): Promise<Record<string, unknown>> {
+        const { botClient, admin, spaceName, botId, playerId } = where;
+        if (botClient && !spaceName) return { error: 'Cannot show the card: not currently in a conversation space' };
+        const who = this.chatCallFor(botId, playerId, botClient, spaceName);
+        if (!who) return { error: 'Artifacts are not available in this chat.' };
+        const memory = this.conversationMemory?.getMemory(botId, playerId);
+        // The model asking twice, at once or one after the other, or the turn asked again, gets what the first did; a card
+        // that could not go may be tried again
+        const earlier = memory?.cardsAgain?.get(id);
+        if (earlier) return earlier;
+        const sending = (async (): Promise<Record<string, unknown>> => {
+            const run = await artifactCardAgain(id, {
+                admin,
+                botId,
+                person: who.person,
+                chat: who.chat,
+                referencedArtifactIds: pointedArtifactIds(this.recentHistoryOf(memory, botId), memory?.pointedArtifacts),
+            });
+            if (!run.card) return run.result;
+            if (!this.deliverArtifactCard(run.card, botClient, spaceName, memory)) {
+                return { error: 'The conversation ended before the card could be placed in chat. Say so; do not claim it was shown.' };
+            }
+            return run.result;
+        })();
+        if (memory) (memory.cardsAgain ??= new Map()).set(id, sending);
+        const result = await sending;
+        if (typeof result.error === 'string' && memory?.cardsAgain?.get(id) === sending) memory.cardsAgain.delete(id);
+        return result;
     }
 
     /**

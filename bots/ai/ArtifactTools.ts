@@ -17,6 +17,7 @@ import type {
 } from '../server/AdminApiService';
 import { ArtifactCallError } from '../server/AdminApiService';
 import { MediaFetchError, fetchMedia, mediaFileName, type TurnMedia } from './ArtifactMedia';
+import { FIND_FILES_TOOL } from './FileTools';
 
 export const MAKE_ARTIFACT_TOOL = 'make_artifact';
 export const CHANGE_ARTIFACT_TOOL = 'change_artifact';
@@ -94,6 +95,19 @@ const MEDIA_PARAM = {
 };
 
 /**
+ * How an artifact is shared, in make_artifact's description (#1815): it always has a link, which the person copies from
+ * its window, so the bot never says there is none and never writes one itself (it would be a guess).
+ */
+export function artifactLinkHelp(sendAgain: boolean): string {
+    return (
+        'Every artifact has a share link. The person it was made for opens its card, taps Share, picks "Anyone with the link" and ' +
+        'taps Copy link; people in this chat can open it from its card without that. Never say an artifact has no link, and never ' +
+        'write a link yourself. ' +
+        (sendAgain ? 'To show its card again (someone just came, or it is far up the chat), use send_again with its id; nothing is made twice. ' : '')
+    );
+}
+
+/**
  * The artifact tools. With `findWith` set to find_files (#1508), list_artifacts is left out: find_files finds artifacts
  * along with files, a page at a time, from every chat the person may reach them from.
  */
@@ -114,6 +128,7 @@ export function artifactToolDefinitions(
                     'locked box with no network except common libraries (cdnjs.cloudflare.com, cdn.jsdelivr.net, unpkg.com, fonts.googleapis.com); ' +
                     'it cannot use the camera, microphone or location, open pop-ups, or reach the game. Make it work on a phone too. ' +
                     MEDIA_HELP +
+                    artifactLinkHelp(findWith === FIND_FILES_TOOL) +
                     'Call this tool silently, then say in one short line what you made.',
                 parameters: {
                     type: 'object',
@@ -480,10 +495,33 @@ export function describeArtifactError(error: unknown): string {
     return "Couldn't do that right now. Say so simply and offer to try again.";
 }
 
+/** Who asks and where, and the artifacts the person pointed at, for a call that opens one by id. */
+function reachOf(context: Pick<ArtifactContext, 'botId' | 'person' | 'chat' | 'referencedArtifactIds'>): { call: ArtifactCall; reach: ArtifactReachCall } {
+    const call: ArtifactCall = { botId: context.botId, person: context.person, chat: context.chat };
+    return { call, reach: { ...call, ...(context.referencedArtifactIds?.length ? { referencedArtifactIds: context.referencedArtifactIds } : {}) } };
+}
+
+/**
+ * An artifact's card, to put in this chat again (#1815): its latest version, as it is. Nothing is saved and no version is
+ * added. It opens through Orbit's read check, so a bot shows only what read_artifact may open: what it made for this
+ * person, what was made in this chat, and what the person pointed at. Never throws.
+ */
+export async function artifactCardAgain(
+    id: string,
+    context: Pick<ArtifactContext, 'admin' | 'botId' | 'person' | 'chat' | 'referencedArtifactIds'>
+): Promise<ArtifactToolRun> {
+    try {
+        const read = await context.admin.readArtifact(id, reachOf(context).reach);
+        const card = cardOf(read.artifact, read.version.number);
+        return { result: { sent: true, artifact: { id: card.id, title: card.title, kind: card.kind, version: card.version } }, card };
+    } catch (error) {
+        return { result: { error: describeArtifactError(error) } };
+    }
+}
+
 /** Runs one artifact tool for one person in one chat. Never throws: a failure comes back as `{ error }` for the model. */
 export async function runArtifactTool(name: string, args: Record<string, unknown>, context: ArtifactContext): Promise<ArtifactToolRun> {
-    const call: ArtifactCall = { botId: context.botId, person: context.person, chat: context.chat };
-    const reach: ArtifactReachCall = { ...call, ...(context.referencedArtifactIds?.length ? { referencedArtifactIds: context.referencedArtifactIds } : {}) };
+    const { call, reach } = reachOf(context);
     try {
         switch (name) {
             case MAKE_ARTIFACT_TOOL: {

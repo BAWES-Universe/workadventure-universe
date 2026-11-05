@@ -219,6 +219,33 @@ describe('send_again', () => {
     });
 });
 
+describe('send_again for an artifact card (#1815)', () => {
+    const ID = '5e9f889a-73fe-47da-aa03-2a1103c85c94';
+
+    it("hands an artifact id to the card's own send, and reads its result as a card put here again", async () => {
+        const sendArtifact = vi.fn(async () => ({ sent: true, artifact: { id: ID, title: 'AutoNode', kind: 'page', version: 2 } }));
+        const ctx = context({ sendArtifact });
+        const result = await runFileTool('send_again', { id: ID.toUpperCase() }, ctx);
+        expect(sendArtifact).toHaveBeenCalledWith(ID);
+        expect(ctx.admin.getBotFile).not.toHaveBeenCalled();
+        expect(formatFileResult('send_again', result)).toBe(
+            'send_again: The card for "AutoNode" (version 2) is in this chat again, as it is; nothing new was made and no version was added. Say in one short line that you put it here again. Do NOT paste a link or the id.'
+        );
+    });
+
+    it('takes only file ids where artifacts are off, and says which ids it takes', async () => {
+        expect(await runFileTool('send_again', { id: ID }, context())).toEqual({ error: 'Give a file id like f12 (find_files gives them).' });
+        expect(await runFileTool('send_again', { id: 'art-1' }, context({ sendArtifact: vi.fn() }))).toEqual({ error: 'Give a file id like f12 or an artifact id (find_files gives them).' });
+    });
+
+    it('says it can put an artifact card here again only where artifacts are on', () => {
+        const on = JSON.stringify(fileToolDefinitions({ artifacts: true }));
+        expect(on).toContain("or an artifact's card, in this chat again");
+        expect(on).toContain('read_artifact, change_artifact and send_again');
+        expect(JSON.stringify(fileToolDefinitions({ artifacts: false }))).not.toContain('artifact');
+    });
+});
+
 describe("Orbit's answers, in words the bot can pass on", () => {
     it('never throws, and never says more than whether the file is there', async () => {
         const failing = (error: Error) => context({ admin: { findBotFiles: vi.fn(async () => { throw error; }), getBotFile: vi.fn(async () => { throw error; }), readBotFile: vi.fn(async () => { throw error; }) } as never });
@@ -439,6 +466,67 @@ describe('the file tools in AIService', () => {
         expect(await again['sendFileAgain'](view(SONG), 'https://cdn.example.com/a.mp3', where)).toMatch(/couldn't be sent right now/);
         expect(await again['sendFileAgain'](view(SONG), 'https://cdn.example.com/a.mp3', where)).toBeNull();
         expect(failing.sendAudio).toHaveBeenCalledTimes(2);
+    });
+
+    describe("an artifact's card again (#1815)", () => {
+        const ID = '5e9f889a-73fe-47da-aa03-2a1103c85c94';
+        const page = { id: ID, title: 'AutoNode', kind: 'page', makerName: 'Tavily Researcher', version: 2 };
+        const withArtifacts = (extra: Record<string, unknown> = {}) => ({
+            ...orbit(),
+            readArtifact: vi.fn(async () => ({ artifact: page, version: { number: 2, summary: null }, content: '<h1>x</h1>', hidden: false })),
+            makeArtifact: vi.fn(),
+            changeArtifact: vi.fn(),
+            ...extra,
+        });
+        const again = { id: 't1', name: 'send_again', arguments: JSON.stringify({ id: ID }) };
+
+        it('in a bubble: puts the same card at the bottom of nearby chat, once a turn, through Orbit\'s read check, and saves nothing', async () => {
+            const bot = { ...client(), sendChatMessage: vi.fn() };
+            const admin = withArtifacts();
+            const ai = withFiles({});
+            const [first, second] = await ai['executeToolCalls']([again, { ...again, id: 't2' }], bot as never, admin as never, undefined, 'uuid-alice', 'bubble-1', 'bot1', 7);
+            expect(admin.readArtifact).toHaveBeenCalledWith(ID, {
+                botId: 'bot1',
+                person: { signedIn: true, identifier: 'uuid-alice', name: 'Alice' },
+                chat: { kind: 'nearby', ref: 'bubble-1' },
+            });
+            expect(bot.sendChatMessage).toHaveBeenCalledTimes(1);
+            expect(bot.sendChatMessage).toHaveBeenCalledWith('bubble-1', `::artifact:${ID}:2:page::AutoNode`);
+            expect(first.result).toEqual({ sent: true, artifact: { id: ID, title: 'AutoNode', kind: 'page', version: 2 } });
+            expect(second.result).toEqual(first.result);
+            expect(admin.makeArtifact).not.toHaveBeenCalled();
+            expect(admin.changeArtifact).not.toHaveBeenCalled();
+            expect(JSON.stringify(first.result)).not.toContain('<h1>');
+        });
+
+        it('in a direct message: the card goes with the reply', async () => {
+            const memory: Record<string, unknown> = { userUuid: 'uuid-alice', playerName: 'Alice', dmRoomId: '!room', pendingArtifacts: [] };
+            const [sent] = await withFiles(memory)['executeToolCalls']([again], undefined, withArtifacts() as never, undefined, 'uuid-alice', 'matrix-dm', 'bot1', -3);
+            expect(sent.result).toMatchObject({ sent: true });
+            expect(memory.pendingArtifacts).toEqual([{ id: ID, version: 2, title: 'AutoNode', kind: 'page', maker: 'Tavily Researcher' }]);
+        });
+
+        it("shows nothing Orbit won't let this bot open here (another bot's work from another chat)", async () => {
+            const bot = { ...client(), sendChatMessage: vi.fn() };
+            const admin = withArtifacts({ readArtifact: vi.fn(async () => { throw new ArtifactCallError('not_found', 404, 'No such artifact.'); }) });
+            const [sent] = await withFiles({})['executeToolCalls']([again], bot as never, admin as never, undefined, 'uuid-alice', 'bubble-1', 'bot1', 7);
+            expect(sent.result).toEqual({ error: "That artifact isn't here, or this person can't open it." });
+            expect(bot.sendChatMessage).not.toHaveBeenCalled();
+        });
+
+        it('lets the person point at one by pasting its link, as read_artifact does', async () => {
+            const admin = withArtifacts();
+            const memory = { conversationHistory: [{ sender: 'person', message: `https://orbit.example/a/${ID}` }] };
+            await withFiles(memory)['executeToolCalls']([again], { ...client(), sendChatMessage: vi.fn() } as never, admin as never, undefined, 'uuid-alice', 'bubble-1', 'bot1', 7);
+            expect(admin.readArtifact).toHaveBeenCalledWith(ID, expect.objectContaining({ referencedArtifactIds: [ID] }));
+        });
+
+        it('says so, and claims nothing, when the bubble closed before the card could go', async () => {
+            const bot = { ...client(), isInSpace: vi.fn(() => false), sendChatMessage: vi.fn() };
+            const [sent] = await withFiles({})['executeToolCalls']([again], bot as never, withArtifacts() as never, undefined, 'uuid-alice', 'bubble-1', 'bot1', 7);
+            expect(sent.result.error).toMatch(/conversation ended before the card could be placed/);
+            expect(bot.sendChatMessage).not.toHaveBeenCalled();
+        });
     });
 
     it("leaves a file tool's result alone when sending media, and reads it as the tool's own lines", async () => {

@@ -11,6 +11,11 @@ const LINK = new RegExp(`https?://[^\\s<>"'()]+/a/(${UUID})(?![0-9a-z-])`, 'gi')
 /** A card as a line of nearby chat, `::artifact:<id>:<version>:<kind>::<title>`. */
 const CARD_LINE = new RegExp(`::artifact:(${UUID}):`, 'gi');
 
+/** Whether this is an artifact's id, as Orbit gives it (any case). */
+export function isArtifactId(value: string): boolean {
+    return new RegExp(`^${UUID}$`, 'i').test(value);
+}
+
 /** A person can point at a few at once; Orbit takes no more than this. */
 export const MAX_POINTED_ARTIFACTS = 20;
 

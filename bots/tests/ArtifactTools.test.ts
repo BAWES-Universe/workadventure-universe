@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
     ARTIFACT_KEY,
+    artifactCardAgain,
     artifactDirectMessage,
     artifactMarker,
     artifactToolDefinitions,
@@ -340,5 +341,39 @@ describe('a reply that says it saved an artifact (Orbit #666)', () => {
         expect(retry).toContain('change_artifact');
         expect(retry).toContain('If they did not ask for an artifact');
         expect(NOTHING_SAVED_LINE).toBe('No new version was saved.');
+    });
+});
+
+describe('the share link and the card again (#1815)', () => {
+    const cardContext = { botId: 'bot1', person: { signedIn: true, identifier: 'uuid-1', name: 'Khalid' }, chat: { kind: 'nearby' as const, ref: 'bubble-1' } };
+    it("tells the bot every artifact has a link the person copies, never to write one, and to use send_again for the card", () => {
+        const make = (findWith?: string) => artifactToolDefinitions(findWith ? { findWith } : {}).find((tool) => tool.function.name === 'make_artifact')!.function.description;
+        expect(make('find_files')).toContain('Every artifact has a share link');
+        expect(make('find_files')).toContain('taps Copy link');
+        expect(make('find_files')).toContain('Never say an artifact has no link, and never write a link yourself.');
+        expect(make('find_files')).toContain('use send_again with its id');
+        // Without the file tools there is no send_again to point at
+        expect(make()).toContain('Every artifact has a share link');
+        expect(make()).not.toContain('send_again');
+    });
+
+    it("gives the card of the latest version, read through Orbit's check with what the person pointed at, and saves nothing", async () => {
+        const readArtifact = vi.fn(async () => ({
+            artifact: { id: 'art-1', title: 'Quests board', kind: 'app', makerName: 'Scout', version: 3 },
+            version: { number: 3, summary: null },
+            content: '<h1>x</h1>',
+            hidden: false,
+        }));
+        const run = await artifactCardAgain('art-1', { ...cardContext, admin: { readArtifact } as never, referencedArtifactIds: ['art-1'] });
+        expect(readArtifact).toHaveBeenCalledWith('art-1', { botId: cardContext.botId, person: cardContext.person, chat: cardContext.chat, referencedArtifactIds: ['art-1'] });
+        expect(run.card).toEqual({ id: 'art-1', version: 3, title: 'Quests board', kind: 'app', maker: 'Scout' });
+        expect(run.result).toEqual({ sent: true, artifact: { id: 'art-1', title: 'Quests board', kind: 'app', version: 3 } });
+    });
+
+    it("gives no card, and Orbit's no in words, when this bot may not open it", async () => {
+        const readArtifact = vi.fn(async () => { throw new ArtifactCallError('not_found', 404, 'No such artifact.'); });
+        const run = await artifactCardAgain('art-9', { ...cardContext, admin: { readArtifact } as never });
+        expect(run.card).toBeUndefined();
+        expect(run.result).toEqual({ error: "That artifact isn't here, or this person can't open it." });
     });
 });
