@@ -84,6 +84,8 @@ class ConnectionManager {
     /** Work held back while the page was being left, done if the browser shows the page again from its back cache. */
     private shownAgain: (() => void)[] = [];
     private authToken: string | null = null;
+    /** Orbit's own id for this person: the only thing the analytics are told about who they are (never the email). */
+    private analyticsUserId: string | null = null;
     private _currentRoom: Room | null = null;
 
     private serviceWorker?: _ServiceWorker;
@@ -226,6 +228,7 @@ class ConnectionManager {
      * Logout
      */
     public logout() {
+        analyticsClient.forgetPerson();
         // save the current token to use it in the redirect logout url
         const tokenTmp = localUserStore.getAuthToken();
         localUserStore.dropGuestTokenAside();
@@ -517,7 +520,7 @@ class ConnectionManager {
             return Promise.reject(new Error("Invalid URL"));
         }
         if (this.localUser) {
-            analyticsClient.identifyUser(this.localUser.uuid, this.localUser.email);
+            analyticsClient.identifyUser(this.analyticsUserId);
         }
 
         //if limit room active test headband
@@ -555,6 +558,10 @@ class ConnectionManager {
         localUserStore.dropGuestTokenAside();
         this.localUser = new LocalUser(data.userUuid, data.email);
         this.authToken = data.authToken;
+        // A new guest is nobody Orbit has told us about yet: the analytics keep them anonymous until it does, and not
+        // linked to whoever used this browser before.
+        this.analyticsUserId = null;
+        analyticsClient.forgetPerson();
         if (!isBenchmark) {
             // In benchmark, we don't have a local storage.
             localUserStore.saveUser(this.localUser);
@@ -915,6 +922,7 @@ class ConnectionManager {
         }
 
         localUserStore.setAuthToken(authToken);
+        this.analyticsUserId = response.userId ?? null;
         this.localUser = new LocalUser(userUuid, email, matrixUserId /*, isMatrixRegistered*/);
         localUserStore.saveUser(this.localUser);
         this.authToken = authToken;
