@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { allowed, AI_EVENT, SERVER_EVENTS, errorClassOf, errorStatusOf, address, toolNames, id, label } from "../ai/telemetryAllowlist";
+import { allowed, AI_EVENT, spaceName, SERVER_EVENTS, errorClassOf, errorStatusOf, address, toolNames, id, label } from "../ai/telemetryAllowlist";
 
 const capture = vi.fn();
 vi.mock("posthog-node", () => ({ PostHog: vi.fn(() => ({ capture, flush: vi.fn() })) }));
@@ -68,6 +68,17 @@ describe("the allowlist", () => {
         expect(address("not a url")).toBeUndefined();
     });
 
+    it("keeps the space of a universe room, with its own @, and of a direct-message room, and drops one with an email in it", () => {
+        for (const room of ["@/acme/main/lobby", "acme.@/main/lobby", "https:@/x", "!abc123:matrix.example.com", "space-1", "@/acme/main/lobby.7f3a-bubble"]) {
+            expect(spaceName(room)).toBe(room);
+        }
+        for (const bad of ["a.b@example.com", "user@host:room", "@alice", "two words", "room@", "x@@y"]) {
+            expect(spaceName(bad)).toBeUndefined();
+        }
+        const kept = allowed("$ai_generation", AI_EVENT, { space: "@/acme/main/lobby", bot_id: "bot-1" });
+        expect(kept).toEqual({ space: "@/acme/main/lobby", bot_id: "bot-1" });
+    });
+
     it("takes ids that the system makes and nothing with spaces or an @", () => {
         expect(id("conversation-bot-1-player-42")).toBe("conversation-bot-1-player-42");
         expect(id("voice-worker:bot-server-1")).toBe("voice-worker:bot-server-1");
@@ -91,12 +102,12 @@ describe("the real client sends only what the allowlist keeps", () => {
 
     it("sends a generation with the figures, the tool names and the error class", async () => {
         const { captureAiGeneration } = await import("../ai/PostHogClient");
-        captureAiGeneration({ ...base, cost: 0.01, latency: 1.5, botId: "bot-1", playerId: "42", toolNames: ["read_mail", "read_mail"], error: "the provider failed (503)" });
+        captureAiGeneration({ ...base, cost: 0.01, latency: 1.5, botId: "bot-1", playerId: "42", space: "@/acme/main/lobby", toolNames: ["read_mail", "read_mail"], error: "the provider failed (503)" });
         expect(capture).toHaveBeenCalledTimes(1);
         expect(capture.mock.calls[0][0].properties).toEqual({
             $ai_session_id: "s", $ai_trace_id: "t", $ai_model: "m", $ai_provider: "openai",
             $ai_input_tokens: 10, $ai_output_tokens: 2, $ai_latency: 1.5, $ai_cost: 0.01,
-            bot_id: "bot-1", player_id: "42", tool_names: ["read_mail", "read_mail"], tool_call_count: 2,
+            bot_id: "bot-1", player_id: "42", space: "@/acme/main/lobby", tool_names: ["read_mail", "read_mail"], tool_call_count: 2,
             $ai_is_error: true, $ai_error: "provider_failed", error_status: 503,
         });
     });
