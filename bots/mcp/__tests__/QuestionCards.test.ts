@@ -138,7 +138,7 @@ describe('a tap', () => {
         expect(s.cards.hasWaiting('b1', '!dm', khalid)).toBe(true);
     });
 
-    it('a pick the bot could not take on after the question timed out stays as it ended', async () => {
+    it('a pick the bot could not take on after the question timed out ends as unanswered, never as picked', async () => {
         const s = setup({ pickNotTaken: true });
         await show(s);
         const id = s.field().id;
@@ -146,7 +146,7 @@ describe('a tap', () => {
         const pick = s.cards.handleTap('b1', '!dm', khalid, s.tap(id, 1, { action: 'pick', choices: ['c1'] }));
         s.advance(60 * 60_000);
         await pick;
-        expect(s.field()).toMatchObject({ answer: { picked: ['c1'] } });
+        expect(s.field()).toMatchObject({ answer: { expired: true } });
         expect(s.cards.hasWaiting('b1', '!dm', khalid)).toBe(false);
     });
 

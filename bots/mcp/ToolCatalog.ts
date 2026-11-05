@@ -104,7 +104,9 @@ export function stableJson(value: unknown): string {
  * connection's token renews on its own, so it is not part of it: the server's address and the way it signs in are.
  */
 export function fingerprintTool(tool: RawTool, server: ToolServerIdentity): string {
-    const secret = process.env.BOT_SERVICE_TOKEN || 'universe-tool-fingerprint';
+    // TOOL_FINGERPRINT_KEY, when set, is a key of its own that is never rotated with the service token: changing the key
+    // puts every confirmed tool back to "not confirmed yet". Without it the service token is the key, as before.
+    const secret = process.env.TOOL_FINGERPRINT_KEY || process.env.BOT_SERVICE_TOKEN || 'universe-tool-fingerprint';
     const account = server.authType === 'bearer' || server.authType === 'api-key' ? (server.authConfig ?? null) : null;
     return createHmac('sha256', secret)
         .update(

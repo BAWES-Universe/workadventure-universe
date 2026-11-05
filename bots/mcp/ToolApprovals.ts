@@ -504,6 +504,8 @@ export class ToolApprovals {
         // Set right before the tool is called: until then, whatever stops this run, the tool did not run
         let started = false;
         let attempt: { attemptId: string; action: SavedAction } | null = null;
+        // Set once Orbit has recorded how this attempt ended, so the catch below does not record it a second time
+        let recorded = false;
         try {
             const claim = await this.deps.orbit.claim(botId, id);
             if (!claim.claimed) {
@@ -518,6 +520,7 @@ export class ToolApprovals {
                     console.warn(`[ToolApprovals] Could not tell Orbit how ${id} ended:`, errorText(error));
                     return null;
                 });
+                recorded = done !== null;
                 await this.redraw(id, card, done ?? action, { ...picked, ...answer });
                 if (followUp) await this.afterRun(card, { botId, roomId, person, title, state: followUp, ...(result ? { result } : {}) });
             };
@@ -563,8 +566,13 @@ export class ToolApprovals {
                 await this.afterRun(card, { botId, roomId, person, title, state: 'failed', result: "It couldn't be started, so nothing was done." });
                 return;
             }
-            // It may have started: never send it again, and tell the person to check
-            await this.redraw(id, card, undefined, { ...picked, unknown: true }).catch(() => undefined);
+            // It may have started: never send it again, and tell the person to check. Orbit is told it is not known how it ended
+            // (unless it already has an outcome), so the attempt is not left open and the person gets the follow-up
+            const claimed = attempt as { attemptId: string; action: SavedAction } | null;
+            const tell = claimed !== null && !recorded;
+            const done = tell ? await this.deps.orbit.finish(botId, id, { attemptId: claimed.attemptId, outcome: 'uncertain' }).catch(() => null) : null;
+            await this.redraw(id, card, done ?? undefined, { ...picked, unknown: true }).catch(() => undefined);
+            if (tell) await this.afterRun(card, { botId, roomId, person, title, state: 'unknown' }).catch(() => undefined);
         } finally {
             this.dispatching.delete(id);
             card.waiting = false;

@@ -183,4 +183,15 @@ describe('PersistentMemory: a copy of a memory for another chat', () => {
         expect(onMap.artifactCalls.size).toBe(1);
         vi.restoreAllMocks();
     });
+
+    it('learns nothing about the person from a line the system wrote in their turn', () => {
+        const own = new PersistentMemory({ adminApiUrl: 'http://orbit.local', immediateSaveEnabled: false });
+        vi.spyOn(own.getMemoryStorage(), 'saveMemory').mockResolvedValue(undefined as never);
+        const extract = vi.spyOn(own, 'extractPersonalInfo');
+        own.setUserUuid(BOT, MAP_PLAYER, UUID, true);
+        own.addMessage(BOT, MAP_PLAYER, 'My name is Zed', 'person', 'bubble-space', false);
+        expect(extract).not.toHaveBeenCalled();
+        own.addMessage(BOT, MAP_PLAYER, 'My name is Zed', 'person', 'bubble-space');
+        expect(extract).toHaveBeenCalledTimes(1);
+    });
 });
