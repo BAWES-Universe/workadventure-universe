@@ -558,22 +558,31 @@ class FakeContext {
     state: "running" | "suspended" = "running";
     currentTime = 0;
     destination = {};
-    onstatechange: (() => void) | null = null;
-    gains: { gain: FakeGainParam; connect: ReturnType<typeof vi.fn> }[] = [];
+    listeners = new Set<() => void>();
+    gains: { gain: FakeGainParam; connect: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> }[] = [];
     sources: unknown[] = [];
+    nodes: { disconnect: ReturnType<typeof vi.fn> }[] = [];
+    addEventListener = vi.fn((_type: string, listener: () => void) => this.listeners.add(listener));
+    removeEventListener = vi.fn((_type: string, listener: () => void) => this.listeners.delete(listener));
+    changeState(): void {
+        for (const listener of [...this.listeners]) listener();
+    }
     resume = vi.fn((): Promise<void> => {
         this.state = "running";
-        this.onstatechange?.();
+        this.changeState();
         return Promise.resolve();
     });
     close = vi.fn((): Promise<void> => Promise.resolve());
     createMediaElementSource = vi.fn((element: unknown) => {
         this.sources.push(element);
-        return { connect: vi.fn() };
+        const source = { connect: vi.fn(), disconnect: vi.fn() };
+        this.nodes.push(source);
+        return source;
     });
     createGain = vi.fn(() => {
-        const gain = { gain: new FakeGainParam(), connect: vi.fn() };
+        const gain = { gain: new FakeGainParam(), connect: vi.fn(), disconnect: vi.fn() };
         this.gains.push(gain);
+        this.nodes.push(gain);
         return gain;
     });
 }
@@ -686,7 +695,7 @@ describe("audio playback on browsers that ignore element volume (iPhone)", () =>
         context.resume.mockClear();
         context.resume.mockImplementation(() => {
             context.state = "running";
-            context.onstatechange?.();
+            context.changeState();
             return Promise.resolve();
         });
         player.retry();
@@ -886,11 +895,11 @@ describe("audio playback on browsers that ignore element volume (iPhone)", () =>
         expect(state).toHaveBeenLastCalledWith("playing");
         context.resume.mockImplementation(() => Promise.resolve());
         context.state = "suspended";
-        context.onstatechange?.();
+        context.changeState();
         expect(state).toHaveBeenLastCalledWith("not_allowed");
         expect(context.resume).toHaveBeenCalled();
         context.state = "running";
-        context.onstatechange?.();
+        context.changeState();
         expect(state).toHaveBeenLastCalledWith("playing");
     });
 
@@ -927,10 +936,55 @@ describe("audio playback on browsers that ignore element volume (iPhone)", () =>
         expect(state).toHaveBeenLastCalledWith("playing");
     });
 
-    it("closes its audio context on destroy", async () => {
+    it("leaves the shared audio context running on destroy and lets go of its own nodes", async () => {
         player.setSource(source("https://maps.example/a.mp3"));
         await flush();
         player.destroy();
-        expect(context.close).toHaveBeenCalledTimes(1);
+        expect(context.close).not.toHaveBeenCalled();
+        expect(context.listeners.size).toBe(0);
+        expect(context.nodes.length).toBeGreaterThan(0);
+        for (const node of context.nodes) expect(node.disconnect).toHaveBeenCalled();
+    });
+
+    it("plays a later sound with its volume once one tap has started the shared context (object sounds)", async () => {
+        context.state = "suspended";
+        context.resume.mockImplementation(() => Promise.resolve());
+        player.setSource(source("https://maps.example/a.mp3"));
+        await flush();
+        expect(state).toHaveBeenLastCalledWith("not_allowed");
+        context.resume.mockImplementation(() => {
+            context.state = "running";
+            context.changeState();
+            return Promise.resolve();
+        });
+        player.retry();
+        expect(state).toHaveBeenLastCalledWith("playing");
+        // A new sound starts later, outside any tap, in its own player: it shares the running context.
+        const laterState = vi.fn();
+        const later = new AudioPlayback(
+            laterState,
+            vi.fn(),
+            () => {
+                const audio = new FakeAudio();
+                Object.defineProperty(audio, "volume", { get: () => 1, set: () => undefined });
+                audio.play.mockImplementation(() => {
+                    audio.paused = false;
+                    return Promise.resolve();
+                });
+                media.push(audio);
+                return audio as unknown as HTMLAudioElement;
+            },
+            1600,
+            undefined,
+            () => context as unknown as AudioContext,
+            checkCors
+        );
+        later.setControls(controls);
+        later.setSource(source("https://maps.example/b.mp3", 0.3));
+        await flush();
+        vi.advanceTimersByTime(2000);
+        expect(laterState).toHaveBeenLastCalledWith("playing");
+        expect(context.gains.at(-1)?.gain.value).toBeCloseTo(0.3 * controls.volume);
+        later.destroy();
     });
 });

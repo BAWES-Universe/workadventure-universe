@@ -25,6 +25,13 @@ on:
         required: false
         type: string
         default: ''
+      voice_worker:
+        description: >-
+          `true` includes the dev voice server in the switch (when DEV_COOLIFY_VOICE_WORKER_UUID is
+          set). `false` leaves it alone, for a run whose voice server image did not build.
+        required: false
+        type: string
+        default: 'true'
       mode:
         description: >-
           Who dev belongs to, checked again once this run holds the switch lock. `pr`: the PR
@@ -42,7 +49,8 @@ permissions:
 jobs:
   switch:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 25 minutes for the game apps, up to 10 more for the voice server, and room for the rest.
+    timeout-minutes: 40
     # One switch at a time, whichever path started it. Never cancel one half-way: a cancelled
     # switch would leave some apps on the old tag and some on the new one.
     concurrency:
@@ -169,7 +177,7 @@ jobs:
 
       # One app at a time, in the order of APPS: each is switched, deployed and confirmed before
       # the next one starts. The whole switch shares one 25-minute budget, inside the job's
-      # 30-minute timeout.
+      # 40-minute timeout (the voice server step after it has its own 10 minutes).
       - name: Switch, deploy and confirm each app
         if: steps.slot.outputs.go == 'true'
         run: |
@@ -229,6 +237,80 @@ jobs:
               *) echo "::warning::$image: Coolify status is '${app_status:-unknown}' right after the deploy" ;;
             esac
           done <<< "$APPS"
+
+      # The dev voice server (Coolify app voice-worker-dev) runs the same kind of pulled image as the
+      # apps above, but it gets its own step: it runs after the game apps and never fails the switch,
+      # like the voice server on prod (without it voice bots on dev answer in text). It is skipped
+      # with a warning until DEV_COOLIFY_VOICE_WORKER_UUID is set, when the caller says its image did
+      # not build, or when its image for this tag does not exist.
+      - name: Switch and deploy the dev voice server
+        if: steps.slot.outputs.go == 'true'
+        continue-on-error: true
+        timeout-minutes: 15
+        env:
+          VOICE_UUID: ${{ vars.DEV_COOLIFY_VOICE_WORKER_UUID }}
+          VOICE_WORKER: ${{ inputs.voice_worker }}
+        run: |
+          set -uo pipefail
+          if [ "$VOICE_WORKER" != true ]; then
+            echo "::warning::The voice server image did not build in this run, so the dev voice server was not switched"
+            exit 0
+          fi
+          if [ -z "$VOICE_UUID" ]; then
+            echo "::warning::DEV_COOLIFY_VOICE_WORKER_UUID is not set, so the dev voice server was not switched"
+            exit 0
+          fi
+          fail() { echo "::error::dev voice server: $1"; exit 1; }
+          get() { curl -sS --max-time 20 -o "$2" -w '%{http_code}' -H "Authorization: Bearer ${COOLIFY_TOKEN}" "${COOLIFY_BASE}$1" || true; }
+          send() { curl -sS --max-time 30 --fail-with-body -H "Authorization: Bearer ${COOLIFY_TOKEN}" -H 'Content-Type: application/json' "$@"; }
+
+          ref="ghcr.io/bawes-universe/voice-worker-universe:${TAG}"
+          if ! timeout 120 docker buildx imagetools inspect "$ref" > /dev/null; then
+            echo "::warning::$ref does not exist, so the dev voice server was not switched"
+            exit 0
+          fi
+          code=$(get "/api/v1/applications/${VOICE_UUID}" /tmp/voice.json)
+          [ "$code" = 200 ] || fail "HTTP $code reading the app (is DEV_COOLIFY_VOICE_WORKER_UUID an app of the Universe Dev team?)"
+          # Only a Docker Image app is ever switched. An app built from a git repo (for example an old
+          # Dockerfile app that was replaced and stopped) is left alone: deploying it would start it again.
+          build_pack=$(jq -r '.build_pack // empty' /tmp/voice.json)
+          case "$build_pack" in
+            dockerfile|nixpacks|railpack|static|dockercompose)
+              echo "::warning::The app in DEV_COOLIFY_VOICE_WORKER_UUID is built from git (build pack '$build_pack'), not a Docker image, so the dev voice server was not switched"
+              exit 0 ;;
+          esac
+          send -X PATCH "${COOLIFY_BASE}/api/v1/applications/${VOICE_UUID}" \
+            -d "$(jq -cn --arg tag "$TAG" '{docker_registry_image_tag: $tag}')" > /dev/null \
+            || fail "Coolify refused the tag change (is the app set to run a Docker image?)"
+          body=$(send -X POST "${COOLIFY_BASE}/api/v1/deploy?uuid=${VOICE_UUID}") || fail "deploy request failed: ${body:-no reply}"
+          id=$(jq -r '.deployments[0].deployment_uuid // empty' <<< "$body")
+          [ -n "$id" ] || fail "Coolify returned no deployment id: $body"
+
+          deadline=$(( $(date +%s) + 10 * 60 ))
+          misses=0
+          while :; do
+            [ "$(date +%s)" -lt "$deadline" ] || fail "deployment $id did not finish within 10 minutes"
+            code=$(get "/api/v1/deployments/${id}" /tmp/voice-deployment.json)
+            status=""
+            [ "$code" = 200 ] && status=$(jq -r '.status // empty' /tmp/voice-deployment.json 2>/dev/null)
+            case "$code:$status" in
+              200:finished) break ;;
+              200:failed|200:cancelled*) fail "deployment $id ended '$status'; its log is in Coolify" ;;
+              401:*|403:*|404:*) fail "HTTP $code reading deployment $id" ;;
+              200:?*) misses=0 ;;
+              *)
+                misses=$((misses + 1))
+                [ "$misses" -lt 3 ] || fail "three unreadable status replies in a row for deployment $id"
+                ;;
+            esac
+            sleep 10
+          done
+
+          code=$(get "/api/v1/applications/${VOICE_UUID}" /tmp/voice.json)
+          [ "$code" = 200 ] || fail "HTTP $code reading the app after the deployment finished"
+          got=$(jq -r '.docker_registry_image_tag // empty' /tmp/voice.json)
+          echo "Dev voice server: finished, tag '$got', status '$(jq -r '.status // empty' /tmp/voice.json)'"
+          [ "$got" = "$TAG" ] || fail "Coolify reports tag '$got' after the deploy, expected '$TAG'"
 
       # Clear old images once every app runs the new tag, so back-to-back switches don't fill
       # the dev disk between Coolify's scheduled cleanups. Volumes and networks are never touched:

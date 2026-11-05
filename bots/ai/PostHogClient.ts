@@ -169,3 +169,17 @@ export async function flushPostHog(): Promise<void> {
         console.error('[PostHog] Flush failed:', e);
     }
 }
+
+/**
+ * Capture a plain event that is not about a person (for example the voice worker's load, #1751). No person profile
+ * is made for it. Never throws.
+ */
+export function captureServerEvent(distinctId: string, event: string, properties: Record<string, unknown>): void {
+    try {
+        const pg = getPostHogClient();
+        if (!pg) return;
+        pg.capture({ distinctId, event, properties: { ...properties, $process_person_profile: false }, timestamp: new Date() });
+    } catch (e) {
+        console.error(`[PostHog] Failed to capture ${event}:`, e);
+    }
+}

@@ -39,6 +39,8 @@ export function parseEmotionsFromResponse(rawResponse: string): ParsedAIResponse
             isInsult: Boolean(parsed.isInsult),
             insultSeverity: parsed.isInsult ? clamp(parsed.insultSeverity ?? 0, 0, 10) : 0,
             context: normalizeContext(parsed.context),
+            // Only the boolean true counts: the bot's own judgement that this person is done talking with it (#1670)
+            ...(parsed.doneTalking === true ? { doneTalking: true } : {}),
         };
         
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -126,4 +128,23 @@ export function detectEmotionPrefixAtEnd(content: string): number {
         }
     }
     return 0;
+}
+
+/** The wave on a bot's box when a person told it they are done talking with it (#1670): the game draws it like a mood. */
+export const WAVE_MOOD = '👋';
+
+/**
+ * The emoji for how the bot feels as it says its reply (#1667), from the emotion block it already writes: it answers
+ * the way the person treats it. No block, no emoji.
+ */
+export function moodOf(emotions: AIEmotionData | null | undefined): string | undefined {
+    if (!emotions) return undefined;
+    if (emotions.isInsult) return emotions.insultSeverity >= 6 ? '😠' : '😒';
+    if (emotions.context === 'angry' || emotions.context === 'frustrated') return '😟';
+    if (emotions.context === 'sarcastic') return '😏';
+    if (emotions.personSentiment >= 60 || emotions.context === 'joking') return '😄';
+    if (emotions.personSentiment >= 20) return '🙂';
+    if (emotions.personSentiment <= -40) return '😟';
+    if (emotions.personSentiment <= -10) return '😕';
+    return '🙂';
 }

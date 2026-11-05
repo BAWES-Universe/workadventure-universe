@@ -11,18 +11,23 @@ vi.hoisted(() => {
     process.env.AUTHENTICATION_TOKEN = "test";
 });
 
-const { executeCommand, executeEntityCommand, getOrLoadGameMap, deleteUploadEverywhere } = vi.hoisted(() => ({
-    executeCommand: vi.fn(),
-    executeEntityCommand: vi.fn(),
-    getOrLoadGameMap: vi.fn(),
-    deleteUploadEverywhere: vi.fn(),
-}));
+const { executeCommand, executeEntityCommand, getOrLoadGameMap, deleteUploadEverywhere, tellBackServers } = vi.hoisted(
+    () => ({
+        executeCommand: vi.fn(),
+        executeEntityCommand: vi.fn(),
+        getOrLoadGameMap: vi.fn(),
+        deleteUploadEverywhere: vi.fn(),
+        tellBackServers: vi.fn(),
+    })
+);
 
 vi.mock("../MapsManager", () => ({
     mapsManager: { executeCommand, getOrLoadGameMap, readGameMap: getOrLoadGameMap, addCommandToQueue: vi.fn() },
 }));
 // Deleting everywhere is tested on its own (UploadDeletion.test.ts): here only who may ask for it.
 vi.mock("../Services/UploadDeletion", () => ({ deleteUploadEverywhere }));
+// Telling the back servers is tested on its own (UploadDeletionNotifier.test.ts): here only what is told, and when.
+vi.mock("../Services/UploadDeletionNotifier", () => ({ uploadDeletionNotifier: { tell: tellBackServers } }));
 vi.mock("../EntitiesManager", () => ({ entitiesManager: { executeCommand: executeEntityCommand } }));
 vi.mock("../Modules/HookManager", () => ({ hookManager: {} }));
 
@@ -323,7 +328,7 @@ describe("MapStorageServer edit rights", () => {
         });
         const remove = (id: string): EditMessage => ({
             $case: "deleteCustomEntityMessage",
-            deleteCustomEntityMessage: { id, wholeUpload: false, pictureIds: [], otherRoomWamUrls: [] },
+            deleteCustomEntityMessage: { id, wholeUpload: false, pictureIds: [] },
         });
 
         it("lets someone with a desk upload, and saves them as the uploader whatever the browser sent", async () => {
@@ -388,14 +393,16 @@ describe("MapStorageServer edit rights", () => {
         describe("deleting an upload everywhere (#1690)", () => {
             const removeEverywhere = (id: string): EditMessage => ({
                 $case: "deleteCustomEntityMessage",
-                deleteCustomEntityMessage: { id, wholeUpload: true, pictureIds: [], otherRoomWamUrls: [] },
+                deleteCustomEntityMessage: { id, wholeUpload: true, pictureIds: [] },
             });
 
             beforeEach(() => {
                 deleteUploadEverywhere.mockResolvedValue(["lounge/map.wam"]);
+                tellBackServers.mockReset();
+                tellBackServers.mockResolvedValue(undefined);
             });
 
-            it("lets an editor delete every picture and every copy, and tells the back which rooms to tell", async () => {
+            it("lets an editor delete every picture and every copy, and tells every back server which rooms lost them", async () => {
                 uploads.set("lamp", { ownerId: "owner" });
                 uploads.set("lamp-red", { ownerId: "owner", variantOf: "lamp" });
                 const answer = await sendAndGetMessage(removeEverywhere("lamp"), editor);
@@ -405,23 +412,32 @@ describe("MapStorageServer edit rights", () => {
                 const message =
                     answer?.$case === "deleteCustomEntityMessage" ? answer.deleteCustomEntityMessage : undefined;
                 expect(message?.pictureIds).toEqual(["lamp", "lamp-red"]);
-                expect(message?.otherRoomWamUrls).toEqual(["http://localhost/universe/world/lounge/map.wam"]);
+                // The back servers get the other rooms and the delete as those rooms receive it
+                expect(tellBackServers).toHaveBeenCalledTimes(1);
+                const [wamUrls, command] = tellBackServers.mock.calls[0] as [string[], EditMapCommandMessage];
+                expect(wamUrls).toEqual(["http://localhost/universe/world/lounge/map.wam"]);
+                expect(command.id).toBe("command");
+                const told =
+                    command.editMapMessage?.message?.$case === "deleteCustomEntityMessage"
+                        ? command.editMapMessage.message.deleteCustomEntityMessage
+                        : undefined;
+                expect(told).toEqual(
+                    expect.objectContaining({ id: "lamp", wholeUpload: true, pictureIds: ["lamp", "lamp-red"] })
+                );
                 expect(executeEntityCommand).not.toHaveBeenCalled();
             });
 
             it("writes the other rooms' addresses the way the web writes them, so a room with a space in its name is found", async () => {
                 uploads.set("lamp", { ownerId: "owner" });
                 deleteUploadEverywhere.mockResolvedValue(["my room/map.wam", "100%/map.wam"]);
-                const answer = await sendAndGetMessage(removeEverywhere("lamp"), editor);
-                const message =
-                    answer?.$case === "deleteCustomEntityMessage" ? answer.deleteCustomEntityMessage : undefined;
-                expect(message?.otherRoomWamUrls).toEqual([
+                await sendAndGetMessage(removeEverywhere("lamp"), editor);
+                expect(tellBackServers.mock.calls[0][0]).toEqual([
                     "http://localhost/universe/world/my%20room/map.wam",
                     "http://localhost/universe/world/100%25/map.wam",
                 ]);
             });
 
-            it("drops the room list and picture list a browser sends, so no room is told about a delete that didn't happen", async () => {
+            it("drops the picture list a browser sends, so no room is told about a delete that didn't happen", async () => {
                 uploads.set("lamp", { ownerId: "owner" });
                 const crafted = (wholeUpload: boolean): EditMessage => ({
                     $case: "deleteCustomEntityMessage",
@@ -429,17 +445,22 @@ describe("MapStorageServer edit rights", () => {
                         id: "lamp",
                         wholeUpload,
                         pictureIds: ["other"],
-                        otherRoomWamUrls: ["http://localhost/universe/world/lounge/map.wam"],
                     },
                 });
                 const single = await sendAndGetMessage(crafted(false), editor);
                 const message =
                     single?.$case === "deleteCustomEntityMessage" ? single.deleteCustomEntityMessage : undefined;
-                expect(message?.otherRoomWamUrls).toEqual([]);
                 expect(message?.pictureIds).toEqual([]);
                 // A refused whole-upload delete tells nobody either
                 deleteUploadEverywhere.mockRejectedValue(new Error("Could not write"));
                 expect(await send(crafted(true), editor)).toBe("errorCommandMessage");
+                expect(tellBackServers).not.toHaveBeenCalled();
+            });
+
+            it("still answers the delete when the back servers can't be told", async () => {
+                uploads.set("lamp", { ownerId: "owner" });
+                tellBackServers.mockRejectedValue(new Error("No back server"));
+                expect(await send(removeEverywhere("lamp"), editor)).toBe("deleteCustomEntityMessage");
             });
 
             it("keeps the rights as they are: the uploader only while every copy is at their desk", async () => {
