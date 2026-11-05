@@ -288,3 +288,72 @@ describe("a model that writes less than the key allows (Orbit #673)", () => {
         expect(choicesUnder(20000)).toEqual([16000, 8000, 4000]);
     });
 });
+
+describe("the Tools group says a lost sign-in first on its line (#1819)", () => {
+    let target: HTMLElement;
+    let destroy: () => void = () => undefined;
+
+    beforeAll(() => {
+        loadLocale("en-US");
+        setLocale("en-US");
+    });
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mocks.api.isInitialized.mockReturnValue(true);
+        target = document.createElement("div");
+        document.body.append(target);
+    });
+
+    afterEach(() => {
+        destroy();
+        destroy = () => undefined;
+        mocks.api.isInitialized.mockReturnValue(false);
+        document.body.innerHTML = "";
+    });
+
+    const server = (id: string, name: string, over: Record<string, unknown> = {}) => ({
+        id,
+        name,
+        serverUrl: `https://${name.toLowerCase()}.example/mcp`,
+        authType: "oauth",
+        enabled: true,
+        createdAt: "2026-11-01T00:00:00Z",
+        ...over,
+    });
+
+    async function brief(servers: unknown[]) {
+        mocks.api.getBotMcpServers.mockResolvedValue(servers);
+        const bot = { id: "b1", name: "Micho", aiProviderRef: "universe-ai" } as BotData;
+        const component = new ToolsGroup({
+            target,
+            props: { bot, open: true, onToggle: vi.fn(), onChange: vi.fn(), aiOptions: null, onOpenScreen: vi.fn() },
+        });
+        destroy = () => component.$destroy();
+        for (let i = 0; i < 6; i++) {
+            // eslint-disable-next-line no-await-in-loop
+            await Promise.resolve();
+            // eslint-disable-next-line no-await-in-loop
+            await tick();
+        }
+        return (target.textContent ?? "").replace(/\s+/g, " ");
+    }
+
+    it("names the one server that needs signing in again", async () => {
+        const text = await brief([server("s1", "Tavily", { signInLostAt: "2026-11-05T09:54:00.000Z" }), server("s2", "Attio")]);
+        expect(text).toContain("Tavily needs signing in again");
+    });
+
+    it("counts them when several do", async () => {
+        const lost = { signInLostAt: "2026-11-05T09:54:00.000Z" };
+        expect(await brief([server("s1", "Tavily", lost), server("s2", "Attio", lost)])).toContain(
+            "2 servers need signing in again"
+        );
+    });
+
+    it("keeps the server names when every sign-in is fine", async () => {
+        const text = await brief([server("s1", "Tavily"), server("s2", "Attio")]);
+        expect(text).toContain("Tavily, Attio");
+        expect(text).not.toContain("signing in again");
+    });
+});

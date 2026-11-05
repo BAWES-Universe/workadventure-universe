@@ -81,7 +81,15 @@
             ? servers.map((s) => s.name).join(", ")
             : page.tools.count({ count: servers.length });
     $: waits = page.tools.waits({ patience: durationLabel(patience) });
-    $: brief = names ? `${names} · ${waits}` : waits;
+    // A sign-in the bot server found lost leads the closed group's line (#1819)
+    $: lost = (servers ?? []).filter((s) => s.signInLostAt);
+    $: lostLine =
+        lost.length === 1
+            ? page.tools.needsSignIn({ server: lost[0].name })
+            : lost.length > 1
+            ? page.tools.needSignInMany({ count: lost.length })
+            : "";
+    $: brief = lostLine ? `${lostLine} · ${waits}` : names ? `${names} · ${waits}` : waits;
     // What the bot runs on, as the model's limit below finds it: Orbit's current pick when the bot has none saved
     $: ceiling = ceilingFor(aiOptions, bot.aiProviderRef ?? aiOptions?.current ?? undefined);
     // A model that writes less than the key allows is where the bot stops (Orbit #673): its limit is the first chip

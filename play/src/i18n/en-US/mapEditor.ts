@@ -1106,6 +1106,8 @@ const mapEditor: BaseTranslation = {
                     // The Tools screens: a server, a heading, Asking for approvals (game #1655)
                     servers: "{count:number} MCP server{{s}}",
                     notChecked: "Not checked yet",
+                    needsSignIn: "{server:string} needs signing in again",
+                    needSignInMany: "{count:number} servers need signing in again",
                     toCheck: "{count:number} to check",
                     sorted: "{server:string}'s {tools:string} are sorted by what they do. For each heading, pick whether {bot:string} uses those tools right away, asks first, or never.",
                     cutOf: "Showing the first {shown:number} of {total:number} tools",

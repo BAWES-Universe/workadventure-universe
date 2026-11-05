@@ -7,6 +7,7 @@ import { MapStore } from "@workadventure/store-utils";
 import { readBotStatusNote, type BotStatusNote } from "../../Bots/BotChatStatus";
 import { readBotRoomLink, type BotRoomLink } from "../../Bots/BotRoomLink";
 import { readBotReplyLimit, type BotReplyLimit } from "../../Bots/BotReplyLimit";
+import { readBotToolSignIn, type BotToolSignIn } from "../../Bots/BotToolSignIn";
 import { readBotAsk, type BotAsk } from "../../Bots/BotAsk";
 import { readArtifactField, type ArtifactCard } from "../../../Artifacts/artifactCard";
 import { readBotSteps, type BotSteps } from "../../Bots/BotSteps";
@@ -62,6 +63,7 @@ export class MatrixChatMessage implements ChatMessage {
     readonly botStatusAt: number | undefined;
     readonly roomLink: BotRoomLink | undefined;
     readonly replyLimit: BotReplyLimit | undefined;
+    readonly toolSignIn: BotToolSignIn | undefined;
     readonly artifact: ArtifactCard | undefined;
     /** A card a bot's notice asks one answer with (#1657): the bot server edits the same notice as the card ends. */
     readonly ask: Writable<BotAsk | undefined>;
@@ -82,6 +84,11 @@ export class MatrixChatMessage implements ChatMessage {
         this.botStatusAt = this.botStatus ? event.localTimestamp : undefined;
         this.roomLink = readBotRoomLink(event.getSender(), event.getOriginalContent(), window.location.origin);
         this.replyLimit = readBotReplyLimit(
+            event.getSender(),
+            event.getOriginalContent(),
+            room.getMember(event.getSender() ?? "")?.name ?? ""
+        );
+        this.toolSignIn = readBotToolSignIn(
             event.getSender(),
             event.getOriginalContent(),
             room.getMember(event.getSender() ?? "")?.name ?? ""

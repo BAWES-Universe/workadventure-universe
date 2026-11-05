@@ -251,3 +251,30 @@ describe('a call refused while a reply runs', () => {
         expect(reports[0].body).toMatchObject({ state: 'expired', status: 403 });
     });
 });
+
+describe('Test server and Connect (#1654)', () => {
+    const test = () => MCPConnector.refreshServerTools('bot-1', 'srv-1', ORBIT, 'admin');
+
+    it('marks a refused sign-in the way a reply does, and tells Orbit', async () => {
+        listAnswer = () => {
+            throw httpError(401);
+        };
+        expect(await test()).toMatchObject({ read: false });
+        await flush();
+        expect(reports.map((r) => r.body.state)).toEqual(['expired']);
+        expect((await discover()).issues).toHaveLength(1);
+    });
+
+    it('clears the mark and tells Orbit when the server answers', async () => {
+        servers = [{ ...base, authConfig: TOKEN_A, signInLostAt: '2026-11-05T09:54:00.000Z' }];
+        expect(await test()).toMatchObject({ read: true });
+        await flush();
+        expect(reports.map((r) => r.body.state)).toEqual(['ok']);
+    });
+
+    it('says nothing to Orbit about a server that was never marked', async () => {
+        expect(await test()).toMatchObject({ read: true });
+        await flush();
+        expect(reports).toEqual([]);
+    });
+});

@@ -106,7 +106,7 @@
 </script>
 
 <div class="ts-screen" data-testid="bot-tools-server">
-    <BotMcpServersEditor botId={bot.id} onlyServerId={serverId} onRemoved={onGone} />
+    <BotMcpServersEditor botId={bot.id} {botName} onlyServerId={serverId} onRemoved={onGone} />
 
     {#if !server}
         <!-- The server list is still loading, or the server is gone -->

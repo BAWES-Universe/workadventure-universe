@@ -1764,6 +1764,11 @@ export interface McpServer {
     /** An old server whose tools nobody has checked yet: it works in text as it did (Orbit #738) */
     notCheckedYet?: boolean;
     lastTestedAt?: string | null;
+    /** When the bot server saw this server refuse the bot's sign-in, or not answer (Orbit #821, game #1819); null when not */
+    signInLostAt?: string | null;
+    noAnswerAt?: string | null;
+    /** When a lost sign-in was made again (a Reconnect or a new key) */
+    reconnectedAt?: string | null;
     lastTestResult?: {
         success: boolean;
         toolCount: number;

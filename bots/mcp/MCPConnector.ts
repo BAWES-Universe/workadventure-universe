@@ -877,8 +877,19 @@ export class MCPConnector {
     ): Promise<{ read: false; reason: string } | { read: true; tools: number; saved: SyncResult } | null> {
         const server = (await this.loadServers(botId, adminApiUrl, adminApiToken)).find((candidate) => candidate.id === serverId);
         if (!server) return null;
-        const read = await this.listAllTools(server);
-        if (!read) return { read: false, reason: 'The server did not answer with a list of tools' };
+        const failure: { outcome?: JsonRpcOutcome } = {};
+        const read = await this.listAllTools(server, failure);
+        const orbit = { adminApiUrl, adminApiToken };
+        if (!read) {
+            // Test server finds out the same as a reply does (#1819)
+            const status = failure.outcome?.status;
+            if (isSignInRefusal(status)) this.markFailed(botId, server, 'expired', orbit, status);
+            return { read: false, reason: 'The server did not answer with a list of tools' };
+        }
+        // It answers: any mark it had is gone, and Orbit is told
+        if (this.health.ok(botId, server.id) || server.signInLostAt || server.noAnswerAt) {
+            void reportToolState(orbit, botId, server.id, 'ok', new Date().toISOString());
+        }
         const raw = read.tools;
         const { tools, titles } = this.toDefinitions(raw);
         toolListCache.set(`${botId}:${server.id}`, { tools, titles, raw, cachedAt: Date.now(), serverId: server.id });
