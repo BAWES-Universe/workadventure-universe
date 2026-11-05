@@ -210,7 +210,7 @@ describe("AIService: no words reach PostHog or Sentry", () => {
         const events = hoisted.posthogCapture.mock.calls.map((call) => call[0]);
         expect(events.length).toBeGreaterThan(0);
         for (const { properties } of events) {
-            expect(properties).toMatchObject({ $ai_is_error: true, $ai_error: "the provider failed (400)" });
+            expect(properties).toMatchObject({ $ai_is_error: true, $ai_error: "provider_failed", error_status: 400 });
         }
         expect(everythingSent()).not.toContain(CANARY.provider);
     });
