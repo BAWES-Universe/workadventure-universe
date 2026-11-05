@@ -27,11 +27,9 @@ describe('replyProblem (#1498)', () => {
         expect(replyProblem({ ...quiet, finishReason: 'STOP' })).toBe('no words and no tool call: it stopped (stop), 0 tokens used, 0 on thinking');
     });
 
-    it('puts the provider error first, with its status', () => {
-        expect(replyProblem({ ...quiet, error: true, errorStatus: 400, errorText: 'OpenAI API error: 400 max_tokens too large' })).toBe(
-            'the provider failed (400): OpenAI API error: 400 max_tokens too large'
-        );
-        expect(replyProblem({ ...quiet, error: true, answered: true })).toBe('the provider failed: the answer stopped before it finished');
+    it('puts the provider error first, with its status only', () => {
+        expect(replyProblem({ ...quiet, error: true, errorStatus: 400 })).toBe('the provider failed (400)');
+        expect(replyProblem({ ...quiet, error: true, answered: true })).toBe('the provider failed');
     });
 });
 

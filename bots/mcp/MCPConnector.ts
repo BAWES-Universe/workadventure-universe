@@ -472,11 +472,6 @@ async function sendJsonRpc(
             }
         } else if (axios.isAxiosError(error)) {
             const status = error.response?.status;
-            const detail = error.response?.data
-                ? typeof error.response.data === 'string'
-                    ? error.response.data.slice(0, 200)
-                    : JSON.stringify(error.response.data).slice(0, 200)
-                : error.message;
             const sanitizedUrl = (() => {
                 try {
                     const u = new URL(serverUrl);
@@ -486,7 +481,8 @@ async function sendJsonRpc(
                 }
             })();
             console.warn(
-                `[MCPConnector] HTTP ${status || 'error'} on ${method} at ${sanitizedUrl}: ${detail}`
+                // No words from the answer or the error: they can quote what was asked of the tool (an email, a file)
+                `[MCPConnector] HTTP ${status || 'error'} on ${method} at ${sanitizedUrl}`
             );
             Sentry.captureException(new Error(`MCPConnector HTTP ${status || 'error'} on ${method}`));
             // Invalidate session cache on HTTP errors for non-initialize methods.

@@ -8,11 +8,15 @@
  * Uses posthog-node SDK for capture (v4.18.0).
  * Flush uses pg.flush() (not shutdown) to avoid destroying the singleton.
  * 
+ * Metadata only. An event never carries words: no $ai_input, no $ai_output, no tool results, no emails, no files, no
+ * memory, and no text from the provider's errors. It carries the model, provider, token counts, cost, latency, the error's
+ * status, tool names and counts, and the bot, conversation and room ids that were already there.
+ *
  * PostHog LLM Observability data model:
  *   $ai_session_id    — Stable across all turns in one conversation (bot-player pair)
  *   $ai_trace_id      — Unique per-turn (identifies one response cycle)
- *   $ai_trace         — Root event per turn (input + output state)
- *   $ai_generation    — Per-LLM-call event (model, tokens, cost, output choices)
+ *   $ai_trace         — Root event per turn (totals only)
+ *   $ai_generation    — Per-LLM-call event (model, tokens, cost, latency)
  */
 
 import { PostHog } from 'posthog-node';
@@ -42,8 +46,6 @@ export interface CapturedGeneration {
     sessionId: string;
     model: string;
     provider: string;
-    input: string;
-    output: string;
     /** All input tokens of the call, the cached ones included */
     inputTokens: number;
     /** Input tokens served from the provider's cache (a subset of inputTokens). Omitted when the provider did not report it. */
@@ -57,8 +59,19 @@ export interface CapturedGeneration {
     botId?: string;
     playerId?: string;
     space?: string;
-    /** Why the reply left the person with nothing (#1498): marks the event as an error in PostHog's LLM views. */
+    /** Names of the tools the call asked for, in order. Names only: never what was passed to them or what came back. */
+    toolNames?: string[];
+    /** Why the reply left the person with nothing (#1498): marks the event as an error in PostHog's LLM views. Plain words about the status, never what the provider said. */
     error?: string;
+}
+
+/**
+ * What the event says about the tools of a call: how many, and which. Tool names are chosen by whoever set the tool up,
+ * not said by a person in a conversation, so they are metadata like the model's name.
+ */
+function toolProperties(params: CapturedGeneration): Record<string, unknown> {
+    if (!params.toolNames?.length) return {};
+    return { tool_names: params.toolNames, tool_call_count: params.toolNames.length };
 }
 
 /**
@@ -95,17 +108,16 @@ export function captureAiGeneration(params: CapturedGeneration): void {
                 $ai_trace_id: params.traceId,
                 $ai_model: params.model,
                 $ai_provider: params.provider,
-                $ai_input: [{role: 'user', content: params.input}],
                 $ai_input_tokens: params.inputTokens,
                 ...(params.cachedInputTokens !== undefined ? { $ai_cache_read_input_tokens: params.cachedInputTokens } : {}),
                 $ai_output_tokens: params.outputTokens,
                 ...cacheProperties(params),
                 $ai_latency: params.latency,
                 $ai_cost: params.cost,
-                $ai_output_choices: [{role: 'assistant', content: params.output}],
                 bot_id: params.botId,
                 player_id: params.playerId,
                 space: params.space,
+                ...toolProperties(params),
                 ...(params.error ? { $ai_is_error: true, $ai_error: params.error } : {}),
             },
             timestamp,
@@ -135,17 +147,16 @@ export function captureAiTrace(params: CapturedGeneration): void {
                 $ai_trace_id: params.traceId,
                 $ai_model: params.model,
                 $ai_provider: params.provider,
-                $ai_input: [{role: 'user', content: params.input}],
                 $ai_input_tokens: params.inputTokens,
                 ...(params.cachedInputTokens !== undefined ? { $ai_cache_read_input_tokens: params.cachedInputTokens } : {}),
                 $ai_output_tokens: params.outputTokens,
                 ...cacheProperties(params),
                 $ai_latency: params.latency,
                 $ai_cost: params.cost,
-                $ai_output: params.output,
                 bot_id: params.botId,
                 player_id: params.playerId,
                 space: params.space,
+                ...toolProperties(params),
                 ...(params.error ? { $ai_is_error: true, $ai_error: params.error } : {}),
             },
             timestamp,
