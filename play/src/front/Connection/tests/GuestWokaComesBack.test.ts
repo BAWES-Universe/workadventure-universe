@@ -19,7 +19,9 @@ vi.mock("../Capabilities", () => ({ hasCapability: () => true }));
 vi.mock("../../Phaser/Game/GameManager", () => ({
     gameManager: { setCharacterTextureIds: mocks.setCharacterTextureIds, setPlayerName: mocks.setPlayerName },
 }));
-vi.mock("../../Administration/AnalyticsClient", () => ({ analyticsClient: { identifyUser: vi.fn(), forgetPerson: vi.fn() } }));
+vi.mock("../../Administration/AnalyticsClient", () => ({
+    analyticsClient: { identifyUser: vi.fn(), forgetPerson: vi.fn() },
+}));
 vi.mock("../../Url/UrlManager", () => ({
     GameConnexionTypes: { room: "room", empty: "empty", login: "login", jwt: "jwt", register: "register" },
     urlManager: { getGameConnexionType: () => "room" },
