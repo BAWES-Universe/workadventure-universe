@@ -188,4 +188,6 @@ export function clearStageState(): void {
     speakInvitationStore.set(undefined);
     pendingInvitesStore.set(new Set());
     broughtOnStageStore.set(new Set());
+    // The area-leave handler that clears it does not run when the scene closes: the next room must not bind to this Stage
+    currentLiveStreamingSpaceStore.set(undefined);
 }

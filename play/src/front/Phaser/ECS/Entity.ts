@@ -26,6 +26,7 @@ import type { OutlineableInterface } from "../Game/OutlineableInterface";
 import { SpeechDomElement } from "../Entity/SpeechDomElement";
 import LL from "../../../i18n/i18n-svelte";
 import { getTriggerHint } from "../../Utils/TriggerHint";
+import { isTouchDevice } from "../../Utils/TouchDevice";
 import { getObjectNearHint, isClickSetting } from "../../Utils/ObjectHint";
 
 export enum EntityEvent {
@@ -377,7 +378,8 @@ export class Entity extends Phaser.GameObjects.Image implements ActivatableInter
      * does one thing and that has a Button Label, else "Press [SPACE] to interact with it" (#1740).
      */
     public getNearHint(): string {
-        return getObjectNearHint(this.entityData.properties, get(LL).trigger.spaceKeyboard(), getTriggerHint("object"));
+        const spaceToken = isTouchDevice() ? get(LL).trigger.keyTap() : get(LL).trigger.spaceKeyboard();
+        return getObjectNearHint(this.entityData.properties, spaceToken, getTriggerHint("object"));
     }
 
     /** Does what this object does when you use it: opens its link or file, plays its sound. Only the given kinds. */

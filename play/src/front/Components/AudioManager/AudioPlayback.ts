@@ -495,7 +495,9 @@ export class AudioPlayback {
         if (context.state === "running") {
             if (!this.contextBlocked) return;
             this.contextBlocked = false;
-            if (this.current?.confirmed) this.onState("playing");
+            // Only when the track really plays again: it may have been paused or failed while the sound was blocked
+            const slot = this.current;
+            if (slot?.confirmed && this.canPlay() && !slot.failed && !slot.media.paused) this.onState("playing");
             return;
         }
         // Screen lock, a call or backgrounding silences the graph while the element keeps "playing".
