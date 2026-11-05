@@ -154,7 +154,7 @@ export class SimplePeer implements SimplePeerConnectionInterface {
         // So we can receive a request we already had before. (which will abort at the first line of createPeerConnection)
         // This would be symmetrical to the way we handle disconnection.
 
-        this.createPeerConnection(user, spaceUserFromBack, spaceUserFromBack.uuid).catch((e) => {
+        this.createPeerConnection(user, spaceUserFromBack).catch((e) => {
             console.error(`receiveWebrtcStart => ${user.userId}`, e);
             Sentry.captureException(e);
         });
@@ -169,8 +169,7 @@ export class SimplePeer implements SimplePeerConnectionInterface {
      */
     private async createPeerConnection(
         user: UserSimplePeerInterface,
-        spaceUser: SpaceUserExtended,
-        uuid: string
+        spaceUser: SpaceUserExtended
     ): Promise<RemotePeer | null> {
         const peerConnection = this.videoPeers.get(user.userId);
         if (peerConnection) {
@@ -234,7 +233,7 @@ export class SimplePeer implements SimplePeerConnectionInterface {
                     }
                 });
 
-                this._analyticsClient.addNewParticipant(peer.uniqueId, user.userId, uuid);
+                this._analyticsClient.addNewParticipant();
 
                 resolve(peer);
             })().catch((e) => {
