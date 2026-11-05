@@ -356,8 +356,17 @@ message DeleteCustomEntityMessage {
   bool wholeUpload = 2;
   // Set by map-storage when wholeUpload is true: every picture of the upload, so each browser removes them all.
   repeated string pictureIds = 3;
-  // Set by map-storage: the map files of the other rooms that lost copies, so the back tells the people in them.
-  repeated string otherRoomWamUrls = 4;
+  // Was the map files of the other rooms that lost copies: map-storage now tells every back server (#1722).
+  reserved 4;
+}
+
+// Map-storage tells every back server that an upload was deleted with all its copies in the other rooms of a world, so
+// each back tells the people in the matching rooms it holds (#1722).
+message UploadDeletedMessage {
+  // The map files of the other rooms of the world, as the rooms are known by.
+  repeated string wamUrls = 1;
+  // The delete as the people in those rooms receive it.
+  EditMapCommandMessage command = 2;
 }
 
 // Asks where the copies of an upload are placed, for the box that confirms deleting it (#1690).
@@ -677,6 +686,8 @@ message Friend {
   FriendPresence presence = 4;
   // ISO date of the last room they entered; empty when unknown or hidden.
   string lastSeenAt = 5;
+  // Their Woka (bottom layer first); empty when they have none to show and the game draws its default.
+  repeated CharacterTextureMessage characterTextures = 6;
 }
 
 message FriendRequest {
@@ -686,6 +697,10 @@ message FriendRequest {
   string sharedWorld = 3;
   // ISO date the request was sent.
   string at = 4;
+  // Not sent any more: a chat ID is built from the person's email, so a request never carries it.
+  string chatId = 5;
+  // Their Woka (bottom layer first); empty when they have none to show and the game draws its default.
+  repeated CharacterTextureMessage characterTextures = 6;
 }
 
 message BlockedPerson {
@@ -712,6 +727,10 @@ message FriendSearchResult {
   string name = 2;
   repeated string universes = 3;
   string relationship = 4;
+  // Their chat ID, so the game can show their Woka; empty when unknown (never sent for a stranger: it is built from their email).
+  string chatId = 5;
+  // Their Woka (bottom layer first); empty when they have none to show and the game draws its default.
+  repeated CharacterTextureMessage characterTextures = 6;
 }
 
 message FriendSearchAnswer {
@@ -1406,11 +1425,41 @@ message PrivateSpaceEvent {
     UnblockUserMessage unblockUserMessage = 21;
     LowerHandPrivateMessage lowerHand = 22;
     BotReplyLimitMessage botReplyLimit = 23;
+    BotVoiceDraftMessage botVoiceDraft = 24;
+    BotVoiceStatusMessage botVoiceStatus = 25;
+    VoiceModeChoiceMessage voiceModeChoice = 26;
+    BotVoiceDoneMessage botVoiceDone = 27;
+    BotAskMessage botAsk = 28;
+    BotAskAnswerMessage botAskAnswer = 29;
     // From 30: upstream WorkAdventure uses the numbers right after ours.
     InviteToSpeakPrivateMessage inviteToSpeak = 30;
     DeclineToSpeakPrivateMessage declineToSpeak = 31;
     MoveToAudiencePrivateMessage moveToAudience = 32;
   }
+}
+
+/**
+ * A bot shows one person, and only them, the card it needs one answer with before it changes, deletes or sends something
+ * (#1658), or a reply only they need. Only a bot may send it (the pusher refuses anyone else), and only about itself.
+ * Everyone in the bubble reads the bot's one plain line instead; this is what only the person who asked gets.
+ */
+message BotAskMessage {
+  string botId = 1;
+  string botName = 2;
+  string kind = 3;       // "card" | "reply"
+  string id = 4;         // card: the card's id (a later event with the same id and a higher revision replaces it); reply: this reply's id
+  int32 revision = 5;    // card only
+  string body = 6;       // card: the card as JSON, the field a direct message's notice carries as `universe.ask`; reply: the words
+}
+
+/**
+ * A tap on a card a bot showed in nearby chat (#1658): goes to that bot and to nobody else. It names the card and the
+ * revision the person saw and what they tapped, never new content.
+ */
+message BotAskAnswerMessage {
+  string askId = 1;
+  int32 revision = 2;
+  string tap = 3;        // JSON: { action: "decide" | "close" | "moreTime" | "reviewAgain" | "askAgain", option? }
 }
 
 message CommunicationStrategyMessage {
@@ -1427,6 +1476,49 @@ message BotReplyLimitMessage {
   string who = 3;       // "guest" | "member" | "maker": which button the card shows
   string botId = 4;
   string botName = 5;
+}
+
+/**
+ * A voice bot tells one person what it is hearing them say (#1664): the game draws it above their message box, for
+ * them only. Only a bot may send it (the pusher refuses anyone else), and only about itself.
+ */
+message BotVoiceDraftMessage {
+  string botId = 1;
+  string botName = 2;
+  string turnId = 3;    // one stretch of speech; the words of a later one never replace an earlier one
+  string state = 4;     // "live" (words so far) | "final" (finished: the person's game sends it) | "lost" (words that didn't come through) | "cleared"
+  string text = 5;
+  string reason = 6;    // "lost" only: "cap" | "gap" | "path" | "stopped" | "provider"
+}
+
+/**
+ * A voice bot tells one person where their audio with it stands (#1666): the game draws the Voice button from it.
+ * Only a bot may send it (the pusher refuses anyone else), and only about itself.
+ */
+message BotVoiceStatusMessage {
+  string botId = 1;
+  string botName = 2;
+  string state = 3;            // "connecting" | "on" | "paused" (the bot says voice is unavailable)
+  int32 followUpSeconds = 4;   // how long the bot keeps listening after it answers without its name; 0: the bot sends none
+  optional int32 repliesLeft = 5;  // spoken replies this person has left in their window (#1669); absent: the bot has no count
+  string repliesResetAt = 6;   // when their window ends, as an ISO time; empty: none is running or the bot doesn't know
+}
+
+/**
+ * A voice bot tells one person it stopped listening to them without its name, because they told it they are done (#1670).
+ * Only a bot may send it (the pusher refuses anyone else), and only about itself.
+ */
+message BotVoiceDoneMessage {
+  string botId = 1;
+  string botName = 2;
+}
+
+/**
+ * A person tells a voice bot how they want to talk with bots (#1666). Only a bot may be the receiver (the pusher
+ * refuses it otherwise). The values are the voice worker's modes (bots/voice/protocol.ts).
+ */
+message VoiceModeChoiceMessage {
+  string mode = 1;             // "talk" | "speak_and_read" | "type_and_listen" | "off" (text only)
 }
 
 message SwitchMessage {
@@ -1463,6 +1555,18 @@ message SpaceMessage {
   repeated string fileNames = 9;    // Original filenames for ALL files (gallery) in order
   optional string id = 10;          // Chosen by the sender, the same for everyone, so reactions and replies can point at it
   optional SpaceMessageQuote replyTo = 11; // The message this one replies to
+  optional SpaceMessageSpoken spoken = 12; // Set on the line made from a person's own speech to a voice bot
+  optional uint32 voiceDurationMs = 13; // A voice note's length, measured by its sender
+  repeated uint32 voiceWaveform = 14;   // A voice note's shape, 0 to 1024 per point (as Matrix writes it)
+}
+
+/**
+ * Where a spoken line came from (#1664). Carried on the line everyone sees, so a bot that did not hear it (a text-only
+ * bot in the same bubble) does not take it for a new request: only the bot it is for answers, and only once per turn.
+ */
+message SpaceMessageSpoken {
+  string botId = 1;   // the voice bot that heard it, and the only one that answers it
+  string turnId = 2;
 }
 
 /**
@@ -1510,6 +1614,8 @@ message SpaceStreamMessage {
   optional string errorMessage = 6; // Error description when isError=true
   bool reset = 7;              // Clear any existing buffer for this responseId (used on regeneration)
   optional string steps = 8;   // A bot's steps line (#1545): its universe.steps field as JSON; the message is drawn as that line
+  optional bool stoppedBySpeech = 9; // A voice bot's voice stopped part-way through responseId because someone spoke over it (#1665): the message is marked, nothing else changes
+  optional string mood = 10;   // On a bot's final reply: the emoji for how the bot feels as it says it (#1667), drawn beside its Woka while it talks
 }
 
 message PrivateEvent {

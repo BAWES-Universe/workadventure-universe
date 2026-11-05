@@ -108,3 +108,90 @@ eventProcessor.registerPrivateEventProcessor("botReplyLimit", (event, sender) =>
     }
     return event;
 });
+
+// What a voice bot hears a person say (#1664) is for that person only: only a bot may send it, and only about itself.
+eventProcessor.registerPrivateEventProcessor("botVoiceDraft", (event, sender) => {
+    if (event.$case !== "botVoiceDraft") {
+        throw new Error("Invalid event type");
+    }
+    const uuid = sender?.uuid ?? "";
+    if (!sender || !(sender.tags.includes("bot") || uuid.startsWith("bot-"))) {
+        throw new Error("Only a bot can send what it hears");
+    }
+    if (uuid.startsWith("bot-") && event.botVoiceDraft.botId !== uuid.slice("bot-".length)) {
+        throw new Error("A bot can only send what it hears itself");
+    }
+    return event;
+});
+
+// Where a voice bot's audio with one person stands (#1666) is for that person only: only a bot may send it, and only
+// about itself.
+eventProcessor.registerPrivateEventProcessor("botVoiceStatus", (event, sender) => {
+    if (event.$case !== "botVoiceStatus") {
+        throw new Error("Invalid event type");
+    }
+    const uuid = sender?.uuid ?? "";
+    if (!sender || !(sender.tags.includes("bot") || uuid.startsWith("bot-"))) {
+        throw new Error("Only a bot can send its voice status");
+    }
+    if (uuid.startsWith("bot-") && event.botVoiceStatus.botId !== uuid.slice("bot-".length)) {
+        throw new Error("A bot can only send its own voice status");
+    }
+    return event;
+});
+
+// A voice bot telling one person it stopped listening to them without its name (#1670): only a bot may send it, and
+// only about itself.
+eventProcessor.registerPrivateEventProcessor("botVoiceDone", (event, sender) => {
+    if (event.$case !== "botVoiceDone") {
+        throw new Error("Invalid event type");
+    }
+    const uuid = sender?.uuid ?? "";
+    if (!sender || !(sender.tags.includes("bot") || uuid.startsWith("bot-"))) {
+        throw new Error("Only a bot can send its voice done notice");
+    }
+    if (uuid.startsWith("bot-") && event.botVoiceDone.botId !== uuid.slice("bot-".length)) {
+        throw new Error("A bot can only send its own voice done notice");
+    }
+    return event;
+});
+
+// How a person wants to talk with bots (#1666) goes to a bot and to nobody else.
+eventProcessor.registerPrivateEventProcessor("voiceModeChoice", (event, _sender, receiver) => {
+    if (event.$case !== "voiceModeChoice") {
+        throw new Error("Invalid event type");
+    }
+    const uuid = receiver?.uuid ?? "";
+    if (!receiver || !(receiver.tags.includes("bot") || uuid.startsWith("bot-"))) {
+        throw new Error("A voice mode can only be sent to a bot");
+    }
+    return event;
+});
+
+// The card a bot shows one person in nearby chat (#1658), or a reply only that person needs: only a bot may send it, and
+// only about itself.
+eventProcessor.registerPrivateEventProcessor("botAsk", (event, sender) => {
+    if (event.$case !== "botAsk") {
+        throw new Error("Invalid event type");
+    }
+    const uuid = sender?.uuid ?? "";
+    if (!sender || !(sender.tags.includes("bot") || uuid.startsWith("bot-"))) {
+        throw new Error("Only a bot can send a card");
+    }
+    if (uuid.startsWith("bot-") && event.botAsk.botId !== uuid.slice("bot-".length)) {
+        throw new Error("A bot can only send its own card");
+    }
+    return event;
+});
+
+// A tap on a bot's card goes to that bot and to nobody else (#1658).
+eventProcessor.registerPrivateEventProcessor("botAskAnswer", (event, _sender, receiver) => {
+    if (event.$case !== "botAskAnswer") {
+        throw new Error("Invalid event type");
+    }
+    const uuid = receiver?.uuid ?? "";
+    if (!receiver || !(receiver.tags.includes("bot") || uuid.startsWith("bot-"))) {
+        throw new Error("A tap on a card can only be sent to a bot");
+    }
+    return event;
+});

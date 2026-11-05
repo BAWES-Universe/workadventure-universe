@@ -352,13 +352,13 @@
       "id": "JN-030",
       "area": "Join, profile and settings",
       "topic": "Join: camera/mic",
-      "action": "In JN-029 press \"How to allow\", then \"Allow camera and mic\", then \"Continue without webcam\".",
-      "expected": "A card opens at the bottom: camera+mic icons, \"Camera / Microphone access needed\", \"So people you walk up to can see and hear you…\". \"Allow camera and mic\" reveals \"Permission denied\", \"You must allow camera and microphone access in your browser.\" and (desktop Chrome/Firefox) a screenshot. \"Continue without webcam\" closes it. \"Try again\" re-asks the browser.",
+      "action": "In JN-029 press \"How to allow\", then \"How to allow\" inside the card, then \"Continue without webcam\".",
+      "expected": "A card opens at the bottom: camera+mic icons, \"Camera / Microphone access needed\", \"So people you walk up to can see and hear you…\". The card has a \"Try again\" button; its \"How to allow\" reveals \"Permission denied\", \"You must allow camera and microphone access in your browser.\" and (desktop Chrome/Firefox) a screenshot. \"Continue without webcam\" closes it. \"Try again\" re-asks the browser.",
       "source": "prod (card) + approved #660 (opens only from How to allow)",
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "`form.helpCameraSettings` (Components/HelpSettings/HelpCameraSettingsPopup.svelte:23-73); buttons text \"Allow camera and mic\", \"Continue without webcam\"; rendered by EnableCameraScene.svelte:439-443"
+      "hooks": "`form.helpCameraSettings` (Components/HelpSettings/HelpCameraSettingsPopup.svelte:23-73); buttons text \"Try again\", \"How to allow\", \"Continue without webcam\"; rendered by EnableCameraScene.svelte:439-443"
     },
     {
       "id": "JN-031",

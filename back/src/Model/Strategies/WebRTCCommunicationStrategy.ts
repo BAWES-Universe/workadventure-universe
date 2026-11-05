@@ -2,6 +2,9 @@ import type { SpaceUser } from "@workadventure/messages";
 import * as Sentry from "@sentry/node";
 import type { ICommunicationStrategy } from "../Interfaces/ICommunicationStrategy";
 import type { ICommunicationSpace } from "../Interfaces/ICommunicationSpace";
+import { isBot, isVoiceBot } from "./VoiceBot";
+
+export { VOICE_BOT_TAG } from "./VoiceBot";
 
 class ConnectionManager {
     private connections: Map<string, Set<string>> = new Map();
@@ -184,10 +187,8 @@ export class WebRTCCommunicationStrategy implements ICommunicationStrategy {
     }
 
     private shouldEstablishConnection(user1: SpaceUser, user2: SpaceUser): boolean {
-        // Skip WebRTC for bots - they only do text chat
-        // Check both tags and uuid prefix (bot uuids start with "bot-")
-        const user1IsBot = user1.tags?.includes("bot") || user1.uuid?.startsWith("bot-") || false;
-        const user2IsBot = user2.tags?.includes("bot") || user2.uuid?.startsWith("bot-") || false;
+        const user1IsBot = isBot(user1);
+        const user2IsBot = isBot(user2);
 
         if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
             console.log(
@@ -199,11 +200,17 @@ export class WebRTCCommunicationStrategy implements ICommunicationStrategy {
             );
         }
 
+        // Every path that opens a connection ends up here. A bot only gets an audio peer when it is a voice bot and
+        // the other side is a person: text-only bots and two bots (voice or not) never get one.
         if (user1IsBot || user2IsBot) {
-            if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
-                console.log(`[WebRTC] Skipping connection - bot detected`);
+            const eligible =
+                (user1IsBot && !user2IsBot && isVoiceBot(user1)) || (user2IsBot && !user1IsBot && isVoiceBot(user2));
+            if (!eligible) {
+                if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+                    console.log(`[WebRTC] Skipping connection - bot without voice, or two bots`);
+                }
+                return false;
             }
-            return false;
         }
 
         const hasExisting = this.hasExistingConnection(user1.spaceUserId, user2.spaceUserId);
@@ -212,8 +219,10 @@ export class WebRTCCommunicationStrategy implements ICommunicationStrategy {
     }
 
     private establishConnection(user1: SpaceUser, user2: SpaceUser): void {
-        this.sendWebRTCStart(user1.spaceUserId, user2.spaceUserId, true);
-        this.sendWebRTCStart(user2.spaceUserId, user1.spaceUserId, false);
+        // The user told "initiator" makes the offer. A voice bot only answers, so the person is the initiator.
+        const [answerer, offerer] = isVoiceBot(user2) ? [user2, user1] : [user1, user2];
+        this.sendWebRTCStart(answerer.spaceUserId, offerer.spaceUserId, true);
+        this.sendWebRTCStart(offerer.spaceUserId, answerer.spaceUserId, false);
     }
 
     private cleanupUserMessages(userId: string): void {

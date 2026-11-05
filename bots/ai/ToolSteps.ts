@@ -5,6 +5,9 @@
  */
 import { CHANGE_ARTIFACT_TOOL, MAKE_ARTIFACT_TOOL } from './ArtifactTools';
 
+/** What a step is about, for the working emoji beside the bot's Woka (#1667): reading ("📖"), searching ("🔎") or writing ("✍️"). */
+export type StepKind = 'read' | 'search' | 'write';
+
 /** The field of the steps message, read by the game. */
 export const STEPS_KEY = 'universe.steps';
 
@@ -20,6 +23,8 @@ export interface ToolStep {
     detail?: string;
     /** Steps with the same group are counted together in the summary. */
     group: string;
+    /** What the call is about; the game shows it as the working emoji. */
+    kind?: StepKind;
 }
 
 /** How a call ended. */
@@ -43,6 +48,7 @@ export interface ShownStep {
     /** The same call with the same detail ran earlier in this reply. */
     again?: boolean;
     note?: string;
+    kind?: StepKind;
 }
 
 /** What the `universe.steps` field carries. */
@@ -58,6 +64,8 @@ export interface StepsField {
 }
 
 const DETAIL_MAX = 60;
+/** A tool server's own title is shown whole (the game wraps it); this only stops a runaway one. */
+const TITLE_MAX = 150;
 const NOTE_MAX = 80;
 /** Arguments worth showing, in order: what the call is about. */
 const DETAIL_KEYS = ['prompt', 'query', 'q', 'search', 'url', 'title', 'topic', 'text', 'description', 'name'];
@@ -71,10 +79,10 @@ const TOKEN_LIKE = /(?=[A-Za-z0-9_-]*\d)(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]{
 const OWN_STEPS: Record<string, (args: Record<string, unknown>) => Omit<ToolStep, 'id'>> = {
     read_web_page: (args) => {
         const where = pageName(args.url);
-        return { doing: where ? `Reading ${where}` : 'Reading a page', done: 'Read a page', detail: shown(args.url), group: 'page' };
+        return { doing: where ? `Reading ${where}` : 'Reading a page', done: 'Read a page', detail: shown(args.url), group: 'page', kind: 'read' };
     },
-    [MAKE_ARTIFACT_TOOL]: (args) => ({ doing: 'Making an artifact', done: 'Made an artifact', detail: shown(args.title), group: 'make_artifact' }),
-    [CHANGE_ARTIFACT_TOOL]: (args) => ({ doing: 'Changing an artifact', done: 'Changed an artifact', detail: shown(args.title), group: 'change_artifact' }),
+    [MAKE_ARTIFACT_TOOL]: (args) => ({ doing: 'Making an artifact', done: 'Made an artifact', detail: shown(args.title), group: 'make_artifact', kind: 'write' }),
+    [CHANGE_ARTIFACT_TOOL]: (args) => ({ doing: 'Changing an artifact', done: 'Changed an artifact', detail: shown(args.title), group: 'change_artifact', kind: 'write' }),
 };
 
 /** How a group reads in the summary, by count. Groups without one say "<done> 3 times". */
@@ -83,6 +91,9 @@ const OWN_GROUPS: Record<string, (count: number) => string> = {
     make_artifact: (n) => (n === 1 ? 'Made an artifact' : `Made ${n} artifacts`),
     change_artifact: (n) => (n === 1 ? 'Changed an artifact' : `Changed an artifact ${n} times`),
 };
+
+/** The line once every call has finished and the answer is being written. */
+export const WRITING_LINE = 'Writing the answer';
 
 /** What a tool with no usable name reads as. */
 const NO_NAME = 'Use a tool';
@@ -101,7 +112,7 @@ export function describeStep(call: { id: string; name: string; arguments?: unkno
     const args = parseArgs(call.arguments);
     const own = OWN_STEPS[call.name];
     if (own && !title) return { id: call.id, ...own(args) };
-    const words = oneLine(title) ?? tidyName(call.name);
+    const words = oneLine(title, TITLE_MAX) ?? tidyName(call.name);
     const named = words !== NO_NAME;
     return {
         id: call.id,
@@ -109,7 +120,23 @@ export function describeStep(call: { id: string; name: string; arguments?: unkno
         done: named ? `Used ${words}` : 'Used a tool',
         detail: detailOf(args),
         group: `tool:${call.name}`,
+        kind: kindOf(`${call.name} ${title ?? ''}`),
     };
+}
+
+/**
+ * A tool server's tool by its words: searching and reading are told apart, anything else makes something. Whole words
+ * only, so "upload", "spreadsheet" and "payload" are not mistaken for loading or reading.
+ */
+export function kindOf(words: string): StepKind {
+    const parts = words
+        .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+        .toLowerCase()
+        .split(/[^a-z]+/)
+        .filter(Boolean);
+    if (parts.some((part) => /^(search|find|lookup|query|queries)/.test(part))) return 'search';
+    if (parts.some((part) => /^(read|fetch|open|scrape|browse|load)/.test(part))) return 'read';
+    return 'write';
 }
 
 /** "generate_music" and "generateMusic" read "Generate music". */
@@ -126,6 +153,8 @@ export function tidyName(name: string): string {
 export function resultOf(id: string, result: unknown): ToolStepResult {
     if (result && typeof result === 'object' && !Array.isArray(result)) {
         const r = result as Record<string, unknown>;
+        // A card is waiting for someone's OK: nothing ran, so the step must not read "Used ..." (#1657)
+        if (r.status === 'waiting_for_ok') return { id, ok: false, note: 'Waiting for your OK. Nothing ran yet' };
         if (r.error || r.success === false || r.isError === true) {
             const why = typeof r.error === 'string' ? r.error : typeof r.message === 'string' ? r.message : undefined;
             // A tool server call that may have run is not a failure; a cancelled turn stays as it was
@@ -155,6 +184,16 @@ export class ReplySteps {
 
     start(steps: ToolStep[]): void {
         for (const step of steps) {
+            // A call is announced when it begins and again when its arguments are complete: the second time only
+            // fills in what it is about
+            const begun = this.steps.find((s) => s.id === step.id && s.state === 'running');
+            if (begun) {
+                if (!begun.detail && step.detail) {
+                    begun.detail = step.detail;
+                    if (this.steps.some((s) => s !== begun && s.group === begun.group && s.detail === begun.detail)) begun.again = true;
+                }
+                continue;
+            }
             // Only a call about something can be seen to repeat: two calls without a detail may differ
             const again = !!step.detail && this.steps.some((s) => s.group === step.group && s.detail === step.detail);
             this.steps.push({ ...step, state: 'running', ...(again ? { again } : {}) });
@@ -193,13 +232,14 @@ export class ReplySteps {
             state: this.state,
             line: this.state === 'working' ? this.liveLine() : summaryOf(this.steps),
             startedAt: this.startedAt,
-            steps: this.steps.map(({ doing, done, detail, state, again, note }) => ({
+            steps: this.steps.map(({ doing, done, detail, state, again, note, kind }) => ({
                 doing,
                 done,
                 ...(detail ? { detail } : {}),
                 state,
                 ...(again ? { again } : {}),
                 ...(note ? { note } : {}),
+                ...(kind ? { kind } : {}),
             })),
         };
     }
@@ -213,10 +253,14 @@ export class ReplySteps {
         return `${field.line}${failed ? ` · ${failed} didn't work` : ''}${unknown ? ` · ${unknown} no answer` : ''}`;
     }
 
-    /** What runs now: the newest running step (the game shows its detail and how many are done beside it). */
+    /**
+     * What runs now: the newest running step (the game shows its detail and how many are done beside it). Once every
+     * call has finished, the bot is writing its answer, so the line stops saying "Using".
+     */
     private liveLine(): string {
-        const now = this.steps.filter((s) => s.state === 'running').at(-1) ?? this.steps.at(-1);
-        return now?.doing ?? '';
+        const running = this.steps.filter((s) => s.state === 'running').at(-1);
+        if (running) return running.doing;
+        return this.steps.length ? WRITING_LINE : '';
     }
 }
 

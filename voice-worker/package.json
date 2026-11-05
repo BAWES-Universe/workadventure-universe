@@ -1,0 +1,30 @@
+{
+  "name": "@workadventure/voice-worker",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Audio-only worker that gives voice bots a media connection in a bubble (peer-to-peer). Fake speech only until recognition and speaking land.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@evan/opus": "1.0.3",
+    "@livekit/rtc-node": "1.2.1",
+    "ajv": "8.20.0",
+    "tsx": "4.23.15",
+    "werift": "0.26.0",
+    "ws": "8.22.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.3",
+    "@types/ws": "8.18.1",
+    "livekit-server-sdk": "2.15.0",
+    "typescript": "5.8.3",
+    "vitest": "3.2.4"
+  }
+}

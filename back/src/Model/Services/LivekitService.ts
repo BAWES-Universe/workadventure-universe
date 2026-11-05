@@ -24,13 +24,15 @@ const PUBLISH_SOURCES = [
 
 /**
  * What a person may send in a media room: everything (they stream), only their camera (in the Audience of a Stage
- * that sees the audience's cameras, #1623), or nothing (they listen).
+ * that sees the audience's cameras, #1623), only their microphone (a voice bot, which speaks and shows nothing), or
+ * nothing (they listen).
  */
-export type PublishRight = "everything" | "camera" | "nothing";
+export type PublishRight = "everything" | "camera" | "microphone" | "nothing";
 
 function publishSources(right: PublishRight): TrackSource[] {
     if (right === "everything") return PUBLISH_SOURCES;
     if (right === "camera") return [TrackSource.CAMERA];
+    if (right === "microphone") return [TrackSource.MICROPHONE];
     return [];
 }
 
