@@ -27,13 +27,12 @@
         const connection = gameManager.getCurrentGameScene().connection;
         if (connection) {
             try {
-                // Found by name or email, shown like the People list: WOKA and name. The email only stands in
-                // for someone who has no name.
+                // Shown like the People list: WOKA and name. The server never sends an email address.
                 return (await connection.queryMembers(filterText)).map(
                     (member, index): MemberOption => ({
                         index,
                         value: member.id,
-                        label: member.name || member.email || member.id,
+                        label: member.name || member.id,
                         textures: member.characterTextures,
                     })
                 );

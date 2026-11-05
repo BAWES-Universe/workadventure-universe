@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { optionsFromEnv } from '../src/config.ts';
+import { optionsFromEnv, startupProblem } from '../src/config.ts';
 import { Down3, Up2 } from '../src/dsp.ts';
 import { Secret } from '../src/connectors.ts';
 import { FakeSpeech } from '../src/fakeSpeech.ts';
@@ -171,5 +171,18 @@ describe('settings', () => {
             iceAdditionalHostAddresses: ['203.0.113.7', '203.0.113.8'],
             iceServers: [{ urls: 'stun:stun.example:3478' }],
         });
+    });
+});
+
+describe('startup safety', () => {
+    it('refuses to listen beyond this machine without a secret', () => {
+        expect(startupProblem(optionsFromEnv({ VOICE_WORKER_HOST: '0.0.0.0' }))).toMatch(/VOICE_WORKER_SECRET/);
+        expect(startupProblem(optionsFromEnv({ VOICE_WORKER_HOST: '10.0.0.5' }))).toMatch(/VOICE_WORKER_SECRET/);
+    });
+    it('starts with a secret, or on this machine only', () => {
+        expect(startupProblem(optionsFromEnv({ VOICE_WORKER_HOST: '0.0.0.0', VOICE_WORKER_SECRET: 's' }))).toBeUndefined();
+        expect(startupProblem(optionsFromEnv({}))).toBeUndefined();
+        expect(startupProblem(optionsFromEnv({ VOICE_WORKER_HOST: 'localhost' }))).toBeUndefined();
+        expect(startupProblem(optionsFromEnv({ VOICE_WORKER_HOST: '::1' }))).toBeUndefined();
     });
 });
