@@ -1824,7 +1824,7 @@ export class SocketManager implements ZoneEventListener {
             members: members.map((member: MemberData) => ({
                 name: member.name ?? undefined,
                 id: member.id,
-                email: member.email ?? undefined,
+                // No email address goes to a browser: it is never needed there, and any browser can ask.
                 characterTextures: member.characterTextures ?? [],
             })),
         };
@@ -1854,7 +1854,7 @@ export class SocketManager implements ZoneEventListener {
                 member: {
                     id: memberFromApi.id,
                     name: memberFromApi.name ?? undefined,
-                    email: memberFromApi.email ?? undefined,
+                    // No email address goes to a browser (see handleSearchMemberQuery).
                     visitCardUrl: memberFromApi.visitCardUrl ?? undefined,
                     chatID: memberFromApi.chatID ?? undefined,
                     characterTextures: memberFromApi.characterTextures ?? [],
@@ -1874,7 +1874,14 @@ export class SocketManager implements ZoneEventListener {
         const { total, members } = await adminService.getWorldChatMembers(roomId, chatMemberQuery.searchText);
         return {
             total,
-            members,
+            // Only what the chat list shows. No email address goes to a browser (see handleSearchMemberQuery).
+            members: members.map((member) => ({
+                uuid: member.uuid,
+                wokaName: member.wokaName,
+                chatId: member.chatId,
+                tags: member.tags,
+                characterTextures: member.characterTextures,
+            })),
         };
     }
 
