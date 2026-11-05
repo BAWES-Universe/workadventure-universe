@@ -95,10 +95,16 @@ describe("AnalyticsClient", () => {
         expect(posthog.capture).toHaveBeenCalledWith("wa_opened_website", { url: "https://example.test/page" });
     });
 
-    it("starts the next person on the browser anonymous after a sign-out", async () => {
+    it("records a sign-out without resetting by itself", async () => {
         analyticsClient.logout();
         await settled();
         expect(posthog.capture).toHaveBeenCalledWith("wa_logout");
+        expect(posthog.reset).not.toHaveBeenCalled();
+    });
+
+    it("starts the next person on the browser anonymous when the game forgets the person", async () => {
+        analyticsClient.forgetPerson();
+        await settled();
         expect(posthog.reset).toHaveBeenCalledTimes(1);
     });
 });

@@ -347,7 +347,17 @@ class AnalyticsClient {
         this.posthogPromise
             ?.then((posthog) => {
                 posthog.capture("wa_logout");
-                // The next person on this browser starts anonymous: they are not linked to this one.
+            })
+            .catch((e) => console.error(e));
+    }
+
+    /**
+     * The next person on this browser starts anonymous: not linked to the one who was here. Called when somebody signs
+     * out and when the game starts a new guest (a refused token, a first visit).
+     */
+    forgetPerson(): void {
+        this.posthogPromise
+            ?.then((posthog) => {
                 posthog.reset();
             })
             .catch((e) => console.error(e));

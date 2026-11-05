@@ -228,6 +228,7 @@ class ConnectionManager {
      * Logout
      */
     public logout() {
+        analyticsClient.forgetPerson();
         // save the current token to use it in the redirect logout url
         const tokenTmp = localUserStore.getAuthToken();
         localUserStore.dropGuestTokenAside();
@@ -557,8 +558,10 @@ class ConnectionManager {
         localUserStore.dropGuestTokenAside();
         this.localUser = new LocalUser(data.userUuid, data.email);
         this.authToken = data.authToken;
-        // A new guest is nobody Orbit has told us about yet: the analytics keep them anonymous until it does.
+        // A new guest is nobody Orbit has told us about yet: the analytics keep them anonymous until it does, and not
+        // linked to whoever used this browser before.
         this.analyticsUserId = null;
+        analyticsClient.forgetPerson();
         if (!isBenchmark) {
             // In benchmark, we don't have a local storage.
             localUserStore.saveUser(this.localUser);
