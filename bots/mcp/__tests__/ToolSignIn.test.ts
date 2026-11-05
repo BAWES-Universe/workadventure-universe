@@ -133,6 +133,20 @@ describe('ToolHealth', () => {
     });
 });
 
+describe('a sign-in that is refused again after it was changed', () => {
+    it('is told to Orbit again, which may have cleared its mark with the new sign-in', () => {
+        const health = new ToolHealth();
+        expect(health.fail('bot', server(), 'expired')).toBe(true);
+        health.reported('bot', 'srv-1');
+        // The same refusal with the same sign-in is not told twice
+        expect(health.fail('bot', server(), 'expired')).toBe(false);
+        // A new sign-in is tried at once; refused again, Orbit hears it again
+        const changed = server({ authConfig: '{"accessToken":"b"}' });
+        expect(health.shouldSkip('bot', changed)).toBe(false);
+        expect(health.fail('bot', changed, 'expired')).toBe(true);
+    });
+});
+
 describe('a failure that says nothing new, and reports on their way', () => {
     it('starts the wait over for a server already marked, so it is not asked at every reply', () => {
         let now = 1_000_000;

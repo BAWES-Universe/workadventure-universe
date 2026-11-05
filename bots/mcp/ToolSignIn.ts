@@ -140,6 +140,8 @@ export class ToolHealth {
             // Reconnected, or a new key: try it now. The mark stays until the server answers.
             entry.credentials = credentials;
             entry.checkedMs = 0;
+            // Orbit may have cleared its mark with the new sign-in: if it is refused again, Orbit is told again
+            entry.reported = false;
             return false;
         }
         const wait = entry.state === 'expired' ? this.settings().recheckMs : this.settings().noAnswerRetryMs;
