@@ -551,7 +551,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
         if (typeof eventId !== 'string' || !eventId) return [];
         try {
             const replied = await this.client.getEvent(botUserId, event.room_id, eventId);
-            const id = artifactIdOfCard(replied?.content?.[ARTIFACT_KEY]);
+            // Only a card a bot sent counts (any bot's: another bot's card is a fair thing to point at): a person's own event can carry the same field
+            if (!replied || !botIdFromMatrixId(this.config.domain, replied.sender)) return [];
+            const id = artifactIdOfCard(replied.content?.[ARTIFACT_KEY]);
             return id ? [id] : [];
         } catch {
             return [];

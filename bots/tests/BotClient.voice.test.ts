@@ -223,6 +223,37 @@ describe('BotClient in a meeting room', () => {
         expect(statuses()).toEqual([11, 1]);
     });
 
+    it('shows as online again when the game removes it from the room, or when it leaves every space', async () => {
+        const { internals, send } = setup(true);
+        const inner = internals as Internals & { handleLeaveSpaceRequest(r: { spaceName: string }): Promise<void>; leaveSpace(space: string): Promise<void> };
+        const behavior = { onSpaceLeft: vi.fn() };
+        const spaceLeft = vi.fn();
+        inner.behavior = behavior;
+        inner.meeting = { owns: (space: string) => space === 'area__board', spaceLeft } as never;
+        inner.emitLeaveSpace = vi.fn().mockResolvedValue(undefined);
+        const statuses = () => send.mock.calls.map(([m]) => m.message).filter((m) => m.$case === 'setPlayerDetailsMessage').map((m) => m.setPlayerDetailsMessage.availabilityStatus);
+
+        // The game removes the bot (for example after a rights change)
+        internals.spaces.set('area__board', 'room_9');
+        await inner.handleLeaveSpaceRequest({ spaceName: 'area__board' });
+        expect(spaceLeft).toHaveBeenCalledWith('area__board');
+        expect(statuses()).toEqual([1]);
+
+        // Leaving every space (the behaviour arrives somewhere) also ends the meeting
+        internals.spaces.set('area__board', 'room_9');
+        await inner.leaveSpace('area__board');
+        expect(spaceLeft).toHaveBeenCalledTimes(2);
+        expect(statuses()).toEqual([1, 1]);
+        // The room was never the behaviour's
+        expect(behavior.onSpaceLeft).not.toHaveBeenCalled();
+
+        // A bubble is still the behaviour's, and does not touch the bot's availability
+        internals.spaces.set('proximity-1', 'room_1');
+        await inner.leaveSpace('proximity-1');
+        expect(behavior.onSpaceLeft).toHaveBeenCalledWith('proximity-1');
+        expect(statuses()).toEqual([1, 1]);
+    });
+
     it('does not join, and says so, when the game refuses', async () => {
         const { bot, internals } = setup(true);
         bot.setMeetingAreas(areas, 'http://play.example.test/room');
