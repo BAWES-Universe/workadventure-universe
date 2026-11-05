@@ -133,6 +133,45 @@ describe('ToolHealth', () => {
     });
 });
 
+describe('a failure that says nothing new, and reports on their way', () => {
+    it('starts the wait over for a server already marked, so it is not asked at every reply', () => {
+        let now = 1_000_000;
+        const health = new ToolHealth(() => now, () => ({ recheckMs: 30 * MIN, noAnswerRetryMs: 5 * MIN }));
+        health.fail('bot', server(), 'expired');
+        now += 31 * MIN;
+        expect(health.shouldSkip('bot', server())).toBe(false);
+        health.touch('bot', 'srv-1');
+        expect(health.shouldSkip('bot', server())).toBe(true);
+        now += 31 * MIN;
+        expect(health.shouldSkip('bot', server())).toBe(false);
+        // A server without a mark has nothing to touch
+        health.touch('bot', 'srv-9');
+        expect(health.issuesFor('bot', new Set(['srv-9']))).toEqual([]);
+    });
+
+    it('waits for a report to Orbit that is on its way, but not for long', async () => {
+        const health = new ToolHealth();
+        health.fail('bot', server(), 'expired');
+        expect(health.isReported('bot', 'srv-1')).toBe(false);
+        let release: () => void = () => undefined;
+        health.track('bot', 'srv-1', new Promise<void>((resolve) => (release = resolve)).then(() => health.reported('bot', 'srv-1')));
+        const waited = health.settled('bot', 5_000);
+        release();
+        await waited;
+        expect(health.isReported('bot', 'srv-1')).toBe(true);
+
+        vi.useFakeTimers();
+        try {
+            health.track('bot', 'srv-2', new Promise(() => undefined));
+            const slow = health.settled('bot', 3_000);
+            await vi.advanceTimersByTimeAsync(3_000);
+            await expect(slow).resolves.toBeUndefined();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+});
+
 describe('reportToolState', () => {
     const orbit = { adminApiUrl: 'https://orbit.test', adminApiToken: 'tok' };
 

@@ -791,6 +791,8 @@ export class MCPConnector {
                       ? 'no-answer'
                       : null;
                 if (state) MCPConnector.markFailed(botId, server, state, orbit, status);
+                // Any other failure (a 404, a 429, a refused connection) leaves the mark as it is, and its wait starts over
+                else MCPConnector.health.touch(botId, server.id);
             }
         }
 
@@ -824,9 +826,10 @@ export class MCPConnector {
         if (!this.health.fail(botId, server, state)) return;
         const since = this.health.issuesFor(botId, new Set([server.id])).find((issue) => issue.serverId === server.id)?.since;
         // In the background: the reply does not wait for Orbit. A report that fails is sent again at the next failure.
-        void reportToolState(orbit, botId, server.id, state, since ?? new Date().toISOString(), status).then((told) => {
+        const sent = reportToolState(orbit, botId, server.id, state, since ?? new Date().toISOString(), status).then((told) => {
             if (told) this.health.reported(botId, server.id);
         });
+        this.health.track(botId, server.id, sent);
     }
 
     /** A call came back refused while a reply was running (the sign-in ran out since the list was read): same as at the list. */

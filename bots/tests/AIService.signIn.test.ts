@@ -55,6 +55,8 @@ vi.mock("../client/BotClient", () => ({
 // --- Mock MCPConnector: the tool servers' state is whatever each test sets ---
 const found = {
     issues: [] as any[],
+    /** Server ids Orbit has not been told about yet */
+    unreported: new Set<string>(),
 };
 vi.mock("../mcp/MCPConnector", () => ({
     MCPConnector: {
@@ -62,6 +64,7 @@ vi.mock("../mcp/MCPConnector", () => ({
         executeToolCall: vi.fn().mockResolvedValue({ content: [] }),
         noteRefused: vi.fn(),
         clearCache: vi.fn(),
+        health: { settled: vi.fn(async () => undefined), isReported: vi.fn((_bot: string, id: string) => !found.unreported.has(id)) },
     },
 }));
 
@@ -80,6 +83,7 @@ describe("AIService – a tool whose sign-in expired (#1819)", () => {
         vi.clearAllMocks();
         mockGenerateStream.mockReset();
         found.issues = [];
+        found.unreported = new Set();
         AIService = (await import("../ai/AIService")).AIService;
     });
 
@@ -159,6 +163,17 @@ describe("AIService – a tool whose sign-in expired (#1819)", () => {
         await reply(guest.svc, guest.admin, guest.botClient);
         expect(signInEvents(guest.botClient)).toHaveLength(0);
         expect(guest.admin.canManageBotTools).not.toHaveBeenCalled();
+    });
+
+    it("sends the card only once Orbit has the state it shows", async () => {
+        found.issues = [EXPIRED];
+        found.unreported = new Set(["srv-1"]);
+        const { svc, admin, botClient } = setup();
+        await reply(svc, admin, botClient);
+        expect(signInEvents(botClient)).toHaveLength(0);
+        found.unreported = new Set();
+        await reply(svc, admin, botClient);
+        expect(signInEvents(botClient)).toHaveLength(1);
     });
 
     it("shows no card for a server that only did not answer", async () => {

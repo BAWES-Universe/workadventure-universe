@@ -3085,7 +3085,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         if (!botId) return undefined;
         try {
             const person = this.gatePerson(botId, playerId, botClient, spaceName);
-            const card = toolSignInCard(issues);
+            // The card goes once Orbit has the state it shows: the page checks with Orbit as the card opens
+            await MCPConnector.health.settled(botId);
+            const shown = issues.filter((issue) => MCPConnector.health.isReported(botId, issue.serverId));
+            if (issues.length > 0 && shown.length === 0) return undefined;
+            const card = toolSignInCard(shown);
             const key = `${botId}|${channel}|${spaceName ?? ''}|${channel === 'world' ? playerId : person.signedIn ? person.identifier : ''}`;
             const nearby = channel === 'world' && !!botClient && !!spaceName && playerId !== undefined;
             if (!card) {

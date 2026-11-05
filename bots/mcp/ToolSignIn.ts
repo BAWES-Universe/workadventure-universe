@@ -98,6 +98,8 @@ export interface SeenServer {
 /** What the bot server knows about its tool servers, by bot and server. */
 export class ToolHealth {
     private readonly entries = new Map<string, Entry>();
+    /** Reports to Orbit that are still on their way, by bot and server */
+    private readonly pending = new Map<string, Promise<unknown>>();
 
     constructor(
         private readonly now: () => number = () => Date.now(),
@@ -169,6 +171,38 @@ export class ToolHealth {
             reported: false,
         });
         return true;
+    }
+
+    /** The server was tried again and failed in a way that says nothing new: its wait starts over, nothing else changes. */
+    touch(botId: string, serverId: string): void {
+        const entry = this.entries.get(this.key(botId, serverId));
+        if (entry) entry.checkedMs = this.now();
+    }
+
+    /** Whether Orbit has this server's state. */
+    isReported(botId: string, serverId: string): boolean {
+        return this.entries.get(this.key(botId, serverId))?.reported === true;
+    }
+
+    /** A report to Orbit is on its way. */
+    track(botId: string, serverId: string, sent: Promise<unknown>): void {
+        const key = this.key(botId, serverId);
+        const done = sent.finally(() => {
+            if (this.pending.get(key) === done) this.pending.delete(key);
+        });
+        this.pending.set(key, done);
+    }
+
+    /** Waits for the reports of one bot that are on their way, at most `maxMs`: a card is sent once Orbit has the state it shows. */
+    async settled(botId: string, maxMs = 3000): Promise<void> {
+        const waiting = [...this.pending].filter(([key]) => key.startsWith(`${botId}:`)).map(([, sent]) => sent);
+        if (waiting.length === 0) return;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const limit = new Promise<void>((resolve) => {
+            timer = setTimeout(resolve, maxMs);
+        });
+        await Promise.race([Promise.allSettled(waiting), limit]);
+        if (timer) clearTimeout(timer);
     }
 
     /** Orbit has been told the state. */
