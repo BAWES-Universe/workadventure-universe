@@ -275,7 +275,8 @@ export class QuestionCards {
         card.waiting = false;
         clearTimeout(card.timer);
         const field = this.fieldOf(id, card);
-        card.answer = { picked: pickedChoices(field, ids).map((choice) => choice.id) };
+        const ours = { picked: pickedChoices(field, ids).map((choice) => choice.id) };
+        card.answer = ours;
         card.revision += 1;
         await this.redraw(id, card);
         const taken = await this.deps
@@ -284,7 +285,15 @@ export class QuestionCards {
         if (taken !== false) return;
         // The bot never got the pick (the person left the bubble, or chat is closed to them now): the question is still open
         // until its time is up, so a card that says "picked" for an answer nobody heard is not left behind
-        if (card.waiting || card.expiresAt <= this.now()) return;
+        // The card was changed meanwhile (the person typed or said something): that is its end now
+        if (card.waiting || card.answer !== ours) return;
+        if (card.expiresAt <= this.now()) {
+            // Its time ran out while the pick was on its way and the bot never got it: it ends as unanswered, never as picked
+            card.answer = { expired: true };
+            card.revision += 1;
+            await this.redraw(id, card);
+            return;
+        }
         card.waiting = true;
         card.answer = undefined;
         card.revision += 1;

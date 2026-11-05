@@ -246,6 +246,7 @@ jobs:
       - name: Switch and deploy the dev voice server
         if: steps.slot.outputs.go == 'true'
         continue-on-error: true
+        timeout-minutes: 15
         env:
           VOICE_UUID: ${{ vars.DEV_COOLIFY_VOICE_WORKER_UUID }}
           VOICE_WORKER: ${{ inputs.voice_worker }}
@@ -264,7 +265,7 @@ jobs:
           send() { curl -sS --max-time 30 --fail-with-body -H "Authorization: Bearer ${COOLIFY_TOKEN}" -H 'Content-Type: application/json' "$@"; }
 
           ref="ghcr.io/bawes-universe/voice-worker-universe:${TAG}"
-          if ! docker buildx imagetools inspect "$ref" > /dev/null; then
+          if ! timeout 120 docker buildx imagetools inspect "$ref" > /dev/null; then
             echo "::warning::$ref does not exist, so the dev voice server was not switched"
             exit 0
           fi

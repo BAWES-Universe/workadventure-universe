@@ -38,3 +38,12 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv = process.env): WorkerOpti
         recognitionFinalTimeoutSeconds: int(env.VOICE_RECOGNITION_FINAL_TIMEOUT_SECONDS, DEFAULT_SONIOX_FINAL_TIMEOUT_MS / 1000),
     };
 }
+
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
+
+// The worker is open to anyone who can reach its port when no secret is set, so a worker listening beyond this machine
+// must have one. Returns the reason to refuse to start, or undefined when the settings are safe.
+export function startupProblem(options: Pick<WorkerOptions, 'host' | 'secret'>): string | undefined {
+    if (options.secret || LOOPBACK_HOSTS.has(options.host)) return undefined;
+    return `VOICE_WORKER_SECRET is not set while listening on ${options.host}: anyone who can reach this port could use the worker. Set VOICE_WORKER_SECRET, or set VOICE_WORKER_HOST=127.0.0.1.`;
+}

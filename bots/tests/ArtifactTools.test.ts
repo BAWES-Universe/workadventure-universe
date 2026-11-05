@@ -152,6 +152,12 @@ describe('change_artifact', () => {
         expect(formatArtifactResult('change_artifact', own.result)).toContain('it is version 2 now');
     });
 
+    it("does not call it a copy when the id the model sent differs from the one Orbit answers with only in letter case", async () => {
+        const run = await runArtifactTool('change_artifact', { id: 'ART-1', content: '<p>x</p>' }, context());
+        expect(run.result).toMatchObject({ success: true, id: 'art-1' });
+        expect(run.result).not.toHaveProperty('copiedFrom');
+    });
+
     it('wants an id and either edits or a file, and sends nothing otherwise', async () => {
         const ctx = context();
         expect((await runArtifactTool('change_artifact', { edits: [{ old: 'a', new: 'b' }] }, ctx)).result).toHaveProperty('error');
