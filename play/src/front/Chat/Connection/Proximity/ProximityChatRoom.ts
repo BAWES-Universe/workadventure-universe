@@ -1150,6 +1150,8 @@ export class ProximityChatRoom implements ChatRoom {
         const shown = this.askCards.get(ask.id);
         const shownMessage = shown ? this.messages.get(shown.messageId) : undefined;
         if (shown && shownMessage instanceof ProximityChatMessage && shownMessage.ask) {
+            // A card is the bot's own: another bot that uses the same card id cannot change it or take its taps
+            if (shown.messageId !== `${event.botId}-ask-${ask.id}`) return;
             // Only the bot's own newer word changes a card; an older one that arrives late is ignored
             const current = get(shownMessage.ask);
             if (current && ask.revision >= current.revision) shownMessage.ask.set(ask);

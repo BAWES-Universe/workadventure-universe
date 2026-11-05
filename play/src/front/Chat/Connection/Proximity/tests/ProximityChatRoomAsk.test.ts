@@ -175,6 +175,21 @@ describe("ProximityChatRoom card and private replies from a bot (#1658)", () => 
         expect(get(cards()[0].ask!)).toMatchObject({ revision: 1, answer: { option: "approve" } });
     });
 
+    it("does not let another bot that uses the same card id change the card or take its taps", async () => {
+        const mira = {
+            spaceUserId: "room_8",
+            name: "Mira",
+            uuid: "bot-other",
+            tags: ["bot"],
+        } as unknown as SpaceUserExtended;
+        emit(botAsk(nora));
+        emit(botAsk(mira, { botId: "other", botName: "Mira", revision: 1, body: askField(1, { option: "approve" }) }));
+        expect(cards()).toHaveLength(1);
+        expect(get(cards()[0].ask!)).toMatchObject({ revision: 0 });
+        await room.answerBotAsk({ id: "act-1", revision: 0 }, { action: "decide", option: "approve" });
+        expect(fake.space.emitPrivateMessage).toHaveBeenCalledWith(expect.anything(), nora.spaceUserId);
+    });
+
     it("ignores an older word about a card that arrives late", () => {
         emit(botAsk(nora, { revision: 2, body: askField(2, { closed: true }) }));
         emit(botAsk(nora, { revision: 1, body: askField(1) }));
