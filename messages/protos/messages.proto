@@ -723,8 +723,10 @@ message FriendSearchResult {
   string name = 2;
   repeated string universes = 3;
   string relationship = 4;
-  // Their chat ID, so the game can show their Woka; empty when unknown.
+  // Their chat ID, so the game can show their Woka; empty when unknown (never sent for a stranger: it is built from their email).
   string chatId = 5;
+  // Their Woka (bottom layer first); empty when they have none to show and the game draws its default.
+  repeated CharacterTextureMessage characterTextures = 6;
 }
 
 message FriendSearchAnswer {

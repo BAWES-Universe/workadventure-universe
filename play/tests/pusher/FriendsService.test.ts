@@ -123,6 +123,36 @@ describe("FriendsService", () => {
         expect(results.map((result) => result.chatId)).toEqual(["@bob:chat", undefined, null]);
     });
 
+    it("reads the Woka layers of a search result, and from an Orbit that does not send them yet", async () => {
+        const layers = [
+            { id: "body", url: "https://assets.test/body.png" },
+            { id: "hat", url: "https://assets.test/hat.png" },
+        ];
+        const http = {
+            get: vi.fn(() =>
+                Promise.resolve({
+                    data: {
+                        results: [
+                            {
+                                uuid: "bob",
+                                name: "Bob",
+                                characterTextures: layers,
+                                universes: [],
+                                relationship: "none",
+                            },
+                            { uuid: "old", name: "Old", universes: [], relationship: "none" },
+                        ],
+                    },
+                })
+            ),
+            post: vi.fn(),
+            put: vi.fn(),
+        };
+        const service = new FriendsService("https://orbit.test", "token", http);
+        const { results } = await service.search("alice", "bo");
+        expect(results.map((result) => result.characterTextures)).toEqual([layers, undefined]);
+    });
+
     it("asks Orbit how two players stand", async () => {
         const http = {
             get: vi.fn(() =>

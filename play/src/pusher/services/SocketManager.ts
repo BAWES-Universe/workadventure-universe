@@ -1579,6 +1579,7 @@ export class SocketManager implements ZoneEventListener {
                         uuid: result.uuid,
                         name: result.name ?? "",
                         chatId: result.chatId ?? "",
+                        characterTextures: result.characterTextures ?? [],
                         universes: result.universes,
                         relationship: result.relationship,
                     })),

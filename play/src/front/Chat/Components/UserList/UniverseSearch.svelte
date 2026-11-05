@@ -4,6 +4,7 @@
     import { LL } from "../../../../i18n/i18n-svelte";
     import { friendsStore, relationshipsStore } from "../../Stores/FriendsStore";
     import { requestChatPerson } from "../../Stores/ChatPeopleLookup";
+    import { storedWokaStore } from "../../Stores/StoredWokaStore";
     import FriendAvatar from "./FriendAvatar.svelte";
     import { chatIdsToAsk } from "./Friends";
     import type { ListedPerson } from "./Friends";
@@ -17,7 +18,10 @@
     export let query: string;
     /** No one in this world matched: say so above the button. */
     export let nothingHere = false;
-    /** The saved Woka and background colour for a result; none keeps the default Woka. */
+    /**
+     * The Woka and background colour the world or Orbit already gives a result (people in this world, friends); none
+     * leaves the Woka Orbit sent with the result, else the default one.
+     */
     export let lookOf: (person: ListedPerson) => {
         picture?: Readable<string | undefined>;
         color?: string;
@@ -30,6 +34,21 @@
     let searchedFor = "";
     let latest = 0;
     const askedChatIds = new Set<string>();
+
+    /**
+     * The Woka Orbit sent with a result, as a picture. One store per person for as long as the same layers are shown,
+     * so the list does not redraw them.
+     */
+    const foundPictures = new Map<string, { layers: string; picture: ReturnType<typeof storedWokaStore> }>();
+    function foundPicture(result: FriendSearchResult) {
+        const layers = result.characterTextures.map((texture) => texture.url).join("|");
+        if (!layers) return undefined;
+        const known = foundPictures.get(result.uuid);
+        if (known?.layers === layers) return known.picture;
+        const picture = storedWokaStore(result.characterTextures);
+        foundPictures.set(result.uuid, { layers, picture });
+        return picture;
+    }
 
     // A new query forgets the last results: the button searches again.
     $: if (query !== searchedFor && search.status !== "idle") {
@@ -44,8 +63,10 @@
             const results = await friendsStore.search(query);
             if (request === latest) {
                 search = { status: "done", results };
-                // Orbit draws the Woka of each result the world isn't showing, once per person while People is open.
-                for (const chatId of chatIdsToAsk(results, inWorld, askedChatIds)) requestChatPerson(chatId);
+                // A result that came with its Woka is drawn from that. Orbit is asked about the others the world isn't
+                // showing (a friend's Woka comes with their chat ID), once per person while People is open.
+                const withoutWoka = results.filter((result) => result.characterTextures.length === 0);
+                for (const chatId of chatIdsToAsk(withoutWoka, inWorld, askedChatIds)) requestChatPerson(chatId);
             }
         } catch (e) {
             console.error("Friends: search failed", e);
@@ -96,7 +117,7 @@
                 {@const relationship = relationshipOf(result)}
                 {@const look = lookOf(result)}
                 <li class="flex items-center gap-2 px-2 py-1.5" data-testid={`universe-result-${result.name}`}>
-                    <FriendAvatar picture={look.picture} color={look.color} />
+                    <FriendAvatar picture={look.picture ?? foundPicture(result)} color={look.color} />
                     <div class="ms-1 flex min-w-0 flex-auto flex-col">
                         <span class="truncate text-sm font-bold">{result.name}</span>
                         {#if result.universes.length > 0}
