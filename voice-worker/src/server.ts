@@ -330,12 +330,17 @@ class BridgeConnection {
         counters.inc('bridge_in');
         const msg = message as BotToWorker;
         const previous = this.queues.get(msg.sessionId) ?? Promise.resolve();
-        const next = previous
+        const next: Promise<void> = previous
             .then(() => this.handle(msg))
             .catch((error) => {
                 counters.inc('bridge_handler_errors');
                 console.error('[voice-worker] handler failed', error);
                 this.send(msg.sessionId, { type: 'error', code: 'internal', message: 'handler failed' });
+            })
+            .finally(() => {
+                // The line for a session goes away once its last queued message is done, so a message for a session that
+                // never opened leaves nothing behind, and a session that is closing keeps its line until the close is over
+                if (this.queues.get(msg.sessionId) === next) this.queues.delete(msg.sessionId);
             });
         this.queues.set(msg.sessionId, next);
     }
@@ -401,7 +406,6 @@ class BridgeConnection {
                 break;
             case 'session.end':
                 this.sessions.delete(msg.sessionId);
-                this.queues.delete(msg.sessionId);
                 await session.close();
                 break;
         }
