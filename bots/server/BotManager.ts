@@ -216,6 +216,9 @@ export class BotManager {
             );
         }
 
+        // The tool gate asks Orbit who may change, delete or send through the same gate, so its answers are kept once
+        this.aiService.useAccessGate(this.accessGate);
+
         // Initialize test runner and conversation replay (DEVELOPMENT ONLY)
         // These are only created in development to keep production lightweight
         if (isDevelopment) {
@@ -352,6 +355,8 @@ export class BotManager {
         };
         
         const client = new BotClient(botConfig);
+        // Cards in nearby chat and voice come and go through the AI service's side of it (#1658)
+        client.setAsks(this.aiService.asksPort());
         client.setAccessGate(this.accessGate);
         
         // Store botId mapping
@@ -1003,6 +1008,8 @@ export class BotManager {
                             existingInstance.config.behaviorType !== bot.behaviorType ||
                             JSON.stringify(existingInstance.config.characterTextureIds) !== JSON.stringify(bot.characterTextureIds) ||
                             (existingInstance.config.companionTextureId ?? null) !== (bot.companionTextureId ?? null) ||
+                            // The voice tag is part of the bot's token, so a change of the owner's choice reconnects it
+                            !!existingInstance.config.voiceEnabled !== !!bot.voiceEnabled ||
                             JSON.stringify(existingInstance.config.assignedSpace) !== JSON.stringify(bot.assignedSpace);
                         
                         if (needsRespawn) {
@@ -1305,6 +1312,8 @@ export class BotManager {
             const mapData = await this.mapDataService.getMapData(roomUrl);
             if (mapData && mapData.collisionGrid && mapData.tileDimensions) {
                 client.initializePathfinding(mapData.collisionGrid, mapData.tileDimensions);
+                // Only a voice bot has anything to do with the meeting rooms of the map
+                client.setMeetingAreas(mapData.meetingAreas || [], roomUrl);
                 console.log(`[BotManager] Pathfinding initialized for room ${roomUrl}`);
             } else {
                 console.log(`[BotManager] No collision data available for room ${roomUrl}, pathfinding disabled`);

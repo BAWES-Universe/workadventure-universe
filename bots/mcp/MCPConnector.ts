@@ -14,6 +14,17 @@ import * as Sentry from '@sentry/node';
 import { decryptApiKey } from '../ai/encryption';
 import { linkExternalAbort } from '../ai/providers/abortUtils';
 import { checkOutboundUrl, guardedLookup } from './outboundGuard';
+import {
+    MAX_TOOLS_PER_SERVER,
+    fingerprintTool,
+    keptTools,
+    syncCatalog,
+    toRawTool,
+    type RawTool,
+    type SyncResult,
+    type ToolListCut,
+    type ToolSuggester,
+} from './ToolCatalog';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -28,6 +39,9 @@ export interface McpServerConfig {
     authConfig?: string; // Decrypted auth value (plaintext at this point)
     headers?: Record<string, string>; // Extra headers
     enabled: boolean;
+    /** An old server whose tools were never checked: it keeps working in text as it did (#738). */
+    notCheckedYet?: boolean;
+    policyRevision?: number;
 }
 
 export interface McpToolDefinition {
@@ -43,8 +57,27 @@ interface CachedTools {
     tools: McpToolDefinition[];
     /** Each tool's readable title from tools/list (MCP `title`, or `annotations.title`), by tool name. */
     titles: Record<string, string>;
+    /** Every tool as the server listed it (labels and inputs included), for its fingerprint and its heading (#1654). */
+    raw: RawTool[];
     cachedAt: number;
     serverId: string;
+}
+
+/** Where a tool lives, for routing a call to it and for telling whether it is the tool a person confirmed. */
+export interface ToolServerEntry {
+    serverId: string;
+    serverUrl: string;
+    authType: string;
+    authConfig?: string;
+    headers?: Record<string, string>;
+    /** The tool server's own readable name for the tool, when it gave one (shown in the steps line). */
+    title?: string;
+    /** The server's name in Orbit, for a card that says whose account a tool uses (#1656). */
+    serverName?: string;
+    /** What the tool is right now: its definition, the server's address and the account it uses (#1654). */
+    fingerprint?: string;
+    /** The tool's inputs as the server described them, for showing the details of a call on a card in their order (#1657). */
+    inputSchema?: unknown;
 }
 
 // ---------------------------------------------------------------------------
@@ -54,6 +87,13 @@ interface CachedTools {
 const toolListCache = new Map<string, CachedTools>();
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour
 export const REQUEST_TIMEOUT = 90_000; // 90 seconds
+/**
+ * A server's list is read page by page; this many pages at most (#1654). Only a guard against a server that never stops
+ * (or whose cursor loops): servers page at 50 to 100 tools, so 20 pages is 1,000 to 2,000 tools, well past the 500 that
+ * are kept (MAX_TOOLS_PER_SERVER), which leaves room to count a server that has somewhat more. A server that still has
+ * pages left after these is reported as cut, with no count.
+ */
+const MAX_TOOL_PAGES = 20;
 
 /** Bounds for a bot's own tool-call timeout ("Patience"), matching Orbit's validation. */
 export const MIN_TOOL_TIMEOUT_SECONDS = 5;
@@ -167,7 +207,9 @@ function parseMcpResponse(response: any, requestId?: string): any {
             parsedMessages.find(isAnswer) ??
             parsedMessages[0];
         if (answer !== undefined) {
-            return { data: answer, headers: response.headers, status: response.status };
+            // The server may say, along the way, that its tools changed (#1654)
+            const listChanged = parsedMessages.some((m) => m && typeof m === 'object' && m.method === 'notifications/tools/list_changed');
+            return { data: answer, headers: response.headers, status: response.status, ...(listChanged ? { listChanged } : {}) };
         }
         return response; // fallback to raw
     }
@@ -198,6 +240,8 @@ interface JsonRpcOutcome {
     neverRan: boolean;
     /** It never ran, and for a reason a second try may get past */
     retryable: boolean;
+    /** The server said, in its answer, that its list of tools changed */
+    listChanged?: boolean;
 }
 
 /** Sent, or maybe sent, with no answer: the server may have run it */
@@ -415,7 +459,7 @@ async function sendJsonRpc(
         });
 
         const parsed = parseMcpResponse(response, requestId);
-        return { data: parsed.data, neverRan: false, retryable: false };
+        return { data: parsed.data, neverRan: false, retryable: false, ...(parsed.listChanged ? { listChanged: true } : {}) };
     } catch (error: any) {
         if (axios.isCancel(error)) {
             if (signal?.aborted) {
@@ -495,79 +539,126 @@ export class MCPConnector {
     }
 
     /**
+     * The bot's MCP server configs from the admin API, with their credentials decrypted. Empty when the bot has none; throws
+     * when Orbit can't be asked (the caller decides what that means).
+     */
+    private static async loadServers(botId: string, adminApiUrl: string, adminApiToken: string): Promise<McpServerConfig[]> {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+        let servers: McpServerConfig[] = [];
+        try {
+            const response = await axios.get(`${adminApiUrl}/api/bots/${botId}/mcp-servers`, {
+                headers: {
+                    Authorization: `Bearer ${adminApiToken}`,
+                    'Content-Type': 'application/json',
+                },
+                signal: controller.signal,
+            });
+            servers = response.data || [];
+        } finally {
+            clearTimeout(timeoutId);
+        }
+
+        // Decrypt authConfig for each server (admin API stores it encrypted)
+        for (const server of servers) {
+            if (server.authConfig) {
+                try {
+                    server.authConfig = decryptApiKey(server.authConfig) || undefined;
+                } catch (e) {
+                    console.warn(
+                        `[MCPConnector] Failed to decrypt authConfig for server ${server.name} (${server.id}):`,
+                        e
+                    );
+                    server.authConfig = undefined;
+                }
+            }
+        }
+        return servers;
+    }
+
+    /**
+     * Every tool a server lists, page after page (`nextCursor`), as the server gave them, and no more than are kept
+     * (MAX_TOOLS_PER_SERVER): the list the model gets is the list Orbit saves. When the server has more, `cut` says so, with
+     * how many it has when every page was read (null when pages were left, so there was no count to give); a server with
+     * exactly as many as are kept is not cut. Null when any page brings nothing usable: a half-read list is never kept or
+     * saved to Orbit as if it were the whole one, so the tools of the pages that were not read can't look removed or
+     * unconfirmed. The next read tries again.
+     */
+    private static async listAllTools(server: McpServerConfig): Promise<{ tools: RawTool[]; cut: ToolListCut | null } | null> {
+        const all: RawTool[] = [];
+        let cursor: string | undefined;
+        let moreLeft = false;
+        for (let page = 0; page < MAX_TOOL_PAGES; page++) {
+            const response = await jsonRpcRequest(
+                server.serverUrl,
+                'tools/list',
+                cursor ? { cursor } : undefined,
+                server.authType,
+                server.authConfig,
+                server.headers
+            );
+            if (!response || !response.result || !Array.isArray(response.result.tools)) {
+                return null;
+            }
+            for (const item of response.result.tools) {
+                const tool = toRawTool(item);
+                if (tool) all.push(tool);
+            }
+            const next = response.result.nextCursor;
+            moreLeft = typeof next === 'string' && !!next && next !== cursor;
+            if (!moreLeft) break;
+            cursor = next;
+        }
+        const tools = keptTools(all);
+        const total = new Set(all.map((tool) => tool.name)).size;
+        const cut: ToolListCut | null = moreLeft ? { total: null } : total > MAX_TOOLS_PER_SERVER ? { total } : null;
+        return { tools, cut };
+    }
+
+    /** A tool list as the model gets it, with the readable titles the servers gave. */
+    private static toDefinitions(raw: readonly RawTool[]): { tools: McpToolDefinition[]; titles: Record<string, string> } {
+        const titles: Record<string, string> = {};
+        const tools = raw.map(
+            (tool): McpToolDefinition => ({
+                type: 'function' as const,
+                function: {
+                    name: tool.name,
+                    description: tool.description || '',
+                    parameters: (tool.inputSchema as Record<string, any>) || {},
+                },
+            })
+        );
+        for (const tool of raw) if (tool.title) titles[tool.name] = tool.title;
+        return { tools, titles };
+    }
+
+    /**
      * Discover MCP tools AND build a tool-name → server-config mapping.
      *
      * Returns both the tool definitions and a map that can be used to route
-     * tool calls to the correct MCP server at execution time.
+     * tool calls to the correct MCP server at execution time. Each entry also carries the tool's fingerprint (#1654), so a
+     * call can be checked against the tool a person confirmed.
+     *
+     * Whenever a server's list is read fresh, it is also saved to Orbit with a suggested heading per tool, without making
+     * the caller wait for it (`options.suggest` is the small model for tools the server's labels leave open).
      */
     static async discoverToolsWithMapping(
         botId: string,
         adminApiUrl: string,
         adminApiToken: string,
-        botServiceToken: string
+        botServiceToken: string,
+        options: { suggest?: ToolSuggester } = {}
     ): Promise<{
         tools: McpToolDefinition[];
-        toolServerMap: Map<
-            string,
-            {
-                serverId: string;
-                serverUrl: string;
-                authType: string;
-                authConfig?: string;
-                headers?: Record<string, string>;
-                /** The tool server's own readable name for the tool, when it gave one (shown in the steps line). */
-                title?: string;
-            }
-        >;
+        toolServerMap: Map<string, ToolServerEntry>;
     }> {
-        const toolServerMap = new Map<
-            string,
-            {
-                serverId: string;
-                serverUrl: string;
-                authType: string;
-                authConfig?: string;
-                headers?: Record<string, string>;
-                /** The tool server's own readable name for the tool, when it gave one (shown in the steps line). */
-                title?: string;
-            }
-        >();
+        void botServiceToken;
+        const toolServerMap = new Map<string, ToolServerEntry>();
 
         // Fetch MCP server configs from admin API
         let servers: McpServerConfig[] = [];
         try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
-            try {
-                const response = await axios.get(
-                    `${adminApiUrl}/api/bots/${botId}/mcp-servers`,
-                    {
-                        headers: {
-                            Authorization: `Bearer ${adminApiToken}`,
-                            'Content-Type': 'application/json',
-                        },
-                        signal: controller.signal,
-                    }
-                );
-                servers = response.data || [];
-            } finally {
-                clearTimeout(timeoutId);
-            }
-
-            // Decrypt authConfig for each server (admin API stores it encrypted)
-            for (const server of servers) {
-                if (server.authConfig) {
-                    try {
-                        server.authConfig = decryptApiKey(server.authConfig) || undefined;
-                    } catch (e) {
-                        console.warn(
-                            `[MCPConnector] Failed to decrypt authConfig for server ${server.name} (${server.id}):`,
-                            e
-                        );
-                        server.authConfig = undefined;
-                    }
-                }
-            }
+            servers = await this.loadServers(botId, adminApiUrl, adminApiToken);
         } catch (error: any) {
             if (axios.isAxiosError(error) && error.response?.status === 404) {
                 // No MCP servers configured — not an error
@@ -592,7 +683,7 @@ export class MCPConnector {
         const seenToolNames = new Set<string>();
 
         // Helper to push a tool def only if its name is unique
-        function addUniqueTool(tool: McpToolDefinition, server: McpServerConfig, title?: string) {
+        function addUniqueTool(tool: McpToolDefinition, server: McpServerConfig, title: string | undefined, raw: RawTool | undefined) {
             if (!seenToolNames.has(tool.function.name)) {
                 seenToolNames.add(tool.function.name);
                 allTools.push(tool);
@@ -602,6 +693,9 @@ export class MCPConnector {
                     authType: server.authType,
                     authConfig: server.authConfig,
                     headers: server.headers,
+                    serverName: server.name,
+                    ...(raw ? { fingerprint: fingerprintTool(raw, server) } : {}),
+                    ...(raw?.inputSchema !== undefined ? { inputSchema: raw.inputSchema } : {}),
                     ...(title ? { title } : {}),
                 });
             }
@@ -615,52 +709,37 @@ export class MCPConnector {
             const cached = toolListCache.get(cacheKey);
 
             if (cached && Date.now() < cached.cachedAt + CACHE_TTL) {
+                const rawByName = new Map(cached.raw.map((tool) => [tool.name, tool]));
                 for (const tool of cached.tools) {
-                    addUniqueTool(tool, server, cached.titles[tool.function.name]);
+                    addUniqueTool(tool, server, cached.titles[tool.function.name], rawByName.get(tool.function.name));
                 }
                 return;
             }
 
-            const response = await jsonRpcRequest(
-                server.serverUrl,
-                'tools/list',
-                undefined,
-                server.authType,
-                server.authConfig,
-                server.headers
-            );
+            const read = await MCPConnector.listAllTools(server);
 
-            if (response && response.result && Array.isArray(response.result.tools)) {
-                const toolDefs: McpToolDefinition[] = response.result.tools.map(
-                    (tool: any) => ({
-                        type: 'function' as const,
-                        function: {
-                            name: tool.name,
-                            description: tool.description || '',
-                            parameters: tool.inputSchema || tool.parameters || {},
-                        },
-                    })
-                );
-
-                const titles: Record<string, string> = {};
-                for (const tool of response.result.tools) {
-                    const title = tool?.title ?? tool?.annotations?.title;
-                    if (typeof tool?.name === 'string' && typeof title === 'string' && title.trim()) {
-                        titles[tool.name] = title.trim();
-                    }
-                }
+            if (read) {
+                const raw = read.tools;
+                const { tools: toolDefs, titles } = MCPConnector.toDefinitions(raw);
 
                 // Cache the result
                 toolListCache.set(cacheKey, {
                     tools: toolDefs,
                     titles,
+                    raw,
                     cachedAt: Date.now(),
                     serverId: server.id,
                 });
 
+                const rawByName = new Map(raw.map((tool) => [tool.name, tool]));
                 for (const toolDef of toolDefs) {
-                    addUniqueTool(toolDef, server, titles[toolDef.function.name]);
+                    addUniqueTool(toolDef, server, titles[toolDef.function.name], rawByName.get(toolDef.function.name));
                 }
+                const cachedAt = toolListCache.get(cacheKey)?.cachedAt;
+                void MCPConnector.saveListToOrbit(botId, server, raw, { adminApiUrl, adminApiToken }, options.suggest, read.cut).then((outcome) => {
+                    // Orbit did not get the list: forget it here too, so the next read tries to save it again (not in an hour)
+                    if (outcome.result === 'skipped' && toolListCache.get(cacheKey)?.cachedAt === cachedAt) toolListCache.delete(cacheKey);
+                });
             } else {
                 console.warn(
                     `[MCPConnector] Server ${server.name} (${server.id}) returned no tools or invalid response`
@@ -681,6 +760,48 @@ export class MCPConnector {
         }
 
         return { tools: allTools, toolServerMap };
+    }
+
+    /** Saves one server's list to Orbit in the background. A failure is logged; Orbit keeps what it had. */
+    private static saveListToOrbit(
+        botId: string,
+        server: McpServerConfig,
+        raw: readonly RawTool[],
+        orbit: { adminApiUrl: string; adminApiToken: string },
+        ask?: ToolSuggester,
+        cut?: ToolListCut | null
+    ): Promise<SyncResult> {
+        return syncCatalog({ orbit, botId, serverId: server.id, server, raw, cut, ask }).then((outcome) => {
+            if (outcome.result === 'skipped') console.warn(`[MCPConnector] Tool list of ${server.name} (${server.id}) not saved: ${outcome.reason}`);
+            else if (outcome.result === 'saved' && outcome.saved.changed.length > 0) {
+                console.log(`[MCPConnector] ${outcome.saved.changed.length} tool(s) of ${server.name} changed and wait to be confirmed again`);
+            }
+            return outcome;
+        });
+    }
+
+    /**
+     * Reads one server's whole tool list now (not from the cache), keeps it for the bot, and saves it to Orbit with suggested
+     * headings. For connecting a server and Test server (#1654). Resolves with how it went; null when the bot has no such server.
+     */
+    static async refreshServerTools(
+        botId: string,
+        serverId: string,
+        adminApiUrl: string,
+        adminApiToken: string,
+        suggest?: ToolSuggester
+    ): Promise<{ read: false; reason: string } | { read: true; tools: number; saved: SyncResult } | null> {
+        const server = (await this.loadServers(botId, adminApiUrl, adminApiToken)).find((candidate) => candidate.id === serverId);
+        if (!server) return null;
+        const read = await this.listAllTools(server);
+        if (!read) return { read: false, reason: 'The server did not answer with a list of tools' };
+        const raw = read.tools;
+        const { tools, titles } = this.toDefinitions(raw);
+        toolListCache.set(`${botId}:${server.id}`, { tools, titles, raw, cachedAt: Date.now(), serverId: server.id });
+        const saved = await this.saveListToOrbit(botId, server, raw, { adminApiUrl, adminApiToken }, suggest, read.cut);
+        // Orbit did not get it: the next read tries to save it again
+        if (saved.result === 'skipped') toolListCache.delete(`${botId}:${server.id}`);
+        return { read: true, tools: raw.length, saved };
     }
 
     /**
@@ -715,6 +836,7 @@ export class MCPConnector {
             timeoutMs
         );
         let response = attempt.data;
+        if (attempt.listChanged) MCPConnector.forgetServerList(serverId);
 
         if (!response) {
             // Send the call again only when it provably never ran (never
@@ -791,6 +913,13 @@ export class MCPConnector {
 
         // An answer that is neither a result nor an error proves nothing about what the server did
         return { error: EMPTY_ANSWER_ERROR, outcome: 'uncertain' satisfies ToolCallOutcome, hint: MAY_HAVE_RUN_HINT };
+    }
+
+    /** A server said its tools changed: the next read of any bot's list for it comes from the server and is saved again. */
+    static forgetServerList(serverId: string): void {
+        for (const key of toolListCache.keys()) {
+            if (key.endsWith(`:${serverId}`)) toolListCache.delete(key);
+        }
     }
 
     /**

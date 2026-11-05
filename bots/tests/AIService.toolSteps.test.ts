@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { openToolGate } from './helpers/openToolGate';
 
 vi.mock("@sentry/node", () => ({
     startSpanManual: vi.fn((_opts: unknown, callback: (span: any) => any) =>
@@ -133,14 +134,14 @@ describe("AIService – the steps a reply shows (#1545)", () => {
                 )
             )
             .mockImplementationOnce(says("Here it is."));
-        const chunks = await reply(new AIService(memory, admin, "http://admin.local"));
+        const chunks = await reply(openToolGate(new AIService(memory, admin, "http://admin.local")));
 
-        const reset = chunks.find((chunk) => chunk.toolSteps);
+        const reset = chunks.find((chunk) => chunk.toolSteps && chunk.reset);
         expect(reset.reset).toBe(true);
         // Moving around the map is not a step anyone waits for
         expect(reset.toolSteps).toEqual([
-            { id: "c1", doing: "Using Make a song", done: "Used Make a song", detail: "upbeat 8-bit funk", group: "tool:generate_music" },
-            { id: "c2", doing: "Using Make a song", done: "Used Make a song", detail: "same, meaner bass", group: "tool:generate_music" },
+            { id: "c1", doing: "Using Make a song", done: "Used Make a song", detail: "upbeat 8-bit funk", group: "tool:generate_music", kind: "write" },
+            { id: "c2", doing: "Using Make a song", done: "Used Make a song", detail: "same, meaner bass", group: "tool:generate_music", kind: "write" },
         ]);
         const ended = chunks.find((chunk) => chunk.toolStepResults);
         expect(ended).toMatchObject({ content: "", done: false });
@@ -157,9 +158,9 @@ describe("AIService – the steps a reply shows (#1545)", () => {
         mockGenerateStream
             .mockImplementationOnce(calls({ id: "r1", name: "read_web_page", args: { url: "notaurl" } }))
             .mockImplementationOnce(says("Done."));
-        const chunks = await reply(new AIService(memory, admin, "http://admin.local"));
-        expect(chunks.find((chunk) => chunk.toolSteps).toolSteps).toEqual([
-            { id: "r1", doing: "Reading a page", done: "Read a page", detail: "notaurl", group: "page" },
+        const chunks = await reply(openToolGate(new AIService(memory, admin, "http://admin.local")));
+        expect(chunks.find((chunk) => chunk.toolSteps && chunk.reset).toolSteps).toEqual([
+            { id: "r1", doing: "Reading a page", done: "Read a page", detail: "notaurl", group: "page", kind: "read" },
         ]);
     });
 
@@ -171,9 +172,9 @@ describe("AIService – the steps a reply shows (#1545)", () => {
             .mockImplementationOnce(calls({ id: "c1", name: "generate_music", args: { prompt: "funk" } }))
             .mockImplementationOnce(calls({ id: "c2", name: "generate_music", args: { prompt: "disco" } }))
             .mockImplementation(says("Here is the first one."));
-        const chunks = await reply(new AIService(memory, admin, "http://admin.local"));
+        const chunks = await reply(openToolGate(new AIService(memory, admin, "http://admin.local")));
 
-        const announced = chunks.filter((chunk) => chunk.toolSteps).flatMap((chunk) => chunk.toolSteps.map((step: any) => step.id));
+        const announced = chunks.filter((chunk) => chunk.toolSteps && chunk.reset).flatMap((chunk) => chunk.toolSteps.map((step: any) => step.id));
         expect(announced).toEqual(["c1", "c2"]);
         const results = chunks.filter((chunk) => chunk.toolStepResults).flatMap((chunk) => chunk.toolStepResults);
         expect(results).toEqual([
@@ -181,5 +182,63 @@ describe("AIService – the steps a reply shows (#1545)", () => {
             { id: "c2", ok: false, note: "Not run: the bot reached its step limit" },
         ]);
         expect(mockExecuteToolCall).toHaveBeenCalledTimes(1);
+    });
+
+    it("announces a call the moment its name is known, while its arguments are still coming in", async () => {
+        const { admin, memory } = buildMocks();
+        const events: string[] = [];
+        mockExecuteToolCall.mockResolvedValue({ content: [{ type: "text", text: "ok" }] });
+        mockGenerateStream
+            .mockImplementationOnce(async function* () {
+                yield { content: "Let me make that.", done: false };
+                yield { content: "", done: false, toolCalls: [{ id: "c1", name: "generate_music", arguments: "" }] };
+                events.push("the arguments keep coming");
+                yield { content: "", done: false, toolCalls: [{ id: "c1", name: "", arguments: '{"prompt":"upbeat' }] };
+                yield { content: "", done: false, toolCalls: [{ id: "c1", name: "", arguments: ' funk"}' }] };
+                yield { content: "", done: true, metadata: { tokensUsed: 5, latency: 10, error: false } };
+            })
+            .mockImplementationOnce(says("Here it is."));
+        const service = openToolGate(new AIService(memory, admin, "http://admin.local"));
+        const chunks: any[] = [];
+        for await (const chunk of service.generateBotResponseStream("bot-1", 42, "make me a song", "You are a bot.", "universe-ai", "!dm:matrix.test", "", undefined, undefined, undefined, undefined, "dm")) {
+            if (chunk.toolSteps) events.push(chunk.reset ? "reset" : "begun");
+            chunks.push(chunk);
+        }
+        // The line starts before the rest of the call has arrived; the reset that follows has the complete call
+        expect(events).toEqual(["begun", "the arguments keep coming", "reset"]);
+        const begun = chunks.find((chunk) => chunk.toolSteps && !chunk.reset);
+        expect(begun).toMatchObject({ content: "", done: false });
+        expect(begun.toolSteps).toEqual([{ id: "c1", doing: "Using Make a song", done: "Used Make a song", group: "tool:generate_music", kind: "write" }]);
+        const reset = chunks.find((chunk) => chunk.toolSteps && chunk.reset);
+        expect(reset.toolSteps[0]).toMatchObject({ id: "c1", detail: "upbeat funk" });
+    });
+
+    it("announces nothing for a call without a name, or one the line does not show", async () => {
+        const { admin, memory } = buildMocks();
+        mockGenerateStream
+            .mockImplementationOnce(async function* () {
+                yield { content: "", done: false, toolCalls: [{ id: "n1", name: "", arguments: "{}" }] };
+                yield { content: "", done: false, toolCalls: [{ id: "p1", name: "get_bot_position", arguments: "{}" }] };
+                yield { content: "", done: true, metadata: { tokensUsed: 5, latency: 10, error: false } };
+            })
+            .mockImplementationOnce(says("Done."));
+        const chunks = await reply(openToolGate(new AIService(memory, admin, "http://admin.local")));
+        expect(chunks.filter((chunk) => chunk.toolSteps && !chunk.reset)).toEqual([]);
+    });
+
+    it("announces the calls of a later round when they begin too", async () => {
+        const { admin, memory } = buildMocks();
+        mockExecuteToolCall.mockResolvedValue({ content: [{ type: "text", text: "ok" }] });
+        mockGenerateStream
+            .mockImplementationOnce(calls({ id: "c1", name: "generate_music", args: { prompt: "funk" } }))
+            .mockImplementationOnce(async function* () {
+                yield { content: "", done: false, toolCalls: [{ id: "c2", name: "generate_music", arguments: "" }] };
+                yield { content: "", done: false, toolCalls: [{ id: "c2", name: "", arguments: '{"prompt":"disco"}' }] };
+                yield { content: "", done: true, metadata: { tokensUsed: 5, latency: 10, error: false } };
+            })
+            .mockImplementation(says("Both made."));
+        const chunks = await reply(openToolGate(new AIService(memory, admin, "http://admin.local")));
+        const begun = chunks.filter((chunk) => chunk.toolSteps && !chunk.reset).flatMap((chunk) => chunk.toolSteps.map((step: any) => step.id));
+        expect(begun).toEqual(["c1", "c2"]);
     });
 });

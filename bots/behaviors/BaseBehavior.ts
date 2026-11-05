@@ -8,7 +8,7 @@ import type { SpaceUser } from '@workadventure/messages';
 import { PositionMessage_Direction } from '@workadventure/messages';
 import { facingOf, resolveBehaviorModel, type BotFacing } from './behaviorModel';
 import type { AIService, InterruptionAction } from '../ai/AIService';
-import type { AIStreamChunk, ReplyLimitReached } from '../ai/types';
+import type { AIEmotionData, AIStreamChunk, ReplyLimitReached } from '../ai/types';
 import { withNearbySteps } from './NearbySteps';
 import type { AdminApiService } from '../server/AdminApiService';
 import type { ConversationStorage } from '../memory/ConversationStorage';
@@ -51,6 +51,8 @@ export interface ConversationState {
     pendingUpdateMessage?: string;
     /** Stream id of the bubble the current generation writes into, so an abort can close it */
     activeResponseId?: string;
+    /** The bot judged that this person is done talking with it (#1670): this turn is not an answer, so it opens no follow-up window */
+    endedByPerson?: boolean;
 }
 
 /**
@@ -154,6 +156,23 @@ export abstract class BaseBehavior {
         }
         return undefined;
     }
+    /** Called when the bot has finished answering a person (not when it was cancelled): who and where. */
+    onAnswerFinished?: (userId: number, spaceName: string) => void;
+
+    /** Whether the bot is answering this person right now, or has a line of theirs waiting for its turn. */
+    isBusyWith(userId: number): boolean {
+        const state = this.activeConversations.get(userId);
+        return !!state && (state.isGenerating || state.messageQueue.length > 0);
+    }
+
+    /**
+     * Whether the bot is on a summon to this person right now. The summon ends when they leave or walk far away, and
+     * until then what they say is for the bot even with others around (#1220).
+     */
+    isSummonedBy(userId: number): boolean {
+        const uuid = this.userIdToUuid.get(userId);
+        return this.isSummoned && !!uuid && uuid === this.summonedPlayerUuid;
+    }
     // Authentication tracking - map userId (number) to isLogged (boolean)
     protected userIdToIsLogged: Map<number, boolean> = new Map();
 
@@ -169,6 +188,30 @@ export abstract class BaseBehavior {
     getPersonForAccess(userId: number): { signedIn: boolean; identifier: string | null } {
         const identifier = this.userIdToUuid.get(userId) ?? null;
         return { signedIn: !!identifier && this.userIdToIsLogged.get(userId) === true, identifier };
+    }
+    /**
+     * Who a player is, as Orbit counts people against the Universe AI allowance (#1669): their id as the game gave it and whether
+     * they are a guest. Null while the id isn't known (there is nobody to count).
+     */
+    getTalker(playerId: number): { userId: string; isGuest: boolean } | null {
+        const { signedIn, identifier } = this.getPersonForAccess(playerId);
+        return identifier ? { userId: identifier, isGuest: !signedIn } : null;
+    }
+
+    /**
+     * A voice bot's greeting is a Universe AI reply nobody asked for. It is made only while replies beyond the ones kept for text are
+     * left (#1669, Orbit's reply-allowance with `greeting`); a greeting that isn't made is not announced. Anything that can't be
+     * settled (no id yet, Orbit can't be asked, a bot on its maker's own key) lets it through, as for any reply.
+     */
+    async mayGreetWithinAllowance(playerId: number): Promise<boolean> {
+        const botId = this.bot?.getBotId();
+        const aiProviderRef = this.bot?.getFullConfig()?.aiProviderRef;
+        const talker = this.getTalker(playerId);
+        if (!botId || !aiProviderRef || !talker || !this.aiService || !this.adminApiService) return true;
+        const source = await this.aiService.replySource(aiProviderRef, botId);
+        if (!source || source === 'own-key') return true;
+        const answer = await this.adminApiService.checkReplyAllowance(botId, { userId: talker.userId, isGuest: talker.isGuest, source, greeting: true });
+        return answer.allowed;
     }
     // Pending UUID tracking - map spaceUserId (string) to userId (number) for users we've seen but don't have UUID yet
     // This helps match addSpaceUserMessage when it arrives after a chat message
@@ -1579,6 +1622,9 @@ export abstract class BaseBehavior {
             this.activeConversations.set(senderId, state);
         }
         state.isGenerating = true;
+        state.endedByPerson = false;
+        // Where the person is now: they may have come back in a new bubble since the conversation began
+        state.spaceName = spaceName;
         state.lastMessageTime = Date.now();
         state.currentTask = currentTask || state.currentTask;
         state.generation = (state.generation || 0) + 1;
@@ -1885,6 +1931,10 @@ export abstract class BaseBehavior {
         state.abortController = undefined;
 
         if (!aborted) {
+            // Only an answer to the person opens their follow-up window; a greeting or arrival line (the bot speaking
+            // first) does not and never comes through here (game #1220 option b)
+            // ...nor does a turn in which the person told the bot they are done (#1670)
+            if (!state.endedByPerson) this.onAnswerFinished?.(senderId, state.spaceName);
             // Drain LLM-generated answers first (one-shot, no new generation)
             while (state.pendingAnswers.length > 0) {
                 const answer = state.pendingAnswers.shift()!;
@@ -2174,6 +2224,18 @@ export abstract class BaseBehavior {
     }
 
     /** The fixed reply limit card (#1159), to this person only, in place of an answer. */
+    /**
+     * The bot's own judgement, written in its emotion block, that this person is done talking with it (#1670). Their
+     * follow-up window ends and no reply is made: the caller sends an empty final with the wave. False when the bot did
+     * not say so, or when it cannot apply here (the caller answers as usual).
+     */
+    protected personIsDone(spaceName: string, playerId: number, emotions: AIEmotionData | null | undefined): boolean {
+        if (emotions?.doneTalking !== true || !this.bot?.endFollowUp(spaceName, playerId)) return false;
+        const state = this.activeConversations.get(playerId);
+        if (state) state.endedByPerson = true;
+        return true;
+    }
+
     protected showReplyLimit(spaceName: string, playerId: number, limit: ReplyLimitReached): void {
         this.bot?.sendReplyLimitCard(spaceName, playerId, limit);
     }

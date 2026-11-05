@@ -18,7 +18,11 @@ import { AdminApiService } from './AdminApiService';
 import { BotRegistry } from './BotRegistry';
 import { movementLogger } from '../utils/MovementLogger';
 import { DmReplyService, type DmRoomLink } from './DmReplyService';
-import { readMatrixConfig } from '../matrix/MatrixConfig';
+import { botMatrixId, readMatrixConfig } from '../matrix/MatrixConfig';
+import { OrbitActions } from '../mcp/OrbitActions';
+import { ToolApprovals, type CardSurface } from '../mcp/ToolApprovals';
+import { NearbyAsks } from '../mcp/NearbyAsks';
+import { QuestionCards } from '../mcp/QuestionCards';
 import { verifyMatrixRegistration } from '../matrix/verifyMatrixRegistration';
 import { MatrixAppServiceClient } from '../matrix/MatrixAppServiceClient';
 import { MatrixDmBridge } from '../matrix/MatrixDmBridge';
@@ -28,6 +32,10 @@ import { botWokaPicture } from '../matrix/wokaPicture';
 import type { BotAvailability } from '../matrix/BotStatusNotes';
 import type { Router } from 'express';
 import * as path from 'path';
+import * as Sentry from '@sentry/node';
+import { VoiceLoadWatch, readWorkerLoad, voiceLoadSettings, workerStatsUrl } from '../voice/VoiceLoad';
+import { voiceWorkerSettings } from '../voice/settings';
+import { captureServerEvent } from '../ai/PostHogClient';
 
 // Before anything calls Orbit or an MCP server: a failed call must never put a token or a transcript in the logs
 installAxiosErrorRedaction();
@@ -59,6 +67,62 @@ const preRouters: Router[] = [];
 let matrixBridge: MatrixDmBridge | null = null;
 let matrixRouter: MatrixAppServiceRouter | null = null;
 let dmStatus: ((botIds: string[]) => Promise<Record<string, BotAvailability | 'unknown'>>) | undefined;
+let dmReplies: DmReplyService | undefined;
+let dmCards: CardSurface | undefined;
+
+// The card a bot shows before a tool that asks first runs, saved in Orbit: in the person's direct message (#1657), or in a
+// bubble to the person who asked alone, with one plain line for everyone (#1658). Built before direct messages, so a bubble
+// has its cards with or without them.
+const aiService = botManager.getAIService();
+const nearbyAsks = new NearbyAsks({
+    bot: (botId) => botManager.getBot(botId),
+    quick: async (botId, system, prompt, timeoutMs) => {
+        const provider = botManager.getBot(botId)?.getFullConfig()?.aiProviderRef;
+        if (!provider) return '';
+        return aiService.quickGenerate(provider, system, prompt, botId, timeoutMs);
+    },
+    approvals: () => approvals,
+});
+const orbitActions = new OrbitActions(() => {
+    const serviceToken = process.env.BOT_SERVICE_TOKEN;
+    return ADMIN_API_URL && ADMIN_API_TOKEN && serviceToken ? { adminApiUrl: ADMIN_API_URL, adminApiToken: ADMIN_API_TOKEN, serviceToken } : null;
+});
+const cardSurface: CardSurface = {
+    send: (botId, roomId, content) => (dmCards ? dmCards.send(botId, roomId, content) : Promise.reject(new Error('Direct messages are off'))),
+    say: (botId, roomId, text) => (dmCards ? dmCards.say(botId, roomId, text) : Promise.reject(new Error('Direct messages are off'))),
+};
+// The question cards a bot shows before a big job (#1661): kept here, and a pick goes back to the bot as what the person said
+const questions = new QuestionCards({
+    cards: cardSurface,
+    nearby: nearbyAsks,
+    waitMinutes: async (botId) => (await orbitActions.cardSettings(botId)).cardWaitMinutes,
+    // The bot goes on with the pick in the background: the tap that brought it is not held until the job is done
+    picked: async ({ botId, roomId, person, nearby, text }) => {
+        if (nearby) {
+            if (person.playerId === undefined) return false;
+            // Whether the bot took it on: false when the person left the bubble or chat is closed to them now
+            return (await botManager.getBot(botId)?.answerFromCard(roomId, person.playerId, text).catch(() => false)) ?? false;
+        }
+        void matrixBridge?.carryOnWith(roomId, person, text);
+    },
+});
+const approvals = new ToolApprovals({
+    orbit: orbitActions,
+    cards: cardSurface,
+    nearby: nearbyAsks,
+    questions,
+    gate: aiService.gate,
+    tools: {
+        find: (botId, toolName) => aiService.findToolEntry(botId, toolName),
+        run: async (botId, entry, toolName, args, playerUuid) => {
+            const config = botManager.getBot(botId)?.getFullConfig() ?? (await dmReplies?.getBotConfig(botId).catch(() => null));
+            return aiService.runApprovedTool(botId, entry, toolName, args, playerUuid, config?.toolTimeoutSeconds);
+        },
+    },
+    followUp: (outcome) => matrixBridge?.sayHowItEnded(outcome) ?? Promise.resolve(),
+});
+aiService.useApprovals(approvals);
+aiService.useNearbyAsks(nearbyAsks);
 let dmRoom: ((botId: string) => Promise<DmRoomLink | undefined>) | undefined;
 
 /** Turns direct messages on once Synapse accepts this bot server's registration; leaves them off otherwise. */
@@ -68,7 +132,15 @@ async function setupMatrix(): Promise<void> {
     const matrixClient = new MatrixAppServiceClient(matrixConfig);
     if (!(await verifyMatrixRegistration(matrixClient, matrixConfig))) return;
     const dmReplyService = new DmReplyService(botManager);
+    dmReplies = dmReplyService;
+    // The card a bot shows in the person's direct message (#1657) goes through the Matrix account of the bot
+    const botUser = (botId: string) => botMatrixId(matrixConfig.domain, botId) ?? '';
+    dmCards = {
+        send: (botId, roomId, content) => matrixClient.sendMessage(botUser(botId), roomId, content),
+        say: async (botId, roomId, text) => void (await matrixClient.sendText(botUser(botId), roomId, text)),
+    };
     matrixBridge = new MatrixDmBridge(matrixConfig, matrixClient, {
+        approvals,
         getBotConfig: (botId, fresh) => dmReplyService.getBotConfig(botId, fresh),
         checkAccess: (botId, chatId) => adminApiService.checkDmAccess(botId, chatId),
         reply: (botId, person, text, attachments, hooks) => dmReplyService.reply(botId, person, text, attachments, hooks),
@@ -139,6 +211,8 @@ async function shutdown(signal: string) {
         
         // Stop movement analysis
         stopMovementAnalysis();
+
+        voiceLoadWatch?.stop();
         
         // Stop API server
         // Direct messages already taken in get their answer first; new ones go back to Synapse for the next bot server.
@@ -190,6 +264,8 @@ async function start() {
         // Start periodic movement analysis
         startMovementAnalysis(botManager);
 
+        startVoiceLoadWatch();
+
         // Respawn bots for rooms that have players (after hot reload)
         // Wait a bit for server to be fully ready, then respawn
         setTimeout(async () => {
@@ -204,6 +280,33 @@ async function start() {
         console.error('[BotServer] Failed to start:', error);
         process.exit(1);
     }
+}
+
+// How full the voice worker is (#1751). Only where a voice worker is set up: a server without one has nothing to read.
+let voiceLoadWatch: VoiceLoadWatch | null = null;
+
+function startVoiceLoadWatch(): void {
+    if (!process.env.VOICE_WORKER_URL) return;
+    const worker = voiceWorkerSettings();
+    const settings = voiceLoadSettings();
+    let statsUrl: string;
+    try {
+        statsUrl = workerStatsUrl(worker.url);
+    } catch {
+        console.warn('[BotServer] VOICE_WORKER_URL is not a valid address: voice load is not watched');
+        return;
+    }
+    voiceLoadWatch = new VoiceLoadWatch(
+        {
+            read: () => readWorkerLoad(statsUrl, worker.secret, settings.timeoutMs),
+            capture: (event, properties) => captureServerEvent(`voice-worker:${BOT_SERVER_ID}`, event, { ...properties, bot_server: BOT_SERVER_ID }),
+            warn: (message, details) => Sentry.captureMessage(message, { level: 'warning', tags: { area: 'voice' }, extra: details }),
+            log: (message) => console.warn(`[BotServer] ${message}`),
+        },
+        settings
+    );
+    voiceLoadWatch.start();
+    console.log(`[BotServer] Voice load watch started (every ${settings.intervalMs / 1000}s)`);
 }
 
 // Game loop to update all bots

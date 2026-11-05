@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { openToolGate } from './helpers/openToolGate';
 
 vi.mock("@sentry/node", () => ({
     startSpanManual: vi.fn((_opts: unknown, callback: (span: any) => any) =>
@@ -134,7 +135,7 @@ describe("AIService – a tool call's arguments in pieces", () => {
     it('keeps a piece that is exactly "{}"', async () => {
         const { admin, memory } = buildMocks();
         mockGenerateStream.mockImplementationOnce(pieces("c1", "generate_music", parts)).mockImplementationOnce(says("Here it is."));
-        await reply(new AIService(memory, admin, "http://admin.local"));
+        await reply(openToolGate(new AIService(memory, admin, "http://admin.local")));
         expect(sentPrompts()).toEqual([code]);
     });
 
@@ -144,14 +145,14 @@ describe("AIService – a tool call's arguments in pieces", () => {
             .mockImplementationOnce(pieces("c1", "generate_music", ['{"prompt":"first"}']))
             .mockImplementationOnce(pieces("c2", "generate_music", parts))
             .mockImplementationOnce(says("Here it is."));
-        await reply(new AIService(memory, admin, "http://admin.local"));
+        await reply(openToolGate(new AIService(memory, admin, "http://admin.local")));
         expect(sentPrompts()).toEqual(["first", code]);
     });
 
     it("still runs a call with no arguments", async () => {
         const { admin, memory } = buildMocks();
         mockGenerateStream.mockImplementationOnce(pieces("c1", "generate_music", ["{}"])).mockImplementationOnce(says("Done."));
-        await reply(new AIService(memory, admin, "http://admin.local"));
+        await reply(openToolGate(new AIService(memory, admin, "http://admin.local")));
         expect(mockExecuteToolCall).toHaveBeenCalledTimes(1);
         expect(mockExecuteToolCall.mock.calls[0][3]).toEqual({});
     });
