@@ -3085,14 +3085,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         if (!botId) return undefined;
         try {
             const person = this.gatePerson(botId, playerId, botClient, spaceName);
-            // The card goes once Orbit has the state it shows: the page checks with Orbit as the card opens
-            await MCPConnector.health.settled(botId);
-            const shown = issues.filter((issue) => MCPConnector.health.isReported(botId, issue.serverId));
-            if (issues.length > 0 && shown.length === 0) return undefined;
-            const card = toolSignInCard(shown);
             const key = `${botId}|${channel}|${spaceName ?? ''}|${channel === 'world' ? playerId : person.signedIn ? person.identifier : ''}`;
             const nearby = channel === 'world' && !!botClient && !!spaceName && playerId !== undefined;
-            if (!card) {
+            // No sign-in is lost any more (a server that only does not answer has no card): a card shown before is taken back once
+            if (!toolSignInCard(issues)) {
                 if (nearby && this.signInShown.cleared(key)) {
                     botClient!.sendAskEvent(spaceName!, playerId!, {
                         kind: 'signin',
@@ -3107,6 +3103,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             }
             if (!person.signedIn || !person.identifier) return undefined;
             if (!(await this.toolGate.canManage(botId, person.identifier))) return undefined;
+            // The card goes once Orbit has the state it shows: the page checks with Orbit as the card opens. Only a manager's
+            // reply waits for this, and only while a report is still on its way.
+            await MCPConnector.health.settled(botId);
+            const card = toolSignInCard(issues.filter((issue) => MCPConnector.health.isReported(botId, issue.serverId)));
+            if (!card) return undefined;
             if (!this.signInShown.shouldShow(key, card)) return undefined;
             if (nearby) {
                 botClient!.sendAskEvent(spaceName!, playerId!, {
