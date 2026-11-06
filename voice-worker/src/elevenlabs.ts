@@ -210,8 +210,10 @@ async function* speakOverStream(request: SpeechRequest, call: Call): AsyncGenera
         throw new ProviderError('elevenlabs could not be reached');
     }
     if (!response.ok || !response.body) {
-        await response.body?.cancel().catch(() => undefined);
-        throw new ProviderError('elevenlabs refused the reply', response.status);
+        // Only a refusal's short answer is read, for whether the key is out of credit; never logged or passed on
+        const answer = response.status === 401 ? await response.text().catch(() => '') : '';
+        if (!answer) await response.body?.cancel().catch(() => undefined);
+        throw new ProviderError('elevenlabs refused the reply', refusalStatus(response.status, answer));
     }
 
     const samples = new Samples();
@@ -228,11 +230,31 @@ async function* speakOverStream(request: SpeechRequest, call: Call): AsyncGenera
 }
 
 /**
+ * 402 for a key that is out of credit, the status the rest of Universe reads as "out of credit" (Orbit then says so to the
+ * key's owner instead of "the key was refused"). ElevenLabs answers a spent quota with the same 401 as a wrong key, and says
+ * which in the answer: { detail: { status: "quota_exceeded" } }
+ * (https://elevenlabs.io/docs/help-center/technical/api-error-code-400-or-401).
+ */
+export const OUT_OF_CREDIT = 402;
+
+/** The status a refused reply stands for: its own, or 402 when the answer says the key is out of credit. */
+export function refusalStatus(status: number, answer: string): number {
+    if (status !== 401 || !answer) return status;
+    try {
+        const detail = (JSON.parse(answer) as { detail?: { status?: unknown; code?: unknown } } | null)?.detail;
+        return detail?.status === 'quota_exceeded' || detail?.code === 'quota_exceeded' ? OUT_OF_CREDIT : status;
+    } catch {
+        return status;
+    }
+}
+
+/**
  * The status a Text to Dialogue error stands for, from its error id, so a refused key is told apart from a passing failure
- * the way the same failure over HTTP would be (ElevenLabs answers a bad key or a spent quota with 401 there).
+ * and from a key out of credit, the way the same failure over HTTP is.
  */
 function dialogueErrorStatus(error: string): number | undefined {
-    if (error === 'authentication_required' || error === 'invalid_api_key' || error === 'quota_exceeded') return 401;
+    if (error === 'authentication_required' || error === 'invalid_api_key') return 401;
+    if (error === 'quota_exceeded') return OUT_OF_CREDIT;
     if (error === 'too_many_concurrent_requests' || error === 'system_busy') return 429;
     return undefined;
 }
@@ -293,9 +315,25 @@ class DialogueSocket {
         });
         // Refused before the socket opened (a wrong key answers 401 here)
         this.ws.on('unexpected-response', (_req, res) => {
-            this.push({ kind: 'failed', error: new ProviderError('elevenlabs refused the reply', res.statusCode) });
-            res.resume();
-            this.ws.terminate();
+            const status = res.statusCode ?? 0;
+            if (status !== 401) {
+                this.push({ kind: 'failed', error: new ProviderError('elevenlabs refused the reply', res.statusCode) });
+                res.resume();
+                this.ws.terminate();
+                return;
+            }
+            // A 401's short answer says whether the key is out of credit or wrong
+            let answer = '';
+            res.setEncoding('utf8');
+            res.on('data', (piece: string) => {
+                if (answer.length < 4096) answer += piece;
+            });
+            const refused = (): void => {
+                this.push({ kind: 'failed', error: new ProviderError('elevenlabs refused the reply', refusalStatus(status, answer)) });
+                this.ws.terminate();
+            };
+            res.once('end', refused);
+            res.once('error', refused);
         });
         this.ws.on('error', () => this.push({ kind: 'failed', error: new ProviderError('elevenlabs could not be reached') }));
         this.ws.on('close', () => this.push({ kind: 'failed', error: new ProviderError('elevenlabs stream dropped') }));

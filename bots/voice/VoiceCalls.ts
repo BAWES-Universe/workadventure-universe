@@ -168,6 +168,8 @@ export class VoiceCalls {
     onSessionEnded?: (spaceName: string) => void;
     /** Called when a reply's audio is over, however it ended. */
     onPlayed?: (spaceName: string, segmentId: string) => void;
+    /** Orbit's follow-up window for this bot, each time Orbit says the bot speaks and names one (#1857). */
+    onFollowUpSeconds?: (seconds: number) => void;
     /** Called when a second voice bot arrives in a space: whatever this bot was saying out loud stops there. */
     onCrowded?: (spaceName: string) => void;
     /**
@@ -579,6 +581,7 @@ export class VoiceCalls {
             if ('reason' in active) {
                 why = active.reason;
             } else {
+                if (active.followUpSeconds !== undefined) this.onFollowUpSeconds?.(active.followUpSeconds);
                 providers = active.providers;
                 bubble.signature = active.signature;
                 setup = await settings.sessionSettings(active);
@@ -770,8 +773,9 @@ export class VoiceCalls {
             }
         } else if (message.outcome === 'cleared' || !message.text) {
             this.draft(spaceName, to, { turnId: message.turnId, state: 'cleared', text: '' });
-        } else if (message.outcome === 'final' && current && this.hears && !this.hears(spaceName, to, message.text)) {
-            // Others are in the bubble and this was not said to the bot (#1220): it is not kept, offered back or sent
+        } else if (this.hears && !this.hears(spaceName, to, message.text)) {
+            // Others are in the bubble and this was not said to the bot (#1220): it is not kept, offered back or sent. The
+            // same for words that only came through in part (#1858): a person talking to someone else is never offered them
             this.stats.unaddressed++;
             this.draft(spaceName, to, { turnId: message.turnId, state: 'cleared', text: '' });
         } else if (message.outcome === 'final' && current) {
@@ -984,6 +988,7 @@ export class VoiceCalls {
             if (PAUSING_REASONS.has(active.reason)) this.pause(spaceName, turn);
             return { action: 'text' };
         }
+        if (active.followUpSeconds !== undefined) this.onFollowUpSeconds?.(active.followUpSeconds);
         // Universe AI pays for hearing or speaking: the reply comes out of the person's allowance, which also keeps some for text.
         // Asked before a session is opened again, so a reply that stays in text does not reconnect anyone
         if (this.gate && (!active.providers.recognition.owner || !active.providers.speech.owner)) {

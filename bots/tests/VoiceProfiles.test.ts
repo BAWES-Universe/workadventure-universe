@@ -464,7 +464,7 @@ describe('reply limits', () => {
 
     it("applies the bot's own limits from voice/active", async () => {
         const o = orbit();
-        o.state.active.alice = speaking({ limits: { replyCharacters: 120, replySeconds: 7, turnSeconds: 30 } });
+        o.state.active.alice = speaking({ limits: { replyCharacters: 120, replySeconds: 7, turnSeconds: 30, followUpSeconds: 45 } });
         const alice = await connected(o);
         alice.speech.final(SPACE, 'bot-alice-player-7-00000001-aaaa-bbbb-cccc-dddddddddddd', long);
         await flush();
@@ -686,6 +686,30 @@ describe('settings for talking to Orbit', () => {
         expect(voiceOrbitSettings({ VOICE_ORBIT_TIMEOUT_SECONDS: '2.5', VOICE_ACTIVE_CACHE_SECONDS: '0', VOICE_LIMITS_CACHE_SECONDS: '120' })).toEqual({ timeoutMs: 2500, activeCacheMs: 0, limitsCacheMs: 120000 });
         // A timeout of nothing, or something that is not a number, is not a setting
         expect(voiceOrbitSettings({ VOICE_ORBIT_TIMEOUT_SECONDS: '0', VOICE_ACTIVE_CACHE_SECONDS: 'soon' })).toEqual(DEFAULT_VOICE_ORBIT_SETTINGS);
+    });
+
+    it("carry Orbit's follow-up window: the bot's own, else the server's, and only a value Orbit keeps (#1857)", async () => {
+        const o = orbit();
+        o.state.active.alice = speaking({ limits: { followUpSeconds: 45 } });
+        o.state.limits = { followUpSeconds: 90 };
+        const read = () => new BotVoiceSettings('alice', o.fake, { timeoutMs: 1000, activeCacheMs: 0, limitsCacheMs: 0 }).active();
+        expect(await read()).toMatchObject({ speaks: true, followUpSeconds: 45 });
+        o.state.active.alice = speaking();
+        expect(await read()).toMatchObject({ speaks: true, followUpSeconds: 90 });
+        o.state.limits = { followUpSeconds: 4 };
+        expect(await read()).not.toHaveProperty('followUpSeconds');
+    });
+
+    it('carry the follow-up window to the bot each time Orbit says it speaks (#1857)', async () => {
+        const o = orbit();
+        o.state.active.alice = speaking({ limits: { followUpSeconds: 120 } });
+        o.state.providers.ears = provider('ears', 'soniox', KEYS.ears);
+        o.state.providers['voice-a'] = provider('voice-a', 'elevenlabs', KEYS.voiceA);
+        const alice = bot('alice', o.fake);
+        const windows: number[] = [];
+        alice.calls.onFollowUpSeconds = (seconds) => windows.push(seconds);
+        await alice.connect();
+        expect(windows).toEqual([120]);
     });
 
     it('reuse an answer for a moment, so a bubble that has just started does not ask twice, and never an Orbit error', async () => {

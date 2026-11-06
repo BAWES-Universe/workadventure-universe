@@ -36,16 +36,27 @@ export class DeepgramRecognition implements RecognitionConnector {
 function streamUrl(settings: RecognitionSettings): string {
     const url = new URL(settings.endpoint || DEEPGRAM_ENDPOINT);
     const query = url.searchParams;
-    query.set('model', settings.model || DEFAULT_DEEPGRAM_MODEL);
+    const model = settings.model || DEFAULT_DEEPGRAM_MODEL;
+    query.set('model', model);
     query.set('encoding', 'linear16');
     query.set('sample_rate', '16000');
     query.set('channels', '1');
     query.set('interim_results', 'true');
     query.set('endpointing', 'false');
     query.set('smart_format', 'true');
-    // Left out when the profile follows the person, so Deepgram's own default applies
-    if (settings.language) query.set('language', settings.language);
+    // What the person says is not used to train Deepgram's models (https://developers.deepgram.com/trust-security/your-data)
+    query.set('mip_opt_out', 'true');
+    // A fixed language is sent as the profile has it ("ar-KW"). A profile that follows the person listens in every language
+    // the model knows: left out, Deepgram would hear English only (its default is "en"); "multi" also follows a person who
+    // switches language mid-sentence (https://developers.deepgram.com/docs/language)
+    const language = settings.language || followLanguage(model);
+    if (language) query.set('language', language);
     return url.toString();
+}
+
+/** "multi" for the models that hear several languages in one stream (Nova-3 and Nova-2); an older model keeps Deepgram's default. */
+export function followLanguage(model: string): string | undefined {
+    return /^nova-[23]\b/.test(model) ? 'multi' : undefined;
 }
 
 class DeepgramStream implements Recognizer {
