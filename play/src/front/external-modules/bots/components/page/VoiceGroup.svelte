@@ -431,6 +431,8 @@
         const current = base();
         if (!voice || !profile || !current || saving) return;
         const data = voice;
+        // The panel can move to another bot while the voice list loads; the save stays on the bot picked on.
+        const botId = bot.id;
         const now = choiceOfSource(sourceOf(data, profile, part));
         if (now && sameChoice(now, choice)) return;
         await run(async () => {
@@ -452,7 +454,7 @@
                     ...(picked.voiceName ? { voiceName: picked.voiceName } : {}),
                 };
             }
-            return botApiService.saveBotVoice(bot.id, next);
+            return botApiService.saveBotVoice(botId, next);
         });
     }
 
@@ -532,6 +534,7 @@
         const current = base();
         if (!voice || !profile || !current || saving) return;
         const data = voice;
+        const botId = bot.id;
         await run(async () => {
             const next: FullVoiceProfile = { ...current };
             const uai: PayerChoice = { kind: "universe-ai" };
@@ -553,15 +556,18 @@
                     ...(picked.voiceName ? { voiceName: picked.voiceName } : {}),
                 };
             }
-            return botApiService.saveBotVoice(bot.id, next);
+            return botApiService.saveBotVoice(botId, next);
         });
     }
 
     async function checkNow(key: VoiceKey) {
         if (checking) return;
         checking = true;
+        const botId = bot.id;
         try {
-            await botApiService.checkVoiceKey(key.id);
+            const checked = await botApiService.checkVoiceKey(key.id);
+            // A check that did not go through must say so, not look like nothing happened.
+            if (!checked && bot.id === botId) saveError = v.keyDownOther({ key: keyShort(key) });
             await load(bot.id, true);
         } finally {
             // eslint-disable-next-line require-atomic-updates
