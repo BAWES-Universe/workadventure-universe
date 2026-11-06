@@ -85,7 +85,9 @@ export function computeVoiceView(
     users: Iterable<ViewUser>,
     mySpaceUserId: string,
     statuses: ReadonlyMap<string, BotVoiceStatus>,
-    meeting: boolean
+    meeting: boolean,
+    /** A bot this person blocked shows nothing, as with its messages and its status. */
+    isBlocked: (user: ViewUser) => boolean = () => false
 ): VoiceSpaceView {
     const bots: VoiceBotView[] = [];
     let people = 0;
@@ -101,6 +103,7 @@ export function computeVoiceView(
             othersPresent = true;
             continue;
         }
+        if (isBlocked(user)) continue;
         const status = statuses.get(user.spaceUserId);
         if (!status && !user.tags?.includes(VOICE_BOT_TAG)) continue;
         bots.push({
@@ -167,6 +170,11 @@ class VoiceSpaceWatcher {
                 if (status) this.onStatus(event.sender.spaceUserId, status);
             })
         );
+        // Blocking or unblocking a bot already here changes the button at once, not at the next change in the room
+        this.subscriptions.push(
+            blackListManager.onBlockStream.subscribe(() => this.publish()),
+            blackListManager.onUnBlockStream.subscribe(() => this.publish())
+        );
         this.unsubscribers.push(voiceChoiceStore.subscribe(() => this.sendChoiceToBots()));
     }
 
@@ -198,7 +206,8 @@ class VoiceSpaceWatcher {
             this.latest.values(),
             this.space.mySpaceUserId,
             this.statuses,
-            isAreaSpaceName(this.space.getName())
+            isAreaSpaceName(this.space.getName()),
+            (user) => !!user.uuid && blackListManager.isBlackListed(user.uuid)
         );
         views.update((all) => new Map(all).set(this.space, view));
     }

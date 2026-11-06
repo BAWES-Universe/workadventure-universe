@@ -7,10 +7,26 @@ vi.mock("../../../Enum/EnvironmentVariable.ts", () => ({
     PEER_VIDEO_RECOMMENDED_BANDWIDTH: 0,
     MAX_USERNAME_LENGTH: 10,
 }));
-const blocked = new Set<string>();
+const { blocked, blockListeners, eventsOf } = vi.hoisted(() => {
+    const blocked = new Set<string>();
+    const blockListeners = new Set<() => void>();
+    const eventsOf = () => ({
+        subscribe: (listener: () => void) => {
+            blockListeners.add(listener);
+            return { unsubscribe: () => blockListeners.delete(listener) };
+        },
+    });
+    return { blocked, blockListeners, eventsOf };
+});
 vi.mock("../../../WebRtc/BlackListManager", () => ({
-    blackListManager: { isBlackListed: (uuid: string) => blocked.has(uuid) },
+    blackListManager: {
+        isBlackListed: (uuid: string) => blocked.has(uuid),
+        onBlockStream: eventsOf(),
+        onUnBlockStream: eventsOf(),
+    },
 }));
+/** The person blocks or unblocks someone: the block list changes and the watchers hear it. */
+const blockChanged = () => blockListeners.forEach((listener) => listener());
 const resumeAll = vi.fn().mockResolvedValue(undefined);
 vi.mock("../../../WebRtc/AudioContextManager", () => ({ audioContextManager: { resumeAll: () => resumeAll() } }));
 
@@ -99,6 +115,14 @@ describe("who is here with a voice bot", () => {
         });
     });
 
+    it("leaves out a voice bot the person blocked, so the button is for the next one", () => {
+        const users = [user("me"), bot("b1", "1"), bot("b2", "2")];
+        const view = computeVoiceView(users, "me", new Map(), false, (u) => u.uuid === "bot-1");
+        expect(view.bot?.spaceUserId).toBe("b2");
+        expect(view.botSpaceUserIds).toEqual(["b2"]);
+        expect(view.othersPresent).toBe(false);
+    });
+
     it("is for the first voice bot only when there are two", () => {
         const view = computeVoiceView([user("me"), bot("b1", "1"), bot("b2", "2")], "me", new Map(), false);
         expect(view.bot?.spaceUserId).toBe("b1");
@@ -159,6 +183,30 @@ describe("following a bubble for voice bots", () => {
         expect(get(currentVoiceSpaceStore)?.bot?.state).toBe("connecting");
         t.set(user("me"));
         expect(get(currentVoiceSpaceStore)).toBeUndefined();
+    });
+
+    it("shows no button for a voice bot the person blocked", () => {
+        const t = fakeSpace();
+        stop = trackVoiceSpace(t.space);
+        blocked.add("bot-1");
+        t.set(user("me"), bot("b1", "1"));
+        expect(get(currentVoiceSpaceStore)).toBeUndefined();
+        expect(get(voiceBotSpaceUserIdsStore).size).toBe(0);
+        t.set(user("me"), bot("b1", "1"), bot("b2", "2"));
+        expect(get(currentVoiceSpaceStore)?.bot?.spaceUserId).toBe("b2");
+    });
+
+    it("follows the person blocking or unblocking a voice bot that is already here", () => {
+        const t = fakeSpace();
+        stop = trackVoiceSpace(t.space);
+        t.set(user("me"), bot("b1", "1"));
+        expect(get(currentVoiceSpaceStore)?.bot?.spaceUserId).toBe("b1");
+        blocked.add("bot-1");
+        blockChanged();
+        expect(get(currentVoiceSpaceStore)).toBeUndefined();
+        blocked.delete("bot-1");
+        blockChanged();
+        expect(get(currentVoiceSpaceStore)?.bot?.spaceUserId).toBe("b1");
     });
 
     it("forgets the space when we leave it", () => {
