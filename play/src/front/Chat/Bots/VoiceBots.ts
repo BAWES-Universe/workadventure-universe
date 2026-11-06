@@ -170,6 +170,11 @@ class VoiceSpaceWatcher {
                 if (status) this.onStatus(event.sender.spaceUserId, status);
             })
         );
+        // Blocking or unblocking a bot already here changes the button at once, not at the next change in the room
+        this.subscriptions.push(
+            blackListManager.onBlockStream.subscribe(() => this.publish()),
+            blackListManager.onUnBlockStream.subscribe(() => this.publish())
+        );
         this.unsubscribers.push(voiceChoiceStore.subscribe(() => this.sendChoiceToBots()));
     }
 
