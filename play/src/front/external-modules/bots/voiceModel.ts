@@ -87,7 +87,12 @@ export interface BotVoice {
     universeAi: { recognition: UniverseAiPart | null; speech: UniverseAiSpeech | null };
     limits: VoiceLimits;
     window: { hours: number; voiceReplies: number };
+    /** How many voices the Voice row shows before "All voices": Orbit's setting, 5 when it doesn't say */
+    voicesShownFirst: number;
 }
+
+/** What the Voice row shows before "All voices" when Orbit doesn't say (a setting there, recommended 5). */
+export const DEFAULT_VOICES_SHOWN_FIRST = 5;
 
 /** One voice a company lists (GET /api/bots/:id/voice/voices). */
 export interface VoiceChoice {
@@ -220,6 +225,7 @@ export function readBotVoice(data: unknown): BotVoice | null {
     const replyCharacters = count(server.replyCharacters);
     const replySeconds = count(server.replySeconds);
     const listenMinutesPerDay = count(server.listenMinutesPerDay);
+    const shownFirst = count(server.voicesShownFirst);
     const hours = count(window.hours);
     const voiceReplies = count(signedIn.voiceReplies);
     if (
@@ -275,6 +281,8 @@ export function readBotVoice(data: unknown): BotVoice | null {
         },
         limits: { turnSeconds, replyCharacters, replySeconds, listenMinutesPerDay },
         window: { hours, voiceReplies },
+        voicesShownFirst:
+            shownFirst !== undefined && shownFirst >= 1 ? Math.floor(shownFirst) : DEFAULT_VOICES_SHOWN_FIRST,
     };
 }
 
@@ -416,7 +424,11 @@ export function payerOptions(voice: BotVoice): PayerOption[] {
     return options;
 }
 
-/** The provider and model a part runs on for a choice (the first model it lists for the job, or the one kept). */
+/**
+ * The provider and model a part runs on for a choice. Universe AI's part always starts on the model Universe AI uses now (Orbit
+ * serves a bot on Universe AI with its current models, so a model kept from an older version would only be a stale name); a lent
+ * key starts on the first model it lists for the job, or the one kept when it lists it.
+ */
 export function providerOf(
     voice: BotVoice,
     part: VoicePart,
@@ -426,8 +438,7 @@ export function providerOf(
     if (choice.kind === "universe-ai") {
         const uai = voice.universeAi[part];
         if (!uai) return null;
-        const model = keepModel && uai.models.some((candidate) => candidate.id === keepModel) ? keepModel : uai.model;
-        return { providerId: uai.providerId, model };
+        return { providerId: uai.providerId, model: uai.model };
     }
     const models = choice.key.models.filter((candidate) => candidate.kind === part);
     if (models.length === 0) return null;
@@ -468,7 +479,10 @@ export type VoiceView =
 export function viewOf(voice: BotVoice): VoiceView {
     if (!voice.universeAllows) return { kind: "not-allowed" };
     const revision = liveRevision(voice);
-    if (!voice.enabled || !revision) return noService(voice) ? { kind: "no-service" } : { kind: "off" };
+    // Nothing to run a job on, or no way to cover both jobs (two keys that each do one job and no Universe AI to do the other)
+    if (!voice.enabled || !revision) {
+        return noService(voice) || payerOptions(voice).length === 0 ? { kind: "no-service" } : { kind: "off" };
+    }
     return { kind: "on", profile: revision.profile, pause: pauseOf(voice, revision.profile) };
 }
 
@@ -551,6 +565,45 @@ export function startingVoice(
     }
     const first = list[0];
     return first ? { voiceId: first.voiceId, voiceName: first.name } : null;
+}
+
+/**
+ * The voices the Voice row shows before "All voices": the one to start with first (the voice kept, else Universe AI's default
+ * voice, else the first the company lists), then the others in the company's order, `size` in all.
+ */
+export function doorVoices(
+    voice: BotVoice,
+    choice: PayerChoice,
+    list: VoiceChoice[],
+    keep?: string
+): { voices: VoiceChoice[]; startId: string | undefined } {
+    const start = startingVoice(voice, choice, list, keep);
+    // A default voice the company doesn't list (any more) can't be heard or picked: the first one listed starts instead
+    const first = (start ? list.find((candidate) => candidate.voiceId === start.voiceId) : undefined) ?? list[0];
+    const rest = list.filter((candidate) => candidate !== first);
+    const voices = (first ? [first, ...rest] : rest).slice(0, Math.max(1, voice.voicesShownFirst));
+    return { voices, startId: first?.voiceId };
+}
+
+/** The place to pay from that the Voice row starts on: the one the last version used when it is still there, else a lent key, else Universe AI. */
+export function startingPayer(voice: BotVoice, previous: VoiceProfile | null): PayerOption | null {
+    const options = payerOptions(voice);
+    const before = previous?.speech?.providerId;
+    // A key that is down would turn voice on already paused: it is never the one to start on while another way works
+    const working = (option: PayerOption) =>
+        ![option.recognition, option.speech].some(
+            (choice) => choice.kind === "key" && choice.key.health.status === "down"
+        );
+    const same = before
+        ? options.find((option) => working(option) && providerOf(voice, "speech", option.speech)?.providerId === before)
+        : undefined;
+    return (
+        same ??
+        options.find((option) => option.kind === "key" && working(option)) ??
+        options.find(working) ??
+        options[0] ??
+        null
+    );
 }
 
 /** The source a voice list is read from: "universe-ai" or a key's id. */
