@@ -35,16 +35,24 @@ that names nothing gets) and the scripted `FakeEars` for tests, plus these real 
 * `soniox` (hearing, `src/soniox.ts`): one real-time WebSocket stream per stretch of speech to
   `wss://stt-rt.soniox.com/transcribe-websocket` (or the profile's `endpoint`), the key in the `Authorization` header only,
   16 kHz mono `s16le`, the profile's `model`, and its `language` (the plain code, "ar" for "ar-KW") as the only language
-  hint when it fixes one. Partial words
-  are the final tokens so far plus the latest guesses; when the person pauses an empty text frame ends the audio and the
+  hint when it fixes one. A model Soniox has retired or deprecated (`stt-rt-v5`, removed 15 Dec 2026, its alias
+  `stt-rt-v4`, and older) listens with the current `stt-rt-v6`. Soniox's own end-of-speech detection is on, with the
+  starting point Soniox recommends for voice AI (`max_endpoint_delay_ms` 1500, latency level 2, sensitivity 0.3; the last
+  two from v5 on): when it hears the person finish (its `<end>` token) the stretch ends at once, and the worker's own
+  quiet timer waits 1.8 s instead of 0.8 s as a fallback, so a mid-sentence pause is not cut. Partial words
+  are the final tokens so far plus the latest guesses; when the stretch ends an empty text frame ends the audio and the
   words are final on Soniox's `finished`. A refused key (401/403), an error answer (its `error_code`), a dropped stream or
   no `finished` within `VOICE_RECOGNITION_FINAL_TIMEOUT_SECONDS` (default 10) fails the turn with the words heard so far.
 * `elevenlabs` (speaking, `src/elevenlabs.ts`): one connection per reply to `https://api.elevenlabs.io` (or the profile's
-  `endpoint`), the key in the `xi-api-key` header only, the profile's `model` as `model_id`, raw 24 kHz PCM that plays as
-  it arrives. How each model is asked comes from one table of ElevenLabs' documented models (`ELEVENLABS_MODELS`, #1847):
-  the real-time v3 and v4 models (`eleven_v4_turbo`, `eleven_v3_conversational`) are served only over the Text to Dialogue
-  WebSocket (`/v1/text-to-dialogue/stream-input`: the voice, the whole reply, then `close_socket`, which flushes it); every
-  other model streams over `POST /v1/text-to-speech/{voiceId}/stream?output_format=pcm_24000`. The reply's language goes
+  `endpoint`), the key in the `xi-api-key` header only, raw 24 kHz PCM that plays as it arrives. How each model is asked
+  comes from one table of ElevenLabs' documented models (`ELEVENLABS_MODELS`, #1847). The superseded Turbo v2 ids speak
+  with the Flash model ElevenLabs replaced them with. The real-time v3 and v4 models (`eleven_v4_turbo`,
+  `eleven_v3_conversational`) are served only over the Text to Dialogue WebSocket (`/v1/text-to-dialogue/stream-input`):
+  the socket is opened and set up (voice, settings) as soon as someone in the bubble starts talking, kept alive while it
+  waits and closed after 45 s unused, so the reply does not wait for a connection; the reply is the whole text then
+  `close_socket`, which flushes it, and the socket closes at once when the reply is no longer wanted. Text normalization is
+  on there, so numbers, dates and amounts are read as words (the reply's text is also what the chat shows). Every other
+  model streams over `POST /v1/text-to-speech/{voiceId}/stream?output_format=pcm_24000`. The reply's language goes
   as `language_code` to every model but the old ones that refuse it (multilingual v1/v2 and the English-only ones); a
   model newer than the table gets it too, since ElevenLabs ignores a code a model cannot use. Expression: `restrained`
   sends stability 0.75, `expressive` 0.3 (on v3, which takes only 0, 0.5 or 1: 1 Robust and 0 Creative), `natural`

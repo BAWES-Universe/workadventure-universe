@@ -96,6 +96,12 @@ export class Speaker {
         return true;
     }
 
+    /** A reply is likely soon: the voice gets ready for it, while voice is on. */
+    prepare(): void {
+        if (this.stopped || !this.host.active()) return;
+        this.host.voice.prepare?.();
+    }
+
     /** Stops what is playing and drops what is queued. */
     stopAll(reason: PlaybackReason): void {
         if (this.current) this.halt(reason);
@@ -110,6 +116,7 @@ export class Speaker {
         this.halt('voice_stop');
         this.wake?.();
         await this.done;
+        this.host.voice.release?.();
     }
 
     /** Cancels the reply being played: its audio stops within a frame and the provider call is closed. */

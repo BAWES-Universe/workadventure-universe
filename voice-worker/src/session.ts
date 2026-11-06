@@ -81,7 +81,7 @@ function guardedRecognizer(inner: Recognizer, events: RecognizerEvents): Recogni
             events.failed('', status === undefined ? undefined : { status });
         }
     };
-    return { push: (pcm) => guard(() => inner.push(pcm)), finish: () => guard(() => inner.finish()), close: () => { broken = true; inner.close(); } };
+    return { push: (pcm) => guard(() => inner.push(pcm)), finish: () => guard(() => inner.finish()), close: () => { broken = true; inner.close(); }, pauseMs: inner.pauseMs };
 }
 
 export class Session {
@@ -116,8 +116,12 @@ export class Session {
                   send: (message) => host.send(message),
                   next: host.input,
                   bargeInMs: host.bargeInMs,
-                  // A person speaking over the bot stops its voice at once, here, with no round trip
-                  onSpeaking: () => this.speaker.bargeIn(),
+                  // A person speaking over the bot stops its voice at once, here, with no round trip; and a reply is
+                  // likely soon, so the speaking provider gets ready for it
+                  onSpeaking: () => {
+                      this.speaker.bargeIn();
+                      this.speaker.prepare();
+                  },
               })
             : undefined;
         this.input = this.recognition ? this.recognition.sink : host.input;
@@ -180,6 +184,21 @@ export class Session {
                     : (async function* (): AsyncGenerator<Int16Array> {
                           throw new Error('no such speech adapter');
                       })(),
+            // Getting ready is a speed-up only: nothing it does may stop the bubble
+            prepare: () => {
+                try {
+                    connector?.prepare?.({ settings, lang: settings.language, expression });
+                } catch {
+                    // The reply opens its own connection
+                }
+            },
+            release: () => {
+                try {
+                    connector?.release?.(settings);
+                } catch {
+                    // Closed with the bubble anyway
+                }
+            },
         };
         return { voice, provider: this.reporter('speech', config.adapter) };
     }

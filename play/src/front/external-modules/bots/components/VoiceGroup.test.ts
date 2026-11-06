@@ -33,8 +33,8 @@ const uai = {
         providerId: "uai-listen",
         adapter: "soniox",
         name: "Soniox",
-        model: "stt-rt-v3",
-        models: [{ id: "stt-rt-v3", label: "Soniox real-time" }],
+        model: "stt-rt-v6",
+        models: [{ id: "stt-rt-v6", label: "Soniox real-time" }],
     },
     speech: {
         providerId: "uai-speak",
@@ -61,7 +61,7 @@ const key = (over: Record<string, unknown> = {}) => ({
 });
 
 const uaiProfile = {
-    recognition: { providerId: "uai-listen", model: "stt-rt-v3" },
+    recognition: { providerId: "uai-listen", model: "stt-rt-v6" },
     speech: { providerId: "uai-speak", model: "eleven_v4_turbo", voiceId: "v-river", voiceName: "River" },
     expression: "natural",
     language: { mode: "follow" },
@@ -196,7 +196,7 @@ describe("the bot page's Voice group (#1668)", () => {
         await mount();
         await click("bot-voice-switch");
         expect(mocks.api.saveBotVoice).toHaveBeenCalledWith("b1", {
-            recognition: { providerId: "uai-listen", model: "stt-rt-v3" },
+            recognition: { providerId: "uai-listen", model: "stt-rt-v6" },
             speech: { providerId: "uai-speak", model: "eleven_v4_turbo", voiceId: "v-river", voiceName: "River" },
             expression: "natural",
             language: { mode: "follow" },

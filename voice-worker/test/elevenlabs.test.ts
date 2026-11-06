@@ -1,10 +1,10 @@
 // Speaking with ElevenLabs (#1748), against a stand-in ElevenLabs server on loopback: no key, no network, no spend.
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ConnectorRegistry, ProviderError, Secret, type SpeechRequest } from '../src/connectors.ts';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { ELEVENLABS_ADAPTER, ELEVENLABS_MODELS, ElevenLabsSpeech, elevenLabsModel } from '../src/elevenlabs.ts';
+import { ELEVENLABS_ADAPTER, ELEVENLABS_MODELS, ElevenLabsSpeech, WARM_SOCKET_MS, currentElevenLabsModel, elevenLabsModel } from '../src/elevenlabs.ts';
 import { VoiceWorker } from '../src/server.ts';
 import { waitFor } from './harness.ts';
 
@@ -178,6 +178,17 @@ describe('the ElevenLabs models', () => {
         expect(elevenLabsModel('eleven_multilingual_v2').languageCode).toBe(false);
     });
 
+    it('speaks a Turbo v2 profile with the Flash model ElevenLabs replaced it with', async () => {
+        const el = await fakeElevenLabs((res) => res.end(pcm(1)));
+        await collect(new ElevenLabsSpeech().speak(request(el.base, { lang: 'ar' }, { model: 'eleven_turbo_v2_5' })));
+        await collect(new ElevenLabsSpeech().speak(request(el.base, { lang: 'ar' }, { model: 'eleven_turbo_v2' })));
+        expect(el.seen.map((s) => [s.body?.model_id, s.body?.language_code])).toEqual([
+            ['eleven_flash_v2_5', 'ar'],
+            ['eleven_flash_v2', undefined],
+        ]);
+        expect(currentElevenLabsModel('eleven_v4_turbo')).toBe('eleven_v4_turbo');
+    });
+
     it('treats a model newer than the table as one that streams over HTTP and takes the language', () => {
         expect(elevenLabsModel('eleven_v5')).toEqual({ transport: 'stream', languageCode: true, stability: 'any' });
         // Not a lookup through the prototype
@@ -190,6 +201,8 @@ describe('the ElevenLabs models', () => {
 });
 
 interface FakeDialogue {
+    /** Drops every open socket, as ElevenLabs would on its side. */
+    dropAll: () => void;
     base: string;
     upgrades: { url?: string; key?: string | string[] }[];
     messages: Record<string, unknown>[];
@@ -203,9 +216,9 @@ afterEach(async () => {
 
 /** A stand-in Text to Dialogue WebSocket: `onClose` runs once the worker asks it to close the socket. */
 async function fakeDialogue(options: { refuse?: number; onClose?: (send: (m: object) => void, ws: WebSocket) => void } = {}): Promise<FakeDialogue> {
-    const state: FakeDialogue = { base: '', upgrades: [], messages: [], closed: false };
     const httpServer = http.createServer();
     const wss = new WebSocketServer({ noServer: true });
+    const state: FakeDialogue = { base: '', upgrades: [], messages: [], closed: false, dropAll: () => wss.clients.forEach((c) => c.terminate()) };
     httpServer.on('upgrade', (req, socket, head) => {
         state.upgrades.push({ url: req.url, key: req.headers['xi-api-key'] });
         if (options.refuse) {
@@ -256,7 +269,8 @@ describe('speaking with Eleven v4 Turbo over the Text to Dialogue WebSocket', ()
         expect(el.upgrades).toHaveLength(1);
         const url = new URL(el.upgrades[0].url!, 'ws://x');
         expect(url.pathname).toBe('/v1/text-to-dialogue/stream-input');
-        expect(Object.fromEntries(url.searchParams)).toEqual({ model_id: 'eleven_v4_turbo', output_format: 'pcm_24000', language_code: 'ar' });
+        // Numbers, dates and amounts read as words: the reply's text is also the chat's, so it can't be written out for the voice
+        expect(Object.fromEntries(url.searchParams)).toEqual({ model_id: 'eleven_v4_turbo', output_format: 'pcm_24000', apply_text_normalization: 'on', language_code: 'ar' });
         expect(el.upgrades[0].key).toBe(KEY);
         expect(el.messages).toEqual([
             { voices: ['voice/1'], voice_settings: { stability: 0.3 } },
@@ -330,5 +344,86 @@ describe('speaking with Eleven v4 Turbo over the Text to Dialogue WebSocket', ()
         const stream = new ElevenLabsSpeech().speak(turbo(el.base, { signal: abort.signal }));
         abort.abort();
         expect(await collect(stream)).toEqual([]);
+    });
+});
+
+describe('getting Eleven v4 Turbo ready before the reply', () => {
+    const turbo = (base: string, extra: Partial<SpeechRequest> = {}, settings: object = {}) => request(base, extra, { model: 'eleven_v4_turbo', ...settings });
+
+    it('opens and sets up the socket when someone starts talking, then speaks the reply on it', async () => {
+        const el = await fakeDialogue({ onClose: (send, ws) => (send({ audio: b64(pcm(4, 5)) }), send({ is_final: true }), ws.close()) });
+        const speech = new ElevenLabsSpeech();
+        const reply = turbo(el.base, { expression: 'restrained' });
+        speech.prepare({ settings: reply.settings, expression: 'restrained' });
+        await waitFor('the socket to be set up', () => el.messages.length === 1);
+        // Set up, nothing to speak yet
+        expect(el.messages).toEqual([{ voices: ['voice/1'], voice_settings: { stability: 0.75 } }]);
+        expect(await collect(speech.speak(reply))).toEqual([4, 5]);
+        expect(el.upgrades).toHaveLength(1);
+        expect(el.messages.slice(1)).toEqual([{ inputs: [{ text: 'Hello there', voice_id: 'voice/1' }] }, { close_socket: true }]);
+    });
+
+    it('keeps one ready socket per bubble however often people start talking', async () => {
+        const el = await fakeDialogue();
+        const speech = new ElevenLabsSpeech();
+        const { settings } = turbo(el.base);
+        speech.prepare({ settings });
+        speech.prepare({ settings });
+        await waitFor('the socket to be set up', () => el.messages.length === 1);
+        speech.prepare({ settings });
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        expect(el.upgrades).toHaveLength(1);
+        speech.release(settings);
+        await waitFor('the socket to be closed', () => el.closed);
+    });
+
+    it('opens a new socket when the reply is in another language than the ready one', async () => {
+        const el = await fakeDialogue({ onClose: (send) => send({ is_final: true }) });
+        const speech = new ElevenLabsSpeech();
+        const reply = turbo(el.base, { lang: 'fr' }, { language: 'ar' });
+        speech.prepare({ settings: reply.settings, lang: 'ar' });
+        await waitFor('the socket to be set up', () => el.messages.length === 1);
+        await collect(speech.speak(reply));
+        expect(el.upgrades.map((u) => new URL(u.url!, 'ws://x').searchParams.get('language_code'))).toEqual(['ar', 'fr']);
+    });
+
+    it('does not use a ready socket that failed, and opens a fresh one', async () => {
+        const el = await fakeDialogue({
+            onClose: (send) => {
+                send({ audio: b64(pcm(9)) });
+                send({ is_final: true });
+            },
+        });
+        const speech = new ElevenLabsSpeech();
+        const reply = turbo(el.base);
+        speech.prepare({ settings: reply.settings });
+        await waitFor('the socket to be set up', () => el.messages.length === 1);
+        // ElevenLabs drops it while it waits
+        el.dropAll();
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        expect(await collect(speech.speak(reply))).toEqual([9]);
+        expect(el.upgrades).toHaveLength(2);
+    });
+
+    it('says it is still there while it waits, and closes when no reply comes', async () => {
+        vi.useFakeTimers({ toFake: ['setInterval', 'setTimeout', 'clearInterval', 'clearTimeout'] });
+        try {
+            const el = await fakeDialogue();
+            const speech = new ElevenLabsSpeech();
+            speech.prepare({ settings: turbo(el.base).settings });
+            await vi.waitFor(() => expect(el.messages).toHaveLength(1));
+            await vi.advanceTimersByTimeAsync(10_000);
+            await vi.waitFor(() => expect(el.messages).toContainEqual({ keep_alive: true }));
+            await vi.advanceTimersByTimeAsync(WARM_SOCKET_MS);
+            await vi.waitFor(() => expect(el.closed).toBe(true));
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('opens nothing ahead for a model that streams over HTTP', () => {
+        const speech = new ElevenLabsSpeech();
+        // Nothing listens there: opening a socket would fail loudly in the test
+        expect(() => speech.prepare({ settings: request('http://127.0.0.1:1').settings })).not.toThrow();
     });
 });

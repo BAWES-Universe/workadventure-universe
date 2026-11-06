@@ -12,6 +12,30 @@ export const DEFAULT_SONIOX_FINAL_TIMEOUT_MS = 10_000;
 /** Audio held while the connection opens. Past this the oldest goes: a stream that slow is failing anyway. */
 const MAX_PENDING_MS = 10_000;
 
+/** The current real-time model (https://docs.soniox.com/stt/models). */
+export const SONIOX_CURRENT_MODEL = 'stt-rt-v6';
+/**
+ * Real-time models Soniox has retired or deprecated: stt-rt-v5 is removed on 15 Dec 2026 (stt-rt-v4 is its alias), and
+ * the older ones are already served by their successors. A profile that still names one listens with the current model,
+ * as Soniox's own upgrade notes say to.
+ */
+export const SONIOX_SUPERSEDED = new Set(['stt-rt-v5', 'stt-rt-v4', 'stt-rt-v3', 'stt-rt-preview', 'stt-rt-preview-v2', 'stt-rt-preview-v1']);
+
+/** The model a stream is opened with: the profile's, or the current one when Soniox has retired it. */
+export const currentSonioxModel = (model: string): string => (SONIOX_SUPERSEDED.has(model) ? SONIOX_CURRENT_MODEL : model);
+
+/**
+ * Soniox's own end-of-speech detection (https://docs.soniox.com/stt/rt/endpoint-detection), with the starting point it
+ * recommends for voice AI: it hears that the person finished from what they said and how, so a bot answers a finished
+ * sentence at once and waits through a mid-sentence pause. MAX_ENDPOINT_DELAY_MS is the most it waits after speech ends.
+ */
+export const MAX_ENDPOINT_DELAY_MS = 1500;
+const ENDPOINT_TUNING = { endpoint_latency_adjustment_level: 2, endpoint_sensitivity: 0.3 };
+/** The sensitivity and latency settings are taken from stt-rt-v5 on. */
+const takesEndpointTuning = (model: string): boolean => Number(/^stt-rt-v(\d+)$/.exec(model)?.[1] ?? 0) >= 5;
+/** Quiet that still ends a stretch when Soniox has not said so: its longest wait, and a little for the answer to arrive. */
+export const SONIOX_FALLBACK_PAUSE_MS = MAX_ENDPOINT_DELAY_MS + 300;
+
 export interface SonioxOptions {
     finalTimeoutMs?: number;
 }
@@ -48,11 +72,22 @@ class SonioxStream implements Recognizer {
     private finishing = false;
     private done = false;
     private timer?: NodeJS.Timeout;
+    private endpointed = false;
+    readonly pauseMs = SONIOX_FALLBACK_PAUSE_MS;
 
     constructor(settings: RecognitionSettings, private readonly events: RecognizerEvents, private readonly finalTimeoutMs: number) {
         this.ws = new WebSocket(settings.endpoint || SONIOX_ENDPOINT, { headers: { Authorization: `Bearer ${settings.key.reveal()}` } });
         this.ws.on('open', () => {
-            const config: Record<string, unknown> = { model: settings.model, audio_format: 's16le', sample_rate: 16000, num_channels: 1 };
+            const model = currentSonioxModel(settings.model);
+            const config: Record<string, unknown> = {
+                model,
+                audio_format: 's16le',
+                sample_rate: 16000,
+                num_channels: 1,
+                enable_endpoint_detection: true,
+                max_endpoint_delay_ms: MAX_ENDPOINT_DELAY_MS,
+                ...(takesEndpointTuning(model) ? ENDPOINT_TUNING : {}),
+            };
             // Soniox takes plain language codes ("ar"), not regional ones ("ar-KW")
             if (settings.language) config.language_hints = [settings.language.split(/[-_]/)[0].toLowerCase()];
             this.ws.send(JSON.stringify(config));
@@ -124,11 +159,14 @@ class SonioxStream implements Recognizer {
             return;
         }
         let live = '';
+        let ended = false;
         const tokens: unknown[] = Array.isArray(message.tokens) ? message.tokens : [];
         for (const item of tokens) {
             if (typeof item !== 'object' || item === null) continue;
             const token = item as SonioxToken;
-            if (typeof token.text !== 'string' || !isWord(token.text)) continue;
+            if (typeof token.text !== 'string') continue;
+            if (token.text.trim() === '<end>') ended = true;
+            if (!isWord(token.text)) continue;
             if (token.is_final === true) this.finalText += token.text;
             else live += token.text;
         }
@@ -143,6 +181,11 @@ class SonioxStream implements Recognizer {
         if (heard && heard !== this.lastShown) {
             this.lastShown = heard;
             this.events.partial(heard);
+        }
+        // Soniox heard the person finish: every word before it is final. Said once; the stretch then ends with finish()
+        if (ended && !this.endpointed && !this.finishing) {
+            this.endpointed = true;
+            this.events.endpoint?.();
         }
     }
 

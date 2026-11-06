@@ -40,14 +40,24 @@ export const ELEVENLABS_MODELS: Readonly<Record<string, ElevenLabsModel>> = {
     eleven_v3: model('stream', true, 'presets'),
     eleven_v3_conversational: model('dialogue', true, 'presets'),
     eleven_flash_v2_5: model('stream', true),
-    // Superseded by eleven_flash_v2_5 (the same voice, lower latency), still served
-    eleven_turbo_v2_5: model('stream', true),
     eleven_multilingual_v2: model('stream', false),
     eleven_flash_v2: model('stream', false),
-    eleven_turbo_v2: model('stream', false),
     eleven_multilingual_v1: model('stream', false),
     eleven_monolingual_v1: model('stream', false),
 };
+
+/**
+ * Ids ElevenLabs has superseded, and what it says to use instead. The Turbo v2 models are "functionally equivalent" to the
+ * Flash ones, which have lower latency, and ElevenLabs recommends Flash "in all use cases"; a profile that still names a
+ * Turbo id speaks with the Flash model.
+ */
+export const ELEVENLABS_SUCCESSORS: Readonly<Record<string, string>> = {
+    eleven_turbo_v2_5: 'eleven_flash_v2_5',
+    eleven_turbo_v2: 'eleven_flash_v2',
+};
+
+/** The model a reply is asked for with: the profile's, or the one ElevenLabs replaced it with. */
+export const currentElevenLabsModel = (id: string): string => (Object.hasOwn(ELEVENLABS_SUCCESSORS, id) ? ELEVENLABS_SUCCESSORS[id] : id);
 
 /**
  * A model not in the table is a newer one: ElevenLabs says a language_code a model does not support is ignored, and only
@@ -57,7 +67,8 @@ export const ELEVENLABS_MODELS: Readonly<Record<string, ElevenLabsModel>> = {
 const NEWER_MODEL = model('stream', true);
 
 export function elevenLabsModel(id: string): ElevenLabsModel {
-    return Object.hasOwn(ELEVENLABS_MODELS, id) ? ELEVENLABS_MODELS[id] : NEWER_MODEL;
+    const current = currentElevenLabsModel(id);
+    return Object.hasOwn(ELEVENLABS_MODELS, current) ? ELEVENLABS_MODELS[current] : NEWER_MODEL;
 }
 
 /**
@@ -94,32 +105,97 @@ class Samples {
     }
 }
 
-export class ElevenLabsSpeech implements SpeechConnector {
-    speak(request: SpeechRequest): AsyncGenerator<Int16Array> {
-        const traits = elevenLabsModel(request.settings.model);
-        const lang = request.lang ?? request.settings.language;
-        const options = {
-            base: (request.settings.endpoint || ELEVENLABS_ENDPOINT).replace(/\/+$/, ''),
-            languageCode: lang && traits.languageCode ? languageOf(lang) : undefined,
-            stability: request.expression ? STABILITY[traits.stability][request.expression] : undefined,
-        };
-        return traits.transport === 'dialogue' ? speakOverDialogue(request, options) : speakOverStream(request, options);
-    }
-}
 
-interface CallOptions {
+/** How long a socket opened ahead of a reply waits for it before it is closed. Each open socket holds a dialogue session. */
+export const WARM_SOCKET_MS = 45_000;
+/** ElevenLabs closes a socket after 20 seconds with nothing from us; a waiting socket says it is still there this often. */
+const KEEP_ALIVE_MS = 10_000;
+
+/** What a reply needs from the call: the address, the model as it is asked for, and the parameters the model takes. */
+interface Call {
     /** The address with no trailing slash. */
     base: string;
+    model: string;
+    voiceId: string;
     languageCode?: string;
     stability?: number;
 }
 
-async function* speakOverStream(request: SpeechRequest, options: CallOptions): AsyncGenerator<Int16Array> {
+type CallRequest = Pick<SpeechRequest, 'settings' | 'lang' | 'expression'>;
+
+function callFor(request: CallRequest): { call: Call; traits: ElevenLabsModel } {
+    const model = currentElevenLabsModel(request.settings.model);
+    const traits = elevenLabsModel(model);
+    const lang = request.lang ?? request.settings.language;
+    return {
+        traits,
+        call: {
+            base: (request.settings.endpoint || ELEVENLABS_ENDPOINT).replace(/\/+$/, ''),
+            model,
+            voiceId: request.settings.voiceId,
+            languageCode: lang && traits.languageCode ? languageOf(lang) : undefined,
+            stability: request.expression ? STABILITY[traits.stability][request.expression] : undefined,
+        },
+    };
+}
+
+const sameCall = (a: Call, b: Call): boolean =>
+    a.base === b.base && a.model === b.model && a.voiceId === b.voiceId && a.languageCode === b.languageCode && a.stability === b.stability;
+
+export class ElevenLabsSpeech implements SpeechConnector {
+    /** A socket opened ahead of the next reply, per bubble (its settings). */
+    private readonly warm = new WeakMap<object, { call: Call; socket: DialogueSocket }>();
+
+    speak(request: SpeechRequest): AsyncGenerator<Int16Array> {
+        const { call, traits } = callFor(request);
+        if (traits.transport === 'stream') return speakOverStream(request, call);
+        return this.speakOverDialogue(request, call);
+    }
+
+    /**
+     * The bubble will likely want a reply soon (someone started talking): for a model served over the Text to Dialogue
+     * WebSocket, the socket is opened and set up now, so the reply does not wait for the connection. Nothing is spoken or
+     * billed until a reply is sent on it; unused, it closes after WARM_SOCKET_MS.
+     */
+    prepare(request: CallRequest): void {
+        const { call, traits } = callFor(request);
+        if (traits.transport !== 'dialogue') return;
+        const held = this.warm.get(request.settings);
+        if (held && sameCall(held.call, call) && held.socket.usable()) return;
+        held?.socket.close();
+        const socket = new DialogueSocket(call, request.settings.key.reveal(), WARM_SOCKET_MS, () => {
+            if (this.warm.get(request.settings)?.socket === socket) this.warm.delete(request.settings);
+        });
+        this.warm.set(request.settings, { call, socket });
+    }
+
+    /** The bubble is closing: a socket opened ahead of a reply is closed. */
+    release(settings: object): void {
+        this.warm.get(settings)?.socket.close();
+        this.warm.delete(settings);
+    }
+
+    private async *speakOverDialogue(request: SpeechRequest, call: Call): AsyncGenerator<Int16Array> {
+        if (request.signal.aborted) return;
+        const held = this.warm.get(request.settings);
+        this.warm.delete(request.settings);
+        let socket: DialogueSocket;
+        if (held && sameCall(held.call, call) && held.socket.usable()) {
+            socket = held.socket;
+        } else {
+            held?.socket.close();
+            socket = new DialogueSocket(call, request.settings.key.reveal());
+        }
+        yield* socket.say(request.text, request.signal);
+    }
+}
+
+async function* speakOverStream(request: SpeechRequest, call: Call): AsyncGenerator<Int16Array> {
     const { settings } = request;
-    const url = `${options.base}/v1/text-to-speech/${encodeURIComponent(settings.voiceId)}/stream?output_format=${OUTPUT_FORMAT}`;
-    const body: Record<string, unknown> = { text: request.text, model_id: settings.model };
-    if (options.languageCode) body.language_code = options.languageCode;
-    if (options.stability !== undefined) body.voice_settings = { stability: options.stability };
+    const url = `${call.base}/v1/text-to-speech/${encodeURIComponent(call.voiceId)}/stream?output_format=${OUTPUT_FORMAT}`;
+    const body: Record<string, unknown> = { text: request.text, model_id: call.model };
+    if (call.languageCode) body.language_code = call.languageCode;
+    if (call.stability !== undefined) body.voice_settings = { stability: call.stability };
 
     let response: Response;
     try {
@@ -163,86 +239,130 @@ function dialogueErrorStatus(error: string): number | undefined {
 
 type DialogueEvent = { kind: 'audio'; samples: Int16Array } | { kind: 'end' } | { kind: 'failed'; error: ProviderError };
 
-async function* speakOverDialogue(request: SpeechRequest, options: CallOptions): AsyncGenerator<Int16Array> {
-    const { settings } = request;
-    if (request.signal.aborted) return;
-    const query = new URLSearchParams({ model_id: settings.model, output_format: OUTPUT_FORMAT });
-    if (options.languageCode) query.set('language_code', options.languageCode);
-    const url = `${options.base.replace(/^http/, 'ws')}/v1/text-to-dialogue/stream-input?${query}`;
+/**
+ * One Text to Dialogue WebSocket, for one reply. It is set up as soon as it opens (the voice and its settings), so it can be
+ * opened ahead of the reply; the reply is the whole text and then close_socket, which flushes it (nothing waits for the
+ * ~40 characters the socket otherwise buffers). Text normalization is on, so numbers, dates and amounts are read as words:
+ * the reply's text is also what the chat shows, so it cannot be written out in words for the voice.
+ */
+class DialogueSocket {
+    private readonly ws: WebSocket;
+    private readonly events: DialogueEvent[] = [];
+    private readonly samples = new Samples();
+    private wake?: () => void;
+    private settled = false;
+    private used = false;
+    private keepAlive?: NodeJS.Timeout;
+    private expiry?: NodeJS.Timeout;
+    private readonly voiceId: string;
 
-    const events: DialogueEvent[] = [];
-    let wake: (() => void) | undefined;
-    let settled = false;
-    const push = (event: DialogueEvent): void => {
-        if (settled) return;
-        if (event.kind !== 'audio') settled = true;
-        events.push(event);
-        wake?.();
-    };
-    const samples = new Samples();
-
-    const ws = new WebSocket(url, { headers: { 'xi-api-key': settings.key.reveal() } });
-    const onAbort = (): void => {
-        settled = true;
-        wake?.();
-    };
-    request.signal.addEventListener('abort', onAbort, { once: true });
-
-    ws.on('open', () => {
-        const start: Record<string, unknown> = { voices: [settings.voiceId] };
-        if (options.stability !== undefined) start.voice_settings = { stability: options.stability };
-        ws.send(JSON.stringify(start));
-        ws.send(JSON.stringify({ inputs: [{ text: request.text, voice_id: settings.voiceId }] }));
-        // Flushes what is buffered, sends the last audio and a final message, then closes
-        ws.send(JSON.stringify({ close_socket: true }));
-    });
-    ws.on('message', (data, isBinary) => {
-        if (isBinary) return;
-        // Nothing ElevenLabs sends may throw out of here: a socket handler that throws takes the whole worker down
-        let message: Record<string, unknown>;
-        try {
-            const parsed: unknown = JSON.parse(data.toString());
-            if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return;
-            message = parsed as Record<string, unknown>;
-        } catch {
-            return;
-        }
-        if (typeof message.error === 'string') {
-            push({ kind: 'failed', error: new ProviderError('elevenlabs refused the reply', dialogueErrorStatus(message.error)) });
-            return;
-        }
-        if (typeof message.audio === 'string' && message.audio) {
-            const out = samples.take(Buffer.from(message.audio, 'base64'));
-            if (out) push({ kind: 'audio', samples: out });
-        }
-        if (message.is_final === true) push({ kind: 'end' });
-    });
-    // Refused before the socket opened (a wrong key answers 401 here)
-    ws.on('unexpected-response', (_req, res) => {
-        push({ kind: 'failed', error: new ProviderError('elevenlabs refused the reply', res.statusCode) });
-        res.resume();
-        ws.terminate();
-    });
-    ws.on('error', () => push({ kind: 'failed', error: new ProviderError('elevenlabs could not be reached') }));
-    ws.on('close', () => push({ kind: 'failed', error: new ProviderError('elevenlabs stream dropped') }));
-
-    try {
-        while (true) {
-            if (request.signal.aborted) return;
-            const event = events.shift();
-            if (!event) {
-                await new Promise<void>((resolve) => (wake = resolve));
-                wake = undefined;
-                continue;
+    constructor(call: Call, key: string, waitMs?: number, private readonly onGone: () => void = () => undefined) {
+        this.voiceId = call.voiceId;
+        const query = new URLSearchParams({ model_id: call.model, output_format: OUTPUT_FORMAT, apply_text_normalization: 'on' });
+        if (call.languageCode) query.set('language_code', call.languageCode);
+        this.ws = new WebSocket(`${call.base.replace(/^http/, 'ws')}/v1/text-to-dialogue/stream-input?${query}`, { headers: { 'xi-api-key': key } });
+        this.ws.on('open', () => {
+            const start: Record<string, unknown> = { voices: [call.voiceId] };
+            if (call.stability !== undefined) start.voice_settings = { stability: call.stability };
+            this.ws.send(JSON.stringify(start));
+            if (!this.used) {
+                this.keepAlive = setInterval(() => this.ws.send(JSON.stringify({ keep_alive: true })), KEEP_ALIVE_MS);
+                this.keepAlive.unref?.();
             }
-            if (event.kind === 'audio') yield event.samples;
-            else if (event.kind === 'end') return;
-            else throw event.error;
+        });
+        this.ws.on('message', (data, isBinary) => {
+            if (isBinary) return;
+            // Nothing ElevenLabs sends may throw out of here: a socket handler that throws takes the whole worker down
+            let message: Record<string, unknown>;
+            try {
+                const parsed: unknown = JSON.parse(data.toString());
+                if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return;
+                message = parsed as Record<string, unknown>;
+            } catch {
+                return;
+            }
+            if (typeof message.error === 'string') {
+                this.push({ kind: 'failed', error: new ProviderError('elevenlabs refused the reply', dialogueErrorStatus(message.error)) });
+                return;
+            }
+            if (typeof message.audio === 'string' && message.audio) {
+                const out = this.samples.take(Buffer.from(message.audio, 'base64'));
+                if (out) this.push({ kind: 'audio', samples: out });
+            }
+            if (message.is_final === true) this.push({ kind: 'end' });
+        });
+        // Refused before the socket opened (a wrong key answers 401 here)
+        this.ws.on('unexpected-response', (_req, res) => {
+            this.push({ kind: 'failed', error: new ProviderError('elevenlabs refused the reply', res.statusCode) });
+            res.resume();
+            this.ws.terminate();
+        });
+        this.ws.on('error', () => this.push({ kind: 'failed', error: new ProviderError('elevenlabs could not be reached') }));
+        this.ws.on('close', () => this.push({ kind: 'failed', error: new ProviderError('elevenlabs stream dropped') }));
+        if (waitMs !== undefined) {
+            this.expiry = setTimeout(() => this.close(), waitMs);
+            this.expiry.unref?.();
         }
-    } finally {
-        request.signal.removeEventListener('abort', onAbort);
-        ws.removeAllListeners('close');
-        ws.on('error', () => undefined);
-        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.terminate();
+    }
+
+    /** Not used for a reply yet, and neither failed nor closed. */
+    usable(): boolean {
+        return !this.used && !this.settled && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING);
+    }
+
+    async *say(text: string, signal: AbortSignal): AsyncGenerator<Int16Array> {
+        this.used = true;
+        clearTimeout(this.expiry);
+        clearInterval(this.keepAlive);
+        const onAbort = (): void => {
+            this.settled = true;
+            this.wake?.();
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
+        const sendReply = (): void => {
+            this.ws.send(JSON.stringify({ inputs: [{ text, voice_id: this.voiceId }] }));
+            // Flushes what is buffered, sends the last audio and a final message, then closes
+            this.ws.send(JSON.stringify({ close_socket: true }));
+        };
+        if (this.ws.readyState === WebSocket.OPEN) sendReply();
+        else this.ws.once('open', sendReply);
+        try {
+            while (true) {
+                if (signal.aborted) return;
+                const event = this.events.shift();
+                if (!event) {
+                    await new Promise<void>((resolve) => (this.wake = resolve));
+                    this.wake = undefined;
+                    continue;
+                }
+                if (event.kind === 'audio') yield event.samples;
+                else if (event.kind === 'end') return;
+                else throw event.error;
+            }
+        } finally {
+            signal.removeEventListener('abort', onAbort);
+            this.close();
+        }
+    }
+
+    close(): void {
+        clearTimeout(this.expiry);
+        clearInterval(this.keepAlive);
+        this.settled = true;
+        this.wake?.();
+        this.ws.removeAllListeners('close');
+        this.ws.on('error', () => undefined);
+        if (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING) this.ws.terminate();
+        this.onGone();
+    }
+
+    private push(event: DialogueEvent): void {
+        if (this.settled) return;
+        if (event.kind !== 'audio') {
+            this.settled = true;
+            clearInterval(this.keepAlive);
+        }
+        this.events.push(event);
+        this.wake?.();
     }
 }
