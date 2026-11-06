@@ -79,6 +79,64 @@ describe('the budget: counting', () => {
         expect(t.orbit.reportVoiceListening).toHaveBeenLastCalledWith('bot-1', { seconds: 5 });
     });
 
+    it('does not retry in a loop when a lot has gathered and Orbit cannot be asked: one try, then a wait that grows', async () => {
+        const t = budget([null]);
+        t.b.add(20_000);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(t.orbit.reportVoiceListening).toHaveBeenCalledTimes(1);
+        // More chatter during the wait does not make it try again before the wait is over
+        t.advance(5_000);
+        t.b.add(20_000);
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(t.orbit.reportVoiceListening).toHaveBeenCalledTimes(1);
+        // After 30 s it tries again; failing again, the next wait is twice as long
+        t.advance(25_000);
+        await vi.advanceTimersByTimeAsync(25_000);
+        expect(t.orbit.reportVoiceListening).toHaveBeenCalledTimes(2);
+        t.advance(59_000);
+        await vi.advanceTimersByTimeAsync(59_000);
+        expect(t.orbit.reportVoiceListening).toHaveBeenCalledTimes(2);
+        t.advance(1_000);
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(t.orbit.reportVoiceListening).toHaveBeenCalledTimes(3);
+        // And it reports what it kept once Orbit answers
+        t.set([answer(false)]);
+        t.advance(120_000);
+        await vi.advanceTimersByTimeAsync(120_000);
+        expect(t.orbit.reportVoiceListening).toHaveBeenCalledTimes(4);
+        expect(t.orbit.reportVoiceListening).toHaveBeenLastCalledWith('bot-1', { seconds: 40 });
+    });
+
+    it('reports what gathered while a report was out, after the usual wait', async () => {
+        const t = budget();
+        let release!: () => void;
+        t.orbit.reportVoiceListening.mockImplementationOnce(async () => {
+            await new Promise<void>((resolve) => (release = resolve));
+            return answer(false);
+        });
+        t.b.add(16_000);
+        await vi.advanceTimersByTimeAsync(0);
+        // Some chatter arrives while that report is out, and a look at the day comes with it
+        t.b.add(4_000);
+        void t.b.flush();
+        release();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(t.orbit.reportVoiceListening).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(t.orbit.reportVoiceListening).toHaveBeenCalledTimes(2);
+        expect(t.orbit.reportVoiceListening).toHaveBeenLastCalledWith('bot-1', { seconds: 4 });
+    });
+
+    it('stops reporting once the bot is shut down', async () => {
+        const t = budget();
+        t.b.add(5_000);
+        t.b.shutdown();
+        await vi.advanceTimersByTimeAsync(60_000);
+        t.b.add(20_000);
+        await t.b.flush();
+        expect(t.orbit.reportVoiceListening).not.toHaveBeenCalled();
+    });
+
     it('never throws when Orbit does', async () => {
         const t = budget();
         t.orbit.reportVoiceListening.mockRejectedValueOnce(new Error('down'));

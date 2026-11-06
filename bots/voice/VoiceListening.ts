@@ -21,6 +21,9 @@ const FLUSH_AT_MS = 15_000;
 const FLUSH_AFTER_MS = 10_000;
 /** What is kept to report again after a report that could not be made. More than this is dropped. */
 const MAX_PENDING_MS = 10 * 60_000;
+/** After a report that could not be made, the next try waits this long, then twice as long each time, to at most the cap. */
+const RETRY_FIRST_MS = 30_000;
+const RETRY_CAP_MS = 5 * 60_000;
 /** A spent day is looked at again at most this often when a group forms, so a limit raised in Orbit lets the bot listen again. */
 const RECHECK_MS = 60_000;
 
@@ -32,6 +35,10 @@ export class ListeningBudget {
     private resetTimer: ReturnType<typeof setTimeout> | undefined;
     private askedAt = 0;
     private reporting: Promise<void> | undefined;
+    /** No report is tried before this time (epoch ms) after one failed: an Orbit that is down or from before this is not hammered. */
+    private retryAt = 0;
+    private retryMs = RETRY_FIRST_MS;
+    private closed = false;
 
     constructor(
         private readonly botId: string,
@@ -49,38 +56,60 @@ export class ListeningBudget {
 
     /** Group chatter the bot took in: reported soon, in one call for what gathers. */
     add(audioMs: number): void {
-        if (!Number.isFinite(audioMs) || audioMs <= 0) return;
+        if (this.closed || !Number.isFinite(audioMs) || audioMs <= 0) return;
         this.pendingMs = Math.min(MAX_PENDING_MS, this.pendingMs + audioMs);
-        if (this.pendingMs >= FLUSH_AT_MS) {
+        if (this.pendingMs >= FLUSH_AT_MS && this.now() >= this.retryAt) {
             void this.flush();
-        } else if (!this.flushTimer) {
-            this.flushTimer = setTimeout(() => void this.flush(), FLUSH_AFTER_MS);
-            this.flushTimer.unref?.();
+        } else {
+            this.schedule(Math.max(FLUSH_AFTER_MS, this.retryAt - this.now()));
         }
     }
 
     /** Asks Orbit where the day stands, counting nothing: when a group forms, so a day already used (or a limit changed) is known before anyone talks. */
     async check(): Promise<void> {
-        if (this.now() - this.askedAt < RECHECK_MS && !this.pendingMs) return;
+        if (this.closed || (this.now() - this.askedAt < RECHECK_MS && !this.pendingMs) || this.now() < this.retryAt) return;
         await this.flush();
     }
 
     /** Reports what has gathered (or only asks when nothing has). */
     flush(): Promise<void> {
+        if (this.closed) return Promise.resolve();
         if (this.flushTimer) {
             clearTimeout(this.flushTimer);
             this.flushTimer = undefined;
         }
         // One report at a time: what gathers meanwhile goes in the next
         if (this.reporting) return this.reporting;
-        this.reporting = this.report().finally(() => {
+        this.reporting = this.report().then((ok) => {
             this.reporting = undefined;
-            if (this.pendingMs >= FLUSH_AT_MS) void this.flush();
+            if (this.closed) return;
+            if (ok) {
+                this.retryMs = RETRY_FIRST_MS;
+                // What gathered while the report was out: right away when it is a lot, else after the usual short wait
+                if (this.pendingMs >= FLUSH_AT_MS) void this.flush();
+                else if (this.pendingMs >= 1000) this.schedule(FLUSH_AFTER_MS);
+            } else {
+                // Not counted: tried again after a wait that grows, never in a loop
+                this.retryAt = this.now() + this.retryMs;
+                this.retryMs = Math.min(RETRY_CAP_MS, this.retryMs * 2);
+                if (this.pendingMs >= 1000) this.schedule(this.retryAt - this.now());
+            }
         });
         return this.reporting;
     }
 
-    private async report(): Promise<void> {
+    /** A report is made after this long, unless one is already waiting. */
+    private schedule(delayMs: number): void {
+        if (this.flushTimer || this.closed) return;
+        this.flushTimer = setTimeout(() => {
+            this.flushTimer = undefined;
+            void this.flush();
+        }, delayMs);
+        this.flushTimer.unref?.();
+    }
+
+    /** True when Orbit answered (the seconds are counted), false when it could not be asked or did not know the question. */
+    private async report(): Promise<boolean> {
         const ms = this.pendingMs;
         // Whole seconds only: what is left over waits for more
         const seconds = Math.floor(ms / 1000);
@@ -96,7 +125,7 @@ export class ListeningBudget {
             // Not counted: kept to report again, and the bot keeps listening
             this.pendingMs = Math.min(MAX_PENDING_MS, this.pendingMs + seconds * 1000);
             this.log('voice: could not report the daily listening, the bot keeps listening');
-            return;
+            return false;
         }
         const wasSpent = this.isSpent();
         this.spentUntil = answer.spent ? Date.parse(answer.resetsAt) : 0;
@@ -104,7 +133,7 @@ export class ListeningBudget {
             clearTimeout(this.resetTimer);
             this.resetTimer = undefined;
         }
-        if (this.spentUntil > this.now()) {
+        if (!this.closed && this.spentUntil > this.now()) {
             // The next day starts: the bot listens to groups again, without waiting for anyone to ask
             this.resetTimer = setTimeout(() => {
                 this.resetTimer = undefined;
@@ -114,10 +143,12 @@ export class ListeningBudget {
             this.resetTimer.unref?.();
         }
         if (this.isSpent() !== wasSpent) this.onChange();
+        return true;
     }
 
     /** The bot is going away: nothing more is reported or waited for. */
     shutdown(): void {
+        this.closed = true;
         if (this.flushTimer) clearTimeout(this.flushTimer);
         if (this.resetTimer) clearTimeout(this.resetTimer);
         this.flushTimer = undefined;
