@@ -2674,6 +2674,8 @@ export class BotClient {
                   )
                 : undefined
         );
+        // People call the bot by this name, so the hearing is told to expect it (#1864)
+        this.voice.botName = this.config.name;
         // Voice paused for someone (the allowance, or a key that isn't working): the one fixed line, in the chat the reply is in
         this.voice.onPaused = (spaceName) => this.sendChatMessage(spaceName, pausedLine(this.config.name));
         this.speech = new BotSpeech(this.voice, voiceReplyLimits());

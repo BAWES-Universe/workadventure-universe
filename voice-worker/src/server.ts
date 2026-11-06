@@ -401,6 +401,9 @@ class BridgeConnection {
             case 'bot.retract':
                 session.retract(msg.segmentId);
                 break;
+            case 'recognition.terms':
+                session.setTerms(msg.terms);
+                break;
             case 'voice.stop':
                 session.stopVoice();
                 break;

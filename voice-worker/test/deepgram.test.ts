@@ -29,7 +29,7 @@ afterEach(async () => {
 
 type Reply = (send: (m: object) => void, ws: WebSocket) => void;
 
-async function fakeDeepgram(options: { refuse?: number; onCloseStream?: Reply } = {}): Promise<FakeDeepgram> {
+async function fakeDeepgram(options: { refuse?: number; refuseKeyterm?: number; onCloseStream?: Reply } = {}): Promise<FakeDeepgram> {
     const server = http.createServer();
     const wss = new WebSocketServer({ noServer: true });
     let current: WebSocket | undefined;
@@ -45,8 +45,8 @@ async function fakeDeepgram(options: { refuse?: number; onCloseStream?: Reply } 
     server.on('upgrade', (req, socket, head) => {
         state.auth.push(req.headers.authorization);
         state.requests.push(new URL(req.url ?? '/', 'http://localhost'));
-        if (options.refuse) {
-            socket.end(`HTTP/1.1 ${options.refuse} Refused\r\nContent-Length: 0\r\n\r\n`);
+        if (options.refuse || (options.refuseKeyterm && state.requests[state.requests.length - 1].searchParams.has('keyterm'))) {
+            socket.end(`HTTP/1.1 ${options.refuse ?? options.refuseKeyterm} Refused\r\nContent-Length: 0\r\n\r\n`);
             return;
         }
         wss.handleUpgrade(req, socket, head, (ws) => {
@@ -130,6 +130,72 @@ describe('hearing with Deepgram', () => {
         await waitFor('the stream to open', () => deepgram.requests.length === 1);
         expect(deepgram.requests[0].searchParams.get('language')).toBe('ar-KW');
         stream.close();
+    });
+
+    it('tells Nova-3 the names to expect, one key term each, in the address and not in the header (#1864)', async () => {
+        const deepgram = await fakeDeepgram();
+        const stream = new DeepgramRecognition().listen(settings(deepgram.url, { language: 'ar-KW', terms: ['Nora', 'Alma Max'] }), heard().events);
+        await waitFor('the stream to open', () => deepgram.requests.length === 1);
+        expect(deepgram.requests[0].searchParams.getAll('keyterm')).toEqual(['Nora', 'Alma Max']);
+        expect(deepgram.requests[0].searchParams.get('language')).toBe('ar-KW');
+        stream.close();
+    });
+
+    it('sends no key terms to a model that does not take them, or when there are no names, or more than fit', async () => {
+        const deepgram = await fakeDeepgram();
+        const long = Array.from({ length: 16 }, (_, i) => `${i}`.padEnd(64, 'x'));
+        const open = async (extra: object) => {
+            const before = deepgram.requests.length;
+            const stream = new DeepgramRecognition().listen(settings(deepgram.url, extra), heard().events);
+            await waitFor('the stream to open', () => deepgram.requests.length === before + 1);
+            stream.close();
+        };
+        await open({ model: 'nova-2', terms: ['Nora'] });
+        await open({});
+        await open({ model: 'nova-3-general', terms: long });
+        expect(deepgram.requests[0].searchParams.has('keyterm')).toBe(false);
+        expect(deepgram.requests[1].searchParams.has('keyterm')).toBe(false);
+        const sent = deepgram.requests[2].searchParams.getAll('keyterm');
+        expect(sent.join('').length).toBeLessThanOrEqual(200);
+        expect(sent).toEqual(long.slice(0, sent.length));
+        expect(sent.length).toBeGreaterThan(0);
+    });
+
+    it('opens the stretch again without key terms when Deepgram refuses them with a 400, keeps the audio, and skips them for the next stretches', async () => {
+        const deepgram = await fakeDeepgram({ refuseKeyterm: 400, onCloseStream: endWith('hello there') });
+        const connector = new DeepgramRecognition();
+        const { got, events } = heard();
+        const stream = connector.listen(settings(deepgram.url, { terms: ['Nora'] }), events);
+        stream.push(audio(100));
+        await waitFor('the second try', () => deepgram.requests.length === 2);
+        expect(deepgram.requests[0].searchParams.has('keyterm')).toBe(true);
+        expect(deepgram.requests[1].searchParams.has('keyterm')).toBe(false);
+        // The audio held while it opened is not lost, and the person's words come through as if nothing happened
+        await waitFor('the audio to arrive', () => deepgram.audioBytes === 2 * 16 * 100);
+        stream.finish();
+        await waitFor('the last words', () => got.finals.length === 1);
+        expect(got.finals).toEqual(['hello there']);
+        expect(got.failures).toEqual([]);
+        // The next stretch does not try them again
+        const next = connector.listen(settings(deepgram.url, { terms: ['Nora'] }), heard().events);
+        await waitFor('the next stream to open', () => deepgram.requests.length === 3);
+        expect(deepgram.requests[2].searchParams.has('keyterm')).toBe(false);
+        next.close();
+    });
+
+    it('does not retry a refusal that is not about key terms, or when none were sent', async () => {
+        const deepgram = await fakeDeepgram({ refuse: 400 });
+        const { got, events } = heard();
+        new DeepgramRecognition().listen(settings(deepgram.url), events);
+        await waitFor('the refusal', () => got.failures.length === 1);
+        expect(deepgram.requests).toHaveLength(1);
+        expect(got.failures).toEqual([{ text: '', status: 400 }]);
+        const unauthorized = await fakeDeepgram({ refuse: 401 });
+        const second = heard();
+        new DeepgramRecognition().listen(settings(unauthorized.url, { terms: ['Nora'] }), second.events);
+        await waitFor('the second refusal', () => second.got.failures.length === 1);
+        expect(unauthorized.requests).toHaveLength(1);
+        expect(second.got.failures).toEqual([{ text: '', status: 401 }]);
     });
 
     it('asks Deepgram not to train on what people say', async () => {

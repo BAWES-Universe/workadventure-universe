@@ -488,6 +488,37 @@ describe('two bubbles with two different connectors', () => {
         expect(bot.violations).toEqual([]);
     }, 30000);
 
+    it('hands the hearing the names the bubble named, and the new ones from the next stretch of speech (#1864)', async () => {
+        const seen: (string[] | undefined)[] = [];
+        const ears = new FakeEars(['one two', 'three four']);
+        const hearing: RecognitionConnector = {
+            listen: (settings, events) => {
+                seen.push(settings.terms ? [...settings.terms] : undefined);
+                return ears.factory(events);
+            },
+        };
+        const { bot } = await start(new ConnectorRegistry().registerRecognition('ears', hearing));
+        const alice = new FakeHuman('alice');
+        humans.push(alice);
+        // Messy names are tidied on arrival: trimmed, none twice
+        open(bot, 's1', { recognition: { ...recognition('ears', KEY_A), terms: ['Nora', ' Nora ', 'Max'] } });
+        await waitFor('the session', () => bot.of('session.start').length === 1);
+        await bot.join('s1', alice);
+        alice.startMic(440);
+        await sleep(500);
+        alice.stopMic();
+        await waitFor('the first words', () => bot.of('user.turn', 's1').some((t) => t.outcome === 'final'), 6000);
+        // Another bot arrives: the names change for the next stretch, and nothing that is open is touched
+        bot.send({ type: 'recognition.terms', sessionId: 's1', terms: ['Nora', 'Alma'] });
+        await sleep(100);
+        alice.startMic(440);
+        await sleep(500);
+        alice.stopMic();
+        await waitFor('the second words', () => bot.of('user.turn', 's1').filter((t) => t.outcome === 'final').length === 2, 6000);
+        expect(seen).toEqual([['Nora', 'Max'], ['Nora', 'Alma']]);
+        expect(bot.violations).toEqual([]);
+    }, 30000);
+
     it('uses the built-in test engine when a bubble names nothing, and says nothing about providers', async () => {
         const { bot } = await start(new ConnectorRegistry());
         open(bot, 's1');

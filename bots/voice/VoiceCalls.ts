@@ -27,6 +27,7 @@ import type { FromWorker, ProviderPart, ToWorker, VoiceDraft, VoiceMode, VoiceSi
 import type { SpeechTurn, TurnDecision } from './BotSpeech';
 import type { RepliesLeft, TurnGate } from './VoiceAllowance';
 import type { VoiceLink } from './VoiceLink';
+import { hearingTerms } from './VoiceTerms';
 import { VOICE_BOT_TAG } from './VoiceBotTag';
 import type { ActiveVoice, PartProvider, VoiceSettings } from './VoiceSettings';
 
@@ -61,6 +62,8 @@ interface Bubble {
     signature?: string;
     /** A provider refused its key: the next turn fetches the keys again by opening the session anew. */
     stale?: boolean;
+    /** The names the hearing was last told to expect, once the session is open (see `hearingNames`). */
+    terms?: string;
 }
 
 /** The bot's LiveKit participant in a bubble, as the worker holds it. */
@@ -158,6 +161,10 @@ export class VoiceCalls {
     private readonly actual = new Map<string, VoiceStatus>();
     /** The other voice bots in each space, by space user id. While there is one, this bot answers in text and says nothing out loud. */
     private readonly otherVoiceBots = new Map<string, Set<string>>();
+    /** The names of those voice bots, by space and user: people call them by name, so the hearing is told to expect them (#1864). */
+    private readonly voiceBotNames = new Map<string, string>();
+    /** The name people call this bot by. Set by whoever makes it; without one the hearing is told no name. */
+    botName = '';
     /** Called when a reply's voice stopped part-way because someone spoke over it. */
     onStopped?: (spaceName: string, segmentId: string) => void;
     /** Called when a reply's segment ended without any of it being heard (see `handlePlayback`). */
@@ -385,6 +392,24 @@ export class VoiceCalls {
         if (now) this.onCrowded?.(spaceName);
     }
 
+    /** The names the hearing should expect in this space: this bot's own, then the other voice bots' (#1864). */
+    private hearingNames(spaceName: string): string[] {
+        const others = [...(this.otherVoiceBots.get(spaceName) ?? [])].map((id) => this.voiceBotNames.get(callKey(spaceName, id)) ?? '');
+        return hearingTerms(this.botName, others);
+    }
+
+    /** Another voice bot came or went: a session that is open is told the new names, for the next stretch of speech. */
+    private namesChanged(spaceName: string): void {
+        const bubble = this.bubbles.get(spaceName);
+        // Not open yet: the names are read when it opens
+        if (bubble?.terms === undefined) return;
+        const terms = this.hearingNames(spaceName);
+        const signature = JSON.stringify(terms);
+        if (signature === bubble.terms) return;
+        bubble.terms = signature;
+        this.post({ type: 'recognition.terms', sessionId: bubble.sessionId, terms });
+    }
+
     /** Whether this user is a voice bot other than this one. */
     private isOtherVoiceBot(spaceName: string, user: SpaceUser): boolean {
         return user.spaceUserId.length > 0 && user.spaceUserId.length <= MAX_ID_CHARS && user.spaceUserId !== this.game.botSpaceUserId(spaceName) && isBotUser(user) && (user.tags?.includes(VOICE_BOT_TAG) ?? false);
@@ -426,6 +451,7 @@ export class VoiceCalls {
         this.invitations.delete(spaceName);
         this.roster.delete(spaceName);
         this.otherVoiceBots.delete(spaceName);
+        for (const key of this.voiceBotNames.keys()) if (key.startsWith(`${spaceName}\n`)) this.voiceBotNames.delete(key);
         for (const [key, lost] of this.lost) if (lost.spaceName === spaceName) this.lost.delete(key);
         for (const key of this.spoken.keys()) if (key.startsWith(`${spaceName}\n`)) this.spoken.delete(key);
         for (const key of this.pausedFor) if (key.startsWith(`${spaceName}\n`)) this.pausedFor.delete(key);
@@ -498,12 +524,16 @@ export class VoiceCalls {
         const voiceBots = new Set<string>();
         for (const user of users) {
             if (this.isPerson(spaceName, user)) people.set(user.spaceUserId, user);
-            else if (this.isOtherVoiceBot(spaceName, user)) voiceBots.add(user.spaceUserId);
+            else if (this.isOtherVoiceBot(spaceName, user)) {
+                voiceBots.add(user.spaceUserId);
+                this.voiceBotNames.set(callKey(spaceName, user.spaceUserId), user.name);
+            }
         }
         this.roster.set(spaceName, people);
         this.otherVoiceBots.set(spaceName, voiceBots);
         this.rosterChanged(spaceName);
         this.crowdChanged(spaceName, wasCrowded);
+        this.namesChanged(spaceName);
     }
 
     spaceUserJoined(spaceName: string, user: SpaceUser): void {
@@ -512,7 +542,9 @@ export class VoiceCalls {
             let bots = this.otherVoiceBots.get(spaceName);
             if (!bots) this.otherVoiceBots.set(spaceName, (bots = new Set()));
             bots.add(user.spaceUserId);
+            this.voiceBotNames.set(callKey(spaceName, user.spaceUserId), user.name);
             this.crowdChanged(spaceName, wasCrowded);
+            this.namesChanged(spaceName);
             return;
         }
         if (!this.isPerson(spaceName, user)) return;
@@ -527,7 +559,11 @@ export class VoiceCalls {
 
     spaceUserLeft(spaceName: string, spaceUserId: string): void {
         const wasCrowded = this.crowded(spaceName);
-        if (this.otherVoiceBots.get(spaceName)?.delete(spaceUserId)) this.crowdChanged(spaceName, wasCrowded);
+        if (this.otherVoiceBots.get(spaceName)?.delete(spaceUserId)) {
+            this.voiceBotNames.delete(callKey(spaceName, spaceUserId));
+            this.crowdChanged(spaceName, wasCrowded);
+            this.namesChanged(spaceName);
+        }
         this.talking.get(spaceName)?.delete(spaceUserId);
         this.joined.delete(callKey(spaceName, spaceUserId));
         this.lost.delete(callKey(spaceName, spaceUserId));
@@ -599,6 +635,10 @@ export class VoiceCalls {
             return;
         }
         this.rememberSession(bubble.sessionId, providers);
+        // The names the hearing is asked to expect (a bot that joins later is sent as `recognition.terms`)
+        const terms = this.hearingNames(bubble.spaceName);
+        bubble.terms = JSON.stringify(terms);
+        if (terms.length) setup.recognition = { ...setup.recognition, terms };
         // setup holds the keys: it goes into this one message and nowhere else
         if (!this.openMessage(bubble, setup)) {
             this.evictBubble(bubble.sessionId, 'worker not available');
@@ -1127,6 +1167,7 @@ export class VoiceCalls {
         this.pausedFor.clear();
         this.actual.clear();
         this.otherVoiceBots.clear();
+        this.voiceBotNames.clear();
         this.link.close();
     }
 
