@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { ConnectorRegistry, Secret } from '../src/connectors.ts';
 import { optionsFromEnv } from '../src/config.ts';
-import { DEEPGRAM_ADAPTER, DeepgramRecognition } from '../src/deepgram.ts';
+import { DEEPGRAM_ADAPTER, DeepgramRecognition, followLanguage } from '../src/deepgram.ts';
 import type { RecognizerEvents } from '../src/recognizer.ts';
 import { VoiceWorker } from '../src/server.ts';
 import { waitFor } from './harness.ts';
@@ -114,13 +114,39 @@ describe('hearing with Deepgram', () => {
         stream.close();
     });
 
-    it('leaves the language to Deepgram when the profile follows the person, and uses a default model when none is named', async () => {
+    it('listens in every language when the profile follows the person, and uses a default model when none is named', async () => {
         const deepgram = await fakeDeepgram();
         const stream = new DeepgramRecognition().listen(settings(deepgram.url, { model: '' }), heard().events);
         await waitFor('the stream to open', () => deepgram.requests.length === 1);
-        expect(deepgram.requests[0].searchParams.has('language')).toBe(false);
+        // Left out, Deepgram would hear English only
+        expect(deepgram.requests[0].searchParams.get('language')).toBe('multi');
         expect(deepgram.requests[0].searchParams.get('model')).toBe('nova-3');
         stream.close();
+    });
+
+    it('keeps a fixed regional language as the profile has it', async () => {
+        const deepgram = await fakeDeepgram();
+        const stream = new DeepgramRecognition().listen(settings(deepgram.url, { language: 'ar-KW' }), heard().events);
+        await waitFor('the stream to open', () => deepgram.requests.length === 1);
+        expect(deepgram.requests[0].searchParams.get('language')).toBe('ar-KW');
+        stream.close();
+    });
+
+    it('asks Deepgram not to train on what people say', async () => {
+        const deepgram = await fakeDeepgram();
+        const stream = new DeepgramRecognition().listen(settings(deepgram.url), heard().events);
+        await waitFor('the stream to open', () => deepgram.requests.length === 1);
+        expect(deepgram.requests[0].searchParams.get('mip_opt_out')).toBe('true');
+        stream.close();
+    });
+
+    it('follows the person with "multi" only on the models that hear several languages at once', () => {
+        expect(followLanguage('nova-3')).toBe('multi');
+        expect(followLanguage('nova-3-general')).toBe('multi');
+        expect(followLanguage('nova-2')).toBe('multi');
+        expect(followLanguage('nova-30')).toBeUndefined();
+        expect(followLanguage('enhanced')).toBeUndefined();
+        expect(followLanguage('whisper-large')).toBeUndefined();
     });
 
     it('shows the final segments so far followed by the latest guess, and says every word once the person paused', async () => {
