@@ -143,6 +143,36 @@ describe("Hear <bot> say hello (#1852)", () => {
         expect(mocks.api.sayBotHello).toHaveBeenCalledTimes(1);
     });
 
+    it("leaves nothing of the words behind when it was stopped before the bot finished writing, so the next hello starts on thinking", async () => {
+        let first: (value: { text: string; url: string }) => void = () => undefined;
+        mocks.api.sayBotHello.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    first = resolve;
+                })
+        );
+        await mount();
+        await click();
+        expect(text()).toContain("Hala is thinking of a hello…");
+        // Another sample is picked while the bot is still writing
+        stopSample();
+        await settle();
+        first({ text: "An old hello nobody heard.", url: "blob:hello-old" });
+        await settle();
+        expect(revoked).toEqual(["blob:hello-old"]);
+        expect(text()).toContain("Hear Hala say hello");
+        // The next tap starts on thinking, not on the old words
+        mocks.api.sayBotHello.mockImplementationOnce(
+            () =>
+                new Promise(() => {
+                    /* never answers */
+                })
+        );
+        await click();
+        expect(text()).toContain("Hala is thinking of a hello…");
+        expect(text()).not.toContain("An old hello nobody heard.");
+    });
+
     it("greys out when the voice replies are used up, says when they are back, and lets go then", async () => {
         mocks.api.sayBotHello.mockRejectedValue(
             refused(429, { error: "used_up", resetsAt: "2026-11-06T18:40:00.000Z" })

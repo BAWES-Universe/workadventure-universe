@@ -49,12 +49,14 @@
     async function hear() {
         if (usedUp || thinking) return;
         failed = false;
+        words = null;
         await toggleSample(
             ID,
             async () => {
                 try {
                     const hello = await botApiService.sayBotHello(botId, locale);
-                    words = hello.text;
+                    // Stopped (or another sample picked) while the bot was still writing: the words are not for anyone now
+                    if ($playingSample === ID) words = hello.text;
                     return { url: hello.url, revoke: true };
                 } catch (e) {
                     const why = helloFailureOf(e);
