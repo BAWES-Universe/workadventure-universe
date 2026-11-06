@@ -179,6 +179,17 @@ describe('the budget: a spent day', () => {
         expect(t.changes).toHaveBeenCalledTimes(1);
     });
 
+    it('looks at most once a minute when only a part of a second is waiting to be reported', async () => {
+        const t = budget();
+        t.b.add(1600);
+        await t.b.flush();
+        expect(t.orbit.reportVoiceListening).toHaveBeenCalledTimes(1);
+        // 600 ms is left over: it is not a reason to ask again every time a group changes
+        await t.b.check();
+        await t.b.check();
+        expect(t.orbit.reportVoiceListening).toHaveBeenCalledTimes(1);
+    });
+
     it('looks at most once a minute when only asking', async () => {
         const t = budget();
         await t.b.check();

@@ -67,7 +67,7 @@ export class ListeningBudget {
 
     /** Asks Orbit where the day stands, counting nothing: when a group forms, so a day already used (or a limit changed) is known before anyone talks. */
     async check(): Promise<void> {
-        if (this.closed || (this.now() - this.askedAt < RECHECK_MS && !this.pendingMs) || this.now() < this.retryAt) return;
+        if (this.closed || (this.now() - this.askedAt < RECHECK_MS && this.pendingMs < 1000) || this.now() < this.retryAt) return;
         await this.flush();
     }
 
