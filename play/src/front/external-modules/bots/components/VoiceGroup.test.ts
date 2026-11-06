@@ -296,6 +296,16 @@ describe("the bot page's Voice group (#1668)", () => {
         expect(byTestId("bot-voice-option")).toHaveLength(2);
     });
 
+    it("treats a source that lists no voice as a failure to load, with Try again, not a dead button", async () => {
+        mocks.api.getBotVoice.mockResolvedValue(answer());
+        mocks.api.getBotVoices.mockResolvedValueOnce([]).mockResolvedValue(voices);
+        await mount();
+        expect(text()).toContain("Couldn’t load the voices.");
+        expect(byTestId("bot-voice-go")).toHaveLength(0);
+        await click("bot-voice-door-retry");
+        expect(byTestId("bot-voice-option")).toHaveLength(2);
+    });
+
     it("turns on again with the voice it had, without making a new version", async () => {
         mocks.api.getBotVoice.mockResolvedValue({ ...turnedOn(), enabled: false });
         mocks.api.setBotVoiceEnabled.mockResolvedValue(turnedOn());

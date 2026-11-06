@@ -310,8 +310,12 @@
         listLoading[slot] ??= botApiService
             .getBotVoices(botId, id)
             .then((list) => {
+                // A source that lists no voice is a failure to load, not a list: the page offers Try again instead of a dead button
+                const stored = list.length > 0;
                 // eslint-disable-next-line svelte/infinite-reactive-loop
-                if (bot.id === botId) lists = { ...lists, [id]: list };
+                if (bot.id === botId && stored) lists = { ...lists, [id]: list };
+                // eslint-disable-next-line svelte/infinite-reactive-loop
+                if (bot.id === botId && !stored) listFailed = { ...listFailed, [id]: true };
                 return list;
             })
             .catch((e) => {
