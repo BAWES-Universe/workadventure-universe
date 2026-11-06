@@ -354,4 +354,15 @@ describe("a provider that hears the end of speech itself (#1847)", () => {
         expect(r.turns()).toEqual([expect.objectContaining({ outcome: 'final' })]);
         r.dispose();
     });
+
+    it("also waits that long when the audio simply stops (a sender that sends nothing while silent), not the worker's own shorter wait (#1866)", async () => {
+        const r = endpointing(900);
+        r.speak(400);
+        // No more audio at all: past the worker's own wait (400 ms), before the provider's (900 ms)
+        await sleep(600);
+        expect(r.turns()).toHaveLength(0);
+        await sleep(500);
+        expect(r.turns()).toEqual([expect.objectContaining({ outcome: 'final' })]);
+        r.dispose();
+    });
 });
