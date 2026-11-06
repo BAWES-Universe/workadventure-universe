@@ -563,6 +563,7 @@
     async function checkNow(key: VoiceKey) {
         if (checking) return;
         checking = true;
+        saveError = null;
         const botId = bot.id;
         try {
             const checked = await botApiService.checkVoiceKey(key.id);
