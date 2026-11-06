@@ -535,7 +535,7 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
                     retry: "حاول مرة أخرى",
                     moreVoicesTitle: "أصوات أكثر بمفتاح الصوت الخاص بك",
                     moreVoicesLine:
-                        "أضف مفتاح ElevenLabs أو Deepgram أو Cartesia من مفاتيح الذكاء الاصطناعي وأعِره هنا. تدفع أنت تكلفة صوت {bot} عليه؛ ولا تُستهلك ردود أي شخص.",
+                        "أضف مفتاح ElevenLabs أو Deepgram أو Cartesia أو Fish Audio من مفاتيح الذكاء الاصطناعي وأعِره هنا. تدفع أنت تكلفة صوت {bot} عليه؛ ولا تُستهلك ردود أي شخص.",
                     keep: "رجوع",
                     use: "استخدم {voice}",
                 },

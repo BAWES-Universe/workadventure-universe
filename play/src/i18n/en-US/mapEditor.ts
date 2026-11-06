@@ -1101,7 +1101,7 @@ const mapEditor: BaseTranslation = {
                     retry: "Try again",
                     moreVoicesTitle: "More voices with your own voice key",
                     moreVoicesLine:
-                        "Add an ElevenLabs, Deepgram or Cartesia key in AI keys and lend it here. You pay for {bot:string}’s voice on it; nobody’s replies are used.",
+                        "Add an ElevenLabs, Deepgram, Cartesia or Fish Audio key in AI keys and lend it here. You pay for {bot:string}’s voice on it; nobody’s replies are used.",
                     keep: "Back",
                     use: "Use {voice:string}",
                 },
