@@ -8,10 +8,10 @@ vi.mock("../../../Enum/EnvironmentVariable.ts", () => ({
     PEER_VIDEO_RECOMMENDED_BANDWIDTH: 0,
     MAX_USERNAME_LENGTH: 10,
 }));
-const noEvents = { subscribe: () => ({ unsubscribe: () => undefined }) };
-vi.mock("../../../WebRtc/BlackListManager", () => ({
-    blackListManager: { isBlackListed: () => false, onBlockStream: noEvents, onUnBlockStream: noEvents },
-}));
+vi.mock("../../../WebRtc/BlackListManager", () => {
+    const noEvents = { subscribe: () => ({ unsubscribe: () => undefined }) };
+    return { blackListManager: { isBlackListed: () => false, onBlockStream: noEvents, onUnBlockStream: noEvents } };
+});
 const { resumeAll, microphone } = vi.hoisted(() => {
     let on = true;
     const listeners = new Set<(value: boolean) => void>();
