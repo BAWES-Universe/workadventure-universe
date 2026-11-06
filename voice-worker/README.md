@@ -34,16 +34,22 @@ that names nothing gets) and the scripted `FakeEars` for tests, plus these real 
 
 * `soniox` (hearing, `src/soniox.ts`): one real-time WebSocket stream per stretch of speech to
   `wss://stt-rt.soniox.com/transcribe-websocket` (or the profile's `endpoint`), the key in the `Authorization` header only,
-  16 kHz mono `s16le`, the profile's `model`, and its `language` as the only language hint when it fixes one. Partial words
+  16 kHz mono `s16le`, the profile's `model`, and its `language` (the plain code, "ar" for "ar-KW") as the only language
+  hint when it fixes one. Partial words
   are the final tokens so far plus the latest guesses; when the person pauses an empty text frame ends the audio and the
   words are final on Soniox's `finished`. A refused key (401/403), an error answer (its `error_code`), a dropped stream or
   no `finished` within `VOICE_RECOGNITION_FINAL_TIMEOUT_SECONDS` (default 10) fails the turn with the words heard so far.
-* `elevenlabs` (speaking, `src/elevenlabs.ts`): one streamed `POST /v1/text-to-speech/{voiceId}/stream?output_format=pcm_24000`
-  per reply to `https://api.elevenlabs.io` (or the profile's `endpoint`), the key in the `xi-api-key` header only, the
-  profile's `model` as `model_id`. Raw 24 kHz PCM plays as it arrives. The reply's language goes as `language_code`
-  (only to the v2.5 and v3 models; the others refuse one, so they go without it). Expression: `restrained` sends stability 0.75, `expressive` 0.3,
-  `natural` nothing (the voice's saved settings). A refusal fails with ElevenLabs' status; an unreachable server or a
-  dropped stream fails without one.
+* `elevenlabs` (speaking, `src/elevenlabs.ts`): one connection per reply to `https://api.elevenlabs.io` (or the profile's
+  `endpoint`), the key in the `xi-api-key` header only, the profile's `model` as `model_id`, raw 24 kHz PCM that plays as
+  it arrives. How each model is asked comes from one table of ElevenLabs' documented models (`ELEVENLABS_MODELS`, #1847):
+  the real-time v3 and v4 models (`eleven_v4_turbo`, `eleven_v3_conversational`) are served only over the Text to Dialogue
+  WebSocket (`/v1/text-to-dialogue/stream-input`: the voice, the whole reply, then `close_socket`, which flushes it); every
+  other model streams over `POST /v1/text-to-speech/{voiceId}/stream?output_format=pcm_24000`. The reply's language goes
+  as `language_code` to every model but the old ones that refuse it (multilingual v1/v2 and the English-only ones); a
+  model newer than the table gets it too, since ElevenLabs ignores a code a model cannot use. Expression: `restrained`
+  sends stability 0.75, `expressive` 0.3 (on v3, which takes only 0, 0.5 or 1: 1 Robust and 0 Creative), `natural`
+  nothing (the voice's saved settings). A refusal fails with ElevenLabs' status (a WebSocket error answer maps its id to
+  the status the same failure has over HTTP); an unreachable server or a dropped stream fails without one.
 * `cartesia` (speaking, `src/cartesia.ts`): one streamed `POST /tts/bytes` per reply to `https://api.cartesia.ai` (or the
   profile's `endpoint`), the key in the `Authorization: Bearer` header only, `Cartesia-Version` from `VOICE_CARTESIA_VERSION`,
   the profile's `model` as `model_id` and voice as `voice.id`, asking for raw `pcm_s16le` at 24 kHz, which plays as it arrives.

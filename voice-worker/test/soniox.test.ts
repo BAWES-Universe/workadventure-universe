@@ -90,7 +90,7 @@ function heard() {
     return { got, events };
 }
 
-const settings = (url: string, extra: object = {}) => ({ adapter: 'soniox', model: 'stt-rt-v5', key: new Secret(KEY), endpoint: url, ...extra });
+const settings = (url: string, extra: object = {}) => ({ adapter: 'soniox', model: 'stt-rt-v6', key: new Secret(KEY), endpoint: url, ...extra });
 const audio = (ms: number) => new Int16Array(16 * ms).fill(100);
 
 describe('hearing with Soniox', () => {
@@ -104,9 +104,17 @@ describe('hearing with Soniox', () => {
         stream.push(audio(100));
         await waitFor('the audio to arrive', () => soniox.audioBytes === 2 * 16 * 200);
         expect(soniox.auth).toEqual([`Bearer ${KEY}`]);
-        expect(soniox.configs[0]).toEqual({ model: 'stt-rt-v5', audio_format: 's16le', sample_rate: 16000, num_channels: 1, language_hints: ['ar'] });
+        expect(soniox.configs[0]).toEqual({ model: 'stt-rt-v6', audio_format: 's16le', sample_rate: 16000, num_channels: 1, language_hints: ['ar'] });
         // The key is only in the header, never in the start message
         expect(JSON.stringify(soniox.configs[0])).not.toContain(KEY);
+        stream.close();
+    });
+
+    it('hints the plain language when the profile names a regional one', async () => {
+        const soniox = await fakeSoniox();
+        const stream = new SonioxRecognition().listen(settings(soniox.url, { language: 'ar-KW' }), heard().events);
+        await waitFor('the stream to be configured', () => soniox.configs.length === 1);
+        expect(soniox.configs[0].language_hints).toEqual(['ar']);
         stream.close();
     });
 

@@ -53,7 +53,8 @@ class SonioxStream implements Recognizer {
         this.ws = new WebSocket(settings.endpoint || SONIOX_ENDPOINT, { headers: { Authorization: `Bearer ${settings.key.reveal()}` } });
         this.ws.on('open', () => {
             const config: Record<string, unknown> = { model: settings.model, audio_format: 's16le', sample_rate: 16000, num_channels: 1 };
-            if (settings.language) config.language_hints = [settings.language];
+            // Soniox takes plain language codes ("ar"), not regional ones ("ar-KW")
+            if (settings.language) config.language_hints = [settings.language.split(/[-_]/)[0].toLowerCase()];
             this.ws.send(JSON.stringify(config));
             for (const chunk of this.pending) this.ws.send(chunk);
             this.pending = [];
