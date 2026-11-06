@@ -193,7 +193,7 @@ export class GameManager {
             !localUserStore.getHelpCameraSettingsShown() &&
             (!get(requestedMicrophoneState) || !get(requestedCameraState))
         ) {
-            showHelpCameraSettings();
+            showHelpCameraSettings(true);
             localUserStore.setHelpCameraSettingsShown();
         }
     }

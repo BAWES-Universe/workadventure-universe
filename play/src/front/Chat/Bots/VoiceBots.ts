@@ -85,9 +85,12 @@ export function computeVoiceView(
     users: Iterable<ViewUser>,
     mySpaceUserId: string,
     statuses: ReadonlyMap<string, BotVoiceStatus>,
-    meeting: boolean
+    meeting: boolean,
+    /** A bot this person blocked shows nothing on the button, as with its messages and its status. */
+    isBlocked: (user: ViewUser) => boolean = () => false
 ): VoiceSpaceView {
     const bots: VoiceBotView[] = [];
+    const botSpaceUserIds: string[] = [];
     let people = 0;
     let othersPresent = false;
     let meIncluded = false;
@@ -103,6 +106,9 @@ export function computeVoiceView(
         }
         const status = statuses.get(user.spaceUserId);
         if (!status && !user.tags?.includes(VOICE_BOT_TAG)) continue;
+        // A blocked bot is still told apart from people, so our choice not to hear bots keeps silencing its sound
+        botSpaceUserIds.push(user.spaceUserId);
+        if (isBlocked(user)) continue;
         bots.push({
             spaceUserId: user.spaceUserId,
             botId: status?.botId ?? (user.uuid ?? "").replace(/^bot-/, ""),
@@ -116,7 +122,7 @@ export function computeVoiceView(
         });
     }
     if (!meIncluded) people++;
-    return { meeting, bot: bots[0], botSpaceUserIds: bots.map((bot) => bot.spaceUserId), people, othersPresent };
+    return { meeting, bot: bots[0], botSpaceUserIds, people, othersPresent };
 }
 
 const views = writable<ReadonlyMap<SpaceInterface, VoiceSpaceView>>(new Map());
@@ -167,6 +173,11 @@ class VoiceSpaceWatcher {
                 if (status) this.onStatus(event.sender.spaceUserId, status);
             })
         );
+        // Blocking or unblocking a bot already here changes the button at once, not at the next change in the room
+        this.subscriptions.push(
+            blackListManager.onBlockStream.subscribe(() => this.publish()),
+            blackListManager.onUnBlockStream.subscribe(() => this.publish())
+        );
         this.unsubscribers.push(voiceChoiceStore.subscribe(() => this.sendChoiceToBots()));
     }
 
@@ -198,7 +209,8 @@ class VoiceSpaceWatcher {
             this.latest.values(),
             this.space.mySpaceUserId,
             this.statuses,
-            isAreaSpaceName(this.space.getName())
+            isAreaSpaceName(this.space.getName()),
+            (user) => !!user.uuid && blackListManager.isBlackListed(user.uuid)
         );
         views.update((all) => new Map(all).set(this.space, view));
     }

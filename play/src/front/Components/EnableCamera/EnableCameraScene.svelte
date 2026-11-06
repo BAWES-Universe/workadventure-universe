@@ -23,6 +23,9 @@
     import { StringUtils } from "../../Utils/StringUtils";
     import { popupStore } from "../../Stores/PopupStore";
     import { showHelpCameraSettings } from "../../Stores/HelpSettingsStore";
+    import { markCameraRefused } from "../../Stores/CameraRetryStore";
+    import { currentInstallEnvironment } from "../../Install/InstallPlatform";
+    import { cameraHelpKindFor } from "../../WebRtc/CameraHelp";
     import bgMap from "../images/map-exemple.png";
     import JoinLegal from "../Join/JoinLegal.svelte";
     import USelect from "../UI/USelect.svelte";
@@ -44,6 +47,14 @@
     let lastMicrophone: string | undefined = undefined;
     let cameraBlocked = false;
     let microphoneBlocked = false;
+    // The address bar is the way back on a computer or Android. The iPhone app has none, so it says what works there.
+    const helpKind = cameraHelpKindFor(currentInstallEnvironment());
+    $: blockedHint =
+        helpKind === "ios-app"
+            ? $LL.camera.enable.blockedHintIosApp()
+            : helpKind === "ios-browser"
+            ? $LL.camera.enable.blockedHintIosBrowser()
+            : $LL.camera.enable.blockedHint();
     // The test sound is your join sound (Settings > Sound), played on the speaker picked here
     const sound = new Audio();
 
@@ -69,6 +80,8 @@
     const unsubscribeLocalStreamStore = localStreamStore.subscribe((value) => {
         if (value.type === "success") {
             stream = value.stream;
+            // A stream arrived (for example after Try again on the access card): the blocked hints may be out of date
+            checkPermissions().catch((e) => console.warn(e));
 
             if (stream !== undefined) {
                 const videoTracks = stream.getVideoTracks();
@@ -107,9 +120,20 @@
 
     async function checkPermissions() {
         const [camera, microphone] = await Promise.all([permissionState("camera"), permissionState("microphone")]);
-        if (camera === undefined && microphone === undefined && $localStreamStore.type === "error") {
-            cameraBlocked = $localStreamStore.error.name === "NotAllowedError";
-            microphoneBlocked = cameraBlocked;
+        if (camera === undefined && microphone === undefined) {
+            // The browser can't be asked: only a stream error or a stream that arrived says anything
+            if ($localStreamStore.type === "error") {
+                cameraBlocked = $localStreamStore.error.name === "NotAllowedError";
+                microphoneBlocked = cameraBlocked;
+            } else if ($localStreamStore.stream) {
+                // A device that now delivers is not blocked; one without a track keeps what was known before
+                if ($localStreamStore.stream.getVideoTracks().length > 0) {
+                    cameraBlocked = false;
+                }
+                if ($localStreamStore.stream.getAudioTracks().length > 0) {
+                    microphoneBlocked = false;
+                }
+            }
             return;
         }
         cameraBlocked = camera === "denied";
@@ -202,6 +226,8 @@
 
     function howToAllow() {
         helpAsked = true;
+        // The card may have been closed before (that forgets the refusal): the screen knows the camera is blocked
+        if (cameraBlocked) markCameraRefused();
         showHelpCameraSettings();
     }
 
@@ -297,7 +323,7 @@
                         <div class="camera-off-message">
                             <span class="camera-off-icon"><IconLock font-size="28" /></span>
                             <span class="text-base font-semibold text-white">{$LL.camera.enable.cameraBlocked()}</span>
-                            <span class="font-normal">{$LL.camera.enable.blockedHint()}</span>
+                            <span class="font-normal">{blockedHint}</span>
                             <span class="flex flex-wrap justify-center gap-2 mt-1">
                                 <button
                                     type="button"
@@ -380,7 +406,7 @@
                 {#if microphoneBlocked}
                     <p class="u-join-error">
                         {$LL.camera.enable.microphoneBlocked()}
-                        {$LL.camera.enable.blockedHint()}
+                        {blockedHint}
                     </p>
                 {:else if microphoneOn}
                     <div class="grid gap-1.5">
