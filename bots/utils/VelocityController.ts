@@ -2,7 +2,7 @@
  * VelocityController - Handles smooth acceleration and deceleration for natural movement
  */
 
-import type { PositionInterface } from '../../play/src/front/Connection/ConnexionModels';
+import type { PositionInterface } from '../types/Position';
 
 export enum MovementState {
     Idle = 'idle',

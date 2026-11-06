@@ -4,7 +4,7 @@
 
 import type { ChatUpload } from '../services/ChatFiles';
 import { BaseBehavior, createConversationState, type BehaviorConfig } from './BaseBehavior';
-import type { PositionInterface } from '../../play/src/front/Connection/ConnexionModels';
+import type { PositionInterface } from '../types/Position';
 import { PositionMessage_Direction } from '@workadventure/messages';
 import type { SpaceUser } from '@workadventure/messages';
 import { ConversationMemory } from '../memory/ConversationMemory';

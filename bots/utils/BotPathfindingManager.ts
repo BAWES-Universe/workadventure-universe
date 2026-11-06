@@ -3,7 +3,7 @@
  */
 
 import * as EasyStar from 'easystarjs';
-import type { PositionInterface } from '../../play/src/front/Connection/ConnexionModels';
+import type { PositionInterface } from '../types/Position';
 
 export enum PathTileType {
     Walkable = 0,
