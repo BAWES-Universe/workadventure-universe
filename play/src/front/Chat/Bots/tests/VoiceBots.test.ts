@@ -115,11 +115,11 @@ describe("who is here with a voice bot", () => {
         });
     });
 
-    it("leaves out a voice bot the person blocked, so the button is for the next one", () => {
+    it("leaves a voice bot the person blocked off the button, but keeps its sound told apart", () => {
         const users = [user("me"), bot("b1", "1"), bot("b2", "2")];
         const view = computeVoiceView(users, "me", new Map(), false, (u) => u.uuid === "bot-1");
         expect(view.bot?.spaceUserId).toBe("b2");
-        expect(view.botSpaceUserIds).toEqual(["b2"]);
+        expect(view.botSpaceUserIds).toEqual(["b1", "b2"]);
         expect(view.othersPresent).toBe(false);
     });
 
@@ -191,7 +191,8 @@ describe("following a bubble for voice bots", () => {
         blocked.add("bot-1");
         t.set(user("me"), bot("b1", "1"));
         expect(get(currentVoiceSpaceStore)).toBeUndefined();
-        expect(get(voiceBotSpaceUserIdsStore).size).toBe(0);
+        // Its sound is still told apart from people's, so not hearing bots silences it too
+        expect([...get(voiceBotSpaceUserIdsStore)]).toEqual(["b1"]);
         t.set(user("me"), bot("b1", "1"), bot("b2", "2"));
         expect(get(currentVoiceSpaceStore)?.bot?.spaceUserId).toBe("b2");
     });
@@ -284,6 +285,17 @@ describe("following a bubble for voice bots", () => {
         t.emitted.length = 0;
         voiceChoiceStore.choose("text_only");
         expect(t.emitted).toEqual([]);
+    });
+
+    it("still silences the sound of a voice bot the person blocked when they chose not to hear bots", () => {
+        const t = fakeSpace();
+        stop = trackVoiceSpace(t.space);
+        blocked.add("bot-1");
+        t.set(user("me"), bot("b1", "1"));
+        expect([...get(silencedVoiceBotsStore)]).toEqual([]);
+        voiceChoiceStore.choose("text_only");
+        expect([...get(silencedVoiceBotsStore)]).toEqual(["b1"]);
+        expect(get(currentVoiceSpaceStore)).toBeUndefined();
     });
 
     it("silences the sound of voice bots when we chose not to hear them, and not otherwise", () => {

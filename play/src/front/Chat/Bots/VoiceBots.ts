@@ -86,10 +86,11 @@ export function computeVoiceView(
     mySpaceUserId: string,
     statuses: ReadonlyMap<string, BotVoiceStatus>,
     meeting: boolean,
-    /** A bot this person blocked shows nothing, as with its messages and its status. */
+    /** A bot this person blocked shows nothing on the button, as with its messages and its status. */
     isBlocked: (user: ViewUser) => boolean = () => false
 ): VoiceSpaceView {
     const bots: VoiceBotView[] = [];
+    const botSpaceUserIds: string[] = [];
     let people = 0;
     let othersPresent = false;
     let meIncluded = false;
@@ -103,9 +104,11 @@ export function computeVoiceView(
             othersPresent = true;
             continue;
         }
-        if (isBlocked(user)) continue;
         const status = statuses.get(user.spaceUserId);
         if (!status && !user.tags?.includes(VOICE_BOT_TAG)) continue;
+        // A blocked bot is still told apart from people, so our choice not to hear bots keeps silencing its sound
+        botSpaceUserIds.push(user.spaceUserId);
+        if (isBlocked(user)) continue;
         bots.push({
             spaceUserId: user.spaceUserId,
             botId: status?.botId ?? (user.uuid ?? "").replace(/^bot-/, ""),
@@ -119,7 +122,7 @@ export function computeVoiceView(
         });
     }
     if (!meIncluded) people++;
-    return { meeting, bot: bots[0], botSpaceUserIds: bots.map((bot) => bot.spaceUserId), people, othersPresent };
+    return { meeting, bot: bots[0], botSpaceUserIds, people, othersPresent };
 }
 
 const views = writable<ReadonlyMap<SpaceInterface, VoiceSpaceView>>(new Map());
