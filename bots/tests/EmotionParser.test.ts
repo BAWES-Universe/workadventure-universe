@@ -8,7 +8,7 @@
  *    (beforeEmotion extraction, empty fragments, mixed content)
  */
 import { describe, it, expect } from 'vitest';
-import { parseEmotionsFromResponse, hasEmotionBlock } from '../ai/EmotionParser';
+import { parseEmotionsFromResponse, hasEmotionBlock, moodOf } from '../ai/EmotionParser';
 
 // --- parseEmotionsFromResponse (complete message, used on chunk.done) ---
 
@@ -132,5 +132,53 @@ describe('[EM fragment detection (behavior streaming pattern)', () => {
         const emotionIdx = 'EMOTION_UPDATE]'.indexOf('[EM');
         expect(emotionIdx).toBe(-1); // No [EM in the second chunk alone
         // This is why the fullMessage check is needed
+    });
+});
+
+
+// --- moodOf: the emoji beside the bot's Woka (#1667) ---
+
+describe('moodOf', () => {
+    const feel = (personSentiment: number, context: string = 'neutral', isInsult = false, insultSeverity = 0) =>
+        moodOf({ personSentiment, isInsult, insultSeverity, context });
+
+    it('has no emoji when the reply carried no emotion block', () => {
+        expect(moodOf(null)).toBeUndefined();
+        expect(moodOf(undefined)).toBeUndefined();
+    });
+
+    it('smiles at kind people and a joke', () => {
+        expect(feel(80)).toBe('😄');
+        expect(feel(30)).toBe('🙂');
+        expect(feel(0, 'joking')).toBe('😄');
+        expect(feel(0)).toBe('🙂');
+    });
+
+    it('is put out by an insult, more so by a harsh one', () => {
+        expect(feel(-60, 'angry', true, 3)).toBe('😒');
+        expect(feel(-90, 'angry', true, 9)).toBe('😠');
+    });
+
+    it('is worried by an upset person and unconvinced by sarcasm', () => {
+        expect(feel(-20, 'frustrated')).toBe('😟');
+        expect(feel(-50)).toBe('😟');
+        expect(feel(-15)).toBe('😕');
+        expect(feel(0, 'sarcastic')).toBe('😏');
+    });
+});
+
+describe('doneTalking (#1670)', () => {
+    const parse = (extra: string) =>
+        parseEmotionsFromResponse(`[EMOTION_UPDATE]{"personSentiment":0,"isInsult":false,"insultSeverity":0,"context":"neutral"${extra}}[/EMOTION_UPDATE]`);
+
+    it('is read only when the bot wrote the boolean true', () => {
+        expect(parse(', "doneTalking": true').emotions?.doneTalking).toBe(true);
+        for (const extra of ['', ', "doneTalking": false', ', "doneTalking": "true"', ', "doneTalking": 1']) {
+            expect(parse(extra).emotions?.doneTalking).toBeUndefined();
+        }
+    });
+
+    it('leaves no words when the bot wrote only the block', () => {
+        expect(parse(', "doneTalking": true').cleanedResponse).toBe('');
     });
 });

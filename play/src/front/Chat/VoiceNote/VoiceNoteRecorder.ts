@@ -26,24 +26,30 @@ export interface VoiceNoteRecording {
  * The level of each slice is read from the live stream, so the shape of the note is known without decoding the file.
  */
 export async function startVoiceNoteRecording(format: RecordingFormat): Promise<VoiceNoteRecording> {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    let context: AudioContext | undefined;
+    // Made and started in the tap itself, before the wait for the microphone: an iPhone only lets sound run from a
+    // tap, and a context made after that wait stays silent when nothing else is playing (a direct message, not a
+    // bubble). The meter and the note's shape then read nothing.
+    // Not waited for: a context the browser will not start yet must not hold up the recording itself.
+    const context = new AudioContext();
+    context.resume().catch(() => {});
+    let stream: MediaStream | undefined;
     try {
-        context = new AudioContext();
-        return await wire(stream, context, format);
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        return wire(stream, context, format);
     } catch (e) {
-        // The microphone is open by now: let it go, or the browser keeps its light on.
-        stream.getTracks().forEach((track) => track.stop());
-        await context?.close().catch(() => {});
+        // The microphone may be open by now: let it go, or the browser keeps its light on.
+        stream?.getTracks().forEach((track) => track.stop());
+        await context.close().catch(() => {});
         throw e;
     }
 }
 
-async function wire(stream: MediaStream, context: AudioContext, format: RecordingFormat): Promise<VoiceNoteRecording> {
+function wire(stream: MediaStream, context: AudioContext, format: RecordingFormat): VoiceNoteRecording {
     const analyser = context.createAnalyser();
     analyser.fftSize = 1024;
     context.createMediaStreamSource(stream).connect(analyser);
-    if (context.state === "suspended") await context.resume();
+    // Safari can also leave it "interrupted": anything but running is asked to run again, without waiting for it.
+    if (context.state !== "running") context.resume().catch(() => {});
     const samples = new Float32Array(analyser.fftSize);
 
     const recorder = new MediaRecorder(stream, {

@@ -86,16 +86,10 @@ export class ActivatablesManager {
             this.selectedActivatableObjectByDistance?.characterCloseByOutline(this.outlineColor);
             if (this.selectedActivatableObjectByDistance instanceof RemotePlayer == false) {
                 // TODO: improve this to show multiple trigger messages
-                let triggerMessage: string = getTriggerHint("object");
-                if (this.selectedActivatableObjectByDistance instanceof Entity) {
-                    for (const property of this.selectedActivatableObjectByDistance.getEntityData().properties) {
-                        if (property.type === "entityDescriptionProperties") continue;
-                        if (property.triggerMessage) {
-                            triggerMessage = property.triggerMessage;
-                            break;
-                        }
-                    }
-                }
+                const triggerMessage =
+                    this.selectedActivatableObjectByDistance instanceof Entity
+                        ? this.selectedActivatableObjectByDistance.getNearHint()
+                        : getTriggerHint("object");
                 this.selectedActivatableObjectByDistance.playText("object", triggerMessage, 10000, () => {
                     this.currentPlayer.scene.userInputManager.handleActivableEntity();
                 });

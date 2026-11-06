@@ -107,6 +107,16 @@ export function extensionOfLink(link: string | undefined): string {
     return extensionOf(path);
 }
 
+/** The file name a link ends with, without its query or fragment ("file" when it ends with none). */
+export function fileNameOfLink(link: string): string {
+    const lastSegment = link.split("?")[0].split("#")[0].split("/").pop() ?? "";
+    try {
+        return decodeURIComponent(lastSegment) || "file";
+    } catch {
+        return lastSegment || "file";
+    }
+}
+
 /** The kind of reader a file name asks for, or undefined when the viewer has none for it. */
 export function fileKindOf(name: string | undefined): FileViewerKind | undefined {
     return KIND_BY_EXTENSION[extensionOf(name)];

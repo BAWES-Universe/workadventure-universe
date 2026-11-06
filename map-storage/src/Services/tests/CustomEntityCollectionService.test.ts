@@ -74,8 +74,8 @@ describe("CustomEntityCollectionService", () => {
         const fromMapTwo = new CustomEntityCollectionService("host", "universe/world");
 
         await Promise.all([
-            fromMapOne.deleteEntity({ id: "a", wholeUpload: false, pictureIds: [], otherRoomWamUrls: [] }),
-            fromMapTwo.deleteEntity({ id: "b", wholeUpload: false, pictureIds: [], otherRoomWamUrls: [] }),
+            fromMapOne.deleteEntity({ id: "a", wholeUpload: false, pictureIds: [] }),
+            fromMapTwo.deleteEntity({ id: "b", wholeUpload: false, pictureIds: [] }),
             fromMapOne.modifyEntity({ id: "c", name: "renamed", tags: ["t"], depthOffset: 1 }),
         ]);
 

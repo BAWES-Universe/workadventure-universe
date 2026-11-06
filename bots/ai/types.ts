@@ -161,7 +161,10 @@ export interface AIStreamChunk {
     replyLimit?: ReplyLimitReached;
     reset?: boolean; // If true, frontend should clear current stream content before processing this chunk
     toolNames?: string[]; // Names of tools being called (for status display in the new bubble)
-    /** The calls this reset starts, in plain words, for the steps line of a direct message (#1545). */
+    /**
+     * The calls this reset starts, in plain words, for the steps line of a direct message (#1545). Also sent alone,
+     * without `reset`, when calls begin: their name is known and their arguments are still coming in.
+     */
     toolSteps?: ToolStep[];
     /** How the calls of the last round ended: sent once they ran, before the bot carries on. */
     toolStepResults?: ToolStepResult[];
@@ -257,6 +260,8 @@ export interface AIEmotionData {
     isInsult: boolean;             // Whether the message was an insult
     insultSeverity: number;        // 1-10 if insult, 0 otherwise
     context: 'sarcastic' | 'joking' | 'sincere' | 'frustrated' | 'angry' | 'neutral' | string;
+    /** Several people are in the bubble and this person told the bot they are done talking with it (#1670). Only ever true. */
+    doneTalking?: boolean;
 }
 
 /**

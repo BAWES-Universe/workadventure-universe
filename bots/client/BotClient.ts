@@ -22,6 +22,9 @@ import {
     apiVersionHash,
     FollowRequestMessage,
     FollowAbortMessage,
+    PrivateSpaceEvent,
+    AvailabilityStatus,
+    SetPlayerDetailsMessage,
 } from '@workadventure/messages';
 import type { PositionInterface, ViewportInterface } from '../../play/src/front/Connection/ConnexionModels';
 import { BotState } from './BotState';
@@ -29,13 +32,27 @@ import type { BaseBehavior } from '../behaviors/BaseBehavior';
 import { BotPathfindingManager } from '../utils/BotPathfindingManager';
 import { PathSmoother } from '../utils/PathSmoother';
 import { movementLogger } from '../utils/MovementLogger';
-import type { BotConfiguration } from '../server/AdminApiService';
+import { adminApiService, type BotConfiguration } from '../server/AdminApiService';
 import { CANNOT_CHECK_CHAT_LINE, type BotAccessGate, type BotAccessVerdict } from '../server/BotAccessGate';
 import { FileParser } from '../services/FileParser';
 import type { ChatUpload, SentMedia } from '../services/ChatFiles';
 import { extractChatLinks } from '../utils/chatLinks';
 import { resolve4, resolve6 } from 'dns/promises';
 import * as Sentry from '@sentry/node';
+import { VoiceCalls } from '../voice/VoiceCalls';
+import { WorkerLink } from '../voice/VoiceLink';
+import { VOICE_BOT_TAG } from '../voice/VoiceBotTag';
+import { MeetingPresence, type MeetingArea } from '../voice/MeetingAreas';
+import { voiceOrbitSettings, voiceReplyLimits, voiceWorkerSettings } from '../voice/settings';
+import { BotVoiceSettings } from '../voice/VoiceSettings';
+import { BotSpeech } from '../voice/BotSpeech';
+import { OrbitTurnGate, pausedLine } from '../voice/VoiceAllowance';
+import { pausedAtCapacityEvent } from '../voice/VoiceLoad';
+import { captureServerEvent } from '../ai/PostHogClient';
+import { BotAttention, followUpSeconds } from './BotAttention';
+import { isBotSpaceUser, type BotAsksPort } from '../mcp/NearbyAsks';
+import type { PrivateEventPusherToFront } from '@workadventure/messages';
+import { audioFileNameFor } from '../utils/audioFileName';
 
 // Get the secret key from environment - must match pusher's SECRET_KEY
 const SECRET_KEY = process.env.SECRET_KEY || 'default-secret-key';
@@ -97,7 +114,16 @@ export class BotClient {
     private pendingMessages: ClientToServerMessage[] = [];
     private static readonly MAX_PENDING_MESSAGES = 100;
     private spaces: Map<string, SpaceUser['spaceUserId']> = new Map();
+    /** Audio connections with people, for a voice bot only (see isVoiceBot). Null for every other bot. */
+    private voice: VoiceCalls | null = null;
+    /** What a voice bot says out loud of the replies it writes (see voice/BotSpeech.ts). Null for every other bot. */
+    private speech: BotSpeech | null = null;
+    /** Which meeting room the bot stands in, for a voice bot only (see voice/MeetingAreas.ts). */
+    private meeting: MeetingPresence | null = null;
+    private meetingAreas: { areas: MeetingArea[]; roomUrl: string } = { areas: [], roomUrl: '' };
     private players: Map<number, PlayerInfo> = new Map();
+    /** Cards in nearby chat and voice (#1658). Set by the bot manager; without it a bubble never gets a card. */
+    private asks: BotAsksPort | undefined;
     // Conversation bubbles the bot can see: groupId -> user ids in that bubble
     private bubbles: Map<number, number[]> = new Map();
     private queryId: number = 0;
@@ -136,8 +162,37 @@ export class BotClient {
     // Callback invoked when WebSocket unexpectedly disconnects (not during initial connection)
     public onDisconnect?: () => void;
 
+    /**
+     * Who the bot listens to when others are in the bubble (#1220): the person who says its name, who summoned it, or
+     * who it answered a moment ago. With one person it listens to them as always.
+     */
+    private readonly attention: BotAttention;
+
     constructor(private config: BotConfig) {
         this.state = new BotState(config.position);
+        this.attention = new BotAttention(
+            config.name,
+            followUpSeconds(),
+            (userId) => this.behavior?.isSummonedBy?.(userId) ?? false,
+            (userId) => (this.behavior?.isBusyWith?.(userId) ?? false) || (this.speech?.isSpeakingTo(userId) ?? false)
+        );
+    }
+
+    /**
+     * Counts someone toward the people in the bubble (#1220), unless it is this bot or another bot. Bots are told apart
+     * by who they are (the bot tag or a bot uuid, as the voice relay does), not by their number: numbers repeat from
+     * room to room, and a person must never be taken for a bot because of one.
+     */
+    private rememberPerson(spaceName: string, userId: number, user: { tags?: string[]; uuid?: string }): void {
+        if (userId === this.userId || user.tags?.includes('bot') || user.uuid?.startsWith('bot-')) return;
+        this.attention.personJoined(spaceName, userId);
+    }
+
+    /** The numeric player id in a space user id ("roomID_userID"), or 0. */
+    private static playerIdOf(spaceUserId: string | undefined): number {
+        const at = spaceUserId?.lastIndexOf('_') ?? -1;
+        const id = at === -1 ? NaN : Number.parseInt(spaceUserId!.substring(at + 1), 10);
+        return Number.isNaN(id) ? 0 : id;
     }
     
     /**
@@ -165,7 +220,8 @@ export class BotClient {
         const tokenData = {
             identifier: botIdentifier,
             username: this.config.name,
-            tags: ['bot'],
+            // A voice bot is the only kind of bot the game opens an audio connection with
+            tags: this.isVoiceBot() ? ['bot', VOICE_BOT_TAG] : ['bot'],
         };
         
         return jwt.sign(tokenData, SECRET_KEY, { expiresIn: '30d' });
@@ -247,6 +303,7 @@ export class BotClient {
                     this.onDisconnect?.();
                 }
                 this.connected = false;
+                this.stopVoice();
                 this.resetJoin();
             });
 
@@ -267,6 +324,7 @@ export class BotClient {
      * Disconnect from server
      */
     disconnect(): void {
+        this.stopVoice();
         // Unregister this bot's userId
         if (this.userId !== null) {
             BotClient.botUserIds.delete(this.userId);
@@ -313,6 +371,8 @@ export class BotClient {
      * Never throws.
      */
     private async mayChat(spaceName: string, senderId: number, message: object): Promise<boolean> {
+        // A meeting room's chat is not the bot's to answer: there the bot only takes part in the audio
+        if (this.isMeetingSpace(spaceName)) return false;
         const gate = this.accessGate;
         if (!gate || !this.behavior) return true;
         // Someone's first words can arrive just before the game says who they are: asking Orbit now would take a
@@ -331,15 +391,20 @@ export class BotClient {
                 return false;
             }
         }
-        const verdict = await this.chatVerdict(gate, this.behavior.getPersonForAccess(senderId));
+        return this.chatAllowed(gate, spaceName, senderId);
+    }
+
+    /** Orbit's answer for this person, with the owner's line said once per visit when it is a no. */
+    private async chatAllowed(gate: BotAccessGate, spaceName: string, personId: number): Promise<boolean> {
+        const verdict = await this.chatVerdict(gate, this.behavior!.getPersonForAccess(personId));
         if (verdict.kind === 'allowed') {
-            this.toldNoChat.delete(senderId);
+            this.toldNoChat.delete(personId);
             return true;
         }
         if (verdict.kind === 'refused') {
-            const toldAt = this.toldNoChat.get(senderId);
+            const toldAt = this.toldNoChat.get(personId);
             if (toldAt !== undefined && Date.now() - toldAt < BotClient.TOLD_NO_CHAT_FOR_MS) return false;
-            this.toldNoChat.set(senderId, Date.now());
+            this.toldNoChat.set(personId, Date.now());
         }
         this.sendChatMessage(spaceName, verdict.line);
         return false;
@@ -369,7 +434,7 @@ export class BotClient {
         const gate = this.accessGate;
         if (!gate || !this.behavior) return true;
         const verdict = await this.chatVerdict(gate, this.behavior.getPersonForAccess(personId));
-        if (verdict.kind === 'allowed') return true;
+        if (verdict.kind === 'allowed') return this.greetingWithinAllowance(personId);
         if (verdict.kind === 'refused') {
             const toldAt = this.toldNoChat.get(personId);
             if (toldAt === undefined || Date.now() - toldAt >= BotClient.TOLD_NO_CHAT_FOR_MS) {
@@ -378,6 +443,20 @@ export class BotClient {
             }
         }
         return false;
+    }
+
+    /**
+     * A voice bot greets only while replies beyond the ones kept for text are left (#1669): a greeting is a Universe AI reply nobody
+     * asked for. A greeting that isn't made says nothing. Every other bot is as it was. Never throws.
+     */
+    private async greetingWithinAllowance(personId: number): Promise<boolean> {
+        if (!this.isVoiceBot() || !this.behavior) return true;
+        try {
+            return await this.behavior.mayGreetWithinAllowance(personId);
+        } catch (error) {
+            console.warn(`[Bot ${this.config.botId}] Could not check the allowance for a greeting, greeting anyway: ${error instanceof Error ? error.message : 'unknown'}`);
+            return true;
+        }
     }
 
     /**
@@ -419,6 +498,8 @@ export class BotClient {
         }
         this.behavior = behavior;
         behavior.setBot(this);
+        // Who the bot has just answered can go on without its name for a while (#1220)
+        behavior.onAnswerFinished = (userId, spaceName) => this.attention.answered(spaceName, userId);
     }
 
     /**
@@ -543,6 +624,7 @@ export class BotClient {
         const newDirection = this.state.getDirection();
         const newMoving = this.state.isMoving();
         const now = Date.now();
+        if (this.joined) this.meeting?.update(newPosition);
         
         // Calculate position change distance
         const positionChanged = this.lastSentPosition 
@@ -1384,11 +1466,13 @@ export class BotClient {
         }
 
         try {
+            this.voice?.spaceLeft(spaceName);
+            this.speech?.spaceLeft(spaceName);
+            this.attention.spaceLeft(spaceName);
+            const wasMeeting = this.isMeetingSpace(spaceName);
             await this.emitLeaveSpace(spaceName);
             this.spaces.delete(spaceName);
-            if (this.behavior) {
-                this.behavior.onSpaceLeft(spaceName);
-            }
+            this.afterSpaceLeft(spaceName, wasMeeting);
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[Bot ${this.config.botId}] Left space: ${spaceName}`);
             }
@@ -1438,6 +1522,7 @@ export class BotClient {
                                 name: this.config.name,
                                 galleryUrls: [],
                                 fileNames: [],
+                                voiceWaveform: [],
                             },
                         },
                     },
@@ -1765,12 +1850,18 @@ export class BotClient {
     async sendAudio(spaceName: string, url: string, asker?: number, mimeType?: string): Promise<string> {
         const mimeHint = mimeType || this.inferMimeFromExt(url);
         try {
-            const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
-            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, undefined, undefined, asker)) {
+            const { location, mimeType: uploadedType } = await this.uploadMedia(url, mimeHint);
+            // A song with no usable name would show as a plain player: give it one that ends as audio.
+            // When nothing says which audio type it is (a stored link is a bare id, with no type), mp3 is the common one,
+            // and the message still goes out as audio, not as a file the card would not play.
+            const audioType = [mimeHint, uploadedType].find((one) => one?.startsWith('audio/')) ?? 'audio/mpeg';
+            const fileName = audioFileNameFor(location, audioType);
+            const sentType = uploadedType.startsWith('audio/') ? uploadedType : audioType;
+            if (!this.sendMediaMessage(spaceName, location, 'audio', sentType, undefined, fileName, asker)) {
                 const err = new Error(`Bot is not in space ${spaceName} — cannot send audio`);
                 (err as any)._cdnUrl = location;
-                (err as any)._mediaType = mediaType;
-                (err as any)._mimeType = mimeType;
+                (err as any)._mediaType = 'audio';
+                (err as any)._mimeType = sentType;
                 throw err;
             }
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -1907,6 +1998,7 @@ export class BotClient {
                                 galleryUrls: [],
                                 fileNames: [],
                                 fileName,
+                                voiceWaveform: [],
                             },
                         },
                     },
@@ -1954,6 +2046,7 @@ export class BotClient {
                                 mimeType,
                                 galleryUrls: extraUrls,
                                 fileNames: fileNames ?? [],
+                                voiceWaveform: [],
                             },
                         },
                     },
@@ -2020,7 +2113,8 @@ export class BotClient {
         isError?: boolean,
         errorMessage?: string,
         reset?: boolean,
-        steps?: string
+        steps?: string,
+        mood?: string
     ): void {
         const spaceUserId = this.spaces.get(spaceName);
         if (!spaceUserId) {
@@ -2048,7 +2142,88 @@ export class BotClient {
                                 errorMessage,
                                 reset: reset ?? false,
                                 ...(steps !== undefined ? { steps } : {}),
+                                ...(mood ? { mood } : {}),
                             },
+                        },
+                    },
+                },
+            },
+        });
+        // A voice bot says what it has written once it is final: after the chat has it, and never the steps line or an error
+        if (this.speech && steps === undefined && !isError) {
+            if (isFinal) {
+                if (finalContent) this.speech.final(spaceName, responseId, finalContent);
+            } else if (token) {
+                this.speech.begin(responseId);
+            }
+        }
+    }
+
+    /** Says a voice bot's reply was cut off by someone speaking: the message in everyone's chat is marked (#1665). */
+    private sendSpeechStopped(spaceName: string, responseId: string): void {
+        this.send({
+            message: {
+                $case: 'publicEvent',
+                publicEvent: {
+                    spaceName,
+                    spaceEvent: {
+                        event: {
+                            $case: 'spaceStreamMessage',
+                            spaceStreamMessage: { responseId, token: '', isFinal: true, isError: false, reset: false, stoppedBySpeech: true },
+                        },
+                    },
+                },
+            },
+        });
+    }
+
+    /** A tool round or a retry of this person's reply is under way: what finishes meanwhile is not spoken (see BotSpeech). */
+    holdSpeech(spaceName: string, playerId: number): void {
+        this.speech?.hold(spaceName, playerId);
+    }
+
+    /** This person's reply has been checked: what finishes next may be spoken. */
+    releaseSpeech(spaceName: string, playerId: number): void {
+        this.speech?.release(spaceName, playerId);
+    }
+
+    /**
+     * Whether this bot should tell, by its own judgement, that this person is done talking with it (#1670): a voice bot
+     * with other people in the bubble, and not on a summon to this person (a summon makes everything they say its own).
+     */
+    mayEndFollowUp(spaceName: string, playerId: number): boolean {
+        return this.isVoiceBot() && this.attention.endable(spaceName, playerId);
+    }
+
+    /**
+     * The bot has judged that this person is done talking with it (#1670). Only their follow-up window ends: the bot
+     * stops speaking to them, they need its name again, and a private line says so. Nobody else's window is touched, and
+     * nothing the bot is working on is cancelled. False when it does not apply (the caller then answers as usual).
+     */
+    endFollowUp(spaceName: string, playerId: number): boolean {
+        if (!this.mayEndFollowUp(spaceName, playerId)) return false;
+        this.attention.ended(spaceName, playerId);
+        this.speech?.endFor(spaceName, playerId);
+        this.sendVoiceDone(spaceName, playerId);
+        return true;
+    }
+
+    /** Tells one person, and only them, that the bot stopped listening to them without its name (#1670). */
+    private sendVoiceDone(spaceName: string, playerId: number): void {
+        const spaceUserId = this.spaces.get(spaceName);
+        if (!spaceUserId) return;
+        const cut = spaceUserId.lastIndexOf('_');
+        if (cut < 0) return;
+        this.send({
+            message: {
+                $case: 'privateEvent',
+                privateEvent: {
+                    spaceName,
+                    receiverUserId: `${spaceUserId.slice(0, cut)}_${playerId}`,
+                    spaceEvent: {
+                        event: {
+                            $case: 'botVoiceDone',
+                            botVoiceDone: { botId: this.config.botId, botName: this.config.name },
                         },
                     },
                 },
@@ -2082,6 +2257,99 @@ export class BotClient {
                 },
             },
         });
+    }
+
+    /**
+     * The card this bot needs one answer with, or a reply only one person needs, to that person and nobody else
+     * (#1658). Sent as a private event; the pusher passes it on only when a bot sends it about itself. False when the
+     * bot is not in that space, so nothing was sent.
+     */
+    sendAskEvent(spaceName: string, playerId: number, event: { kind: 'card' | 'reply'; id: string; revision: number; body: string }): boolean {
+        const spaceUserId = this.spaces.get(spaceName);
+        if (!spaceUserId) return false;
+        const cut = spaceUserId.lastIndexOf('_');
+        if (cut < 0) return false;
+        this.sendPrivateEvent(spaceName, `${spaceUserId.slice(0, cut)}_${playerId}`, {
+            $case: 'botAsk',
+            botAsk: { botId: this.config.botId, botName: this.config.name, ...event },
+        });
+        return true;
+    }
+
+    /**
+     * One plain line everyone in the bubble reads, and hears from a voice bot (#1658): a message of its own, finished at
+     * once, so a voice bot says it as it says any reply.
+     */
+    sayToBubble(spaceName: string, line: string): boolean {
+        if (!this.spaces.has(spaceName) || !line.trim()) return false;
+        const responseId = `bot-${this.config.botId}-say-${uuidv4()}`;
+        this.sendStreamMessage(spaceName, responseId, line, false);
+        this.sendStreamMessage(spaceName, responseId, '', true, line);
+        return true;
+    }
+
+    /** Where cards in nearby chat and voice are shown, and their taps come from (#1658). */
+    setAsks(asks: BotAsksPort | undefined): void {
+        this.asks = asks;
+    }
+
+    /** When each person last said something out loud to this voice bot, so what reaches the AI next can be told from something typed (#1661). */
+    private readonly lastSpoken = new Map<string, number>();
+    /** A spoken line reaches the AI within moments; one older than this was followed by something typed. */
+    private static readonly SPOKEN_FRESH_MS = 20_000;
+
+    /** Remembers that this person just said something out loud (not typed). */
+    private noteSpoken(spaceName: string, playerId: number): void {
+        const key = `${spaceName}|${playerId}`;
+        this.lastSpoken.delete(key);
+        this.lastSpoken.set(key, Date.now());
+        if (this.lastSpoken.size > 500) this.lastSpoken.delete(this.lastSpoken.keys().next().value!);
+    }
+
+    /** Whether the line that just reached the AI from this person was said out loud and not typed. Asked once per line. */
+    takeSpoken(spaceName: string, playerId: number): boolean {
+        const key = `${spaceName}|${playerId}`;
+        const at = this.lastSpoken.get(key);
+        if (at === undefined) return false;
+        this.lastSpoken.delete(key);
+        return Date.now() - at <= BotClient.SPOKEN_FRESH_MS;
+    }
+
+    /**
+     * What a person picked on a card the bot showed them, handed to the bot as what they said (#1661): the bot carries on
+     * with it as it would with any message from them. Only a person in the bubble gets here, and Orbit's chat answer for
+     * them is asked again, as for a message.
+     */
+    async answerFromCard(spaceName: string, playerId: number, text: string): Promise<boolean> {
+        if (!this.behavior || !this.spaces.has(spaceName) || !this.inBubble(playerId)) return false;
+        // The owner may have limited who can chat with the bot since the card was shown: a tap is held to it like a message
+        if (this.isMeetingSpace(spaceName)) return false;
+        if (this.accessGate && !(await this.chatAllowed(this.accessGate, spaceName, playerId))) return false;
+        this.behavior.onChatMessage(spaceName, text, playerId).catch((error) => {
+            console.error(`[Bot ${this.config.botId}] onChatMessage error for a card answer:`, error);
+            Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
+        });
+        return true;
+    }
+
+    /** Whether this person is in a bubble the bot sees: a card is for people in one, and nobody else. */
+    inBubble(playerId: number): boolean {
+        return this.getBubbleUserIds(playerId) !== undefined;
+    }
+
+    /**
+     * A tap on a card, from one person in the bubble (#1658): the event must come to this bot from a person (never a bot)
+     * in a space it is in. Who they are is the game's word, never the event's.
+     */
+    private onAskEvent(event: PrivateEventPusherToFront): void {
+        const inner = event.spaceEvent?.event;
+        if (!inner || inner.$case !== 'botAskAnswer' || !this.asks) return;
+        const sender = event.sender;
+        const me = this.spaces.get(event.spaceName);
+        if (!sender || !me || event.receiverUserId !== me || sender.spaceUserId === me || isBotSpaceUser(sender)) return;
+        const playerId = BotClient.playerIdOf(sender.spaceUserId);
+        if (!playerId) return;
+        this.asks.tap(this, event.spaceName, playerId, inner.botAskAnswer);
     }
 
     /**
@@ -2329,6 +2597,175 @@ export class BotClient {
     /** The name people know this bot by */
     getName(): string {
         return this.config.name;
+    }
+
+    /**
+     * A voice bot is one whose configuration says voice is on (the owner's choice, Orbit #740). Every other bot is
+     * text-only and never touches the voice code.
+     */
+    isVoiceBot(): boolean {
+        return this.fullConfig?.voiceEnabled === true;
+    }
+
+    /** Opens the bot's side of its audio connections. The socket to the voice worker is only used by this bot. */
+    private startVoice(): void {
+        if (!this.isVoiceBot() || this.voice) return;
+        const settings = voiceWorkerSettings();
+        this.voice = new VoiceCalls(
+            this.config.botId,
+            {
+                botSpaceUserId: (spaceName) => this.spaces.get(spaceName),
+                sendSignal: (spaceName, receiverUserId, signal) =>
+                    this.sendPrivateEvent(spaceName, receiverUserId, { $case: 'webRtcSignal', webRtcSignal: { signal } }),
+                sendDisconnect: (spaceName, receiverUserId) =>
+                    this.sendPrivateEvent(spaceName, receiverUserId, {
+                        $case: 'webRtcDisconnectMessage',
+                        webRtcDisconnectMessage: { userId: this.spaces.get(spaceName) ?? '' },
+                    }),
+                sendStart: (spaceName, receiverUserId) =>
+                    this.sendPrivateEvent(spaceName, receiverUserId, {
+                        $case: 'webRtcStartMessage',
+                        webRtcStartMessage: { userId: this.spaces.get(spaceName) ?? '', initiator: true },
+                    }),
+                sendDraft: (spaceName, receiverUserId, draft) =>
+                    this.sendPrivateEvent(spaceName, receiverUserId, {
+                        $case: 'botVoiceDraft',
+                        botVoiceDraft: {
+                            botId: this.config.botId,
+                            botName: this.config.name,
+                            turnId: draft.turnId,
+                            state: draft.state,
+                            text: draft.text,
+                            reason: draft.reason ?? '',
+                        },
+                    }),
+                sendStatus: (spaceName, receiverUserId, status, left) =>
+                    this.sendPrivateEvent(spaceName, receiverUserId, {
+                        $case: 'botVoiceStatus',
+                        botVoiceStatus: {
+                            botId: this.config.botId,
+                            botName: this.config.name,
+                            state: status,
+                            // How long, after answering someone, the bot goes on listening to them without its name
+                            followUpSeconds: this.attention.followUpSeconds,
+                            // The spoken replies this person has left, when Orbit said (#1669)
+                            repliesLeft: left?.count,
+                            repliesResetAt: left?.resetsAt ?? '',
+                        },
+                    }),
+            },
+            (handlers) => {
+                const link = new WorkerLink({ url: settings.url, botId: this.config.botId, secret: settings.secret, ...handlers });
+                link.start();
+                return link;
+            },
+            (message) => console.warn(`[Bot ${this.config.botId}] ${message}`),
+            // Who hears and speaks for this bot is its maker's choice in Orbit. Without Orbit (a local setup) the worker's test engine is used.
+            adminApiService.isConfigured() && process.env.BOT_SERVICE_TOKEN
+                ? new BotVoiceSettings(this.config.botId, adminApiService, voiceOrbitSettings(), (message) => console.warn(`[Bot ${this.config.botId}] ${message}`))
+                : undefined,
+            // A reply Universe AI pays for comes out of the person's allowance (#1669)
+            adminApiService.isConfigured() && process.env.BOT_SERVICE_TOKEN
+                ? new OrbitTurnGate(
+                      this.config.botId,
+                      adminApiService,
+                      (playerId) => this.behavior?.getTalker(playerId) ?? null,
+                      (message) => console.warn(`[Bot ${this.config.botId}] ${message}`)
+                  )
+                : undefined
+        );
+        // Voice paused for someone (the allowance, or a key that isn't working): the one fixed line, in the chat the reply is in
+        this.voice.onPaused = (spaceName) => this.sendChatMessage(spaceName, pausedLine(this.config.name));
+        this.speech = new BotSpeech(this.voice, voiceReplyLimits());
+        // With others in the bubble, a spoken turn is the bot's only when it was said to the bot (#1220)
+        this.voice.hears = (spaceName, personId, text) => this.attention.hears(spaceName, BotClient.playerIdOf(personId), text);
+        this.voice.playerIdOf = (personId) => BotClient.playerIdOf(personId);
+        this.voice.onAudience = (spaceName) => this.speech?.audience(spaceName);
+        this.voice.onUnplayed = (spaceName, segmentId) => this.speech?.unplayed(spaceName, segmentId);
+        this.voice.onHeard = (spaceName, segmentId) => this.speech?.heard(spaceName, segmentId);
+        this.voice.onSessionEnded = (spaceName) => this.speech?.sessionEnded(spaceName);
+        this.voice.onPlayed = (_spaceName, segmentId) => this.speech?.played(segmentId);
+        // A spoken answer is over: the person can go on without the bot's name from now (#1220)
+        this.speech.onOver = (spaceName, personId) => this.attention.answered(spaceName, personId);
+        this.voice.onCrowded =(spaceName) => this.speech?.crowded(spaceName);
+        this.voice.onStopped = (spaceName, segmentId) => {
+            const responseId = this.speech?.stopped(spaceName, segmentId);
+            if (responseId) this.sendSpeechStopped(spaceName, responseId);
+        };
+        this.voice.onTurnedAway = (_spaceName, what) =>
+            captureServerEvent(`bot:${this.config.botId}`, 'voice_paused_at_capacity', pausedAtCapacityEvent(this.config.botId, this.config.roomUrl, what));
+        this.meeting = new MeetingPresence({
+            join: (spaceName) => this.joinMeetingSpace(spaceName),
+            leave: (spaceName) => this.leaveMeetingSpace(spaceName),
+        });
+        this.meeting.setAreas(this.meetingAreas.areas, this.meetingAreas.roomUrl);
+    }
+
+    private stopVoice(): void {
+        this.speech?.shutdown();
+        this.voice?.shutdown();
+        this.voice = null;
+        this.speech = null;
+        this.meeting?.reset();
+        this.meeting = null;
+    }
+
+    /** The meeting rooms of the map (areas with a LiveKit room setting). Only a voice bot ever uses them. */
+    setMeetingAreas(areas: MeetingArea[], roomUrl: string): void {
+        this.meetingAreas = { areas, roomUrl };
+        this.meeting?.setAreas(areas, roomUrl);
+    }
+
+    private isMeetingSpace(spaceName: string): boolean {
+        return this.meeting?.owns(spaceName) === true;
+    }
+
+    /**
+     * The bot stands in a meeting room: it joins the room's space like a player does, so the voice code treats it as
+     * any other space. It takes part in the audio only: the bot's behaviour (its conversations, greetings, chat) is
+     * not told about the room, and the bot shows as being in a meeting, as a player does, so that no bubble forms
+     * around it meanwhile.
+     */
+    private async joinMeetingSpace(spaceName: string): Promise<boolean> {
+        try {
+            const spaceUserId = await this.emitJoinSpace(spaceName, FilterType.ALL_USERS, ['cameraState', 'microphoneState', 'screenShareState']);
+            this.spaces.set(spaceName, spaceUserId);
+            this.emitAddSpaceFilter(spaceName);
+            this.sendSpaceUserUpdate(spaceName, { cameraState: false, microphoneState: false, screenSharingState: false });
+            this.sendAvailability(AvailabilityStatus.LIVEKIT);
+            return true;
+        } catch (error) {
+            console.warn(`[Bot ${this.config.botId}] Could not join meeting room ${spaceName}: ${error instanceof Error ? error.message : error}`);
+            return false;
+        }
+    }
+
+    private async leaveMeetingSpace(spaceName: string): Promise<void> {
+        try {
+            this.emitRemoveSpaceFilter(spaceName);
+            this.voice?.spaceLeft(spaceName);
+            this.speech?.spaceLeft(spaceName);
+            await this.emitLeaveSpace(spaceName);
+        } catch (error) {
+            console.warn(`[Bot ${this.config.botId}] Could not leave meeting room ${spaceName}:`, error);
+        }
+        this.spaces.delete(spaceName);
+        this.sendAvailability(AvailabilityStatus.ONLINE);
+    }
+
+    private sendAvailability(availabilityStatus: AvailabilityStatus): void {
+        this.send({ message: { $case: 'setPlayerDetailsMessage', setPlayerDetailsMessage: SetPlayerDetailsMessage.fromPartial({ availabilityStatus }) } });
+    }
+
+    /** A private event to one person in a space the bot is in. */
+    private sendPrivateEvent(spaceName: string, receiverUserId: string, event: NonNullable<PrivateSpaceEvent['event']>): void {
+        if (!this.spaces.has(spaceName)) return;
+        this.send({
+            message: {
+                $case: 'privateEvent',
+                privateEvent: { spaceName, receiverUserId, spaceEvent: { event } },
+            },
+        });
     }
 
     /**
@@ -2594,6 +3031,10 @@ export class BotClient {
                 // Register this bot's userId so other bots can ignore it
                 BotClient.botUserIds.add(this.userId);
                 this.markJoined();
+                this.startVoice();
+                for (const variable of message.roomJoinedMessage.areaPropertyVariable ?? []) {
+                    this.meeting?.setLive(variable.areaId, variable.propertyId, variable.key, variable.value);
+                }
                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                     console.log(`[Bot ${this.config.botId}] ✅ Joined room, userId: ${this.userId}`);
                 }
@@ -2757,9 +3198,10 @@ export class BotClient {
                 break;
 
             case 'initSpaceUsersMessage':
+                this.voice?.spaceUsers(message.initSpaceUsersMessage.spaceName, message.initSpaceUsersMessage.users ?? []);
                 // When bot joins a space, backend sends all existing users with their UUIDs
                 // This ensures we have UUID tracking before any chat messages arrive
-                if (this.behavior && message.initSpaceUsersMessage) {
+                if (this.behavior && message.initSpaceUsersMessage && !this.isMeetingSpace(message.initSpaceUsersMessage.spaceName)) {
                     const spaceName = message.initSpaceUsersMessage.spaceName;
                     const spaceUsers = message.initSpaceUsersMessage.users || [];
                     
@@ -2803,6 +3245,7 @@ export class BotClient {
                             }
                             
                             // Call onSpaceUserJoined to track UUIDs and auth status
+                            this.rememberPerson(spaceName, numericUserId, spaceUser);
                             await this.behavior.onSpaceUserJoined(spaceName, userWithId);
                         } else {
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -2814,9 +3257,15 @@ export class BotClient {
                 break;
 
             case 'addSpaceUserMessage':
+                if (message.addSpaceUserMessage.user) this.voice?.spaceUserJoined(message.addSpaceUserMessage.spaceName, message.addSpaceUserMessage.user);
+                // A person who came back (a reload, or walking back to the bubble) gets their cards and replies again (#1658)
+                if (message.addSpaceUserMessage.user && this.asks && !isBotSpaceUser(message.addSpaceUserMessage.user)) {
+                    const joined = BotClient.playerIdOf(message.addSpaceUserMessage.user.spaceUserId);
+                    if (joined) this.asks.personBack(this, message.addSpaceUserMessage.spaceName, joined);
+                }
                 // When a user joins a space, we get their SpaceUser info
                 // Extract numeric userId from spaceUserId to avoid name collisions
-                if (this.behavior && message.addSpaceUserMessage) {
+                if (this.behavior && message.addSpaceUserMessage && !this.isMeetingSpace(message.addSpaceUserMessage.spaceName)) {
                     const spaceName = message.addSpaceUserMessage.spaceName;
                     const spaceUser = message.addSpaceUserMessage.user;
                     
@@ -2854,6 +3303,7 @@ export class BotClient {
                         console.log(`[Bot ${this.config.botId}] 📝 Tracking UUID from addSpaceUserMessage for user ${numericUserId} (${spaceUser.name}): ${spaceUser.uuid || 'NO UUID'}, isLogged: ${spaceUser.isLogged || false}`);
                     }
                     
+                    this.rememberPerson(spaceName, numericUserId, spaceUser);
                     await this.behavior.onSpaceUserJoined(spaceName, userWithId);
                 }
                 break;
@@ -2863,6 +3313,10 @@ export class BotClient {
                     const chatMessage = message.updateSpaceUserMessage.message.message;
                     if (chatMessage && this.behavior) {
                         console.log(`[Bot ${this.config.botId}] Received chat via updateSpaceUserMessage: "${chatMessage}" from user ${message.updateSpaceUserMessage.userId}`);
+                        // With others in the bubble, only what is said to the bot reaches it (#1220)
+                        if (!this.attention.hears(message.updateSpaceUserMessage.spaceName, message.updateSpaceUserMessage.userId ?? 0, chatMessage)) {
+                            break;
+                        }
                         if (!(await this.mayChat(message.updateSpaceUserMessage.spaceName, message.updateSpaceUserMessage.userId ?? 0, message))) {
                             break;
                         }
@@ -2962,10 +3416,27 @@ export class BotClient {
                             console.warn(`[Bot ${this.config.botId}] Behavior is null, cannot handle chat message`);
                             break;
                         }
+                        // A line made from what someone said to a voice bot is for that bot alone: any other bot in
+                        // the bubble (text-only, or another voice bot) shows it but does not take it for a new
+                        // request, and the bot it is for answers it once, however many times it arrives
+                        if (spaceMessage.spoken) {
+                            if (spaceMessage.spoken.botId !== this.config.botId) break;
+                            if (this.voice?.acceptSpoken(spaceName, senderUserId, spaceMessage.spoken.turnId, spaceMessage.message) === 'duplicate') break;
+                        } else {
+                            // Typed: whatever was said out loud before is not what this answers (#1661)
+                            this.lastSpoken.delete(`${spaceName}|${senderId}`);
+                        }
+                        // With others in the bubble, a line not meant for the bot goes no further: it is not read, saved or
+                        // answered, and the person is not even asked about (#1220). Before anything else is done with it.
+                        if (!this.attention.hears(spaceName, senderId, spaceMessage.message)) {
+                            break;
+                        }
                         // Before anything is done with the message (links looked up, files read, the AI asked)
                         if (!(await this.mayChat(spaceName, senderId, message))) {
                             break;
                         }
+                        // Said out loud, not typed, to this bot and let through: a card waiting for an answer says so (#1661)
+                        if (spaceMessage.spoken) this.noteSpoken(spaceName, senderId);
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                             console.log(`[Bot ${this.config.botId}] Calling behavior.onChatMessage: "${spaceMessage.message}" from ${senderName} (userId: ${senderId})`);
                         }
@@ -3012,9 +3483,31 @@ export class BotClient {
                 break;
 
             case 'removeSpaceUserMessage':
-                if (this.behavior) {
+                this.voice?.spaceUserLeft(message.removeSpaceUserMessage.spaceName, message.removeSpaceUserMessage.spaceUserId);
+                if (this.behavior && !this.isMeetingSpace(message.removeSpaceUserMessage.spaceName)) {
+                    this.attention.personLeft(
+                        message.removeSpaceUserMessage.spaceName,
+                        BotClient.playerIdOf(message.removeSpaceUserMessage.spaceUserId) || (message.removeSpaceUserMessage.userId ?? 0)
+                    );
                     this.behavior.onSpaceUserLeft(message.removeSpaceUserMessage.spaceName, message.removeSpaceUserMessage.userId);
                 }
+                break;
+
+            case 'areaPropertyVariableMessage':
+                // How many people are inside a room and whether it is locked: a voice bot waits at the door of a closed one
+                this.meeting?.setLive(
+                    message.areaPropertyVariableMessage.areaId,
+                    message.areaPropertyVariableMessage.propertyId,
+                    message.areaPropertyVariableMessage.key,
+                    message.areaPropertyVariableMessage.value
+                );
+                break;
+
+            case 'privateEvent':
+                // Only a voice bot has audio connections; for every other bot a private event changes nothing
+                this.voice?.handlePrivateEvent(message.privateEvent);
+                // A tap on a card this bot showed in nearby chat (#1658)
+                this.onAskEvent(message.privateEvent);
                 break;
 
             case 'errorMessage':
@@ -3179,17 +3672,33 @@ export class BotClient {
         });
     }
 
+    /**
+     * What follows a space that is left, whoever ended it (the bot, or the game with a leave request). A meeting room was
+     * never the behaviour's, and the bot showed as in a meeting while it stood there: it is plainly online again, or no
+     * bubble could form around it until it entered and left another meeting room.
+     */
+    private afterSpaceLeft(spaceName: string, wasMeeting: boolean): void {
+        if (!wasMeeting) {
+            this.behavior?.onSpaceLeft(spaceName);
+            return;
+        }
+        this.meeting?.spaceLeft(spaceName);
+        this.sendAvailability(AvailabilityStatus.ONLINE);
+    }
+
     private async handleLeaveSpaceRequest(request: LeaveSpaceRequestMessage): Promise<void> {
         try {
             // Unregister as a space watcher before leaving
             // This matches frontend behavior and ensures proper cleanup
             this.emitRemoveSpaceFilter(request.spaceName);
             
+            this.voice?.spaceLeft(request.spaceName);
+            this.speech?.spaceLeft(request.spaceName);
+            this.attention.spaceLeft(request.spaceName);
+            const wasMeeting = this.isMeetingSpace(request.spaceName);
             await this.emitLeaveSpace(request.spaceName);
             this.spaces.delete(request.spaceName);
-            if (this.behavior) {
-                this.behavior.onSpaceLeft(request.spaceName);
-            }
+            this.afterSpaceLeft(request.spaceName, wasMeeting);
         } catch (error) {
             console.error(`[Bot ${this.config.botId}] Error leaving space:`, error);
         }

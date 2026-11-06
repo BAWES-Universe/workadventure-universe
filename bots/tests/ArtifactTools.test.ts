@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
     ARTIFACT_KEY,
+    artifactCardAgain,
     artifactDirectMessage,
     artifactMarker,
     artifactToolDefinitions,
@@ -129,6 +130,34 @@ describe('change_artifact', () => {
         expect(vi.mocked(ctx.admin.changeArtifact).mock.calls[0][2]).not.toHaveProperty('edits');
     });
 
+    it("tells the model that another bot's artifact is not changed itself, but saved as its own copy (Orbit #800)", () => {
+        const [, change] = artifactToolDefinitions();
+        expect(change.function.description).toContain('never changed itself');
+        expect(change.function.description).toContain('new copy of your own');
+    });
+
+    it("returns Orbit's copy as the card and names the original, when another bot's artifact was changed (Orbit #800)", async () => {
+        const copy = { id: 'art-9', title: 'Quests board', kind: 'app' as const, makerName: 'Pixel', version: 1, copiedFromId: 'art-1' };
+        const ctx = context({ changeArtifact: vi.fn(async () => ({ artifact: copy, version: { number: 1, summary: null }, hidden: false })) as never });
+        const run = await runArtifactTool('change_artifact', { id: 'art-1', content: '<p>x</p>' }, ctx);
+        expect(run.result).toMatchObject({ success: true, id: 'art-9', version: 1, copiedFrom: 'art-1' });
+        expect(run.card).toMatchObject({ id: 'art-9', version: 1 });
+        const line = formatArtifactResult('change_artifact', run.result);
+        expect(line).toContain("another bot's");
+        expect(line).toContain('id art-9');
+        expect(line).toContain('the original is unchanged');
+        // Its own artifact still changes in place: same id, no copy line
+        const own = await runArtifactTool('change_artifact', { id: 'art-1', content: '<p>x</p>' }, context());
+        expect(own.result).not.toHaveProperty('copiedFrom');
+        expect(formatArtifactResult('change_artifact', own.result)).toContain('it is version 2 now');
+    });
+
+    it("does not call it a copy when the id the model sent differs from the one Orbit answers with only in letter case", async () => {
+        const run = await runArtifactTool('change_artifact', { id: 'ART-1', content: '<p>x</p>' }, context());
+        expect(run.result).toMatchObject({ success: true, id: 'art-1' });
+        expect(run.result).not.toHaveProperty('copiedFrom');
+    });
+
     it('wants an id and either edits or a file, and sends nothing otherwise', async () => {
         const ctx = context();
         expect((await runArtifactTool('change_artifact', { edits: [{ old: 'a', new: 'b' }] }, ctx)).result).toHaveProperty('error');
@@ -159,6 +188,23 @@ describe('read_artifact and list_artifacts', () => {
         expect(run.card).toBeUndefined();
         await runArtifactTool('read_artifact', { id: 'art-1', version: 'x' }, ctx);
         expect(ctx.admin.readArtifact).toHaveBeenLastCalledWith('art-1', expect.anything(), null);
+    });
+
+    it('sends the artifacts the person pointed at with a read or a change, and with nothing else (game #1781)', async () => {
+        const ctx = { ...context(), referencedArtifactIds: ['0b7c1d2e-1111-4222-8333-944455556666'] };
+        await runArtifactTool('read_artifact', { id: 'art-1' }, ctx);
+        expect(ctx.admin.readArtifact).toHaveBeenLastCalledWith('art-1', expect.objectContaining({ botId: 'bot1', referencedArtifactIds: ['0b7c1d2e-1111-4222-8333-944455556666'] }), null);
+        await runArtifactTool('change_artifact', { id: 'art-1', content: '<p>x</p>' }, ctx);
+        expect(vi.mocked(ctx.admin.changeArtifact).mock.calls[0][1]).toMatchObject({ referencedArtifactIds: ['0b7c1d2e-1111-4222-8333-944455556666'] });
+        // The list is the bot's own and takes no ids: Orbit refuses a body with fields it does not know
+        await runArtifactTool('list_artifacts', {}, ctx);
+        expect(vi.mocked(ctx.admin.listArtifactsInChat).mock.calls[0][0]).not.toHaveProperty('referencedArtifactIds');
+    });
+
+    it('sends no list of pointed-at artifacts when the person pointed at none', async () => {
+        const ctx = { ...context(), referencedArtifactIds: [] };
+        await runArtifactTool('read_artifact', { id: 'art-1' }, ctx);
+        expect(vi.mocked(ctx.admin.readArtifact).mock.calls[0][1]).not.toHaveProperty('referencedArtifactIds');
     });
 
     it('lists what was made in the chat, newest first, without addresses', async () => {
@@ -301,5 +347,39 @@ describe('a reply that says it saved an artifact (Orbit #666)', () => {
         expect(retry).toContain('change_artifact');
         expect(retry).toContain('If they did not ask for an artifact');
         expect(NOTHING_SAVED_LINE).toBe('No new version was saved.');
+    });
+});
+
+describe('the share link and the card again (#1815)', () => {
+    const cardContext = { botId: 'bot1', person: { signedIn: true, identifier: 'uuid-1', name: 'Khalid' }, chat: { kind: 'nearby' as const, ref: 'bubble-1' } };
+    it("tells the bot every artifact has a link the person copies, never to write one, and to use send_again for the card", () => {
+        const make = (findWith?: string) => artifactToolDefinitions(findWith ? { findWith } : {}).find((tool) => tool.function.name === 'make_artifact')!.function.description;
+        expect(make('find_files')).toContain('Every artifact has a share link');
+        expect(make('find_files')).toContain('taps Copy link');
+        expect(make('find_files')).toContain('Never say an artifact has no link, and never write a link yourself.');
+        expect(make('find_files')).toContain('use send_again with its id');
+        // Without the file tools there is no send_again to point at
+        expect(make()).toContain('Every artifact has a share link');
+        expect(make()).not.toContain('send_again');
+    });
+
+    it("gives the card of the latest version, read through Orbit's check with what the person pointed at, and saves nothing", async () => {
+        const readArtifact = vi.fn(async () => ({
+            artifact: { id: 'art-1', title: 'Quests board', kind: 'app', makerName: 'Scout', version: 3 },
+            version: { number: 3, summary: null },
+            content: '<h1>x</h1>',
+            hidden: false,
+        }));
+        const run = await artifactCardAgain('art-1', { ...cardContext, admin: { readArtifact } as never, referencedArtifactIds: ['art-1'] });
+        expect(readArtifact).toHaveBeenCalledWith('art-1', { botId: cardContext.botId, person: cardContext.person, chat: cardContext.chat, referencedArtifactIds: ['art-1'] });
+        expect(run.card).toEqual({ id: 'art-1', version: 3, title: 'Quests board', kind: 'app', maker: 'Scout' });
+        expect(run.result).toEqual({ sent: true, artifact: { id: 'art-1', title: 'Quests board', kind: 'app', version: 3 } });
+    });
+
+    it("gives no card, and Orbit's no in words, when this bot may not open it", async () => {
+        const readArtifact = vi.fn(async () => { throw new ArtifactCallError('not_found', 404, 'No such artifact.'); });
+        const run = await artifactCardAgain('art-9', { ...cardContext, admin: { readArtifact } as never });
+        expect(run.card).toBeUndefined();
+        expect(run.result).toEqual({ error: "That artifact isn't here, or this person can't open it." });
     });
 });

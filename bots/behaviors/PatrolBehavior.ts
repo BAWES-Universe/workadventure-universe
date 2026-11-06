@@ -12,7 +12,7 @@ import { PositionMessage_Direction, type SpaceUser } from '@workadventure/messag
 import { movementLogger } from '../utils/MovementLogger';
 import { ConversationMemory } from '../memory/ConversationMemory';
 import { BotClient } from '../client/BotClient';
-import { parseEmotionsFromResponse, appendStreamedChunk, detectEmotionPrefixAtEnd } from '../ai/EmotionParser';
+import { parseEmotionsFromResponse, appendStreamedChunk, detectEmotionPrefixAtEnd, moodOf, WAVE_MOOD } from '../ai/EmotionParser';
 import { createBatchState, batchAppend, batchFlush } from '../ai/StreamBatcher';
 
 export interface PatrolBehaviorConfig extends BehaviorConfig {
@@ -1113,7 +1113,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                     
                     if (cleanedMessage.trim()) {
                         // Send message to space - all followers in the space will receive it
-                        this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, cleanedMessage.trim());
+                        this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, cleanedMessage.trim(), false, undefined, false, undefined, moodOf(parsedResponse.emotions));
                         // Store in memory for the first follower (representative of the group)
                         this.conversationMemory?.addMessage(botId, followerPlayer.userId, cleanedMessage.trim(), 'bot', spaceName);
                     } else {
@@ -1291,7 +1291,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                     
                     if (cleanedMessage.trim()) {
                         // Send message to space - all followers in the space will receive it
-                        this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, cleanedMessage.trim());
+                        this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, cleanedMessage.trim(), false, undefined, false, undefined, moodOf(parsedResponse.emotions));
                         // Store in memory for the first follower (representative of the group)
                         this.conversationMemory?.addMessage(botId, followerPlayer.userId, cleanedMessage.trim(), 'bot', spaceName);
                     } else {
@@ -1440,7 +1440,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                     // Send response
                     if (cleanedMessage.trim()) {
                         if (this.bot && this.currentSpaceName === spaceName) {
-                            this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', true, cleanedMessage.trim());
+                            this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', true, cleanedMessage.trim(), false, undefined, false, undefined, moodOf(parsedResponse.emotions));
                             // Store bot's message in memory
                             this.conversationMemory?.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
                         }
@@ -1621,7 +1621,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                     // Send response
                     if (cleanedMessage.trim()) {
                         if (this.bot && this.currentSpaceName === spaceName) {
-                            this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', true, cleanedMessage.trim());
+                            this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', true, cleanedMessage.trim(), false, undefined, false, undefined, moodOf(parsedResponse.emotions));
                             // Store bot's message in memory
                             this.conversationMemory?.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
                         }
@@ -1788,7 +1788,13 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 this.bot,
                 this.adminApiService,
                 abortSignal,
-                images
+                images,
+                'world',
+                undefined,
+                undefined,
+                undefined,
+                false,
+                true // a person said it
             ), spaceName, botId, playerId, abortSignal)) {
                 if (chunk.reset) {
                     if (abortSignal?.aborted) break;
@@ -1877,7 +1883,9 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
 
                     // Parse emotions from AI response (unified emotion system)
                     const parsedResponse = parseEmotionsFromResponse(fullMessage);
-                    let processedMessage = parsedResponse.cleanedResponse;
+                    // The bot judged that this person is done talking with it (#1670): their window ends and nothing is said, whatever was written
+                    const personDone = this.personIsDone(spaceName, playerId, parsedResponse.emotions);
+                    let processedMessage = personDone ? '' : parsedResponse.cleanedResponse;
 
                     // Update emotions from AI analysis
                     if (parsedResponse.emotions && this.conversationMemory) {
@@ -1945,7 +1953,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                     // Send processed message via stream final chunk
                     if (processedMessage.trim()) {
                         // Send the final chunk with the complete cleaned message
-                        this.bot?.sendStreamMessage(spaceName, responseId, '', true, processedMessage);
+                        this.bot?.sendStreamMessage(spaceName, responseId, '', true, processedMessage, false, undefined, false, undefined, moodOf(parsedResponse.emotions));
 
                         // Store bot's message in memory
                         if (this.conversationMemory) {
@@ -1964,7 +1972,8 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                         }
                     } else {
                         // Response contained only emotion/control blocks — finalize with empty content to close bubble
-                        this.bot?.sendStreamMessage(spaceName, responseId, '', true, '');
+                        // A wave on the bot's box when the person said they are done; otherwise nothing to show
+                        this.bot?.sendStreamMessage(spaceName, responseId, '', true, '', false, undefined, false, undefined, personDone ? WAVE_MOOD : undefined);
                     }
                     break;
                 }
@@ -2105,7 +2114,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                     
                     if (cleanedMessage.trim()) {
                         if (this.bot) {
-                            this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, '', true, cleanedMessage.trim());
+                            this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, '', true, cleanedMessage.trim(), false, undefined, false, undefined, moodOf(parsedResponse.emotions));
                             this.conversationMemory?.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
                         }
                     } else {

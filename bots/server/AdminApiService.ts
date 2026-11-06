@@ -8,12 +8,13 @@ import axios, { type AxiosResponse } from 'axios';
 import * as Sentry from '@sentry/node';
 import { parseForgetNotice, type MemoryForgetHandler } from '../memory/ForgetNotice';
 import type { WokaList } from '../matrix/wokaPicture';
+import type { VoiceActiveAnswer, VoiceCredentialsAnswer, VoiceHealthReport, VoiceLimits } from '../voice/VoiceSettings';
 
 // Optional Sentry integration (uncomment if @sentry/node is installed)
 // import * as Sentry from '@sentry/node';
 
 // Helper to safely capture exceptions (works with or without Sentry)
-const captureException = (error: Error) => {
+const captureException = (error: unknown) => {
     // Uncomment if Sentry is configured:
     // Sentry.captureException(error);
     console.error('AdminApiService error:', error);
@@ -83,6 +84,14 @@ export interface ArtifactCall {
     chat: ArtifactChat;
 }
 
+/**
+ * Read and change also carry the artifacts the person pointed at (game #1781): the one way a bot opens another bot's work.
+ * Only these two routes take it; the list and the search refuse a body with fields they do not know.
+ */
+export interface ArtifactReachCall extends ArtifactCall {
+    referencedArtifactIds?: string[];
+}
+
 export interface ArtifactEdit {
     old: string;
     new: string;
@@ -95,6 +104,8 @@ export interface ArtifactSummary {
     kind: ArtifactKind;
     makerName: string;
     version: number;
+    /** Set when this artifact is a copy; a change to another bot's artifact answers with the bot's own copy (Orbit #800). */
+    copiedFromId?: string | null;
 }
 
 export interface ArtifactVersionSummary {
@@ -197,8 +208,11 @@ export interface BotFilesFound {
     hidden: boolean;
 }
 
-/** What people do with a bot, as Orbit's check names it. */
-export type BotAccessAction = 'chat' | 'dm' | 'summon';
+/**
+ * What people do with a bot, as Orbit's check names it. `change` and `deleteOrSend` are the two permissions a bot's tool
+ * needs to change things or to delete or send something (Orbit #737, game #1656).
+ */
+export type BotAccessAction = 'chat' | 'dm' | 'summon' | 'change' | 'deleteOrSend';
 
 /** Who is asking: a signed-in person is named by their uuid or email, a guest only by being a guest. */
 export interface BotAccessPerson {
@@ -260,6 +274,9 @@ export interface BotConfiguration {
         radius: number;
     };
     enabled?: boolean; // Whether bot is active (defaults to true if not specified)
+    // Whether the bot joins its bubble's audio: the owner's choice, off until the owner turns it on (Orbit #740 will
+    // send it). Missing means off, and the bot stays text-only.
+    voiceEnabled?: boolean;
     characterTextureIds?: string[]; // Character texture IDs for bot appearance
     // The companion (pet) that walks with the bot: a companion texture id from the room's companion list.
     // Null or missing means none.
@@ -820,6 +837,67 @@ export class AdminApiService {
         }
     }
 
+    // ---- Voice (Orbit #740, game #1746) ----------------------------------------------------------------------
+    // These throw when Orbit cannot be asked, and the voice code answers in text then. An error here never carries the
+    // key: a credentials answer holds only the encrypted key, and nothing from the request or the answer is put in a message.
+
+    private voiceHeaders(): { Authorization: string } {
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!this.isConfigured() || !botServiceToken) throw new Error('Orbit is not set up for voice');
+        return { Authorization: `Bearer ${botServiceToken}` };
+    }
+
+    /** What a voice bot speaks with now. Null when Orbit does not know the bot. */
+    async getVoiceActive(botId: string, timeoutMs: number): Promise<VoiceActiveAnswer | null> {
+        try {
+            const response: AxiosResponse<VoiceActiveAnswer> = await axios.get(resolveAdminApiEndpoint(this.adminApiUrl, `api/bots/${encodeURIComponent(botId)}/voice/active`), {
+                headers: { ...this.voiceHeaders(), 'Cache-Control': 'no-store' },
+                timeout: timeoutMs,
+            });
+            return response.data;
+        } catch (error) {
+            if (axios.isAxiosError(error) && error.response?.status === 404) return null;
+            throw error;
+        }
+    }
+
+    /** One voice provider for one bot, the key still encrypted. Null when the bot may not use it (404, or 400). */
+    async getVoiceCredentials(providerId: string, botId: string, timeoutMs: number): Promise<VoiceCredentialsAnswer | null> {
+        try {
+            const response: AxiosResponse<VoiceCredentialsAnswer> = await axios.get(
+                resolveAdminApiEndpoint(this.adminApiUrl, `api/voice/providers/${encodeURIComponent(providerId)}/credentials`),
+                { headers: { ...this.voiceHeaders(), 'Cache-Control': 'no-store' }, params: { botId }, timeout: timeoutMs }
+            );
+            return response.data;
+        } catch (error) {
+            const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+            if (status === 404 || status === 400) return null;
+            throw error;
+        }
+    }
+
+    /** The server's voice limits (GET /api/voice/limits). */
+    async getVoiceLimits(timeoutMs: number): Promise<Partial<VoiceLimits> | null> {
+        const response: AxiosResponse<{ limits?: Partial<VoiceLimits> }> = await axios.get(resolveAdminApiEndpoint(this.adminApiUrl, 'api/voice/limits'), {
+            headers: { ...this.voiceHeaders(), 'Cache-Control': 'no-store' },
+            timeout: timeoutMs,
+        });
+        return response.data?.limits ?? null;
+    }
+
+    /** How a call to a voice provider went. A provider of the server's own has no health to keep: Orbit answers 404, which is fine. */
+    async reportVoiceHealth(providerId: string, report: VoiceHealthReport, timeoutMs: number): Promise<void> {
+        try {
+            await axios.post(resolveAdminApiEndpoint(this.adminApiUrl, `api/voice/providers/${encodeURIComponent(providerId)}/health`), report, {
+                headers: this.voiceHeaders(),
+                timeout: timeoutMs,
+            });
+        } catch (error) {
+            if (axios.isAxiosError(error) && error.response?.status === 404) return;
+            throw error;
+        }
+    }
+
     /**
      * May this person get one more reply from this bot now (#1159)? Orbit counts their Universe AI replies (30 every 5
      * hours signed in, 10 for a guest, 200 shared by a bot's guests) and the bot's own limit per person. `source` is
@@ -828,7 +906,7 @@ export class AdminApiService {
      */
     async checkReplyAllowance(
         botId: string,
-        input: { userId: string; isGuest?: boolean; source: 'universe-ai' | 'provider' | 'own-key' }
+        input: { userId: string; isGuest?: boolean; source: 'universe-ai' | 'provider' | 'own-key'; greeting?: boolean }
     ): Promise<ReplyAllowance> {
         if (!this.isConfigured()) return { allowed: true };
         const botServiceToken = process.env.BOT_SERVICE_TOKEN;
@@ -849,6 +927,92 @@ export class AdminApiService {
             const msg = (axios.isAxiosError(error) && error.response?.status) || (error as Error)?.message || 'Unknown error';
             console.warn(`[AdminApiService] Reply limit check failed, letting the reply through: ${msg}`);
             return { allowed: true };
+        }
+    }
+
+    /**
+     * May this reply be spoken (game #1669, Orbit voice-allowance)? Counts it against the person's Universe AI window when it
+     * is, under the reply's turn, so asking again never counts it twice. Null when Orbit can't be asked or doesn't know the
+     * question: the caller keeps the reply in text, so nothing is spoken on Universe AI's account without an answer.
+     */
+    async checkVoiceAllowance(
+        botId: string,
+        input: { userId: string; isGuest: boolean; turnId: string }
+    ): Promise<{ allowed: true; left?: number; resetsAt?: string } | { allowed: false; resetsAt: string } | null> {
+        if (!this.isConfigured()) return null;
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!botServiceToken) return null;
+        try {
+            const response = await axios.post(
+                `${this.adminApiUrl}/api/bots/${encodeURIComponent(botId)}/voice-allowance`,
+                input,
+                { headers: { Authorization: `Bearer ${botServiceToken}` }, timeout: 5000 }
+            );
+            const body = response.data as Partial<{ allowed: boolean; resetsAt: string; left: number }>;
+            if (body?.allowed === true) {
+                // What is left comes with a yes from an Orbit that counts it; an Orbit from before sends only the yes
+                const left = typeof body.left === 'number' && Number.isInteger(body.left) && body.left >= 0 ? body.left : undefined;
+                const resetsAt = typeof body.resetsAt === 'string' && !Number.isNaN(Date.parse(body.resetsAt)) ? body.resetsAt : undefined;
+                return left === undefined ? { allowed: true } : { allowed: true, left, resetsAt };
+            }
+            if (body?.allowed === false && typeof body.resetsAt === 'string' && !Number.isNaN(Date.parse(body.resetsAt))) return { allowed: false, resetsAt: body.resetsAt };
+            return null;
+        } catch (error) {
+            const msg = (axios.isAxiosError(error) && error.response?.status) || (error as Error)?.message || 'Unknown error';
+            console.warn(`[AdminApiService] Voice allowance check failed, the reply stays in text: ${msg}`);
+            return null;
+        }
+    }
+
+    /**
+     * How many spoken replies a person has left (#1669, Orbit voice-allowance/left), counting nothing and starting no window.
+     * `left` is null when Orbit can't name the person; `resetsAt` is null while no window is running. Null when Orbit can't be
+     * asked or is from before this existed: the Voice menu then says nothing about what is left.
+     */
+    async voiceRepliesLeft(botId: string, input: { userId: string; isGuest: boolean }): Promise<{ left: number | null; resetsAt: string | null } | null> {
+        if (!this.isConfigured()) return null;
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!botServiceToken) return null;
+        try {
+            const response = await axios.post(
+                `${this.adminApiUrl}/api/bots/${encodeURIComponent(botId)}/voice-allowance/left`,
+                input,
+                { headers: { Authorization: `Bearer ${botServiceToken}` }, timeout: 5000 }
+            );
+            const body = response.data as Partial<{ left: number | null; resetsAt: string | null }>;
+            // Anything but an answer in this shape is an Orbit that doesn't know the question
+            if (!body || typeof body !== 'object') return null;
+            const left = typeof body?.left === 'number' && Number.isInteger(body.left) && body.left >= 0 ? body.left : null;
+            const resetsAt = typeof body?.resetsAt === 'string' && !Number.isNaN(Date.parse(body.resetsAt)) ? body.resetsAt : null;
+            return { left, resetsAt };
+        } catch (error) {
+            const msg = (axios.isAxiosError(error) && error.response?.status) || (error as Error)?.message || 'Unknown error';
+            console.warn(`[AdminApiService] Asking what is left of the spoken replies failed: ${msg}`);
+            return null;
+        }
+    }
+
+    /**
+     * Gives back a spoken reply that was counted and never heard (#1669). Safe to repeat: Orbit gives back at most once.
+     * True: given back. False: nothing was counted under that turn. Null: it could not be done (Orbit down, or an Orbit
+     * from before this existed); the caller carries on, the reply it belongs to is already settled.
+     */
+    async releaseVoiceReply(botId: string, input: { turnId: string }): Promise<boolean | null> {
+        if (!this.isConfigured()) return null;
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!botServiceToken) return null;
+        try {
+            const response = await axios.post(
+                `${this.adminApiUrl}/api/bots/${encodeURIComponent(botId)}/voice-allowance/release`,
+                input,
+                { headers: { Authorization: `Bearer ${botServiceToken}` }, timeout: 5000 }
+            );
+            const released = (response.data as Partial<{ released: boolean }>)?.released;
+            return typeof released === 'boolean' ? released : null;
+        } catch (error) {
+            const msg = (axios.isAxiosError(error) && error.response?.status) || (error as Error)?.message || 'Unknown error';
+            console.warn(`[AdminApiService] Giving back a voice reply failed: ${msg}`);
+            return null;
         }
     }
 
@@ -1149,6 +1313,34 @@ export class AdminApiService {
     }
 
     /**
+     * Whether this person may manage the bot's tools (Manage bots for it). Such a person may try a tool that is not
+     * confirmed yet, with a card every time (game #1656). A guest or an unknown person is not one. Throws when Orbit
+     * can't answer, so the caller can tell "no" from "could not check". Uses BOT_SERVICE_TOKEN.
+     */
+    async canManageBotTools(botId: string, identifier: string): Promise<boolean> {
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!botServiceToken) {
+            throw new Error('BOT_SERVICE_TOKEN environment variable is not set');
+        }
+        const response: AxiosResponse<{ canManage?: unknown }> = await axios.post(
+            resolveAdminApiEndpoint(this.adminApiUrl, `api/bots/${encodeURIComponent(botId)}/tool-manager`),
+            { identifier },
+            {
+                headers: {
+                    Authorization: `Bearer ${botServiceToken}`,
+                    'Content-Type': 'application/json',
+                    'Cache-Control': 'no-store',
+                },
+                timeout: BOT_ACCESS_TIMEOUT_MS,
+            }
+        );
+        if (typeof response.data?.canManage !== 'boolean') {
+            throw new Error('Orbit answered the tool manager check with something unexpected');
+        }
+        return response.data.canManage;
+    }
+
+    /**
      * One call to Orbit's artifact routes with the bot service token. A refusal comes back as an ArtifactCallError with
      * Orbit's own code and line (no content is ever logged); anything that stops Orbit answering is `orbit_unavailable`.
      */
@@ -1205,7 +1397,7 @@ export class AdminApiService {
     /** Change one with small edits (or the whole new file). Every change is a new version. */
     changeArtifact(
         id: string,
-        call: ArtifactCall,
+        call: ArtifactReachCall,
         change: { edits?: ArtifactEdit[]; content?: string; summary?: string | null; title?: string | null; baseVersion?: number | null; dropMedia?: string[] },
         timeoutMs?: number,
         media: ArtifactMediaUpload[] = []
@@ -1216,13 +1408,13 @@ export class AdminApiService {
     /** Read one version of an artifact, with its text. */
     readArtifact(
         id: string,
-        call: ArtifactCall,
+        call: ArtifactReachCall,
         version?: number | null
     ): Promise<{ artifact: ArtifactSummary; version: ArtifactVersionSummary; content: string; hidden: boolean }> {
         return this.artifactCall(`api/artifacts/${encodeURIComponent(id)}/read`, { ...call, ...(version ? { version } : {}) });
     }
 
-    /** The artifacts made in this chat that the person may open, plus their own from other chats, the most recently changed first. */
+    /** The artifacts made in this chat that the person may open, plus the ones this bot made for them in other chats, the most recently changed first. */
     listArtifactsInChat(call: ArtifactCall): Promise<{ artifacts: ArtifactSummary[]; hidden: boolean }> {
         return this.artifactCall('api/artifacts/in-chat', call);
     }

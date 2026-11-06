@@ -40,6 +40,8 @@ export async function* withNearbySteps(stream: AsyncIterable<AIStreamChunk>, lin
                     steps.start(chunk.toolSteps);
                     show();
                 }
+                // Calls that only began: the reply's bubbles wait for the reset that comes with their arguments
+                if (!chunk.reset) continue;
             }
             if (chunk.toolStepResults) {
                 if (steps?.finish(chunk.toolStepResults)) show();

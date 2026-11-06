@@ -41,6 +41,21 @@ class AudioContextManager {
     }
 
     /**
+     * Resume every AudioContext the browser left suspended. Call it inside a tap or a click: a browser only lets
+     * sound start from a person's own gesture (an iPhone stays silent unless it starts inside the tap).
+     */
+    public async resumeAll(): Promise<void> {
+        const resumes: Promise<void>[] = [];
+        this.audioContexts.forEach((context) => {
+            // Safari also reports "interrupted" (a call, the screen lock); the DOM typings of this TypeScript do not list it
+            if (context.state === "suspended" || (context.state as string) === "interrupted") {
+                resumes.push(context.resume());
+            }
+        });
+        await Promise.all(resumes);
+    }
+
+    /**
      * Close and remove an AudioContext with the specified sample rate.
      * This should be called when the context is no longer needed.
      * @param sampleRate The sample rate of the context to close (default: browser's default)

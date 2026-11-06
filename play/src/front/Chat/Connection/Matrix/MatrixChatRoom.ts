@@ -42,6 +42,7 @@ import type {
 import { ChatPermissionLevel, InvitationNoLongerAvailableError } from "../ChatConnection";
 import { isAChatRoomIsVisible, navChat, selectedChatMessageToReply, botsChatIds } from "../../Stores/ChatStore";
 import { readBotSteps } from "../../Bots/BotSteps";
+import { BOT_ASK_ANSWER_EVENT, botAskAnswerContent, type BotAsk, type BotAskTap } from "../../Bots/BotAsk";
 import { selectedRoomStore } from "../../Stores/SelectRoomStore";
 import { gameManager } from "../../../Phaser/Game/GameManager";
 import { localUserStore } from "../../../Connection/LocalUserStore";
@@ -549,6 +550,7 @@ export class MatrixChatRoom
                 this.messages.get(event_id)?.modifyContent(newBody);
                 // A bot's steps line (#1545) is one notice the bot server keeps updating
                 this.messages.get(event_id)?.modifySteps(event.getSender(), newContent);
+                this.messages.get(event_id)?.modifyAsk(event.getSender(), newContent, event.localTimestamp);
                 // A pinned message loaded on its own, outside the loaded conversation, gets the edit too.
                 this.detachedMessages.get(event_id)?.modifyContent(newBody);
             }
@@ -703,6 +705,18 @@ export class MatrixChatRoom
         this.matrixRoom.client
             .sendReadReceipt(this.matrixRoom.getLastLiveEvent() ?? null, ReceiptType.Read)
             .catch((error) => console.error(error));
+    }
+
+    /**
+     * A tap on a bot's card (#1657). The event names the card and the revision the person saw, never new content: the bot
+     * server checks both and keeps the one decision a double tap or a second device can make.
+     */
+    async answerBotAsk(ask: Pick<BotAsk, "id" | "revision">, tap: BotAskTap): Promise<void> {
+        await this.matrixRoom.client.sendEvent(
+            this.matrixRoom.roomId,
+            BOT_ASK_ANSWER_EVENT as never,
+            botAskAnswerContent(ask, tap) as never
+        );
     }
 
     sendMessage(message: string) {

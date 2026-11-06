@@ -122,6 +122,9 @@
         if ($mapEditorSelectedEntityStore) {
             $mapEditorSelectedEntityStore.updateProperty(property);
         }
+        // The setting was edited in place: tell the other editors, which preview the hint over the object from all of
+        // its settings (#1740).
+        properties = properties;
     }
 
     function getPropertyFromType(type: EntityDataPropertiesKeys, subtype?: string): EntityDataProperty {
@@ -413,6 +416,7 @@
                         {:else if property.type === "openWebsite"}
                             <OpenWebsitePropertyEditor
                                 {property}
+                                siblings={properties}
                                 triggerOptionActivated={false}
                                 on:close={() => {
                                     onDeleteProperty(property.id);

@@ -2,8 +2,11 @@
 // page needs about them. No Svelte and no network in here, so it can be tested on its own.
 
 export type RuleValue = "yes" | "no" | "default";
-/** What a rule can say something about. `dm` is direct messages, from anywhere. */
-export type RuleAction = "chat" | "dm" | "summon" | "manage";
+/**
+ * What a rule can say something about. `dm` is direct messages, from anywhere. `change` is having the bot make or edit
+ * things with its tools, `deleteOrSend` is having it delete or send things (Orbit's two role permissions, #737).
+ */
+export type RuleAction = "chat" | "dm" | "summon" | "manage" | "change" | "deleteOrSend";
 
 export interface BotRule {
     id: string;
@@ -16,6 +19,8 @@ export interface BotRule {
     dm: RuleValue;
     summon: RuleValue;
     manage: RuleValue;
+    change: RuleValue;
+    deleteOrSend: RuleValue;
 }
 
 export interface BotRole {
@@ -28,7 +33,15 @@ export interface BotRole {
     defaults: Record<RuleAction, boolean>;
 }
 
+/** The universe the bot is in and who owns it, by name, for the line on who can always use the bot. Missing on an older Orbit. */
+export interface BotUniverse {
+    name: string;
+    ownerName: string | null;
+}
+
 export interface BotPermissions {
+    /** Missing on an older Orbit */
+    universe?: BotUniverse;
     privateBot: boolean;
     refusalReply: string | null;
     dailyReplyCap: number | null;
@@ -36,7 +49,8 @@ export interface BotPermissions {
     roles: BotRole[];
 }
 
-export const SHOWN_ACTIONS: readonly RuleAction[] = ["chat", "dm", "summon", "manage"];
+/** In the order a row's screen shows them */
+export const SHOWN_ACTIONS: readonly RuleAction[] = ["chat", "dm", "summon", "change", "deleteOrSend", "manage"];
 
 /** Longest line Orbit keeps for people who may not chat with the bot */
 export const REFUSAL_REPLY_MAX = 500;
@@ -76,6 +90,8 @@ export function readRule(raw: unknown): BotRule | undefined {
         dm: value(rule.dm),
         summon: value(rule.summon),
         manage: value(rule.manage),
+        change: value(rule.change),
+        deleteOrSend: value(rule.deleteOrSend),
     };
 }
 
@@ -99,12 +115,18 @@ export function readPermissions(raw: unknown): BotPermissions {
                           dm: defaults.dm === true,
                           summon: defaults.summon === true,
                           manage: defaults.manage === true,
+                          change: defaults.change === true,
+                          deleteOrSend: defaults.deleteOrSend === true,
                       },
                   },
               ];
           })
         : [];
+    const universe = body.universe as { name?: unknown; ownerName?: unknown } | null | undefined;
     return {
+        ...(universe && typeof universe.name === "string" && universe.name
+            ? { universe: { name: universe.name, ownerName: text(universe.ownerName) } }
+            : {}),
         privateBot: body.privateBot === true,
         refusalReply: text(body.refusalReply),
         dailyReplyCap: typeof body.dailyReplyCap === "number" ? body.dailyReplyCap : null,
@@ -136,7 +158,7 @@ export function rolesWithoutRule(permissions: BotPermissions): BotRole[] {
 
 /** A row that says nothing but Default everywhere adds nothing: it is the same as no row */
 export function saysNothing(rule: BotRule): boolean {
-    return (["chat", "dm", "summon", "manage"] as const).every((action) => rule[action] === "default");
+    return SHOWN_ACTIONS.every((action) => rule[action] === "default");
 }
 
 export interface DefaultFor {
@@ -162,7 +184,7 @@ export function defaultFor(action: RuleAction, rule: BotRule, roles: readonly Bo
 export interface RuleSummaryText {
     blocked: string;
     follows: string;
-    /** "Chat nearby", "Direct messages", "Summon", "Manage" */
+    /** "Chat nearby", "Direct messages", "Summon", "Manage this bot", "Change things", "Delete or send" */
     action: Record<RuleAction, string>;
     /** Puts what a row blocks after what it allows: "Chat nearby · Summon blocked" */
     allowsAndBlocks: (allows: string, blocks: string) => string;

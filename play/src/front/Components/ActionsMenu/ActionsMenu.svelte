@@ -2,32 +2,19 @@
     // The card an object opens when you click it, in the Look around card's look (PlaceCard.svelte): its picture, its
     // name, its description, and one row per thing it does, each with the editor's icon and words for that setting.
     // When it opens and how it closes are decided elsewhere (Entity.ts); this only draws it.
-    import type { ComponentType } from "svelte";
     import type { Unsubscriber } from "svelte/store";
     import { onDestroy } from "svelte";
     import { LL } from "../../../i18n/i18n-svelte";
     import { actionsMenuStore } from "../../Stores/ActionsMenuStore";
     import { mobileLayoutStore } from "../../Stores/MobileLayoutStore";
     import VisitCard from "../VisitCard/VisitCard.svelte";
-    import { getSettingTitle } from "../LookAround/placeInfo";
-    import { connectionManager } from "../../Connection/ConnectionManager";
-    import youtubeSvg from "../images/applications/icon_youtube.svg";
-    import klaxoonSvg from "../images/applications/icon_klaxoon.svg";
-    import googleDriveSvg from "../images/applications/icon_google_drive.svg";
-    import googleDocsSvg from "../images/applications/icon_google_docs.svg";
-    import googleSheetsSvg from "../images/applications/icon_google_sheets.svg";
-    import googleSlidesSvg from "../images/applications/icon_google_slides.svg";
-    import eraserSvg from "../images/applications/icon_eraser.svg";
-    import excalidrawSvg from "../images/applications/icon_excalidraw.svg";
-    import cardsSvg from "../images/applications/icon_cards.svg";
-    import tldrawJpeg from "../images/applications/icon_tldraw.jpeg";
 
     import type { ActionsMenuAction, ActionsMenuData } from "../../Stores/ActionsMenuStore";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
-    import { IconChevronRight, IconExternalLink, IconFile, IconFileMusic, IconLink, IconX } from "@wa-icons";
+    import ActionRows from "./ActionRows.svelte";
+    import { IconX } from "@wa-icons";
 
     let actionsMenuData: ActionsMenuData | undefined;
-    let sortedActions: ActionsMenuAction[] | undefined;
 
     let actionsMenuStoreUnsubscriber: Unsubscriber | null;
 
@@ -43,20 +30,6 @@
 
     actionsMenuStoreUnsubscriber = actionsMenuStore.subscribe((value) => {
         actionsMenuData = value;
-        if (actionsMenuData) {
-            sortedActions = [...actionsMenuData.actions.values()].sort((a, b) => {
-                const ap = a.priority ?? 0;
-                const bp = b.priority ?? 0;
-                if (ap > bp) {
-                    return -1;
-                }
-                if (ap < bp) {
-                    return 1;
-                } else {
-                    return 0;
-                }
-            });
-        }
     });
 
     onDestroy(() => {
@@ -65,43 +38,9 @@
         }
     });
 
-    // The same icons the editor shows for each setting.
-    const SETTING_ICONS: Record<string, ComponentType> = {
-        openWebsite: IconLink,
-        openFile: IconFile,
-        playAudio: IconFileMusic,
-    };
-    const APP_IMAGES: Record<string, string> = {
-        youtube: youtubeSvg,
-        klaxoon: klaxoonSvg,
-        googleDrive: googleDriveSvg,
-        googleDocs: googleDocsSvg,
-        googleSheets: googleSheetsSvg,
-        googleSlides: googleSlidesSvg,
-        eraser: eraserSvg,
-        excalidraw: excalidrawSvg,
-        cards: cardsSvg,
-        tldraw: tldrawJpeg,
-    };
-
-    /** An app of "Open a website" shows the app's own picture, as in the editor; a room's own app too. */
-    function appImage(action: ActionsMenuAction): string | undefined {
-        if (action.propertyType !== "openWebsite" || !action.application || action.application === "website") {
-            return undefined;
-        }
-        return (
-            APP_IMAGES[action.application] ??
-            connectionManager.applications.find((app) => app.name === action.application)?.image
-        );
-    }
-
-    /** The line under the label: what the row does, in the editor's words ("Open a website"), and if in a new tab. */
-    function hintOf(action: ActionsMenuAction): string {
-        const title = action.propertyType ? getSettingTitle(action.propertyType, $LL, action.application) : undefined;
-        const parts: string[] = [];
-        if (title) parts.push(title);
-        if (action.newTab) parts.push($LL.mapEditor.objectCard.newTab());
-        return parts.join(" · ");
+    async function runAction(action: ActionsMenuAction) {
+        analyticsClient.clickPropertyMapEditor(action.actionName, action.style);
+        await action.callback();
     }
 </script>
 
@@ -137,48 +76,7 @@
             <p class="object-card-desc">{actionsMenuData.menuDescription}</p>
         {/if}
 
-        {#if sortedActions && sortedActions.length > 0}
-            <div class="object-card-rows">
-                {#each sortedActions as action (action.uuid)}
-                    {@const image = appImage(action)}
-                    {@const hint = hintOf(action)}
-                    <button
-                        type="button"
-                        class="u-menu-row {action.style ?? ''}"
-                        on:click={() => analyticsClient.clickPropertyMapEditor(action.actionName, action.style)}
-                        on:click|preventDefault={async () => {
-                            await action.callback();
-                        }}
-                    >
-                        <span class="u-menu-tile">
-                            {#if image}
-                                <img src={image} alt="" draggable="false" />
-                            {:else if action.actionIcon}
-                                <span
-                                    class="object-card-mask"
-                                    style="background-color: {action.iconColor ?? 'white'};
-                                        -webkit-mask: url({action.actionIcon}) no-repeat center;
-                                        mask: url({action.actionIcon}) no-repeat center;"
-                                />
-                            {:else}
-                                <svelte:component this={SETTING_ICONS[action.propertyType ?? ""] ?? IconLink} />
-                            {/if}
-                        </span>
-                        <span class="u-menu-label">
-                            {action.actionName}
-                            {#if hint}<span class="u-menu-hint">{hint}</span>{/if}
-                        </span>
-                        <span class="u-menu-go">
-                            {#if action.newTab}
-                                <IconExternalLink font-size="18" />
-                            {:else}
-                                <IconChevronRight font-size="18" />
-                            {/if}
-                        </span>
-                    </button>
-                {/each}
-            </div>
-        {/if}
+        <ActionRows actions={actionsMenuData.actions} onSelect={runAction} />
     </div>
 {/if}
 
@@ -241,32 +139,5 @@
         font-size: 13.5px;
         line-height: 1.4;
         color: rgba(244, 242, 250, 0.86);
-    }
-    .object-card-rows {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-        margin-top: 12px;
-    }
-    .object-card-rows .u-menu-row {
-        min-height: 52px;
-        margin: 0;
-        padding: 6px 10px 6px 8px;
-        background: rgba(255, 255, 255, 0.06);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 14px;
-        color: #fff;
-        text-align: start;
-    }
-    .object-card-rows .u-menu-row:hover {
-        background: rgba(255, 255, 255, 0.1);
-    }
-    .object-card-rows .u-menu-hint {
-        color: rgba(244, 242, 250, 0.6);
-    }
-    .object-card-mask {
-        display: block;
-        width: 20px;
-        height: 20px;
     }
 </style>

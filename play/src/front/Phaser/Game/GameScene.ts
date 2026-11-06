@@ -69,7 +69,7 @@ import { getBotServerUrl } from "../../external-modules/bots/services/BotServerU
 import { refreshThisDeviceOnce } from "../../Notification/Push/PushDevice";
 import { clearHandsOffHere, myHandRaisedStore, raisedHandsStore } from "../../Space/RaiseHand/RaiseHandStore";
 import { attendeeCameraAreaSpacesStore, stopShowingCameraToSpeakers } from "../../Space/AttendeeCamera";
-import { bindPodiumToRaiseHand } from "../../Space/RaiseHand/PodiumStore";
+import { bindPodiumToRaiseHand, clearStageState } from "../../Space/RaiseHand/PodiumStore";
 import { Loader } from "../Components/Loader";
 import { RemotePlayer } from "../Entity/RemotePlayer";
 import { SelectCharacterScene, SelectCharacterSceneName } from "../Login/SelectCharacterScene";
@@ -1420,6 +1420,8 @@ export class GameScene extends DirtyScene {
         clearHandsOffHere();
         // Nor do they stop showing our camera to a Stage's speakers (#1623)
         stopShowingCameraToSpeakers();
+        // Nor do they stop a speaker's broadcast to a Stage or end the Audience state: leave them behind with the room.
+        clearStageState();
         // Nor does leaving a camera-locking area: end the lock and put the zoom back to what it was before it, or the
         // next scene (a reconnect) starts zoomed in on the old area, with every resize snapping back to it.
         if (waScaleManager.getFocusTarget()) {

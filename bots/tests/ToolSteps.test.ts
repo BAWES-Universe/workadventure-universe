@@ -19,7 +19,24 @@ describe('ToolSteps', () => {
             done: 'Used Make a song',
             detail: 'upbeat 8-bit funk',
             group: 'tool:generate_music',
+            kind: 'write',
         });
+    });
+
+    it('tells reading, searching and writing apart for the emoji beside the Woka (#1667)', () => {
+        expect(describeStep({ id: 'a', name: 'read_web_page', arguments: { url: 'https://x.test' } }).kind).toBe('read');
+        expect(describeStep({ id: 'a', name: 'web_search' }).kind).toBe('search');
+        expect(describeStep({ id: 'a', name: 'doc_lookup' }).kind).toBe('search');
+        expect(describeStep({ id: 'a', name: 'fetch_page' }, 'Open a page').kind).toBe('read');
+        expect(describeStep({ id: 'a', name: 'generate_music' }).kind).toBe('write');
+        expect(describeStep({ id: 'a', name: 'webSearch' }).kind).toBe('search');
+        // Whole words only: these merely contain "read" or "load"
+        expect(describeStep({ id: 'a', name: 'upload_file' }).kind).toBe('write');
+        expect(describeStep({ id: 'a', name: 'make_spreadsheet' }).kind).toBe('write');
+        expect(describeStep({ id: 'a', name: 'send_payload' }).kind).toBe('write');
+        const steps = new ReplySteps(0);
+        steps.start([describeStep({ id: 'a', name: 'web_search' })]);
+        expect(steps.field().steps[0].kind).toBe('search');
     });
 
     it('says "Using" while it runs and "Used" once done, so a name never reads as an order', () => {
@@ -69,6 +86,7 @@ describe('ToolSteps', () => {
         expect(resultOf('a', [{ type: 'text' }])).toEqual({ id: 'a', ok: true });
         expect(resultOf('a', { success: false, message: 'Not allowed' })).toEqual({ id: 'a', ok: false, note: 'Not allowed' });
         expect(resultOf('a', { isError: true })).toEqual({ id: 'a', ok: false });
+        expect(resultOf('a', { status: 'waiting_for_ok', message: 'A card was shown.' })).toEqual({ id: 'a', ok: false, note: 'Waiting for your OK. Nothing ran yet' });
         expect(resultOf('a', { error: 'MCP tool error: quota at https://x.test/?key=abc reached' })).toEqual({
             id: 'a',
             ok: false,
@@ -85,6 +103,27 @@ describe('ToolSteps', () => {
         expect(summaryOf([step('page', 'Read a page')])).toBe('Read 1 page');
         expect(summaryOf([step('tool:x', 'Search', 'failed')])).toBe('1 step');
         expect(summaryOf([step('tool:x', 'Search', 'failed'), step('tool:y', 'Fetch', 'failed')])).toBe('2 steps');
+    });
+
+    it("shows a tool server's own title whole, with no \"…\" where there is room (#1723)", () => {
+        const title = 'Hugging Face Hub: Find, use and view models, datasets, spaces and papers';
+        expect(title.length).toBeGreaterThan(60);
+        expect(describeStep({ id: 'a', name: 'hf_fs' }, title)).toMatchObject({ doing: `Using ${title}`, done: `Used ${title}` });
+        // Only a runaway title is stopped, well past anything a person reads as a name
+        const runaway = describeStep({ id: 'a', name: 'x' }, 'w'.repeat(400));
+        expect(Array.from(runaway.done).length).toBeLessThan(200);
+    });
+
+    it('says it is writing the answer once every call has finished, not "Using" (#1723)', () => {
+        const steps = new ReplySteps(1000);
+        steps.start([describeStep({ id: 'a', name: 'generate_music', arguments: { prompt: 'funk' } }), describeStep({ id: 'b', name: 'generate_music', arguments: { prompt: 'jazz' } })]);
+        steps.finish([{ id: 'a', ok: true }]);
+        expect(steps.field().line).toBe('Using Generate music');
+        steps.finish([{ id: 'b', ok: true }]);
+        expect(steps.field()).toMatchObject({ state: 'working', line: 'Writing the answer' });
+        expect(steps.text()).toBe('Writing the answer…');
+        // Before any call there is no line to write
+        expect(new ReplySteps(1).field().line).toBe('');
     });
 
     it('follows a reply: live while it works, a summary once it answers', () => {
@@ -143,5 +182,17 @@ describe('ToolSteps', () => {
         expect(field.steps[0].note).toBe('No answer. May have finished');
         expect(field.line).toBe('2 steps');
         expect(steps.text()).toBe("2 steps · 1 didn't work · 1 no answer");
+    });
+
+    it('shows a call once when it is announced as it begins and again with its arguments, filling in what it is about', () => {
+        const steps = new ReplySteps(0);
+        steps.start([{ id: 'a', doing: 'Making an artifact', done: 'Made an artifact', group: 'make_artifact', kind: 'write' }]);
+        steps.start([{ id: 'a', doing: 'Making an artifact', done: 'Made an artifact', detail: 'Moon base', group: 'make_artifact', kind: 'write' }]);
+        expect(steps.size).toBe(1);
+        expect(steps.field().steps).toMatchObject([{ doing: 'Making an artifact', detail: 'Moon base', state: 'running' }]);
+        // A later call with the same id, once the first ended, is a new call
+        steps.finish([{ id: 'a', ok: true }]);
+        steps.start([{ id: 'a', doing: 'Making an artifact', done: 'Made an artifact', detail: 'Moon base', group: 'make_artifact' }]);
+        expect(steps.size).toBe(2);
     });
 });

@@ -8,8 +8,10 @@
  * - Usage tracking
  */
 
+import { pointedArtifactIds } from './ArtifactReferences';
 import type { ConversationMemory } from '../memory/ConversationMemory';
-import type { AdminApiService, AIProviderCredentials, BotAiCredentialsAnswer } from '../server/AdminApiService';
+import type { AdminApiService, AIProviderCredentials, BotAccessPerson, BotAiCredentialsAnswer } from '../server/AdminApiService';
+import { BotAccessGate } from '../server/BotAccessGate';
 import { BotClient } from '../client/BotClient';
 import type { AIProviderConfig, AIStreamChunk, AIUsageMetadata, BotLimits, ToolCall } from './types';
 import { BOT_LIMIT_DEFAULTS, readBotLimits } from './types';
@@ -19,7 +21,16 @@ import { AIProviderRegistry } from './AIProviderRegistry';
 import { sortToolsByName } from './toolOrder';
 import type { MapDataService } from '../server/MapDataService';
 import * as Sentry from '@sentry/node';
-import { MCPConnector, toolTimeoutMs } from '../mcp/MCPConnector';
+import { MCPConnector, toolTimeoutMs, type ToolServerEntry } from '../mcp/MCPConnector';
+import type { ToolSuggester } from '../mcp/ToolCatalog';
+import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision } from '../mcp/ToolGate';
+import { ToolPolicySource } from '../mcp/ToolPolicy';
+import type { ToolApprovals } from '../mcp/ToolApprovals';
+import { cardTitle, outcomeOf } from '../mcp/ApprovalCard';
+import { quantityOf, type BatchKind } from '../mcp/ToolQuantity';
+import { CONFIRM_SYSTEM, isConfirm, tapInstead } from '../mcp/NearbyWords';
+import { ASK_PERSON_TOOL, NEVER_ASK_RULE, askPersonDefinition, readQuestion, type QuestionAsked } from '../mcp/QuestionCard';
+import type { BotAsksPort } from '../mcp/NearbyAsks';
 import { appendStreamedChunk } from './EmotionParser';
 import { describeStep, resultOf, showsAsStep, type ToolStep } from './ToolSteps';
 import { jsonrepair } from 'jsonrepair';
@@ -39,6 +50,8 @@ export type InterruptionAction = 'update' | 'cancel' | 'answer' | 'queue';
  * upstream call rather than leaving it dangling (see the call sites).
  */
 const QUICK_LLM_TIMEOUT_MS = 3000;
+/** Suggesting a heading for every tool of a server reads a whole list, so it gets longer (#1654). */
+const TOOL_SUGGEST_TIMEOUT_MS = 30_000;
 /** How long a reply waits for the newest-files line (#1508) before it goes on without it. */
 const RECENT_FILES_WAIT_MS = 2000;
 /** Files remembered with the tool that made them, until they are sent. */
@@ -94,6 +107,7 @@ import { providerErrorText } from './providers/ownKeyHttp';
 export { ROOM_CARD_MARK } from './systemPrompt';
 import {
     artifactMarker,
+    artifactCardAgain,
     artifactToolDefinitions,
     artifactsEnabled,
     formatArtifactResult,
@@ -131,6 +145,30 @@ type ResolvedProvider =
     | { resting: true; line: string };
 
 /** Refs that only Orbit can resolve for a bot: Universe AI (follows the Default) and a person's own key (`key-…`). */
+/**
+ * The key a tool result carries when the bot showed a card to one person in a bubble (#1658): the one plain line everyone
+ * reads is the bot's whole reply, so what the model might add never goes out.
+ */
+const SHARED_LINE = 'sharedLine';
+/** With it, the cards whose "the bot asks" line this is, so what comes after is said after it. */
+const SHARED_LINE_ID = 'sharedLineId';
+
+export function sharedLineIdsOf(toolResults: ReadonlyArray<{ result?: unknown }>): string[] {
+    const ids = toolResults.map((tr) => (tr.result as Record<string, unknown> | undefined)?.[SHARED_LINE_ID]).filter((id): id is string => typeof id === 'string' && !!id);
+    return [...new Set(ids)];
+}
+
+/** The one line everyone in a bubble reads for the calls of a round: each line once, even when the same call was made twice at the same moment. */
+export function sharedLineOf(toolResults: ReadonlyArray<{ result?: unknown }>): string {
+    const lines = toolResults.map((tr) => (tr.result as Record<string, unknown> | undefined)?.[SHARED_LINE]).filter((line): line is string => typeof line === 'string' && !!line);
+    return [...new Set(lines)].join(' ');
+}
+/** Telling a yes from anything else is one short word from the bot's own AI; a slow one counts as not a yes. */
+const CONFIRM_TIMEOUT_MS = 4000;
+const NEARBY_ASK_RULE =
+    'Other people can read this chat. Some tools ask the person for an OK on a card only they see before they change, delete or send something. ' +
+    'Before you call a tool, write nothing first. Never repeat what is on a card (names, subjects, amounts, wording) in your reply or later to anyone else. ' +
+    'When a tool says a card was shown, write nothing more.';
 const UNIVERSE_AI_REF = 'universe-ai';
 const OWN_KEY_PREFIX = 'key-';
 const needsBotRoute = (ref: string): boolean => ref === UNIVERSE_AI_REF || ref.startsWith(OWN_KEY_PREFIX);
@@ -178,6 +216,11 @@ export class AIService {
     private madeMedia = new Map<string, MadeWith>();
     private providerRegistry: AIProviderRegistry;
     private mapDataService?: MapDataService;
+    /** The one check right before a tool server's tool runs, and before the model is offered it (#1656). */
+    private toolGate: ToolGate;
+    /** The card a tool that asks first shows in a direct message (#1657). Without it such a call is not run. */
+    private approvals?: ToolApprovals;
+    private nearbyAsks?: BotAsksPort;
 
     constructor(
         conversationMemory: ConversationMemory,
@@ -190,6 +233,123 @@ export class AIService {
         this.adminApiUrl = adminApiUrl;
         this.providerRegistry = new AIProviderRegistry();
         this.mapDataService = mapDataService;
+        this.toolGate = this.buildToolGate(new BotAccessGate(adminApiService));
+    }
+
+    /**
+     * Use the bot server's own access gate for the two permissions a tool may need (change, delete or send), so its
+     * answers are kept once for everything that asks Orbit who may do what.
+     */
+    useAccessGate(gate: BotAccessGate): void {
+        this.toolGate = this.buildToolGate(gate);
+    }
+
+    /** The tool gate this service checks calls with, for what shows the cards and runs what a tap approved. */
+    get gate(): ToolGate {
+        return this.toolGate;
+    }
+
+    /** Where taps on cards in nearby chat and people coming back to a bubble are sent (#1658). */
+    useNearbyAsks(asks: BotAsksPort): void {
+        this.nearbyAsks = asks;
+    }
+
+    /** The same, for a bot's client, which looks it up each time so it need not be set before the bot spawns. */
+    asksPort(): BotAsksPort {
+        return {
+            tap: (bot, spaceName, playerId, answer) => this.nearbyAsks?.tap(bot, spaceName, playerId, answer),
+            personBack: (bot, spaceName, playerId) => this.nearbyAsks?.personBack(bot, spaceName, playerId),
+        };
+    }
+
+    useApprovals(approvals: ToolApprovals): void {
+        this.approvals = approvals;
+    }
+
+    /** The tool server entry for a tool of this bot as it is now, or null. Read from the cached list: no model is asked. */
+    async findToolEntry(botId: string, toolName: string): Promise<ToolServerEntry | null> {
+        const adminApiToken = this.adminApiService?.['adminApiToken'];
+        if (!adminApiToken) return null;
+        const found = await MCPConnector.discoverToolsWithMapping(botId, this.adminApiUrl, adminApiToken, process.env.BOT_SERVICE_TOKEN || '');
+        return found.toolServerMap.get(toolName) ?? null;
+    }
+
+    /** Runs a tool call a person approved on a card (#1657), the way a reply would, with the bot's own Patience. */
+    async runApprovedTool(botId: string, entry: ToolServerEntry, toolName: string, args: Record<string, unknown>, playerUuid: string, toolTimeoutSeconds?: number | null): Promise<unknown> {
+        return this.callMcpTool(entry, toolName, args, playerUuid, undefined, toolTimeoutSeconds);
+    }
+
+    /** One call to a tool server's tool, and what comes back made ready for the bot: blobs uploaded, errors as results. */
+    private async callMcpTool(
+        entry: ToolServerEntry,
+        toolName: string,
+        args: Record<string, unknown>,
+        playerUuid: string | undefined,
+        abortSignal?: AbortSignal,
+        toolTimeoutSeconds?: number | null
+    ): Promise<any> {
+        try {
+            const rawResult = await MCPConnector.executeToolCall(
+                entry.serverId,
+                entry.serverUrl,
+                toolName,
+                args,
+                entry.authType,
+                entry.authConfig,
+                entry.headers,
+                playerUuid,
+                abortSignal,
+                toolTimeoutMs(toolTimeoutSeconds)
+            );
+            // Process MCP resource blobs (base64 binary data) by uploading to CDN
+            // and returning CDN URLs so the AI can use send_image/send_audio/etc.
+            if (Array.isArray(rawResult)) {
+                const processed = await this.processMcpResourceContent(rawResult);
+                return processed.content;
+            }
+            return rawResult;
+        } catch (mcpError: any) {
+            console.error(`[AIService] Error executing MCP tool ${toolName}:`, mcpError);
+            Sentry.captureException(mcpError instanceof Error ? mcpError : new Error(String(mcpError)));
+            return { error: `MCP tool error: ${mcpError.message || 'Unknown error'}` };
+        }
+    }
+
+    private buildToolGate(access: BotAccessGate): ToolGate {
+        const policy = new ToolPolicySource(() => {
+            const adminApiToken = this.adminApiService?.['adminApiToken'];
+            return this.adminApiUrl && adminApiToken ? { adminApiUrl: this.adminApiUrl, adminApiToken } : null;
+        });
+        return new ToolGate(policy, access, {
+            canManageBotTools: (botId, identifier) => this.adminApiService.canManageBotTools(botId, identifier),
+        });
+    }
+
+    /** Who is asking, as the gate names them: the signed-in person, or a guest. Same person in a bubble and in a direct message. */
+    private gatePerson(botId: string | undefined, playerId: number | undefined, botClient?: BotClient, spaceName?: string): BotAccessPerson {
+        try {
+            const chat = botId !== undefined && playerId !== undefined ? this.chatCallFor(botId, playerId, botClient, spaceName) : null;
+            if (!chat || !chat.person.signedIn || !chat.person.identifier) return { signedIn: false };
+            return { signedIn: true, identifier: chat.person.identifier };
+        } catch (error) {
+            // Not knowing who is asking is the same as a guest: the stricter reading
+            console.warn('[AIService] Could not tell who is asking for a tool:', error instanceof Error ? error.message : error);
+            return { signedIn: false };
+        }
+    }
+
+    /** What the gate needs to know about one tool call or one tool in the list. */
+    private gateCallFor(botId: string, toolName: string, entry: ToolServerEntry, person: BotAccessPerson, botClient?: BotClient): GateCall {
+        return {
+            botId,
+            toolName,
+            ...(entry.title ? { toolTitle: entry.title } : {}),
+            serverId: entry.serverId,
+            ...(entry.fingerprint ? { fingerprint: entry.fingerprint } : {}),
+            person,
+            // A voice bot speaking in a bubble: servers that were never checked are not used by voice
+            voice: !!botClient?.isVoiceBot?.(),
+        };
     }
 
     /** At most this many names, so a crowded room can't swamp the prompt. */
@@ -299,6 +459,19 @@ export class AIService {
             }
         }
         return { resting: false, config: await this.getProviderConfigById(providerId), source: 'provider' };
+    }
+
+    /**
+     * What a reply from this bot would run on: Universe AI, a server provider or the maker's own key (null when it can't be told,
+     * or the key is resting). Asked before a voice bot greets someone (#1669); the answer is Orbit's own, cached as for a reply.
+     */
+    async replySource(providerId: string, botId: string): Promise<'universe-ai' | 'provider' | 'own-key' | null> {
+        try {
+            const resolved = await this.resolveProvider(providerId, botId);
+            return resolved.resting ? null : resolved.source;
+        } catch {
+            return null;
+        }
     }
 
     /** A bot's limits as Orbit last served them, the recommended ones until it has (Orbit #666). */
@@ -493,6 +666,10 @@ export class AIService {
      * tries once more: the first reply and the line go out as their own message (a `reset`), then the second try.
      * A retry (a reply written again, say after a repetition) is not checked: what it talks about may have been saved
      * by the first one.
+     *
+     * For a voice bot, nothing is spoken until this has finished: the bot is told (`holdSpeech`) when a tool round or the
+     * retry starts, and that the reply is checked (`releaseSpeech`) just before the held done, so a draft that is later
+     * corrected, or an acknowledgement ahead of the work, is never said.
      */
     async *generateBotResponseStream(
         botId: string,
@@ -510,11 +687,21 @@ export class AIService {
         toolTimeoutSeconds?: number | null,
         homeRoomUrl?: string,
         peopleInRoom?: string[] | null,
-        isRetry = false
+        isRetry = false,
+        // True only when this is what a person said to the bot: a greeting, an arrival or a goodbye is the bot's own prompt
+        personSaid = false
     ): AsyncGenerator<AIStreamChunk> {
         const turn: TurnFacts = { artifactTools: false, artifactSaved: false, guard: false };
+        const hearing = spaceName !== undefined && botClient !== undefined ? { spaceName, botClient } : undefined;
+        // A new turn starts with nothing held, whatever an earlier one that was cut short left behind
+        if (!isRetry) hearing?.botClient.releaseSpeech(hearing.spaceName, playerId);
         const attempt = (text: string, retry: boolean, facts: TurnFacts) =>
             this.generateTurn(botId, playerId, text, chatInstructions, providerId, spaceName, conversationContext, botClient, adminApiService, abortSignal, images, channel, toolTimeoutSeconds, homeRoomUrl, peopleInRoom, retry, facts);
+        // A card waits for this person in the bubble (#1658): a yes never sends, and anything else closes it
+        if (personSaid && !isRetry && channel === 'world' && botClient && spaceName && playerId !== undefined && (await this.whileCardWaits(botId, playerId, message, providerId, spaceName, botClient))) {
+            yield { content: '', done: true } as AIStreamChunk;
+            return;
+        }
         let said = '';
         let done: AIStreamChunk | null = null;
         for await (const chunk of attempt(message, isRetry, turn)) {
@@ -523,20 +710,28 @@ export class AIService {
                 done = chunk;
                 continue;
             }
-            if (chunk.reset) said = '';
-            else if (chunk.content) said += chunk.content;
+            if (chunk.reset) {
+                said = '';
+                hearing?.botClient.holdSpeech(hearing.spaceName, playerId);
+            } else if (chunk.content) {
+                said += chunk.content;
+            }
             yield chunk;
         }
         if (!done) return;
         if (isRetry || abortSignal?.aborted || done.metadata?.error || !turn.guard || !turn.artifactTools || turn.artifactSaved || !claimsArtifactSaved(said)) {
+            hearing?.botClient.releaseSpeech(hearing.spaceName, playerId);
             yield done;
             return;
         }
         console.warn(`[AIService] Bot ${botId} said it saved an artifact but nothing was saved; saying so and trying once more`);
         yield { content: `\n\n${NOTHING_SAVED_LINE}`, done: false };
+        hearing?.botClient.holdSpeech(hearing.spaceName, playerId);
         yield { content: '', done: false, reset: true, toolNames: [] };
         const second: TurnFacts = { artifactTools: false, artifactSaved: false, guard: false };
         for await (const chunk of attempt(nothingSavedRetryMessage(message, said), true, second)) {
+            if (chunk.reset) hearing?.botClient.holdSpeech(hearing.spaceName, playerId);
+            if (chunk.done) hearing?.botClient.releaseSpeech(hearing.spaceName, playerId);
             yield chunk;
             if (chunk.done) return;
         }
@@ -577,6 +772,7 @@ export class AIService {
             const memory = this.conversationMemory?.getMemory(botId, playerId);
             memory?.artifactCalls?.clear();
             memory?.sentAgain?.clear();
+            memory?.cardsAgain?.clear();
         }
         // This turn's media (#1510): what the person sent with this message; its tools add theirs as they run. The turn
         // holds its own list, so a turn that a newer message replaced can't add to the newer one's
@@ -802,7 +998,7 @@ export class AIService {
             // Build system prompt. Order matters for provider prompt caching
             // (issue #1333): see ai/systemPrompt.ts.
             // The ends of the parts that stay the same from message to message are where the Claude provider marks its cache
-            const { prompt: systemPrompt, cacheEnds: promptCacheEnds } = buildSystemPromptWithEnds({
+            const { prompt: basePrompt, cacheEnds: promptCacheEnds } = buildSystemPromptWithEnds({
                 chatInstructions,
                 mapContextInfo,
                 conversationContext,
@@ -814,13 +1010,28 @@ export class AIService {
                 ].filter(Boolean).join('\n\n') || undefined,
                 channel,
                 recentFiles: await recentFiles,
+                // A voice bot with others in the bubble tells, by its own judgement, when this person is done talking with it (#1670)
+                endFollowUp: channel === 'world' && !!spaceName && playerId !== undefined && !!botClient?.mayEndFollowUp?.(spaceName, playerId),
             });
 
             // Check if Qwen model (for /no_think directive)
             const isQwenModel = config.model.toLowerCase().includes('qwen');
 
             // Define tools for function calling
-            const { tools, toolServerMap } = await this.buildTools(botId, botClient, adminApiService || this.adminApiService, channel);
+            const { tools, toolServerMap } = await this.buildTools(
+                botId,
+                botClient,
+                adminApiService || this.adminApiService,
+                channel,
+                providerId,
+                this.gatePerson(botId, playerId, botClient, spaceName)
+            );
+            // In a bubble, what is on an approval card is for one person only: nothing is said before a tool that asks, and
+            // nothing from a card is repeated in the chat (#1658). Added at the end, after what the provider caches.
+            const nearbyRule = channel === 'world' && botClient && this.approvals && toolServerMap.size > 0 ? NEARBY_ASK_RULE : '';
+            // With "Asks which way to go" on Never the bot says its pick and starts (#1661)
+            const neverAsk = botId && this.approvals?.asksQuestions && (await this.approvals.settings(botId)).askWhichWay === 'never' ? NEVER_ASK_RULE : '';
+            const systemPrompt = [basePrompt, nearbyRule, neverAsk].filter(Boolean).join('\n\n');
             if (turn) turn.artifactTools = tools.some((tool) => writesArtifact(tool?.function?.name ?? ''));
 
             // Generate stream with tools
@@ -870,7 +1081,7 @@ export class AIService {
             const playerMemory = this.conversationMemory.getMemory(botId, playerId);
             const playerUuid = playerMemory?.userUuid || `temp-${playerId}`;
             // Map to accumulate tool call arguments by ID (for streaming tool calls where arguments come in chunks)
-            const toolCallAccumulator: Map<string, { id: string; name: string; arguments: string }> = new Map();
+            const toolCallAccumulator: Map<string, { id: string; name: string; arguments: string; announced?: boolean }> = new Map();
 
             // For Qwen models, add /no_think to user message instead of system prompt
             const userMessageForQwen = isQwenModel 
@@ -1072,6 +1283,11 @@ export class AIService {
                             }
                         }
                     }
+
+                    // A call whose name is known has begun, though its arguments are still coming in (an artifact's whole
+                    // page can take a minute): the steps line starts now instead of when they are complete.
+                    const begun = this.beginSteps(toolCallAccumulator, toolServerMap);
+                    if (begun.length) yield {content: '', done: false, toolSteps: begun};
 
                     // If we have tool calls and chunk is done, execute them BEFORE yielding any content
                     if (chunk.done && toolCallAccumulator.size > 0) {
@@ -1318,6 +1534,9 @@ export class AIService {
                             // pass it): the first round reads the cap from this chunk, later rounds from the previous round's last chunk
                             const replyCutOff = !!(followUpIterations === 1 ? chunk.metadata?.truncated : lastFollowUpDoneChunk?.metadata?.truncated);
                             const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia);
+                            // A card went to one person alone (#1658): the line everyone reads is the whole reply, said instead of the model's own words
+                            const sharedLine = sharedLineOf(toolResults);
+                            const sharedLineIds = sharedLineIdsOf(toolResults);
                             // Which tool made each file, and what it was asked for, for the bot's list of files (#1508)
                             this.noteMadeMedia(pendingToolCalls, toolResults);
                             // The steps line marks each shown call done or failed before the bot carries on (#1545)
@@ -1415,7 +1634,7 @@ export class AIService {
                                 const errorStatusBefore = followUpErrorStatus;
                                 const errorTextBefore = errorText;
                                 let refusedForLength = false;
-                                for await (const resultChunk of this.meteredStream(
+                                for await (const resultChunk of sharedLine ? this.saySharedLine(sharedLine, sharedLineIds) : this.meteredStream(
                                     ledger,
                                     providerId,
                                     systemPrompt,
@@ -1494,6 +1713,8 @@ export class AIService {
                                             }
                                         }
                                     }
+                                    const begunNext = this.beginSteps(toolCallAccumulator, toolServerMap);
+                                    if (begunNext.length) yield {content: '', done: false, toolSteps: begunNext};
                                     if (resultChunk.done) {
                                         streamCompleted = true;
                                         // Buffer done chunk instead of yielding it — callers break
@@ -2579,9 +2800,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     /**
      * Build tool definitions for function calling
      */
-    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService, channel: 'world' | 'dm' = 'world'): Promise<{ tools: any[]; toolServerMap: Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string>; title?: string }> }> {
+    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService, channel: 'world' | 'dm' = 'world', providerId?: string, asking?: BotAccessPerson): Promise<{ tools: any[]; toolServerMap: Map<string, ToolServerEntry> }> {
         const tools: any[] = [];
-        const toolServerMap = new Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string>; title?: string }>();
+        const toolServerMap = new Map<string, ToolServerEntry>();
 
         if (botClient) {
             // Tool: Get people on the map
@@ -2758,6 +2979,13 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             });
         }
 
+        // Tool: ask which way to go on a card (#1661). Only for a signed-in person (a guest has no cards), with question cards
+        // set up, and not when the bot's setting is Never.
+        if ((botClient || channel === 'dm') && botId && asking?.signedIn && this.approvals?.asksQuestions) {
+            const way = (await this.approvals.settings(botId)).askWhichWay;
+            if (way !== 'never') tools.push(askPersonDefinition(way));
+        }
+
         // Tools: make, change, read and find live artifacts (game #1422). They need Orbit, which keeps them, and a chat to
         // put the card in: a bubble on the map or a direct message. Off unless BOT_ARTIFACTS_ENABLED=true.
         // Tools: find, open and send again files from earlier chats (#1508), with an Orbit that keeps them. They find
@@ -2775,13 +3003,27 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     botId,
                     this.adminApiUrl,
                     adminApiService['adminApiToken'],
-                    process.env.BOT_SERVICE_TOKEN || ''
+                    process.env.BOT_SERVICE_TOKEN || '',
+                    { suggest: this.toolSuggesterFor(providerId, botId) }
                 );
                 const mcpTools = mcpResult.tools;
 
                 // Transfer tool→server mapping to the outer-scope map
                 for (const [key, value] of mcpResult.toolServerMap) {
                     toolServerMap.set(key, value);
+                }
+
+                // Tools this person can't use are not offered to the model (#1656). The call is checked again when it is made.
+                const offered = new Set<string>();
+                if (asking) {
+                    await Promise.all(
+                        mcpTools.map(async (mcpTool: any) => {
+                            const entry = toolServerMap.get(mcpTool.function.name);
+                            if (!entry || (await this.toolGate.offers(this.gateCallFor(botId, mcpTool.function.name, entry, asking, botClient)))) {
+                                offered.add(mcpTool.function.name);
+                            }
+                        })
+                    );
                 }
 
                 // Build a set of existing tool names for deduplication
@@ -2791,6 +3033,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 // depend on which MCP server answered first (issue #1333):
                 // built-in tools first, then MCP tools by name.
                 for (const mcpTool of sortToolsByName(mcpTools)) {
+                    if (asking && !offered.has(mcpTool.function.name)) continue;
                     if (!existingToolNames.has(mcpTool.function.name)) {
                         tools.push(mcpTool);
                         existingToolNames.add(mcpTool.function.name);
@@ -2807,6 +3050,25 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         }
 
         return { tools, toolServerMap };
+    }
+
+    /**
+     * The small model that suggests a heading for a tool the server's own labels leave open (#1654): the bot's own provider,
+     * given longer than the quick calls because it reads a whole list at once. None without a provider.
+     */
+    toolSuggesterFor(providerId: string | undefined, botId: string | undefined): ToolSuggester | undefined {
+        if (!providerId || !botId) return undefined;
+        return (system, user) => this.quickGenerate(providerId, system, user, botId, TOOL_SUGGEST_TIMEOUT_MS);
+    }
+
+    /**
+     * Reads one server's whole tool list now and saves it to Orbit with a suggested heading per tool (#1654): when a server
+     * is connected and on Test server. Null when the bot has no such server.
+     */
+    refreshServerTools(botId: string, serverId: string, providerId: string | undefined, adminApiService?: AdminApiService) {
+        const admin = adminApiService || this.adminApiService;
+        if (!admin) return Promise.resolve(null);
+        return MCPConnector.refreshServerTools(botId, serverId, this.adminApiUrl, admin['adminApiToken'], this.toolSuggesterFor(providerId, botId));
     }
 
     /** Orbit keeps files in this bot's chats (it served their limits), so the file tools can be offered and run. */
@@ -2844,7 +3106,46 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             // One look through Universe AI's vision, never for a bot on a person's own key (as for images people send)
             ...(source === 'own-key' ? {} : { look: (url: string) => this.describeImagesViaDefaultVision([url], abortSignal) }),
             send: (file, url) => this.sendFileAgain(file, url, { botClient, spaceName, botId, playerId }),
+            ...(artifactsEnabled() ? { sendArtifact: (id: string) => this.sendArtifactCardAgain(id, { botClient, admin, spaceName, botId, playerId }) } : {}),
         });
+    }
+
+    /**
+     * An artifact's card put in this chat again (#1815), for someone who just came or to bring it down the chat: its latest
+     * version, nothing saved. Orbit's read check decides whether this bot may show it here (game #1781). Once a turn, as a
+     * file sent again is. Never throws.
+     */
+    private async sendArtifactCardAgain(
+        id: string,
+        where: { botClient?: BotClient; admin: AdminApiService; spaceName?: string; botId: string; playerId: number }
+    ): Promise<Record<string, unknown>> {
+        const { botClient, admin, spaceName, botId, playerId } = where;
+        if (botClient && !spaceName) return { error: 'Cannot show the card: not currently in a conversation space' };
+        const who = this.chatCallFor(botId, playerId, botClient, spaceName);
+        if (!who) return { error: 'Artifacts are not available in this chat.' };
+        const memory = this.conversationMemory?.getMemory(botId, playerId);
+        // The model asking twice, at once or one after the other, or the turn asked again, gets what the first did; a card
+        // that could not go may be tried again
+        const earlier = memory?.cardsAgain?.get(id);
+        if (earlier) return earlier;
+        const sending = (async (): Promise<Record<string, unknown>> => {
+            const run = await artifactCardAgain(id, {
+                admin,
+                botId,
+                person: who.person,
+                chat: who.chat,
+                referencedArtifactIds: pointedArtifactIds(this.recentHistoryOf(memory, botId), memory?.pointedArtifacts),
+            });
+            if (!run.card) return run.result;
+            if (!this.deliverArtifactCard(run.card, botClient, spaceName, memory)) {
+                return { error: 'The conversation ended before the card could be placed in chat. Say so; do not claim it was shown.' };
+            }
+            return run.result;
+        })();
+        if (memory) (memory.cardsAgain ??= new Map()).set(id, sending);
+        const result = await sending;
+        if (typeof result.error === 'string' && memory?.cardsAgain?.get(id) === sending) memory.cardsAgain.delete(id);
+        return result;
     }
 
     /**
@@ -2964,6 +3265,12 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         }
     }
 
+    /** The messages the bot's replies read ("Messages it remembers"): a link older than that is out of view, so it points at nothing. */
+    private recentHistoryOf<T>(memory: { conversationHistory?: T[] } | undefined, botId: string): T[] | undefined {
+        const window = this.conversationMemory?.windowFor?.(botId);
+        return window && window > 0 ? memory?.conversationHistory?.slice(-window) : memory?.conversationHistory;
+    }
+
     /**
      * Run one artifact tool for the person who is talking to the bot, and put its card in their chat: in a bubble that is
      * a line of nearby chat; in a direct message it waits in memory and goes out with the reply. Never throws.
@@ -2994,6 +3301,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             botId,
             person,
             chat,
+            // Only what the person themselves pointed at: their messages in the recent window, and a card they replied to
+            referencedArtifactIds: pointedArtifactIds(this.recentHistoryOf(memory, botId), memory?.pointedArtifacts),
             saveTimeoutMs: limits.artifactSaveSeconds * 1000,
             media: { turn: where.turnMedia ?? memory?.turnMedia ?? [], maxBytes: limits.artifactMediaBytes },
         });
@@ -3030,7 +3339,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         toolCalls: ToolCall[],
         botClient?: BotClient,
         adminApiService?: AdminApiService,
-        toolServerMap?: Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string>; title?: string }>,
+        toolServerMap?: Map<string, ToolServerEntry>,
         playerUuid?: string,
         spaceName?: string,
         botId?: string,
@@ -3372,6 +3681,16 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         );
                         break;
 
+                    case ASK_PERSON_TOOL:
+                        result = await this.askPerson(
+                            botId,
+                            typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
+                            playerId,
+                            botClient,
+                            spaceName
+                        );
+                        break;
+
                     case READ_WEB_PAGE_TOOL: {
                         const parsedArgs = typeof toolCall.arguments === 'string'
                             ? this.safeParseToolArgs(toolCall.arguments)
@@ -3384,35 +3703,40 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         // Check if this is an MCP tool (not a hardcoded one)
                         const mcpServerConfig = toolServerMap?.get(toolCall.name);
                         if (mcpServerConfig) {
-                            try {
-                                const parsedArgs = typeof toolCall.arguments === 'string'
-                                    ? this.safeParseToolArgs(toolCall.arguments)
-                                    : toolCall.arguments || {};
-                                const rawResult = await MCPConnector.executeToolCall(
-                                    mcpServerConfig.serverId,
-                                    mcpServerConfig.serverUrl,
-                                    toolCall.name,
-                                    parsedArgs,
-                                    mcpServerConfig.authType,
-                                    mcpServerConfig.authConfig,
-                                    mcpServerConfig.headers,
-                                    playerUuid,
-                                    abortSignal,
-                                    toolTimeoutMs(toolTimeoutSeconds)
-                                );
-                                // Process MCP resource blobs (base64 binary data) by uploading to CDN
-                                // and returning CDN URLs so the AI can use send_image/send_audio/etc.
-                                if (Array.isArray(rawResult)) {
-                                    const processed = await this.processMcpResourceContent(rawResult);
-                                    result = processed.content;
-                                } else {
-                                    result = rawResult;
-                                }
-                            } catch (mcpError: any) {
-                                console.error(`[AIService] Error executing MCP tool ${toolCall.name}:`, mcpError);
-                                Sentry.captureException(mcpError instanceof Error ? mcpError : new Error(String(mcpError)));
-                                result = { error: `MCP tool error: ${mcpError.message || 'Unknown error'}` };
+                            // One check right before the call starts (#1656): the model's list is only a convenience
+                            const verdict = botId
+                                ? await this.toolGate.decide(
+                                      this.gateCallFor(botId, toolCall.name, mcpServerConfig, this.gatePerson(botId, playerId, botClient, spaceName), botClient)
+                                  )
+                                : ({ kind: 'refuse', why: 'cannot_check', line: CANNOT_CHECK_TOOL_LINE } as GateDecision);
+                            const parsedArgs = typeof toolCall.arguments === 'string'
+                                ? this.safeParseToolArgs(toolCall.arguments)
+                                : toolCall.arguments || {};
+                            if (verdict.kind === 'refuse') {
+                                result = this.toolNotRun(verdict);
+                                break;
                             }
+                            if (verdict.kind === 'ask') {
+                                // A card in a direct message asks for the OK; the call waits there, not here (#1657)
+                                const asked = await this.askForOk(botId!, toolCall.name, mcpServerConfig, parsedArgs, verdict, playerId, botClient, spaceName);
+                                if (asked.kind === 'result') {
+                                    result = asked.result;
+                                    break;
+                                }
+                            }
+                            let release: (() => void) | undefined;
+                            if (verdict.kind === 'run' && verdict.heading === 'makesNew') {
+                                // Runs right away, until a request would make more than the bot's limit (#1662)
+                                const counted = await this.checkHowMany(botId!, toolCall.name, mcpServerConfig, parsedArgs, verdict, playerId, botClient, spaceName);
+                                if (counted.kind === 'result') {
+                                    result = counted.result;
+                                    break;
+                                }
+                                release = counted.release;
+                            }
+                            result = await this.callMcpTool(mcpServerConfig, toolCall.name, parsedArgs, playerUuid, abortSignal, toolTimeoutSeconds);
+                            // A call that proved it made nothing doesn't count toward the limit
+                            if (release && ['failed', 'notSent'].includes(outcomeOf(result))) release();
                         } else {
                             // Log unknown tool for debugging
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -3435,6 +3759,191 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
         // Wait for all tool calls to complete in parallel
         return Promise.all(toolPromises);
+    }
+
+    /**
+     * The person said or wrote something in a bubble (#1658). While one of their cards waits: a plain yes is answered for
+     * them alone (a yes never sends, only the tap does) and the turn ends there, never said aloud; anything else closes the
+     * card, as in a direct message, and the turn goes on. True when the turn is over. Never throws.
+     */
+    private async whileCardWaits(botId: string, playerId: number, message: string, providerId: string, spaceName: string, botClient: BotClient): Promise<boolean> {
+        const approvals = this.approvals;
+        if (!approvals) return false;
+        try {
+            const chat = this.chatCallFor(botId, playerId, botClient, spaceName);
+            // Whatever anyone says, a guest too, starts a new request: what the last one made doesn't count against it (#1662)
+            if (chat) approvals.newRequest(botId, spaceName, { uuid: chat.person.identifier || `guest:${playerId}`, name: chat.person.name, playerId });
+            if (!chat?.person.signedIn || !chat.person.identifier) return false;
+            const person = { uuid: chat.person.identifier, name: chat.person.name, playerId };
+            approvals.touch(botId, spaceName, person);
+            // A question card waiting for them is answered by what they typed or said (#1661): their message is the answer, so
+            // it goes on to the bot as it is
+            await approvals.answerQuestionByMessage(botId, spaceName, person, botClient.takeSpoken?.(spaceName, playerId) ? 'spoken' : 'typed');
+            const label = approvals.waitingLabel(botId, spaceName, person);
+            if (!label) return false;
+            let yes = false;
+            try {
+                yes = isConfirm(await this.quickGenerate(providerId, CONFIRM_SYSTEM, message.slice(0, 300), botId, CONFIRM_TIMEOUT_MS));
+            } catch {
+                // Not knowing is not a yes: the card closes and the person asks again
+            }
+            if (yes) {
+                await approvals.replyPrivately(botId, spaceName, person, tapInstead(label));
+                return true;
+            }
+            await approvals.onPersonMessage(botId, spaceName, person);
+            return false;
+        } catch (error) {
+            console.warn('[AIService] Could not tell what a person said while their card waits:', error instanceof Error ? error.message : error);
+            return false;
+        }
+    }
+
+    /** The reply after a card was shown in a bubble: only the line everyone reads (#1658), as if the model had written it. */
+    private async *saySharedLine(line: string, cardIds: readonly string[] = []): AsyncGenerator<AIStreamChunk> {
+        try {
+            yield { content: line, done: false, metadata: undefined };
+            yield { content: '', done: true, metadata: { tokensUsed: 0, promptTokens: 0, completionTokens: 0 } } as AIStreamChunk;
+        } finally {
+            // Said (or the reply ended before it could be): how the card ends may be said after it now
+            this.approvals?.askLineSaid(cardIds);
+        }
+    }
+
+    /** What the model is told when the gate did not let a tool run: the line the person can be told as it is. */
+    private toolNotRun(verdict: Extract<GateDecision, { kind: 'refuse' }>): { error: string } {
+        return { error: `${verdict.line} This was not done, and it cannot be done another way. Tell the person.` };
+    }
+
+    /**
+     * The model asks which way to go (#1661): a card with the choices, in a direct message or, in a bubble, to the person
+     * alone with one plain line for everyone. The reply ends there; their pick comes back as their next message. Never throws.
+     */
+    private async askPerson(botId: string | undefined, args: Record<string, unknown>, playerId: number | undefined, botClient?: BotClient, spaceName?: string): Promise<Record<string, unknown>> {
+        const inWords = 'A question card could not be shown here. Ask in one short sentence in words instead.';
+        const chat = botId && playerId !== undefined ? this.chatCallFor(botId, playerId, botClient, spaceName) : null;
+        if (!botId || !this.approvals || !chat || !chat.person.signedIn || !chat.person.identifier) return { error: inWords };
+        if ((await this.approvals.settings(botId)).askWhichWay === 'never') {
+            return { error: "This bot's settings say not to ask which way to go. Pick the best choice, say your pick in one short line and start." };
+        }
+        const read = readQuestion(args);
+        if ('why' in read) return { error: read.why };
+        const nearby = chat.chat.kind === 'nearby';
+        const asked = await this.approvals.askQuestion({
+            botId,
+            roomId: chat.chat.ref,
+            person: { uuid: chat.person.identifier, name: chat.person.name, ...(nearby && playerId !== undefined ? { playerId } : {}) },
+            asked: (read as { ok: true; asked: QuestionAsked }).asked,
+        });
+        // In a bubble the line everyone reads is the bot's whole reply (see the follow-up)
+        return asked.kind === 'waiting' && asked.line ? { ...asked.result, [SHARED_LINE]: asked.line } : asked.result;
+    }
+
+    /**
+     * A tool that makes new things runs right away until a request would make more than the bot's "Asks before making
+     * more than" number (#1662). Then one card shows the total and one tap makes the lot. How many comes only from what
+     * the tool declares about its inputs; a tool that doesn't say asks every time while a limit is set. With nobody to
+     * ask (a guest), a call that doesn't say how many runs as before, and a known amount over the limit is not run.
+     */
+    private async checkHowMany(
+        botId: string,
+        toolName: string,
+        entry: ToolServerEntry,
+        args: Record<string, unknown>,
+        verdict: Extract<GateDecision, { kind: 'run' }>,
+        playerId: number | undefined,
+        botClient?: BotClient,
+        spaceName?: string
+    ): Promise<{ kind: 'run'; release?: () => void } | { kind: 'result'; result: unknown }> {
+        const approvals = this.approvals;
+        if (!approvals || playerId === undefined || verdict.policyRevision === undefined || !verdict.fingerprint) return { kind: 'run' };
+        try {
+            const limit = (await approvals.settings(botId)).askBeforeMaking;
+            if (limit === null) return { kind: 'run' };
+            const chat = this.chatCallFor(botId, playerId, botClient, spaceName);
+            if (!chat) return { kind: 'run' };
+            const canAsk = chat.person.signedIn && !!chat.person.identifier;
+            const nearby = chat.chat.kind === 'nearby';
+            const person = { uuid: chat.person.identifier || `guest:${playerId}`, name: chat.person.name, ...(nearby ? { playerId } : {}) };
+            const quantity = quantityOf(toolName, entry.title, args, entry.inputSchema);
+            let batch: BatchKind;
+            if (!quantity.known) {
+                if (!canAsk) {
+                    // A tool that says nothing about how many runs as it did. A count that was given but cannot be read as a number
+                    // is not a tool saying nothing: nobody can tell it is under the limit, and a guest can't be asked
+                    if (!('unreadable' in quantity && quantity.unreadable)) return { kind: 'run' };
+                    return {
+                        kind: 'result',
+                        result: { error: `The number asked for could not be read, so it cannot be checked against the ${limit} this bot makes without asking, and it was not done. Ask for a whole number, or tell them to message you directly and ask again there.` },
+                    };
+                }
+                batch = { kind: 'unknown', toolTitle: cardTitle(toolName, entry.title), ...(entry.serverName ? { serverName: entry.serverName } : {}) };
+            } else {
+                if (quantity.count === 0) return { kind: 'run' };
+                const reserved = approvals.reserveMake(botId, chat.chat.ref, person, quantity.count, limit);
+                if (!('soFar' in reserved)) return { kind: 'run', release: () => approvals.releaseMake(botId, chat.chat.ref, person, quantity.count, reserved.epoch) };
+                if (!canAsk) {
+                    return {
+                        kind: 'result',
+                        result: { error: `This would make ${quantity.count} ${quantity.unit}, more than the ${limit} this bot makes without asking, so it needs the person's OK first and it was not done. Tell them to message you directly and ask again there.` },
+                    };
+                }
+                batch =
+                    reserved.soFar > 0
+                        ? { kind: 'part', count: quantity.count, unit: quantity.unit, limit, soFar: reserved.soFar, names: quantity.names }
+                        : { kind: 'over', count: quantity.count, unit: quantity.unit, limit };
+            }
+            const decision = { kind: 'ask' as const, heading: 'makesNew' as const, notReviewed: false, policyRevision: verdict.policyRevision, fingerprint: verdict.fingerprint };
+            return await this.askForOk(botId, toolName, entry, args, decision, playerId, botClient, spaceName, batch);
+        } catch (error) {
+            // Never in the way of the tool: a check that failed is the tool as it was before this card
+            console.warn('[AIService] Could not count what a tool makes:', error instanceof Error ? error.message : error);
+            return { kind: 'run' };
+        }
+    }
+
+    /**
+     * A call that needs the person's OK (#1657). In a direct message the card is shown and the call waits there: the
+     * model hears that it is waiting, and the reply ends. A remembered approval that covers the call lets it run now.
+     * Anywhere else there is no card to show, so it is not run and the person is told to ask in a direct message.
+     */
+    private async askForOk(
+        botId: string,
+        toolName: string,
+        entry: ToolServerEntry,
+        args: Record<string, unknown>,
+        decision: Extract<GateDecision, { kind: 'ask' }>,
+        playerId: number | undefined,
+        botClient?: BotClient,
+        spaceName?: string,
+        batch?: BatchKind
+    ): Promise<{ kind: 'run' } | { kind: 'result'; result: unknown }> {
+        const chat = playerId !== undefined ? this.chatCallFor(botId, playerId, botClient, spaceName) : null;
+        if (!this.approvals || !chat || !chat.person.signedIn || !chat.person.identifier) {
+            return { kind: 'result', result: { error: "This needs the person's OK first and it was not done. Tell them to message you directly and ask again there." } };
+        }
+        // In a bubble the card goes to the person who asked alone, and everyone reads one line (#1658)
+        const nearby = chat.chat.kind === 'nearby';
+        const proposed = await this.approvals.propose({
+            botId,
+            roomId: chat.chat.ref,
+            person: { uuid: chat.person.identifier, name: chat.person.name, ...(nearby && playerId !== undefined ? { playerId } : {}) },
+            toolName,
+            ...(entry.title ? { toolTitle: entry.title } : {}),
+            entry,
+            args,
+            decision,
+            ...(batch ? { batch } : {}),
+        });
+        if (proposed.kind === 'run') return { kind: 'run' };
+        // The line everyone in the bubble reads travels with the result: it is the bot's whole reply (see the follow-up)
+        return {
+            kind: 'result',
+            result:
+                proposed.kind === 'waiting' && proposed.line
+                    ? { ...proposed.result, [SHARED_LINE]: proposed.line, ...(proposed.lineId ? { [SHARED_LINE_ID]: proposed.lineId } : {}) }
+                    : proposed.result,
+        };
     }
 
     /**
@@ -4016,6 +4525,20 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         }
     }
 
+    /**
+     * The calls that have a name and were not announced yet, as steps (#1545), marked announced. Tool pieces arrive over
+     * seconds, so this lets the steps line start when a call begins; the reset that follows once the arguments are
+     * complete carries the same steps and only fills in what they were about.
+     */
+    private beginSteps(
+        calls: Map<string, { id: string; name: string; arguments: string; announced?: boolean }>,
+        toolServerMap: Map<string, { title?: string }>
+    ): ToolStep[] {
+        const fresh = Array.from(calls.values()).filter((call) => call.name && !call.announced);
+        for (const call of fresh) call.announced = true;
+        return this.stepsOf(fresh, toolServerMap);
+    }
+
     /** The calls a reset starts, as the steps line shows them: tool servers' tools and our own work tools (#1545). */
     private stepsOf(
         calls: Array<{ id: string; name: string; arguments?: unknown }>,
@@ -4423,7 +4946,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     private async runBoundedProviderCall<T>(
         providerId: string,
         call: (provider: AIProvider, config: AIProviderConfig, signal: AbortSignal) => Promise<T>,
-        botId?: string
+        botId?: string,
+        timeoutMs: number = QUICK_LLM_TIMEOUT_MS
     ): Promise<T | undefined> {
         let timeoutId: ReturnType<typeof setTimeout> | undefined;
         let lookupTimeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -4441,7 +4965,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             const provider = this.providerRegistry.getOrCreateProvider(config);
             if (!provider) return undefined;
             const controller = new AbortController();
-            timeoutId = setTimeout(() => controller.abort(), QUICK_LLM_TIMEOUT_MS);
+            timeoutId = setTimeout(() => controller.abort(), timeoutMs);
             return await call(provider, config, controller.signal);
         } catch {
             // Timeout abort or provider error — the caller decides the fallback.
@@ -4509,14 +5033,15 @@ Return JSON: { "action": "...", "message": "what to say as a followup" }`;
      * Returns '' on failure so callers stay silent rather than fall back to
      * hardcoded text.
      */
-    async quickGenerate(providerId: string, systemPrompt: string, userPrompt: string, botId?: string): Promise<string> {
+    async quickGenerate(providerId: string, systemPrompt: string, userPrompt: string, botId?: string, timeoutMs?: number): Promise<string> {
         // Same bounded-abort pattern as quickClassify: the overflow ack runs in
         // the interruption-routing path — a slow provider must not delay it for
         // the provider's own (30s+) timeout, and the call must actually be
         // cancelled at the deadline, not left dangling.
         const result = await this.runBoundedProviderCall(providerId, (provider, config, signal) =>
             provider.generate(systemPrompt, userPrompt, config, undefined, signal),
-            botId
+            botId,
+            timeoutMs
         );
         return (result?.content || '').trim();
     }

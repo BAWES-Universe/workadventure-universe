@@ -96,6 +96,96 @@ describe("FriendsService", () => {
         });
     });
 
+    it("reads a search answer with a chat ID, and from an Orbit that does not send one yet", async () => {
+        const http = {
+            get: vi.fn(() =>
+                Promise.resolve({
+                    data: {
+                        results: [
+                            {
+                                uuid: "bob",
+                                name: "Bob",
+                                chatId: "@bob:chat",
+                                universes: ["Bawes"],
+                                relationship: "none",
+                            },
+                            { uuid: "old", name: "Old", universes: [], relationship: "none" },
+                            { uuid: "nochat", name: "No chat", chatId: null, universes: [], relationship: "none" },
+                        ],
+                    },
+                })
+            ),
+            post: vi.fn(),
+            put: vi.fn(),
+        };
+        const service = new FriendsService("https://orbit.test", "token", http);
+        const { results } = await service.search("alice", "bo");
+        expect(results.map((result) => result.chatId)).toEqual(["@bob:chat", undefined, null]);
+    });
+
+    it("reads the Woka layers of a search result, and from an Orbit that does not send them yet", async () => {
+        const layers = [
+            { id: "body", url: "https://assets.test/body.png" },
+            { id: "hat", url: "https://assets.test/hat.png" },
+        ];
+        const http = {
+            get: vi.fn(() =>
+                Promise.resolve({
+                    data: {
+                        results: [
+                            {
+                                uuid: "bob",
+                                name: "Bob",
+                                characterTextures: layers,
+                                universes: [],
+                                relationship: "none",
+                            },
+                            { uuid: "old", name: "Old", universes: [], relationship: "none" },
+                        ],
+                    },
+                })
+            ),
+            post: vi.fn(),
+            put: vi.fn(),
+        };
+        const service = new FriendsService("https://orbit.test", "token", http);
+        const { results } = await service.search("alice", "bo");
+        expect(results.map((result) => result.characterTextures)).toEqual([layers, undefined]);
+    });
+
+    it("reads the Woka layers of friends and requests, and a list from an Orbit that does not send them yet", async () => {
+        const layers = [{ id: "body", url: "https://assets.test/body.png" }];
+        const list = {
+            friends: [
+                {
+                    uuid: "f",
+                    name: "F",
+                    chatId: "@f:chat",
+                    characterTextures: layers,
+                    shareLocation: true,
+                    since: null,
+                    lastSeenAt: null,
+                },
+                { uuid: "g", name: "G", chatId: "@g:chat", shareLocation: true, since: null, lastSeenAt: null },
+            ],
+            incoming: [
+                { uuid: "i", name: "I", characterTextures: layers, sharedWorld: null, requestedAt: "2026-11-05" },
+            ],
+            outgoing: [
+                { uuid: "o", name: "O", characterTextures: layers, sentAt: "2026-11-05" },
+                { uuid: "p", name: "P", chatId: "@p:chat", sentAt: "2026-11-05" },
+            ],
+            blocked: [],
+        };
+        const http = { get: vi.fn(() => Promise.resolve({ data: list })), post: vi.fn(), put: vi.fn() };
+        const service = new FriendsService("https://orbit.test", "token", http);
+        const result = await service.getFriends("alice");
+        expect(result.friends.map((friend) => friend.characterTextures)).toEqual([layers, undefined]);
+        expect(result.incoming[0].characterTextures).toEqual(layers);
+        expect(result.incoming[0].chatId).toBeUndefined();
+        expect(result.outgoing.map((request) => request.characterTextures)).toEqual([layers, undefined]);
+    });
+
     it("asks Orbit how two players stand", async () => {
         const http = {
             get: vi.fn(() =>

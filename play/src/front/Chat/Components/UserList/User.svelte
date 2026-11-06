@@ -61,10 +61,11 @@
 
     $: ({ chatId, availabilityStatus, username = "", color, isAdmin, pictureStore } = user);
 
-    // A bot here is on (it walks the map), but may have no AI provider yet: say so before anyone writes to it.
+    // A bot here is on (it walks the map), but may be resting or have no AI provider yet: People says what its chat
+    // and the Chats list say, before anyone writes to it.
     $: botId = user.isBot ? botIdFromChatId(chatId) : undefined;
     $: botAvailability = botId ? botStatusCache.store(botId) : readable(undefined);
-    $: botUnready = $botAvailability === "unready";
+    $: botState = $botAvailability === "unready" || $botAvailability === "resting" ? $botAvailability : undefined;
     // Message shows only for people the bot's owner lets message it.
     $: botDmAccess = botId ? botDmAccessCache.store(botId) : readable(false);
 
@@ -310,17 +311,14 @@
                 <div class="text-xs mb-0 font-condensed opacity-75 self-end">
                     {#if isMe}
                         {$LL.chat.you()}
-                    {:else if botUnready}
+                    {:else if botState}
                         <div
                             class="flex items-center"
-                            style="color:{botStatusColour('unready')}"
-                            data-testid="botUnready"
+                            style="color:{botStatusColour(botState)}"
+                            data-testid={botState === "unready" ? "botUnready" : "botResting"}
                         >
-                            <div
-                                class="rounded-full me-1 h-1.5 w-1.5"
-                                style="background:{botStatusColour('unready')}"
-                            />
-                            {$LL.chat.botStatus.unready()}
+                            <div class="rounded-full me-1 h-1.5 w-1.5" style="background:{botStatusColour(botState)}" />
+                            {$LL.chat.botStatus[botState]()}
                         </div>
                     {:else if $userStatus}
                         <div class="flex items-center brightness-150" style="color:{getColorHexOfStatus($userStatus)}">

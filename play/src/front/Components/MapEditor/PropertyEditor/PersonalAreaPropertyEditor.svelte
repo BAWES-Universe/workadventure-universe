@@ -26,7 +26,7 @@
           }))
         : undefined;
 
-    // The owner shows like the People list: WOKA and name (the email only stands in for someone without a name).
+    // The owner shows like the People list: WOKA and name.
     let personalAreaOwner: string | null = personalAreaPropertyData.ownerId;
     let ownerTextures: CharacterTextureMessage[] = [];
 
@@ -41,7 +41,7 @@
             const connection = gameManager.getCurrentGameScene().connection;
             if (connection) {
                 const member = await connection.queryMember(personalAreaPropertyData.ownerId);
-                personalAreaOwner = member.name || member.email || member.id;
+                personalAreaOwner = member.name || member.id;
                 ownerTextures = member.characterTextures;
             }
         }
