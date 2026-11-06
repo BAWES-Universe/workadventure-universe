@@ -479,7 +479,10 @@ export type VoiceView =
 export function viewOf(voice: BotVoice): VoiceView {
     if (!voice.universeAllows) return { kind: "not-allowed" };
     const revision = liveRevision(voice);
-    if (!voice.enabled || !revision) return noService(voice) ? { kind: "no-service" } : { kind: "off" };
+    // Nothing to run a job on, or no way to cover both jobs (two keys that each do one job and no Universe AI to do the other)
+    if (!voice.enabled || !revision) {
+        return noService(voice) || payerOptions(voice).length === 0 ? { kind: "no-service" } : { kind: "off" };
+    }
     return { kind: "on", profile: revision.profile, pause: pauseOf(voice, revision.profile) };
 }
 
@@ -586,10 +589,21 @@ export function doorVoices(
 export function startingPayer(voice: BotVoice, previous: VoiceProfile | null): PayerOption | null {
     const options = payerOptions(voice);
     const before = previous?.speech?.providerId;
+    // A key that is down would turn voice on already paused: it is never the one to start on while another way works
+    const working = (option: PayerOption) =>
+        ![option.recognition, option.speech].some(
+            (choice) => choice.kind === "key" && choice.key.health.status === "down"
+        );
     const same = before
-        ? options.find((option) => providerOf(voice, "speech", option.speech)?.providerId === before)
+        ? options.find((option) => working(option) && providerOf(voice, "speech", option.speech)?.providerId === before)
         : undefined;
-    return same ?? options.find((option) => option.kind === "key") ?? options[0] ?? null;
+    return (
+        same ??
+        options.find((option) => option.kind === "key" && working(option)) ??
+        options.find(working) ??
+        options[0] ??
+        null
+    );
 }
 
 /** The source a voice list is read from: "universe-ai" or a key's id. */

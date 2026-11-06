@@ -316,6 +316,20 @@ describe("the bot page's Voice group (#1668)", () => {
         expect(mocks.api.saveBotVoice.mock.calls[0][1].speech).toMatchObject({ voiceId: "v-fahad" });
     });
 
+    it("keeps the style and language it had when it is turned on again with another voice", async () => {
+        const styled = { ...uaiProfile, expression: "expressive", language: { mode: "fixed", code: "ar" } };
+        mocks.api.getBotVoice.mockResolvedValue({ ...turnedOn(styled), enabled: false });
+        mocks.api.saveBotVoice.mockResolvedValue(answer());
+        mocks.api.setBotVoiceEnabled.mockResolvedValue(turnedOn());
+        await mount();
+        await click("bot-voice-option", 1);
+        await click("bot-voice-go");
+        expect(mocks.api.saveBotVoice.mock.calls[0][1]).toMatchObject({
+            expression: "expressive",
+            language: { mode: "fixed", code: "ar" },
+        });
+    });
+
     it("turns off from the switch, and the row opens on voices again", async () => {
         mocks.api.getBotVoice.mockResolvedValue(turnedOn());
         mocks.api.setBotVoiceEnabled.mockResolvedValue({ ...turnedOn(), enabled: false });

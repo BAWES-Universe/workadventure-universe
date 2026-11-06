@@ -306,6 +306,32 @@ describe("the Voice row's door", () => {
         expect(startingPayer(read(), null)?.id).toBe("universe-ai");
         expect(startingPayer(read({ universeAi: { recognition: null, speech: null } }), null)).toBeNull();
     });
+
+    it("never starts on a key that is down while another way works (it would turn on already paused)", () => {
+        const down = keyAnswer({ health: { status: "down", downSince: "2026-11-03T06:12:00Z", downReason: "credit" } });
+        const voice = read({ lentKeys: [down] });
+        expect(startingPayer(voice, null)?.id).toBe("universe-ai");
+        const onKey = { speech: { providerId: "key-el", model: "m", voiceId: "x" } };
+        expect(startingPayer(voice, onKey)?.id).toBe("universe-ai");
+        const another = keyAnswer({ id: "key-2" });
+        expect(startingPayer(read({ lentKeys: [down, another] }), onKey)?.id).toBe("key-2");
+        // Nothing else to start on: the key is still offered, and the page says it is down
+        expect(
+            startingPayer(read({ lentKeys: [down], universeAi: { recognition: null, speech: null } }), null)
+        ).toBeNull();
+    });
+
+    it("reads as no service when no way covers both jobs, even though each job has something to run on", () => {
+        const listens = keyAnswer({
+            id: "ear",
+            recognition: true,
+            speech: false,
+            models: [{ id: "nova", kind: "recognition" }],
+        });
+        const speaks = keyAnswer({ id: "mouth" });
+        const none = { recognition: null, speech: null };
+        expect(viewOf(read({ lentKeys: [listens, speaks], universeAi: none })).kind).toBe("no-service");
+    });
 });
 
 describe("voices", () => {

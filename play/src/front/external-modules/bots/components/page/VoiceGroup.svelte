@@ -409,6 +409,7 @@
         const botId = bot.id;
         const saved = await run(async () => {
             const spoken = { voiceId: choice.voiceId, voiceName: choice.name };
+            const before = liveRevision(data)?.profile;
             if (!sameAsBefore(data, option, choice)) {
                 const recognition = providerOf(data, "recognition", option.recognition);
                 const speech = providerOf(data, "speech", option.speech);
@@ -420,8 +421,9 @@
                         model: choice.model || speech.model,
                         ...spoken,
                     },
-                    expression: "natural",
-                    language: { mode: "follow" },
+                    // The style and language the bot had stay when only the voice or the place to pay changes
+                    expression: before?.expression ?? "natural",
+                    language: before?.language ?? { mode: "follow" },
                 };
                 await botApiService.saveBotVoice(botId, fresh);
             }
