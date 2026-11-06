@@ -15,6 +15,8 @@ import {
     startingVoice,
     viewOf,
     filterVoices,
+    doorVoices,
+    startingPayer,
     voiceLanguages,
     type BotVoice,
     type VoiceChoice,
@@ -224,6 +226,85 @@ describe("who can pay", () => {
         expect(providerOf(voice, "speech", key)).toEqual({ providerId: "key-el", model: "m1" });
         expect(providerOf(voice, "speech", key, "m2")).toEqual({ providerId: "key-el", model: "m2" });
         expect(providerOf(voice, "recognition", key)).toBeNull();
+    });
+
+    it("always starts Universe AI's part on the model Universe AI uses now, whatever model was kept", () => {
+        const voice = read({
+            universeAi: {
+                recognition: orbitAnswer().universeAi.recognition,
+                speech: {
+                    ...orbitAnswer().universeAi.speech,
+                    models: [{ id: "eleven_v4_turbo" }, { id: "eleven_flash_v2_5" }],
+                },
+            },
+        });
+        const [uai] = choicesFor(voice, "speech");
+        expect(providerOf(voice, "speech", uai, "eleven_flash_v2_5")).toEqual({
+            providerId: "uai-speak",
+            model: "eleven_v4_turbo",
+        });
+    });
+});
+
+describe("the Voice row's door", () => {
+    const voices = ["a", "b", "c", "d", "e", "f", "g"].map(
+        (id): VoiceChoice => ({
+            voiceId: id,
+            name: id.toUpperCase(),
+            description: "",
+            languages: [],
+            previewUrl: null,
+            providerId: "p",
+            model: "m",
+        })
+    );
+
+    it("shows five voices unless Orbit says another number", () => {
+        expect(read().voicesShownFirst).toBe(5);
+        expect(
+            read({
+                voiceLimits: {
+                    ...orbitAnswer().voiceLimits,
+                    limits: { ...orbitAnswer().voiceLimits.limits, voicesShownFirst: 3 },
+                },
+            }).voicesShownFirst
+        ).toBe(3);
+        expect(
+            read({
+                voiceLimits: {
+                    ...orbitAnswer().voiceLimits,
+                    limits: { ...orbitAnswer().voiceLimits.limits, voicesShownFirst: 0 },
+                },
+            }).voicesShownFirst
+        ).toBe(5);
+    });
+
+    it("puts the voice to start with first, then the company's order, cut at the number to show", () => {
+        const voice = read();
+        const [uai] = choicesFor(voice, "speech");
+        // Universe AI's default voice is not in this list: the first listed starts
+        expect(doorVoices(voice, uai, voices).voices.map((item) => item.voiceId)).toEqual(["a", "b", "c", "d", "e"]);
+        expect(doorVoices(voice, uai, voices).startId).toBe("a");
+        // A voice kept moves to the front, and nothing is listed twice
+        const kept = doorVoices(voice, uai, voices, "f");
+        expect(kept.voices.map((item) => item.voiceId)).toEqual(["f", "a", "b", "c", "d"]);
+        expect(kept.startId).toBe("f");
+        // Universe AI's own default voice leads when the list has it
+        const withDefault = [...voices, { ...voices[0], voiceId: "v-default", name: "River" }];
+        expect(doorVoices(voice, uai, withDefault).startId).toBe("v-default");
+        expect(doorVoices(voice, uai, withDefault).voices[0].name).toBe("River");
+        expect(doorVoices(voice, uai, []).voices).toEqual([]);
+    });
+
+    it("starts on a lent key when there is one, and on the place the last version used when it is still there", () => {
+        const voice = read({ lentKeys: [keyAnswer()] });
+        expect(startingPayer(voice, null)?.id).toBe("key-el");
+        const before = { speech: { providerId: "uai-speak", model: "m", voiceId: "x" } };
+        expect(startingPayer(voice, before)?.id).toBe("universe-ai");
+        const onKey = { speech: { providerId: "key-el", model: "m", voiceId: "x" } };
+        expect(startingPayer(voice, onKey)?.id).toBe("key-el");
+        expect(startingPayer(read(), null)?.id).toBe("universe-ai");
+        expect(startingPayer(read({ universeAi: { recognition: null, speech: null } }), null)).toBeNull();
     });
 });
 
