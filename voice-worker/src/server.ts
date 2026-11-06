@@ -7,6 +7,7 @@ import type { Duplex } from 'node:stream';
 import { type RawData, WebSocket, WebSocketServer } from 'ws';
 import { ConnectorRegistry } from './connectors.ts';
 import { Counters } from './counters.ts';
+import { Latency } from './latency.ts';
 import { DEEPGRAM_ADAPTER, DEFAULT_DEEPGRAM_FINAL_TIMEOUT_MS, DeepgramRecognition } from './deepgram.ts';
 import { FAKE_ADAPTER, FakeSpeech } from './fakeSpeech.ts';
 import type { IceConfig } from './lane.ts';
@@ -74,6 +75,8 @@ const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
 
 export class VoiceWorker {
     readonly counters = new Counters();
+    /** How long turns take, per provider (#1865). */
+    readonly latency = new Latency();
     /**
      * CPU is measured on the worker's own clock, not per /stats read, so every reader (and a second read soon after the
      * first) sees the same figure: the start of the current sample, and the last minute's samples in percent.
@@ -165,6 +168,7 @@ export class VoiceWorker {
             memoryMb: Math.round(process.memoryUsage().rss / (1024 * 1024)),
             uptimeSeconds: Math.round(process.uptime()),
             counters: this.counters.snapshot(),
+            latency: this.latency.snapshot(),
         };
     }
 
@@ -192,6 +196,7 @@ export class VoiceWorker {
         return {
             engineId: this.engineId,
             counters: this.counters,
+            latency: this.latency,
             ice: this.options.ice,
             input: this.options.input ?? (() => undefined),
             connectors: this.connectors,

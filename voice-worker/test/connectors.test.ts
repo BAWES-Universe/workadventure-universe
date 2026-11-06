@@ -727,3 +727,67 @@ describe('provider keys', () => {
         expect(secret.reveal()).toBe(KEY_A);
     });
 });
+
+describe('how long a spoken turn takes is timed (#1865)', () => {
+    it('records hear, think, speak, play and total for the providers of the bubble, and never a word', async () => {
+        const ears = new FakeEars(['my secret sentence']);
+        const hearing: RecognitionConnector = { listen: (_settings, events) => ears.factory(events) };
+        const voice: SpeechConnector = {
+            async *speak() {
+                await sleep(150);
+                yield tone(400);
+            },
+        };
+        const { worker, bot } = await start(new ConnectorRegistry().registerRecognition('ears', hearing).registerSpeech('voice', voice));
+        const alice = new FakeHuman('alice');
+        humans.push(alice);
+        open(bot, 's1', { recognition: recognition('ears', KEY_A), speech: speech('voice', KEY_B) });
+        await waitFor('the session', () => bot.of('session.start').length === 1);
+        await bot.join('s1', alice);
+        alice.startMic(440);
+        await sleep(600);
+        alice.stopMic();
+        await waitFor('the words', () => bot.of('user.turn', 's1').some((t) => t.outcome === 'final'), 6000);
+        // The bot thinks for a while, then replies
+        await sleep(200);
+        bot.send({ type: 'bot.say', sessionId: 's1', segmentId: 'g1', text: 'a reply', committed: true });
+        await waitFor('the first sound', () => (worker.stats().latency as { total?: unknown }).total !== undefined, 6000);
+
+        const latency = worker.stats().latency as Record<string, Record<string, { samples: number; p50: number; p95: number }>>;
+        expect(Object.keys(latency).sort()).toEqual(['hear', 'play', 'speak', 'think', 'total']);
+        expect(latency.hear.ears.samples).toBe(1);
+        expect(latency.think.bot.p50).toBeGreaterThanOrEqual(150);
+        expect(latency.speak.voice.p50).toBeGreaterThanOrEqual(120);
+        expect(latency.play.voice.p50).toBeLessThan(200);
+        // From the person stopping to the first sound: at least the bot's thinking and the voice's first audio
+        expect(latency.total['ears>voice'].p50).toBeGreaterThanOrEqual(latency.think.bot.p50 + latency.speak.voice.p50);
+        // Nothing anyone said, and no key, is in what is served
+        const served = JSON.stringify(worker.stats());
+        expect(served).not.toContain('secret');
+        expect(served).not.toContain(KEY_A);
+        expect(served).not.toContain(KEY_B);
+        expect(bot.violations).toEqual([]);
+    }, 30000);
+
+    it('times a reply that answers no spoken turn as speak and play only, and a built-in test engine not at all', async () => {
+        const voice: SpeechConnector = {
+            async *speak() {
+                yield tone(200);
+            },
+        };
+        const { worker, bot } = await start(new ConnectorRegistry().registerSpeech('voice', voice));
+        const alice = new FakeHuman('alice');
+        humans.push(alice);
+        open(bot, 's1', { speech: speech('voice', KEY_B) });
+        open(bot, 's2');
+        await waitFor('the sessions', () => bot.of('session.start').length === 2);
+        await bot.join('s1', alice);
+        bot.send({ type: 'bot.say', sessionId: 's1', segmentId: 'g1', text: 'typed reply', committed: true });
+        bot.send({ type: 'bot.say', sessionId: 's2', segmentId: 'g2', text: 'test engine', committed: true });
+        await waitFor('the voice reply', () => (worker.stats().latency as { speak?: unknown }).speak !== undefined, 6000);
+        await waitFor('the test engine reply', () => !!bot.progress('s2', 'g2'));
+        const latency = worker.stats().latency as Record<string, Record<string, unknown>>;
+        expect(Object.keys(latency).sort()).toEqual(['play', 'speak']);
+        expect(Object.keys(latency.speak)).toEqual(['voice']);
+    }, 30000);
+});

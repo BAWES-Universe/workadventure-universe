@@ -7,6 +7,7 @@ import { type ConnectorRegistry, type ProviderReporter, Secret, type SpeechConne
 import type { Counters } from './counters.ts';
 import { FAKE_SPEECH_SETTINGS } from './fakeSpeech.ts';
 import { Lane, type IceConfig } from './lane.ts';
+import type { Latency } from './latency.ts';
 import type { Expression, LeaveReason, Mode, ProviderPart, RecognitionConfig, Signal, SpeechConfig, WorkerToBot } from './protocol.ts';
 import { modeListens } from './protocol.ts';
 import { Recognition } from './recognition.ts';
@@ -41,6 +42,8 @@ export interface SessionHost {
     speechTimeoutMs: number;
     /** Voiced audio before a person counts as speaking over the bot. */
     bargeInMs?: number;
+    /** How long turns take, per provider (#1865). Times only. Absent: not measured. */
+    latency?: Latency;
     /** Lanes alive in the whole worker, to enforce the limit. */
     laneCount(): number;
     maxLanes: number;
@@ -97,6 +100,10 @@ export class Session {
     private readonly recognition?: Recognition;
     private readonly statusTimer: NodeJS.Timeout;
     private closing = false;
+    /** The last turn that came through whole, until a reply is handed over for it (#1865). */
+    private lastFinal?: { at: number; endOfSpeechAt: number };
+    /** When the person stopped talking, for each reply that answers a spoken turn and has not started yet. */
+    private readonly answering = new Map<string, number>();
 
     constructor(
         readonly id: string,
@@ -116,6 +123,7 @@ export class Session {
                   send: (message) => host.send(message),
                   next: host.input,
                   bargeInMs: host.bargeInMs,
+                  onFinal: ({ hearMs }) => this.heardTurn(settings.recognition?.adapter, hearMs),
                   // A person speaking over the bot stops its voice at once, here, with no round trip; and a reply is
                   // likely soon, so the speaking provider gets ready for it
                   onSpeaking: () => {
@@ -132,7 +140,11 @@ export class Session {
             speechTimeoutMs: host.speechTimeoutMs,
             targets: () => (this.room ? [...this.lanes.values(), this.room] : [...this.lanes.values()]),
             active: () => this.voice === 'active',
-            progress: (message) => host.send({ type: 'playback.progress', ...message }),
+            progress: (message) => {
+                if (message.finished) this.answering.delete(message.segmentId);
+                host.send({ type: 'playback.progress', ...message });
+            },
+            firstFrame: ({ segmentId, speakMs, playMs, sentAt }) => this.firstFrame(settings.recognition?.adapter, settings.speech?.adapter, segmentId, speakMs, playMs, sentAt),
         });
         this.statusTimer = setInterval(() => this.sendStatus(), STATUS_INTERVAL_MS);
         this.statusTimer.unref?.();
@@ -379,7 +391,45 @@ export class Session {
     }
 
     say(segmentId: string, text: string, maxMs?: number, lang?: string): void {
+        this.pairReply(segmentId);
         this.speaker.enqueue(segmentId, text, maxMs, lang);
+    }
+
+    // ---- how long a turn takes (#1865): times and provider names only ----
+
+    /** A person's stretch of speech came through whole: how long after they stopped talking (a bubble with a real hearing provider only). */
+    private heardTurn(adapter: string | undefined, hearMs: number): void {
+        if (!adapter) return;
+        const now = performance.now();
+        this.host.latency?.record('hear', adapter, hearMs);
+        this.lastFinal = { at: now, endOfSpeechAt: now - hearMs };
+    }
+
+    /**
+     * The bot's reply arrived. The first one after a person's turn answers it: the time since their words were final is the bot's
+     * to think. Which turn a reply is for is not in the message, so this is the best guess: the latest one not yet answered, and
+     * only within two minutes (anything older was ignored, as a group's chatter is).
+     */
+    private pairReply(segmentId: string): void {
+        const turn = this.lastFinal;
+        if (!turn || performance.now() - turn.at > 120_000) return;
+        this.lastFinal = undefined;
+        this.host.latency?.record('think', 'bot', performance.now() - turn.at);
+        this.answering.set(segmentId, turn.endOfSpeechAt);
+        for (const oldest of this.answering.keys()) {
+            if (this.answering.size <= 32) break;
+            this.answering.delete(oldest);
+        }
+    }
+
+    private firstFrame(hearing: string | undefined, speaking: string | undefined, segmentId: string, speakMs: number, playMs: number, sentAt: number): void {
+        const latency = this.host.latency;
+        const endOfSpeechAt = this.answering.get(segmentId);
+        this.answering.delete(segmentId);
+        if (!latency || !speaking) return;
+        latency.record('speak', speaking, speakMs);
+        latency.record('play', speaking, playMs);
+        if (endOfSpeechAt !== undefined && hearing) latency.record('total', `${hearing}>${speaking}`, sentAt - endOfSpeechAt);
     }
 
     retract(segmentId: string): void {

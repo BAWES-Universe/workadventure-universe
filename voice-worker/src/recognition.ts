@@ -48,6 +48,8 @@ export interface RecognitionOptions {
     provider?: ProviderReporter;
     /** Where the audio goes on to besides recognition (the worker-wide tap). */
     next?: InputSink;
+    /** A stretch of speech came through whole and became the person's line (#1865): how long after they stopped talking. A time, never the words. */
+    onFinal?(timing: { participantId: string; hearMs: number }): void;
 }
 
 interface Turn {
@@ -63,6 +65,8 @@ interface Turn {
     announced: boolean;
     /** The last words heard. */
     text: string;
+    /** When the last voiced audio arrived: when the person stopped talking, as far as the worker can tell. */
+    lastVoicedAt: number;
     /** Said its last (final, lost or cleared): anything later from the recognizer is ignored. */
     over: boolean;
     /** When the last audio arrived, and the timer that ends the stretch if no more does. */
@@ -145,6 +149,7 @@ export class Recognition {
         }
 
         turn.lastAt = performance.now();
+        if (voiced) turn.lastVoicedAt = turn.lastAt;
         turn.audioMs += ms;
         turn.gapMs += frame.droppedMs;
         turn.quietMs = voiced ? 0 : turn.quietMs + ms;
@@ -208,6 +213,7 @@ export class Recognition {
             text: '',
             over: false,
             lastAt: performance.now(),
+            lastVoicedAt: performance.now(),
         };
         const participantId = frame.participantId;
         turn.recognizer = this.options.factory({
@@ -287,6 +293,7 @@ export class Recognition {
             ...(kind === 'lost' ? { reason } : {}),
             audioMs: Math.round(turn.audioMs),
         });
+        if (kind === 'final') this.options.onFinal?.({ participantId, hearMs: Math.max(0, Math.round(performance.now() - turn.lastVoicedAt)) });
     }
 
     /** Ends every stretch of one person that is not over: lost keeps their words to offer back, cleared drops them. */

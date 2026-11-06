@@ -111,6 +111,15 @@ process's share of one core, averaged over the last minute; reading it changes n
 `lanes_refused` and `sessions_refused` for those turned away because the worker was full. The bot server reads it every
 minute for its load events and warnings (game #1751).
 
+`/stats` also has `latency` (#1865): how long a spoken turn takes, in milliseconds, as the median (`p50`), the 95th percentile
+(`p95`) and the number of turns (`samples`) over the last ten minutes (at most 200 turns each), per stage and provider. Times and
+provider names only, never a word anyone said. `hear`: the person stops talking until their last words are final (the hearing
+provider). `think`: those words are final until the bot's reply arrives (the bot and its AI model; the first reply after a spoken
+turn is taken as its answer, within two minutes). `speak`: the reply is handed to the voice until its first audio (the speaking
+provider). `play`: that audio until its first frame is on its way out (this worker). `total`: the person stops talking until the
+first frame of the answer goes out (provider `soniox>elevenlabs`, the hearing and the speaking one). A bubble on the built-in test
+engine is not timed.
+
 ### LiveKit tests
 
 `test/livekit.test.ts` runs against a real local `livekit-server` and is skipped when none answers on
