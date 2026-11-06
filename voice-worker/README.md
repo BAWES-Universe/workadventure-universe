@@ -111,6 +111,17 @@ process's share of one core, averaged over the last minute; reading it changes n
 `lanes_refused` and `sessions_refused` for those turned away because the worker was full. The bot server reads it every
 minute for its load events and warnings (game #1751).
 
+### One-shot lines: `POST /preview`
+
+The bot server asks the worker to speak one line once, with the speech settings of a bubble, and plays the audio back to the
+maker's browser ("Hear the bot say hello", game #1852). Same bearer secret as `/stats`. Body: `{ speech: { adapter, model,
+voiceId, key, endpoint?, region?, language? }, text, expression?, maxSeconds? }` (text up to 1000 characters, body up to
+16 KB). The answer is `200 audio/wav` (24 kHz mono 16-bit, `x-audio-ms` is its length), `400` for a request or an adapter the
+worker does not have, `401`, `413`, `429 {error:"busy"}` over `VOICE_MAX_PREVIEWS`, or `502 {error:"provider", status?,
+rejected}` when the voice company refused or failed (`rejected`: it refused the key). It uses the same connectors as a bubble,
+so ElevenLabs `eleven_v4_turbo` goes over the Text-to-Dialogue socket. The key is held for the call only and never logged. The
+call is cancelled if the caller goes away.
+
 ### LiveKit tests
 
 `test/livekit.test.ts` runs against a real local `livekit-server` and is skipped when none answers on
@@ -135,6 +146,8 @@ npm test
 | `VOICE_MAX_SESSIONS_PER_BOT` | `64` | Bubbles one bot may have open. |
 | `VOICE_MAX_UTTERANCE_SECONDS` | `180` | The longest stretch of one person's speech taken, in seconds of audio. Past it the words are offered back to them, never sent. |
 | `VOICE_MAX_REPLY_SECONDS` | `60` | The longest one spoken reply plays, whatever the bot server asks (it asks for its own, up to this). |
+| `VOICE_MAX_PREVIEWS` | `8` | One-shot lines ("Hear the bot say hello", game #1852) rendered at once. Over it, `POST /preview` answers 429. |
+| `VOICE_MAX_PREVIEW_SECONDS` | `20` | The longest a one-shot line plays, whatever the bot server asks. |
 | `VOICE_SPEECH_TIMEOUT_SECONDS` | `15` | The longest a speech provider may go without sending the next piece of a reply's audio before the call counts as failed. |
 | `VOICE_RECOGNITION_FINAL_TIMEOUT_SECONDS` | `10` | The longest a hearing provider may take for a person's last words after they paused before the call counts as failed. |
 | `VOICE_BARGE_IN_MS` | `100` | Speech this long, from a person the bot hears, stops the bot's voice. A click or a cough is shorter. |

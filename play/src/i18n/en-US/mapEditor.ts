@@ -1014,6 +1014,17 @@ const mapEditor: BaseTranslation = {
                     hear: "Hear {voice:string}",
                     noSample: "{voice:string} has no sample",
                     sampleFailed: "Couldn’t play the sample. Try again.",
+                    helloTitle: "Hear {bot:string} say hello",
+                    helloLineUniverseAi:
+                        "{bot:string} answers in its own words, with this voice and style. Uses 1 of your voice replies.",
+                    helloLineKey:
+                        "{bot:string} answers in its own words, with this voice and style. Uses a few characters of {key:string}.",
+                    helloThinking: "{bot:string} is thinking of a hello…",
+                    helloSaying: "{bot:string} is saying hello…",
+                    helloStop: "Stop",
+                    helloUsedUp:
+                        "Your voice replies are used up until {time:string}. The samples above still play, free.",
+                    helloFailed: "{bot:string} couldn’t say hello just now. Try again.",
                     change: "Change",
                     howItSpeaks: "How it speaks",
                     payerUniverseAiTitle: "Universe AI pays for listening and speaking.",
