@@ -142,6 +142,8 @@ export class VoiceCalls {
      * bot (its name, a summon, or the follow-up right after an answer); without this every turn is the bot's to hear.
      */
     hears?: (spaceName: string, personId: string, text: string) => boolean;
+    /** Whether a space is a meeting room, where the bot takes everything as said to it (see `inGroup`). */
+    isMeeting?: (spaceName: string) => boolean;
     /** Called when someone's audio is connected (a call or the room): what was waiting for an audience can be said. */
     onAudience?: (spaceName: string) => void;
     /** What each person's mode is, as they chose it. Missing: the default. Kept so a choice made before the audio connects still applies. */
@@ -337,9 +339,13 @@ export class VoiceCalls {
         return chosen === 'talk' ? 'type_and_listen' : chosen === 'speak_and_read' ? 'off' : chosen;
     }
 
-    /** Several people are in this bubble, so what one of them says is not necessarily for the bot. */
+    /**
+     * Several people are in this bubble, so what one of them says is not necessarily for the bot. A meeting room is not a group in this
+     * sense: the bot is there to hear the meeting and takes everything as said to it (it has no "said to the bot" to count), so the
+     * daily listening neither counts nor holds back what is said there.
+     */
     private inGroup(spaceName: string): boolean {
-        return (this.roster.get(spaceName)?.size ?? 0) > 1;
+        return (this.roster.get(spaceName)?.size ?? 0) > 1 && !this.isMeeting?.(spaceName);
     }
 
     /**
