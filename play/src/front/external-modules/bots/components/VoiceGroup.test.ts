@@ -423,6 +423,16 @@ describe("the bot page's Voice group (#1668)", () => {
         expect(text()).toContain("River · Expressive · Universe AI");
     });
 
+    it("shows Try again in the picker too when the source lists no voice", async () => {
+        mocks.api.getBotVoice.mockResolvedValue(turnedOn());
+        mocks.api.getBotVoices.mockReset();
+        mocks.api.getBotVoices.mockResolvedValue([]);
+        await mount();
+        await click("bot-voice-change");
+        expect(text()).toContain("Couldn’t load the voices.");
+        expect(byTestId("bot-voice-use")[0] as HTMLButtonElement | undefined).toBeUndefined();
+    });
+
     it("picks another voice in the picker and saves it only on Use", async () => {
         mocks.api.getBotVoice.mockResolvedValue(turnedOn());
         mocks.api.saveBotVoice.mockResolvedValue(
