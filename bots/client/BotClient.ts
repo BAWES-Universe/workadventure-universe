@@ -2695,6 +2695,8 @@ export class BotClient {
         this.voice.onAudience = (spaceName) => this.speech?.audience(spaceName);
         this.voice.onUnplayed = (spaceName, segmentId) => this.speech?.unplayed(spaceName, segmentId);
         this.voice.onHeard = (spaceName, segmentId) => this.speech?.heard(spaceName, segmentId);
+        // Orbit's follow-up window (its voice limits) is the one the bot uses, in voice and in nearby chat alike
+        this.voice.onFollowUpSeconds = (seconds) => this.attention.useFollowUpSeconds(seconds);
         this.voice.onSessionEnded = (spaceName) => this.speech?.sessionEnded(spaceName);
         this.voice.onPlayed = (_spaceName, segmentId) => this.speech?.played(segmentId);
         // A spoken answer is over: the person can go on without the bot's name from now (#1220)

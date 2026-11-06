@@ -289,6 +289,17 @@ describe('the relay: counting group chatter', () => {
         expect(t.orbit.reportVoiceListening).toHaveBeenCalledWith('bot-1', { seconds: 3 });
     });
 
+    it('counts words that only came through in part when they were not said to the bot, since the bot drops them too', async () => {
+        const t = relay();
+        await t.group();
+        t.orbit.reportVoiceListening.mockClear();
+        t.calls.hears = (_space, _person, text) => /^nora\b/i.test(text);
+        t.turn('room_7', 'Sara, lunch at', 6000, 'lost');
+        t.turn('room_7', 'Nora, what is', 7000, 'lost');
+        await t.listening.flush();
+        expect(t.orbit.reportVoiceListening).toHaveBeenCalledWith('bot-1', { seconds: 6 });
+    });
+
     it('counts nothing in a meeting room, where the bot takes everything as said to it, and never holds it back there', async () => {
         const t = relay();
         t.calls.isMeeting = () => true;

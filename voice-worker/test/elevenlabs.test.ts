@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ConnectorRegistry, ProviderError, Secret, type SpeechRequest } from '../src/connectors.ts';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { ELEVENLABS_ADAPTER, ELEVENLABS_MODELS, ElevenLabsSpeech, WARM_SOCKET_MS, currentElevenLabsModel, elevenLabsModel } from '../src/elevenlabs.ts';
+import { ELEVENLABS_ADAPTER, ELEVENLABS_MODELS, ElevenLabsSpeech, WARM_SOCKET_MS, currentElevenLabsModel, elevenLabsModel, refusalStatus } from '../src/elevenlabs.ts';
 import { VoiceWorker } from '../src/server.ts';
 import { waitFor } from './harness.ts';
 
@@ -124,6 +124,25 @@ describe('speaking with ElevenLabs', () => {
         expect(`${(error as Error).message} ${JSON.stringify(error)}`).not.toContain(KEY);
     });
 
+    it('fails with 402 when the key is out of credit, which ElevenLabs answers with a 401 that says so', async () => {
+        const el = await fakeElevenLabs((res) => {
+            res.statusCode = 401;
+            res.end(JSON.stringify({ detail: { status: 'quota_exceeded', message: 'This request exceeds your quota.' } }));
+        });
+        const error = await collect(new ElevenLabsSpeech().speak(request(el.base))).catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(ProviderError);
+        expect((error as ProviderError).status).toBe(402);
+    });
+
+    it('reads only a 401 for being out of credit: a wrong key and any other status keep their own', () => {
+        expect(refusalStatus(401, JSON.stringify({ detail: { status: 'invalid_api_key' } }))).toBe(401);
+        expect(refusalStatus(401, JSON.stringify({ detail: { code: 'quota_exceeded' } }))).toBe(402);
+        expect(refusalStatus(401, 'not json')).toBe(401);
+        expect(refusalStatus(401, 'null')).toBe(401);
+        expect(refusalStatus(401, '')).toBe(401);
+        expect(refusalStatus(429, JSON.stringify({ detail: { status: 'quota_exceeded' } }))).toBe(429);
+    });
+
     it('fails without a status when ElevenLabs cannot be reached', async () => {
         const error = await collect(new ElevenLabsSpeech().speak(request('http://127.0.0.1:1'))).catch((e: unknown) => e);
         expect(error).toBeInstanceOf(ProviderError);
@@ -215,14 +234,15 @@ afterEach(async () => {
 });
 
 /** A stand-in Text to Dialogue WebSocket: `onClose` runs once the worker asks it to close the socket. */
-async function fakeDialogue(options: { refuse?: number; onClose?: (send: (m: object) => void, ws: WebSocket) => void } = {}): Promise<FakeDialogue> {
+async function fakeDialogue(options: { refuse?: number; refuseBody?: string; onClose?: (send: (m: object) => void, ws: WebSocket) => void } = {}): Promise<FakeDialogue> {
     const httpServer = http.createServer();
     const wss = new WebSocketServer({ noServer: true });
     const state: FakeDialogue = { base: '', upgrades: [], messages: [], closed: false, dropAll: () => wss.clients.forEach((c) => c.terminate()) };
     httpServer.on('upgrade', (req, socket, head) => {
         state.upgrades.push({ url: req.url, key: req.headers['xi-api-key'] });
         if (options.refuse) {
-            socket.end(`HTTP/1.1 ${options.refuse} Refused\r\nContent-Length: 0\r\n\r\n`);
+            const body = options.refuseBody ?? '';
+            socket.end(`HTTP/1.1 ${options.refuse} Refused\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
             return;
         }
         wss.handleUpgrade(req, socket, head, (ws) => {
@@ -291,7 +311,7 @@ describe('speaking with Eleven v4 Turbo over the Text to Dialogue WebSocket', ()
 
     it.each([
         ['authentication_required', 401],
-        ['quota_exceeded', 401],
+        ['quota_exceeded', 402],
         ['too_many_concurrent_requests', 429],
         ['something_new', undefined],
     ])('fails when ElevenLabs answers %s, with status %s', async (error, status) => {
@@ -307,6 +327,13 @@ describe('speaking with Eleven v4 Turbo over the Text to Dialogue WebSocket', ()
         const failure = await collect(new ElevenLabsSpeech().speak(turbo(el.base))).catch((e: unknown) => e);
         expect(failure).toBeInstanceOf(ProviderError);
         expect((failure as ProviderError).status).toBe(401);
+    });
+
+    it('fails with 402 when the socket is refused because the key is out of credit', async () => {
+        const el = await fakeDialogue({ refuse: 401, refuseBody: JSON.stringify({ detail: { status: 'quota_exceeded', message: 'no' } }) });
+        const failure = await collect(new ElevenLabsSpeech().speak(turbo(el.base))).catch((e: unknown) => e);
+        expect(failure).toBeInstanceOf(ProviderError);
+        expect((failure as ProviderError).status).toBe(402);
     });
 
     it('fails without a status when ElevenLabs cannot be reached', async () => {
