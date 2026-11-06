@@ -38,7 +38,9 @@ export class StreamVolume {
     private context: AudioContext | undefined;
     private source: MediaStreamAudioSourceNode | undefined;
     private gain: GainNode | undefined;
-    private sourceStream: MediaStream | undefined;
+    // The live audio tracks the source node was made for: a track added, removed or ended needs a new one
+    private sourceTracks: string | undefined;
+    private watchedTracks: MediaStreamTrack[] = [];
     private armed = false;
     private destroyed = false;
 
@@ -49,7 +51,11 @@ export class StreamVolume {
 
     setStream(stream: MediaStream | undefined): void {
         if (this.destroyed || stream === this.stream) return;
+        this.stream?.removeEventListener("addtrack", this.onTracksChanged);
+        this.stream?.removeEventListener("removetrack", this.onTracksChanged);
         this.stream = stream;
+        this.stream?.addEventListener("addtrack", this.onTracksChanged);
+        this.stream?.addEventListener("removetrack", this.onTracksChanged);
         this.apply();
     }
 
@@ -61,6 +67,9 @@ export class StreamVolume {
 
     destroy(): void {
         if (this.destroyed) return;
+        this.stream?.removeEventListener("addtrack", this.onTracksChanged);
+        this.stream?.removeEventListener("removetrack", this.onTracksChanged);
+        this.watchTracks([]);
         this.disconnect();
         this.disarm();
         this.context?.removeEventListener("statechange", this.onContextState);
@@ -76,16 +85,19 @@ export class StreamVolume {
             this.element.volume = this.volume;
             return;
         }
-        if (this.volume >= 1 || !this.stream || this.stream.getAudioTracks().length === 0) {
+        const tracks = this.stream?.getAudioTracks().filter((track) => track.readyState !== "ended") ?? [];
+        this.watchTracks(tracks);
+        if (this.volume >= 1 || !this.stream || tracks.length === 0) {
             this.disconnect();
             return;
         }
+        const trackIds = tracks.map((track) => track.id).join(",");
         const context = this.ensureContext();
         if (!context) {
             this.disconnect();
             return;
         }
-        if (!this.gain || this.sourceStream !== this.stream) {
+        if (!this.gain || this.sourceTracks !== trackIds) {
             this.disconnect();
             try {
                 const source = context.createMediaStreamSource(this.stream);
@@ -94,7 +106,7 @@ export class StreamVolume {
                 gain.connect(context.destination);
                 this.source = source;
                 this.gain = gain;
-                this.sourceStream = this.stream;
+                this.sourceTracks = trackIds;
             } catch (error) {
                 console.warn("StreamVolume: could not route the sound through a gain node", error);
                 this.disconnect();
@@ -119,6 +131,21 @@ export class StreamVolume {
         } else {
             this.disarm();
         }
+    }
+
+    private readonly onTracksChanged = (): void => {
+        if (!this.destroyed) this.apply();
+    };
+
+    /** A track that ends (the person's sound restarted) must not leave the element muted on a silent source */
+    private watchTracks(tracks: MediaStreamTrack[]): void {
+        for (const track of this.watchedTracks) {
+            if (!tracks.includes(track)) track.removeEventListener("ended", this.onTracksChanged);
+        }
+        for (const track of tracks) {
+            if (!this.watchedTracks.includes(track)) track.addEventListener("ended", this.onTracksChanged);
+        }
+        this.watchedTracks = tracks;
     }
 
     private ensureContext(): AudioContext | undefined {
@@ -171,7 +198,7 @@ export class StreamVolume {
     private disconnect(): void {
         this.source?.disconnect();
         this.gain?.disconnect();
-        this.source = this.gain = this.sourceStream = undefined;
+        this.source = this.gain = this.sourceTracks = undefined;
         this.disarm();
         if (!this.destroyed) this.element.muted = false;
     }

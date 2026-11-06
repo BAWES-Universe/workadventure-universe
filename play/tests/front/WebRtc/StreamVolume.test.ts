@@ -36,8 +36,37 @@ class FakeContext {
     });
 }
 
-const stream = (audio = true) =>
-    ({ getAudioTracks: () => (audio ? [{ kind: "audio" }] : []) } as unknown as MediaStream);
+let nextTrackId = 0;
+class FakeTrack extends EventTarget {
+    id = `track-${++nextTrackId}`;
+    kind = "audio";
+    readyState: "live" | "ended" = "live";
+    end(): void {
+        this.readyState = "ended";
+        this.dispatchEvent(new Event("ended"));
+    }
+}
+class FakeStream extends EventTarget {
+    tracks: FakeTrack[];
+    constructor(audio = true) {
+        super();
+        this.tracks = audio ? [new FakeTrack()] : [];
+    }
+    getAudioTracks(): FakeTrack[] {
+        return [...this.tracks];
+    }
+    /** As the browser does when a peer adds or removes a track */
+    remoteAdd(track: FakeTrack): void {
+        this.tracks.push(track);
+        this.dispatchEvent(new Event("addtrack"));
+    }
+    remoteRemove(track: FakeTrack): void {
+        this.tracks = this.tracks.filter((other) => other !== track);
+        this.dispatchEvent(new Event("removetrack"));
+    }
+}
+const stream = (audio = true) => new FakeStream(audio) as unknown as MediaStream;
+const fake = (value: MediaStream) => value as unknown as FakeStream;
 
 describe("the volume of someone's live sound", () => {
     let element: { volume: number; muted: boolean };
@@ -181,5 +210,54 @@ describe("the volume of someone's live sound", () => {
         volume.setVolume(0.6);
         expect(element.volume).toBe(0.6);
         expect(context.createMediaStreamSource).not.toHaveBeenCalled();
+    });
+
+    it("plays a track a peer adds later through the gain node", () => {
+        const volume = create();
+        const sound = stream(false);
+        volume.setStream(sound);
+        volume.setVolume(0.3);
+        expect(element.muted).toBe(false);
+        fake(sound).remoteAdd(new FakeTrack());
+        expect(context.createMediaStreamSource).toHaveBeenCalledTimes(1);
+        expect(context.gains[0].gain.value).toBe(0.3);
+        expect(element.muted).toBe(true);
+    });
+
+    it("makes a new source when a peer swaps its track, and never stays muted on a dead one", () => {
+        const volume = create();
+        const sound = stream();
+        volume.setStream(sound);
+        volume.setVolume(0.3);
+        const first = fake(sound).tracks[0];
+        fake(sound).remoteRemove(first);
+        // No sound left: the element plays (nothing) unmuted, the old source is gone
+        expect(context.sources[0].disconnect).toHaveBeenCalled();
+        expect(element.muted).toBe(false);
+        fake(sound).remoteAdd(new FakeTrack());
+        expect(context.createMediaStreamSource).toHaveBeenCalledTimes(2);
+        expect(element.muted).toBe(true);
+    });
+
+    it("lets the element play again when the track ends", () => {
+        const volume = create();
+        const sound = stream();
+        volume.setStream(sound);
+        volume.setVolume(0.3);
+        expect(element.muted).toBe(true);
+        fake(sound).tracks[0].end();
+        expect(context.sources[0].disconnect).toHaveBeenCalled();
+        expect(element.muted).toBe(false);
+    });
+
+    it("stops listening to the stream and its tracks on destroy", () => {
+        const volume = create();
+        const sound = stream();
+        volume.setStream(sound);
+        volume.setVolume(0.3);
+        volume.destroy();
+        fake(sound).remoteAdd(new FakeTrack());
+        fake(sound).tracks[0].end();
+        expect(context.createMediaStreamSource).toHaveBeenCalledTimes(1);
     });
 });
