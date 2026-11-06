@@ -293,3 +293,65 @@ describe('words nobody asked to keep', () => {
         expect(r.ears.closed).toBe(1);
     });
 });
+
+describe("a provider that hears the end of speech itself (#1847)", () => {
+    /** A recognizer that hears "hello there", ends the stretch when told, and waits `pauseMs` of quiet otherwise. */
+    function endpointing(pauseMs: number) {
+        const sent: OutgoingMessage[] = [];
+        const said: { endpoint?: () => void } = {};
+        let finished = 0;
+        const recognition = new Recognition({
+            factory: (events) => {
+                said.endpoint = events.endpoint;
+                return {
+                    pauseMs,
+                    push: () => events.partial('hello there'),
+                    finish: () => {
+                        finished++;
+                        events.final('hello there');
+                    },
+                    close: () => undefined,
+                };
+            },
+            maxUtteranceMs: 180000,
+            pauseMs: 400,
+            counters: new Counters(),
+            send: (message) => sent.push(message),
+        });
+        const feed = (pcm: () => Int16Array, ms: number) => {
+            for (let t = 0; t < ms; t += FRAME) recognition.sink({ participantId: 'p1', epoch: 1, pcm16k: pcm(), droppedMs: 0 });
+        };
+        return {
+            said,
+            finished: () => finished,
+            speak: (ms: number) => feed(loud, ms),
+            pause: (ms: number) => feed(quiet, ms),
+            turns: () => sent.filter((m) => m.type === 'user.turn'),
+            dispose: () => recognition.dispose(),
+        };
+    }
+
+    it('ends the stretch as soon as the provider says the person finished, before any long quiet', () => {
+        const r = endpointing(1800);
+        r.speak(400);
+        r.pause(100);
+        expect(r.turns()).toHaveLength(0);
+        r.said.endpoint?.();
+        expect(r.finished()).toBe(1);
+        expect(r.turns()).toEqual([expect.objectContaining({ outcome: 'final', text: 'hello there' })]);
+        // Said again for a stretch that is over: nothing more
+        r.said.endpoint?.();
+        expect(r.finished()).toBe(1);
+        r.dispose();
+    });
+
+    it("waits through a pause longer than the worker's own while the provider has not said so, then ends on quiet as a fallback", () => {
+        const r = endpointing(1000);
+        r.speak(400);
+        r.pause(600);
+        expect(r.turns()).toHaveLength(0);
+        r.pause(400);
+        expect(r.turns()).toEqual([expect.objectContaining({ outcome: 'final' })]);
+        r.dispose();
+    });
+});

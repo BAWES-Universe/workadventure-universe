@@ -15,6 +15,11 @@ export interface RecognizerEvents {
      * provider's HTTP status when it answered with one; leave it out for a timeout or a dropped connection.
      */
     failed(text: string, failure?: { status?: number }): void;
+    /**
+     * The provider's own end-of-speech detection says the person finished what they were saying (from the words and how
+     * they were said, not only from quiet). The stretch ends now, as if they had paused.
+     */
+    endpoint?(): void;
 }
 
 export interface Recognizer {
@@ -24,6 +29,11 @@ export interface Recognizer {
     finish(): void;
     /** Throw everything away. Nothing is said after this. */
     close(): void;
+    /**
+     * Set when the provider detects the end of speech itself (and says so with `endpoint`): quiet this long still ends the
+     * stretch, as a fallback, instead of the worker's own shorter pause.
+     */
+    readonly pauseMs?: number;
 }
 
 /** One recognizer per stretch of speech. */

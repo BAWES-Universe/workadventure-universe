@@ -35,8 +35,8 @@ const orbitAnswer = (over: Record<string, unknown> = {}) => ({
             providerId: "uai-listen",
             adapter: "soniox",
             name: "Soniox",
-            model: "stt-rt-v3",
-            models: [{ id: "stt-rt-v3", label: "Soniox real-time" }],
+            model: "stt-rt-v6",
+            models: [{ id: "stt-rt-v6", label: "Soniox real-time" }],
         },
         speech: {
             providerId: "uai-speak",
@@ -79,7 +79,7 @@ const read = (over: Record<string, unknown> = {}): BotVoice => {
 };
 
 const uaiProfile: VoiceProfile = {
-    recognition: { providerId: "uai-listen", model: "stt-rt-v3" },
+    recognition: { providerId: "uai-listen", model: "stt-rt-v6" },
     speech: { providerId: "uai-speak", model: "eleven_v4_turbo", voiceId: "v-default", voiceName: "River" },
 };
 const on = (profile: VoiceProfile, extra: Record<string, unknown> = {}) =>

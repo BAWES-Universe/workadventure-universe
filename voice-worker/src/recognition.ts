@@ -163,7 +163,7 @@ export class Recognition {
             this.finishAs(person, turn, frame.participantId, 'lost', 'cap', turn.text);
             person.waitForPause = true;
             person.quietMs = 0;
-        } else if (turn.quietMs >= this.pauseMs) {
+        } else if (turn.quietMs >= (turn.recognizer.pauseMs ?? this.pauseMs)) {
             this.pause(person, turn);
         }
     }
@@ -226,6 +226,12 @@ export class Recognition {
                 // A hole in the audio: the words are not trusted to be all there, so they are only offered back
                 if (turn.gapMs >= GAP_LOSS_MS && words) this.finishAs(person, turn, participantId, 'lost', 'gap', words);
                 else this.finishAs(person, turn, participantId, words ? 'final' : 'cleared', undefined, words);
+            },
+            endpoint: () => {
+                // The provider heard them finish: their words are made final now, without waiting out the quiet
+                if (turn.over || this.disposed || person.speaking !== turn) return;
+                this.options.counters.inc('speech_endpoints');
+                this.pause(person, turn);
             },
             failed: (text, failure) => {
                 if (turn.over || this.disposed) return;

@@ -411,6 +411,59 @@ describe('two bubbles with two different connectors', () => {
         expect(voice.requests[0].settings).toMatchObject({ endpoint: 'https://tts.example/v1', region: 'eu', language: 'ar' });
     });
 
+    it('tells its speech connector to get ready when someone starts talking, and to let go when the bubble closes', async () => {
+        const prepared: Pick<SpeechRequest, 'settings' | 'lang' | 'expression'>[] = [];
+        const released: unknown[] = [];
+        const connector: SpeechConnector = {
+            async *speak() {
+                yield tone(100);
+            },
+            prepare: (request) => prepared.push(request),
+            release: (settings) => released.push(settings),
+        };
+        const registry = new ConnectorRegistry()
+            .registerSpeech('voice-a', connector)
+            .registerRecognition('ears-a', { listen: (_settings, events) => new FakeEars(['hello']).factory(events) });
+        const { bot } = await start(registry);
+        const alice = new FakeHuman('alice');
+        humans.push(alice);
+        open(bot, 's1', { speech: { ...speech('voice-a', KEY_A), language: 'ar' }, recognition: recognition('ears-a', KEY_A), expression: 'restrained' });
+        await waitFor('the session', () => bot.of('session.start').length === 1);
+        await bot.join('s1', alice);
+        expect(prepared).toHaveLength(0);
+        alice.startMic(440);
+        await waitFor('the connector to get ready', () => prepared.length > 0, 6000);
+        alice.stopMic();
+        expect(prepared[0]).toMatchObject({ lang: 'ar', expression: 'restrained', settings: { adapter: 'voice-a', voiceId: 'voice-voice-a' } });
+        bot.send({ type: 'session.end', sessionId: 's1' });
+        await waitFor('the connector to let go', () => released.length === 1, 6000);
+        expect(released[0]).toBe(prepared[0].settings);
+    }, 30000);
+
+    it('carries on when getting ready throws', async () => {
+        const connector: SpeechConnector = {
+            async *speak() {
+                yield tone(100);
+            },
+            prepare: () => {
+                throw new Error('boom');
+            },
+        };
+        const registry = new ConnectorRegistry()
+            .registerSpeech('voice-a', connector)
+            .registerRecognition('ears-a', { listen: (_settings, events) => new FakeEars(['hello']).factory(events) });
+        const { bot } = await start(registry);
+        const alice = new FakeHuman('alice');
+        humans.push(alice);
+        open(bot, 's1', { speech: speech('voice-a', KEY_A), recognition: recognition('ears-a', KEY_A) });
+        await waitFor('the session', () => bot.of('session.start').length === 1);
+        await bot.join('s1', alice);
+        alice.startMic(440);
+        await sleep(1000);
+        alice.stopMic();
+        await waitFor('her words', () => bot.of('user.turn', 's1').some((t) => t.outcome === 'final'), 6000);
+    }, 30000);
+
     it('takes each bubble\'s own longest stretch of speech (turnSeconds), the worker\'s own when a bubble names none', async () => {
         const hearing: RecognitionConnector = { listen: (_settings, events) => new FakeEars(['one two three four five six seven eight nine ten']).factory(events) };
         const { bot } = await start(new ConnectorRegistry().registerRecognition('ears', hearing));
