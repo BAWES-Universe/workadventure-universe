@@ -9,6 +9,12 @@ services:
     image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/play-universe:${VERSION}
   back:
     image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/back-universe:${VERSION}
+    # back-universe listens on port 80 in production (HTTP_PORT=80) and its image HEALTHCHECK
+    # probes port 80, while the upstream compose file leaves back on its default 8080.
+    environment:
+      HTTP_PORT: "80"
+    labels:
+      traefik.http.services.back.loadbalancer.server.port: "80"
   uploader:
     image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/uploader-universe:${VERSION}
   map-storage:
