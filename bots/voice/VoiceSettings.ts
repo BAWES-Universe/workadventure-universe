@@ -89,6 +89,11 @@ export interface SpeakingNow {
      * `signature`: a changed value reaches a bubble the next time its session is opened, so one limit edit does not cut every call.
      */
     turnSeconds?: number;
+    /**
+     * Seconds after the bot answers someone in which they can go on without its name (Orbit's voice limit), when Orbit gave
+     * one. Not part of `signature`: it changes who the bot listens to, not the bubble's audio.
+     */
+    followUpSeconds?: number;
 }
 
 export type ActiveVoice = { speaks: false; reason: string } | SpeakingNow;
@@ -167,7 +172,7 @@ export class BotVoiceSettings implements VoiceSettings {
         const language = profile?.language?.mode === 'fixed' && profile.language.code ? profile.language.code : undefined;
         // A part that Orbit says Universe AI pays for has no health to report; when Orbit does not say, the report is sent and ignored
         const paidBy = (part: ProviderPart): boolean => answer!.parts?.[part] !== 'universe-ai';
-        const { replyLimits, turnSeconds } = await this.limitsFor(answer.limits);
+        const { replyLimits, turnSeconds, followUpSeconds } = await this.limitsFor(answer.limits);
         return {
             keep: true,
             value: {
@@ -180,6 +185,7 @@ export class BotVoiceSettings implements VoiceSettings {
                 profile: { recognitionModel: recognition.model, speechModel: speech.model, voiceId: speech.voiceId, expression, language },
                 replyLimits,
                 ...(turnSeconds !== undefined ? { turnSeconds } : {}),
+                ...(followUpSeconds !== undefined ? { followUpSeconds } : {}),
             },
         };
     }
@@ -189,14 +195,18 @@ export class BotVoiceSettings implements VoiceSettings {
      * server's, else none (the settings from the environment apply). Each limit is read on its own, so a bot that sent only some
      * takes the rest from the server's.
      */
-    private async limitsFor(fromBot: Partial<VoiceLimits> | null | undefined): Promise<{ replyLimits?: SpeakingNow['replyLimits']; turnSeconds?: number }> {
+    private async limitsFor(
+        fromBot: Partial<VoiceLimits> | null | undefined
+    ): Promise<{ replyLimits?: SpeakingNow['replyLimits']; turnSeconds?: number; followUpSeconds?: number }> {
         let replyLimits = replyLimitsOf(fromBot);
         let turnSeconds = turnSecondsOf(fromBot);
-        if (replyLimits !== undefined && turnSeconds !== undefined) return { replyLimits, turnSeconds };
+        let followUpSeconds = followUpSecondsOf(fromBot);
+        if (replyLimits !== undefined && turnSeconds !== undefined && followUpSeconds !== undefined) return { replyLimits, turnSeconds, followUpSeconds };
         const server = await this.serverLimits();
         replyLimits ??= replyLimitsOf(server);
         turnSeconds ??= turnSecondsOf(server);
-        return { replyLimits, turnSeconds };
+        followUpSeconds ??= followUpSecondsOf(server);
+        return { replyLimits, turnSeconds, followUpSeconds };
     }
 
     private async serverLimits(): Promise<Partial<VoiceLimits> | null | undefined> {
@@ -299,6 +309,12 @@ function replyLimitsOf(limits: Partial<VoiceLimits> | null | undefined): Speakin
 function turnSecondsOf(limits: Partial<VoiceLimits> | null | undefined): number | undefined {
     const seconds = limits?.turnSeconds;
     return typeof seconds === 'number' && Number.isInteger(seconds) && seconds >= 5 && seconds <= 3600 ? seconds : undefined;
+}
+
+/** The follow-up window, only when it is a whole number Orbit keeps (5 to 600 seconds). */
+function followUpSecondsOf(limits: Partial<VoiceLimits> | null | undefined): number | undefined {
+    const seconds = limits?.followUpSeconds;
+    return typeof seconds === 'number' && Number.isInteger(seconds) && seconds >= 5 && seconds <= 600 ? seconds : undefined;
 }
 
 /** A line about a failed call that cannot carry a key: the status or the error's code, never its request or answer. */
