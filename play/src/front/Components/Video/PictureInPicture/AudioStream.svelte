@@ -4,6 +4,7 @@
     import * as Sentry from "@sentry/svelte";
     import type { Readable } from "svelte/store";
     import { watchBotAudio } from "../../../Chat/Bots/VoiceBots";
+    import { StreamVolume } from "../../../WebRtc/StreamVolume";
 
     export let streamStore: Readable<MediaStream | undefined>;
     export let outputDeviceId: string | undefined = undefined;
@@ -20,11 +21,18 @@
     export let volume: Readable<number>;
     let audioElement: HTMLAudioElement;
 
-    $: {
-        if (audioElement) {
-            audioElement.volume = $volume;
-        }
+    // iPhone ignores element volume: the slider goes through a gain node there (#1851)
+    let streamVolume: StreamVolume | undefined;
+    let boundElement: HTMLAudioElement | undefined;
+    function volumeFor(element: HTMLAudioElement | undefined): StreamVolume | undefined {
+        if (streamVolume && element === boundElement) return streamVolume;
+        streamVolume?.destroy();
+        boundElement = element;
+        streamVolume = element ? new StreamVolume(element) : undefined;
+        return streamVolume;
     }
+
+    $: volumeFor(audioElement)?.setVolume($volume);
 
     let lastRequestedDeviceId: string | undefined;
 
@@ -94,6 +102,7 @@
             audioElement.srcObject = stream;
         }
     }
+    $: volumeFor(audioElement)?.setStream(stream);
 
     onMount(() => {
         (async () => {
@@ -104,7 +113,7 @@
                     return;
                 }
                 audioElement.srcObject = stream ?? null;
-                audioElement.volume = $volume;
+                volumeFor(audioElement)?.setVolume($volume);
             }
         })().catch((e) => {
             console.error(e);
@@ -115,6 +124,8 @@
     onDestroy(() => {
         destroyed = true;
         unwatchBotAudio?.();
+        streamVolume?.destroy();
+        streamVolume = undefined;
     });
 </script>
 
