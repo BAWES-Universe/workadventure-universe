@@ -467,6 +467,7 @@ export class VoiceCalls {
         const call = this.calls.get(callKey(spaceName, personId));
         if (!call) return;
         this.calls.delete(callKey(spaceName, personId));
+        this.sentModes.delete(callKey(spaceName, personId));
         this.post({ type: 'lane.close', sessionId: call.sessionId, participantId: call.participantId, epoch: call.epoch, reason });
     }
 
@@ -493,6 +494,7 @@ export class VoiceCalls {
         for (const key of this.left.keys()) if (key.startsWith(`${spaceName}\n`)) this.left.delete(key);
         for (const key of this.toldLeft.keys()) if (key.startsWith(`${spaceName}\n`)) this.toldLeft.delete(key);
         for (const key of this.actual.keys()) if (key.startsWith(`${spaceName}\n`)) this.actual.delete(key);
+        for (const key of this.sentModes.keys()) if (key.startsWith(`${spaceName}\n`)) this.sentModes.delete(key);
         this.talking.delete(spaceName);
         this.lastSpeechAt.delete(spaceName);
     }

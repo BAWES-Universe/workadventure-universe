@@ -342,6 +342,27 @@ describe('the relay: a spent day', () => {
         expect(sets.map((m) => [m.participantId, m.mode]).sort()).toEqual([['room_7', 'type_and_listen'], ['room_8', 'type_and_listen']]);
     });
 
+    it('forgets the modes it sent when the bot leaves the space or a connection ends', async () => {
+        const sentModes = (t: ReturnType<typeof relay>) => (t.calls as unknown as { sentModes: Map<string, string> }).sentModes;
+        const t = relay();
+        await t.group();
+        await spend(t);
+        expect(sentModes(t).size).toBe(2);
+        t.calls.spaceLeft(SPACE);
+        expect(sentModes(t).size).toBe(0);
+
+        const u = relay();
+        await u.group();
+        await spend(u);
+        u.calls.handlePrivateEvent({
+            spaceName: SPACE,
+            receiverUserId: BOT,
+            sender: { spaceUserId: 'room_7', uuid: 'uuid-room_7', tags: [], name: 'room_7' },
+            spaceEvent: { event: { $case: 'webRtcDisconnectMessage', webRtcDisconnectMessage: { userId: 'room_7' } } },
+        } as never);
+        expect([...sentModes(u).keys()].some((k) => k.endsWith('room_7'))).toBe(false);
+    });
+
     it('leaves a person who chose text only, or listening, as they chose', async () => {
         const t = relay();
         t.calls.spaceUsers(SPACE, [t.person('room_7'), t.person('room_8')]);
