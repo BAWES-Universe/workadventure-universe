@@ -103,7 +103,9 @@ export class ListeningBudget {
         if (this.flushTimer || this.closed) return;
         this.flushTimer = setTimeout(() => {
             this.flushTimer = undefined;
-            void this.flush();
+            // A timer set while a report was out may fire inside the wait that report's failure started: it waits that out first
+            if (this.now() < this.retryAt) this.schedule(this.retryAt - this.now());
+            else void this.flush();
         }, delayMs);
         this.flushTimer.unref?.();
     }

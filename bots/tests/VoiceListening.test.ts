@@ -127,6 +127,30 @@ describe('the budget: counting', () => {
         expect(t.orbit.reportVoiceListening).toHaveBeenLastCalledWith('bot-1', { seconds: 4 });
     });
 
+    it('keeps the wait after a failure even when chatter set a timer while the report was out', async () => {
+        const t = budget([null]);
+        let fail!: () => void;
+        t.orbit.reportVoiceListening.mockImplementationOnce(async () => {
+            await new Promise<void>((resolve) => (fail = resolve));
+            return null;
+        });
+        t.b.add(16_000);
+        await vi.advanceTimersByTimeAsync(0);
+        // Chatter arrives while the report is out: a short timer is set. Then the report fails.
+        t.b.add(2_000);
+        fail();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(t.orbit.reportVoiceListening).toHaveBeenCalledTimes(1);
+        // The short timer fires inside the 30 s wait: nothing is asked
+        t.advance(10_000);
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(t.orbit.reportVoiceListening).toHaveBeenCalledTimes(1);
+        // After the wait it is
+        t.advance(20_000);
+        await vi.advanceTimersByTimeAsync(20_000);
+        expect(t.orbit.reportVoiceListening).toHaveBeenCalledTimes(2);
+    });
+
     it('stops reporting once the bot is shut down', async () => {
         const t = budget();
         t.b.add(5_000);
