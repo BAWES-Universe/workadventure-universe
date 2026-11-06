@@ -47,6 +47,7 @@ import { voiceOrbitSettings, voiceReplyLimits, voiceWorkerSettings } from '../vo
 import { BotVoiceSettings } from '../voice/VoiceSettings';
 import { BotSpeech } from '../voice/BotSpeech';
 import { OrbitTurnGate, pausedLine } from '../voice/VoiceAllowance';
+import { ListeningBudget } from '../voice/VoiceListening';
 import { pausedAtCapacityEvent } from '../voice/VoiceLoad';
 import { captureServerEvent } from '../ai/PostHogClient';
 import { BotAttention, followUpSeconds } from './BotAttention';
@@ -2670,6 +2671,15 @@ export class BotClient {
                       this.config.botId,
                       adminApiService,
                       (playerId) => this.behavior?.getTalker(playerId) ?? null,
+                      (message) => console.warn(`[Bot ${this.config.botId}] ${message}`)
+                  )
+                : undefined,
+            // What it hears of group chatter comes out of its daily listening, set in Orbit (#1859)
+            adminApiService.isConfigured() && process.env.BOT_SERVICE_TOKEN
+                ? new ListeningBudget(
+                      this.config.botId,
+                      adminApiService,
+                      () => this.voice?.listeningChanged(),
                       (message) => console.warn(`[Bot ${this.config.botId}] ${message}`)
                   )
                 : undefined

@@ -27,6 +27,7 @@ import type { FromWorker, ProviderPart, ToWorker, VoiceDraft, VoiceMode, VoiceSi
 import type { SpeechTurn, TurnDecision } from './BotSpeech';
 import type { RepliesLeft, TurnGate } from './VoiceAllowance';
 import type { VoiceLink } from './VoiceLink';
+import type { ListeningBudget } from './VoiceListening';
 import { VOICE_BOT_TAG } from './VoiceBotTag';
 import type { ActiveVoice, PartProvider, VoiceSettings } from './VoiceSettings';
 
@@ -145,6 +146,8 @@ export class VoiceCalls {
     onAudience?: (spaceName: string) => void;
     /** What each person's mode is, as they chose it. Missing: the default. Kept so a choice made before the audio connects still applies. */
     private readonly modes = new Map<string, VoiceMode>();
+    /** The mode the worker last got for each person's connection, which is theirs unless the daily listening limit holds it back (#1859). */
+    private readonly sentModes = new Map<string, VoiceMode>();
     /** The last status each person was told, so only a change is sent. */
     private readonly told = new Map<string, VoiceStatus>();
     /** What each person has left of their spoken replies, as far as Orbit said (#1669), and what they were last told of it. */
@@ -199,7 +202,9 @@ export class VoiceCalls {
         /** What each bubble hears and speaks with, from Orbit. Without it a bubble gets the worker's built-in test engine. */
         private readonly settings?: VoiceSettings,
         /** Settles a reply that Universe AI pays for against the person's allowance (#1669). Without it nothing is counted. */
-        private readonly gate?: TurnGate
+        private readonly gate?: TurnGate,
+        /** Counts what the bot hears of group chatter against its daily listening limit (#1859). Without it nothing is counted or stopped. */
+        private readonly listening?: ListeningBudget
     ) {
         if (settings) this.beforeSpeaking = (spaceName, turn) => this.prepareTurn(spaceName, turn);
         this.link = openLink({
@@ -285,11 +290,13 @@ export class VoiceCalls {
         // A newer connection replaces the one before it: the worker closes the old path when it opens the new one
         const call: Call = { spaceName, sessionId: bubble.sessionId, participantId: person.spaceUserId, epoch };
         this.calls.set(key, call);
-        if (!this.post({ type: 'lane.open', sessionId: bubble.sessionId, participantId: person.spaceUserId, epoch, mode: this.modeOf(spaceName, person.spaceUserId) })) {
+        const mode = this.modeOf(spaceName, person.spaceUserId);
+        if (!this.post({ type: 'lane.open', sessionId: bubble.sessionId, participantId: person.spaceUserId, epoch, mode })) {
             this.calls.delete(key);
             this.refuse(spaceName, person.spaceUserId);
             return;
         }
+        this.sentModes.set(key, mode);
         this.stats.started++;
         this.tell(spaceName, person.spaceUserId, 'connecting');
     }
@@ -306,14 +313,58 @@ export class VoiceCalls {
         }
         const key = callKey(spaceName, person.spaceUserId);
         this.modes.set(key, mode as VoiceMode);
-        this.setMode(spaceName, mode as VoiceMode, person.spaceUserId);
+        const effective = this.modeOf(spaceName, person.spaceUserId);
+        this.sentModes.set(key, effective);
+        this.setMode(spaceName, effective, person.spaceUserId);
         // In a LiveKit room the worker is told by the list of people, which carries each person's mode
         const room = this.rooms.get(spaceName);
         if (room) this.sendPeople(room);
     }
 
-    private modeOf(spaceName: string, personId: string): VoiceMode {
+    /** The mode a person chose, or the default. */
+    private chosenModeOf(spaceName: string, personId: string): VoiceMode {
         return this.modes.get(callKey(spaceName, personId)) ?? DEFAULT_PERSON_MODE;
+    }
+
+    /**
+     * The mode the worker is given for a person: the one they chose, except that once the bot's daily listening is used (#1859) a
+     * person in a group (two or more people in the bubble) is not listened to: talking becomes typing (the bot still speaks its
+     * answers) and speaking and reading becomes text only. Someone alone with the bot is never held back.
+     */
+    private modeOf(spaceName: string, personId: string): VoiceMode {
+        const chosen = this.chosenModeOf(spaceName, personId);
+        if (!this.listening?.isSpent() || !this.inGroup(spaceName)) return chosen;
+        return chosen === 'talk' ? 'type_and_listen' : chosen === 'speak_and_read' ? 'off' : chosen;
+    }
+
+    /** Several people are in this bubble, so what one of them says is not necessarily for the bot. */
+    private inGroup(spaceName: string): boolean {
+        return (this.roster.get(spaceName)?.size ?? 0) > 1;
+    }
+
+    /**
+     * Tells the worker the mode each person in a space should have now, for those it differs for (a group forming or breaking up, the
+     * day's listening used up or starting again). Connections the worker already has the right mode for are left alone.
+     */
+    private syncListening(spaceName: string): void {
+        for (const personId of this.roster.get(spaceName)?.keys() ?? []) {
+            const key = callKey(spaceName, personId);
+            if (!this.calls.has(key)) continue;
+            const mode = this.modeOf(spaceName, personId);
+            if (this.sentModes.get(key) === mode) continue;
+            this.sentModes.set(key, mode);
+            this.setMode(spaceName, mode, personId);
+        }
+        const room = this.rooms.get(spaceName);
+        if (room) this.sendPeople(room);
+    }
+
+    /**
+     * The bot's daily listening was used up, or a new day began or the limit was raised (#1859): every bubble is told its modes again.
+     * Called by the listening budget.
+     */
+    listeningChanged(): void {
+        for (const spaceName of this.roster.keys()) this.syncListening(spaceName);
     }
 
     /** Tells one person where their audio stands, once per change. */
@@ -485,8 +536,10 @@ export class VoiceCalls {
     }
 
     private rosterChanged(spaceName: string): void {
-        const room = this.rooms.get(spaceName);
-        if (room) this.sendPeople(room);
+        // A group forming or breaking up changes who is listened to once the day's listening is used
+        this.syncListening(spaceName);
+        // And a group is where the daily listening is asked about, so a day already used (or a limit changed) is known before anyone talks
+        if (this.inGroup(spaceName)) void this.listening?.check();
     }
 
     /** Everyone in a space the bot is in (all of them, replacing what was known). */
@@ -531,6 +584,7 @@ export class VoiceCalls {
         this.lost.delete(callKey(spaceName, spaceUserId));
         this.live.delete(callKey(spaceName, spaceUserId));
         this.modes.delete(callKey(spaceName, spaceUserId));
+        this.sentModes.delete(callKey(spaceName, spaceUserId));
         this.told.delete(callKey(spaceName, spaceUserId));
         this.left.delete(callKey(spaceName, spaceUserId));
         this.toldLeft.delete(callKey(spaceName, spaceUserId));
@@ -636,6 +690,7 @@ export class VoiceCalls {
     /** Ends a call the worker can no longer carry, and tells the person's browser so it does not wait for it. */
     private drop(call: Call, closeOnWorker: boolean): void {
         this.calls.delete(callKey(call.spaceName, call.participantId));
+        this.sentModes.delete(callKey(call.spaceName, call.participantId));
         if (closeOnWorker) {
             this.post({ type: 'lane.close', sessionId: call.sessionId, participantId: call.participantId, epoch: call.epoch, reason: 'failed' });
         }
@@ -769,10 +824,14 @@ export class VoiceCalls {
                 this.draft(spaceName, to, { turnId: message.turnId, state: 'live', text: message.text });
             }
         } else if (message.outcome === 'cleared' || !message.text) {
+            // Sound in a group with no words the bot can use is not for it either: it counts against the daily listening (#1859)
+            if (current && this.inGroup(spaceName)) this.listening?.add(message.audioMs);
             this.draft(spaceName, to, { turnId: message.turnId, state: 'cleared', text: '' });
         } else if (message.outcome === 'final' && current && this.hears && !this.hears(spaceName, to, message.text)) {
-            // Others are in the bubble and this was not said to the bot (#1220): it is not kept, offered back or sent
+            // Others are in the bubble and this was not said to the bot (#1220): it is not kept, offered back or sent. The audio
+            // went to the listening provider all the same, so it counts against the bot's daily listening (#1859)
             this.stats.unaddressed++;
+            this.listening?.add(message.audioMs);
             this.draft(spaceName, to, { turnId: message.turnId, state: 'cleared', text: '' });
         } else if (message.outcome === 'final' && current) {
             this.remember(spaceName, to, message.turnId, message.text);
@@ -1116,6 +1175,8 @@ export class VoiceCalls {
         this.talking.clear();
         this.lastSpeechAt.clear();
         this.modes.clear();
+        this.sentModes.clear();
+        this.listening?.shutdown();
         this.told.clear();
         this.left.clear();
         this.toldLeft.clear();
