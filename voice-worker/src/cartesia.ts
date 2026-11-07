@@ -1,7 +1,9 @@
 // Speaking with Cartesia (#1748), on the shared kit (#1883): one streamed request per reply to /tts/bytes, asking for raw 24 kHz mono s16 PCM so the
 // audio plays as it arrives with nothing to decode. The key goes in the Authorization header of that one request and
 // nowhere else.
-import type { SpeechConnector, SpeechRequest } from './connectors.ts';
+import type { RecognitionConnector, RecognitionSettings, SpeechConnector, SpeechRequest } from './connectors.ts';
+import type { Recognizer, RecognizerEvents } from './recognizer.ts';
+import { socketHearing } from './kit/socketHearing.ts';
 import { httpSpeech, SPEECH_RATE } from './kit/httpSpeech.ts';
 import { baseLanguage } from './kit/signIn.ts';
 import type { Expression } from './protocol.ts';
@@ -57,5 +59,56 @@ export class CartesiaSpeech implements SpeechConnector {
 
     speak(request: SpeechRequest): AsyncIterable<Int16Array> {
         return this.connector.speak(request);
+    }
+}
+
+/** Cartesia's real-time listening socket (https://docs.cartesia.ai/api-reference/stt/stt). */
+export const CARTESIA_HEARING_ENDPOINT = 'wss://api.cartesia.ai';
+/** `language` is taken only by ink-whisper; the newer Ink models detect it. */
+const TAKES_LANGUAGE = /^ink-whisper/;
+
+interface CartesiaAnswer {
+    type?: unknown;
+    text?: unknown;
+    is_final?: unknown;
+    status_code?: unknown;
+}
+
+/**
+ * Listening with Cartesia (#1878), on the shared kit (#1883): one socket per stretch of speech, 16 kHz s16 audio as binary frames,
+ * the key in the X-API-Key header of that one connection. Each transcript is a piece of text: final pieces are kept as they come
+ * (they carry their own spaces), the latest other one shows until it is final. "close" ends the audio: Cartesia sends the last
+ * words, then `done`. Cartesia has no end-of-speech signal of its own, so the worker's own pause ends a stretch.
+ */
+export class CartesiaRecognition implements RecognitionConnector {
+    private readonly connector: RecognitionConnector;
+
+    constructor(options: CartesiaOptions & { finalTimeoutMs?: number } = {}) {
+        const version = options.version || DEFAULT_CARTESIA_VERSION;
+        this.connector = socketHearing({
+            adapter: CARTESIA_ADAPTER,
+            endpoint: CARTESIA_HEARING_ENDPOINT,
+            connect: (settings, base) => {
+                const query = new URLSearchParams({ model: settings.model, encoding: 'pcm_s16le', sample_rate: '16000', cartesia_version: version });
+                if (settings.language && TAKES_LANGUAGE.test(settings.model)) query.set('language', baseLanguage(settings.language));
+                return { url: `${base}/stt/websocket?${query}`, headers: { 'X-API-Key': settings.key.reveal() } };
+            },
+            finish: () => ['close'],
+            join: 'tokens',
+            finalTimeoutMs: options.finalTimeoutMs,
+            read: (data, isBinary) => {
+                if (isBinary) return undefined;
+                const answer = JSON.parse(data.toString()) as CartesiaAnswer;
+                if (typeof answer !== 'object' || answer === null) return undefined;
+                if (answer.type === 'error') return { error: { status: typeof answer.status_code === 'number' ? answer.status_code : undefined } };
+                if (answer.type === 'done') return { finished: true };
+                if (answer.type !== 'transcript' || typeof answer.text !== 'string') return undefined;
+                return answer.is_final === true ? { committed: answer.text } : { interim: answer.text };
+            },
+        });
+    }
+
+    listen(settings: RecognitionSettings, events: RecognizerEvents): Recognizer {
+        return this.connector.listen(settings, events);
     }
 }
