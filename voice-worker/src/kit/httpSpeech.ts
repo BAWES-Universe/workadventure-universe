@@ -8,6 +8,9 @@ import { decodeAudioText, PcmReader, Resampler } from './pcm.ts';
 /** The worker plays speech at this rate. */
 export const SPEECH_RATE = 24_000;
 
+/** What makes a call: the global `fetch`, or the guarded one for an address a person typed (kit/publicFetch.ts). Only a text address is passed. */
+export type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
+
 export interface HttpCall {
     /** The full address, or a path that is joined to the base address. */
     url: string;
@@ -51,6 +54,8 @@ export interface HttpSpeechSpec {
     call(request: SpeechRequest, base: string): HttpCall;
     audio: RawAudio | FramedAudio;
     outOfCredit?: CreditCheck;
+    /** What makes the call; the global `fetch` when left out. A company at an address a person typed passes the guarded one (kit/publicFetch.ts). */
+    fetch?: FetchLike;
 }
 
 /** A speaking connector made from a spec. */
@@ -67,7 +72,7 @@ async function* speakOverHttp(spec: HttpSpeechSpec, request: SpeechRequest): Asy
 
     let response: Response;
     try {
-        response = await fetch(url, { method: call.method ?? 'POST', headers: call.headers, body: call.body, signal: request.signal, redirect: 'manual' });
+        response = await (spec.fetch ?? fetch)(url, { method: call.method ?? 'POST', headers: call.headers, body: call.body, signal: request.signal, redirect: 'manual' });
     } catch {
         if (request.signal.aborted) return;
         throw failure(spec.adapter, 'could not be reached');
