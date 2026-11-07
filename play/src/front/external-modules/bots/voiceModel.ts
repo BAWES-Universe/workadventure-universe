@@ -548,6 +548,7 @@ export function companyName(adapter: string): string {
         assemblyai: "AssemblyAI",
         async: "Async",
         bland: "Bland",
+        camb: "CAMB.AI",
         elevenlabs: "ElevenLabs",
         cartesia: "Cartesia",
         fish: "Fish Audio",
