@@ -20,6 +20,11 @@ export interface HearingMessage {
     finished?: boolean;
     /** The company accepted the setup and now takes audio (only read when the spec sets `readyFirst`). */
     ready?: boolean;
+    /**
+     * From the company's own speech detection (Sarvam's VAD signals): it heard speech start, or it answered speech it heard. With
+     * `lastAnswerAfterFinish`, a stretch finished once every start it reported has its answer waits `settleMs`, not `quietMs`.
+     */
+    speech?: 'started' | 'answered';
     error?: { status?: number };
 }
 
@@ -86,6 +91,8 @@ class SocketStream implements Recognizer {
     private endpointed = false;
     /** The socket is open and the company takes audio. */
     private accepting = false;
+    /** Speech the company reported starting and has not answered yet; unknown until it reports any (`HearingMessage.speech`). */
+    private unanswered?: number;
     private timer?: NodeJS.Timeout;
     readonly pauseMs?: number;
 
@@ -131,12 +138,16 @@ class SocketStream implements Recognizer {
     finish(): void {
         if (this.done || this.finishing) return;
         this.finishing = true;
-        if (this.accepting && this.ws?.readyState === WebSocket.OPEN) this.sendFinish();
-        const last = this.spec.lastAnswerAfterFinish;
-        this.timer = last
-            ? setTimeout(() => this.end(), last.quietMs)
-            : setTimeout(() => this.fail(failure(this.spec.adapter, 'took too long for the last words')), this.spec.finalTimeoutMs ?? DEFAULT_FINAL_TIMEOUT_MS);
-        this.timer.unref?.();
+        if (this.accepting && this.ws?.readyState === WebSocket.OPEN) {
+            this.sendFinish();
+            // The wait for the last answer started with the end of the audio
+            if (this.spec.lastAnswerAfterFinish) return;
+        }
+        // A socket still opening that never takes the end of the audio fails, however the last words come once it does
+        this.restartTimer(
+            () => this.fail(failure(this.spec.adapter, 'took too long for the last words')),
+            this.spec.finalTimeoutMs ?? DEFAULT_FINAL_TIMEOUT_MS,
+        );
     }
 
     close(): void {
@@ -216,6 +227,15 @@ class SocketStream implements Recognizer {
 
     private sendFinish(): void {
         for (const message of this.spec.finish(this.settings)) this.ws?.send(message);
+        const last = this.spec.lastAnswerAfterFinish;
+        // Counted from the end of the audio: quietMs for words the company may still hold, a moment when it has answered all
+        if (last) this.restartTimer(() => this.end(), this.unanswered === 0 ? (last.settleMs ?? DEFAULT_SETTLE_MS) : last.quietMs);
+    }
+
+    private restartTimer(run: () => void, ms: number): void {
+        clearTimeout(this.timer);
+        this.timer = setTimeout(run, ms);
+        this.timer.unref?.();
     }
 
     private answer(answer: HearingMessage | HearingMessage[] | undefined): void {
@@ -223,6 +243,8 @@ class SocketStream implements Recognizer {
         for (const message of Array.isArray(answer) ? answer : [answer]) {
             if (this.done) return;
             if (message.error) return this.fail(failure(this.spec.adapter, 'answered with an error', message.error.status));
+            if (message.speech === 'started') this.unanswered = (this.unanswered ?? 0) + 1;
+            if (message.speech === 'answered' && this.unanswered) this.unanswered -= 1;
             if (message.ready) this.accept();
             if (message.committed) {
                 const glue = this.spec.join === 'tokens' || !this.committed ? '' : ' ';
@@ -243,9 +265,7 @@ class SocketStream implements Recognizer {
             }
             const last = this.spec.lastAnswerAfterFinish;
             if (this.finishing && last && (message.committed !== undefined || message.interim !== undefined)) {
-                clearTimeout(this.timer);
-                this.timer = setTimeout(() => this.end(), last.settleMs ?? DEFAULT_SETTLE_MS);
-                this.timer.unref?.();
+                this.restartTimer(() => this.end(), last.settleMs ?? DEFAULT_SETTLE_MS);
             }
         }
     }
