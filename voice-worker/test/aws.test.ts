@@ -265,7 +265,11 @@ describe('hearing with Nova Sonic', () => {
 
     it('fails a key AWS can’t take as a refused key, without opening anything', async () => {
         const { heard, events } = listener();
-        new AwsRecognition().listen({ ...settings(), key: new Secret('only-the-secret') }, events);
+        const hearing = new AwsRecognition().listen({ ...settings(), key: new Secret('only-the-secret') }, events);
+        // Said once the caller holds the hearing, not while it is being made
+        expect(hearing).toBeDefined();
+        expect(heard.failed).toEqual([]);
+        await Promise.resolve();
         expect(heard.failed).toEqual([{ text: '', status: 401 }]);
     });
 });
