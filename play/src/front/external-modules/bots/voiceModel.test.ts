@@ -337,7 +337,7 @@ describe("the Voice row's door", () => {
         ).toBeNull();
     });
 
-    it("reads as no service when no way covers both jobs, even though each job has something to run on", () => {
+    it("offers one key that listens and another that speaks when no Universe AI voice covers either job", () => {
         const listens = keyAnswer({
             id: "ear",
             recognition: true,
@@ -346,7 +346,29 @@ describe("the Voice row's door", () => {
         });
         const speaks = keyAnswer({ id: "mouth" });
         const none = { recognition: null, speech: null };
-        expect(viewOf(read({ lentKeys: [listens, speaks], universeAi: none })).kind).toBe("no-service");
+        const voice = read({ lentKeys: [listens, speaks], universeAi: none });
+        expect(noService(voice)).toBe(false);
+        expect(viewOf(voice).kind).toBe("off");
+        expect(payerOptions(voice)).toMatchObject([
+            {
+                id: "ear+mouth",
+                kind: "key",
+                recognition: { kind: "key", key: { id: "ear" } },
+                speech: { kind: "key", key: { id: "mouth" } },
+            },
+        ]);
+        expect(startingPayer(voice, null)?.id).toBe("ear+mouth");
+    });
+
+    it("reads as no service when only a listening key is lent and nothing speaks", () => {
+        const listens = keyAnswer({
+            id: "ear",
+            recognition: true,
+            speech: false,
+            models: [{ id: "nova", kind: "recognition" }],
+        });
+        const none = { recognition: null, speech: null };
+        expect(viewOf(read({ lentKeys: [listens], universeAi: none })).kind).toBe("no-service");
     });
 });
 

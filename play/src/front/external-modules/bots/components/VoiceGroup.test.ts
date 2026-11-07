@@ -596,8 +596,58 @@ describe("the bot page's Voice group (#1668)", () => {
         mocks.api.getBotVoice.mockResolvedValue(answer({ universeAi: { recognition: null, speech: null } }));
         await mount();
         expect(text()).toContain("Not available here yet");
-        expect(text()).toContain("Voice isn’t available on this server yet");
+        expect(text()).toContain("No voice is set up here yet");
         expect((byTestId("bot-voice-switch")[0] as HTMLInputElement).disabled).toBe(true);
+    });
+
+    it("shows the bot's maker a way forward when no voice is set up: Add voice keys opens AI keys", async () => {
+        mocks.api.getBotAiOptions.mockResolvedValue(options({ viewerIsMaker: true }));
+        mocks.api.getBotVoice.mockResolvedValue(answer({ universeAi: { recognition: null, speech: null } }));
+        await mount();
+        expect(text()).toContain("No voice is set up here yet");
+        expect(text()).toContain("Add voice keys of your own in AI keys, one that listens and one that speaks");
+        expect(byTestId("bot-voice-add-keys")).toHaveLength(1);
+        await click("bot-voice-add-keys");
+        expect(mocks.openOrbitPage).toHaveBeenCalledWith("/admin/you/ai-keys");
+    });
+
+    it("turns voice on from a listening key and a speaking key when Universe AI has no voice, naming both keys", async () => {
+        const none = { universeAi: { recognition: null, speech: null } };
+        const ear = (id: string, adapter: string, last4: string) =>
+            key({
+                id,
+                adapter,
+                last4,
+                recognition: true,
+                speech: false,
+                models: [{ id: "stt", label: "STT", kind: "recognition" }],
+            });
+        mocks.api.getBotVoice.mockResolvedValue(
+            answer({ ...none, lentKeys: [ear("ear-1", "soniox", "1111"), ear("ear-2", "deepgram", "2222"), key()] })
+        );
+        mocks.api.getBotVoices.mockResolvedValue(voices);
+        await mount();
+        expect(text()).not.toContain("No voice is set up here yet");
+        expect(byTestId("bot-voice-add-keys")).toHaveLength(0);
+        await click("bot-voice-payer-change");
+        const cards = byTestId("bot-voice-ask-key").map((card) => card.textContent?.replace(/\s+/g, " ") ?? "");
+        expect(cards).toHaveLength(2);
+        expect(cards[0]).toContain("Soniox");
+        expect(cards[0]).toContain("ElevenLabs");
+        expect(cards[1]).toContain("Deepgram");
+        expect(cards[1]).toContain("ElevenLabs");
+        expect(cards[0]).not.toEqual(cards[1]);
+    });
+
+    it("tells a co-manager, who can't lend keys for the bot, only that voice isn't set up, with no button", async () => {
+        mocks.api.getBotAiOptions.mockResolvedValue(
+            options({ viewerIsMaker: false, maker: { id: "u9", name: "Khalid" } })
+        );
+        mocks.api.getBotVoice.mockResolvedValue(answer({ universeAi: { recognition: null, speech: null } }));
+        await mount();
+        expect(text()).toContain("No voice is set up here yet");
+        expect(text()).not.toContain("Add voice keys");
+        expect(byTestId("bot-voice-add-keys")).toHaveLength(0);
     });
 
     it("shows nothing to someone who can't manage the bot's voice", async () => {
