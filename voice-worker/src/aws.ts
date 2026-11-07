@@ -257,7 +257,9 @@ class SonicHearing implements Recognizer {
             this.stream = open(settings);
             for (const event of opening(this.prompt, LISTEN_ONLY, LISTENING_VOICE, this.audio)) this.stream.send(event);
         } catch (error) {
-            this.fail(error instanceof ProviderError ? error : failure(AWS_ADAPTER, 'could not be reached'));
+            // Said after the caller holds this hearing, never while it is still being made
+            const problem = error instanceof ProviderError ? error : failure(AWS_ADAPTER, 'could not be reached');
+            queueMicrotask(() => this.fail(problem));
             return;
         }
         void this.read(this.stream);
