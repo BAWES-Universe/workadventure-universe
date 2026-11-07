@@ -1075,6 +1075,8 @@ const mapEditor: BaseTranslation = {
                     listensOn: "Listens on",
                     listeningModel: "Listening model",
                     talkingModel: "Talking model",
+                    talkingModelHint:
+                        "Listens and speaks in one live connection. {bot:string}’s Mind writes every answer, out loud and in text.",
                     talksLive: "Talks live",
                     payerTalksLiveTitle: "{key:string} listens and speaks live, in one model.",
                     payerTalksLive:

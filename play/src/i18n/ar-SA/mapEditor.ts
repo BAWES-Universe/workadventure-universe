@@ -543,6 +543,7 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
                     listensOn: "يستمع عبر",
                     listeningModel: "نموذج الاستماع",
                     talkingModel: "نموذج المحادثة المباشرة",
+                    talkingModelHint: "يستمع ويتكلم في اتصال مباشر واحد. عقل {bot} يكتب كل إجابة، بالصوت والنص.",
                     talksLive: "يتحدث مباشرة",
                     payerTalksLiveTitle: "{key} يستمع ويتكلم مباشرة، في نموذج واحد.",
                     payerTalksLive: "{key} يستمع ويتكلم مباشرة. عقل {bot} يكتب كل إجابة، بالصوت والنص.",

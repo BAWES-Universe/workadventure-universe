@@ -1354,6 +1354,8 @@
                                                     ),
                                                 })}</span
                                             >
+                                            {#if live}<span class="bp-cn">{v.talkingModelHint({ bot: botName })}</span
+                                                >{/if}
                                         </span>
                                         {#if models.length > 1}<span class="vg-chg">{v.change()}</span>{/if}
                                     </button>
