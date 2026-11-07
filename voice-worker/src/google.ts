@@ -7,7 +7,8 @@
 // - Hearing: Gemini Live has no way to only listen. Its own turn detection is off, so the person's speech is marked by the
 //   worker (activityStart, then activityEnd when the stretch ends) and it never answers mid-stretch. After activityEnd it
 //   starts an answer nobody hears: that answer is cut to one token (`maxOutputTokens: 1`), and the stretch ends with the turn.
-//   The words come from the input transcription, in pieces.
+//   The words come from the input transcription, in pieces, sent apart from the turn in no set order: the stretch ends once
+//   nothing more has come for a moment after the turn.
 // - Speaking: the Mind's words go in as the one text of a fresh session, told to read them aloud exactly, in the picked voice.
 //   Audio comes back at 24 kHz, the worker's own rate.
 import type { RecognitionConnector, RecognitionSettings, SpeechConnector, SpeechRequest } from './connectors.ts';
@@ -22,6 +23,8 @@ export const GOOGLE_ENDPOINT = 'wss://generativelanguage.googleapis.com';
 const LIVE_PATH = '/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
 const HEARING_RATE = 16_000;
 const SPEAKING_RATE = 24_000;
+/** How long to wait for words after the turn ends, when no more have come. */
+const SETTLE_MS = 400;
 
 const json = (value: unknown) => JSON.stringify(value);
 
@@ -68,6 +71,8 @@ export class GoogleRecognition implements RecognitionConnector {
             adapter: GOOGLE_ADAPTER,
             endpoint: GOOGLE_ENDPOINT,
             join: 'tokens',
+            // Google sends the transcription apart from the turn, in no set order: words can still come after turnComplete
+            settleMs: SETTLE_MS,
             connect: (s, base) => liveAddress(s.key, base),
             start: (s) => [
                 json({

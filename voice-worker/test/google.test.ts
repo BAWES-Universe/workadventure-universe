@@ -137,6 +137,27 @@ describe('hearing', () => {
         expect(Buffer.from(audio.data, 'base64').length).toBe(640);
     });
 
+    it('keeps words that come after the end of the turn', async () => {
+        const server = await realtime({
+            onEvent: (event, send) => {
+                if (event.setup) send({ setupComplete: {} });
+                const input = event.realtimeInput as Record<string, unknown> | undefined;
+                if (input?.activityEnd) {
+                    send(turn({ inputTranscription: { text: 'Two teas' } }));
+                    send(turn({ turnComplete: true }));
+                    setTimeout(() => send(turn({ inputTranscription: { text: ' and a cake' } })), 100);
+                }
+            },
+        });
+        const { heard, events } = listener();
+        const stream = new GoogleRecognition().listen(settings(server.url), events);
+        stream.push(new Int16Array(320).fill(1000));
+        stream.finish();
+        await waitFor('the last words', () => heard.finals.length === 1);
+        expect(heard.finals).toEqual(['Two teas and a cake']);
+        expect(heard.failed).toEqual([]);
+    });
+
     it('fails when Google closes the socket (a key it refused)', async () => {
         const server = await realtime({ onEvent: (event, _send, ws) => event.setup && ws.close(1008, 'API key not valid') });
         const { heard, events } = listener();

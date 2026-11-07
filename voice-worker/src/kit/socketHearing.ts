@@ -46,6 +46,11 @@ export interface SocketHearingSpec {
     closeIsFinished?: boolean;
     /** Set when the company detects the end of speech itself: quiet this long still ends a stretch. */
     pauseMs?: number;
+    /**
+     * Words can still come after `finished` (Google sends its transcription apart from the end of its turn): the stretch then ends
+     * once nothing more has come for this long.
+     */
+    settleMs?: number;
     /** How long the last words may take after finish(). Default 10 s. */
     finalTimeoutMs?: number;
     outOfCredit?: CreditCheck;
@@ -70,6 +75,7 @@ class SocketStream implements Recognizer {
     private finishing = false;
     private done = false;
     private endpointed = false;
+    private settling = false;
     /** The socket is open but the company hasn't said it is ready for audio (only with `spec.ready`). */
     private waiting = false;
     private timer?: NodeJS.Timeout;
@@ -191,6 +197,16 @@ class SocketStream implements Recognizer {
 
     private answer(answer: HearingMessage | HearingMessage[] | undefined): void {
         if (this.done || !answer) return;
+        this.inAnswer(answer);
+        // Each answer while settling waits again for anything after it
+        if (this.settling && !this.done) {
+            clearTimeout(this.timer);
+            this.timer = setTimeout(() => this.end(), this.spec.settleMs);
+            this.timer.unref?.();
+        }
+    }
+
+    private inAnswer(answer: HearingMessage | HearingMessage[]): void {
         for (const message of Array.isArray(answer) ? answer : [answer]) {
             if (this.done) return;
             if (message.error) return this.fail(failure(this.spec.adapter, 'answered with an error', message.error.status));
@@ -200,7 +216,10 @@ class SocketStream implements Recognizer {
                 this.interim = '';
             }
             if (message.interim !== undefined) this.interim = message.interim;
-            if (message.finished) return this.end();
+            if (message.finished) {
+                if (!this.spec.settleMs) return this.end();
+                this.settling = true;
+            }
             const heard = this.heard();
             if (heard && heard !== this.lastShown) {
                 this.lastShown = heard;
