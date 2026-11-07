@@ -36,6 +36,7 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv = process.env): WorkerOpti
         speechTimeoutSeconds: int(env.VOICE_SPEECH_TIMEOUT_SECONDS, DEFAULT_SPEECH_TIMEOUT_SECONDS),
         bargeInMs: int(env.VOICE_BARGE_IN_MS, DEFAULT_BARGE_IN_MS),
         cartesiaVersion: env.VOICE_CARTESIA_VERSION?.trim() || DEFAULT_CARTESIA_VERSION,
+        ownSpeechSampleRate: int(env.VOICE_OPENAI_COMPATIBLE_SAMPLE_RATE, 24_000),
         maxPreviewSeconds: int(env.VOICE_MAX_PREVIEW_SECONDS, DEFAULT_MAX_PREVIEW_SECONDS),
         maxPreviews: int(env.VOICE_MAX_PREVIEWS, DEFAULT_MAX_PREVIEWS),
         recognitionFinalTimeoutSeconds: int(env.VOICE_RECOGNITION_FINAL_TIMEOUT_SECONDS, DEFAULT_SONIOX_FINAL_TIMEOUT_MS / 1000),
