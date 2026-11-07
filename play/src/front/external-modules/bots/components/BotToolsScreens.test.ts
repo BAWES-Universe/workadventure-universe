@@ -339,7 +339,7 @@ describe("the bot page's Tools screens (game #1655)", () => {
             mocks.testBotMcpServer.mockResolvedValue({ success: true, toolCount: 6, toolNames: [] });
             mocks.refreshMcpServerTools.mockImplementation(() => {
                 saved = true;
-                return Promise.resolve({ tools: 6 });
+                return Promise.resolve({ tools: 6, saved: "saved" });
             });
             await mountServer();
             expect(target.textContent).toContain("has no tools sorted yet");
@@ -357,6 +357,17 @@ describe("the bot page's Tools screens (game #1655)", () => {
             mocks.getMcpServerTools.mockResolvedValue(answer({ tools: [] }));
             mocks.testBotMcpServer.mockResolvedValue({ success: true, toolCount: 6, toolNames: [] });
             mocks.refreshMcpServerTools.mockRejectedValue(new Error("Bot-server API error: 502"));
+            await mountServer();
+
+            await press();
+
+            expect(byTestId("bot-test-problem")?.textContent).toContain("Couldn't read the tools right now");
+        });
+
+        it("says so when the bot server read the tools but Orbit did not get them", async () => {
+            mocks.getMcpServerTools.mockResolvedValue(answer({ tools: [] }));
+            mocks.testBotMcpServer.mockResolvedValue({ success: true, toolCount: 6, toolNames: [] });
+            mocks.refreshMcpServerTools.mockResolvedValue({ tools: 6, saved: "skipped" });
             await mountServer();
 
             await press();
@@ -384,7 +395,7 @@ describe("the bot page's Tools screens (game #1655)", () => {
             mocks.testBotMcpServer.mockResolvedValue({ success: true, toolCount: 6, toolNames: [] });
             mocks.refreshMcpServerTools
                 .mockRejectedValueOnce(new Error("Bot-server API error: 502"))
-                .mockResolvedValue({ tools: 6 });
+                .mockResolvedValue({ tools: 6, saved: "saved" });
             await mountServer();
             await press();
             expect(byTestId("bot-test-problem")).not.toBeNull();

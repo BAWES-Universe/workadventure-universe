@@ -422,14 +422,14 @@
             if (result.success) {
                 // Orbit only checked that the server answers. The bot server reads the whole list and saves it to Orbit
                 // (#1654): that is what fills the server's page, so wait for it before reading the page again.
+                const couldNotRead = "Couldn't read the tools right now. Tap Test server to try again.";
                 try {
-                    await botApiService.refreshMcpServerTools(botId, serverId);
+                    const refreshed = await botApiService.refreshMcpServerTools(botId, serverId);
+                    // The bot server answers 200 when it read the tools but Orbit did not get them: the page stays empty
+                    if (refreshed.saved === "skipped") testProblem = { ...testProblem, [serverId]: couldNotRead };
                 } catch (error) {
                     console.error("[BotMcpServersEditor] Error reading the tools of an MCP server:", error);
-                    testProblem = {
-                        ...testProblem,
-                        [serverId]: "Couldn't read the tools right now. Tap Test server to try again.",
-                    };
+                    testProblem = { ...testProblem, [serverId]: couldNotRead };
                 }
                 // Reload servers from API to get updated lastTestResult / lastTestedAt, and the tools just saved
                 void loadServers();

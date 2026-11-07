@@ -1720,7 +1720,10 @@ export class BotApiService {
      * Ask the bot server to read a tool server's whole list now and save it to Orbit with a suggested heading per tool
      * (#1654). Testing a server only asks Orbit whether the server answers: this is what puts its tools on the server's page.
      */
-    async refreshMcpServerTools(botId: string, serverId: string): Promise<{ tools: number }> {
+    async refreshMcpServerTools(
+        botId: string,
+        serverId: string
+    ): Promise<{ tools: number; saved: "saved" | "unchanged" | "skipped" }> {
         const response = await this.fetchBotServer(
             `/api/bots/${encodeURIComponent(botId)}/mcp-servers/${encodeURIComponent(serverId)}/refresh-tools`,
             { method: "POST" }
