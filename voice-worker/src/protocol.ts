@@ -30,7 +30,11 @@ export type ProviderPart = 'recognition' | 'speech';
  * What the bot server names for hearing in `session.open`: an adapter (lowercase, as Orbit stores it), the model, and the
  * key. The key is only ever used for the provider call: it is never logged, counted or sent back.
  */
-export interface RecognitionConfig { adapter: string; model: string; key: string; endpoint?: string; region?: string; language?: string }
+export interface RecognitionConfig {
+    adapter: string; model: string; key: string; endpoint?: string; region?: string; language?: string;
+    /** Names the hearing should expect and spell as written here (the bot's own name, the other voice bots' names). At most 16, 64 characters each. */
+    terms?: string[];
+}
 /** The same for speaking, with the voice. */
 export interface SpeechConfig { adapter: string; model: string; voiceId: string; key: string; endpoint?: string; region?: string; language?: string }
 
@@ -58,6 +62,8 @@ export interface SessionEnd extends Base { type: 'session.end' }
 export interface RoomJoin extends Base { type: 'room.join'; epoch: number; serverUrl: string; token: string }
 export interface RoomLeave extends Base { type: 'room.leave'; epoch: number }
 /** The people in the bubble whose microphone the bot may subscribe to, and how each is handled. Replaces the earlier list. */
+/** The names the hearing should expect, replacing the ones before: another voice bot came or went. Read when the next stretch of speech opens. */
+export interface RecognitionTerms extends Base { type: 'recognition.terms'; terms: string[] }
 export interface RoomPeople extends Base { type: 'room.people'; epoch: number; people: { participantId: string; mode: Mode }[] }
 
 // worker -> bot server
@@ -97,7 +103,7 @@ export interface ProviderOk extends Base { type: 'provider.ok'; part: ProviderPa
 export interface ProviderFailed extends Base { type: 'provider.failed'; part: ProviderPart; adapter: string; status?: number; rejected?: true }
 export interface ErrorMsg extends Base { type: 'error'; code: string; message: string; participantId?: string; epoch?: number }
 
-export type BotToWorker = SessionOpen | LaneOpen | LaneSignalIn | LaneClose | ModeSet | BotSay | BotRetract | VoiceStop | SessionEnd | RoomJoin | RoomLeave | RoomPeople;
+export type BotToWorker = SessionOpen | LaneOpen | LaneSignalIn | LaneClose | ModeSet | BotSay | BotRetract | VoiceStop | SessionEnd | RoomJoin | RoomLeave | RoomPeople | RecognitionTerms;
 export type WorkerToBot =
     | SessionStart | ParticipantJoin | ParticipantLeave | LaneSignalOut | PlaybackProgress | EngineStatus | RoomState | UserSpeechStarted | UserPartial | UserTurn | ProviderOk | ProviderFailed | ErrorMsg;
 

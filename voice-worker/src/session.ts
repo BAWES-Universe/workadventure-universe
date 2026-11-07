@@ -3,7 +3,7 @@
 // transport rules); the session only carries it out. Every path has an epoch from one counter, and the newest wins:
 // a newer lane replaces the old lane, the room replaces every older lane, a lane replaces an older room, and anything
 // still addressed to an older epoch is dropped.
-import { type ConnectorRegistry, type ProviderReporter, Secret, type SpeechConnector, type SpeechSettings, type Voice, isRejection, statusOf } from './connectors.ts';
+import { type ConnectorRegistry, type ProviderReporter, type RecognitionSettings, Secret, type SpeechConnector, type SpeechSettings, type Voice, isRejection, statusOf } from './connectors.ts';
 import type { Counters } from './counters.ts';
 import { FAKE_SPEECH_SETTINGS } from './fakeSpeech.ts';
 import { Lane, type IceConfig } from './lane.ts';
@@ -14,6 +14,7 @@ import { Recognition } from './recognition.ts';
 import type { Recognizer, RecognizerEvents, RecognizerFactory } from './recognizer.ts';
 import { RoomTransport } from './roomTransport.ts';
 import { Speaker } from './speaker.ts';
+import { cleanTerms } from './terms.ts';
 import type { InputSink } from './transport.ts';
 
 /** A connection that has not come up this long after the person's offer is given up. */
@@ -103,6 +104,8 @@ export class Session {
     private readonly recognition?: Recognition;
     private readonly statusTimer: NodeJS.Timeout;
     private closing = false;
+    /** The names the hearing is asked to expect (#1864): the bot's own and the other voice bots'. The next stretch of speech reads them. */
+    private terms: string[] = [];
     /** Each person's latest turn that came through whole, until a reply is handed over (#1865). Kept per person so two people never share one slot. */
     private readonly unanswered = new Map<string, { at: number; endOfSpeechAt: number }>();
     /** When the person stopped talking, for each reply that answers a spoken turn and has not started yet. */
@@ -116,6 +119,7 @@ export class Session {
         public defaultMode: Mode = 'talk',
         settings: SessionSettings = {}
     ) {
+        this.terms = cleanTerms(settings.recognition?.terms);
         const hearing = this.hearingFor(settings.recognition);
         this.recognition = hearing
             ? new Recognition({
@@ -171,7 +175,19 @@ export class Session {
     /** Hearing for this bubble: the provider it names, else the worker's own engine. An adapter the worker does not have hears nothing and says so. */
     private hearingFor(config?: RecognitionConfig): { factory: RecognizerFactory; provider?: ProviderReporter } | undefined {
         if (!config) return this.host.recognizer ? { factory: this.host.recognizer } : undefined;
-        const settings = { adapter: config.adapter, model: config.model, key: new Secret(config.key), endpoint: config.endpoint, region: config.region, language: config.language };
+        const names = () => this.terms;
+        const settings: RecognitionSettings = {
+            adapter: config.adapter,
+            model: config.model,
+            key: new Secret(config.key),
+            endpoint: config.endpoint,
+            region: config.region,
+            language: config.language,
+            // Read when a stretch of speech opens, so a bot that joins the bubble is expected from the next one
+            get terms() {
+                return names();
+            },
+        };
         const connector = this.host.connectors.recognition(config.adapter);
         const factory: RecognizerFactory = (events) => {
             if (!connector) return failingRecognizer(events);
@@ -441,6 +457,11 @@ export class Session {
 
     retract(segmentId: string): void {
         this.speaker.retract(segmentId);
+    }
+
+    /** Another voice bot came or went: the next stretch of speech is heard with the new names. One already open keeps the old. */
+    setTerms(terms: unknown): void {
+        this.terms = cleanTerms(terms);
     }
 
     stopVoice(): void {
