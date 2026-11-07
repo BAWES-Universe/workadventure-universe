@@ -17,7 +17,7 @@ export const DEFAULT_MAX_PREVIEWS = 8;
 
 /** What the bot server asks for: the settings of `session.open`'s `speech`, and the words. */
 export interface PreviewRequest {
-    speech: { adapter: string; model: string; voiceId: string; key: string; endpoint?: string; region?: string; language?: string };
+    speech: { adapter: string; model: string; voiceId: string; key?: string; endpoint?: string; region?: string; language?: string };
     text: string;
     lang?: string;
     expression?: Expression;
@@ -53,13 +53,13 @@ export function readPreviewRequest(body: unknown): PreviewRequest | string {
     if (!isText(text, MAX_PREVIEW_CHARACTERS) || !text.trim()) return 'text is missing or too long';
     if (typeof speech !== 'object' || speech === null || Array.isArray(speech)) return 'speech is missing';
     const s = speech as Record<string, unknown>;
-    if (!isText(s.adapter, 64) || !isText(s.model, 128) || !isText(s.voiceId, 256) || !isText(s.key, 4096)) return 'speech needs an adapter, a model, a voiceId and a key';
+    if (!isText(s.adapter, 64) || !isText(s.model, 128) || !isText(s.voiceId, 256) || !optionalText(s.key, 4096)) return 'speech needs an adapter, a model and a voiceId, and its key, when it has one';
     if (!optionalText(s.endpoint, 2048) || !optionalText(s.region, 64) || !optionalText(s.language, 32)) return 'speech has a field that is not text';
     if (!optionalText(lang, 32)) return 'lang is not text';
     if (expression !== undefined && !EXPRESSIONS.includes(expression as Expression)) return 'expression is not one of the three';
     if (maxSeconds !== undefined && !(typeof maxSeconds === 'number' && Number.isFinite(maxSeconds) && maxSeconds > 0)) return 'maxSeconds is not a positive number';
     return {
-        speech: { adapter: s.adapter, model: s.model, voiceId: s.voiceId, key: s.key, endpoint: s.endpoint as string | undefined, region: s.region as string | undefined, language: s.language as string | undefined },
+        speech: { adapter: s.adapter, model: s.model, voiceId: s.voiceId, key: s.key as string | undefined, endpoint: s.endpoint as string | undefined, region: s.region as string | undefined, language: s.language as string | undefined },
         text,
         lang: lang as string | undefined,
         expression: expression as Expression | undefined,
@@ -105,7 +105,7 @@ export class Previewer {
         signal.addEventListener('abort', onAbort, { once: true });
         try {
             const speech = request.speech;
-            const settings: SpeechSettings = { adapter: speech.adapter, model: speech.model, voiceId: speech.voiceId, key: new Secret(speech.key), endpoint: speech.endpoint, region: speech.region, language: speech.language };
+            const settings: SpeechSettings = { adapter: speech.adapter, model: speech.model, voiceId: speech.voiceId, key: new Secret(speech.key ?? ''), endpoint: speech.endpoint, region: speech.region, language: speech.language };
             const maxMs = Math.min(request.maxSeconds ? request.maxSeconds * 1000 : this.host.maxPreviewMs, this.host.maxPreviewMs);
             const capSamples = Math.ceil(maxMs / FRAME_MS) * TTS_FRAME_SAMPLES;
             const stream = new ReplyStream(() => connector.speak({ text: request.text, settings, lang: request.lang ?? settings.language, expression: request.expression, signal: stop.signal }), {

@@ -7,6 +7,7 @@ import type { Duplex } from 'node:stream';
 import { type RawData, WebSocket, WebSocketServer } from 'ws';
 import { ConnectorRegistry } from './connectors.ts';
 import { Counters } from './counters.ts';
+import { Latency } from './latency.ts';
 import { DEEPGRAM_ADAPTER, DEFAULT_DEEPGRAM_FINAL_TIMEOUT_MS, DeepgramRecognition } from './deepgram.ts';
 import { FAKE_ADAPTER, FakeSpeech } from './fakeSpeech.ts';
 import type { IceConfig } from './lane.ts';
@@ -45,10 +46,19 @@ import { AWS_HEARING_MODELS, AWS_SPEECH_MODELS, AWS_VOICE_ADAPTER, AwsPolly, Aws
 import { AZURE_SPEECH_ADAPTER, AzureSpeechRecognition, AzureTts } from './azureSpeech.ts';
 import { ELEVENLABS_ADAPTER, ElevenLabsSpeech } from './elevenlabs.ts';
 import { CARTESIA_ADAPTER, CartesiaRecognition, CartesiaSpeech } from './cartesia.ts';
+import { AWS_ADAPTER, AwsRecognition, AwsSpeech } from './aws.ts';
+import { AZURE_ADAPTER, AzureRecognition, AzureSpeech } from './azure.ts';
+import { GOOGLE_ADAPTER, GoogleRecognition, GoogleSpeech } from './google.ts';
+import { INWORLD_ADAPTER, InworldRecognition, InworldSpeech } from './inworld.ts';
+import { ULTRAVOX_ADAPTER, UltravoxRecognition, UltravoxSpeech } from './ultravox.ts';
+import { ZOOM_ADAPTER, ZoomRecognition, ZoomSpeech } from './zoom.ts';
+import { OPENAI_ADAPTER, OpenAiRecognition, OpenAiSpeech } from './openai.ts';
+import { XAI_ADAPTER, XaiRecognition, XaiSpeech } from './xai.ts';
 import { FISH_ADAPTER, FishSpeech } from './fish.ts';
 import { DeepgramSpeech } from './deepgramSpeech.ts';
 import { ElevenLabsRecognition } from './elevenlabsHearing.ts';
 import { SonioxSpeech } from './sonioxSpeech.ts';
+import { OPENAI_COMPATIBLE_ADAPTER, OpenAiCompatibleRecognition, OpenAiCompatibleSpeech } from './openaiCompatible.ts';
 import { DEFAULT_SONIOX_FINAL_TIMEOUT_MS, SONIOX_ADAPTER, SonioxRecognition } from './soniox.ts';
 import { checkMessage } from './validate.ts';
 import { DEFAULT_MAX_PREVIEWS, DEFAULT_MAX_PREVIEW_SECONDS, type PreviewFailure, Previewer, readPreviewRequest } from './preview.ts';
@@ -78,6 +88,8 @@ export interface WorkerOptions {
     bargeInMs?: number;
     /** The Cartesia API version every Cartesia request names. Default DEFAULT_CARTESIA_VERSION. */
     cartesiaVersion?: string;
+    /** The sample rate of a person's own speech server's raw audio, when it isn't the usual 24 kHz (VOICE_OPENAI_COMPATIBLE_SAMPLE_RATE). */
+    ownSpeechSampleRate?: number;
     /** How long a hearing provider may take for the last words after a person paused, in seconds, before it counts as failed. Default 10. */
     recognitionFinalTimeoutSeconds?: number;
     /** The longest one line spoken outside a bubble (the bot page's "Hear it say hello") plays, in seconds. Default 20. */
@@ -113,6 +125,8 @@ const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
 
 export class VoiceWorker {
     readonly counters = new Counters();
+    /** How long turns take, per provider (#1865). */
+    readonly latency = new Latency();
     /**
      * CPU is measured on the worker's own clock, not per /stats read, so every reader (and a second read soon after the
      * first) sees the same figure: the start of the current sample, and the last minute's samples in percent.
@@ -247,6 +261,26 @@ export class VoiceWorker {
             this.connectors.registerRecognition(DEEPGRAM_ADAPTER, new DeepgramRecognition({ finalTimeoutMs }));
         }
         if (!this.connectors.speech(DEEPGRAM_ADAPTER)) this.connectors.registerSpeech(DEEPGRAM_ADAPTER, new DeepgramSpeech());
+        // A talking model (game #1910) is named for both hearing and speaking, under one adapter
+        if (!this.connectors.recognition(AWS_ADAPTER)) this.connectors.registerRecognition(AWS_ADAPTER, new AwsRecognition());
+        if (!this.connectors.speech(AWS_ADAPTER)) this.connectors.registerSpeech(AWS_ADAPTER, new AwsSpeech());
+        if (!this.connectors.recognition(AZURE_ADAPTER)) this.connectors.registerRecognition(AZURE_ADAPTER, new AzureRecognition());
+        if (!this.connectors.speech(AZURE_ADAPTER)) this.connectors.registerSpeech(AZURE_ADAPTER, new AzureSpeech());
+        if (!this.connectors.recognition(GOOGLE_ADAPTER)) this.connectors.registerRecognition(GOOGLE_ADAPTER, new GoogleRecognition());
+        if (!this.connectors.speech(GOOGLE_ADAPTER)) this.connectors.registerSpeech(GOOGLE_ADAPTER, new GoogleSpeech());
+        if (!this.connectors.recognition(INWORLD_ADAPTER)) this.connectors.registerRecognition(INWORLD_ADAPTER, new InworldRecognition());
+        if (!this.connectors.speech(INWORLD_ADAPTER)) this.connectors.registerSpeech(INWORLD_ADAPTER, new InworldSpeech());
+        if (!this.connectors.recognition(ULTRAVOX_ADAPTER)) this.connectors.registerRecognition(ULTRAVOX_ADAPTER, new UltravoxRecognition());
+        if (!this.connectors.speech(ULTRAVOX_ADAPTER)) this.connectors.registerSpeech(ULTRAVOX_ADAPTER, new UltravoxSpeech());
+        if (!this.connectors.recognition(ZOOM_ADAPTER)) this.connectors.registerRecognition(ZOOM_ADAPTER, new ZoomRecognition());
+        if (!this.connectors.speech(ZOOM_ADAPTER)) this.connectors.registerSpeech(ZOOM_ADAPTER, new ZoomSpeech());
+        if (!this.connectors.recognition(OPENAI_ADAPTER)) this.connectors.registerRecognition(OPENAI_ADAPTER, new OpenAiRecognition());
+        if (!this.connectors.speech(OPENAI_ADAPTER)) this.connectors.registerSpeech(OPENAI_ADAPTER, new OpenAiSpeech());
+        if (!this.connectors.recognition(XAI_ADAPTER)) this.connectors.registerRecognition(XAI_ADAPTER, new XaiRecognition());
+        if (!this.connectors.speech(XAI_ADAPTER)) this.connectors.registerSpeech(XAI_ADAPTER, new XaiSpeech());
+        // A person's own speech server (#1874): hears and speaks, at the https address they typed, through the address guard
+        if (!this.connectors.speech(OPENAI_COMPATIBLE_ADAPTER)) this.connectors.registerSpeech(OPENAI_COMPATIBLE_ADAPTER, new OpenAiCompatibleSpeech({ sampleRate: options.ownSpeechSampleRate }));
+        if (!this.connectors.recognition(OPENAI_COMPATIBLE_ADAPTER)) this.connectors.registerRecognition(OPENAI_COMPATIBLE_ADAPTER, new OpenAiCompatibleRecognition());
         this.previewer = new Previewer({
             connectors: this.connectors,
             speechTimeoutMs: (options.speechTimeoutSeconds ?? DEFAULT_SPEECH_TIMEOUT_SECONDS) * 1000,
@@ -314,6 +348,7 @@ export class VoiceWorker {
             memoryMb: Math.round(process.memoryUsage().rss / (1024 * 1024)),
             uptimeSeconds: Math.round(process.uptime()),
             counters: this.counters.snapshot(),
+            latency: this.latency.snapshot(),
         };
     }
 
@@ -341,6 +376,7 @@ export class VoiceWorker {
         return {
             engineId: this.engineId,
             counters: this.counters,
+            latency: this.latency,
             ice: this.options.ice,
             input: this.options.input ?? (() => undefined),
             connectors: this.connectors,
@@ -617,6 +653,9 @@ class BridgeConnection {
                 break;
             case 'bot.retract':
                 session.retract(msg.segmentId);
+                break;
+            case 'recognition.terms':
+                session.setTerms(msg.terms);
                 break;
             case 'voice.stop':
                 session.stopVoice();
