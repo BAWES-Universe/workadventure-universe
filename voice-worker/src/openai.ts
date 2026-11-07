@@ -166,9 +166,18 @@ export class OpenAiRecognition implements RecognitionConnector {
                         return [...inOrder(), { interim: '' }, ...allWritten()];
                     }
                     case 'conversation.item.input_audio_transcription.failed': {
-                        // A refused key or no credit is the key's own problem, the same as on the socket
+                        // A refused key or no credit is the key's own problem, the same as on the socket: the stretch fails
                         const error = errorOf(event);
-                        return { error: error.status ? { status: error.status } : {} };
+                        if (error.status) return { error: { status: error.status } };
+                        // Any other failure loses only this piece: the rest of the stretch is still written down
+                        written++;
+                        const item = typeof event.item_id === 'string' ? event.item_id : '';
+                        if (item === interimItem) {
+                            interim = '';
+                            interimItem = '';
+                        }
+                        if (item && order.includes(item)) waiting.set(item, '');
+                        return [...inOrder(), { interim: '' }, ...allWritten()];
                     }
                     case 'error': {
                         const error = errorOf(event);

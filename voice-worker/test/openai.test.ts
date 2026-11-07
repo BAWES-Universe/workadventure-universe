@@ -243,6 +243,32 @@ describe('hearing', () => {
         expect(heard.finals).toEqual(['One coffee with oat milk']);
     });
 
+    it('keeps the rest of the stretch when one piece can’t be written down for another reason', async () => {
+        const server = await realtime({
+            onEvent: (event, send) => {
+                if (event.type === 'input_audio_buffer.append') {
+                    send({ type: 'input_audio_buffer.committed', item_id: 'i1' });
+                    send({ type: 'input_audio_buffer.committed', item_id: 'i2', previous_item_id: 'i1' });
+                    send({ type: 'input_audio_buffer.committed', item_id: 'i3', previous_item_id: 'i2' });
+                    send({ type: 'conversation.item.input_audio_transcription.completed', item_id: 'i1', transcript: 'One coffee' });
+                    send({ type: 'conversation.item.input_audio_transcription.failed', item_id: 'i2', error: { type: 'server_error', code: 'transcription_failed' } });
+                    send({ type: 'conversation.item.input_audio_transcription.completed', item_id: 'i3', transcript: 'and a tea' });
+                }
+                if (event.type === 'input_audio_buffer.commit') {
+                    send({ type: 'error', error: { type: 'invalid_request_error', code: 'input_audio_buffer_commit_empty' } });
+                }
+            },
+        });
+        const { heard, events } = listener();
+        const stream = new OpenAiRecognition().listen(settings(server.url), events);
+        stream.push(new Int16Array(320));
+        await waitFor('the words', () => heard.partials.includes('One coffee and a tea'));
+        stream.finish();
+        await waitFor('the last words', () => heard.finals.length === 1);
+        expect(heard.finals).toEqual(['One coffee and a tea']);
+        expect(heard.failed).toEqual([]);
+    });
+
     it('reports a refused key when a piece can’t be written down', async () => {
         const server = await realtime({
             onEvent: (event, send) => {
