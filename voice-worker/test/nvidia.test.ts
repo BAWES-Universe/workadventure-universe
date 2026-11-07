@@ -4,7 +4,7 @@ import http2 from 'node:http2';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ConnectorRegistry, ProviderError, Secret, type SpeechRequest } from '../src/connectors.ts';
-import { GrpcFrames, grpcFrame, pb, pbBytes, pbRead, pbUint } from '../src/kit/grpc.ts';
+import { GrpcCall, GrpcFrames, grpcFrame, pb, pbBytes, pbRead, pbUint } from '../src/kit/grpc.ts';
 import { NVIDIA_ADAPTER, NVIDIA_FUNCTIONS, NvidiaRecognition, NvidiaSpeech, nvidiaHearing, nvidiaVoice } from '../src/nvidia.ts';
 import type { RecognizerEvents } from '../src/recognizer.ts';
 import { VoiceWorker } from '../src/server.ts';
@@ -64,7 +64,7 @@ async function fakeRiva(handlers: { onCall?: (call: Call) => void; onMessage?: (
                 server.close(() => resolve());
             }),
     );
-    return { base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, calls };
+    return { base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, calls, sessions };
 }
 
 const respond = (call: Call) => {
@@ -231,6 +231,27 @@ describe('speaking with NVIDIA', () => {
         const riva = await fakeRiva({ onEnd: (call) => sendMessage(call, Buffer.from([0x0a, 0x7f])) });
         const failure = await collect(new NvidiaSpeech().speak(speaking(riva.base))).catch((e: unknown) => e);
         expect(failure).toBeInstanceOf(ProviderError);
+    });
+
+    it("fails with the HTTP status of a page that isn't gRPC, such as a proxy's error page", async () => {
+        const riva = await fakeRiva({
+            onCall: (call) => {
+                call.stream.respond({ ':status': 502, 'content-type': 'text/html' });
+                call.stream.end('<html><body>Bad gateway</body></html>');
+            },
+        });
+        const failure = await collect(new NvidiaSpeech().speak(speaking(riva.base))).catch((e: unknown) => e);
+        expect(failure).toBeInstanceOf(ProviderError);
+        expect((failure as ProviderError).status).toBe(502);
+    });
+
+    it('leaves no connection behind when a call cannot be asked for', async () => {
+        const riva = await fakeRiva({});
+        const ends: unknown[] = [];
+        expect(() => new GrpcCall({ origin: riva.base, path: '/x.Y/Z', headers: { 'bad name': 'x' } }, () => undefined, (end) => ends.push(end))).toThrow();
+        await waitFor('the connection to close', () => riva.sessions.size > 0 && [...riva.sessions].every((session) => session.closed || session.destroyed));
+        expect(ends).toEqual([]);
+        expect(riva.calls).toEqual([]);
     });
 
     it('stops when the reply is no longer wanted', async () => {
