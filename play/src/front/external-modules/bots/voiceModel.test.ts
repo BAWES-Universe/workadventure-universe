@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
     choicesFor,
+    companyName,
     fullProfile,
     limitsOf,
     modelLabel,
@@ -468,6 +469,11 @@ describe("talking models (#1910)", () => {
             providerId: "key-oa",
             model: "gpt-realtime-2.1-mini",
         });
+    });
+
+    it("names the talking-model companies as they write their own names", () => {
+        expect(companyName("openai")).toBe("OpenAI");
+        expect(companyName("xai")).toBe("xAI");
     });
 
     it("reads which voices talk live", () => {
