@@ -12,6 +12,8 @@ import type { BotConfiguration } from './AdminApiService';
 import { movementLogger } from '../utils/MovementLogger';
 import { MCPConnector } from '../mcp/MCPConnector';
 import { BotBusyError, BotUnavailableError } from '../utils/summonErrors';
+import { helloSourceOf, typedVoiceName, type HelloSource, type VoiceHello } from '../voice/VoiceHello';
+import { buildVoiceHello } from '../voice/VoiceHelloWiring';
 
 export interface BotAPIRequest extends Request {
     /** Who the game token says the caller is (its `identifier`): a guest's uuid, a member's email or id. */
@@ -238,6 +240,8 @@ export interface BotAPIOptions {
     dmStatus?: (botIds: string[]) => Promise<Record<string, string>>;
     /** The room a bot lives in, for its profile in a direct message; only when Matrix DMs are on. */
     dmRoom?: (botId: string) => Promise<{ url: string; room: string; world: string; universe: string } | undefined>;
+    /** "Hear this voice say hello" on the bot page (#1852). Left out, it is built from the bot server's own parts the first time it is asked for; null: not available. */
+    voiceHello?: VoiceHello | null;
 }
 
 /** Most bots one state lookup may ask about: a chat list's worth. */
@@ -273,6 +277,7 @@ export class BotAPI {
     private server: any = null;
     private dmStatus: BotAPIOptions['dmStatus'];
     private dmRoom: BotAPIOptions['dmRoom'];
+    private voiceHelloOption: BotAPIOptions['voiceHello'];
 
     constructor(
         botManager: BotManager,
@@ -288,6 +293,7 @@ export class BotAPI {
         this.botRegistry = botRegistry;
         this.dmStatus = options.dmStatus;
         this.dmRoom = options.dmRoom;
+        this.voiceHelloOption = options.voiceHello;
 
         // Routers with their own auth and body limits (the Matrix application service) go before the shared parser.
         for (const router of preRouters) {
@@ -297,6 +303,11 @@ export class BotAPI {
         // Keep constructor simple - no route registration here
         this.setupMiddleware();
         this.setupRoutes();
+    }
+
+    private voiceHello(): VoiceHello | null {
+        if (this.voiceHelloOption === undefined) this.voiceHelloOption = buildVoiceHello(this.adminApiService);
+        return this.voiceHelloOption;
     }
 
     private async isAskingAboutThemselves(req: BotAPIRequest, userUuid: string): Promise<boolean> {
@@ -860,6 +871,57 @@ export class BotAPI {
         });
 
         // Get available AI providers (for bot editor UI). Signed-in only; returns metadata, no credentials
+        // "Hear this voice say hello" (#1852): the voice worker says one short fixed line with the bot's voice, for the people who
+        // manage the bot. The first one counts as one of the maker's voice replies when Universe AI pays for the voice; the same voice
+        // heard again soon is kept and free. Says why when it can't.
+        this.app.post('/api/bots/:botId/voice/hello', requireSession, requireManager, async (req: BotAPIRequest, res: Response) => {
+            const hello = this.voiceHello();
+            if (!hello || !req.sessionUuid) {
+                res.status(503).json({ error: 'unavailable' });
+                return;
+            }
+            const locale = typeof req.body?.locale === 'string' ? req.body.locale.slice(0, 16) : undefined;
+            // A voice name typed and not saved yet (#1874), heard from the person's own speech server only. One that is not a name is refused
+            let voiceId: string | undefined;
+            if (req.body?.voiceId !== undefined) {
+                voiceId = typedVoiceName(req.body.voiceId);
+                if (voiceId === undefined) {
+                    res.status(400).json({ error: 'bad_voice_name' });
+                    return;
+                }
+            }
+            // Where it is heard from when voice is not on yet (the door): the speech server and its model. It needs the name to hear
+            let source: HelloSource | undefined;
+            if (req.body?.source !== undefined) {
+                source = helloSourceOf(req.body.source);
+                if (!source || voiceId === undefined) {
+                    res.status(400).json({ error: 'bad_source' });
+                    return;
+                }
+            }
+            try {
+                const result = await hello.say({
+                    botId: req.params.botId as string,
+                    personId: req.sessionUuid,
+                    locale,
+                    ...(voiceId !== undefined ? { voiceId } : {}),
+                    ...(source ? { source } : {}),
+                });
+                if (result.ok === false) {
+                    const body: Record<string, unknown> = { ...result };
+                    delete body.ok;
+                    delete body.status;
+                    res.status(result.status).json(body);
+                    return;
+                }
+                res.json({ text: result.text, mime: 'audio/wav', audio: result.wav.toString('base64'), ms: result.ms, ...(result.cached ? { cached: true } : {}) });
+            } catch (error) {
+                // What the error holds is never sent or logged: it could be about a key
+                console.error('[BotAPI] Voice hello failed:', error instanceof Error ? error.constructor.name : 'error');
+                res.status(500).json({ error: 'failed' });
+            }
+        });
+
         this.app.get('/api/bots/ai-providers', requireSession, async (req: Request, res: Response) => {
             try {
                 const enabled = req.query.enabled === 'true' || req.query.enabled === undefined;

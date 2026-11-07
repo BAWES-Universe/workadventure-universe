@@ -505,6 +505,18 @@ describe('VoiceCalls: what a person says to the bot', () => {
         expect(t.calls.acceptSpoken(SPACE, 'room_7', '1-2', 'Nora, what do you think?')).toBe('new');
     });
 
+    it('with several people in the bubble, never offers back words that did not all come through when they were not said to the bot (#1858)', () => {
+        const t = talking();
+        t.calls.hears = (_space, _person, text) => /^nora\b/i.test(text);
+        t.say({ type: 'user.turn', outcome: 'lost', reason: 'provider', text: 'Sara, lunch at', audioMs: 900 });
+        expect(t.game.drafts).toEqual([['room_7', { turnId: '1-1', state: 'cleared', text: '' }]]);
+        expect(t.calls.acceptSpoken(SPACE, 'room_7', '1-1', 'Sara, lunch at')).toBe('unknown');
+        expect(t.calls.stats.unaddressed).toBe(1);
+        // Said to the bot: offered back like before
+        t.say({ type: 'user.turn', turnId: '1-2', outcome: 'lost', reason: 'provider', text: 'Nora, what is', audioMs: 900 });
+        expect(t.game.drafts[1]).toEqual(['room_7', { turnId: '1-2', state: 'lost', text: 'Nora, what is', reason: 'provider' }]);
+    });
+
     it('offers back words that did not all come through, and never as a line to send by itself', () => {
         const t = talking();
         t.say({ type: 'user.turn', outcome: 'lost', reason: 'cap', text: 'one two three', audioMs: 180000 });

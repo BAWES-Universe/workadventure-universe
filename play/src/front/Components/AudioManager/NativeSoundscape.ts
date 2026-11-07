@@ -124,14 +124,21 @@ export class NativeSoundscape {
             },
             () => this.createGraphMedia(),
             dependencies.fadeDuration,
-            container
+            container,
+            undefined,
+            undefined,
+            // The adapter of createGraphMedia applies the volume through its own gain node
+            () => true
         );
         this.water = new AudioPlayback(
             (state) => this.onState("water", state),
             () => {},
             () => this.createGraphMedia(),
             0,
-            container
+            container,
+            undefined,
+            undefined,
+            () => true
         );
     }
 
