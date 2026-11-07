@@ -6,7 +6,7 @@ import { ProviderError, type RecognitionConnector, type RecognitionSettings } fr
 import type { Recognizer, RecognizerEvents } from '../recognizer.ts';
 import { answerStatus, failure, type CreditCheck } from './errors.ts';
 import { pcmBytes } from './pcm.ts';
-import type { SocketAddress } from './socketSpeech.ts';
+import { letGo, type SocketAddress } from './socketSpeech.ts';
 
 /** What one answer from the company holds. */
 export interface HearingMessage {
@@ -35,7 +35,17 @@ export interface SocketHearingSpec {
     connect(settings: RecognitionSettings, base: string): SocketAddress | Promise<SocketAddress>;
     /** Messages sent once the socket opens, before any audio: usually the setup. */
     start?(settings: RecognitionSettings): (string | Uint8Array)[];
-    /** The company answers the setup before it takes audio (Meta): audio is held until an answer says `ready`. */
+    /**
+     * Set when the company must answer the setup before it takes audio (Google's setupComplete): audio and the end of it wait for
+     * the first answer this says yes to. That answer is not read as words.
+     */
+    ready?(data: Buffer, isBinary: boolean): boolean;
+    /** Messages sent once the company is ready, before the audio held meanwhile (Google: the start of the person's speech). */
+    afterReady?(settings: RecognitionSettings): (string | Uint8Array)[];
+    /**
+     * The company answers the setup before it takes audio, in an answer read like any other (Meta): audio is held until a read
+     * answer says `ready`.
+     */
     readyFirst?: boolean;
     /** Messages sent once the company says `ready`, before any audio (Mistral: the session's settings). */
     whenReady?(settings: RecognitionSettings): (string | Uint8Array)[];
@@ -52,6 +62,11 @@ export interface SocketHearingSpec {
     closed?(code: number, reason: string): HearingMessage | undefined;
     /** Set when the company detects the end of speech itself: quiet this long still ends a stretch. */
     pauseMs?: number;
+    /**
+     * Words can still come after `finished` (Google sends its transcription apart from the end of its turn): the stretch then ends
+     * once nothing more has come for this long.
+     */
+    settleMs?: number;
     /** How long the last words may take after finish(). Default 10 s. */
     finalTimeoutMs?: number;
     /**
@@ -60,6 +75,8 @@ export interface SocketHearingSpec {
      * segment's words still in flight don't cut off the last ones; with none within `quietMs`, it ends with what was heard.
      */
     lastAnswerAfterFinish?: { quietMs: number; settleMs?: number };
+    /** Messages sent before the socket is let go, while it is still open (Ultravox: hang up the call). */
+    goodbye?(): (string | Uint8Array)[];
     outOfCredit?: CreditCheck;
 }
 
@@ -84,7 +101,8 @@ class SocketStream implements Recognizer {
     private finishing = false;
     private done = false;
     private endpointed = false;
-    /** The socket is open and the company takes audio. */
+    private settling = false;
+    /** The socket is open and the company takes audio (with `spec.ready` or `spec.readyFirst`, once it said so). */
     private accepting = false;
     /** Speech the company reported starting and has not answered yet; unknown until it reports any (`HearingMessage.speech`). */
     private unanswered?: number;
@@ -168,12 +186,17 @@ class SocketStream implements Recognizer {
             } catch {
                 return this.fail(failure(this.spec.adapter, 'could not be sent the audio'));
             }
-            if (!this.spec.readyFirst) this.accept();
+            if (!this.spec.ready && !this.spec.readyFirst) this.accept();
         });
         ws.on('message', (data: WebSocket.RawData, isBinary: boolean) => {
             // Nothing the company sends may throw out of here: a socket handler that throws takes the whole worker down
             try {
                 const buffer = Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data as ArrayBuffer);
+                if (!this.accepting && this.spec.ready?.(buffer, isBinary)) {
+                    for (const message of this.spec.afterReady?.(this.settings) ?? []) ws.send(message);
+                    this.accept();
+                    return;
+                }
                 this.answer(this.spec.read(buffer, isBinary));
             } catch {
                 this.fail(failure(this.spec.adapter, 'sent an answer that could not be read'));
@@ -205,7 +228,7 @@ class SocketStream implements Recognizer {
         });
     }
 
-    /** Sends the audio held so far, and the end of it when that already came; from now on audio goes straight out. */
+    /** Sends the audio held while the socket opened (and the company got ready), then the end of it if that came already. */
     private accept(): void {
         if (this.accepting || this.done) return;
         this.accepting = true;
@@ -235,6 +258,16 @@ class SocketStream implements Recognizer {
 
     private answer(answer: HearingMessage | HearingMessage[] | undefined): void {
         if (this.done || !answer) return;
+        this.inAnswer(answer);
+        // Each answer while settling waits again for anything after it
+        if (this.settling && !this.done) {
+            clearTimeout(this.timer);
+            this.timer = setTimeout(() => this.end(), this.spec.settleMs);
+            this.timer.unref?.();
+        }
+    }
+
+    private inAnswer(answer: HearingMessage | HearingMessage[]): void {
         for (const message of Array.isArray(answer) ? answer : [answer]) {
             if (this.done) return;
             if (message.error) return this.fail(failure(this.spec.adapter, 'answered with an error', message.error.status));
@@ -247,7 +280,10 @@ class SocketStream implements Recognizer {
                 this.interim = '';
             }
             if (message.interim !== undefined) this.interim = message.interim;
-            if (message.finished) return this.end();
+            if (message.finished) {
+                if (!this.spec.settleMs) return this.end();
+                this.settling = true;
+            }
             const heard = this.heard();
             if (heard && heard !== this.lastShown) {
                 this.lastShown = heard;
@@ -291,6 +327,6 @@ class SocketStream implements Recognizer {
         if (!ws) return;
         ws.removeAllListeners();
         ws.on('error', () => undefined);
-        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.terminate();
+        letGo(ws, this.spec.goodbye);
     }
 }

@@ -4,7 +4,7 @@
 import { type RecognitionConnector, type RecognitionSettings } from '../connectors.ts';
 import type { Recognizer, RecognizerEvents } from '../recognizer.ts';
 import { answerStatus, readSome, type CreditCheck } from './errors.ts';
-import type { HttpCall } from './httpSpeech.ts';
+import type { FetchLike, HttpCall } from './httpSpeech.ts';
 import { wavFile } from './pcm.ts';
 
 export const HEARING_RATE = 16_000;
@@ -22,6 +22,8 @@ export interface UploadHearingSpec {
     outOfCredit?: CreditCheck;
     maxSeconds?: number;
     timeoutMs?: number;
+    /** What makes the call; the global `fetch` when left out. A company at an address a person typed passes the guarded one (kit/publicFetch.ts). */
+    fetch?: FetchLike;
 }
 
 /** A hearing connector made from a spec. */
@@ -83,7 +85,7 @@ class UploadStretch implements Recognizer {
         const url = /^[a-z]+:\/\//i.test(call.url) ? call.url : `${base}${call.url.startsWith('/') ? '' : '/'}${call.url}`;
         let response: Response;
         try {
-            response = await fetch(url, { method: call.method ?? 'POST', headers: call.headers, body: call.body, signal: this.abort.signal, redirect: 'manual' });
+            response = await (this.spec.fetch ?? fetch)(url, { method: call.method ?? 'POST', headers: call.headers, body: call.body, signal: this.abort.signal, redirect: 'manual' });
         } catch {
             return this.fail(undefined);
         }
