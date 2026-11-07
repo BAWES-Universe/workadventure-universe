@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
     choicesFor,
+    coversBoth,
     fullProfile,
     helloFailureOf,
     limitsOf,
     modelLabel,
     noService,
+    optionOf,
     pauseOf,
     payerKind,
     payerOptions,
@@ -14,6 +16,7 @@ import {
     readBotVoice,
     readHello,
     sourceOf,
+    splitChoices,
     startingVoice,
     viewOf,
     filterVoices,
@@ -214,8 +217,45 @@ describe("who can pay", () => {
     it("offers Universe AI, and each lent key with Universe AI doing the job the key can't", () => {
         const voice = read({ lentKeys: [keyAnswer()] });
         const options = payerOptions(voice);
-        expect(options.map((option) => option.id)).toEqual(["universe-ai", "key-el"]);
+        expect(options.map((option) => option.id)).toEqual(["universe-ai", "universe-ai+key-el"]);
         expect(options[1]).toMatchObject({ recognition: { kind: "universe-ai" }, speech: { kind: "key" } });
+    });
+
+    it("offers a key that listens and speaks for both jobs first, then every way to split them, A to Z", () => {
+        const both = keyAnswer({
+            id: "key-dg",
+            adapter: "deepgram",
+            name: "My Deepgram",
+            recognition: true,
+            speech: true,
+            models: [
+                { id: "nova-3", kind: "recognition" },
+                { id: "aura-2", kind: "speech" },
+            ],
+        });
+        const voice = read({ lentKeys: [keyAnswer(), both] });
+        const options = payerOptions(voice);
+        expect(options.filter(coversBoth).map((option) => option.id)).toEqual(["universe-ai", "key-dg"]);
+        expect(options.map((option) => option.id)).toEqual([
+            "universe-ai",
+            "key-dg",
+            "universe-ai+key-dg",
+            "universe-ai+key-el",
+            "key-dg+universe-ai",
+            "key-dg+key-el",
+        ]);
+        expect(splitChoices(voice, "speech").map((choice) => (choice.kind === "key" ? choice.key.id : "uai"))).toEqual([
+            "uai",
+            "key-dg",
+            "key-el",
+        ]);
+        expect(splitChoices(voice, "recognition").map((choice) => choice.kind)).toEqual(["universe-ai", "key"]);
+        const dg = splitChoices(voice, "recognition")[1];
+        const el = splitChoices(voice, "speech")[2];
+        expect(optionOf(voice, dg, el)?.id).toBe("key-dg+key-el");
+        expect(optionOf(voice, el, dg)).toBeUndefined();
+        // One key for the whole voice is where it starts
+        expect(startingPayer(voice, null)?.id).toBe("key-dg");
     });
 
     it("leaves out a key that can't be covered, and a key with no model", () => {
@@ -314,11 +354,11 @@ describe("the Voice row's door", () => {
 
     it("starts on a lent key when there is one, and on the place the last version used when it is still there", () => {
         const voice = read({ lentKeys: [keyAnswer()] });
-        expect(startingPayer(voice, null)?.id).toBe("key-el");
+        expect(startingPayer(voice, null)?.id).toBe("universe-ai+key-el");
         const before = { speech: { providerId: "uai-speak", model: "m", voiceId: "x" } };
         expect(startingPayer(voice, before)?.id).toBe("universe-ai");
         const onKey = { speech: { providerId: "key-el", model: "m", voiceId: "x" } };
-        expect(startingPayer(voice, onKey)?.id).toBe("key-el");
+        expect(startingPayer(voice, onKey)?.id).toBe("universe-ai+key-el");
         expect(startingPayer(read(), null)?.id).toBe("universe-ai");
         expect(startingPayer(read({ universeAi: { recognition: null, speech: null } }), null)).toBeNull();
     });
@@ -330,14 +370,14 @@ describe("the Voice row's door", () => {
         const onKey = { speech: { providerId: "key-el", model: "m", voiceId: "x" } };
         expect(startingPayer(voice, onKey)?.id).toBe("universe-ai");
         const another = keyAnswer({ id: "key-2" });
-        expect(startingPayer(read({ lentKeys: [down, another] }), onKey)?.id).toBe("key-2");
+        expect(startingPayer(read({ lentKeys: [down, another] }), onKey)?.id).toBe("universe-ai+key-2");
         // Nothing else to start on: the key is still offered, and the page says it is down
         expect(
             startingPayer(read({ lentKeys: [down], universeAi: { recognition: null, speech: null } }), null)
         ).toBeNull();
     });
 
-    it("reads as no service when no way covers both jobs, even though each job has something to run on", () => {
+    it("offers one key that listens and another that speaks when no Universe AI voice covers either job", () => {
         const listens = keyAnswer({
             id: "ear",
             recognition: true,
@@ -346,7 +386,29 @@ describe("the Voice row's door", () => {
         });
         const speaks = keyAnswer({ id: "mouth" });
         const none = { recognition: null, speech: null };
-        expect(viewOf(read({ lentKeys: [listens, speaks], universeAi: none })).kind).toBe("no-service");
+        const voice = read({ lentKeys: [listens, speaks], universeAi: none });
+        expect(noService(voice)).toBe(false);
+        expect(viewOf(voice).kind).toBe("off");
+        expect(payerOptions(voice)).toMatchObject([
+            {
+                id: "ear+mouth",
+                kind: "key",
+                recognition: { kind: "key", key: { id: "ear" } },
+                speech: { kind: "key", key: { id: "mouth" } },
+            },
+        ]);
+        expect(startingPayer(voice, null)?.id).toBe("ear+mouth");
+    });
+
+    it("reads as no service when only a listening key is lent and nothing speaks", () => {
+        const listens = keyAnswer({
+            id: "ear",
+            recognition: true,
+            speech: false,
+            models: [{ id: "nova", kind: "recognition" }],
+        });
+        const none = { recognition: null, speech: null };
+        expect(viewOf(read({ lentKeys: [listens], universeAi: none })).kind).toBe("no-service");
     });
 });
 

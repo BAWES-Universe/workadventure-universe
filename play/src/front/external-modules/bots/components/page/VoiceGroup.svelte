@@ -14,6 +14,8 @@
         VOICE_EXPRESSIONS,
         choiceOfSource,
         choicesFor,
+        coversBoth,
+        optionOf,
         companyName,
         describeVoice,
         doorVoices,
@@ -54,6 +56,7 @@
     import PageField from "./PageField.svelte";
     import VoicePicker from "./VoicePicker.svelte";
     import VoiceRows from "./VoiceRows.svelte";
+    import VoicePayerPicker from "./VoicePayerPicker.svelte";
     import VoiceHello from "./VoiceHello.svelte";
     import {
         IconAlertTriangle,
@@ -228,12 +231,56 @@
     }
     $: whoKey = viewerIsMaker ? v.yourKey() : v.theirKey({ maker });
 
+    /** The name of a way to pay with keys: both keys when one listens and another speaks, else the one key. */
+    /** A place a job runs on, as a sentence starts with it: "Universe AI", "Your Soniox key", "Sara’s Soniox key" */
+    function placeShort(choice: PayerChoice): string {
+        return choice.kind === "universe-ai" ? v.askUniverseAi() : keyShort(choice.key);
+    }
+
+    /** What pays for both jobs (#1911): one place for both, or the two places of a split */
+    function payerTitle(option: PayerOption): string {
+        if (coversBoth(option)) {
+            return option.speech.kind === "key"
+                ? v.paidByKey({ key: keyPhrase(option.speech.key, true) })
+                : v.paidByUniverseAi();
+        }
+        return v.payerSplitTitle({ listens: placeShort(option.recognition), speaks: placeShort(option.speech) });
+    }
+
+    /** The line under it: what one place does and who pays, or that two companies are paid for */
+    function payerLine(option: PayerOption, data: BotVoice): string {
+        const keyLine = viewerIsMaker
+            ? v.askKeyLine({ bot: botName })
+            : v.askKeyLineTheirs({ owner: maker, bot: botName });
+        if (coversBoth(option)) {
+            if (option.speech.kind === "universe-ai") {
+                return v.payerBothUniverseAiLine({ replies: data.window.voiceReplies, hours: data.window.hours });
+            }
+            return viewerIsMaker
+                ? v.payerBothKeyLine({ bot: botName })
+                : v.payerBothKeyLineTheirs({ owner: maker, bot: botName });
+        }
+        if (option.recognition.kind === "key" && option.speech.kind === "key") {
+            return viewerIsMaker
+                ? v.payerTwoKeysLine({ bot: botName })
+                : v.payerTwoKeysLineTheirs({ owner: maker, bot: botName });
+        }
+        return keyLine;
+    }
+
     function payerBrief(data: BotVoice, current: VoiceProfile): string {
         switch (payerKind(data, current)) {
             case "universe-ai":
                 return v.payerUniverseAi();
-            case "keys":
+            case "keys": {
+                // One key that listens and speaks is one key, named by its company
+                const speaks = sourceOf(data, current, "speech");
+                const listens = sourceOf(data, current, "recognition");
+                if (speaks.kind === "key" && listens.kind === "key" && speaks.key.id === listens.key.id) {
+                    return keyPhrase(speaks.key, true);
+                }
                 return viewerIsMaker ? v.payerYourKeys() : v.payerTheirKeys({ maker });
+            }
             default:
                 return viewerIsMaker ? v.payerUniverseAiAndYourKey() : v.payerUniverseAiAndTheirKey({ maker });
         }
@@ -272,8 +319,9 @@
 
     $: payerKindNow = voice && profile ? payerKind(voice, profile) : "universe-ai";
     $: speakingKey = speaksSource?.kind === "key" ? speaksSource.key : null;
-    $: listeningKey = listensSource?.kind === "key" ? listensSource.key : null;
     $: limits = voice && profile ? limitsOf(voice, profile) : null;
+    $: listensChoice = listensSource ? choiceOfSource(listensSource) : null;
+    $: onOption = voice && listensChoice && speakChoice ? optionOf(voice, listensChoice, speakChoice) ?? null : null;
 
     // ---------------------------------------------------------------------------------------------------------------
     // The Voice row while voice is off: a few voices to hear, and one button
@@ -296,7 +344,9 @@
     $: doorTags =
         door?.startId === undefined
             ? {}
-            : { [door.startId]: previousProfile?.speech?.voiceId === door.startId ? v.usedBefore() : v.recommended() };
+            : previousProfile?.speech?.voiceId === door.startId
+            ? { [door.startId]: v.usedBefore() }
+            : {};
 
     // ---------------------------------------------------------------------------------------------------------------
     // Voice lists and samples
@@ -461,25 +511,29 @@
         if (input instanceof HTMLInputElement) input.checked = view?.kind === "on";
     }
 
-    /** Speaks on / Listens on: another place for one job. A new place for speaking brings a voice that company has. */
-    async function chooseSource(part: VoicePart, choice: PayerChoice) {
+    /** Who pays (#1911): where both jobs run. A new place for speaking brings a voice that company has; one save for both. */
+    async function choosePlaces(option: PayerOption) {
         const current = base();
         if (!voice || !profile || !current || saving) return;
         const data = voice;
         // The panel can move to another bot while the voice list loads; the save stays on the bot picked on.
         const botId = bot.id;
-        const now = choiceOfSource(sourceOf(data, profile, part));
-        if (now && sameChoice(now, choice)) return;
+        const listensNow = choiceOfSource(sourceOf(data, profile, "recognition"));
+        const speaksNow = choiceOfSource(sourceOf(data, profile, "speech"));
+        const newListening = !listensNow || !sameChoice(listensNow, option.recognition);
+        const newSpeaking = !speaksNow || !sameChoice(speaksNow, option.speech);
+        if (!newListening && !newSpeaking) return;
         await run(async () => {
             const next: FullVoiceProfile = { ...current };
-            if (part === "recognition") {
-                const picked = providerOf(data, "recognition", choice);
+            if (newListening) {
+                const picked = providerOf(data, "recognition", option.recognition);
                 if (!picked) throw new Error(v.voicesFailed());
                 next.recognition = picked;
-            } else {
-                const speech = providerOf(data, "speech", choice);
-                const list = await voicesFor(choice);
-                const picked = startingVoice(data, choice, list, current.speech.voiceId);
+            }
+            if (newSpeaking) {
+                const speech = providerOf(data, "speech", option.speech);
+                const list = await voicesFor(option.speech);
+                const picked = startingVoice(data, option.speech, list, current.speech.voiceId);
                 if (!speech || !picked) throw new Error(v.voicesFailed());
                 const entry = list.find((candidate) => candidate.voiceId === picked.voiceId);
                 next.speech = {
@@ -785,10 +839,23 @@
                             <span class="bp-cn">{v.notAllowedLine({ bot: botName })}</span>
                         {:else}
                             <span class="bp-ut">{v.noServiceTitle()}</span>
-                            <span class="bp-cn">{v.noServiceLine({ bot: botName })}</span>
+                            <span class="bp-cn"
+                                >{viewerIsMaker && canOpenOrbit()
+                                    ? v.noServiceLineMaker({ bot: botName })
+                                    : v.noServiceLine({ bot: botName })}</span
+                            >
                         {/if}
                     </div>
                 </div>
+                {#if view.kind === "no-service" && viewerIsMaker && canOpenOrbit()}
+                    <div class="bp-line">
+                        <span />
+                        <PageButton tall testId="bot-voice-add-keys" on:click={openAiKeys}>
+                            {v.addVoiceKeys()}
+                            <IconExternalLink font-size="14" />
+                        </PageButton>
+                    </div>
+                {/if}
                 {#if view.kind === "not-allowed" && canOpenOrbit()}
                     <div class="bp-line">
                         <span />
@@ -816,87 +883,43 @@
                     </label>
                 {:else if doorOption}
                     <p class="bp-m" data-testid="bot-voice-off-line">{v.doorLead({ bot: botName })}</p>
-                    {#if doorOptions.length > 1}
+                    <!-- Universe AI alone needs no row: the note under the voices says it is free -->
+                    {#if voice && (doorOptions.length > 1 || doorOption.kind === "key")}
                         <button
                             type="button"
                             class="vg-tap"
-                            aria-expanded={payerOpen}
+                            class:vg-still={doorOptions.length < 2}
+                            disabled={doorOptions.length < 2}
+                            aria-expanded={doorOptions.length < 2 ? undefined : payerOpen}
                             data-testid="bot-voice-payer-change"
                             on:click={() => (payerOpen = !payerOpen)}
                         >
                             <span class="vg-ico">
-                                {#if doorOption.kind === "key" && doorOption.key}<IconKey
+                                {#if doorOption.speech.kind === "key" || doorOption.recognition.kind === "key"}<IconKey
                                         font-size="20"
                                     />{:else}<IconSparkles font-size="20" />{/if}
                             </span>
                             <span class="bp-mtx">
-                                <span class="vg-t"
-                                    >{doorOption.kind === "key" && doorOption.key
-                                        ? v.paidByKey({ key: keyPhrase(doorOption.key, true) })
-                                        : v.paidByUniverseAi()}</span
-                                >
-                                <span class="bp-cn">
-                                    {#if doorOption.kind === "key"}
-                                        {viewerIsMaker
-                                            ? v.askKeyLine({ bot: botName })
-                                            : v.askKeyLineTheirs({ owner: maker, bot: botName })}
-                                    {:else if voice}
-                                        {v.askUniverseAiLine({
-                                            replies: voice.window.voiceReplies,
-                                            hours: voice.window.hours,
-                                        })}
-                                    {/if}
-                                </span>
+                                <span class="vg-t">{payerTitle(doorOption)}</span>
+                                <span class="bp-cn">{payerLine(doorOption, voice)}</span>
                             </span>
-                            <span class="vg-chg">{v.change()}</span>
+                            {#if doorOptions.length > 1}<span class="vg-chg">{v.change()}</span>{/if}
                         </button>
-                        {#if payerOpen}
-                            <div class="bp-cards" role="radiogroup" aria-label={v.whoPays()}>
-                                {#each doorOptions as option (option.id)}
-                                    <button
-                                        type="button"
-                                        class="bp-card"
-                                        class:picked={doorOption.id === option.id}
-                                        role="radio"
-                                        aria-checked={doorOption.id === option.id}
-                                        data-testid="bot-voice-ask-{option.kind}"
-                                        on:click={() => {
-                                            doorPayerId = option.id;
-                                            payerOpen = false;
-                                        }}
-                                    >
-                                        <span class="bp-cico">
-                                            {#if option.kind === "universe-ai"}<IconSparkles
-                                                    font-size="22"
-                                                />{:else}<IconKey font-size="22" />{/if}
-                                        </span>
-                                        <span class="bp-ctx">
-                                            <span class="bp-ct"
-                                                >{option.kind === "universe-ai" || !option.key
-                                                    ? v.askUniverseAi()
-                                                    : keyPhrase(option.key)}</span
-                                            >
-                                            <span class="bp-cn">
-                                                {#if option.kind === "universe-ai" && voice}
-                                                    {v.askUniverseAiLine({
-                                                        replies: voice.window.voiceReplies,
-                                                        hours: voice.window.hours,
-                                                    })}
-                                                {:else if viewerIsMaker}
-                                                    {v.askKeyLine({ bot: botName })}
-                                                {:else}
-                                                    {v.askKeyLineTheirs({ owner: maker, bot: botName })}
-                                                {/if}
-                                            </span>
-                                        </span>
-                                        <span
-                                            class="bp-radio"
-                                            class:on={doorOption.id === option.id}
-                                            aria-hidden="true"
-                                        />
-                                    </button>
-                                {/each}
-                            </div>
+                        {#if payerOpen && doorOptions.length > 1}
+                            <VoicePayerPicker
+                                {voice}
+                                listens={doorOption.recognition}
+                                speaks={doorOption.speech}
+                                {botName}
+                                {viewerIsMaker}
+                                {maker}
+                                place="door"
+                                keyName={(key) => keyPhrase(key)}
+                                onPick={(option) => {
+                                    doorPayerId = option.id;
+                                    if (coversBoth(option)) payerOpen = false;
+                                }}
+                            />
                         {/if}
                     {/if}
                     <div class="bp-cap" data-testid="bot-voice-door-caption">
@@ -1096,15 +1119,8 @@
                                         replies: voice.window.voiceReplies,
                                         hours: voice.window.hours,
                                     })}
-                                {:else if payerKindNow === "keys" && speakingKey && listeningKey}
-                                    {v.payerKeysTitle({
-                                        speaks: keyPhrase(speakingKey),
-                                        listens: keyPhrase(listeningKey),
-                                    })}
-                                {:else if payerKindNow === "key-speaks" && speakingKey}
-                                    {v.payerKeySpeaksTitle({ speaks: keyPhrase(speakingKey) })}
-                                {:else if payerKindNow === "key-listens" && listeningKey}
-                                    {v.payerKeyListensTitle({ listens: keyPhrase(listeningKey) })}
+                                {:else if onOption}
+                                    {payerTitle(onOption)}
                                 {:else}
                                     {whoKey}
                                 {/if}
@@ -1174,9 +1190,7 @@
                                         on:click={() => chooseLanguageMode("follow")}
                                     >
                                         <span class="bp-ctx">
-                                            <span class="bp-ct"
-                                                >{v.languageFollow()}<span class="vg-rec">{v.recommended()}</span></span
-                                            >
+                                            <span class="bp-ct">{v.languageFollow()}</span>
                                             <span class="bp-cn">{v.languageFollowHint({ bot: botName })}</span>
                                         </span>
                                         <span
@@ -1238,21 +1252,8 @@
                                 <span class="bp-mtx">
                                     {#if payerKindNow === "universe-ai"}
                                         <span class="vg-t">{v.askUniverseAi()}</span>
-                                    {:else if payerKindNow === "keys" && speakingKey && listeningKey}
-                                        <span class="vg-t"
-                                            >{v.payerKeysTitle({
-                                                speaks: keyPhrase(speakingKey),
-                                                listens: keyPhrase(listeningKey),
-                                            })}</span
-                                        >
-                                    {:else if payerKindNow === "key-speaks" && speakingKey}
-                                        <span class="vg-t"
-                                            >{v.payerKeySpeaksTitle({ speaks: keyPhrase(speakingKey) })}</span
-                                        >
-                                    {:else if payerKindNow === "key-listens" && listeningKey}
-                                        <span class="vg-t"
-                                            >{v.payerKeyListensTitle({ listens: keyPhrase(listeningKey) })}</span
-                                        >
+                                    {:else if onOption}
+                                        <span class="vg-t">{payerTitle(onOption)}</span>
                                     {:else}
                                         <span class="vg-t">{whoKey}</span>
                                     {/if}
@@ -1283,51 +1284,18 @@
                                 {/if}
                             </div>
                             {#if hasKeyChoice && sourcesOpen}
-                                {#each [{ part: "speech", caption: v.speaksOn(), source: speaksSource }, { part: "recognition", caption: v.listensOn(), source: listensSource }] as row (row.part)}
-                                    {@const part = row.part === "speech" ? "speech" : "recognition"}
-                                    {@const current = row.source ? choiceOfSource(row.source) : null}
-                                    <div class="bp-cap" id="voice-{part}-on">{row.caption}</div>
-                                    <div class="bp-cards" role="radiogroup" aria-labelledby="voice-{part}-on">
-                                        {#each choicesFor(voice, part) as choice (sourceKey(choice))}
-                                            {@const picked = current !== null && sameChoice(current, choice)}
-                                            <button
-                                                type="button"
-                                                role="radio"
-                                                class="bp-card"
-                                                class:picked
-                                                aria-checked={picked}
-                                                disabled={saving}
-                                                data-testid="bot-voice-{part}-{choice.kind}"
-                                                on:click={() => void chooseSource(part, choice)}
-                                            >
-                                                <span class="bp-cico">
-                                                    {#if choice.kind === "universe-ai"}<IconSparkles
-                                                            font-size="22"
-                                                        />{:else}<IconKey font-size="22" />{/if}
-                                                </span>
-                                                <span class="bp-ctx">
-                                                    <span class="bp-ct"
-                                                        >{choice.kind === "universe-ai"
-                                                            ? v.askUniverseAi()
-                                                            : keyPhrase(choice.key)}</span
-                                                    >
-                                                    <span class="bp-cn">
-                                                        {#if choice.kind === "universe-ai"}
-                                                            {part === "speech"
-                                                                ? v.universeAiPeople()
-                                                                : v.universeAiListens()}
-                                                        {:else if viewerIsMaker}
-                                                            {v.keyYouPay()}
-                                                        {:else}
-                                                            {v.keyOwnerPays({ owner: maker })}
-                                                        {/if}
-                                                    </span>
-                                                </span>
-                                                <span class="bp-radio" class:on={picked} aria-hidden="true" />
-                                            </button>
-                                        {/each}
-                                    </div>
-                                {/each}
+                                <VoicePayerPicker
+                                    {voice}
+                                    listens={listensChoice}
+                                    speaks={speakChoice}
+                                    {botName}
+                                    {viewerIsMaker}
+                                    {maker}
+                                    {saving}
+                                    place="on"
+                                    keyName={(key) => keyPhrase(key)}
+                                    onPick={(option) => void choosePlaces(option)}
+                                />
                             {/if}
                             {#if !hasKeyChoice && payerKindNow === "universe-ai"}
                                 <p class="bp-note" data-testid="bot-voice-universe-ai-picks">
@@ -1366,9 +1334,7 @@
                                                         shown ?? (chosen ? { id: chosen } : undefined),
                                                         ""
                                                     ),
-                                                })}{#if models[0]?.id === chosen}<span class="vg-rec"
-                                                        >{v.recommended()}</span
-                                                    >{/if}</span
+                                                })}</span
                                             >
                                         </span>
                                         {#if models.length > 1}<span class="vg-chg">{v.change()}</span>{/if}
@@ -1648,17 +1614,6 @@
         opacity: 0.5;
         cursor: default;
     }
-    .vg-rec {
-        margin-inline-start: 8px;
-        padding: 3px 8px;
-        border: 1px solid rgba(243, 241, 250, 0.16);
-        border-radius: 999px;
-        font-size: 11px;
-        font-weight: 700;
-        color: rgba(243, 241, 250, 0.85);
-        white-space: nowrap;
-        vertical-align: 1px;
-    }
     .vg-more {
         display: grid;
         grid-template-columns: minmax(0, 1fr) auto;
@@ -1754,14 +1709,6 @@
     .bp-card:disabled:not(.picked) {
         opacity: 0.55;
         cursor: default;
-    }
-    .bp-cico {
-        flex: none;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 28px;
-        color: #fff;
     }
     .bp-ctx {
         flex: 1;
