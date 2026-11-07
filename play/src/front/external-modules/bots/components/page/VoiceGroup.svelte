@@ -96,7 +96,9 @@
     let myKeys: Array<{ id: string; adapter: string }> | null = null;
     let lendPending = false;
 
-    let screen: "page" | "picker" = "page";
+    let screen: "page" | "picker" | "places" = "page";
+    /** The place picked for speaking lists no voices (a speech server of the person's own): its voice's name is asked for before saving */
+    let typedPlaces: PayerOption | null = null;
     let moreOpen = false;
     let saving = false;
     let saveError: string | null = null;
@@ -167,6 +169,7 @@
         voice = null;
         hidden = false;
         screen = "page";
+        typedPlaces = null;
         moreOpen = false;
         doorPayerId = null;
         doorPickedId = undefined;
@@ -553,6 +556,19 @@
         const newListening = !listensNow || !sameChoice(listensNow, option.recognition);
         const newSpeaking = !speaksNow || !sameChoice(speaksNow, option.speech);
         if (!newListening && !newSpeaking) return;
+        if (newSpeaking) {
+            try {
+                await voicesFor(option.speech);
+            } catch (e) {
+                // A speech server that lists no voices has none to start on: the name of its voice is asked for before anything is saved
+                if (isNoVoiceList(e) && bot.id === botId) {
+                    typedPlaces = option;
+                    screen = "places";
+                    return;
+                }
+                // Any other failure is shown by the save below, which asks again
+            }
+        }
         await run(async () => {
             const next: FullVoiceProfile = { ...current };
             if (newListening) {
@@ -575,6 +591,32 @@
             }
             return botApiService.saveBotVoice(botId, next);
         });
+    }
+
+    /** Moves the jobs to a speech server that lists no voices, speaking with the name typed for it */
+    async function usePlacesName(option: PayerOption, name: string) {
+        const current = base();
+        if (!voice || !profile || !current) return;
+        const data = voice;
+        const botId = bot.id;
+        const listensNow = choiceOfSource(sourceOf(data, profile, "recognition"));
+        const newListening = !listensNow || !sameChoice(listensNow, option.recognition);
+        const saved = await run(async () => {
+            const next: FullVoiceProfile = { ...current };
+            if (newListening) {
+                const picked = providerOf(data, "recognition", option.recognition);
+                if (!picked) throw new Error(v.voicesFailed());
+                next.recognition = picked;
+            }
+            const speech = providerOf(data, "speech", option.speech);
+            if (!speech) throw new Error(v.voicesFailed());
+            next.speech = { providerId: speech.providerId, model: speech.model, voiceId: name, voiceName: name };
+            return botApiService.saveBotVoice(botId, next);
+        });
+        if (saved) {
+            typedPlaces = null;
+            screen = "page";
+        }
     }
 
     function chooseModel(part: VoicePart, model: string) {
@@ -839,6 +881,23 @@
                     <p class="bp-m">{v.loadFailed()}</p>
                     <PageButton on:click={() => void load(bot.id)}>{v.retry()}</PageButton>
                 </div>
+            {:else if screen === "places" && view.kind === "on" && typedPlaces}
+                <VoiceTyped
+                    botId={bot.id}
+                    {botName}
+                    mode="change"
+                    server={ownName(true)}
+                    serverStart={ownName(false)}
+                    source={providerOf(voice, "speech", typedPlaces.speech) ?? undefined}
+                    busy={saving}
+                    onBack={() => {
+                        typedPlaces = null;
+                        screen = "page";
+                    }}
+                    onUse={(name) => (typedPlaces ? usePlacesName(typedPlaces, name) : undefined)}
+                    on:refresh={() => void load(bot.id, true)}
+                />
+                {#if saveError}<p class="vg-error" role="alert">{saveError}</p>{/if}
             {:else if screen === "picker" && view.kind === "on" && pickerTyped}
                 <VoiceTyped
                     botId={bot.id}

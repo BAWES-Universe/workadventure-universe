@@ -1160,6 +1160,35 @@ describe("the bot page's Voice group (#1668)", () => {
             expect(byTestId("bot-voice-typed")).toHaveLength(0);
         });
 
+        it("moving a bot that speaks onto it from Who pays asks for the name first, with nothing saved and no error", async () => {
+            mocks.api.getBotVoice.mockResolvedValue(turnedOn(uaiProfile, { lentKeys: [own] }));
+            mocks.api.getBotVoices.mockImplementation((_bot: string, source: string) =>
+                source === "key-own" ? Promise.reject(noList()) : Promise.resolve(voices)
+            );
+            mocks.api.saveBotVoice.mockResolvedValue(turnedOn(ownProfile("bm_george"), { lentKeys: [own] }));
+            await mount();
+            await click("bot-voice-more");
+            await click("bot-voice-sources-change");
+            await click("bot-voice-both-key-own");
+            expect(mocks.api.saveBotVoice).not.toHaveBeenCalled();
+            expect(byTestId("bot-voice-error")).toHaveLength(0);
+            expect(text()).toContain("Voice for Tinyfish on your speech server");
+            await type("bm_george");
+            await click("bot-voice-use");
+            // The bot still speaks on Universe AI: the server and model to hear it from are named
+            expect(mocks.api.checkBotVoiceName).toHaveBeenCalledWith("b1", "en-US", {
+                voiceId: "bm_george",
+                source: { providerId: "key-own", model: "kokoro" },
+            });
+            expect(mocks.api.saveBotVoice).toHaveBeenCalledWith("b1", {
+                recognition: { providerId: "key-own", model: "whisper-1" },
+                speech: { providerId: "key-own", model: "kokoro", voiceId: "bm_george", voiceName: "bm_george" },
+                expression: "natural",
+                language: { mode: "follow" },
+            });
+            expect(byTestId("bot-voice-typed")).toHaveLength(0);
+        });
+
         it("names the server as Sara's to a co-manager", async () => {
             mocks.api.getBotAiOptions.mockResolvedValue(
                 options({ viewerIsMaker: false, maker: { id: "u2", name: "Sara" } })
