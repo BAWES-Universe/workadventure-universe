@@ -26,6 +26,7 @@ import { GROQ_ADAPTER, GroqRecognition, GroqSpeech } from './groq.ts';
 import { HUME_ADAPTER, HumeSpeech } from './hume.ts';
 import { META_ADAPTER, MetaRecognition } from './meta.ts';
 import { MISTRAL_ADAPTER, MistralRecognition, MistralSpeech } from './mistral.ts';
+import { NEUPHONIC_ADAPTER, NeuphonicSpeech } from './neuphonic.ts';
 import { ELEVENLABS_ADAPTER, ElevenLabsSpeech } from './elevenlabs.ts';
 import { CARTESIA_ADAPTER, CartesiaRecognition, CartesiaSpeech } from './cartesia.ts';
 import { FISH_ADAPTER, FishSpeech } from './fish.ts';
@@ -153,6 +154,7 @@ export class VoiceWorker {
             this.connectors.registerRecognition(MISTRAL_ADAPTER, new MistralRecognition({ finalTimeoutMs }));
         }
         if (!this.connectors.speech(MISTRAL_ADAPTER)) this.connectors.registerSpeech(MISTRAL_ADAPTER, new MistralSpeech());
+        if (!this.connectors.speech(NEUPHONIC_ADAPTER)) this.connectors.registerSpeech(NEUPHONIC_ADAPTER, new NeuphonicSpeech());
         if (!this.connectors.recognition(SONIOX_ADAPTER)) {
             const finalTimeoutMs = (options.recognitionFinalTimeoutSeconds ?? DEFAULT_SONIOX_FINAL_TIMEOUT_MS / 1000) * 1000;
             this.connectors.registerRecognition(SONIOX_ADAPTER, new SonioxRecognition({ finalTimeoutMs }));
