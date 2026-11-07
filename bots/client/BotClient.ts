@@ -2265,7 +2265,7 @@ export class BotClient {
      * (#1658). Sent as a private event; the pusher passes it on only when a bot sends it about itself. False when the
      * bot is not in that space, so nothing was sent.
      */
-    sendAskEvent(spaceName: string, playerId: number, event: { kind: 'card' | 'reply'; id: string; revision: number; body: string }): boolean {
+    sendAskEvent(spaceName: string, playerId: number, event: { kind: 'card' | 'reply' | 'signin'; id: string; revision: number; body: string }): boolean {
         const spaceUserId = this.spaces.get(spaceName);
         if (!spaceUserId) return false;
         const cut = spaceUserId.lastIndexOf('_');

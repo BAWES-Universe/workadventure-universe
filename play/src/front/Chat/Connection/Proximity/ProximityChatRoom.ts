@@ -38,6 +38,7 @@ import { selectedRoomStore } from "../../Stores/SelectRoomStore";
 import { isBotUser, mapExtendedSpaceUserToChatUser } from "../../UserProvider/ChatUserMapper";
 import { fileNameOfLink } from "../../../FileViewer/fileKinds";
 import { parseBotReplyLimit, type BotReplyLimit } from "../../Bots/BotReplyLimit";
+import { parseNearbyToolSignIn, type BotToolSignIn } from "../../Bots/BotToolSignIn";
 import { botAskTapJson, readNearbyBotAsk, type BotAsk, type BotAskTap } from "../../Bots/BotAsk";
 import {
     afterTypedSend,
@@ -147,6 +148,8 @@ export interface ProximityChatMessageOptions {
     react?: (message: ProximityChatMessage, key: string) => void;
     /** A reply limit the person reached on a bot (#1159): the message is the fixed card. */
     replyLimit?: BotReplyLimit;
+    /** A tool's sign-in expired and this person manages the bot (#1819): the message is the Reconnect card. */
+    toolSignIn?: BotToolSignIn;
     /** A bot's steps line (#1545): the message is that line. */
     steps?: BotSteps;
     /** A card a bot showed this person alone (#1658): the message is that card. */
@@ -193,6 +196,8 @@ export class ProximityChatMessage implements ChatMessage {
     steps?: Writable<BotSteps | undefined>;
     /** Set on the fixed card a bot sends one person who reached a reply limit (#1159). Local and in memory only. */
     replyLimit?: BotReplyLimit;
+    /** Set on the Reconnect card a bot shows this person alone (#1819). Local and in memory only. */
+    toolSignIn?: BotToolSignIn;
     /** Set on a card a bot showed this person alone (#1658): the bot's own events change it as the card ends. */
     ask?: Writable<BotAsk | undefined>;
     /** Set on a reply a bot wrote for this person alone (#1658). Local and in memory only. */
@@ -213,6 +218,7 @@ export class ProximityChatMessage implements ChatMessage {
         this.session = options.session;
         this.notSent = options.notSent;
         this.replyLimit = options.replyLimit;
+        this.toolSignIn = options.toolSignIn;
         this.spoken = options.spoken;
         if (options.steps) this.steps = writable(options.steps);
         if (options.ask) this.ask = writable(options.ask);
@@ -224,6 +230,7 @@ export class ProximityChatMessage implements ChatMessage {
             !options.notSent &&
             !options.isQuotedMessage &&
             !options.replyLimit &&
+            !options.toolSignIn &&
             !options.steps &&
             !options.ask &&
             !options.privateReply;
@@ -290,6 +297,8 @@ export class ProximityChatRoom implements ChatRoom {
     private askCards = new Map<string, { messageId: string; botSpaceUserId: string }>();
     /** The reply limit card shown for each bot, by bot id, so a newer one replaces it */
     private replyLimitCards = new Map<string, string>();
+    /** The Reconnect card each bot showed this person (#1819): the message that holds it, by bot. */
+    private toolSignInCards = new Map<string, { messageId: string; revision: number }>();
     private spaceVoiceDraftSubscription: Subscription | undefined;
     private spaceVoiceDoneSubscription: Subscription | undefined;
     /**
@@ -1144,6 +1153,10 @@ export class ProximityChatRoom implements ChatRoom {
             this.addBotCardMessage(senderSpaceUserId, { privateReply: true }, body, `${event.botId}-reply-${event.id}`);
             return;
         }
+        if (event.kind === "signin") {
+            this.onToolSignIn(event, senderSpaceUserId);
+            return;
+        }
         if (event.kind !== "card") return;
         const ask = readNearbyBotAsk(event.body, Date.now());
         if (!ask || ask.id !== event.id) return;
@@ -1160,6 +1173,33 @@ export class ProximityChatRoom implements ChatRoom {
         }
         const message = this.addBotCardMessage(senderSpaceUserId, { ask }, "", `${event.botId}-ask-${ask.id}`);
         if (message) this.askCards.set(ask.id, { messageId: message.id, botSpaceUserId: senderSpaceUserId });
+    }
+
+    /**
+     * The Reconnect card a bot shows this person alone when a tool's sign-in expired (#1819): pinned above the message
+     * box. The bot's newer word replaces the one shown; an empty list takes the card back (the sign-in is back).
+     */
+    private onToolSignIn(
+        event: { botId: string; botName: string; id: string; revision: number; body: string },
+        senderSpaceUserId: string
+    ): void {
+        const toolSignIn = parseNearbyToolSignIn(event.body, event.botId, event.botName);
+        if (!toolSignIn) return;
+        const shown = this.toolSignInCards.get(toolSignIn.botId);
+        // Only the bot's own newer word changes the card; an older one that arrives late is ignored
+        if (shown && event.revision < shown.revision) return;
+        if (shown) this.messages.delete(shown.messageId);
+        if (toolSignIn.lost.length === 0) {
+            this.toolSignInCards.delete(toolSignIn.botId);
+            return;
+        }
+        const message = this.addBotCardMessage(
+            senderSpaceUserId,
+            { toolSignIn },
+            "",
+            `${toolSignIn.botId}-signin-${event.revision}`
+        );
+        if (message) this.toolSignInCards.set(toolSignIn.botId, { messageId: message.id, revision: event.revision });
     }
 
     private addBotCardMessage(

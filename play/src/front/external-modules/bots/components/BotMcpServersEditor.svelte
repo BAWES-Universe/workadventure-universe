@@ -9,6 +9,7 @@
     import LL from "../../../../i18n/i18n-svelte";
     import { beginBot, botToolsStore, loadAllServerTools, setServers } from "../stores/BotToolsStore";
     import { toCheck } from "../toolsModel";
+    import { reconnectBotServer } from "../services/reconnectServer";
     import PageButton from "./page/PageButton.svelte";
     import { IconChevronDown, IconPlus, IconTool } from "@wa-icons";
 
@@ -21,6 +22,8 @@
     export let onlyServerId: string | undefined = undefined;
     /** The server was removed from its own page: go back to the list */
     export let onRemoved: (() => void) | undefined = undefined;
+    /** The bot's name, for the lines that say what a lost sign-in means for it (#1819) */
+    export let botName = "This bot";
 
     // ─── State ─────────────────────────────────────────────────────────────────────
 
@@ -623,8 +626,89 @@
         }
     }
 
+    // ─── A sign-in the bot server found lost while answering (#1819) ─────────────────────
+
+    /** When a connection stopped, in the viewer's own clock: the time today, with the day when it is not today. */
+    function clock(iso: string): string {
+        const at = new Date(iso);
+        const sameDay = at.toDateString() === new Date().toDateString();
+        return at.toLocaleTimeString(undefined, {
+            ...(sameDay ? {} : { weekday: "short" }),
+            hour: "numeric",
+            minute: "2-digit",
+        });
+    }
+
+    /**
+     * What the bot server last saw when it really used the server, not only the last Test. Null when it saw nothing wrong.
+     * `head` is the longer line on the server's own page.
+     */
+    function liveLine(server: McpServer, head: boolean): string | null {
+        if (server.signInLostAt) {
+            return head
+                ? `Sign-in expired at ${clock(server.signInLostAt)}`
+                : `Sign-in expired · since ${clock(server.signInLostAt)}`;
+        }
+        if (server.noAnswerAt) {
+            return head
+                ? `Didn't answer at ${clock(server.noAnswerAt)} · tries again in a few minutes`
+                : `Didn't answer · ${clock(server.noAnswerAt)}`;
+        }
+        if (server.reconnectedAt && head && getStatusDot(server) === "ok") {
+            const count = server.lastTestResult?.toolCount ?? 0;
+            return `Connected · ${count} tool${count !== 1 ? "s" : ""} · reconnected at ${clock(server.reconnectedAt)}`;
+        }
+        return null;
+    }
+
+    // Reconnect on the server's own page: the provider's window for a sign-in, a pasted key for a key or token
+    let reconnectingServerId: string | null = null;
+    let reconnectBlocked = false;
+    let newKey = "";
+    let savingKey = false;
+    let keyError = "";
+
+    async function handleReconnect(server: McpServer) {
+        if (reconnectingServerId !== null) return;
+        reconnectingServerId = server.id;
+        reconnectBlocked = false;
+        const result = await reconnectBotServer(botId, server.id);
+        /* eslint-disable require-atomic-updates */
+        reconnectBlocked = result === "blocked";
+        reconnectingServerId = null;
+        /* eslint-enable require-atomic-updates */
+        // The provider said yes: Orbit has the new sign-in and clears the mark. Read the page again, and check the tools.
+        if (result === "done") {
+            await loadServers();
+            void handleTestConnection(server.id);
+        }
+    }
+
+    async function handleSaveKey(server: McpServer) {
+        const key = newKey.trim();
+        if (!key || savingKey) return;
+        savingKey = true;
+        keyError = "";
+        try {
+            // Only the key is sent: the rest of the server stays as it is
+            await botApiService.updateBotMcpServer(botId, server.id, { authConfig: key });
+            // eslint-disable-next-line require-atomic-updates
+            newKey = "";
+            await loadServers();
+            void handleTestConnection(server.id);
+        } catch (error) {
+            console.error("[BotMcpServersEditor] Could not save the new key:", error);
+            keyError = "Couldn't save it. Try again.";
+        } finally {
+            // eslint-disable-next-line require-atomic-updates
+            savingKey = false;
+        }
+    }
+
     /** One line under a server's name: what it gives the bot, or why it doesn't. */
     function statusLine(server: McpServer): string {
+        const live = liveLine(server, false);
+        if (live) return live;
         const result = server.lastTestResult;
         if (server.authType === "oauth" && !server.oauthConnected) return `Needs you to connect ${server.name}`;
         if (!result) return "Not tested yet";
@@ -635,6 +719,8 @@
 
     /** The first line on a server's own page: whether it is connected and how many tools it offers */
     function headLine(server: McpServer): string {
+        const live = liveLine(server, true);
+        if (live) return live;
         const result = server.lastTestResult;
         if (server.authType === "oauth" && !server.oauthConnected) return `Needs you to connect ${server.name}`;
         if (!result) return "Not tested yet";
@@ -644,6 +730,7 @@
     }
 
     function getStatusDot(server: McpServer): string {
+        if (server.signInLostAt || server.noAnswerAt) return "failed";
         const result = server.lastTestResult;
         if (!result) return "untested";
         return result.success ? "ok" : "failed";
@@ -667,9 +754,63 @@
             <div class="mcp-body mcp-single" data-testid="bot-tools-server-head">
                 <div class="mcp-state">
                     <i class="mcp-dot-inline {getStatusDot(server)}" />
-                    <span class:mcp-bad={getStatusDot(server) === "failed"}>{headLine(server)}</span>
+                    <span
+                        class:mcp-bad={getStatusDot(server) === "failed" && !liveLine(server, true)}
+                        class:mcp-live={!!liveLine(server, true)}>{headLine(server)}</span
+                    >
                 </div>
                 <div class="mcp-url" title={server.serverUrl}>{server.serverUrl}</div>
+                {#if server.signInLostAt}
+                    <!-- The bot server found the sign-in refused while answering -->
+                    <p class="mcp-why">
+                        Until it's reconnected, {botName} answers without {server.name}'s tools and tells people who ask
+                        for them.
+                    </p>
+                    {#if server.authType === "oauth"}
+                        <PageButton
+                            go
+                            tall
+                            testId="bot-reconnect"
+                            disabled={reconnectingServerId !== null}
+                            on:click={() => handleReconnect(server)}
+                            >{reconnectingServerId === server.id
+                                ? `Waiting for ${server.name}…`
+                                : `Reconnect ${server.name}`}</PageButton
+                        >
+                        <span class="mcp-hint"
+                            >{reconnectingServerId === server.id
+                                ? `Finish in the ${server.name} window. This page updates by itself.`
+                                : reconnectBlocked
+                                ? "Couldn't open the sign-in window. Allow pop-ups and try again."
+                                : `Opens ${server.name}'s sign-in. Sign in with the ${server.name} account ${botName} should use.`}</span
+                        >
+                    {:else if server.authType === "bearer" || server.authType === "api-key"}
+                        <label class="mcp-keylab" for="mcp-newkey"
+                            >New {server.authType === "bearer" ? "token" : "API key"} from {server.name}</label
+                        >
+                        <input
+                            id="mcp-newkey"
+                            class="mcp-input mcp-key"
+                            type="password"
+                            autocomplete="off"
+                            placeholder="Paste it here"
+                            bind:value={newKey}
+                        />
+                        <PageButton
+                            go
+                            tall
+                            testId="bot-save-key"
+                            disabled={savingKey || !newKey.trim()}
+                            on:click={() => handleSaveKey(server)}
+                            >{savingKey ? "Saving…" : "Save and check"}</PageButton
+                        >
+                        <span class="mcp-hint"
+                            >{keyError || `Replaces the old one. ${botName} uses it from its next reply.`}</span
+                        >
+                    {:else}
+                        <span class="mcp-hint">{server.name} now asks for a sign-in. Edit server to add one.</span>
+                    {/if}
+                {/if}
                 <div class="mcp-actions">
                     {#if server.authType !== "oauth" || server.oauthConnected}
                         <button
@@ -682,7 +823,7 @@
                             {testingServerId === server.id ? "Testing..." : "Test server"}
                         </button>
                     {/if}
-                    {#if server.authType === "oauth" && !server.oauthConnected}
+                    {#if server.authType === "oauth" && !server.oauthConnected && !server.signInLostAt}
                         <button
                             type="button"
                             class="mcp-chip mcp-good"
@@ -745,7 +886,10 @@
                 </span>
                 <span class="mcp-tx">
                     <span class="mcp-t">{server.name}</span>
-                    <span class="mcp-m" class:mcp-bad={getStatusDot(server) === "failed"}
+                    <span
+                        class="mcp-m"
+                        class:mcp-bad={getStatusDot(server) === "failed" && !liveLine(server, false)}
+                        class:mcp-live={!!liveLine(server, false)}
                         >{statusLine(server)}{#if unchecked}<span class="mcp-warn">
                                 · {$LL.mapEditor.edit.bots.page.tools.notChecked()}</span
                             >{:else if waiting > 0}<span class="mcp-warn">
@@ -1132,6 +1276,38 @@
     .mcp-body.mcp-single {
         padding: 0;
         gap: 10px;
+    }
+    /* A sign-in the bot server found lost (#1819) */
+    .mcp-tx .mcp-live,
+    .mcp-live {
+        color: #fff;
+        font-weight: 600;
+    }
+    .mcp-why {
+        margin: 0;
+        font-size: 13px;
+        line-height: 1.4;
+        color: rgba(244, 242, 250, 0.86);
+    }
+    .mcp-hint {
+        font-size: 12.5px;
+        line-height: 1.35;
+        color: rgba(244, 242, 250, 0.64);
+    }
+    .mcp-keylab {
+        font-size: 13px;
+        font-weight: 600;
+    }
+    .mcp-key {
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        height: 44px;
+        padding: 0 12px;
+        border-radius: 12px;
+        color: #fff;
+    }
+    .mcp-single :global(.bp-btn.tall) {
+        width: 100%;
     }
     .mcp-state {
         display: flex;

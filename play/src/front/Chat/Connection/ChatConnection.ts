@@ -5,6 +5,7 @@ import type { StateEvents } from "matrix-js-sdk";
 import type { BotStatusNote } from "../Bots/BotChatStatus";
 import type { BotRoomLink } from "../Bots/BotRoomLink";
 import type { BotReplyLimit } from "../Bots/BotReplyLimit";
+import type { BotToolSignIn } from "../Bots/BotToolSignIn";
 import type { BotSteps } from "../Bots/BotSteps";
 import type { ArtifactCard } from "../../Artifacts/artifactCard";
 import type { BotAsk, BotAskTap } from "../Bots/BotAsk";
@@ -205,6 +206,8 @@ export interface ChatMessage {
     roomLink?: BotRoomLink;
     /** Set when a bot did not answer because the person reached a reply limit (#1159): drawn as the fixed card. */
     replyLimit?: BotReplyLimit;
+    /** Set when a bot says a tool's sign-in expired and this person manages it (#1819): drawn as a card pinned above the message box. */
+    toolSignIn?: BotToolSignIn;
     /** Set on a nearby line made from what its sender said out loud to a voice bot (#1664): a small mic mark beside its time. */
     spoken?: boolean;
     /** Set on a voice bot's reply whose voice stopped part-way because someone spoke over it (#1665): a quiet line under it. */
