@@ -80,6 +80,8 @@ export class OpenAiRecognition implements RecognitionConnector {
         let committed = 0;
         let written = 0;
         let finishing = false;
+        // The model's turn detection ended a turn and the person has not started again: what is left is only the quiet after it
+        let afterTurn = false;
         let interimItem = '';
         let interim = '';
         // Pieces are written down in the order they were committed, whatever order their words arrive in
@@ -124,7 +126,8 @@ export class OpenAiRecognition implements RecognitionConnector {
             frame: (pcm16k) => json({ type: 'input_audio_buffer.append', audio: pcmBytes(resampler.process(pcm16k)).toString('base64') }),
             finish: () => {
                 finishing = true;
-                return [json({ type: 'input_audio_buffer.commit' })];
+                // Committing the quiet after a turn would make one more piece to write down: slower, and a model may hear words in it
+                return [json({ type: afterTurn ? 'input_audio_buffer.clear' : 'input_audio_buffer.commit' })];
             },
             read: (data, isBinary) => {
                 const event = readEvent(data, isBinary);
@@ -133,8 +136,15 @@ export class OpenAiRecognition implements RecognitionConnector {
                         committed++;
                         if (typeof event.item_id === 'string' && event.item_id) order.push(event.item_id);
                         return undefined;
+                    case 'input_audio_buffer.speech_started':
+                        afterTurn = false;
+                        return undefined;
                     case 'input_audio_buffer.speech_stopped':
+                        afterTurn = true;
                         return { endpoint: true };
+                    case 'input_audio_buffer.cleared':
+                        // Nothing more was committed: done once every piece is written down
+                        return allWritten();
                     case 'conversation.item.input_audio_transcription.delta': {
                         const item = typeof event.item_id === 'string' ? event.item_id : '';
                         if (item !== interimItem) {

@@ -146,12 +146,13 @@ describe('hearing', () => {
         const server = await realtime({
             onEvent: (event, send) => {
                 if (event.type === 'input_audio_buffer.append') {
+                    send({ type: 'input_audio_buffer.speech_started', item_id: 'i1' });
                     send({ type: 'input_audio_buffer.speech_stopped', item_id: 'i1' });
                     send({ type: 'input_audio_buffer.committed', item_id: 'i1' });
                 }
-                // The turn detection already committed everything: the explicit commit finds nothing
-                if (event.type === 'input_audio_buffer.commit') {
-                    send({ type: 'error', error: { type: 'invalid_request_error', code: 'input_audio_buffer_commit_empty' } });
+                // The turn detection already committed the words: only the quiet after them is cleared
+                if (event.type === 'input_audio_buffer.clear') {
+                    send({ type: 'input_audio_buffer.cleared' });
                     setTimeout(() => send({ type: 'conversation.item.input_audio_transcription.completed', item_id: 'i1', transcript: 'One coffee please' }), 30);
                 }
             },
@@ -164,6 +165,57 @@ describe('hearing', () => {
         await waitFor('the last words', () => heard.finals.length === 1);
         expect(heard.finals).toEqual(['One coffee please']);
         expect(heard.failed).toEqual([]);
+        // The quiet after the turn is never committed as a piece of its own
+        expect(server.received.some((event) => event.type === 'input_audio_buffer.commit')).toBe(false);
+    });
+
+    it('finishes at once when the turn is written down before the quiet after it is cleared', async () => {
+        const server = await realtime({
+            onEvent: (event, send) => {
+                if (event.type === 'input_audio_buffer.append') {
+                    send({ type: 'input_audio_buffer.speech_started', item_id: 'i1' });
+                    send({ type: 'input_audio_buffer.speech_stopped', item_id: 'i1' });
+                    send({ type: 'input_audio_buffer.committed', item_id: 'i1' });
+                    send({ type: 'conversation.item.input_audio_transcription.completed', item_id: 'i1', transcript: 'Hello there' });
+                }
+                if (event.type === 'input_audio_buffer.clear') send({ type: 'input_audio_buffer.cleared' });
+            },
+        });
+        const { heard, events } = listener();
+        const stream = new OpenAiRecognition().listen(settings(server.url), events);
+        stream.push(new Int16Array(320));
+        await waitFor('the words', () => heard.partials.includes('Hello there'));
+        stream.finish();
+        await waitFor('the last words', () => heard.finals.length === 1);
+        expect(heard.finals).toEqual(['Hello there']);
+    });
+
+    it('still commits when the person started again after the model’s turn ended', async () => {
+        const server = await realtime({
+            onEvent: (event, send) => {
+                if (event.type === 'input_audio_buffer.append' && !server.received.some((e) => e.type === 'input_audio_buffer.commit')) {
+                    if (server.received.filter((e) => e.type === 'input_audio_buffer.append').length === 1) {
+                        send({ type: 'input_audio_buffer.speech_started', item_id: 'i1' });
+                        send({ type: 'input_audio_buffer.speech_stopped', item_id: 'i1' });
+                        send({ type: 'input_audio_buffer.committed', item_id: 'i1' });
+                        send({ type: 'conversation.item.input_audio_transcription.completed', item_id: 'i1', transcript: 'One coffee' });
+                        send({ type: 'input_audio_buffer.speech_started', item_id: 'i2' });
+                    }
+                }
+                if (event.type === 'input_audio_buffer.commit') {
+                    send({ type: 'input_audio_buffer.committed', item_id: 'i2', previous_item_id: 'i1' });
+                    send({ type: 'conversation.item.input_audio_transcription.completed', item_id: 'i2', transcript: 'and a tea' });
+                }
+            },
+        });
+        const { heard, events } = listener();
+        const stream = new OpenAiRecognition().listen(settings(server.url), events);
+        stream.push(new Int16Array(320));
+        await waitFor('the first words', () => heard.partials.includes('One coffee'));
+        stream.finish();
+        await waitFor('the last words', () => heard.finals.length === 1);
+        expect(heard.finals).toEqual(['One coffee and a tea']);
+        expect(server.received.some((event) => event.type === 'input_audio_buffer.clear')).toBe(false);
     });
 
     it('keeps a stretch’s pieces in the order they were committed, whatever order their words come in', async () => {
