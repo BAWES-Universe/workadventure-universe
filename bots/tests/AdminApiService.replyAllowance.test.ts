@@ -146,3 +146,20 @@ describe('giving back a spoken reply that was never heard (#1669)', () => {
         }
     });
 });
+
+describe('reporting what a bot listened to in a day (#1859)', () => {
+    const OK = { spent: false, usedSeconds: 30, limitSeconds: 3600, resetsAt: '2026-11-07T00:00:00.000Z' };
+
+    it('sends the seconds with the service token and reads the answer', async () => {
+        answer = { status: 200, body: JSON.stringify(OK) };
+        expect(await service.reportVoiceListening('bot-1', { seconds: 30 })).toEqual(OK);
+        expect(asked).toEqual({ url: '/api/bots/bot-1/voice-listening', auth: 'Bearer service-token', body: { seconds: 30 } });
+    });
+
+    it('is null, and never throws, when Orbit cannot be asked, is from before this existed, or answers nonsense', async () => {
+        for (const bad of [{ status: 404, body: '{"error":"Not found"}' }, { status: 500, body: '{}' }, { status: 200, body: 'nonsense' }, { status: 200, body: '{}' }, { status: 200, body: JSON.stringify({ ...OK, resetsAt: 'soon' }) }]) {
+            answer = bad;
+            expect(await service.reportVoiceListening('bot-1', { seconds: 5 })).toBeNull();
+        }
+    });
+});

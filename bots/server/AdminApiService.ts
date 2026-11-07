@@ -1017,6 +1017,44 @@ export class AdminApiService {
     }
 
     /**
+     * Adds seconds of group listening to a bot's day and says whether the day's minutes are used (game #1859, Orbit voice-listening).
+     * With no seconds (0) it only asks. Null when Orbit can't be asked or is from before this existed: the caller keeps listening, so
+     * a bot is never stopped over an answer that did not come.
+     */
+    async reportVoiceListening(
+        botId: string,
+        input: { seconds: number }
+    ): Promise<{ spent: boolean; usedSeconds: number; limitSeconds: number; resetsAt: string } | null> {
+        if (!this.isConfigured()) return null;
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!botServiceToken) return null;
+        try {
+            const response = await axios.post(
+                `${this.adminApiUrl}/api/bots/${encodeURIComponent(botId)}/voice-listening`,
+                input,
+                { headers: { Authorization: `Bearer ${botServiceToken}` }, timeout: 5000 }
+            );
+            const body = response.data as Partial<{ spent: boolean; usedSeconds: number; limitSeconds: number; resetsAt: string }>;
+            // Anything but an answer in this shape is an Orbit that doesn't know the question
+            if (
+                !body ||
+                typeof body.spent !== 'boolean' ||
+                typeof body.usedSeconds !== 'number' ||
+                typeof body.limitSeconds !== 'number' ||
+                typeof body.resetsAt !== 'string' ||
+                Number.isNaN(Date.parse(body.resetsAt))
+            ) {
+                return null;
+            }
+            return { spent: body.spent, usedSeconds: body.usedSeconds, limitSeconds: body.limitSeconds, resetsAt: body.resetsAt };
+        } catch (error) {
+            const msg = (axios.isAxiosError(error) && error.response?.status) || (error as Error)?.message || 'Unknown error';
+            console.warn(`[AdminApiService] Reporting the daily listening failed: ${msg}`);
+            return null;
+        }
+    }
+
+    /**
      * Get available AI providers
      * Uses BOT_SERVICE_TOKEN (separate from ADMIN_API_TOKEN)
      */
