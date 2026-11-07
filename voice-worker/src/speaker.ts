@@ -41,6 +41,11 @@ export interface SpeakerHost {
     /** False once voice is stopped for the session. */
     active(): boolean;
     progress(message: Omit<PlaybackProgress, 'type' | 'sessionId' | 'ts'>): void;
+    /**
+     * The first frame of a reply is on its way to someone (#1865): how long the voice took to make its first audio after the reply
+     * was handed to it, how long this worker then took to send it, and when that was (`performance.now()`). Times only.
+     */
+    firstFrame?(timing: { segmentId: string; speakMs: number; playMs: number; sentAt: number }): void;
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -142,6 +147,7 @@ export class Speaker {
     private async play(segment: Segment): Promise<void> {
         const { counters, provider } = this.host;
         const abort = (this.abort = new AbortController());
+        const requestedAt = performance.now();
         // The provider is read ahead of playback, but never further than this reply may play
         const stream = (this.stream = new ReplyStream(() => this.host.voice.speak({ text: segment.text, lang: segment.lang, signal: abort.signal }), {
             signal: abort.signal,
@@ -151,6 +157,8 @@ export class Speaker {
         const up = new Up2();
         let started = false;
         let startedAt = 0;
+        let firstAudioAt = 0;
+        let timed = false;
         let frame = 0;
         let lastProgress = 0;
         let reason: PlaybackReason = 'completed';
@@ -174,7 +182,7 @@ export class Speaker {
             }
             if (!started) {
                 started = true;
-                startedAt = lastProgress = performance.now();
+                startedAt = lastProgress = firstAudioAt = performance.now();
                 counters.inc('segments_started');
             }
             const listeners = this.host.targets().filter((t) => t.plays());
@@ -183,6 +191,11 @@ export class Speaker {
                 const out: OutputFrame = { pcm24k, opus: () => (opus ??= Buffer.from(this.encoder.encode(up.process(pcm24k)))) };
                 for (const listener of listeners) listener.sendFrame(out);
                 segment.playedMs += FRAME_MS;
+                if (!timed) {
+                    timed = true;
+                    const sentAt = performance.now();
+                    this.host.firstFrame?.({ segmentId: segment.id, speakMs: firstAudioAt - requestedAt, playMs: sentAt - firstAudioAt, sentAt });
+                }
             } else {
                 segment.deliveredAll = false;
             }
