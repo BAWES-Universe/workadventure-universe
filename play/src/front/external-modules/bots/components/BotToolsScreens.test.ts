@@ -5,6 +5,8 @@ import { get } from "svelte/store";
 const mocks = vi.hoisted(() => ({
     isInitialized: vi.fn(() => true),
     getBotMcpServers: vi.fn(),
+    testBotMcpServer: vi.fn(),
+    refreshMcpServerTools: vi.fn(),
     getMcpServerTools: vi.fn(),
     moveMcpTool: vi.fn(),
     confirmMcpTools: vi.fn(),
@@ -322,6 +324,86 @@ describe("the bot page's Tools screens (game #1655)", () => {
         await mountServer();
         expect(target.textContent).toContain("Linear has no tools sorted yet. Tap Test server to read them.");
         expect(byTestId("bot-tools-search")).toBeNull();
+    });
+
+    describe("Test server", () => {
+        const press = async () => {
+            byTestId("bot-test-server")?.click();
+            await settle();
+        };
+
+        it("has the bot server read the tools, then shows them on the page", async () => {
+            // Orbit has no tools until the bot server has read and saved them
+            let saved = false;
+            mocks.getMcpServerTools.mockImplementation(() => Promise.resolve(saved ? answer() : answer({ tools: [] })));
+            mocks.testBotMcpServer.mockResolvedValue({ success: true, toolCount: 6, toolNames: [] });
+            mocks.refreshMcpServerTools.mockImplementation(() => {
+                saved = true;
+                return Promise.resolve({ tools: 6, saved: "saved" });
+            });
+            await mountServer();
+            expect(target.textContent).toContain("has no tools sorted yet");
+
+            await press();
+
+            expect(mocks.testBotMcpServer).toHaveBeenCalledWith("b1", "s1");
+            expect(mocks.refreshMcpServerTools).toHaveBeenCalledWith("b1", "s1");
+            expect(target.textContent).not.toContain("has no tools sorted yet");
+            expect(byTestId("bot-tools-heading-looksUp")).not.toBeNull();
+            expect(byTestId("bot-test-problem")).toBeNull();
+        });
+
+        it("says so when the bot server could not read the tools, instead of showing the same page", async () => {
+            mocks.getMcpServerTools.mockResolvedValue(answer({ tools: [] }));
+            mocks.testBotMcpServer.mockResolvedValue({ success: true, toolCount: 6, toolNames: [] });
+            mocks.refreshMcpServerTools.mockRejectedValue(new Error("Bot-server API error: 502"));
+            await mountServer();
+
+            await press();
+
+            expect(byTestId("bot-test-problem")?.textContent).toContain("Couldn't read the tools right now");
+        });
+
+        it("says so when the bot server read the tools but Orbit did not get them", async () => {
+            mocks.getMcpServerTools.mockResolvedValue(answer({ tools: [] }));
+            mocks.testBotMcpServer.mockResolvedValue({ success: true, toolCount: 6, toolNames: [] });
+            mocks.refreshMcpServerTools.mockResolvedValue({ tools: 6, saved: "skipped" });
+            await mountServer();
+
+            await press();
+
+            expect(byTestId("bot-test-problem")?.textContent).toContain("Couldn't read the tools right now");
+        });
+
+        it("does not ask the bot server to read when the server did not answer the test", async () => {
+            mocks.getMcpServerTools.mockResolvedValue(answer({ tools: [] }));
+            mocks.testBotMcpServer.mockResolvedValue({
+                success: false,
+                toolCount: 0,
+                toolNames: [],
+                error: "HTTP 401",
+            });
+            await mountServer();
+
+            await press();
+
+            expect(mocks.refreshMcpServerTools).not.toHaveBeenCalled();
+        });
+
+        it("clears the last problem when the next test works", async () => {
+            mocks.getMcpServerTools.mockResolvedValue(answer({ tools: [] }));
+            mocks.testBotMcpServer.mockResolvedValue({ success: true, toolCount: 6, toolNames: [] });
+            mocks.refreshMcpServerTools
+                .mockRejectedValueOnce(new Error("Bot-server API error: 502"))
+                .mockResolvedValue({ tools: 6, saved: "saved" });
+            await mountServer();
+            await press();
+            expect(byTestId("bot-test-problem")).not.toBeNull();
+
+            await press();
+
+            expect(byTestId("bot-test-problem")).toBeNull();
+        });
     });
 
     describe("a heading's page", () => {
