@@ -6,7 +6,7 @@
     import { createEventDispatcher, onDestroy } from "svelte";
     import LL from "../../../../../i18n/i18n-svelte";
     import { botApiService } from "../../services/BotApiService";
-    import { helloFailureOf } from "../../voiceModel";
+    import { helloFailureOf, voiceNameFailureOf, type VoiceNameFailure } from "../../voiceModel";
     import { playingSample, stopSample, toggleSample } from "../../voicePlayer";
     import { IconLoader2, IconMessageCircle, IconPauseFilled } from "@wa-icons";
 
@@ -15,13 +15,23 @@
     export let paidByKey: string | null;
     /** The language the game is read in: the bot says hello in it unless its instructions say it speaks another */
     export let locale: string;
+    /** A speech server of the person's own pays nobody: the line says so, and `paidByKey` names the server ("your speech server") (#1874) */
+    export let free = false;
+    /** A voice name typed for the person's own speech server and not saved yet: it is heard instead of the saved voice (empty: nothing to hear yet) */
+    export let voiceName: string | undefined = undefined;
+    /** Before voice is on: the speech server and model the typed name is heard from */
+    export let source: { providerId: string; model: string } | undefined = undefined;
+    /** Something else is asking the server a moment ago (Use checking the name): the server makes one hello at a time per person */
+    export let blocked = false;
+    /** The server is being asked for this hello: nothing else may ask it meanwhile */
+    export let working = false;
 
     /** A hello and a sample share the one player, so one of them is heard at a time */
     const ID = "hello";
     /** setTimeout takes at most this many milliseconds */
     const LONGEST_WAIT_MS = 2 ** 31 - 1;
 
-    const dispatch = createEventDispatcher<{ refresh: undefined }>();
+    const dispatch = createEventDispatcher<{ refresh: undefined; problem: VoiceNameFailure }>();
 
     let words: string | null = null;
     let failed = false;
@@ -29,10 +39,19 @@
     let usedUpTimer: ReturnType<typeof setTimeout> | undefined;
 
     $: v = $LL.mapEditor.edit.bots.page.voice;
+    $: typed = voiceName !== undefined;
+    $: nothingToHear = voiceName === "";
+    // Another name typed: the one being said is not the one in the field any more
+    let heardName = voiceName;
+    $: if (voiceName !== heardName) {
+        heardName = voiceName;
+        if ($playingSample === ID) stopSample();
+    }
     $: playing = $playingSample === ID;
     // The words come with the audio; until they do the bot is still writing
     $: if (!playing) words = null;
     $: thinking = playing && words === null;
+    $: working = thinking;
     $: saying = playing && words !== null;
     $: time = usedUp ? usedUp.toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" }) : "";
 
@@ -46,22 +65,31 @@
     }
 
     async function hear() {
-        if (usedUp || thinking) return;
+        if (usedUp || thinking || nothingToHear || blocked) return;
         failed = false;
         words = null;
+        const asked = voiceName;
         await toggleSample(
             ID,
             async () => {
                 try {
-                    const hello = await botApiService.sayBotHello(botId, locale);
+                    const hello =
+                        voiceName === undefined
+                            ? await botApiService.sayBotHello(botId, locale)
+                            : await botApiService.sayBotHello(botId, locale, { voiceId: voiceName, source });
                     // Stopped (or another sample picked) while the bot was still writing: the words are not for anyone now
                     if ($playingSample === ID) words = hello.text;
                     return { url: hello.url, revoke: true };
                 } catch (e) {
                     const why = helloFailureOf(e);
+                    // The name in the field was changed while the server answered: this is about another name
+                    const stale = typed && voiceName !== asked;
                     if (why.kind === "used-up") waitUntilBack(why.resetsAt);
                     // The page is out of date (voice was turned off) or the key was refused: ask again how the voice stands
-                    if (why.kind === "off" || why.kind === "provider") dispatch("refresh");
+                    // A typed name the server refused says nothing of the page being out of date: only voice being off does
+                    if (why.kind === "off" || (why.kind === "provider" && !typed)) dispatch("refresh");
+                    // A typed name that was not taken, or a server that did not answer, is said by the one red line next to the field
+                    if (typed && !stale) dispatch("problem", voiceNameFailureOf(e));
                     throw e;
                 }
             },
@@ -80,8 +108,8 @@
 <button
     type="button"
     class="vh"
-    class:dim={usedUp !== null}
-    disabled={usedUp !== null || thinking}
+    class:dim={usedUp !== null || nothingToHear || blocked}
+    disabled={usedUp !== null || thinking || nothingToHear || blocked}
     aria-busy={thinking}
     data-testid="bot-voice-hello"
     on:click={() => void hear()}
@@ -93,17 +121,21 @@
     </span>
     <span class="vh-tx" aria-live="polite">
         <span class="vh-t">
-            {#if thinking}{v.helloThinking()}{:else if saying}{v.helloSaying()}{:else}{v.helloTitle()}{/if}
+            {#if thinking}{v.helloThinking()}{:else if saying}{v.helloSaying()}{:else if voiceName}{v.helloTitleNamed({
+                    voice: voiceName,
+                })}{:else}{v.helloTitle()}{/if}
         </span>
         <span class="vh-n" data-testid="bot-voice-hello-line">
-            {#if saying}“{words}”{:else if usedUp}{v.helloUsedUp({ time })}{:else if !thinking}{paidByKey
+            {#if saying}“{words}”{:else if usedUp}{v.helloUsedUp({ time })}{:else if !thinking}{free
+                    ? v.helloLineOwn({ server: paidByKey ?? "" })
+                    : paidByKey
                     ? v.helloLineKey({ key: paidByKey })
                     : v.helloLineUniverseAi()}{/if}
         </span>
     </span>
     {#if saying}<span class="vh-sr">{v.helloStop()}</span>{/if}
 </button>
-{#if failed}<p class="vh-error" role="alert" data-testid="bot-voice-hello-failed">
+{#if failed && !typed}<p class="vh-error" role="alert" data-testid="bot-voice-hello-failed">
         {v.helloFailed()}
     </p>{/if}
 
