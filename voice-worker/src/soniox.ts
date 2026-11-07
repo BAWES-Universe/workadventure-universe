@@ -4,6 +4,7 @@
 import WebSocket from 'ws';
 import { ProviderError, type RecognitionConnector, type RecognitionSettings } from './connectors.ts';
 import type { Recognizer, RecognizerEvents } from './recognizer.ts';
+import { termsWithin } from './terms.ts';
 
 export const SONIOX_ADAPTER = 'soniox';
 export const SONIOX_ENDPOINT = 'wss://stt-rt.soniox.com/transcribe-websocket';
@@ -35,6 +36,8 @@ const ENDPOINT_TUNING = { endpoint_latency_adjustment_level: 2, endpoint_sensiti
 const takesEndpointTuning = (model: string): boolean => Number(/^stt-rt-v(\d+)$/.exec(model)?.[1] ?? 0) >= 5;
 /** Quiet that still ends a stretch when Soniox has not said so: its longest wait, and a little for the answer to arrive. */
 export const SONIOX_FALLBACK_PAUSE_MS = MAX_ENDPOINT_DELAY_MS + 300;
+/** Soniox takes at most 8,000 tokens (about 10,000 characters) of context (https://docs.soniox.com/stt/concepts/context); names are far under it. */
+const MAX_TERMS_CHARS = 1000;
 
 export interface SonioxOptions {
     finalTimeoutMs?: number;
@@ -77,6 +80,8 @@ class SonioxStream implements Recognizer {
 
     constructor(settings: RecognitionSettings, private readonly events: RecognizerEvents, private readonly finalTimeoutMs: number) {
         this.ws = new WebSocket(settings.endpoint || SONIOX_ENDPOINT, { headers: { Authorization: `Bearer ${settings.key.reveal()}` } });
+        // The names as they are when this stretch of speech opens
+        const terms = termsWithin(settings.terms ?? [], MAX_TERMS_CHARS);
         this.ws.on('open', () => {
             const model = currentSonioxModel(settings.model);
             const config: Record<string, unknown> = {
@@ -88,6 +93,8 @@ class SonioxStream implements Recognizer {
                 max_endpoint_delay_ms: MAX_ENDPOINT_DELAY_MS,
                 ...(takesEndpointTuning(model) ? ENDPOINT_TUNING : {}),
             };
+            // Names to expect, spelled as listed: "Nora" said in Arabic is written "Nora", not "نورا" (https://docs.soniox.com/stt/concepts/context)
+            if (terms.length) config.context = { terms };
             // Soniox takes plain language codes ("ar"), not regional ones ("ar-KW")
             if (settings.language) config.language_hints = [settings.language.split(/[-_]/)[0].toLowerCase()];
             this.ws.send(JSON.stringify(config));
