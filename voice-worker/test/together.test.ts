@@ -104,6 +104,16 @@ describe('hearing with Together AI', () => {
         await waitFor('the failure', () => got.failures.length === 1);
         expect(got.failures).toEqual([{ text: '', status: 401 }]);
     });
+
+    it('reads a rate limit as one even when its words name the key', async () => {
+        const s = await fakeRealtime();
+        const { got, events } = heard();
+        new TogetherRecognition().listen(hearing(s.base), events);
+        await waitFor('the socket', () => s.seen.sockets.length === 1);
+        s.send({ type: 'error', error: { type: 'rate_limit_error', message: 'Rate limit exceeded for your API key' } });
+        await waitFor('the failure', () => got.failures.length === 1);
+        expect(got.failures).toEqual([{ text: '', status: 429 }]);
+    });
 });
 
 /** A stand-in for Together's speaking address, answering with `answer`. */
