@@ -557,6 +557,7 @@ export function companyName(adapter: string): string {
         meta: "Meta",
         mistral: "Mistral",
         neuphonic: "Neuphonic",
+        openai: "OpenAI",
         resemble: "Resemble AI",
         rime: "Rime",
         sarvam: "Sarvam AI",

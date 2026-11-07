@@ -34,6 +34,7 @@ import { SMALLEST_ADAPTER, SmallestRecognition, SmallestSpeech } from './smalles
 import { SPEECHIFY_ADAPTER, SpeechifySpeech } from './speechify.ts';
 import { SPEECHMATICS_ADAPTER, SpeechmaticsRecognition, SpeechmaticsSpeech } from './speechmatics.ts';
 import { TOGETHER_ADAPTER, TogetherRecognition, TogetherSpeech } from './together.ts';
+import { OPENAI_ADAPTER, OpenAIRecognition } from './openaiHearing.ts';
 import { ELEVENLABS_ADAPTER, ElevenLabsSpeech } from './elevenlabs.ts';
 import { CARTESIA_ADAPTER, CartesiaRecognition, CartesiaSpeech } from './cartesia.ts';
 import { FISH_ADAPTER, FishSpeech } from './fish.ts';
@@ -182,6 +183,10 @@ export class VoiceWorker {
             this.connectors.registerRecognition(TOGETHER_ADAPTER, new TogetherRecognition({ finalTimeoutMs }));
         }
         if (!this.connectors.speech(TOGETHER_ADAPTER)) this.connectors.registerSpeech(TOGETHER_ADAPTER, new TogetherSpeech());
+        if (!this.connectors.recognition(OPENAI_ADAPTER)) {
+            const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
+            this.connectors.registerRecognition(OPENAI_ADAPTER, new OpenAIRecognition({ finalTimeoutMs }));
+        }
         if (!this.connectors.recognition(SONIOX_ADAPTER)) {
             const finalTimeoutMs = (options.recognitionFinalTimeoutSeconds ?? DEFAULT_SONIOX_FINAL_TIMEOUT_MS / 1000) * 1000;
             this.connectors.registerRecognition(SONIOX_ADAPTER, new SonioxRecognition({ finalTimeoutMs }));
