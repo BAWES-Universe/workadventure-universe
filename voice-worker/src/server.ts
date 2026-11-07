@@ -42,6 +42,7 @@ import { recognitionByModel, speechByModel } from './kit/byModel.ts';
 import { GEMINI_SPEECH_ADAPTER, GEMINI_SPEECH_MODELS, GeminiSpeech } from './geminiSpeech.ts';
 import { ZOOM_SCRIBE_ADAPTER, ZOOM_SCRIBE_MODELS, ZoomScribeRecognition } from './zoomScribe.ts';
 import { AWS_HEARING_MODELS, AWS_SPEECH_MODELS, AWS_VOICE_ADAPTER, AwsPolly, AwsTranscribe } from './awsVoice.ts';
+import { AZURE_SPEECH_ADAPTER, AzureSpeechRecognition, AzureTts } from './azureSpeech.ts';
 import { ELEVENLABS_ADAPTER, ElevenLabsSpeech } from './elevenlabs.ts';
 import { CARTESIA_ADAPTER, CartesiaRecognition, CartesiaSpeech } from './cartesia.ts';
 import { FISH_ADAPTER, FishSpeech } from './fish.ts';
@@ -226,6 +227,11 @@ export class VoiceWorker {
             this.connectors.registerRecognition(AWS_VOICE_ADAPTER, recognitionByModel(AWS_HEARING_MODELS, hearing, this.connectors.recognition(AWS_VOICE_ADAPTER)));
             this.connectors.registerSpeech(AWS_VOICE_ADAPTER, speechByModel(AWS_SPEECH_MODELS, new AwsPolly(), this.connectors.speech(AWS_VOICE_ADAPTER)));
         }
+        if (!this.connectors.recognition(AZURE_SPEECH_ADAPTER)) {
+            const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
+            this.connectors.registerRecognition(AZURE_SPEECH_ADAPTER, new AzureSpeechRecognition({ finalTimeoutMs }));
+        }
+        if (!this.connectors.speech(AZURE_SPEECH_ADAPTER)) this.connectors.registerSpeech(AZURE_SPEECH_ADAPTER, new AzureTts());
         if (!this.connectors.recognition(SONIOX_ADAPTER)) {
             const finalTimeoutMs = (options.recognitionFinalTimeoutSeconds ?? DEFAULT_SONIOX_FINAL_TIMEOUT_MS / 1000) * 1000;
             this.connectors.registerRecognition(SONIOX_ADAPTER, new SonioxRecognition({ finalTimeoutMs }));

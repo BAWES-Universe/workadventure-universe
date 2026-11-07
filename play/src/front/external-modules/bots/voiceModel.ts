@@ -548,6 +548,7 @@ export function companyName(adapter: string): string {
         assemblyai: "AssemblyAI",
         async: "Async",
         aws: "AWS",
+        "azure-speech": "Azure AI Speech",
         bland: "Bland",
         camb: "CAMB.AI",
         fal: "fal",
