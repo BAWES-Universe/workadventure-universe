@@ -54,3 +54,26 @@ export function voiceOrbitSettings(env: NodeJS.ProcessEnv = process.env): VoiceO
         limitsCacheMs: seconds(env.VOICE_LIMITS_CACHE_SECONDS, DEFAULT_VOICE_ORBIT_SETTINGS.limitsCacheMs, true),
     };
 }
+
+/** How long "Hear <bot> say hello" keeps a hello it made and how much audio it keeps (#1852). Ordinary settings. */
+export interface VoiceHelloCacheSettings {
+    /** How long one hello is played again instead of being made again, in milliseconds. 0 keeps none. */
+    ttlMs: number;
+    /** The most audio kept, in bytes. */
+    maxBytes: number;
+}
+
+export const DEFAULT_VOICE_HELLO_CACHE_SETTINGS: VoiceHelloCacheSettings = { ttlMs: 60 * 60 * 1000, maxBytes: 32 * 1024 * 1024 };
+
+export function voiceHelloCacheSettings(env: NodeJS.ProcessEnv = process.env): VoiceHelloCacheSettings {
+    const number = (value: string | undefined): number | undefined => {
+        const parsed = Number.parseFloat(value ?? '');
+        return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+    };
+    const minutes = number(env.VOICE_HELLO_CACHE_MINUTES);
+    const megabytes = number(env.VOICE_HELLO_CACHE_MB);
+    return {
+        ttlMs: minutes === undefined ? DEFAULT_VOICE_HELLO_CACHE_SETTINGS.ttlMs : Math.round(minutes * 60 * 1000),
+        maxBytes: megabytes === undefined || megabytes === 0 ? DEFAULT_VOICE_HELLO_CACHE_SETTINGS.maxBytes : Math.round(megabytes * 1024 * 1024),
+    };
+}
