@@ -33,6 +33,11 @@ on:
           - discord-bot
           - bot-server
           - voice-worker
+      rollback_tag:
+        description: 'Roll production back to a release tag (vX.Y.Z) or image tag (universe-<sha7>); leave empty for a normal build'
+        required: false
+        default: ''
+        type: string
 
 # Serialise runs per ref. Two pushes to `universe` inside one run's window both computed the
 # same next version (get-version reads the latest tag at the start of a run, the tag is only
@@ -63,6 +68,7 @@ jobs:
   # release tag and the version baked into the images
   # ─────────────────────────────────────────────────
   get-version:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.rollback_tag == '' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -660,6 +666,49 @@ jobs:
             exit 1
           fi
           echo "All services deployed."
+
+      - name: Verify universe.bawes.net health after deploy
+        env:
+          PROD_URL: https://universe.bawes.net
+        run: |
+          set -euo pipefail
+          # Confirm the public front/pusher HTTP endpoint (/ping -> "pong"), the pusher-to-back
+          # gRPC health endpoint (/ping-backs -> "pong"), and /server.json all answer after
+          # Coolify finishes switching the containers. Retry for up to 2 minutes while Traefik
+          # routes traffic to the newly started containers.
+          check_endpoint() {
+            path="$1"; expected="$2"
+            end=$((SECONDS + 120))
+            last_code="000"
+            last_body=""
+            while [ "$SECONDS" -lt "$end" ]; do
+              code=$(curl -sS --max-time 15 -o "$RUNNER_TEMP/health-body.txt" -w '%{http_code}' \
+                "${PROD_URL}${path}" 2>/dev/null) || code="000"
+              body=""
+              if [ -f "$RUNNER_TEMP/health-body.txt" ]; then
+                body=$(cat "$RUNNER_TEMP/health-body.txt")
+              fi
+              if [ "$code" = "200" ] && { [ -z "$expected" ] || [ "$body" = "$expected" ]; }; then
+                echo "${PROD_URL}${path}: HTTP 200 (${expected:-ok})"
+                return 0
+              fi
+              last_code="$code"
+              last_body="$body"
+              sleep 10
+            done
+            echo "::error::Health check failed for ${PROD_URL}${path} (last HTTP ${last_code}, body: ${last_body:0:120})"
+            return 1
+          }
+
+          check_endpoint "/ping" "pong"
+          check_endpoint "/ping-backs" "pong"
+          check_endpoint "/server.json" ""
+          if ! jq -e '.domain and .version' "$RUNNER_TEMP/health-body.txt" >/dev/null 2>&1; then
+            echo "::error::${PROD_URL}/server.json did not return valid server metadata"
+            exit 1
+          fi
+          echo "Production health checks passed for ${PROD_URL}."
+
       - name: Record GitHub deployment
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -679,3 +728,244 @@ jobs:
           NEW_VERSION: ${{ needs.release.outputs.new_version }}
         run: |
           npx -y @sentry/cli@3.4.3 releases deploys "v${NEW_VERSION}" new -e production --org bawes-co
+
+  # ─────────────────────────────────────────────────
+  # Rollback: re-point :universe and :latest in GHCR
+  # to a previous release's universe-<sha7> images,
+  # redeploy in Coolify, and verify health.
+  # ─────────────────────────────────────────────────
+  rollback:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/universe' && inputs.rollback_tag != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 170
+    permissions:
+      contents: read
+      packages: write
+      deployments: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Resolve rollback image tag
+        id: resolve
+        env:
+          ROLLBACK_TAG: ${{ inputs.rollback_tag }}
+        run: |
+          set -euo pipefail
+          raw=$(printf '%s' "$ROLLBACK_TAG" | tr -d '[:space:]')
+          if [[ "$raw" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            rel_tag="v${raw#v}"
+            if ! full_sha=$(git rev-parse --verify --quiet "refs/tags/${rel_tag}^{commit}"); then
+              echo "::error::Release tag '${rel_tag}' was not found in repository tags"
+              exit 1
+            fi
+            image_tag="universe-${full_sha::7}"
+            label="${rel_tag} (${image_tag})"
+          elif [[ "$raw" =~ ^universe-[0-9a-f]{7,40}$ ]]; then
+            sha_part="${raw#universe-}"
+            image_tag="universe-${sha_part::7}"
+            label="$image_tag"
+          else
+            echo "::error::Invalid rollback_tag '$raw'. Use a release tag (e.g. v0.3.18) or an immutable production image tag (e.g. universe-15a5ef8)."
+            exit 1
+          fi
+          echo "Resolved rollback target: $label -> $image_tag"
+          echo "image_tag=$image_tag" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify and retag production images in GHCR
+        id: retag
+        env:
+          IMAGE_TAG: ${{ steps.resolve.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          owner=$(printf '%s' "$IMAGE_PREFIX" | tr '[:upper:]' '[:lower:]')
+          services="back map-storage play bot-server discord-bot uploader"
+
+          # Verify every required service image exists for the target tag before mutating :universe or :latest.
+          for svc in $services; do
+            src="${REGISTRY}/${owner}/${svc}-universe:${IMAGE_TAG}"
+            if ! docker buildx imagetools inspect "$src" >/dev/null; then
+              echo "::error::Rollback aborted: image $src does not exist in GHCR"
+              exit 1
+            fi
+            echo "Verified $src"
+          done
+
+          voice_available=false
+          voice_src="${REGISTRY}/${owner}/voice-worker-universe:${IMAGE_TAG}"
+          if docker buildx imagetools inspect "$voice_src" >/dev/null 2>&1; then
+            voice_available=true
+            echo "Verified $voice_src"
+          else
+            echo "::warning::$voice_src not found in GHCR; voice-worker will be skipped during rollback"
+          fi
+          echo "voice_worker=$voice_available" >> "$GITHUB_OUTPUT"
+
+          for svc in $services; do
+            repo="${REGISTRY}/${owner}/${svc}-universe"
+            docker buildx imagetools create \
+              -t "${repo}:universe" \
+              -t "${repo}:latest" \
+              "${repo}:${IMAGE_TAG}"
+            echo "Retagged ${repo}:universe and :latest -> ${IMAGE_TAG}"
+          done
+
+          if [ "$voice_available" = true ]; then
+            repo="${REGISTRY}/${owner}/voice-worker-universe"
+            docker buildx imagetools create \
+              -t "${repo}:universe" \
+              -t "${repo}:latest" \
+              "${repo}:${IMAGE_TAG}"
+            echo "Retagged ${repo}:universe and :latest -> ${IMAGE_TAG}"
+          fi
+
+      - name: Redeploy rolled-back services in Coolify
+        env:
+          COOLIFY_BASE: ${{ secrets.COOLIFY_BASE }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          COOLIFY_PLAY_UUID: ${{ secrets.COOLIFY_PLAY_UUID }}
+          COOLIFY_BACK_UUID: ${{ secrets.COOLIFY_BACK_UUID }}
+          COOLIFY_MAP_STORAGE_UUID: ${{ secrets.COOLIFY_MAP_STORAGE_UUID }}
+          COOLIFY_BOT_SERVER_UUID: ${{ secrets.COOLIFY_BOT_SERVER_UUID }}
+          COOLIFY_DISCORD_BOT_UUID: ${{ secrets.COOLIFY_DISCORD_BOT_UUID }}
+          COOLIFY_UPLOADER_UUID: ${{ secrets.COOLIFY_UPLOADER_UUID }}
+          COOLIFY_VOICE_WORKER_UUID: ${{ secrets.COOLIFY_VOICE_WORKER_UUID }}
+          VOICE_WORKER_AVAILABLE: ${{ steps.retag.outputs.voice_worker }}
+          ROLLBACK_LABEL: ${{ steps.resolve.outputs.label }}
+        run: |
+          deploy_one() {
+            name="$1"; uuid="$2"
+            if ! queued=$(curl -sSf --max-time 60 -X POST "${COOLIFY_BASE}/api/v1/deploy?uuid=${uuid}" \
+              -H "Authorization: Bearer ${COOLIFY_TOKEN}"); then
+              echo "::error::Coolify did not accept the rollback deploy for $name"
+              return 1
+            fi
+            deployment=$(echo "$queued" | jq -r '.deployments[0].deployment_uuid // empty')
+            if [ -z "$deployment" ]; then
+              echo "::error::Coolify gave no deployment to follow for $name"
+              return 1
+            fi
+            echo "$name: rollback deployment $deployment queued"
+            last=""
+            end=$((SECONDS + 1200))
+            while [ "$SECONDS" -lt "$end" ]; do
+              sleep 10
+              code=$(curl -s --max-time 30 -o "$RUNNER_TEMP/coolify-status.json" -w '%{http_code}' \
+                "${COOLIFY_BASE}/api/v1/deployments/${deployment}" \
+                -H "Authorization: Bearer ${COOLIFY_TOKEN}") || code=000
+              case "$code" in
+                401|403|404)
+                  echo "::error::$name: Coolify answered $code when reading deployment $deployment (COOLIFY_TOKEN needs the read permission)"
+                  return 1 ;;
+              esac
+              status=""
+              if [ "$code" = "200" ]; then status=$(jq -r '.status // empty' "$RUNNER_TEMP/coolify-status.json" || true); fi
+              if [ -n "$status" ] && [ "$status" != "$last" ]; then
+                echo "$name: $status"
+                last="$status"
+              fi
+              case "$status" in
+                finished) return 0 ;;
+                failed|cancelled-by-user)
+                  echo "::error::$name did not roll back: Coolify deployment $deployment is $status"
+                  return 1 ;;
+              esac
+            done
+            echo "::error::$name did not finish within 20 minutes (Coolify deployment $deployment, last status: ${last:-unknown})"
+            return 1
+          }
+
+          echo "Rolling production back to ${ROLLBACK_LABEL}..."
+          failed=""
+          for service in \
+            "back ${COOLIFY_BACK_UUID}" \
+            "map-storage ${COOLIFY_MAP_STORAGE_UUID}" \
+            "play ${COOLIFY_PLAY_UUID}" \
+            "voice-worker ${COOLIFY_VOICE_WORKER_UUID:-unset}" \
+            "bot-server ${COOLIFY_BOT_SERVER_UUID}" \
+            "discord-bot ${COOLIFY_DISCORD_BOT_UUID}" \
+            "uploader ${COOLIFY_UPLOADER_UUID}"; do
+            # shellcheck disable=SC2086
+            set -- $service
+            if [ "$1" = "play" ] && [ -n "$failed" ]; then
+              echo "::error::play not deployed: it needs${failed} deployed first"
+              failed="$failed play"
+              continue
+            fi
+            if [ "$1" = "voice-worker" ]; then
+              if [ "$VOICE_WORKER_AVAILABLE" != true ]; then
+                echo "::warning::voice-worker not deployed: rollback tag has no voice-worker image"
+              elif [ "$2" = "unset" ]; then
+                echo "::warning::voice-worker not deployed: COOLIFY_VOICE_WORKER_UUID is not set"
+              else
+                deploy_one "$1" "$2" || echo "::warning::voice-worker did not deploy; voice bots answer in text until it does"
+              fi
+              continue
+            fi
+            deploy_one "$1" "$2" || failed="$failed $1"
+          done
+          if [ -n "$failed" ]; then
+            echo "::error::Not rolled back:$failed"
+            exit 1
+          fi
+          echo "All services rolled back to ${ROLLBACK_LABEL}."
+
+      - name: Verify universe.bawes.net health after rollback
+        env:
+          PROD_URL: https://universe.bawes.net
+        run: |
+          set -euo pipefail
+          check_endpoint() {
+            path="$1"; expected="$2"
+            end=$((SECONDS + 120))
+            last_code="000"
+            last_body=""
+            while [ "$SECONDS" -lt "$end" ]; do
+              code=$(curl -sS --max-time 15 -o "$RUNNER_TEMP/health-body.txt" -w '%{http_code}' \
+                "${PROD_URL}${path}" 2>/dev/null) || code="000"
+              body=""
+              if [ -f "$RUNNER_TEMP/health-body.txt" ]; then
+                body=$(cat "$RUNNER_TEMP/health-body.txt")
+              fi
+              if [ "$code" = "200" ] && { [ -z "$expected" ] || [ "$body" = "$expected" ]; }; then
+                echo "${PROD_URL}${path}: HTTP 200 (${expected:-ok})"
+                return 0
+              fi
+              last_code="$code"
+              last_body="$body"
+              sleep 10
+            done
+            echo "::error::Post-rollback health check failed for ${PROD_URL}${path} (last HTTP ${last_code}, body: ${last_body:0:120})"
+            return 1
+          }
+
+          check_endpoint "/ping" "pong"
+          check_endpoint "/ping-backs" "pong"
+          check_endpoint "/server.json" ""
+          if ! jq -e '.domain and .version' "$RUNNER_TEMP/health-body.txt" >/dev/null 2>&1; then
+            echo "::error::${PROD_URL}/server.json did not return valid server metadata"
+            exit 1
+          fi
+          echo "Post-rollback health checks passed for ${PROD_URL}."
+
+      - name: Record GitHub rollback deployment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ROLLBACK_LABEL: ${{ steps.resolve.outputs.label }}
+        run: |
+          DEPLOY_ID=$(printf '{"ref":"%s","environment":"production","description":"Rollback to %s","required_contexts":[]}' "$GITHUB_REF_NAME" "$ROLLBACK_LABEL" | \
+            gh api "repos/$GITHUB_REPOSITORY/deployments" --input - --jq '.id')
+          gh api "repos/$GITHUB_REPOSITORY/deployments/${DEPLOY_ID}/statuses" \
+            -f state=success \
+            -f environment_url=https://universe.bawes.net \
+            -f "log_url=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
