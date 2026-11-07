@@ -114,6 +114,7 @@ const voices: VoiceChoice[] = [
         previewUrl: "https://samples.example.com/river.mp3",
         providerId: "uai-speak",
         model: "eleven_v4_turbo",
+        talk: false,
     },
     {
         voiceId: "v-fahad",
@@ -123,6 +124,7 @@ const voices: VoiceChoice[] = [
         previewUrl: null,
         providerId: "uai-speak",
         model: "eleven_v4_turbo",
+        talk: false,
     },
 ];
 
@@ -259,6 +261,7 @@ describe("the bot page's Voice group (#1668)", () => {
             previewUrl: null,
             providerId: "uai-speak",
             model: "eleven_v4_turbo",
+            talk: false,
         }));
         mocks.api.getBotVoices.mockResolvedValue(many);
         mocks.api.getBotVoice.mockResolvedValue(
@@ -661,6 +664,61 @@ describe("the bot page's Voice group (#1668)", () => {
                 "Speaking model · Eleven v4 Turbo"
             );
             expect(byTestId("bot-voice-speech-model-change")[0].textContent).not.toContain("Change");
+        });
+
+        it("talks live on a talking model: one Talking model row, and changing it changes listening too (#1910)", async () => {
+            const openAi = key({
+                id: "key-oa",
+                adapter: "openai",
+                name: "My OpenAI",
+                recognition: true,
+                speech: true,
+                models: [
+                    { id: "gpt-realtime-2.1", label: "GPT Realtime 2.1", kind: "talk" },
+                    { id: "gpt-realtime-2.1-mini", label: "GPT Realtime 2.1 mini", kind: "talk" },
+                ],
+            });
+            const live = {
+                ...uaiProfile,
+                recognition: { providerId: "key-oa", model: "gpt-realtime-2.1" },
+                speech: { providerId: "key-oa", model: "gpt-realtime-2.1", voiceId: "marin", voiceName: "Marin" },
+            };
+            mocks.api.getBotVoices.mockResolvedValue([
+                {
+                    voiceId: "marin",
+                    name: "Marin",
+                    description: "",
+                    languages: [],
+                    previewUrl: null,
+                    providerId: "key-oa",
+                    model: "gpt-realtime-2.1",
+                    talk: true,
+                },
+            ]);
+            mocks.api.getBotVoice.mockResolvedValue(turnedOn(live, { lentKeys: [openAi] }));
+            mocks.api.saveBotVoice.mockResolvedValue(turnedOn(live, { lentKeys: [openAi] }));
+            await mount();
+            expect(byTestId("bot-voice-card")[0].textContent).toContain("Talks live");
+            expect(text()).toContain(
+                "Your OpenAI key ••••a1b2 listens and speaks live. Tinyfish’s Mind writes every answer, out loud and in text."
+            );
+            await click("bot-voice-more");
+            const row = byTestId("bot-voice-speech-model-change")[0].textContent ?? "";
+            expect(row).toContain("Talking model · GPT Realtime 2.1");
+            expect(text()).not.toContain("Listening model");
+            expect(byTestId("bot-voice-recognition-model-change")).toHaveLength(0);
+            await click("bot-voice-speech-model-change");
+            const select = byTestId("bot-voice-speech-model")[0] as HTMLSelectElement;
+            expect([...select.options].map((option) => option.value)).toEqual([
+                "gpt-realtime-2.1",
+                "gpt-realtime-2.1-mini",
+            ]);
+            select.value = "gpt-realtime-2.1-mini";
+            select.dispatchEvent(new Event("change"));
+            await settle();
+            const saved = mocks.api.saveBotVoice.mock.calls[0][1];
+            expect(saved.speech).toMatchObject({ providerId: "key-oa", model: "gpt-realtime-2.1-mini" });
+            expect(saved.recognition).toEqual({ providerId: "key-oa", model: "gpt-realtime-2.1-mini" });
         });
 
         it("keeps the choice of where each job runs one tap away when a key is lent, and saves it", async () => {

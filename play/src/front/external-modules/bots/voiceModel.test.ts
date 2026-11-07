@@ -11,6 +11,11 @@ import {
     previewKind,
     providerOf,
     readBotVoice,
+    readVoiceChoices,
+    settleTalk,
+    talkingModelsOf,
+    talksLive,
+    modelDoes,
     sourceOf,
     startingVoice,
     viewOf,
@@ -19,6 +24,7 @@ import {
     startingPayer,
     voiceLanguages,
     type BotVoice,
+    type FullVoiceProfile,
     type VoiceChoice,
     type VoiceProfile,
 } from "./voiceModel";
@@ -256,6 +262,7 @@ describe("the Voice row's door", () => {
             previewUrl: null,
             providerId: "p",
             model: "m",
+            talk: false,
         })
     );
 
@@ -344,6 +351,7 @@ describe("voices", () => {
             previewUrl: null,
             providerId: "p",
             model: "m",
+            talk: false,
         },
         {
             voiceId: "b",
@@ -353,6 +361,7 @@ describe("voices", () => {
             previewUrl: null,
             providerId: "p",
             model: "m",
+            talk: false,
         },
     ];
 
@@ -401,5 +410,101 @@ describe("voices", () => {
     it("a profile missing a part isn't finished", () => {
         expect(fullProfile({})).toBeNull();
         expect(fullProfile(uaiProfile)).toMatchObject({ expression: "natural", language: { mode: "follow" } });
+    });
+});
+
+describe("talking models (#1910)", () => {
+    const openAi = (over: Record<string, unknown> = {}) =>
+        keyAnswer({
+            id: "key-oa",
+            adapter: "openai",
+            name: "My OpenAI",
+            recognition: true,
+            speech: true,
+            models: [
+                { id: "gpt-realtime-2.1", label: "GPT Realtime 2.1", kind: "talk" },
+                { id: "gpt-realtime-2.1-mini", label: "GPT Realtime 2.1 mini", kind: "talk" },
+            ],
+            ...over,
+        });
+    const live = {
+        recognition: { providerId: "key-oa", model: "gpt-realtime-2.1" },
+        speech: { providerId: "key-oa", model: "gpt-realtime-2.1", voiceId: "marin", voiceName: "Marin" },
+    };
+    const uai = {
+        recognition: { providerId: "uai-listen", model: "stt-rt-v6" },
+        speech: { providerId: "uai-speak", model: "eleven_v4_turbo", voiceId: "v-default", voiceName: "River" },
+    };
+    type Parts = Pick<FullVoiceProfile, "recognition" | "speech">;
+    const full = (profile: Parts): FullVoiceProfile => ({
+        recognition: profile.recognition,
+        speech: profile.speech,
+        expression: "natural",
+        language: { mode: "follow" },
+    });
+
+    it("reads a talking model as one that both listens and speaks", () => {
+        const voice = read({ lentKeys: [openAi()] });
+        expect(voice.lentKeys[0].models.map((model) => model.kind)).toEqual(["talk", "talk"]);
+        expect(modelDoes({ kind: "talk" }, "recognition")).toBe(true);
+        expect(modelDoes({ kind: "talk" }, "speech")).toBe(true);
+        expect(modelDoes({ kind: "speech" }, "recognition")).toBe(false);
+        expect(choicesFor(voice, "recognition")).toContainEqual({ kind: "key", key: voice.lentKeys[0] });
+        expect(choicesFor(voice, "speech")).toContainEqual({ kind: "key", key: voice.lentKeys[0] });
+    });
+
+    it("starts a key with only talking models on its first one, for either part", () => {
+        const voice = read({ lentKeys: [openAi()] });
+        const key = { kind: "key" as const, key: voice.lentKeys[0] };
+        expect(providerOf(voice, "speech", key)).toEqual({ providerId: "key-oa", model: "gpt-realtime-2.1" });
+        expect(providerOf(voice, "recognition", key, "gpt-realtime-2.1-mini")).toEqual({
+            providerId: "key-oa",
+            model: "gpt-realtime-2.1-mini",
+        });
+    });
+
+    it("reads which voices talk live", () => {
+        const choices = readVoiceChoices([
+            { voiceId: "marin", name: "Marin", providerId: "key-oa", model: "gpt-realtime-2.1", talk: true },
+            { voiceId: "v1", name: "River" },
+        ]);
+        expect(choices?.map((choice) => choice.talk)).toEqual([true, false]);
+    });
+
+    it("talks live only when one talking model is named for both parts", () => {
+        const voice = on(live, { lentKeys: [openAi()] });
+        expect(talksLive(voice, live)).toBe(true);
+        expect(talkingModelsOf(voice, live).map((model) => model.id)).toEqual([
+            "gpt-realtime-2.1",
+            "gpt-realtime-2.1-mini",
+        ]);
+        const split: VoiceProfile = { ...live, recognition: { providerId: "uai-listen", model: "stt-rt-v6" } };
+        expect(talksLive(voice, split)).toBe(false);
+        expect(talkingModelsOf(voice, split)).toEqual([]);
+        expect(talksLive(voice, uaiProfile)).toBe(false);
+    });
+
+    it("names a talking model for listening too, whatever changed", () => {
+        const voice = on(live, { lentKeys: [openAi()] });
+        const speaksLive = full({ ...uai, speech: live.speech });
+        expect(settleTalk(voice, speaksLive).recognition).toEqual(live.recognition);
+        const mini = full({ ...live, speech: { ...live.speech, model: "gpt-realtime-2.1-mini" } });
+        expect(settleTalk(voice, mini).recognition).toEqual({ providerId: "key-oa", model: "gpt-realtime-2.1-mini" });
+        const settled = full(live);
+        expect(settleTalk(voice, settled)).toBe(settled);
+    });
+
+    it("moves listening off a talking model when speaking moved off it", () => {
+        const voice = on(live, { lentKeys: [openAi()] });
+        const spoken = full({ ...live, speech: uai.speech });
+        expect(settleTalk(voice, spoken).recognition).toEqual({ providerId: "uai-listen", model: "stt-rt-v6" });
+        // A key that also listens on its own model keeps listening there
+        const both = on(live, {
+            lentKeys: [openAi({ models: [...openAi().models, { id: "gpt-listen", kind: "recognition" }] })],
+        });
+        expect(settleTalk(both, spoken).recognition).toEqual({ providerId: "key-oa", model: "gpt-listen" });
+        // Nothing to do for a voice that never talked live
+        const plain = full(uai);
+        expect(settleTalk(voice, plain)).toBe(plain);
     });
 });

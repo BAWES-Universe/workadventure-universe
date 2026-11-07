@@ -1041,6 +1041,11 @@ const mapEditor: BaseTranslation = {
                     speakingModel: "Speaking model",
                     listensOn: "Listens on",
                     listeningModel: "Listening model",
+                    talkingModel: "Talking model",
+                    talksLive: "Talks live",
+                    payerTalksLiveTitle: "{key:string} listens and speaks live, in one model.",
+                    payerTalksLive:
+                        "{key:string} listens and speaks live. {bot:string}’s Mind writes every answer, out loud and in text.",
                     universeAiPeople: "People use their own voice replies",
                     universeAiListens: "Free for people talking with it",
                     keyYouPay: "You pay · lent to this universe",
