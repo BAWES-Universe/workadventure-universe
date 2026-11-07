@@ -547,6 +547,7 @@ export function companyName(adapter: string): string {
     const known: Record<string, string> = {
         assemblyai: "AssemblyAI",
         async: "Async",
+        aws: "AWS",
         bland: "Bland",
         camb: "CAMB.AI",
         fal: "fal",

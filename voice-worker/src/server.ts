@@ -41,6 +41,7 @@ import { XAI_HEARING_MODELS, XAI_SPEECH_MODELS, XAI_VOICE_ADAPTER, XaiTranscript
 import { recognitionByModel, speechByModel } from './kit/byModel.ts';
 import { GEMINI_SPEECH_ADAPTER, GEMINI_SPEECH_MODELS, GeminiSpeech } from './geminiSpeech.ts';
 import { ZOOM_SCRIBE_ADAPTER, ZOOM_SCRIBE_MODELS, ZoomScribeRecognition } from './zoomScribe.ts';
+import { AWS_HEARING_MODELS, AWS_SPEECH_MODELS, AWS_VOICE_ADAPTER, AwsPolly, AwsTranscribe } from './awsVoice.ts';
 import { ELEVENLABS_ADAPTER, ElevenLabsSpeech } from './elevenlabs.ts';
 import { CARTESIA_ADAPTER, CartesiaRecognition, CartesiaSpeech } from './cartesia.ts';
 import { FISH_ADAPTER, FishSpeech } from './fish.ts';
@@ -217,6 +218,13 @@ export class VoiceWorker {
             const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
             const hearing = new ZoomScribeRecognition({ finalTimeoutMs });
             this.connectors.registerRecognition(ZOOM_SCRIBE_ADAPTER, recognitionByModel(ZOOM_SCRIBE_MODELS, hearing, this.connectors.recognition(ZOOM_SCRIBE_ADAPTER)));
+        }
+        // AWS also talks live under the same name (#1910): Transcribe and Polly take only their models
+        {
+            const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
+            const hearing = new AwsTranscribe({ finalTimeoutMs });
+            this.connectors.registerRecognition(AWS_VOICE_ADAPTER, recognitionByModel(AWS_HEARING_MODELS, hearing, this.connectors.recognition(AWS_VOICE_ADAPTER)));
+            this.connectors.registerSpeech(AWS_VOICE_ADAPTER, speechByModel(AWS_SPEECH_MODELS, new AwsPolly(), this.connectors.speech(AWS_VOICE_ADAPTER)));
         }
         if (!this.connectors.recognition(SONIOX_ADAPTER)) {
             const finalTimeoutMs = (options.recognitionFinalTimeoutSeconds ?? DEFAULT_SONIOX_FINAL_TIMEOUT_MS / 1000) * 1000;
