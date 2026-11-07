@@ -302,6 +302,40 @@ describe("Hear this voice say hello (#1852)", () => {
             expect(problems).toEqual(["rejected", "unreachable"]);
         });
 
+        it("does not ask the page to look again when the server only refused the name: that would wipe the field", async () => {
+            mocks.api.sayBotHello.mockRejectedValueOnce(
+                refused(502, { error: "provider", providerStatus: 404, rejected: false })
+            );
+            const refresh = await mount({ paidByKey: "your speech server", free: true, voiceName: "nope" });
+            await click();
+            expect(refresh).not.toHaveBeenCalled();
+            expect(problems).toEqual(["rejected"]);
+        });
+
+        it("says nothing of a refusal that came back for a name that has been changed since", async () => {
+            let fail: (e: unknown) => void = () => undefined;
+            mocks.api.sayBotHello.mockImplementation(
+                () =>
+                    new Promise((_resolve, reject) => {
+                        fail = reject;
+                    })
+            );
+            const mounted = await mount({ paidByKey: "your speech server", free: true, voiceName: "nope" });
+            await click();
+            mounted.component.$set({ voiceName: "af_heart" });
+            await settle();
+            fail(refused(502, { error: "provider", providerStatus: 404, rejected: false }));
+            await settle();
+            expect(problems).toEqual([]);
+        });
+
+        it("waits while something else asks the server, which makes one hello at a time", async () => {
+            await mount({ paidByKey: "your speech server", free: true, voiceName: "af_heart", blocked: true });
+            expect(button().disabled).toBe(true);
+            await click();
+            expect(mocks.api.sayBotHello).not.toHaveBeenCalled();
+        });
+
         it("does not call the saved voice's failure a typed name's", async () => {
             mocks.api.sayBotHello.mockRejectedValueOnce(
                 refused(502, { error: "provider", providerStatus: 404, rejected: false })

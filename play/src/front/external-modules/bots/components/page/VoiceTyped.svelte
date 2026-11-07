@@ -34,11 +34,13 @@
     let name = mode === "change" ? currentName ?? "" : "";
     let problem: VoiceNameFailure | null = null;
     let checking = false;
+    /** The hello is being asked of the server: the server makes one at a time, so Use waits for it */
+    let hearing = false;
 
     $: v = $LL.mapEditor.edit.bots.page.voice;
     $: typed = name.trim();
     $: same = mode === "change" && typed === currentName;
-    $: canUse = typed !== "" && !same && !checking && !busy && problem !== "rejected";
+    $: canUse = typed !== "" && !same && !checking && !hearing && !busy && problem !== "rejected";
     $: useLabel = checking ? v.checkingVoice({ voice: typed }) : typed ? v.use({ voice: typed }) : v.useThisVoice();
     $: bad =
         problem === "rejected"
@@ -110,6 +112,8 @@
     paidByKey={server}
     free
     voiceName={typed}
+    blocked={checking}
+    bind:working={hearing}
     {source}
     locale={$locale}
     on:problem={(e) => (problem = e.detail)}

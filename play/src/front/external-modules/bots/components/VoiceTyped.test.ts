@@ -234,6 +234,48 @@ describe("A voice name typed for a speech server of the person's own (#1874)", (
         expect(useButton().textContent?.trim()).toBe("Use af_sky");
     });
 
+    it("waits for the hello that is being made before Use, and the hello waits for Use: the server makes one at a time", async () => {
+        let said: (value: { text: string; url: string }) => void = () => undefined;
+        mocks.api.sayBotHello.mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    said = resolve;
+                })
+        );
+        const hello = () => target.querySelector<HTMLButtonElement>("[data-testid=bot-voice-hello]")!;
+        const { onUse } = await mount();
+        await type("af_heart");
+        hello().click();
+        await settle();
+        expect(useButton().disabled).toBe(true);
+        said({ text: "Hello!", url: "blob:y" });
+        class Audio {
+            onended = null;
+            onerror = null;
+            play() {
+                return Promise.resolve();
+            }
+            pause() {}
+        }
+        vi.stubGlobal("Audio", Audio);
+        await settle();
+        stopSample();
+        await settle();
+        expect(useButton().disabled).toBe(false);
+        // While Use asks, the hello cannot be asked for
+        mocks.api.checkBotVoiceName.mockImplementation(
+            () =>
+                new Promise(() => {
+                    // never answers
+                })
+        );
+        useButton().click();
+        await settle();
+        expect(hello().disabled).toBe(true);
+        expect(onUse).not.toHaveBeenCalled();
+        vi.unstubAllGlobals();
+    });
+
     it("waits while it is saving", async () => {
         await mount({ busy: true });
         await type("af_heart");

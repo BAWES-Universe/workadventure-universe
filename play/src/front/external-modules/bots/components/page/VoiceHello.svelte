@@ -21,6 +21,10 @@
     export let voiceName: string | undefined = undefined;
     /** Before voice is on: the speech server and model the typed name is heard from */
     export let source: { providerId: string; model: string } | undefined = undefined;
+    /** Something else is asking the server a moment ago (Use checking the name): the server makes one hello at a time per person */
+    export let blocked = false;
+    /** The server is being asked for this hello: nothing else may ask it meanwhile */
+    export let working = false;
 
     /** A hello and a sample share the one player, so one of them is heard at a time */
     const ID = "hello";
@@ -47,6 +51,7 @@
     // The words come with the audio; until they do the bot is still writing
     $: if (!playing) words = null;
     $: thinking = playing && words === null;
+    $: working = thinking;
     $: saying = playing && words !== null;
     $: time = usedUp ? usedUp.toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" }) : "";
 
@@ -60,9 +65,10 @@
     }
 
     async function hear() {
-        if (usedUp || thinking || nothingToHear) return;
+        if (usedUp || thinking || nothingToHear || blocked) return;
         failed = false;
         words = null;
+        const asked = voiceName;
         await toggleSample(
             ID,
             async () => {
@@ -76,11 +82,14 @@
                     return { url: hello.url, revoke: true };
                 } catch (e) {
                     const why = helloFailureOf(e);
+                    // The name in the field was changed while the server answered: this is about another name
+                    const stale = typed && voiceName !== asked;
                     if (why.kind === "used-up") waitUntilBack(why.resetsAt);
                     // The page is out of date (voice was turned off) or the key was refused: ask again how the voice stands
-                    if (why.kind === "off" || why.kind === "provider") dispatch("refresh");
+                    // A typed name the server refused says nothing of the page being out of date: only voice being off does
+                    if (why.kind === "off" || (why.kind === "provider" && !typed)) dispatch("refresh");
                     // A typed name that was not taken, or a server that did not answer, is said by the one red line next to the field
-                    if (typed) dispatch("problem", voiceNameFailureOf(e));
+                    if (typed && !stale) dispatch("problem", voiceNameFailureOf(e));
                     throw e;
                 }
             },
@@ -99,8 +108,8 @@
 <button
     type="button"
     class="vh"
-    class:dim={usedUp !== null || nothingToHear}
-    disabled={usedUp !== null || thinking || nothingToHear}
+    class:dim={usedUp !== null || nothingToHear || blocked}
+    disabled={usedUp !== null || thinking || nothingToHear || blocked}
     aria-busy={thinking}
     data-testid="bot-voice-hello"
     on:click={() => void hear()}
