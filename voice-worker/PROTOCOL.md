@@ -25,7 +25,7 @@ directions. `src/protocol.ts` and `bots/voice/protocol.ts` mirror it as TypeScri
 Bot server to worker: `session.open` (optionally naming the bubble's providers, see Providers), `lane.open`, `lane.signal` (the person's offer or candidates), `lane.close`,
 `mode.set`, `bot.say`, `bot.retract`, `voice.stop`, `session.end`, and for LiveKit `room.join` (the address and the token the
 game made for the bot's identity), `room.people` (whose microphone the bot may subscribe to, with their modes; replaces the
-earlier list) and `room.leave`.
+earlier list) and `room.leave`. `recognition.terms` replaces the names the hearing is asked to expect (see Providers).
 
 Worker to bot server: `session.start` (session accepted), `participant.join` (audio is connected both ways),
 `participant.leave`, `lane.signal` (the answer), `playback.progress`, `engine.status` (with `room` while in a room),
@@ -109,19 +109,29 @@ sends nothing for `VOICE_SPEECH_TIMEOUT_SECONDS` (default 15) counts as failed.
 
 Each bubble picks its own hearing and speaking provider. `session.open` may carry, all optional:
 
-* `recognition`: `{ adapter, model, key, endpoint?, region?, language? }`, who hears the people in this bubble.
-* `speech`: `{ adapter, model, voiceId, key, endpoint?, region?, language? }`, who speaks for the bot in this bubble.
+* `recognition`: `{ adapter, model, key?, endpoint?, region?, language?, terms? }`, who hears the people in this bubble. `terms` is up to 16
+  names of at most 64 characters (the bot's own name first, then the other voice bots' in the bubble): the hearing provider is asked to expect
+  them and spell them as written, so "Nora" said in Arabic is not heard as "نورا" and the bot answers when called (#1864). Names only, never
+  anything a person said. A later `recognition.terms { terms }` replaces the list (another voice bot came or went); a stretch of speech that is
+  already open keeps the names it started with.
+* `speech`: `{ adapter, model, voiceId, key?, endpoint?, region?, language? }`, who speaks for the bot in this bubble.
+  `key` is left out only for a speech server on a person's own computer that has none (`openai-compatible`, #1874); it is never an empty string.
 * `expression`: `restrained`, `natural` or `expressive`, how much feeling the voice puts in (each connector maps it to what
   its provider offers). Handed to the speech connector with every reply.
 * `turnSeconds`: a whole number from 5 to 3600, the longest stretch of one person's speech taken in this bubble (Orbit's voice limit, #1669).
   Without it `VOICE_MAX_UTTERANCE_SECONDS` applies.
 
-`adapter` is the lowercase name Orbit stores (`soniox`, `elevenlabs`, `deepgram`, `cartesia`...). The worker has a registry of
+`adapter` is the lowercase name Orbit stores (`soniox`, `elevenlabs`, `deepgram`, `cartesia`, `aws`, `azure`, `google`, `inworld`, `openai`, `ultravox`, `xai`, `zoom`...). The worker has a registry of
 connectors by that name (`src/connectors.ts`); a provider is one small file implementing `RecognitionConnector` or
 `SpeechConnector` and registered under its name. A bubble that names nothing gets the built-in test engine (a generated tone
 for speech; no hearing unless the worker was given a test recognizer). The test engine is also registered as `fake`.
 The settings are read when the session is created; a repeated `session.open` for a session that exists does not change them.
 `bot.say` may carry `lang`; it goes to the speech connector (the bubble's `language` is used when it does not).
+
+A **talking model** (game #1910) listens and speaks in one, such as OpenAI's `gpt-realtime-2.1`. A bot on one names the same
+adapter and model for `recognition` and `speech` (`aws`, `azure`, `google`, `inworld`, `openai`, `ultravox`, `xai` or `zoom`, with the voice in `speech.voiceId`; for `azure` the model is the deployment name and the endpoint the person's own resource; for `aws` the key is the access key ID, a colon and the secret, and `region` the key's region; for `inworld` the model is the TTS model it speaks with; `ultravox` makes one call for each stretch and each reply; `zoom` hears English only), and nothing else changes: what
+the person says still comes back as `user.turn`, the bot's own Mind still writes the answer, and `bot.say` still carries the
+words to speak. The model is only used to hear and to read the answer aloud; it is never asked to answer by itself.
 
 An adapter the worker has no connector for does not fail the session. Hearing: every stretch of speech ends as soon as it
 starts (`user.turn` `cleared`, nothing to offer back), and the failure is reported. Speaking: every reply ends in text only,

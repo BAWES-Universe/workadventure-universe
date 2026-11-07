@@ -52,6 +52,52 @@ export interface WorkerLoad {
     cpuPercent: number;
     memoryMb: number;
     counters: Record<string, number>;
+    /** How long turns took in the last ten minutes, per stage and provider (#1865). Times and provider names only. */
+    latency?: WorkerLatency;
+}
+
+/** Stage (`hear`, `think`, `speak`, `play`, `total`), then provider, then the turns timed and their median and 95th percentile in milliseconds. */
+export type WorkerLatency = Record<string, Record<string, { samples: number; p50: number; p95: number }>>;
+
+/** The most latency figures one event carries, so a worker that names many providers cannot make it huge. */
+const MAX_LATENCY_SERIES = 40;
+
+/**
+ * The worker's timings as flat PostHog properties: `latency_<stage>_<provider>_p50_ms`, `_p95_ms` and `_turns`, with the provider
+ * as a lowercase word (`total` joins the hearing and speaking provider: `soniox_to_elevenlabs`). Numbers only.
+ */
+export function latencyProperties(latency: WorkerLatency | undefined): Record<string, number> {
+    const out: Record<string, number> = {};
+    let series = 0;
+    for (const [stage, providers] of Object.entries(latency ?? {})) {
+        for (const [provider, stats] of Object.entries(providers ?? {})) {
+            if (series >= MAX_LATENCY_SERIES) return out;
+            series++;
+            const name = `latency_${word(stage)}_${word(provider.replace('>', '_to_'))}`;
+            out[`${name}_p50_ms`] = stats.p50;
+            out[`${name}_p95_ms`] = stats.p95;
+            out[`${name}_turns`] = stats.samples;
+        }
+    }
+    return out;
+}
+
+const word = (text: string): string => text.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'unknown';
+
+/** What the worker said about latency, keeping only the numbers we read: anything else in it is dropped. */
+function readLatency(raw: unknown): WorkerLatency {
+    const out: WorkerLatency = {};
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return out;
+    const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+    for (const [stage, providers] of Object.entries(raw)) {
+        if (typeof providers !== 'object' || providers === null) continue;
+        for (const [provider, stats] of Object.entries(providers as Record<string, unknown>)) {
+            const { samples, p50, p95 } = (stats ?? {}) as Record<string, unknown>;
+            if (!finite(samples) || !finite(p50) || !finite(p95)) continue;
+            (out[stage] ??= {})[provider] = { samples, p50, p95 };
+        }
+    }
+    return out;
 }
 
 /** The worker's /stats address, next to the bridge address the bot server already has. */
@@ -73,6 +119,7 @@ export async function readWorkerLoad(statsUrl: string, secret: string | undefine
         if (!response.ok) return null;
         const body = (await response.json()) as Partial<WorkerLoad>;
         const n = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+        const latency = readLatency((body as { latency?: unknown }).latency);
         return {
             connections: n(body.connections),
             sessions: n(body.sessions),
@@ -82,6 +129,7 @@ export async function readWorkerLoad(statsUrl: string, secret: string | undefine
             cpuPercent: n(body.cpuPercent),
             memoryMb: n(body.memoryMb),
             counters: body.counters && typeof body.counters === 'object' ? body.counters : {},
+            ...(Object.keys(latency).length > 0 ? { latency } : {}),
         };
     } catch {
         return null;
@@ -151,6 +199,8 @@ export class VoiceLoadWatch {
             turned_away_total: turnedAwayTotal,
             cpu_percent: load.cpuPercent,
             memory_mb: load.memoryMb,
+            // How fast bots answer, per provider (#1865): numbers only
+            ...latencyProperties(load.latency),
         });
 
         if (load.cpuPercent >= this.settings.cpuPercent) this.cpuHighSince ??= now;

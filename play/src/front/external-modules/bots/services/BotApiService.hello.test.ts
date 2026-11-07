@@ -9,7 +9,7 @@ vi.mock("../../../Connection/LocalUserStore", () => ({
 }));
 vi.mock("../../../Connection/AxiosUtils", () => ({ axiosToPusher: { get: vi.fn() } }));
 
-import { helloFailureOf } from "../voiceModel";
+import { helloFailureOf, voiceNameFailureOf } from "../voiceModel";
 import { BotApiService } from "./BotApiService";
 
 const SESSION = `orb_sess_v2_${"a".repeat(64)}`;
@@ -97,5 +97,46 @@ describe("BotApiService.sayBotHello (#1852)", () => {
         fetchMock.mockResolvedValue(reply(200, { text: "", audio: "" }));
         await expect(service().sayBotHello("b1", "en-US")).rejects.toThrow("can't read");
         expect(urls).toHaveLength(0);
+    });
+
+    it("says the voice name typed and where to hear it from, only when there is one (#1874)", async () => {
+        const wav = btoa("RIFF....WAVE");
+        fetchMock.mockImplementation(() =>
+            Promise.resolve(reply(200, { text: "Hello, Universe.", mime: "audio/wav", audio: wav, ms: 1000 }))
+        );
+        const api = service();
+        await api.sayBotHello("b1", "en-US", { voiceId: "bm_george" });
+        expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ locale: "en-US", voiceId: "bm_george" });
+        await api.sayBotHello("b1", "en-US", {
+            voiceId: "bm_george",
+            source: { providerId: "my-server", model: "kokoro" },
+        });
+        expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
+            locale: "en-US",
+            voiceId: "bm_george",
+            source: { providerId: "my-server", model: "kokoro" },
+        });
+    });
+
+    it("checks a typed name with the same hello and plays nothing (#1874)", async () => {
+        fetchMock.mockResolvedValue(
+            reply(200, { text: "Hello, Universe.", mime: "audio/wav", audio: btoa("RIFF....WAVE"), ms: 1000 })
+        );
+        await expect(service().checkBotVoiceName("b1", "en-US", { voiceId: "af_heart" })).resolves.toBeUndefined();
+        expect(urls).toHaveLength(0);
+        expect(fetchMock.mock.calls[0][0]).toBe("https://bots.example.com/api/bots/b1/voice/hello");
+    });
+
+    it("throws what the server answered when the check fails, so the page can tell a refused name from a silent server (#1874)", async () => {
+        fetchMock.mockResolvedValue(reply(502, { error: "provider", providerStatus: 404, rejected: false }));
+        const failure = await service()
+            .checkBotVoiceName("b1", "en-US", { voiceId: "nope" })
+            .catch((e: unknown) => e);
+        expect(voiceNameFailureOf(failure)).toBe("rejected");
+        fetchMock.mockResolvedValue(reply(503, { error: "unavailable" }));
+        const silent = await service()
+            .checkBotVoiceName("b1", "en-US", { voiceId: "nope" })
+            .catch((e: unknown) => e);
+        expect(voiceNameFailureOf(silent)).toBe("unreachable");
     });
 });
