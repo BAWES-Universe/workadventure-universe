@@ -90,6 +90,19 @@ describe('bridge messages', () => {
         expect(checkMessage('fromWorker', { ...base, type: 'room.join', epoch: 3, serverUrl: 'wss://x', token: 't' })).not.toBeNull();
     });
 
+    it('accepts the names the hearing should expect, and refuses a list that is too long, a name that is empty or too long, or not a list (#1864)', () => {
+        const recognition = { adapter: 'soniox', model: 'm', key: 'k' };
+        expect(checkMessage('fromBot', { ...base, type: 'session.open', bubbleId: 'b', botId: 'x', recognition: { ...recognition, terms: ['Nora', 'Max'] } })).toBeNull();
+        expect(checkMessage('fromBot', { ...base, type: 'recognition.terms', terms: ['Nora'] })).toBeNull();
+        expect(checkMessage('fromBot', { ...base, type: 'recognition.terms', terms: [] })).toBeNull();
+        expect(checkMessage('fromBot', { ...base, type: 'recognition.terms', terms: Array.from({ length: 17 }, (_, i) => `n${i}`) })).not.toBeNull();
+        expect(checkMessage('fromBot', { ...base, type: 'recognition.terms', terms: [''] })).not.toBeNull();
+        expect(checkMessage('fromBot', { ...base, type: 'recognition.terms', terms: ['x'.repeat(65)] })).not.toBeNull();
+        expect(checkMessage('fromBot', { ...base, type: 'recognition.terms', terms: 'Nora' })).not.toBeNull();
+        expect(checkMessage('fromBot', { ...base, type: 'session.open', bubbleId: 'b', botId: 'x', recognition: { ...recognition, terms: [3] } })).not.toBeNull();
+        expect(checkMessage('fromWorker', { ...base, type: 'recognition.terms', terms: ['Nora'] })).not.toBeNull();
+    });
+
     it('accepts the request for an audio line, and nothing else shaped like it', () => {
         const request = { type: 'transceiverRequest', transceiverRequest: { kind: 'audio', init: { direction: 'recvonly' } } };
         expect(checkMessage('fromWorker', { ...base, type: 'lane.signal', participantId: 'p', epoch: 1, signal: request })).toBeNull();
@@ -113,7 +126,9 @@ describe('bridge messages', () => {
         const voice = { adapter: 'elevenlabs', model: 'flash', voiceId: 'v1', key: 'k', endpoint: 'https://api.example', region: 'eu', language: 'en' };
         expect(checkMessage('fromBot', { ...base, type: 'session.open', bubbleId: 'b', botId: 'x', recognition: ears, speech: voice, expression: 'natural' })).toBeNull();
         expect(checkMessage('fromBot', { ...base, type: 'session.open', bubbleId: 'b', botId: 'x', speech: voice })).toBeNull();
-        expect(checkMessage('fromBot', { ...base, type: 'session.open', bubbleId: 'b', botId: 'x', recognition: { ...ears, key: undefined } })).not.toBeNull();
+        expect(checkMessage('fromBot', { ...base, type: 'session.open', bubbleId: 'b', botId: 'x', recognition: { ...ears, key: '' } })).not.toBeNull();
+        // A speech server on a person's own computer may have no key (#1874): the key is left out, never empty
+        expect(checkMessage('fromBot', { ...base, type: 'session.open', bubbleId: 'b', botId: 'x', recognition: { ...ears, adapter: 'openai-compatible', key: undefined }, speech: { ...voice, adapter: 'openai-compatible', key: undefined } })).toBeNull();
         expect(checkMessage('fromBot', { ...base, type: 'session.open', bubbleId: 'b', botId: 'x', speech: { ...voice, voiceId: undefined } })).not.toBeNull();
         expect(checkMessage('fromBot', { ...base, type: 'session.open', bubbleId: 'b', botId: 'x', speech: { ...voice, adapter: 'ElevenLabs' } })).not.toBeNull();
         expect(checkMessage('fromBot', { ...base, type: 'session.open', bubbleId: 'b', botId: 'x', speech: { ...voice, endpoint: 'file:///etc/passwd' } })).not.toBeNull();
