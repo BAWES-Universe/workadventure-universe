@@ -21,6 +21,7 @@ import { BLAND_ADAPTER, BlandSpeech } from './bland.ts';
 import { CAMB_ADAPTER, CambSpeech } from './camb.ts';
 import { FAL_ADAPTER, FalRecognition } from './fal.ts';
 import { GLADIA_ADAPTER, GladiaRecognition } from './gladia.ts';
+import { GRADIUM_ADAPTER, GradiumRecognition, GradiumSpeech } from './gradium.ts';
 import { ELEVENLABS_ADAPTER, ElevenLabsSpeech } from './elevenlabs.ts';
 import { CARTESIA_ADAPTER, CartesiaRecognition, CartesiaSpeech } from './cartesia.ts';
 import { FISH_ADAPTER, FishSpeech } from './fish.ts';
@@ -131,6 +132,11 @@ export class VoiceWorker {
             const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
             this.connectors.registerRecognition(GLADIA_ADAPTER, new GladiaRecognition({ finalTimeoutMs }));
         }
+        if (!this.connectors.recognition(GRADIUM_ADAPTER)) {
+            const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
+            this.connectors.registerRecognition(GRADIUM_ADAPTER, new GradiumRecognition({ finalTimeoutMs }));
+        }
+        if (!this.connectors.speech(GRADIUM_ADAPTER)) this.connectors.registerSpeech(GRADIUM_ADAPTER, new GradiumSpeech());
         if (!this.connectors.recognition(SONIOX_ADAPTER)) {
             const finalTimeoutMs = (options.recognitionFinalTimeoutSeconds ?? DEFAULT_SONIOX_FINAL_TIMEOUT_MS / 1000) * 1000;
             this.connectors.registerRecognition(SONIOX_ADAPTER, new SonioxRecognition({ finalTimeoutMs }));
