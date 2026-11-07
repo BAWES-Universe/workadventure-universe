@@ -1,9 +1,10 @@
 <svelte:options immutable={true} />
 
 <script lang="ts">
-    import { createEventDispatcher, onDestroy } from "svelte";
+    import { createEventDispatcher, onDestroy, onMount } from "svelte";
     import type { Readable } from "svelte/store";
     import type { RemoteVideoTrack } from "livekit-client";
+    import { configureInlineVideoElement } from "../../../Utils/MobileWebViewMediaCompatibility";
     import { NoVideoOutputDetector } from "./NoVideoOutputDetector";
 
     export let style: string;
@@ -24,7 +25,10 @@
     }>();
 
     $: {
-        if ($remoteVideoTrack) {
+        if ($remoteVideoTrack && videoElement) {
+            // Enforce inline playback attributes before LiveKit attaches the track so iOS WKWebView and Android
+            // WebView never hijack the video stream into a native full-screen media overlay.
+            configureInlineVideoElement(videoElement);
             if ($remoteVideoTrack !== attachedVideoTrack) {
                 if (attachedVideoTrack) {
                     attachedVideoTrack.detach(videoElement);
@@ -49,6 +53,10 @@
         }
     }
 
+    onMount(() => {
+        configureInlineVideoElement(videoElement);
+    });
+
     onDestroy(() => {
         if (attachedVideoTrack) {
             attachedVideoTrack.detach(videoElement);
@@ -66,5 +74,6 @@
     class={className}
     autoplay
     playsinline
+    webkit-playsinline="true"
     muted={true}
 />

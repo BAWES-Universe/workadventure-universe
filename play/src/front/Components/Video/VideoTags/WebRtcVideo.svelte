@@ -3,6 +3,7 @@
 <script lang="ts">
     import { createEventDispatcher, onDestroy, onMount } from "svelte";
     import type { WebRtcStreamable } from "../../../Stores/StreamableCollectionStore";
+    import { configureInlineVideoElement } from "../../../Utils/MobileWebViewMediaCompatibility";
     import { NoVideoOutputDetector } from "./NoVideoOutputDetector";
 
     export let style: string;
@@ -35,6 +36,7 @@
 
     $: if (videoElement) {
         if (stream) {
+            configureInlineVideoElement(videoElement);
             const newVideoTrack = getVideoTrack(stream);
             const currentStream = videoElement.srcObject as MediaStream | null;
             const currentTrack = currentStream ? getVideoTrack(currentStream) : undefined;
@@ -94,6 +96,7 @@
         if (!videoElement) {
             throw new Error("WebRtcVideo: videoElement is undefined");
         }
+        configureInlineVideoElement(videoElement);
     });
 
     onDestroy(() => {
@@ -116,6 +119,7 @@
     class={className}
     autoplay
     playsinline
+    webkit-playsinline="true"
     muted={true}
     {loop}
     data-testid="webrtc-video"
