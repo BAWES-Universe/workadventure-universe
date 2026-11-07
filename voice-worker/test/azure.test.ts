@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { ConnectorRegistry, ProviderError, Secret, type SpeechRequest } from '../src/connectors.ts';
-import { AZURE_ADAPTER, AZURE_TRANSCRIPTION_MODEL, AzureRecognition, AzureSpeech, azureAddress } from '../src/azure.ts';
+import { AZURE_ADAPTER, AZURE_TRANSCRIPTION_MODEL, AzureRecognition, AzureSpeech, azureAddress, isAzureResource } from '../src/azure.ts';
 import type { RecognizerEvents } from '../src/recognizer.ts';
 import { VoiceWorker } from '../src/server.ts';
 import { waitFor } from './harness.ts';
@@ -93,6 +93,28 @@ describe('the address', () => {
         expect(address.url).toBe('wss://my-res.openai.azure.com/openai/v1/realtime?model=realtime%20prod');
         expect(address.headers).toEqual({ 'api-key': KEY });
     });
+
+    it('is only ever a resource on Azure’s own names, over https, on the usual port', () => {
+        for (const ok of ['https://my-res.openai.azure.com', 'https://my-res.cognitiveservices.azure.com/', 'https://my-res.services.ai.azure.com', 'https://My-Res.OpenAI.Azure.com:443']) {
+            expect(isAzureResource(ok)).toBe(true);
+        }
+        for (const refused of [
+            'http://my-res.openai.azure.com',
+            'https://127.0.0.1',
+            'ws://127.0.0.1:8080',
+            'https://localhost',
+            'https://169.254.169.254',
+            'https://openai.azure.com',
+            'https://my-res.openai.azure.com.attacker.example',
+            'https://attackeropenai.azure.com.example',
+            'https://my-res.openai.azure.com:8443',
+            'https://user:pass@my-res.openai.azure.com',
+            'not an address',
+        ]) {
+            expect(isAzureResource(refused)).toBe(false);
+            expect(() => azureAddress('realtime-prod', new Secret(KEY), refused)).toThrow(ProviderError);
+        }
+    });
 });
 
 describe('hearing', () => {
@@ -106,7 +128,7 @@ describe('hearing', () => {
             },
         });
         const { heard, events } = listener();
-        const stream = new AzureRecognition().listen(settings(server.url), events);
+        const stream = new AzureRecognition({ anyHost: true }).listen(settings(server.url), events);
         stream.push(new Int16Array(320));
         stream.finish();
         await waitFor('the last words', () => heard.finals.length === 1);
@@ -126,10 +148,20 @@ describe('hearing', () => {
         expect(JSON.stringify(heard)).not.toContain(KEY);
     });
 
+    it('never connects to an address that isn’t an Azure resource, so the key never goes there', async () => {
+        const server = await realtime({});
+        const { heard, events } = listener();
+        const stream = new AzureRecognition().listen(settings(server.url), events);
+        stream.push(new Int16Array(320));
+        await waitFor('the failure', () => heard.failed.length === 1);
+        expect(server.seen).toEqual([]);
+        expect(JSON.stringify(heard)).not.toContain(KEY);
+    });
+
     it('fails with the status when the key is refused', async () => {
         const server = await realtime({ refuse: 401 });
         const { heard, events } = listener();
-        const stream = new AzureRecognition().listen(settings(server.url), events);
+        const stream = new AzureRecognition({ anyHost: true }).listen(settings(server.url), events);
         stream.push(new Int16Array(320));
         await waitFor('the failure', () => heard.failed.length === 1);
         expect(heard.failed[0].status).toBe(401);
@@ -145,7 +177,7 @@ describe('speaking', () => {
                 send({ type: 'response.done', response: { status: 'completed' } });
             },
         });
-        expect(await collect(new AzureSpeech().speak(speechRequest(server.url)))).toEqual([1, 2, 3]);
+        expect(await collect(new AzureSpeech({ anyHost: true }).speak(speechRequest(server.url)))).toEqual([1, 2, 3]);
         expect(server.seen[0].url).toBe('/openai/v1/realtime?model=realtime-prod');
         const [setup] = server.received as [{ session: { audio: { output: { voice: string } } } }];
         expect(setup.session.audio.output.voice).toBe('marin');
@@ -153,7 +185,7 @@ describe('speaking', () => {
 
     it('fails with 401 when the key is refused, and never says the key', async () => {
         const server = await realtime({ refuse: 401 });
-        const failure = await collect(new AzureSpeech().speak(speechRequest(server.url))).catch((error: unknown) => error);
+        const failure = await collect(new AzureSpeech({ anyHost: true }).speak(speechRequest(server.url))).catch((error: unknown) => error);
         expect(failure).toBeInstanceOf(ProviderError);
         expect((failure as ProviderError).status).toBe(401);
         expect(String((failure as Error).message)).not.toContain(KEY);
