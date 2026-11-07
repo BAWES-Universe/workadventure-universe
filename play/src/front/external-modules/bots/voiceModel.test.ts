@@ -22,6 +22,9 @@ import {
     readHello,
     sourceOf,
     splitChoices,
+    splitPlaces,
+    speaksLive as speaksOnTalkingModel,
+    voicesForOption,
     startingVoice,
     viewOf,
     filterVoices,
@@ -548,6 +551,59 @@ describe("talking models (#1910)", () => {
         expect(own?.speech).toEqual({ kind: "key", key: voice.lentKeys[0] });
         const keyOnly = read({ universeAi: { recognition: null, speech: null }, lentKeys: [openAi()] });
         expect(payerOptions(keyOnly).map((option) => option.id)).toEqual(["key-oa"]);
+    });
+
+    it("leaves a key that only talks live out of the split lists, so every place there can be half of a split", () => {
+        const withOwn = openAi({
+            id: "key-ob",
+            name: "Also OpenAI",
+            models: [...openAi().models, { id: "gpt-listen", kind: "recognition" }, { id: "gpt-tts", kind: "speech" }],
+        });
+        const voice = read({ lentKeys: [openAi(), withOwn] });
+        const id = (choice: { kind: string; key?: { id: string } }) => choice.key?.id ?? choice.kind;
+        for (const part of ["recognition", "speech"] as const) {
+            const places = splitPlaces(voice, part).map(id);
+            expect(places).not.toContain("key-oa");
+            expect(places).toContain("key-ob");
+        }
+        // Each place offered for speaking pairs with Universe AI listening, so picking one always does something
+        const uaiListens = { kind: "universe-ai" as const };
+        for (const place of splitPlaces(voice, "speech")) {
+            expect(optionOf(voice, uaiListens, place)).toBeDefined();
+        }
+        // The key that only talks live is still offered as one place for both jobs
+        expect(
+            payerOptions(voice)
+                .filter(coversBoth)
+                .map((option) => option.id)
+        ).toContain("key-oa");
+    });
+
+    it("speaks a split on the key's own speaking voices, never a talking model's, so the split holds", () => {
+        const withOwn = openAi({
+            models: [...openAi().models, { id: "gpt-listen", kind: "recognition" }, { id: "gpt-tts", kind: "speech" }],
+        });
+        const voice = on(live, { lentKeys: [withOwn] });
+        expect(speaksOnTalkingModel(voice, live)).toBe(true);
+        const key = { kind: "key" as const, key: voice.lentKeys[0] };
+        const split = optionOf(voice, { kind: "universe-ai" }, key);
+        const one = optionOf(voice, key, key);
+        if (!split || !one) throw new Error("both options should be offered");
+        const list = readVoiceChoices([
+            { voiceId: "marin", name: "Marin", providerId: "key-oa", model: "gpt-realtime-2.1", talk: true },
+            { voiceId: "alloy", name: "Alloy", providerId: "key-oa", model: "gpt-tts", talk: false },
+        ]);
+        if (!list) throw new Error("the list should be readable");
+        expect(voicesForOption(split, list).map((choice) => choice.voiceId)).toEqual(["alloy"]);
+        expect(voicesForOption(one, list).map((choice) => choice.voiceId)).toEqual(["marin", "alloy"]);
+        // Listening on Universe AI and speaking on the key's own model is left as it is
+        const next = full({
+            ...live,
+            recognition: uai.recognition,
+            speech: { ...live.speech, model: "gpt-tts", voiceId: "alloy" },
+        });
+        expect(speaksOnTalkingModel(voice, next)).toBe(false);
+        expect(settleTalk(voice, next).recognition).toEqual(uai.recognition);
     });
 
     it("starts a key with only talking models on its first one, for either part", () => {

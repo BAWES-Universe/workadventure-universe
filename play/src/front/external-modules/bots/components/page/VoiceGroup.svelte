@@ -39,6 +39,8 @@
         voiceLanguages,
         previewKind,
         settleTalk,
+        speaksLive,
+        voicesForOption,
         talkingModelsOf,
         talksLive,
         type BotVoice,
@@ -531,7 +533,9 @@
         const listensNow = choiceOfSource(sourceOf(data, profile, "recognition"));
         const speaksNow = choiceOfSource(sourceOf(data, profile, "speech"));
         const newListening = !listensNow || !sameChoice(listensNow, option.recognition);
-        const newSpeaking = !speaksNow || !sameChoice(speaksNow, option.speech);
+        // Splitting the jobs takes speaking off a talking model too: it always listens as well, so it can't be half of a split
+        const leavesLive = !coversBoth(option) && speaksLive(data, profile);
+        const newSpeaking = !speaksNow || !sameChoice(speaksNow, option.speech) || leavesLive;
         if (!newListening && !newSpeaking) return;
         await run(async () => {
             const next: FullVoiceProfile = { ...current };
@@ -542,7 +546,7 @@
             }
             if (newSpeaking) {
                 const speech = providerOf(data, "speech", option.speech);
-                const list = await voicesFor(option.speech);
+                const list = voicesForOption(option, await voicesFor(option.speech));
                 const picked = startingVoice(data, option.speech, list, current.speech.voiceId);
                 if (!speech || !picked) throw new Error(v.voicesFailed());
                 const entry = list.find((candidate) => candidate.voiceId === picked.voiceId);

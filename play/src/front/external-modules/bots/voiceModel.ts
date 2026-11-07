@@ -437,6 +437,15 @@ export interface PayerOption {
 }
 
 /**
+ * A key that does a job only through a talking model (#1910): it listens with the voice it speaks in, so it runs both jobs on its
+ * own and is never half of a split.
+ */
+const talkOnly = (choice: PayerChoice, part: VoicePart): boolean =>
+    choice.kind === "key" &&
+    !choice.key.models.some((model) => model.kind === part) &&
+    choice.key.models.some((model) => model.kind === "talk");
+
+/**
  * Every way to cover both jobs (#1911): each place that can listen paired with each place that can speak. One place for both
  * (Universe AI, or one key whose company listens and speaks) is one option; so is a split (one company listens, another speaks).
  * The ones that cover both jobs with one place come first, Universe AI before the keys, the keys by company name, then the splits
@@ -444,11 +453,6 @@ export interface PayerOption {
  */
 export function payerOptions(voice: BotVoice): PayerOption[] {
     const options: PayerOption[] = [];
-    // A key that only talks live (#1910) listens with the voice it speaks in: it runs both jobs on its own, never half of a split
-    const talkOnly = (choice: PayerChoice, part: VoicePart): boolean =>
-        choice.kind === "key" &&
-        !choice.key.models.some((model) => model.kind === part) &&
-        choice.key.models.some((model) => model.kind === "talk");
     const listening = splitChoices(voice, "recognition");
     for (const key of voice.lentKeys) {
         const own: PayerChoice = { kind: "key", key };
@@ -500,6 +504,25 @@ export function splitChoices(voice: BotVoice, part: VoicePart): PayerChoice[] {
         .sort((a, b) => name(a.choice).localeCompare(name(b.choice)) || a.index - b.index)
         .map((entry) => entry.choice);
 }
+
+/**
+ * The places the split lists offer for a job: those of splitChoices that can be half of a split. A key that only talks live is
+ * left out, since it can't listen or speak without doing the other job too; it is offered among the places that do both.
+ */
+export function splitPlaces(voice: BotVoice, part: VoicePart): PayerChoice[] {
+    return splitChoices(voice, part).filter((choice) => !talkOnly(choice, part));
+}
+
+/** Whether a profile's speaking part names a talking model on a lent key (#1910). */
+export const speaksLive = (voice: BotVoice, profile: VoiceProfile): boolean =>
+    talkingModel(voice, profile) !== undefined;
+
+/**
+ * The voices a speaking place starts on for an option. A split speaks without a talking model, since a talking model always listens
+ * too: its voices are left out, so the place speaks on its own speaking model.
+ */
+export const voicesForOption = (option: PayerOption, list: VoiceChoice[]): VoiceChoice[] =>
+    coversBoth(option) ? list : list.filter((choice) => !choice.talk);
 
 /**
  * The provider and model a part runs on for a choice. Universe AI's part always starts on the model Universe AI uses now (Orbit

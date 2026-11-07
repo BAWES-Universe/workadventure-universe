@@ -10,7 +10,7 @@
         payerOptions,
         sameChoice,
         sourceKey,
-        splitChoices,
+        splitPlaces,
         type BotVoice,
         type PayerChoice,
         type PayerOption,
@@ -46,7 +46,7 @@
         const kept = current[other];
         const next =
             (kept ? pair(kept) : undefined) ??
-            splitChoices(voice, other)
+            splitPlaces(voice, other)
                 .map(pair)
                 .find((option) => option !== undefined);
         if (next) onPick(next);
@@ -121,7 +121,7 @@
             aria-labelledby="voice-{part}-{place}"
             data-testid="bot-voice-split-{part}"
         >
-            {#each splitChoices(voice, part) as choice (sourceKey(choice))}
+            {#each splitPlaces(voice, part) as choice (sourceKey(choice))}
                 {@const now = current[part]}
                 {@const picked = now !== null && sameChoice(now, choice)}
                 <button
