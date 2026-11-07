@@ -52,16 +52,19 @@
         if (next) onPick(next);
     }
 
-    // Reactive, so the cards follow listens and speaks when they change
-    $: isCurrent = (option: PayerOption) =>
-        !!listens && !!speaks && sameChoice(listens, option.recognition) && sameChoice(speaks, option.speech);
+    // Takes listens and speaks as arguments so the template redraws the cards when they change
+    const isCurrent = (option: PayerOption, now: { recognition: PayerChoice | null; speech: PayerChoice | null }) =>
+        !!now.recognition &&
+        !!now.speech &&
+        sameChoice(now.recognition, option.recognition) &&
+        sameChoice(now.speech, option.speech);
 </script>
 
 {#if both.length > 0}
     <div class="bp-cap" id="voice-both-{place}">{v.bothCaption()}</div>
     <div class="bp-cards" role="radiogroup" aria-labelledby="voice-both-{place}" data-testid="bot-voice-both">
         {#each both as option (option.id)}
-            {@const picked = isCurrent(option)}
+            {@const picked = isCurrent(option, current)}
             <button
                 type="button"
                 role="radio"
