@@ -3,6 +3,7 @@ import { DEFAULT_CARTESIA_VERSION } from './cartesia.ts';
 import type { IceConfig } from './lane.ts';
 import { DEFAULT_BARGE_IN_MS } from './recognition.ts';
 import { DEFAULT_SONIOX_FINAL_TIMEOUT_MS } from './soniox.ts';
+import { DEFAULT_MAX_PREVIEWS, DEFAULT_MAX_PREVIEW_SECONDS } from './preview.ts';
 import { DEFAULT_MAX_REPLY_SECONDS, DEFAULT_MAX_UTTERANCE_SECONDS, DEFAULT_SPEECH_TIMEOUT_SECONDS, type WorkerOptions } from './server.ts';
 
 const int = (value: string | undefined, fallback: number): number => {
@@ -35,6 +36,8 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv = process.env): WorkerOpti
         speechTimeoutSeconds: int(env.VOICE_SPEECH_TIMEOUT_SECONDS, DEFAULT_SPEECH_TIMEOUT_SECONDS),
         bargeInMs: int(env.VOICE_BARGE_IN_MS, DEFAULT_BARGE_IN_MS),
         cartesiaVersion: env.VOICE_CARTESIA_VERSION?.trim() || DEFAULT_CARTESIA_VERSION,
+        maxPreviewSeconds: int(env.VOICE_MAX_PREVIEW_SECONDS, DEFAULT_MAX_PREVIEW_SECONDS),
+        maxPreviews: int(env.VOICE_MAX_PREVIEWS, DEFAULT_MAX_PREVIEWS),
         recognitionFinalTimeoutSeconds: int(env.VOICE_RECOGNITION_FINAL_TIMEOUT_SECONDS, DEFAULT_SONIOX_FINAL_TIMEOUT_MS / 1000),
     };
 }

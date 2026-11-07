@@ -54,6 +54,7 @@
     import PageField from "./PageField.svelte";
     import VoicePicker from "./VoicePicker.svelte";
     import VoiceRows from "./VoiceRows.svelte";
+    import VoiceHello from "./VoiceHello.svelte";
     import {
         IconAlertTriangle,
         IconCheck,
@@ -226,6 +227,18 @@
         return viewerIsMaker ? v.keyMineShort({ company }) : v.keyTheirsShort({ owner: maker, company });
     }
     $: whoKey = viewerIsMaker ? v.yourKey() : v.theirKey({ maker });
+
+    /** The name of a way to pay with keys: both keys when one listens and another speaks, else the one key. */
+    function payerTitle(option: PayerOption, middle: boolean): string {
+        if (option.recognition.kind === "key" && option.speech.kind === "key") {
+            return v.payerKeysTitle({
+                speaks: keyPhrase(option.speech.key, middle),
+                listens: keyPhrase(option.recognition.key, middle),
+            });
+        }
+        if (!option.key) return "";
+        return middle ? v.paidByKey({ key: keyPhrase(option.key, true) }) : keyPhrase(option.key);
+    }
 
     function payerBrief(data: BotVoice, current: VoiceProfile): string {
         switch (payerKind(data, current)) {
@@ -784,10 +797,23 @@
                             <span class="bp-cn">{v.notAllowedLine({ bot: botName })}</span>
                         {:else}
                             <span class="bp-ut">{v.noServiceTitle()}</span>
-                            <span class="bp-cn">{v.noServiceLine({ bot: botName })}</span>
+                            <span class="bp-cn"
+                                >{viewerIsMaker && canOpenOrbit()
+                                    ? v.noServiceLineMaker({ bot: botName })
+                                    : v.noServiceLine({ bot: botName })}</span
+                            >
                         {/if}
                     </div>
                 </div>
+                {#if view.kind === "no-service" && viewerIsMaker && canOpenOrbit()}
+                    <div class="bp-line">
+                        <span />
+                        <PageButton tall testId="bot-voice-add-keys" on:click={openAiKeys}>
+                            {v.addVoiceKeys()}
+                            <IconExternalLink font-size="14" />
+                        </PageButton>
+                    </div>
+                {/if}
                 {#if view.kind === "not-allowed" && canOpenOrbit()}
                     <div class="bp-line">
                         <span />
@@ -831,7 +857,7 @@
                             <span class="bp-mtx">
                                 <span class="vg-t"
                                     >{doorOption.kind === "key" && doorOption.key
-                                        ? v.paidByKey({ key: keyPhrase(doorOption.key, true) })
+                                        ? payerTitle(doorOption, true)
                                         : v.paidByUniverseAi()}</span
                                 >
                                 <span class="bp-cn">
@@ -873,7 +899,7 @@
                                             <span class="bp-ct"
                                                 >{option.kind === "universe-ai" || !option.key
                                                     ? v.askUniverseAi()
-                                                    : keyPhrase(option.key)}</span
+                                                    : payerTitle(option, false)}</span
                                             >
                                             <span class="bp-cn">
                                                 {#if option.kind === "universe-ai" && voice}
@@ -1059,6 +1085,17 @@
                         >
                     </div>
                     {#if sampleError}<p class="bp-m" role="alert">{v.sampleFailed()}</p>{/if}
+
+                    {#if !pause}
+                        {#key bot.id}
+                            <VoiceHello
+                                botId={bot.id}
+                                paidByKey={speakingKey ? keyPhrase(speakingKey, true) : null}
+                                locale={$locale}
+                                on:refresh={() => void load(bot.id, true)}
+                            />
+                        {/key}
+                    {/if}
 
                     <PageField title={v.howItSpeaks()} hint={v.styleHint[expression]()}>
                         <PageSegment
