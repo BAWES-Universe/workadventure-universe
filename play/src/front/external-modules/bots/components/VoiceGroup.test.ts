@@ -708,6 +708,9 @@ describe("the bot page's Voice group (#1668)", () => {
         await click("bot-voice-split");
         await click("bot-voice-speech-key-el");
         expect(text()).toContain("Your Deepgram key listens. Your ElevenLabs key speaks.");
+        // The card for one key doing both is no longer picked once the jobs are split
+        expect(byTestId("bot-voice-both-key-dg")[0].getAttribute("aria-checked")).toBe("false");
+        expect(byTestId("bot-voice-speech-key-el")[0].getAttribute("aria-checked")).toBe("true");
         await click("bot-voice-go");
         expect(mocks.api.saveBotVoice.mock.calls[0][1]).toMatchObject({
             recognition: { providerId: "key-dg", model: "nova-3" },

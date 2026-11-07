@@ -42,17 +42,18 @@
         const other = part === "speech" ? "recognition" : "speech";
         const pair = (place: PayerChoice) =>
             part === "speech" ? optionOf(voice, place, choice) : optionOf(voice, choice, place);
-        // The other job stays where it is; when its key went away, it takes the first place that can do it
+        // The other job stays where it is; when its place can't do it here any more, it takes the first place that can
         const kept = current[other];
-        const next = kept
-            ? pair(kept)
-            : splitChoices(voice, other)
-                  .map(pair)
-                  .find((option) => option !== undefined);
+        const next =
+            (kept ? pair(kept) : undefined) ??
+            splitChoices(voice, other)
+                .map(pair)
+                .find((option) => option !== undefined);
         if (next) onPick(next);
     }
 
-    const isCurrent = (option: PayerOption) =>
+    // Reactive, so the cards follow listens and speaks when they change
+    $: isCurrent = (option: PayerOption) =>
         !!listens && !!speaks && sameChoice(listens, option.recognition) && sameChoice(speaks, option.speech);
 </script>
 
