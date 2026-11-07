@@ -400,7 +400,10 @@ export function choicesFor(voice: BotVoice, part: VoicePart): PayerChoice[] {
     const choices: PayerChoice[] = [];
     if (voice.universeAi[part]) choices.push({ kind: "universe-ai" });
     for (const key of voice.lentKeys) {
-        const does = part === "speech" ? (model: VoiceModel) => modelDoes(model, part) : (model: VoiceModel) => model.kind === part;
+        const does =
+            part === "speech"
+                ? (model: VoiceModel) => modelDoes(model, part)
+                : (model: VoiceModel) => model.kind === part;
         if (key[part] && key.models.some(does)) choices.push({ kind: "key", key });
     }
     return choices;
@@ -408,7 +411,9 @@ export function choicesFor(voice: BotVoice, part: VoicePart): PayerChoice[] {
 
 /** No voice company is set up for a job (nothing to run it on): voice can't be turned on. A talking model covers both. */
 export function noService(voice: BotVoice): boolean {
-    const talks = voice.lentKeys.some((key) => key.recognition && key.speech && key.models.some((model) => model.kind === "talk"));
+    const talks = voice.lentKeys.some(
+        (key) => key.recognition && key.speech && key.models.some((model) => model.kind === "talk")
+    );
     return choicesFor(voice, "speech").length === 0 || (choicesFor(voice, "recognition").length === 0 && !talks);
 }
 
