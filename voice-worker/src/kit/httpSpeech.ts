@@ -39,6 +39,8 @@ export interface FramedAudio {
     kind: 'lines';
     sampleRate: number;
     encoding: 'base64' | 'hex';
+    /** The samples inside: s16 (the default) or 32-bit floats from -1 to 1 (Mistral), both little-endian. */
+    samples?: 's16' | 'f32';
     /** The first audio may be a WAV file: its header is skipped. */
     mayStartWithWav?: boolean;
     read(message: unknown): AudioFrame | undefined;
@@ -51,6 +53,28 @@ export interface HttpSpeechSpec {
     call(request: SpeechRequest, base: string): HttpCall;
     audio: RawAudio | FramedAudio;
     outOfCredit?: CreditCheck;
+}
+
+/** Turns little-endian 32-bit float samples into s16 bytes, keeping a sample split across two pieces for the next one. */
+export class Float32ToS16 {
+    private carry = new Uint8Array(0);
+
+    take(bytes: Uint8Array): Uint8Array {
+        const all = new Uint8Array(this.carry.length + bytes.length);
+        all.set(this.carry);
+        all.set(bytes, this.carry.length);
+        const whole = all.length - (all.length % 4);
+        this.carry = all.slice(whole);
+        const view = new DataView(all.buffer, all.byteOffset, whole);
+        const out = new Uint8Array((whole / 4) * 2);
+        const outView = new DataView(out.buffer);
+        for (let i = 0; i < whole / 4; i += 1) {
+            const value = view.getFloat32(i * 4, true);
+            const clamped = Number.isFinite(value) ? Math.max(-1, Math.min(1, value)) : 0;
+            outView.setInt16(i * 2, Math.round(clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff), true);
+        }
+        return out;
+    }
 }
 
 /** A speaking connector made from a spec. */
@@ -94,6 +118,7 @@ async function* speakOverHttp(spec: HttpSpeechSpec, request: SpeechRequest): Asy
             }
         } else {
             const framed = spec.audio;
+            const floats = framed.samples === 'f32' ? new Float32ToS16() : undefined;
             let text = '';
             const decoder = new TextDecoder();
             let finished = false;
@@ -110,7 +135,8 @@ async function* speakOverHttp(spec: HttpSpeechSpec, request: SpeechRequest): Asy
                 if (!frame) return;
                 if (frame.error) throw failure(spec.adapter, 'reported an error in the reply', frame.error.status);
                 if (frame.audio) {
-                    const samples = out(reader.take(decodeAudioText(frame.audio, framed.encoding)));
+                    const bytes = decodeAudioText(frame.audio, framed.encoding);
+                    const samples = out(reader.take(floats ? floats.take(bytes) : bytes));
                     if (samples) yield samples;
                 }
                 if (frame.done) finished = true;

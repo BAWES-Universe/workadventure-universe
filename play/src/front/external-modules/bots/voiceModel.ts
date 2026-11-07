@@ -555,6 +555,7 @@ export function companyName(adapter: string): string {
         groq: "Groq",
         hume: "Hume",
         meta: "Meta",
+        mistral: "Mistral",
         elevenlabs: "ElevenLabs",
         cartesia: "Cartesia",
         fish: "Fish Audio",

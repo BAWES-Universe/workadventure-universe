@@ -32,6 +32,8 @@ export interface SocketHearingSpec {
     start?(settings: RecognitionSettings): (string | Uint8Array)[];
     /** The company answers the setup before it takes audio (Meta): audio is held until an answer says `ready`. */
     readyFirst?: boolean;
+    /** Messages sent once the company says `ready`, before any audio (Mistral: the session's settings). */
+    whenReady?(settings: RecognitionSettings): (string | Uint8Array)[];
     /** One piece of 16 kHz mono s16 audio as the company takes it. Default: the raw bytes, as a binary message. */
     frame?(pcm16k: Int16Array): string | Uint8Array;
     /** Messages that end the audio, after which the company sends the last words. */
@@ -180,6 +182,7 @@ class SocketStream implements Recognizer {
         if (this.accepting || this.done) return;
         this.accepting = true;
         try {
+            if (this.spec.readyFirst) for (const message of this.spec.whenReady?.(this.settings) ?? []) this.ws?.send(message);
             for (const message of this.pending) this.ws?.send(message);
             this.pending = [];
             this.pendingMs = 0;
