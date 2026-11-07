@@ -784,10 +784,23 @@
                             <span class="bp-cn">{v.notAllowedLine({ bot: botName })}</span>
                         {:else}
                             <span class="bp-ut">{v.noServiceTitle()}</span>
-                            <span class="bp-cn">{v.noServiceLine({ bot: botName })}</span>
+                            <span class="bp-cn"
+                                >{viewerIsMaker && canOpenOrbit()
+                                    ? v.noServiceLineMaker({ bot: botName })
+                                    : v.noServiceLine({ bot: botName })}</span
+                            >
                         {/if}
                     </div>
                 </div>
+                {#if view.kind === "no-service" && viewerIsMaker && canOpenOrbit()}
+                    <div class="bp-line">
+                        <span />
+                        <PageButton tall testId="bot-voice-add-keys" on:click={openAiKeys}>
+                            {v.addVoiceKeys()}
+                            <IconExternalLink font-size="14" />
+                        </PageButton>
+                    </div>
+                {/if}
                 {#if view.kind === "not-allowed" && canOpenOrbit()}
                     <div class="bp-line">
                         <span />

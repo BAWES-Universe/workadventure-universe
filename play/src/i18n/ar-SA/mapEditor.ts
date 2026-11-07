@@ -476,8 +476,11 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
                     notAllowedLine:
                         "يستطيع المشرف تشغيل «السماح بالبوتات الصوتية» من إعدادات الكون. يبقى {bot} يتحدث بالنص.",
                     universeSettings: "إعدادات الكون",
-                    noServiceTitle: "الصوت غير متاح على هذا الخادم بعد",
+                    noServiceTitle: "لم يُجهَّز أي صوت هنا بعد",
                     noServiceLine: "يبقى {bot} يتحدث بالنص. يتحول هذا الصف إلى قائمة أصوات تلقائيًا عندما يتوفر الصوت.",
+                    noServiceLineMaker:
+                        "ليس لدى Universe AI صوت هنا بعد. أضف مفاتيح صوت خاصة بك من مفاتيح الذكاء الاصطناعي، مفتاحًا للاستماع وآخر للتحدث، وأعِرها لهذا الكون. يبقى {bot} يتحدث بالنص حتى ذلك الحين.",
+                    addVoiceKeys: "أضف مفاتيح الصوت",
                     askUniverseAi: "ذكاء Universe",
                     askUniverseAiLine: "كل شخص يستخدم ردوده الصوتية الخاصة: حتى {replies} كل {hours} ساعات.",
                     askKeyLine: "أنت تدفع؛ ومن يتحدث مع {bot} لا يدفع شيئًا.",
