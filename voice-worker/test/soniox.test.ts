@@ -166,6 +166,43 @@ describe('hearing with Soniox', () => {
         stream.close();
     });
 
+    it('tells Soniox the names to expect as context terms, spelled as given (#1864)', async () => {
+        const soniox = await fakeSoniox();
+        const stream = new SonioxRecognition().listen(settings(soniox.url, { language: 'ar-KW', terms: ['Nora', 'Max'] }), heard().events);
+        await waitFor('the stream to be configured', () => soniox.configs.length === 1);
+        expect(soniox.configs[0]).toMatchObject({ language_hints: ['ar'], context: { terms: ['Nora', 'Max'] } });
+        stream.close();
+    });
+
+    it('sends no context when there are no names, and never more names than fit', async () => {
+        const soniox = await fakeSoniox();
+        const first = new SonioxRecognition().listen(settings(soniox.url), heard().events);
+        await waitFor('the stream to be configured', () => soniox.configs.length === 1);
+        expect(soniox.configs[0]).not.toHaveProperty('context');
+        first.close();
+        const long = Array.from({ length: 16 }, (_, i) => `${i}`.padEnd(64, 'x'));
+        const second = new SonioxRecognition().listen(settings(soniox.url, { terms: long }), heard().events);
+        await waitFor('the second stream to be configured', () => soniox.configs.length === 2);
+        second.close();
+        const sent = (soniox.configs[1].context as { terms: string[] }).terms;
+        expect(sent.join('').length).toBeLessThanOrEqual(1000);
+        expect(sent).toEqual(long.slice(0, sent.length));
+    });
+
+    it('reads the names when the stretch opens, so a change applies from the next one', async () => {
+        const soniox = await fakeSoniox();
+        let names = ['Nora'];
+        const live = { ...settings(soniox.url), get terms() { return names; } };
+        const first = new SonioxRecognition().listen(live, heard().events);
+        await waitFor('the first stream to be configured', () => soniox.configs.length === 1);
+        first.close();
+        names = ['Nora', 'Max'];
+        const second = new SonioxRecognition().listen(live, heard().events);
+        await waitFor('the second stream to be configured', () => soniox.configs.length === 2);
+        second.close();
+        expect(soniox.configs.map((c) => (c.context as { terms: string[] }).terms)).toEqual([['Nora'], ['Nora', 'Max']]);
+    });
+
     it('leaves the language to Soniox when the profile follows the person', async () => {
         const soniox = await fakeSoniox();
         const stream = new SonioxRecognition().listen(settings(soniox.url), heard().events);
