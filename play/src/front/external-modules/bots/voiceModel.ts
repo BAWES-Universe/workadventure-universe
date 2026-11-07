@@ -550,6 +550,7 @@ export function companyName(adapter: string): string {
         bland: "Bland",
         camb: "CAMB.AI",
         fal: "fal",
+        gladia: "Gladia",
         elevenlabs: "ElevenLabs",
         cartesia: "Cartesia",
         fish: "Fish Audio",
