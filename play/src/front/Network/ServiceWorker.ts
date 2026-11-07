@@ -1,3 +1,5 @@
+import { appUpdateManager } from "../Update/AppUpdateManager";
+
 /** The one service worker of the game. It also shows and answers the chat notifications. */
 export const SERVICE_WORKER_URL = "/service-worker.js";
 
@@ -21,12 +23,16 @@ export class _ServiceWorker {
     }
 
     init() {
+        appUpdateManager.watchServiceWorkerController(navigator.serviceWorker);
         // One worker for every room and every build, at a stable address: a changing address (it used to carry the
         // room) made the browser install a new worker on every room change.
         navigator.serviceWorker
             .register(SERVICE_WORKER_URL)
             .then((serviceWorker) => {
                 console.info("Service Worker registered: ", serviceWorker);
+                if (serviceWorker.active) {
+                    serviceWorker.update().catch(() => undefined);
+                }
             })
             .catch((error) => {
                 console.error("Error registering the Service Worker: ", error);

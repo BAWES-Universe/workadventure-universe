@@ -42,12 +42,14 @@
     import { errorStore } from "../Stores/ErrorStore";
     import { wokaRefusedStore } from "../Stores/WokaRefusedStore";
     import { refreshPromptStore } from "../Stores/RefreshPromptStore";
+    import { startAppUpdateManager } from "../Update/AppUpdateManager";
     import ChatDoneToast from "../Chat/Components/ChatDoneToast.svelte";
     import BrowserNotSupported from "./BrowserNotSupported/BrowserNotSupported.svelte";
     import OpenHereWindow from "./EmbedScreens/OpenHereWindow.svelte";
     import OpenHereChatButton from "./EmbedScreens/OpenHereChatButton.svelte";
     import ClosedItemsToast from "./EmbedScreens/ClosedItemsToast.svelte";
     import LinkCopiedToast from "./EmbedScreens/LinkCopiedToast.svelte";
+    import AppUpdateNotice from "./Update/AppUpdateNotice.svelte";
     import GameOverlay from "./GameOverlay.svelte";
 
     let WebGLRenderer = Phaser.Renderer.WebGL.WebGLRenderer;
@@ -94,6 +96,8 @@
     );
 
     onMount(() => {
+        startAppUpdateManager();
+
         // Check browser compatibility before initializing the app
         if (!isStructuredCloneSupported()) {
             browserNotSupported = true;
@@ -315,6 +319,7 @@
 {#if browserNotSupported}
     <BrowserNotSupported />
 {:else}
+    <AppUpdateNotice />
     <ClosedItemsToast />
     <LinkCopiedToast />
     <ChatDoneToast />
