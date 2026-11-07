@@ -1,0 +1,6 @@
+# frozen_string_literal: true
+
+# Defines the canonical Google Play package identifier and default service-account
+# key path for BAWES Universe Android releases.
+package_name("net.bawes.universe")
+json_key_file("fastlane/google-play-key.json") # never commit the real key
