@@ -21,6 +21,7 @@ import { AWS_ADAPTER, AwsRecognition, AwsSpeech } from './aws.ts';
 import { AZURE_ADAPTER, AzureRecognition, AzureSpeech } from './azure.ts';
 import { GOOGLE_ADAPTER, GoogleRecognition, GoogleSpeech } from './google.ts';
 import { INWORLD_ADAPTER, InworldRecognition, InworldSpeech } from './inworld.ts';
+import { ULTRAVOX_ADAPTER, UltravoxRecognition, UltravoxSpeech } from './ultravox.ts';
 import { OPENAI_ADAPTER, OpenAiRecognition, OpenAiSpeech } from './openai.ts';
 import { XAI_ADAPTER, XaiRecognition, XaiSpeech } from './xai.ts';
 import { FISH_ADAPTER, FishSpeech } from './fish.ts';
@@ -122,6 +123,8 @@ export class VoiceWorker {
         if (!this.connectors.speech(GOOGLE_ADAPTER)) this.connectors.registerSpeech(GOOGLE_ADAPTER, new GoogleSpeech());
         if (!this.connectors.recognition(INWORLD_ADAPTER)) this.connectors.registerRecognition(INWORLD_ADAPTER, new InworldRecognition());
         if (!this.connectors.speech(INWORLD_ADAPTER)) this.connectors.registerSpeech(INWORLD_ADAPTER, new InworldSpeech());
+        if (!this.connectors.recognition(ULTRAVOX_ADAPTER)) this.connectors.registerRecognition(ULTRAVOX_ADAPTER, new UltravoxRecognition());
+        if (!this.connectors.speech(ULTRAVOX_ADAPTER)) this.connectors.registerSpeech(ULTRAVOX_ADAPTER, new UltravoxSpeech());
         if (!this.connectors.recognition(OPENAI_ADAPTER)) this.connectors.registerRecognition(OPENAI_ADAPTER, new OpenAiRecognition());
         if (!this.connectors.speech(OPENAI_ADAPTER)) this.connectors.registerSpeech(OPENAI_ADAPTER, new OpenAiSpeech());
         if (!this.connectors.recognition(XAI_ADAPTER)) this.connectors.registerRecognition(XAI_ADAPTER, new XaiRecognition());

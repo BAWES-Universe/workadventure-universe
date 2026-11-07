@@ -6,7 +6,7 @@ import { ProviderError, type RecognitionConnector, type RecognitionSettings } fr
 import type { Recognizer, RecognizerEvents } from '../recognizer.ts';
 import { answerStatus, failure, type CreditCheck } from './errors.ts';
 import { pcmBytes } from './pcm.ts';
-import type { SocketAddress } from './socketSpeech.ts';
+import { letGo, type SocketAddress } from './socketSpeech.ts';
 
 /** What one answer from the company holds. */
 export interface HearingMessage {
@@ -53,6 +53,8 @@ export interface SocketHearingSpec {
     settleMs?: number;
     /** How long the last words may take after finish(). Default 10 s. */
     finalTimeoutMs?: number;
+    /** Messages sent before the socket is let go, while it is still open (Ultravox: hang up the call). */
+    goodbye?(): (string | Uint8Array)[];
     outOfCredit?: CreditCheck;
 }
 
@@ -259,6 +261,6 @@ class SocketStream implements Recognizer {
         if (!ws) return;
         ws.removeAllListeners();
         ws.on('error', () => undefined);
-        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.terminate();
+        letGo(ws, this.spec.goodbye);
     }
 }
