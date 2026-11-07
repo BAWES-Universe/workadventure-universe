@@ -551,6 +551,7 @@ export function companyName(adapter: string): string {
         camb: "CAMB.AI",
         fal: "fal",
         gladia: "Gladia",
+        google: "Google",
         gradium: "Gradium",
         groq: "Groq",
         hume: "Hume",

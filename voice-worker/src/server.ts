@@ -39,6 +39,7 @@ import { NVIDIA_ADAPTER, NvidiaRecognition, NvidiaSpeech } from './nvidia.ts';
 import { MINIMAX_ADAPTER, MiniMaxSpeech } from './minimax.ts';
 import { XAI_HEARING_MODELS, XAI_SPEECH_MODELS, XAI_VOICE_ADAPTER, XaiTranscription, XaiTts } from './xaiVoice.ts';
 import { recognitionByModel, speechByModel } from './kit/byModel.ts';
+import { GEMINI_SPEECH_ADAPTER, GEMINI_SPEECH_MODELS, GeminiSpeech } from './geminiSpeech.ts';
 import { ELEVENLABS_ADAPTER, ElevenLabsSpeech } from './elevenlabs.ts';
 import { CARTESIA_ADAPTER, CartesiaRecognition, CartesiaSpeech } from './cartesia.ts';
 import { FISH_ADAPTER, FishSpeech } from './fish.ts';
@@ -208,6 +209,8 @@ export class VoiceWorker {
             this.connectors.registerRecognition(XAI_VOICE_ADAPTER, recognitionByModel(XAI_HEARING_MODELS, hearing, this.connectors.recognition(XAI_VOICE_ADAPTER)));
             this.connectors.registerSpeech(XAI_VOICE_ADAPTER, speechByModel(XAI_SPEECH_MODELS, new XaiTts(), this.connectors.speech(XAI_VOICE_ADAPTER)));
         }
+        // Google also talks live under the same name (#1910): Gemini text to speech takes only its models
+        this.connectors.registerSpeech(GEMINI_SPEECH_ADAPTER, speechByModel(GEMINI_SPEECH_MODELS, new GeminiSpeech(), this.connectors.speech(GEMINI_SPEECH_ADAPTER)));
         if (!this.connectors.recognition(SONIOX_ADAPTER)) {
             const finalTimeoutMs = (options.recognitionFinalTimeoutSeconds ?? DEFAULT_SONIOX_FINAL_TIMEOUT_MS / 1000) * 1000;
             this.connectors.registerRecognition(SONIOX_ADAPTER, new SonioxRecognition({ finalTimeoutMs }));
