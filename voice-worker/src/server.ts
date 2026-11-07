@@ -18,8 +18,10 @@ import { type OutgoingMessage, Session } from './session.ts';
 import type { InputSink } from './transport.ts';
 import { ELEVENLABS_ADAPTER, ElevenLabsSpeech } from './elevenlabs.ts';
 import { CARTESIA_ADAPTER, CartesiaSpeech } from './cartesia.ts';
+import { FISH_ADAPTER, FishSpeech } from './fish.ts';
 import { DEFAULT_SONIOX_FINAL_TIMEOUT_MS, SONIOX_ADAPTER, SonioxRecognition } from './soniox.ts';
 import { checkMessage } from './validate.ts';
+import { DEFAULT_MAX_PREVIEWS, DEFAULT_MAX_PREVIEW_SECONDS, type PreviewFailure, Previewer, readPreviewRequest } from './preview.ts';
 
 export interface WorkerOptions {
     port: number;
@@ -48,6 +50,10 @@ export interface WorkerOptions {
     cartesiaVersion?: string;
     /** How long a hearing provider may take for the last words after a person paused, in seconds, before it counts as failed. Default 10. */
     recognitionFinalTimeoutSeconds?: number;
+    /** The longest one line spoken outside a bubble (the bot page's "Hear it say hello") plays, in seconds. Default 20. */
+    maxPreviewSeconds?: number;
+    /** How many of those lines are made at once; more are told to come back. Default 8. */
+    maxPreviews?: number;
     engineId?: string;
 }
 
@@ -66,6 +72,8 @@ export const DEFAULT_MAX_REPLY_SECONDS = 60;
 /** How long a speech provider may go without sending the next piece of a reply's audio. */
 export const DEFAULT_SPEECH_TIMEOUT_SECONDS = 15;
 const MAX_MESSAGE_BYTES = 128 * 1024;
+/** The most a /preview request may carry: the settings, a key and a short line. */
+const MAX_PREVIEW_BODY_BYTES = 16 * 1024;
 const PING_INTERVAL_MS = 10000;
 /** CPU is sampled this often, and /stats gives its average over the last CPU_WINDOW_SAMPLES samples (one minute). */
 const CPU_SAMPLE_MS = 5000;
@@ -92,6 +100,7 @@ export class VoiceWorker {
     private readonly connections = new Set<BridgeConnection>();
     readonly engineId: string;
     private pingTimer?: NodeJS.Timeout;
+    private readonly previewer: Previewer;
 
     constructor(readonly options: WorkerOptions) {
         this.engineId = options.engineId ?? `voice-worker-${process.pid}`;
@@ -99,6 +108,7 @@ export class VoiceWorker {
         this.connectors = options.connectors ?? new ConnectorRegistry();
         if (!this.connectors.speech(FAKE_ADAPTER)) this.connectors.registerSpeech(FAKE_ADAPTER, this.speech);
         if (!this.connectors.speech(CARTESIA_ADAPTER)) this.connectors.registerSpeech(CARTESIA_ADAPTER, new CartesiaSpeech({ version: options.cartesiaVersion }));
+        if (!this.connectors.speech(FISH_ADAPTER)) this.connectors.registerSpeech(FISH_ADAPTER, new FishSpeech());
         if (!this.connectors.recognition(SONIOX_ADAPTER)) {
             const finalTimeoutMs = (options.recognitionFinalTimeoutSeconds ?? DEFAULT_SONIOX_FINAL_TIMEOUT_MS / 1000) * 1000;
             this.connectors.registerRecognition(SONIOX_ADAPTER, new SonioxRecognition({ finalTimeoutMs }));
@@ -108,6 +118,13 @@ export class VoiceWorker {
             const finalTimeoutMs = (options.recognitionFinalTimeoutSeconds ?? DEFAULT_DEEPGRAM_FINAL_TIMEOUT_MS / 1000) * 1000;
             this.connectors.registerRecognition(DEEPGRAM_ADAPTER, new DeepgramRecognition({ finalTimeoutMs }));
         }
+        this.previewer = new Previewer({
+            connectors: this.connectors,
+            speechTimeoutMs: (options.speechTimeoutSeconds ?? DEFAULT_SPEECH_TIMEOUT_SECONDS) * 1000,
+            maxPreviewMs: Math.min(options.maxPreviewSeconds ?? DEFAULT_MAX_PREVIEW_SECONDS, options.maxReplySeconds ?? DEFAULT_MAX_REPLY_SECONDS) * 1000,
+            maxPreviews: options.maxPreviews ?? DEFAULT_MAX_PREVIEWS,
+            inc: (counter, by) => this.counters.inc(counter, by),
+        });
         this.server.on('upgrade', (req, socket, head) => this.onUpgrade(req, socket, head));
     }
 
@@ -234,7 +251,75 @@ export class VoiceWorker {
         const path = url.pathname;
         if (path === '/health') return json(200, { ok: true });
         if (path === '/stats') return this.authorized(req) ? json(200, this.stats()) : json(401, { error: 'unauthorized' });
+        if (path === '/preview') {
+            if (req.method !== 'POST') return json(405, { error: 'method not allowed' });
+            if (!this.authorized(req)) {
+                this.counters.inc('preview_unauthorized');
+                return json(401, { error: 'unauthorized' });
+            }
+            void this.onPreview(req, res, json);
+            return;
+        }
         json(404, { error: 'not found' });
+    }
+
+    /**
+     * One line spoken outside a bubble (see preview.ts): the audio comes back as a WAV file, or a short JSON answer that says why not.
+     * The answer never carries the key or the provider's own words.
+     */
+    private async onPreview(req: http.IncomingMessage, res: http.ServerResponse, json: (code: number, body: unknown) => void): Promise<void> {
+        // Bytes first, text once the whole body is in: a character can be split across two pieces
+        const pieces: Buffer[] = [];
+        let received = 0;
+        let tooBig = false;
+        try {
+            for await (const piece of req) {
+                const bytes = Buffer.isBuffer(piece) ? piece : Buffer.from(piece as string);
+                received += bytes.length;
+                if (received > MAX_PREVIEW_BODY_BYTES) {
+                    tooBig = true;
+                    break;
+                }
+                pieces.push(bytes);
+            }
+        } catch {
+            return json(400, { error: 'bad_request', message: 'the request could not be read' });
+        }
+        if (tooBig) return json(413, { error: 'bad_request', message: 'the request is too big' });
+        let body: unknown;
+        try {
+            body = JSON.parse(Buffer.concat(pieces).toString('utf8'));
+        } catch {
+            return json(400, { error: 'bad_request', message: 'the request is not JSON' });
+        }
+        const request = readPreviewRequest(body);
+        if (typeof request === 'string') return json(400, { error: 'bad_request', message: request });
+        // The asker going away closes the provider call
+        const gone = new AbortController();
+        res.once('close', () => {
+            if (!res.writableEnded) gone.abort();
+        });
+        try {
+            const { wav, ms } = await this.previewer.render(request, gone.signal);
+            if (res.writableEnded || res.destroyed) return;
+            res.writeHead(200, { 'content-type': 'audio/wav', 'content-length': wav.length, 'x-audio-ms': String(ms) });
+            res.end(wav);
+        } catch (error) {
+            if (res.writableEnded || res.destroyed) return;
+            const failure = error as PreviewFailure | undefined;
+            switch (failure?.kind) {
+                case 'no_adapter':
+                    return json(400, { error: 'no_adapter' });
+                case 'busy':
+                    return json(429, { error: 'busy' });
+                case 'provider':
+                    return json(502, { error: 'provider', ...(failure.status !== undefined ? { status: failure.status } : {}), rejected: failure.rejected });
+                default:
+                    this.counters.inc('preview_errors');
+                    console.error('[voice-worker] preview failed', error);
+                    return json(500, { error: 'internal' });
+            }
+        }
     }
 
     private onUpgrade(req: http.IncomingMessage, socket: Duplex, head: Buffer): void {

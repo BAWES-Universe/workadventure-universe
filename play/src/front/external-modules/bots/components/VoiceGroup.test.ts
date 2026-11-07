@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
         rollbackBotVoice: vi.fn(),
         checkVoiceKey: vi.fn(),
         getMyVoiceKeys: vi.fn(),
+        sayBotHello: vi.fn(),
     },
     canOpenOrbit: vi.fn(() => true),
     openOrbitPage: vi.fn(),
@@ -442,6 +443,9 @@ describe("the bot page's Voice group (#1668)", () => {
         await click("bot-voice-change");
         expect(text()).toContain("Voices for Tinyfish on Universe AI");
         expect(text()).toContain("More voices with your own voice key");
+        // Which companies a key can come from is the server's choice, so the line names none
+        expect(text()).toContain("Add a voice key from any company this server offers in AI keys, and lend it here.");
+        expect(text()).not.toMatch(/ElevenLabs, Deepgram|Deepgram or Cartesia/);
         expect((byTestId("bot-voice-use")[0] as HTMLButtonElement).disabled).toBe(true);
         await click("bot-voice-option", 1);
         expect(mocks.api.saveBotVoice).not.toHaveBeenCalled();
@@ -453,6 +457,75 @@ describe("the bot page's Voice group (#1668)", () => {
         });
         expect(text()).toContain("Fahad · Natural");
         expect(byTestId("bot-voice-picker-title")).toHaveLength(0);
+    });
+
+    describe("Hear this voice say hello (#1852)", () => {
+        const hello = () => byTestId("bot-voice-hello")[0] as HTMLButtonElement | undefined;
+
+        it("is a row under the voice card while voice is on, and says it costs one of the person's voice replies on Universe AI", async () => {
+            mocks.api.getBotVoice.mockResolvedValue(turnedOn());
+            await mount();
+            expect(hello()?.textContent).toContain("Hear this voice say hello");
+            expect(hello()?.textContent).toContain("Uses 1 of your voice replies; hearing it again soon is free.");
+            // Under the voice card, above How it speaks
+            const card = byTestId("bot-voice-card")[0];
+            const row = hello()!;
+            expect(card.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+            expect(text().indexOf("Hear this voice say hello")).toBeLessThan(text().indexOf("How it speaks"));
+        });
+
+        it("names the lent key that pays instead", async () => {
+            mocks.api.getBotVoice.mockResolvedValue(
+                turnedOn(
+                    { ...uaiProfile, speech: { ...uaiProfile.speech, providerId: "key-el" } },
+                    { lentKeys: [key()] }
+                )
+            );
+            await mount();
+            expect(hello()?.textContent).toContain("Uses a few characters of your ElevenLabs key;");
+            expect(hello()?.textContent).not.toContain("voice replies");
+        });
+
+        it("is not on the page while voice is off, or while the key is down", async () => {
+            mocks.api.getBotVoice.mockResolvedValue(answer());
+            await mount();
+            expect(hello()).toBeUndefined();
+            destroy();
+            document.body.innerHTML = "";
+            target = document.createElement("div");
+            document.body.append(target);
+            const down = key({ health: { status: "down", downSince: "2026-11-03T06:12:00Z", downReason: "credit" } });
+            mocks.api.getBotVoice.mockResolvedValue(
+                turnedOn(
+                    { ...uaiProfile, speech: { ...uaiProfile.speech, providerId: "key-el" } },
+                    { lentKeys: [down] }
+                )
+            );
+            await mount();
+            expect(text()).toContain("Paused · your key is out of credit");
+            expect(hello()).toBeUndefined();
+        });
+
+        it("says hello for this bot in the language of the game, and the page looks again when the voice company refused the key", async () => {
+            const refused = Object.assign(new Error("provider"), {
+                status: 502,
+                body: { error: "provider", providerStatus: 401, rejected: true },
+            });
+            mocks.api.sayBotHello.mockRejectedValue(refused);
+            mocks.api.getBotVoice.mockResolvedValue(
+                turnedOn(
+                    { ...uaiProfile, speech: { ...uaiProfile.speech, providerId: "key-el" } },
+                    { lentKeys: [key()] }
+                )
+            );
+            await mount();
+            const loads = mocks.api.getBotVoice.mock.calls.length;
+            await click("bot-voice-hello");
+            expect(mocks.api.sayBotHello).toHaveBeenCalledWith("b1", "en-US");
+            // Asked again, quietly: the page does not flash its loading state
+            expect(mocks.api.getBotVoice.mock.calls.length).toBe(loads + 1);
+            expect(text()).not.toContain("Loading");
+        });
     });
 
     it("lists the versions and rolls back to an earlier one", async () => {
