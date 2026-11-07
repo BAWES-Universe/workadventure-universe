@@ -116,12 +116,17 @@ Each bubble picks its own hearing and speaking provider. `session.open` may carr
 * `turnSeconds`: a whole number from 5 to 3600, the longest stretch of one person's speech taken in this bubble (Orbit's voice limit, #1669).
   Without it `VOICE_MAX_UTTERANCE_SECONDS` applies.
 
-`adapter` is the lowercase name Orbit stores (`soniox`, `elevenlabs`, `deepgram`, `cartesia`...). The worker has a registry of
+`adapter` is the lowercase name Orbit stores (`soniox`, `elevenlabs`, `deepgram`, `cartesia`, `openai`...). The worker has a registry of
 connectors by that name (`src/connectors.ts`); a provider is one small file implementing `RecognitionConnector` or
 `SpeechConnector` and registered under its name. A bubble that names nothing gets the built-in test engine (a generated tone
 for speech; no hearing unless the worker was given a test recognizer). The test engine is also registered as `fake`.
 The settings are read when the session is created; a repeated `session.open` for a session that exists does not change them.
 `bot.say` may carry `lang`; it goes to the speech connector (the bubble's `language` is used when it does not).
+
+A **talking model** (game #1910) listens and speaks in one, such as OpenAI's `gpt-realtime-2.1`. A bot on one names the same
+adapter and model for `recognition` and `speech` (`openai`, with the voice in `speech.voiceId`), and nothing else changes: what
+the person says still comes back as `user.turn`, the bot's own Mind still writes the answer, and `bot.say` still carries the
+words to speak. The model is only used to hear and to read the answer aloud; it is never asked to answer by itself.
 
 An adapter the worker has no connector for does not fail the session. Hearing: every stretch of speech ends as soon as it
 starts (`user.turn` `cleared`, nothing to offer back), and the failure is reported. Speaking: every reply ends in text only,

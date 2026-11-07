@@ -24,11 +24,21 @@ export interface FullVoiceProfile {
     language: VoiceLanguage;
 }
 
+/**
+ * What a model does: listening, speaking, or `talk`, a talking model that listens and speaks in one (#1910). A bot on a talking
+ * model names it for both parts, and its own Mind still writes every answer.
+ */
+export type VoiceModelKind = VoicePart | "talk";
+
 export interface VoiceModel {
     id: string;
     label?: string;
-    kind: VoicePart;
+    kind: VoiceModelKind;
 }
+
+/** Whether a model can run a part: one of that part's own, or a talking model, which does both. */
+export const modelDoes = (model: Pick<VoiceModel, "kind">, part: VoicePart): boolean =>
+    model.kind === part || model.kind === "talk";
 
 export interface KeyLimit {
     value: number;
@@ -103,6 +113,8 @@ export interface VoiceChoice {
     previewUrl: string | null;
     providerId: string;
     model: string;
+    /** The model is a talking model (#1910): picking this voice names it for listening too. */
+    talk: boolean;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -117,7 +129,7 @@ function readModels(value: unknown): VoiceModel[] {
     for (const item of value) {
         if (!isRecord(item)) continue;
         const id = text(item.id);
-        if (!id || (item.kind !== "recognition" && item.kind !== "speech")) continue;
+        if (!id || (item.kind !== "recognition" && item.kind !== "speech" && item.kind !== "talk")) continue;
         models.push({ id, label: text(item.label), kind: item.kind });
     }
     return models;
@@ -305,6 +317,7 @@ export function readVoiceChoices(data: unknown): VoiceChoice[] | null {
                 previewUrl: text(item.previewUrl) ?? null,
                 providerId: text(item.providerId) ?? "",
                 model: text(item.model) ?? "",
+                talk: item.talk === true,
             },
         ];
     });
@@ -383,7 +396,7 @@ export function choicesFor(voice: BotVoice, part: VoicePart): PayerChoice[] {
     const choices: PayerChoice[] = [];
     if (voice.universeAi[part]) choices.push({ kind: "universe-ai" });
     for (const key of voice.lentKeys) {
-        if (key[part] && key.models.some((model) => model.kind === part)) choices.push({ kind: "key", key });
+        if (key[part] && key.models.some((model) => modelDoes(model, part))) choices.push({ kind: "key", key });
     }
     return choices;
 }
@@ -413,8 +426,8 @@ export function payerOptions(voice: BotVoice): PayerOption[] {
         options.push({ id: "universe-ai", kind: "universe-ai", recognition: uai, speech: uai });
     }
     for (const key of voice.lentKeys) {
-        const listens = key.recognition && key.models.some((model) => model.kind === "recognition");
-        const speaks = key.speech && key.models.some((model) => model.kind === "speech");
+        const listens = key.recognition && key.models.some((model) => modelDoes(model, "recognition"));
+        const speaks = key.speech && key.models.some((model) => modelDoes(model, "speech"));
         if (!listens && !speaks) continue;
         const own: PayerChoice = { kind: "key", key };
         const recognition = listens ? own : voice.universeAi.recognition ? uai : null;
@@ -440,10 +453,60 @@ export function providerOf(
         if (!uai) return null;
         return { providerId: uai.providerId, model: uai.model };
     }
-    const models = choice.key.models.filter((candidate) => candidate.kind === part);
+    // The part's own models first; a key that does the part only through a talking model starts on that one (#1910)
+    const own = choice.key.models.filter((candidate) => candidate.kind === part);
+    const models = own.length > 0 ? own : choice.key.models.filter((candidate) => candidate.kind === "talk");
     if (models.length === 0) return null;
     const model = models.find((candidate) => candidate.id === keepModel) ?? models[0];
     return { providerId: choice.key.id, model: model.id };
+}
+
+/** The talking model a profile's speaking part names on a lent key, or undefined when it speaks some other way. */
+function talkingModel(voice: BotVoice, profile: VoiceProfile): VoiceModel | undefined {
+    const speech = profile.speech;
+    const key = speech?.providerId ? voice.lentKeys.find((candidate) => candidate.id === speech.providerId) : undefined;
+    return key?.models.find((model) => model.kind === "talk" && model.id === speech?.model);
+}
+
+/** Whether the bot talks live (#1910): one talking model on a lent key, named for listening and speaking. */
+export function talksLive(voice: BotVoice, profile: VoiceProfile): boolean {
+    return (
+        talkingModel(voice, profile) !== undefined &&
+        profile.recognition?.providerId === profile.speech?.providerId &&
+        profile.recognition?.model === profile.speech?.model
+    );
+}
+
+/** The talking models of the key a profile talks live on, for the Talking model row. */
+export function talkingModelsOf(voice: BotVoice, profile: VoiceProfile): Array<{ id: string; label?: string }> {
+    if (!talksLive(voice, profile)) return [];
+    const key = voice.lentKeys.find((candidate) => candidate.id === profile.speech?.providerId);
+    return (key?.models ?? [])
+        .filter((model) => model.kind === "talk")
+        .map((model) => ({ id: model.id, label: model.label }));
+}
+
+/**
+ * Keeps a talking model whole (#1910) whatever was just changed: speaking on one means listening on the same one; speaking moved
+ * off it means listening moves too, to a listening model on the same key, else Universe AI's. A talking model is never named
+ * for one part only (Orbit refuses that). Anything else is left as it is.
+ */
+export function settleTalk(voice: BotVoice, next: FullVoiceProfile): FullVoiceProfile {
+    if (talkingModel(voice, next)) {
+        const recognition = { providerId: next.speech.providerId, model: next.speech.model };
+        return next.recognition.providerId === recognition.providerId && next.recognition.model === recognition.model
+            ? next
+            : { ...next, recognition };
+    }
+    const listeningKey = voice.lentKeys.find((candidate) => candidate.id === next.recognition.providerId);
+    const listensLive = listeningKey?.models.some(
+        (model) => model.kind === "talk" && model.id === next.recognition.model
+    );
+    if (!listeningKey || !listensLive) return next;
+    const own = listeningKey.models.find((model) => model.kind === "recognition");
+    if (own) return { ...next, recognition: { providerId: listeningKey.id, model: own.id } };
+    const uai = voice.universeAi.recognition;
+    return uai ? { ...next, recognition: { providerId: uai.providerId, model: uai.model } } : next;
 }
 
 /** The models a source offers for a job, as the selects list them. */
@@ -520,6 +583,7 @@ export function companyName(adapter: string): string {
         elevenlabs: "ElevenLabs",
         cartesia: "Cartesia",
         fish: "Fish Audio",
+        openai: "OpenAI",
         deepgram: "Deepgram",
         soniox: "Soniox",
     };

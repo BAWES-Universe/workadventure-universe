@@ -36,6 +36,9 @@
         viewOf,
         voiceLanguages,
         previewKind,
+        settleTalk,
+        talkingModelsOf,
+        talksLive,
         type BotVoice,
         type FullVoiceProfile,
         type PayerChoice,
@@ -267,7 +270,13 @@
     $: brief = briefOf(voice, view, failed, voiceName, expression, whoKey, botName);
 
     // The voice card's second line
-    $: cardAbout = describeVoice(currentVoice, $locale);
+    $: cardAbout = [currentVoice?.talk ? v.talksLive() : "", describeVoice(currentVoice, $locale)]
+        .filter(Boolean)
+        .join(" · ");
+
+    // A talking model (#1910): one model on a lent key listens and speaks; the bot's Mind still writes every answer
+    $: live = voice && profile ? talksLive(voice, profile) : false;
+    $: talkingModels = voice && profile ? talkingModelsOf(voice, profile) : [];
 
     $: payerKindNow = voice && profile ? payerKind(voice, profile) : "universe-ai";
     $: speakingKey = speaksSource?.kind === "key" ? speaksSource.key : null;
@@ -385,7 +394,8 @@
     }
 
     function commit(next: FullVoiceProfile): Promise<boolean> {
-        return run(() => botApiService.saveBotVoice(bot.id, next));
+        const data = voice;
+        return run(() => botApiService.saveBotVoice(bot.id, data ? settleTalk(data, next) : next));
     }
 
     const base = (): FullVoiceProfile | null => (profile ? fullProfile(profile) : null);
@@ -429,7 +439,7 @@
                     expression: before?.expression ?? "natural",
                     language: before?.language ?? { mode: "follow" },
                 };
-                await botApiService.saveBotVoice(botId, fresh);
+                await botApiService.saveBotVoice(botId, settleTalk(data, fresh));
             }
             const on = await botApiService.setBotVoiceEnabled(botId, true);
             pendingNote = {
@@ -488,7 +498,7 @@
                     ...(picked.voiceName ? { voiceName: picked.voiceName } : {}),
                 };
             }
-            return botApiService.saveBotVoice(botId, next);
+            return botApiService.saveBotVoice(botId, settleTalk(data, next));
         });
     }
 
@@ -535,7 +545,9 @@
         if (!voice || !current || !pickerChoice) return;
         const speech = providerOf(voice, "speech", pickerChoice, current.speech.model);
         if (!speech) return;
-        const sameProvider = current.speech.providerId === (choice.providerId || speech.providerId);
+        // The same place keeps its model, unless the new voice talks live and the old one didn't, or the other way round
+        const sameProvider =
+            current.speech.providerId === (choice.providerId || speech.providerId) && choice.talk === live;
         const saved = await commit({
             ...current,
             speech: {
@@ -592,7 +604,7 @@
                     ...(picked.voiceName ? { voiceName: picked.voiceName } : {}),
                 };
             }
-            return botApiService.saveBotVoice(botId, next);
+            return botApiService.saveBotVoice(botId, settleTalk(data, next));
         });
     }
 
@@ -1079,7 +1091,9 @@
                                     font-size="14"
                                 />{/if}
                             <span>
-                                {#if payerKindNow === "universe-ai"}
+                                {#if live && speakingKey}
+                                    {v.payerTalksLive({ key: keyPhrase(speakingKey), bot: botName })}
+                                {:else if payerKindNow === "universe-ai"}
                                     {v.onNoteUniverseAi({
                                         replies: voice.window.voiceReplies,
                                         hours: voice.window.hours,
@@ -1224,7 +1238,11 @@
                                         />{/if}
                                 </span>
                                 <span class="bp-mtx">
-                                    {#if payerKindNow === "universe-ai"}
+                                    {#if live && speakingKey}
+                                        <span class="vg-t"
+                                            >{v.payerTalksLiveTitle({ key: keyPhrase(speakingKey) })}</span
+                                        >
+                                    {:else if payerKindNow === "universe-ai"}
                                         <span class="vg-t">{v.askUniverseAi()}</span>
                                     {:else if payerKindNow === "keys" && speakingKey && listeningKey}
                                         <span class="vg-t"
@@ -1271,7 +1289,7 @@
                                 {/if}
                             </div>
                             {#if hasKeyChoice && sourcesOpen}
-                                {#each [{ part: "speech", caption: v.speaksOn(), source: speaksSource }, { part: "recognition", caption: v.listensOn(), source: listensSource }] as row (row.part)}
+                                {#each [{ part: "speech", caption: v.speaksOn(), source: speaksSource }, { part: "recognition", caption: v.listensOn(), source: listensSource }].filter((row) => !live || row.part === "speech") as row (row.part)}
                                     {@const part = row.part === "speech" ? "speech" : "recognition"}
                                     {@const current = row.source ? choiceOfSource(row.source) : null}
                                     <div class="bp-cap" id="voice-{part}-on">{row.caption}</div>
@@ -1331,10 +1349,10 @@
                                 {/if}
                             {/if}
 
-                            {#each [{ part: "speech", title: v.speakingModel(), source: speaksSource }, { part: "recognition", title: v.listeningModel(), source: listensSource }] as row (row.part)}
+                            {#each live ? [{ part: "speech", title: v.talkingModel(), source: speaksSource }] : [{ part: "speech", title: v.speakingModel(), source: speaksSource }, { part: "recognition", title: v.listeningModel(), source: listensSource }] as row (row.part)}
                                 {@const part = row.part === "speech" ? "speech" : "recognition"}
                                 {#if row.source && row.source.kind === "key"}
-                                    {@const models = modelsOf(voice, part, row.source)}
+                                    {@const models = live ? talkingModels : modelsOf(voice, part, row.source)}
                                     {@const chosen = profile[part]?.model}
                                     {@const shown = models.find((model) => model.id === chosen)}
                                     <button
