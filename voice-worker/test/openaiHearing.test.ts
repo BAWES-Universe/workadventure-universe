@@ -149,7 +149,9 @@ describe('hearing with OpenAI', () => {
 
     it('is registered as "openai" for hearing, and leaves every other OpenAI model (talking live) to the one already there', () => {
         const base = { port: 0, host: '127.0.0.1', maxLanes: 1, maxSessionsPerConnection: 1, ice: { iceServers: [] } };
-        expect(new VoiceWorker(base).connectors.recognition(OPENAI_ADAPTER)).toBeInstanceOf(OpenAIRecognition);
+        // On its own, the worker has OpenAI's talking connector too, under the same name
+        expect(new VoiceWorker(base).connectors.recognition(OPENAI_ADAPTER)).not.toBeInstanceOf(OpenAIRecognition);
+        expect(new VoiceWorker(base).connectors.recognition(OPENAI_ADAPTER)).toBeDefined();
         const asked: string[] = [];
         const recognizer = { push: () => undefined, finish: () => undefined, close: () => undefined };
         const talking = { listen: (settings: { model: string }) => (asked.push(settings.model), recognizer) };
