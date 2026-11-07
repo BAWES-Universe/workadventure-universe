@@ -39,7 +39,8 @@ async function fakeSpeechify(answer: (res: http.ServerResponse) => void) {
 }
 
 const s16 = (...values: number[]) => Buffer.from(new Int16Array(values).buffer).toString('base64');
-const event = (type: string, data: object) => `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`;
+// As Speechify sends them: the name only on the `event:` line, never inside the data
+const event = (type: string, data: object) => `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
 
 const speaking = (base: string, changes: Partial<SpeechRequest> = {}, settings: object = {}): SpeechRequest => ({
     text: 'Bonjour.',
