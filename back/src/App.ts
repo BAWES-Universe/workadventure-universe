@@ -6,6 +6,7 @@ import { RoomManagerService, SpaceManagerService } from "@workadventure/messages
 import { SharedAdminApi } from "@workadventure/shared-utils/src/SharedAdminApi";
 import { DebugController } from "./Controller/DebugController";
 import { PrometheusController } from "./Controller/PrometheusController";
+import { PushNotificationController } from "./Controller/PushNotificationController";
 import { roomManager } from "./RoomManager";
 import {
     HTTP_PORT,
@@ -26,6 +27,7 @@ class App {
     private prometheusController: PrometheusController;
     private debugController: DebugController;
     private pingController: PingController;
+    private pushNotificationController: PushNotificationController;
 
     constructor() {
         // Création de l'application principale
@@ -45,6 +47,7 @@ class App {
 
         this.debugController = new DebugController(this.app);
         this.pingController = new PingController(this.app);
+        this.pushNotificationController = new PushNotificationController(this.app);
     }
 
     public listen(): void {
