@@ -1,6 +1,7 @@
 <script lang="ts">
     import { onMount, onDestroy } from "svelte";
     import type { BBBCoWebsite } from "../../WebRtc/CoWebsite/BBBCoWebsite";
+    import { resolveWebViewIframeAllowPolicy } from "../../Utils/MobileWebViewMediaCompatibility";
     import { screenWakeLock } from "../../Utils/ScreenWakeLock";
     import { inExternalServiceStore } from "../../Stores/MyMediaStore";
     import meetingIcon from "../images/meeting.svg";
@@ -13,6 +14,7 @@
     export let actualCowebsite: BBBCoWebsite;
     export let visible: boolean;
     let screenWakeRelease: (() => Promise<void>) | undefined;
+    $: allowPolicy = resolveWebViewIframeAllowPolicy(actualCowebsite.getAllowPolicy());
 
     onMount(async () => {
         try {
@@ -65,7 +67,7 @@
             <iframe
                 src={actualCowebsite.getUrl().toString()}
                 frameborder="0"
-                allow={actualCowebsite.getAllowPolicy()}
+                allow={allowPolicy}
                 title="Big Blue Button Meeting"
                 class="bg-white w-full h-full"
                 id="iframe"

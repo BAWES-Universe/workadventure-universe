@@ -2,6 +2,10 @@
     import { onDestroy, onMount } from "svelte";
     import { iframeListener } from "../../Api/IframeListener";
     import type { SimpleCoWebsite } from "../../WebRtc/CoWebsite/SimpleCoWebsite";
+    import {
+        configureWebViewIframe,
+        resolveWebViewIframeAllowPolicy,
+    } from "../../Utils/MobileWebViewMediaCompatibility";
     import LL from "../../../i18n/i18n-svelte";
     import OpenHereRow from "../EmbedScreens/OpenHereRow.svelte";
     import OpenHereItemIcon from "../EmbedScreens/OpenHereItemIcon.svelte";
@@ -23,11 +27,19 @@
     // A page a map opens with Hide URL keeps its address to itself: no line under the name, and nothing to copy or open.
     const hideUrl = actualCowebsite.getHideUrl();
 
+    // Ensure embedded CoWebsite iframes declare mobile WebView media permissions so Android WebView and iOS WKWebView
+    // delegate camera, microphone, fullscreen, autoplay, and clipboard access to embedded applications.
+    $: allowPolicy = resolveWebViewIframeAllowPolicy(actualCowebsite.getAllowPolicy());
+
     // "Hide title bar": while this page is the only thing open, it fills the window and the row is left out. Only the row
     // comes and goes: the iframe below sits outside of this block, so the page never reloads when the row toggles.
     $: titleBarHidden = $titleBarHiddenItemStore === actualCowebsite;
 
     onMount(() => {
+        configureWebViewIframe({
+            iframeElement: iframeSimpleCowebsite,
+            customAllowPolicy: actualCowebsite.getAllowPolicy(),
+        });
         if (allowApi) {
             iframeListener.registerIframe(iframeSimpleCowebsite);
         }
@@ -79,7 +91,7 @@
                 bind:this={iframeSimpleCowebsite}
                 src={actualCowebsite.getUrl().toString()}
                 frameborder="0"
-                allow={actualCowebsite.getAllowPolicy()}
+                allow={allowPolicy}
                 title="Cowebsite"
                 class="bg-white w-full h-full"
             />

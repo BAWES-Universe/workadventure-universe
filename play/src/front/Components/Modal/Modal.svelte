@@ -11,6 +11,10 @@
         modalVisibilityStore,
     } from "../../Stores/ModalStore";
     import { isMediaBreakpointUp } from "../../Utils/BreakpointsUtils";
+    import {
+        configureWebViewIframe,
+        resolveWebViewIframeAllowPolicy,
+    } from "../../Utils/MobileWebViewMediaCompatibility";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { canvasSize, openHereInFrontOfOrbitStore } from "../../Stores/CoWebsiteStore";
     import { DESKTOP_LAYOUT_MIN_WIDTH } from "../../Stores/BarInViewStore";
@@ -40,8 +44,15 @@
 
     // Esc closes the window in front. The Open here window, when it is the one in front, takes the key instead. Whichever
     // of the two answers first marks the key as used, so the other one leaves it alone, in whatever order they listen.
+    function shouldCloseModalOnEscape(e: KeyboardEvent): boolean {
+        if (e.key !== "Escape" || e.defaultPrevented) {
+            return false;
+        }
+        return !$openHereInFrontOfOrbitStore;
+    }
+
     function onKeyDown(e: KeyboardEvent) {
-        if (e.key === "Escape" && !e.defaultPrevented && !$openHereInFrontOfOrbitStore) {
+        if (shouldCloseModalOnEscape(e)) {
             e.preventDefault();
             close();
         }
@@ -52,12 +63,19 @@
     $: takesSide =
         !isFullScreened && !shouldForceMobileFullScreen && (shown?.position === "right" || shown?.position === "left");
 
+    function isModalIframeActive(): boolean {
+        if (!modalIframe || !document.hasFocus()) {
+            return false;
+        }
+        return document.activeElement === modalIframe;
+    }
+
     // A click on the page inside the window never reaches the game, but the game loses the focus to it: the window then
     // comes in front of the chat, as a click on its tools does. Switching to another app also blurs the game, with the
     // focus left wherever it was; the page then has no focus at all, and nothing changes.
     function onWindowBlur() {
         setTimeout(() => {
-            if (modalIframe && document.hasFocus() && document.activeElement === modalIframe) {
+            if (isModalIframeActive()) {
                 windowInFrontStore.set("window");
                 // A click on Orbit's own page brings it in front of the window of files and links, as one on its frame does.
                 sideWindowInFrontStore.set("orbit");
@@ -79,6 +97,10 @@
 
     onMount(() => {
         resizeObserver.observe(mainModal);
+        configureWebViewIframe({
+            iframeElement: modalIframe,
+            customAllowPolicy: shown?.allow,
+        });
         modalIframeWindowStore.set(modalIframe.contentWindow);
         if ($modalIframeStore?.allowApi) {
             iframeListener.registerIframe(modalIframe);
@@ -195,7 +217,7 @@
                 bind:this={modalIframe}
                 height="100%"
                 width="100%"
-                allow={shown?.allow}
+                allow={resolveWebViewIframeAllowPolicy(shown?.allow)}
                 title={shown?.title}
                 src={modalUrl}
                 class="border-0 relative z-40"

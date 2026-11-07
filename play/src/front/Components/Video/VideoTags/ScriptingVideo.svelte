@@ -1,7 +1,9 @@
 <svelte:options immutable={true} />
 
 <script lang="ts">
+    import { onMount } from "svelte";
     import type { ScriptingVideoStreamable } from "../../../Stores/StreamableCollectionStore";
+    import { configureInlineVideoElement } from "../../../Utils/MobileWebViewMediaCompatibility";
 
     export let style: string;
     export let className: string;
@@ -11,6 +13,10 @@
 
     export let media: ScriptingVideoStreamable;
     let videoElement: HTMLVideoElement;
+
+    onMount(() => {
+        configureInlineVideoElement(videoElement);
+    });
 </script>
 
 <!-- svelte-ignore a11y-media-has-caption -->
@@ -23,6 +29,7 @@
     class={className}
     autoplay
     playsinline
+    webkit-playsinline="true"
     src={media.url}
     loop={media.config.loop}
 />
