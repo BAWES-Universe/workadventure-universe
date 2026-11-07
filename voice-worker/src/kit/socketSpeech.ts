@@ -28,6 +28,12 @@ export interface SocketSpeechSpec {
     connect(request: SpeechRequest, base: string): SocketAddress;
     /** The messages sent once the socket is open: usually a setup message, the text, and a flush or close. */
     send(request: SpeechRequest): (string | Uint8Array)[];
+    /**
+     * Set when the company must answer the setup before it takes the text (Google's setupComplete): `start` is sent once the
+     * socket opens, and `send` once an answer this says yes to arrives. That answer is not read as audio.
+     */
+    ready?(data: Buffer, isBinary: boolean): boolean;
+    start?(request: SpeechRequest): (string | Uint8Array)[];
     read(data: Buffer, isBinary: boolean): SpeechMessage | undefined;
     audio: { sampleRate: number; encoding?: 'base64' | 'hex'; mayStartWithWav?: boolean };
     outOfCredit?: CreditCheck;
@@ -85,9 +91,15 @@ async function* speakOverSocket(spec: SocketSpeechSpec, request: SpeechRequest):
     const onAbort = (): void => push({ end: true });
     request.signal.addEventListener('abort', onAbort, { once: true });
 
+    let waiting = false;
     ws.on('open', () => {
         try {
-            for (const message of spec.send(request)) ws.send(message);
+            if (spec.ready) {
+                for (const message of spec.start?.(request) ?? []) ws.send(message);
+                waiting = true;
+            } else {
+                for (const message of spec.send(request)) ws.send(message);
+            }
             rearm();
         } catch {
             push({ error: failure(spec.adapter, 'could not be sent the reply') });
@@ -98,6 +110,11 @@ async function* speakOverSocket(spec: SocketSpeechSpec, request: SpeechRequest):
         const buffer = Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data as ArrayBuffer);
         // Nothing the company sends may throw out of here: a socket handler that throws takes the whole worker down
         try {
+            if (waiting && spec.ready?.(buffer, isBinary)) {
+                waiting = false;
+                for (const message of spec.send(request)) ws.send(message);
+                return;
+            }
             const message = spec.read(buffer, isBinary);
             if (!message) return;
             if (message.error) return push({ error: failure(spec.adapter, 'reported an error in the reply', message.error.status) });

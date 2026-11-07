@@ -590,6 +590,7 @@ export function companyName(adapter: string): string {
         elevenlabs: "ElevenLabs",
         cartesia: "Cartesia",
         fish: "Fish Audio",
+        google: "Google",
         openai: "OpenAI",
         xai: "xAI",
         deepgram: "Deepgram",
