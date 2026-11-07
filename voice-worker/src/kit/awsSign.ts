@@ -8,11 +8,27 @@ export interface AwsKey {
     secretAccessKey: string;
 }
 
-/** The two parts of a key kept as one, "ID:secret" (Orbit). Null when it is not that. */
+/**
+ * The two parts of a key kept as one: "ID:secret" as Orbit saves it, or sign-in fields (src/kit/signIn.ts) naming
+ * `accessKeyId` and `secretAccessKey`. Null when it is neither, so the call fails as a key that can't be read.
+ */
 export function awsKey(key: string): AwsKey | null {
-    const split = key.indexOf(':');
-    if (split <= 0 || split === key.length - 1) return null;
-    return { accessKeyId: key.slice(0, split), secretAccessKey: key.slice(split + 1) };
+    const raw = key.trim();
+    if (raw.startsWith('{')) {
+        let fields: unknown;
+        try {
+            fields = JSON.parse(raw);
+        } catch {
+            return null;
+        }
+        const { accessKeyId, secretAccessKey } = (typeof fields === 'object' && fields !== null ? fields : {}) as Record<string, unknown>;
+        if (typeof accessKeyId !== 'string' || typeof secretAccessKey !== 'string') return null;
+        if (!accessKeyId.trim() || !secretAccessKey.trim()) return null;
+        return { accessKeyId: accessKeyId.trim(), secretAccessKey: secretAccessKey.trim() };
+    }
+    const split = raw.indexOf(':');
+    if (split <= 0 || split === raw.length - 1) return null;
+    return { accessKeyId: raw.slice(0, split), secretAccessKey: raw.slice(split + 1) };
 }
 
 /** AWS's own region names: letters and digits in dashed parts, so nothing else ends up in an address. */

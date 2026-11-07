@@ -19,11 +19,34 @@ export const GEMINI_SPEECH_MODELS: ReadonlySet<string> = new Set([DEFAULT_MODEL,
 /** Pipecat's default voice. */
 const DEFAULT_VOICE = 'Kore';
 
+/**
+ * The locale Gemini speaks each language in when no region is named, as Pipecat's language_to_gemini_tts_language has it
+ * (https://docs.cloud.google.com/text-to-speech/docs/gemini-tts#available_languages). Gemini takes locales, not bare codes.
+ */
+const LOCALES: Record<string, string> = {
+    af: 'af-ZA', am: 'am-ET', ar: 'ar-EG', az: 'az-AZ', be: 'be-BY', bg: 'bg-BG', bn: 'bn-BD', ca: 'ca-ES', ceb: 'ceb-PH',
+    cs: 'cs-CZ', da: 'da-DK', de: 'de-DE', el: 'el-GR', en: 'en-US', es: 'es-ES', et: 'et-EE', eu: 'eu-ES', fa: 'fa-IR',
+    fi: 'fi-FI', fil: 'fil-PH', fr: 'fr-FR', gl: 'gl-ES', gu: 'gu-IN', he: 'he-IL', hi: 'hi-IN', hr: 'hr-HR', ht: 'ht-HT',
+    hu: 'hu-HU', hy: 'hy-AM', id: 'id-ID', is: 'is-IS', it: 'it-IT', ja: 'ja-JP', jv: 'jv-JV', ka: 'ka-GE', kn: 'kn-IN',
+    ko: 'ko-KR', kok: 'kok-IN', la: 'la-VA', lb: 'lb-LU', lo: 'lo-LA', lt: 'lt-LT', lv: 'lv-LV', mai: 'mai-IN', mg: 'mg-MG',
+    mk: 'mk-MK', ml: 'ml-IN', mn: 'mn-MN', mr: 'mr-IN', ms: 'ms-MY', my: 'my-MM', nb: 'nb-NO', ne: 'ne-NP', nl: 'nl-NL',
+    nn: 'nn-NO', no: 'nb-NO', or: 'or-IN', pa: 'pa-IN', pl: 'pl-PL', ps: 'ps-AF', pt: 'pt-BR', ro: 'ro-RO', ru: 'ru-RU',
+    sd: 'sd-IN', si: 'si-LK', sk: 'sk-SK', sl: 'sl-SI', sq: 'sq-AL', sr: 'sr-RS', sv: 'sv-SE', sw: 'sw-KE', ta: 'ta-IN',
+    te: 'te-IN', th: 'th-TH', tl: 'fil-PH', tr: 'tr-TR', uk: 'uk-UA', ur: 'ur-PK', vi: 'vi-VN', zh: 'cmn-CN',
+};
+
 /** The locale Gemini is told to speak in, as BCP-47, or none: then it tells from the text. */
 export function geminiLanguage(language: string | undefined): string | undefined {
     if (!language) return undefined;
-    const [base, region] = language.split(/[-_]/);
-    return region ? `${base.toLowerCase()}-${region.toUpperCase()}` : base.toLowerCase();
+    const [first, ...rest] = language.split(/[-_]/);
+    const base = first.toLowerCase();
+    // A region, not a script (zh-Hant): two letters or three digits (es-419)
+    const region = rest.find((part) => /^([a-z]{2}|\d{3})$/i.test(part))?.toUpperCase();
+    // Gemini speaks Chinese as Mandarin, by region
+    if (base === 'zh') return region === 'TW' || region === 'HK' || /hant/i.test(language) ? 'cmn-TW' : 'cmn-CN';
+    if (region) return `${base}-${region}`;
+    // A bare code Gemini has no locale for is left out rather than refused
+    return LOCALES[base];
 }
 
 interface GeminiAnswer {

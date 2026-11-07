@@ -82,7 +82,21 @@ describe('speaking with Gemini text to speech', () => {
         expect(s.seen[0].body).toMatchObject({ generationConfig: { speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } } } });
         expect(JSON.stringify(s.seen[0].body)).not.toContain('languageCode');
         expect(geminiLanguage('ar_kw')).toBe('ar-KW');
-        expect(geminiLanguage('ja')).toBe('ja');
+    });
+
+    it('names a language without a region by the locale Gemini speaks it in, as Pipecat does', () => {
+        expect(geminiLanguage('en')).toBe('en-US');
+        expect(geminiLanguage('ja')).toBe('ja-JP');
+        expect(geminiLanguage('ar')).toBe('ar-EG');
+        expect(geminiLanguage('fr')).toBe('fr-FR');
+        expect(geminiLanguage('no')).toBe('nb-NO');
+        expect(geminiLanguage('zh')).toBe('cmn-CN');
+        expect(geminiLanguage('zh-Hant')).toBe('cmn-TW');
+        expect(geminiLanguage('zh-TW')).toBe('cmn-TW');
+        expect(geminiLanguage('es-419')).toBe('es-419');
+        expect(geminiLanguage('en-gb')).toBe('en-GB');
+        // None Gemini has: it tells from the text
+        expect(geminiLanguage('xx')).toBeUndefined();
     });
 
     it("fails with Google's status, whether it refuses the call or reports an error in the stream, a wrong key as refused, the key in no failure", async () => {

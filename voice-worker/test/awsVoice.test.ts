@@ -39,6 +39,10 @@ describe('signing and framing', () => {
         expect(headers['x-amz-date']).toBe('20150830T123600Z');
         expect(awsKey(KEY)).toEqual({ accessKeyId: ID, secretAccessKey: SECRET });
         expect(awsKey('no-colon')).toBeNull();
+        // Kept as sign-in fields: read by name, not split at the first colon
+        expect(awsKey(JSON.stringify({ accessKeyId: ID, secretAccessKey: SECRET, region: 'eu-north-1' }))).toEqual({ accessKeyId: ID, secretAccessKey: SECRET });
+        expect(awsKey(JSON.stringify({ accessKeyId: ID }))).toBeNull();
+        expect(awsKey('{"accessKeyId": ')).toBeNull();
     });
 
     it('presigns a socket address with the ID and a signature in its query, never the secret', () => {
