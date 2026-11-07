@@ -72,7 +72,7 @@ export function minimaxLanguage(language: string | undefined): string | undefine
 
 /** The status a MiniMax base_resp code reads as. */
 function minimaxStatus(code: number): number | undefined {
-    if (code === 1004) return 401; // the key is wrong
+    if (code === 1004 || code === 2049) return 401; // the key is wrong, or not a key MiniMax knows
     if (code === 1008) return 402; // out of balance
     if (code === 1002 || code === 1039) return 429; // too many calls or tokens
     if (code === 2013) return 400; // a setting MiniMax doesn't take

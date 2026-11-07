@@ -16,7 +16,7 @@ afterEach(
             server.closeAllConnections();
             server.close(() => resolve());
             server = undefined;
-        })
+        }),
 );
 
 async function fakeHume(reply: (res: http.ServerResponse) => void) {
@@ -45,7 +45,8 @@ async function collect(stream: AsyncIterable<Int16Array>): Promise<number[]> {
     return out;
 }
 
-const chunk = (count: number, last: boolean) => `${JSON.stringify({ type: 'audio', audio: Buffer.from(new Int16Array(count).fill(800).buffer).toString('base64'), chunk_index: 0, is_last_chunk: last, generation_id: 'g', request_id: 'r', snippet_id: 's', text: 'Hello there.', audio_format: 'pcm' })}\n`;
+const chunk = (count: number, last: boolean) =>
+    `${JSON.stringify({ type: 'audio', audio: Buffer.from(new Int16Array(count).fill(800).buffer).toString('base64'), chunk_index: 0, is_last_chunk: last, generation_id: 'g', request_id: 'r', snippet_id: 's', text: 'Hello there.', audio_format: 'pcm' })}\n`;
 
 describe('speaking with Hume', () => {
     it("sends the text with the voice in instant mode and Octave's version, the key in X-Hume-Api-Key, and plays 48 kHz PCM at 24 kHz", async () => {
@@ -60,8 +61,23 @@ describe('speaking with Hume', () => {
         expect(h.seen[0]).toEqual({
             url: '/v0/tts/stream/json',
             key: KEY,
-            body: { utterances: [{ text: 'Hello there.', voice: { id: 'voice-uuid' } }], format: { type: 'pcm' }, instant_mode: true, strip_headers: true, version: '2' },
+            body: {
+                utterances: [{ text: 'Hello there.', voice: { id: 'voice-uuid' } }],
+                format: { type: 'pcm' },
+                instant_mode: true,
+                strip_headers: true,
+                version: '2',
+            },
         });
+    });
+
+    it('plays every snippet Hume splits the text into, each ending with its own last chunk', async () => {
+        const h = await fakeHume((res) => {
+            res.write(chunk(480, true));
+            res.end(chunk(480, true));
+        });
+        const samples = await collect(new HumeSpeech().speak(request(h.base)));
+        expect(samples.length).toBeGreaterThan(440);
     });
 
     it('lets Hume choose a voice when none is picked, with instant mode off', async () => {
