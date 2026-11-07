@@ -40,6 +40,7 @@ import { MINIMAX_ADAPTER, MiniMaxSpeech } from './minimax.ts';
 import { XAI_HEARING_MODELS, XAI_SPEECH_MODELS, XAI_VOICE_ADAPTER, XaiTranscription, XaiTts } from './xaiVoice.ts';
 import { recognitionByModel, speechByModel } from './kit/byModel.ts';
 import { GEMINI_SPEECH_ADAPTER, GEMINI_SPEECH_MODELS, GeminiSpeech } from './geminiSpeech.ts';
+import { ZOOM_SCRIBE_ADAPTER, ZOOM_SCRIBE_MODELS, ZoomScribeRecognition } from './zoomScribe.ts';
 import { ELEVENLABS_ADAPTER, ElevenLabsSpeech } from './elevenlabs.ts';
 import { CARTESIA_ADAPTER, CartesiaRecognition, CartesiaSpeech } from './cartesia.ts';
 import { FISH_ADAPTER, FishSpeech } from './fish.ts';
@@ -211,6 +212,12 @@ export class VoiceWorker {
         }
         // Google also talks live under the same name (#1910): Gemini text to speech takes only its models
         this.connectors.registerSpeech(GEMINI_SPEECH_ADAPTER, speechByModel(GEMINI_SPEECH_MODELS, new GeminiSpeech(), this.connectors.speech(GEMINI_SPEECH_ADAPTER)));
+        // Zoom also talks live under the same name (#1910): Scribe takes only its models
+        {
+            const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
+            const hearing = new ZoomScribeRecognition({ finalTimeoutMs });
+            this.connectors.registerRecognition(ZOOM_SCRIBE_ADAPTER, recognitionByModel(ZOOM_SCRIBE_MODELS, hearing, this.connectors.recognition(ZOOM_SCRIBE_ADAPTER)));
+        }
         if (!this.connectors.recognition(SONIOX_ADAPTER)) {
             const finalTimeoutMs = (options.recognitionFinalTimeoutSeconds ?? DEFAULT_SONIOX_FINAL_TIMEOUT_MS / 1000) * 1000;
             this.connectors.registerRecognition(SONIOX_ADAPTER, new SonioxRecognition({ finalTimeoutMs }));
