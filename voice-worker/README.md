@@ -43,6 +43,8 @@ that names nothing gets) and the scripted `FakeEars` for tests, plus these real 
   are the final tokens so far plus the latest guesses; when the stretch ends an empty text frame ends the audio and the
   words are final on Soniox's `finished`. A refused key (401/403), an error answer (its `error_code`), a dropped stream or
   no `finished` within `VOICE_RECOGNITION_FINAL_TIMEOUT_SECONDS` (default 10) fails the turn with the words heard so far.
+  The names the bubble gives (`recognition.terms`: the bot's own name and the other voice bots') go as `context.terms`, so Soniox
+  spells them as written (#1864).
 * `elevenlabs` (speaking, `src/elevenlabs.ts`): one connection per reply to `https://api.elevenlabs.io` (or the profile's
   `endpoint`), the key in the `xi-api-key` header only, raw 24 kHz PCM that plays as it arrives. How each model is asked
   comes from one table of ElevenLabs' documented models (`ELEVENLABS_MODELS`, #1847). The superseded Turbo v2 ids speak
@@ -95,6 +97,10 @@ that names nothing gets) and the scripted `FakeEars` for tests, plus these real 
   message ends the audio and the words are final once Deepgram has sent its last answer (`Metadata`) or closed the stream
   normally. A refused key (401/403), an `Error` answer, a stream closed any other way or no last answer within
   `VOICE_RECOGNITION_FINAL_TIMEOUT_SECONDS` (default 10) fails the turn with the words heard so far.
+  The bubble's names (`recognition.terms`) go as `keyterm` parameters on Nova-3 (up to 200 characters in all, under Deepgram's
+  500 tokens; an older model has a different feature and gets none). Should Deepgram refuse them with a 400 (a Nova-3 model
+  that does not take key terms), the stretch is opened again without them, nothing heard is lost, and the next stretches of
+  that model and language skip them for an hour (#1864).
 
 To add a provider, write one file that implements a connector and register it by its lowercase adapter name:
 
