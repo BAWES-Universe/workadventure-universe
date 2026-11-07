@@ -22,7 +22,7 @@ interface Rig {
     partials(): string[];
 }
 
-function rig(script: (string | FakeUtterance)[], options: { maxUtteranceMs?: number; pauseMs?: number; idleMs?: number } = {}): Rig {
+function rig(script: (string | FakeUtterance)[], options: { maxUtteranceMs?: number; pauseMs?: number; idleMs?: number; onFinal?: (timing: { participantId: string; hearMs: number }) => void } = {}): Rig {
     const sent: OutgoingMessage[] = [];
     const tapped: number[] = [];
     const ears = new FakeEars(script);
@@ -38,6 +38,7 @@ function rig(script: (string | FakeUtterance)[], options: { maxUtteranceMs?: num
             expect(checkMessage('fromWorker', { ...message, sessionId: 's' })).toBeNull();
         },
         next: (frame) => tapped.push(frame.pcm16k.length),
+        onFinal: options.onFinal,
     });
     const feed = (pcm: () => Int16Array, ms: number, who: string, epoch: number, droppedMs = 0) => {
         for (let t = 0; t < ms; t += FRAME) recognition.sink({ participantId: who, epoch, pcm16k: pcm(), droppedMs: t === 0 ? droppedMs : 0 });
@@ -53,6 +54,35 @@ function rig(script: (string | FakeUtterance)[], options: { maxUtteranceMs?: num
         partials: () => sent.filter((m) => m.type === 'user.partial').map((m) => (m as { text: string }).text),
     };
 }
+
+describe('how long after they stop talking the words come through (#1865)', () => {
+    it('says it once for a stretch that became the person\'s line, with the time since they stopped talking and no words', async () => {
+        const timings: { participantId: string; hearMs: number }[] = [];
+        const r = rig([{ text: 'hello there', finalDelayMs: 120 }], { onFinal: (timing) => timings.push(timing) });
+        r.speak(400);
+        r.pause(440);
+        await sleep(200);
+        expect(r.turns()).toMatchObject([{ outcome: 'final' }]);
+        expect(timings).toHaveLength(1);
+        expect(timings[0].participantId).toBe('p1');
+        // At least the wait for the final words; frames are fed at once here, so the quiet itself costs no real time
+        expect(timings[0].hearMs).toBeGreaterThanOrEqual(100);
+        expect(timings[0].hearMs).toBeLessThan(2000);
+        expect(Object.keys(timings[0]).sort()).toEqual(['hearMs', 'participantId']);
+    });
+
+    it('says nothing for a stretch that was lost or had nothing in it', () => {
+        const timings: unknown[] = [];
+        const lost = rig([{ text: 'one two three four', failAfterWords: 2 }], { onFinal: (timing) => timings.push(timing) });
+        lost.speak(1500);
+        const empty = rig([''], { onFinal: (timing) => timings.push(timing) });
+        empty.speak(400);
+        empty.pause(440);
+        expect(lost.turns().map((t) => t.outcome)).toEqual(['lost']);
+        expect(empty.turns().map((t) => t.outcome)).toEqual(['cleared']);
+        expect(timings).toEqual([]);
+    });
+});
 
 describe('a short noise is not someone speaking', () => {
     it('sends no speech_started for a click shorter than the barge-in, and only the cleared end', () => {
