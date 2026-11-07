@@ -499,8 +499,8 @@ export function talkingModelsOf(voice: BotVoice, profile: VoiceProfile): Array<{
 
 /**
  * Keeps a talking model whole (#1910) whatever was just changed: speaking on one means listening on the same one; speaking moved
- * off it means listening moves too, to a listening model on the same key, else Universe AI's. A talking model is never named
- * for one part only (Orbit refuses that). Anything else is left as it is.
+ * off it means listening moves too, to a listening model on the same key, else Universe AI's, else another lent key's. A talking
+ * model is never named for one part only (Orbit refuses that). Anything else is left as it is.
  */
 export function settleTalk(voice: BotVoice, next: FullVoiceProfile): FullVoiceProfile {
     if (talkingModel(voice, next)) {
@@ -517,7 +517,11 @@ export function settleTalk(voice: BotVoice, next: FullVoiceProfile): FullVoicePr
     const own = listeningKey.models.find((model) => model.kind === "recognition");
     if (own) return { ...next, recognition: { providerId: listeningKey.id, model: own.id } };
     const uai = voice.universeAi.recognition;
-    return uai ? { ...next, recognition: { providerId: uai.providerId, model: uai.model } } : next;
+    if (uai) return { ...next, recognition: { providerId: uai.providerId, model: uai.model } };
+    // No Universe AI listening on this server: another lent key that listens on its own model
+    const other = choicesFor(voice, "recognition").find((choice) => choice.kind === "key");
+    const moved = other ? providerOf(voice, "recognition", other) : null;
+    return moved ? { ...next, recognition: moved } : next;
 }
 
 /** The models a source offers for a job, as the selects list them. */

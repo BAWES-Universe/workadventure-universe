@@ -510,6 +510,21 @@ describe("talking models (#1910)", () => {
             lentKeys: [openAi({ models: [...openAi().models, { id: "gpt-listen", kind: "recognition" }] })],
         });
         expect(settleTalk(both, spoken).recognition).toEqual({ providerId: "key-oa", model: "gpt-listen" });
+        // A server with no Universe AI listening: another lent key that listens takes it
+        const noUaiListening = on(live, {
+            universeAi: { recognition: null, speech: orbitAnswer().universeAi.speech },
+            lentKeys: [
+                openAi(),
+                keyAnswer({
+                    id: "key-dg",
+                    adapter: "deepgram",
+                    recognition: true,
+                    speech: false,
+                    models: [{ id: "nova-3", kind: "recognition" }],
+                }),
+            ],
+        });
+        expect(settleTalk(noUaiListening, spoken).recognition).toEqual({ providerId: "key-dg", model: "nova-3" });
         // Nothing to do for a voice that never talked live
         const plain = full(uai);
         expect(settleTalk(voice, plain)).toBe(plain);
