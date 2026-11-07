@@ -37,7 +37,7 @@ const settle = async () => {
 const refused = (status: number, body: Record<string, unknown>) =>
     Object.assign(new Error(String(body.error)), { status, body });
 
-describe("Hear <bot> say hello (#1852)", () => {
+describe("Hear this voice say hello (#1852)", () => {
     let target: HTMLElement;
     let destroy: () => void = () => undefined;
     const revoked: string[] = [];
@@ -79,7 +79,7 @@ describe("Hear <bot> say hello (#1852)", () => {
         const refresh = vi.fn();
         const component = new VoiceHello({
             target,
-            props: { botId: "b1", botName: "Hala", paidByKey: null, locale: "en-US", ...props },
+            props: { botId: "b1", paidByKey: null, locale: "en-US", ...props },
         });
         component.$on("refresh", refresh);
         destroy = () => component.$destroy();
@@ -90,7 +90,7 @@ describe("Hear <bot> say hello (#1852)", () => {
     it("is one row that says what it does and what it costs: a voice reply on Universe AI", async () => {
         await mount();
         expect(text()).toBe(
-            "Hear Hala say hello Hala answers in its own words, with this voice and style. Uses 1 of your voice replies."
+            "Hear this voice say hello A short line to hear this voice. Uses 1 of your voice replies; hearing it again soon is free."
         );
         expect(button().disabled).toBe(false);
         expect(mocks.api.sayBotHello).not.toHaveBeenCalled();
@@ -98,7 +98,7 @@ describe("Hear <bot> say hello (#1852)", () => {
 
     it("says a few characters of the key when a lent key pays", async () => {
         await mount({ paidByKey: "your ElevenLabs key" });
-        expect(text()).toContain("Uses a few characters of your ElevenLabs key.");
+        expect(text()).toContain("Uses a few characters of your ElevenLabs key;");
         expect(text()).not.toContain("voice replies");
     });
 
@@ -114,21 +114,21 @@ describe("Hear <bot> say hello (#1852)", () => {
         await click();
         expect(mocks.api.sayBotHello).toHaveBeenCalledWith("b1", "ar-SA");
         // The bot is still writing: the row waits and cannot be tapped again
-        expect(text()).toContain("Hala is thinking of a hello…");
+        expect(text()).toContain("Getting the voice ready…");
         expect(button().disabled).toBe(true);
         expect(button().getAttribute("aria-busy")).toBe("true");
-        hello({ text: "Hi, I’m Hala. What can I get you today?", url: "blob:hello-1" });
+        hello({ text: "Hello, Universe. This is how I sound.", url: "blob:hello-1" });
         await settle();
         expect(FakeAudio.last?.src).toBe("blob:hello-1");
-        expect(text()).toContain("Hala is saying hello…");
+        expect(text()).toContain("Saying hello…");
         expect(target.querySelector("[data-testid=bot-voice-hello-line]")?.textContent?.trim()).toBe(
-            "“Hi, I’m Hala. What can I get you today?”"
+            "“Hello, Universe. This is how I sound.”"
         );
         expect(button().disabled).toBe(false);
         // Over: the row is what it was, and the audio is let go
         FakeAudio.last!.onended?.();
         await settle();
-        expect(text()).toContain("Hear Hala say hello");
+        expect(text()).toContain("Hear this voice say hello");
         expect(revoked).toEqual(["blob:hello-1"]);
     });
 
@@ -136,14 +136,14 @@ describe("Hear <bot> say hello (#1852)", () => {
         mocks.api.sayBotHello.mockResolvedValue({ text: "Hello!", url: "blob:hello-2" });
         await mount();
         await click();
-        expect(text()).toContain("Hala is saying hello…");
+        expect(text()).toContain("Saying hello…");
         await click();
         expect(FakeAudio.last?.paused).toBe(true);
-        expect(text()).toContain("Hear Hala say hello");
+        expect(text()).toContain("Hear this voice say hello");
         expect(mocks.api.sayBotHello).toHaveBeenCalledTimes(1);
     });
 
-    it("leaves nothing of the words behind when it was stopped before the bot finished writing, so the next hello starts on thinking", async () => {
+    it("leaves nothing of the words behind when it was stopped before the voice was ready, so the next hello starts on getting ready", async () => {
         let first: (value: { text: string; url: string }) => void = () => undefined;
         mocks.api.sayBotHello.mockImplementationOnce(
             () =>
@@ -153,14 +153,14 @@ describe("Hear <bot> say hello (#1852)", () => {
         );
         await mount();
         await click();
-        expect(text()).toContain("Hala is thinking of a hello…");
+        expect(text()).toContain("Getting the voice ready…");
         // Another sample is picked while the bot is still writing
         stopSample();
         await settle();
         first({ text: "An old hello nobody heard.", url: "blob:hello-old" });
         await settle();
         expect(revoked).toEqual(["blob:hello-old"]);
-        expect(text()).toContain("Hear Hala say hello");
+        expect(text()).toContain("Hear this voice say hello");
         // The next tap starts on thinking, not on the old words
         mocks.api.sayBotHello.mockImplementationOnce(
             () =>
@@ -169,7 +169,7 @@ describe("Hear <bot> say hello (#1852)", () => {
                 })
         );
         await click();
-        expect(text()).toContain("Hala is thinking of a hello…");
+        expect(text()).toContain("Getting the voice ready…");
         expect(text()).not.toContain("An old hello nobody heard.");
     });
 
@@ -186,12 +186,12 @@ describe("Hear <bot> say hello (#1852)", () => {
         expect(button().disabled).toBe(true);
         expect(text()).toContain("Your voice replies are used up until");
         expect(text()).toContain("The samples above still play, free.");
-        expect(text()).not.toContain("couldn’t say hello");
+        expect(text()).not.toContain("Couldn’t play the voice");
         await vi.advanceTimersByTimeAsync(2 * 60 * 60 * 1000);
         expect(button().disabled).toBe(true);
         await vi.advanceTimersByTimeAsync(41 * 60 * 1000);
         expect(button().disabled).toBe(false);
-        expect(text()).toContain("Uses 1 of your voice replies.");
+        expect(text()).toContain("Uses 1 of your voice replies;");
     });
 
     it("says it could not, and can be tried again, when nothing was said", async () => {
@@ -199,7 +199,7 @@ describe("Hear <bot> say hello (#1852)", () => {
         const refresh = await mount();
         await click();
         expect(target.querySelector("[data-testid=bot-voice-hello-failed]")?.textContent?.trim()).toBe(
-            "Hala couldn’t say hello just now. Try again."
+            "Couldn’t play the voice just now. Try again."
         );
         expect(button().disabled).toBe(false);
         // Nothing about the voice changed, so the page is not asked to look again
@@ -207,7 +207,7 @@ describe("Hear <bot> say hello (#1852)", () => {
         mocks.api.sayBotHello.mockResolvedValueOnce({ text: "Hello!", url: "blob:hello-3" });
         await click();
         expect(target.querySelector("[data-testid=bot-voice-hello-failed]")).toBeNull();
-        expect(text()).toContain("Hala is saying hello…");
+        expect(text()).toContain("Saying hello…");
     });
 
     it("asks the page to look again when the voice company refused the key, or the voice was turned off", async () => {
@@ -237,8 +237,8 @@ describe("Hear <bot> say hello (#1852)", () => {
         setLocale("ar-SA");
         try {
             await mount();
-            expect(text()).toContain("استمع إلى تحية Hala");
-            expect(text()).toContain("يستهلك ردًّا صوتيًّا واحدًا من ردودك");
+            expect(text()).toContain("استمع إلى هذا الصوت يقول مرحبًا");
+            expect(text()).toContain("تستهلك ردًّا صوتيًّا واحدًا من ردودك");
         } finally {
             setLocale("en-US");
         }

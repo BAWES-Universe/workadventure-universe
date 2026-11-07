@@ -1,63 +1,134 @@
 /**
- * "Hear <bot> say hello" (#1852): the bot page's way to let a maker hear their bot's real voice. The bot writes a short hello
- * with its own brain (its own instructions, on its own AI), and the voice worker speaks it once with the voice and style the
- * bot speaks with, exactly as a bubble would (same provider, model and key). The audio goes back to the maker's browser; nothing is
- * said in any bubble and nothing is saved.
+ * "Hear this voice say hello" (#1852): the bot page's way to let a maker hear the voice a bot speaks with. The voice worker says one
+ * short, fixed line (the same for every bot, in the language of the voice or of the game) with the provider, model, voice and style
+ * a bubble would use. The audio goes back to the maker's browser; nothing is said in any bubble and nothing is saved.
  *
- * What it costs is what a spoken reply costs: when Universe AI pays for the voice it is one of the maker's own voice replies
- * (counted by Orbit under one id, and given back when no audio came of it); when a lent key pays it is that key's characters, and
- * no allowance is touched. A voice that is off, a key that can't be read or an Orbit that can't be asked says so and says nothing
- * out loud. Nothing here puts a key, the bot's instructions or a provider's own words in an answer or a log line.
+ * A line that never changes can be kept: the audio is reused, for the same voice, model, style and language, for a while (see
+ * HelloCache), so a maker trying a voice again and again pays for it once. What the first one costs is what a spoken reply costs: on
+ * Universe AI it is one of the maker's own voice replies (counted by Orbit under one id, and given back when no audio came of it);
+ * on a lent key it is that key's characters, and no allowance is touched. A voice that is off, a key that can't be read or an
+ * Orbit that can't be asked says so and says nothing out loud. Nothing here puts a key or a provider's own words in an answer or a
+ * log line.
  */
-import { parseEmotionsFromResponse } from '../ai/EmotionParser';
+import { createHash } from 'crypto';
 import type { AllowanceOrbit } from './VoiceAllowance';
-import { SPOKEN_PHRASES, spokenVersion } from './SpokenText';
 import type { VoiceSettings } from './VoiceSettings';
 
-/** How long the bot may take to write its hello, in milliseconds. */
-export const HELLO_WRITE_TIMEOUT_MS = 15_000;
 /** How long the worker may take to speak it, in milliseconds. */
 export const HELLO_SPEAK_TIMEOUT_MS = 30_000;
-/** The most of the hello that is spoken, in characters. It is asked to be two short sentences. */
-export const HELLO_MAX_CHARS = 400;
 /** The longest the hello plays, in seconds. */
 export const HELLO_MAX_SECONDS = 20;
 
-const DEFAULT_INSTRUCTIONS = 'You are a helpful bot.';
+/**
+ * The line, by language: a greeting to the universe and a few words on what is being heard. It names no bot, says nothing a bot
+ * would say about itself and has no gender. "Universe" stays as it is, being the product's name.
+ */
+export const HELLO_LINES: Readonly<Record<string, string>> = {
+    en: 'Hello, Universe. This is how I sound.',
+    ar: 'مرحبًا يا Universe. هذا هو صوتي.',
+    ca: 'Hola, Universe. Així sona la meva veu.',
+    de: 'Hallo, Universe. So klinge ich.',
+    es: 'Hola, Universe. Así suena mi voz.',
+    fr: 'Bonjour, Universe. Voilà à quoi ressemble ma voix.',
+    it: 'Ciao, Universe. Ecco come suona la mia voce.',
+    ja: 'こんにちは、Universe。これが私の声です。',
+    ko: '안녕하세요, Universe. 제 목소리는 이렇습니다.',
+    nl: 'Hallo, Universe. Zo klink ik.',
+    pt: 'Olá, Universe. É assim que a minha voz soa.',
+    zh: '你好，Universe。这就是我的声音。',
+};
 
-/** The person who set up the voice is about to hear the bot for the first time: this is what the bot is asked. */
-function helloPrompts(bot: { name: string; chatInstructions?: string }, language: { pinned?: string; reading?: string }): { system: string; user: string } {
-    const where = language.pinned
-        ? `Say it in the language with the code "${language.pinned}".`
-        : language.reading
-          ? `The person is using the game in ${language.reading}. Say it in that language, unless your instructions say you speak another.`
-          : 'Say it in the language your instructions use.';
-    return {
-        system: `${bot.chatInstructions || DEFAULT_INSTRUCTIONS}\n\nYour name is ${bot.name}.`,
-        user: [
-            'Someone who looks after you has just given you a voice, and is listening to hear you for the first time.',
-            'Say hello to them, in your own words, the way you greet a person who walks up to you. One or two short sentences.',
-            where,
-            'Spoken words only: no emoji, no markdown, no stage directions, no quotation marks. Do not say this is a test.',
-        ].join('\n'),
-    };
+/** The line for a language code such as "ar-KW", or a game locale such as "fr-FR"; English where there is none (or no language). */
+export function helloLine(...languages: Array<string | undefined>): string {
+    for (const language of languages) {
+        if (!language || !/^[A-Za-z]{2,3}([-_][A-Za-z0-9]{2,8})?$/.test(language)) continue;
+        const line = HELLO_LINES[language.split(/[-_]/)[0].toLowerCase()];
+        if (line) return line;
+    }
+    return HELLO_LINES.en;
 }
 
-/** What the bot wrote as words to say: no emotion block, no quotation marks around it, and no "rest is in the chat" tail. */
-export function helloWords(written: string): string {
-    let text = parseEmotionsFromResponse(written).cleanedResponse.trim();
-    const quoted = /^["“«'‘](.+)["”»'’]$/s.exec(text);
-    if (quoted) text = quoted[1].trim();
-    const spoken = spokenVersion(text, HELLO_MAX_CHARS);
-    const tail = ` ${SPOKEN_PHRASES.rest}`;
-    return spoken.endsWith(tail) ? spoken.slice(0, -tail.length).trim() : spoken;
+/** How long a hello is kept and how much of it, so a maker testing the same voice again and again is not paying for it each time. */
+export interface HelloCacheSettings {
+    /** How long one hello is reused, in milliseconds. 0 keeps nothing. */
+    ttlMs: number;
+    /** The most audio kept at once, in bytes. The oldest goes first. */
+    maxBytes: number;
 }
 
-/** The bot as it is saved in Orbit, as far as a hello needs it. */
-export interface HelloBot {
-    name: string;
-    chatInstructions?: string;
-    aiProviderRef?: string;
+interface HelloHeard {
+    text: string;
+    wav: Buffer;
+    ms: number;
+}
+
+/**
+ * The hello that was just made, kept in memory for a while under everything that changes what is heard (see `helloCacheKey`): a
+ * changed voice, model, style or language is a new hello, and only the first one is paid for. It is the same for every bot with
+ * that voice, since the line names none. It lives in this process and is gone when the bot server restarts.
+ */
+export class HelloCache {
+    private readonly entries = new Map<string, HelloHeard & { at: number }>();
+    private bytes = 0;
+
+    constructor(
+        readonly settings: HelloCacheSettings,
+        private readonly now: () => number = Date.now
+    ) {}
+
+    get(key: string): HelloHeard | undefined {
+        const entry = this.entries.get(key);
+        if (!entry) return undefined;
+        if (this.now() - entry.at >= this.settings.ttlMs) {
+            this.drop(key);
+            return undefined;
+        }
+        // Used again: it is the last to go
+        this.entries.delete(key);
+        this.entries.set(key, entry);
+        return { text: entry.text, wav: entry.wav, ms: entry.ms };
+    }
+
+    set(key: string, heard: HelloHeard): void {
+        if (this.settings.ttlMs <= 0 || heard.wav.length > this.settings.maxBytes) return;
+        this.drop(key);
+        this.entries.set(key, { ...heard, at: this.now() });
+        this.bytes += heard.wav.length;
+        for (const oldest of this.entries.keys()) {
+            if (this.bytes <= this.settings.maxBytes) break;
+            this.drop(oldest);
+        }
+    }
+
+    private drop(key: string): void {
+        const entry = this.entries.get(key);
+        if (!entry) return;
+        this.entries.delete(key);
+        this.bytes -= entry.wav.length;
+    }
+}
+
+/**
+ * What makes one hello different from another: who speaks it (the provider the voice comes from), the model, voice and style, the
+ * language it is said in and the words. Hashed. The key is not in it: a voice company's key changing does not change what is heard.
+ */
+export function helloCacheKey(input: { speechProviderId: string; speech: HelloPreviewRequest['speech']; expression: string; text: string }): string {
+    const { speech } = input;
+    return createHash('sha256')
+        .update(
+            JSON.stringify([
+                input.speechProviderId,
+                speech.adapter,
+                speech.model,
+                speech.voiceId,
+                speech.endpoint ?? '',
+                speech.region ?? '',
+                speech.language ?? '',
+                input.expression,
+                input.text,
+            ])
+        )
+        .digest('hex');
 }
 
 /** What the worker is asked (its /preview): the speech settings of a bubble, with the words. */
@@ -78,12 +149,11 @@ export interface HelloPorts {
     /** A fresh view of the bot's voice, so a change made a moment ago is heard. */
     voice(botId: string): VoiceSettings;
     allowance: Pick<AllowanceOrbit, 'checkVoiceAllowance' | 'releaseVoiceReply'>;
-    bot(botId: string): Promise<HelloBot | null>;
-    /** One short piece of text from the bot's own AI; empty when it can't be had. */
-    write(aiProviderRef: string, system: string, user: string, botId: string, timeoutMs: number): Promise<string>;
     preview(request: HelloPreviewRequest, timeoutMs: number): Promise<HelloPreviewAnswer>;
     newId(): string;
     log?(message: string): void;
+    /** A hello made a moment ago with the same voice and language is played again instead of being paid for again. */
+    cache?: HelloCache;
 }
 
 export type HelloFailure =
@@ -96,24 +166,13 @@ export type HelloFailure =
     | { status: 429; error: 'used_up'; resetsAt: string }
     /** A hello is already being made for this person and bot. */
     | { status: 429; error: 'busy' }
-    /** The bot wrote nothing to say. */
-    | { status: 502; error: 'no_words' }
     /** The voice company refused or failed: `status` is its HTTP status, `rejected` that it refused the key itself. */
     | { status: 502; error: 'provider'; providerStatus?: number; rejected: boolean };
 
-export type HelloResult = { ok: true; text: string; wav: Buffer; ms: number } | ({ ok: false } & HelloFailure);
+/** `cached`: it was made earlier and is played again: nothing was counted and nothing was asked of the voice company. */
+export type HelloResult = { ok: true; text: string; wav: Buffer; ms: number; cached?: true } | ({ ok: false } & HelloFailure);
 
 const fail = (failure: HelloFailure): HelloResult => ({ ok: false, ...failure });
-
-/** The language name to put in the bot's prompt for a game locale such as "ar-SA", or undefined when it is not one. */
-function readingLanguage(locale: string | undefined): string | undefined {
-    if (!locale || !/^[a-z]{2,3}([-_][A-Za-z0-9]{2,8})?$/.test(locale)) return undefined;
-    try {
-        return new Intl.DisplayNames(['en'], { type: 'language' }).of(locale.split(/[-_]/)[0]) ?? undefined;
-    } catch {
-        return undefined;
-    }
-}
 
 export class VoiceHello {
     /** Hellos being made, by bot and person: one at a time each. */
@@ -140,9 +199,13 @@ export class VoiceHello {
             }
             const session = await settings.sessionSettings(active);
             if (!session) return fail({ status: 503, error: 'unavailable' });
-            const bot = await this.ports.bot(botId);
-            if (!bot) return fail({ status: 404, error: 'unknown_bot' });
-            if (!bot.aiProviderRef) return fail({ status: 502, error: 'no_words' });
+
+            // The language the voice is set to speak, else the one the game is read in
+            const text = helloLine(active.profile.language, input.locale);
+            const cacheKey = this.ports.cache ? helloCacheKey({ speechProviderId: active.providers.speech.providerId, speech: session.speech, expression: session.expression, text }) : null;
+            const heard = cacheKey ? this.ports.cache?.get(cacheKey) : undefined;
+            // Heard already, with this very voice: played again, free, and no allowance is touched
+            if (heard) return { ok: true, text: heard.text, wav: heard.wav, ms: heard.ms, cached: true };
 
             // Universe AI pays for the voice: this hello is one of the maker's own voice replies, counted under its own id
             if (!active.providers.speech.owner) {
@@ -154,16 +217,6 @@ export class VoiceHello {
                 if (verdict.allowed === false) return fail({ status: 429, error: 'used_up', resetsAt: verdict.resetsAt });
                 counted = true;
             }
-
-            const prompts = helloPrompts(bot, { pinned: active.profile.language, reading: readingLanguage(input.locale) });
-            let written = '';
-            try {
-                written = await this.ports.write(bot.aiProviderRef, prompts.system, prompts.user, botId, HELLO_WRITE_TIMEOUT_MS);
-            } catch {
-                written = '';
-            }
-            const text = helloWords(written);
-            if (!text) return fail({ status: 502, error: 'no_words' });
 
             const answer = await this.ports.preview({ speech: session.speech, text, expression: session.expression, maxSeconds: HELLO_MAX_SECONDS }, HELLO_SPEAK_TIMEOUT_MS);
             if (answer.ok === false) {
@@ -183,6 +236,7 @@ export class VoiceHello {
             }
             if (active.providers.speech.owner) settings.report(active.providers.speech.providerId, 'speech', { ok: true });
             delivered = true;
+            if (cacheKey) this.ports.cache?.set(cacheKey, { text, wav: answer.wav, ms: answer.ms });
             return { ok: true, text, wav: answer.wav, ms: answer.ms };
         } finally {
             this.making.delete(mine);

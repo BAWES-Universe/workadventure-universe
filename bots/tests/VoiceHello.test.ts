@@ -1,7 +1,8 @@
 /**
- * "Hear <bot> say hello" (#1852): the bot writes a hello with its own brain and the voice worker speaks it once for the maker. These
- * check who pays (the maker's voice reply on Universe AI, a lent key's characters otherwise), that nothing is counted for a hello
- * that was not heard, that the bot's own words and the bubble's own voice settings are used, and that nothing carries a key.
+ * "Hear this voice say hello" (#1852): the voice worker says one short fixed line with the bot's voice for the maker, and a hello
+ * made a moment ago for the same voice is played again. These check who pays (the maker's voice reply on Universe AI the first time,
+ * a lent key's characters otherwise, nothing for one that is played again), that nothing is counted for a hello that was not
+ * heard, that the bubble's own voice settings are used, and that nothing carries a key.
  */
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -13,12 +14,16 @@ vi.mock('../mcp/MCPConnector', () => ({ MCPConnector: { clearCache: vi.fn() } })
 vi.mock('../utils/MovementLogger', () => ({ movementLogger: {} }));
 
 import { BotAPI } from '../server/BotAPI';
+import { voiceHelloCacheSettings } from '../voice/settings';
 import {
+    HELLO_LINES,
     HELLO_MAX_SECONDS,
+    HelloCache,
     VoiceHello,
-    helloWords,
+    helloLine,
     previewAtWorker,
     workerPreviewUrl,
+    type HelloCacheSettings,
     type HelloPorts,
     type HelloPreviewAnswer,
     type HelloPreviewRequest,
@@ -46,9 +51,8 @@ function hello(options: {
     owner?: boolean;
     language?: string;
     settings?: SessionSettings | null;
-    bot?: Awaited<ReturnType<HelloPorts['bot']>>;
+    cache?: HelloCache;
     allowance?: Awaited<ReturnType<HelloPorts['allowance']['checkVoiceAllowance']>>;
-    written?: string | (() => Promise<string>);
     preview?: HelloPreviewAnswer | (() => Promise<HelloPreviewAnswer>);
 } = {}) {
     const report = vi.fn();
@@ -59,9 +63,6 @@ function hello(options: {
     };
     const checkVoiceAllowance = vi.fn(async () => (options.allowance === undefined ? { allowed: true as const, left: 17 } : options.allowance));
     const releaseVoiceReply = vi.fn(async () => true as boolean | null);
-    const write = vi.fn(async (_ref: string, _system: string, _user: string, _botId: string, _ms: number) =>
-        typeof options.written === 'function' ? options.written() : (options.written ?? 'Hi, I am Hala. What can I get you?')
-    );
     const preview = vi.fn(async (_request: HelloPreviewRequest, _ms: number): Promise<HelloPreviewAnswer> =>
         typeof options.preview === 'function' ? options.preview() : (options.preview ?? { ok: true, wav: WAV, ms: 2300 })
     );
@@ -69,34 +70,27 @@ function hello(options: {
     const ports: HelloPorts = {
         voice: () => voice,
         allowance: { checkVoiceAllowance, releaseVoiceReply },
-        bot: async () => (options.bot === undefined ? { name: 'Hala', chatInstructions: 'You work at Zaatar & Co. and take orders.', aiProviderRef: 'universe-ai' } : options.bot),
-        write,
         preview,
         newId: () => `id${++n}`,
+        ...(options.cache ? { cache: options.cache } : {}),
     };
-    return { hello: new VoiceHello(ports), voice, report, checkVoiceAllowance, releaseVoiceReply, write, preview };
+    return { hello: new VoiceHello(ports), voice, report, checkVoiceAllowance, releaseVoiceReply, preview };
 }
 
 const say = (h: VoiceHello, extra: Partial<{ locale: string; personId: string }> = {}) => h.say({ botId: 'hala', personId: 'maker-uuid', ...extra });
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
-describe('hearing a bot say hello', () => {
-    it('on Universe AI: counts one voice reply for the maker, has the bot write its hello and speaks it with the bot\'s own voice settings', async () => {
+describe('hearing a voice say hello', () => {
+    it('on Universe AI: counts one voice reply for the maker and speaks the fixed line with the bot\'s own voice settings', async () => {
         const h = hello({ owner: false });
-        const result = await say(h.hello, { locale: 'ar-SA' });
-        expect(result).toEqual({ ok: true, text: 'Hi, I am Hala. What can I get you?', wav: WAV, ms: 2300 });
+        const result = await say(h.hello, { locale: 'en-US' });
+        expect(result).toEqual({ ok: true, text: HELLO_LINES.en, wav: WAV, ms: 2300 });
         // One reply counted, for the maker as a signed-in person, under an id of its own
         expect(h.checkVoiceAllowance).toHaveBeenCalledTimes(1);
         expect(h.checkVoiceAllowance).toHaveBeenCalledWith('hala', { userId: 'maker-uuid', isGuest: false, turnId: 'hello-id1' });
-        // The bot's own instructions and name, on its own AI, in the language the maker reads the game in
-        const [ref, system, user, botId] = h.write.mock.calls[0];
-        expect([ref, botId]).toEqual(['universe-ai', 'hala']);
-        expect(system).toContain('You work at Zaatar & Co. and take orders.');
-        expect(system).toContain('Your name is Hala.');
-        expect(user).toContain('Arabic');
         // Spoken exactly as a bubble would: the provider, model, voice and key of the session, and the style
         const [request] = h.preview.mock.calls[0];
-        expect(request).toEqual({ speech: session().speech, text: 'Hi, I am Hala. What can I get you?', expression: 'natural', maxSeconds: HELLO_MAX_SECONDS });
+        expect(request).toEqual({ speech: session().speech, text: HELLO_LINES.en, expression: 'natural', maxSeconds: HELLO_MAX_SECONDS });
         // Heard, so nothing is given back
         await flush();
         expect(h.releaseVoiceReply).not.toHaveBeenCalled();
@@ -110,23 +104,34 @@ describe('hearing a bot say hello', () => {
         expect(h.report).toHaveBeenCalledWith('voice-key', 'speech', { ok: true });
     });
 
-    it('says the language a bot is set to speak, whatever the game is read in', async () => {
-        const h = hello({ language: 'ar-KW' });
-        await say(h.hello, { locale: 'en-US' });
-        expect(h.write.mock.calls[0][2]).toContain('"ar-KW"');
-        expect(h.write.mock.calls[0][2]).not.toContain('English');
+    it('names no bot and says nothing a bot would say of itself', () => {
+        for (const line of Object.values(HELLO_LINES)) {
+            expect(line.length).toBeGreaterThan(10);
+            expect(line.length).toBeLessThanOrEqual(80);
+            expect(line).toContain('Universe');
+        }
     });
 
-    it('leaves the language to the bot\'s instructions when it is not set to one and the game language is not known', async () => {
-        const h = hello();
-        await say(h.hello, { locale: 'not a locale' });
-        expect(h.write.mock.calls[0][2]).toContain('language your instructions use');
+    it('says it in the language the voice is set to, else the one the game is read in, else English', async () => {
+        expect(helloLine('ar-KW', 'en-US')).toBe(HELLO_LINES.ar);
+        expect(helloLine(undefined, 'fr-FR')).toBe(HELLO_LINES.fr);
+        expect(helloLine(undefined, 'zh_CN')).toBe(HELLO_LINES.zh);
+        // A language there is no line for (or no language at all) falls to the next one, then to English
+        expect(helloLine('xx', 'de-DE')).toBe(HELLO_LINES.de);
+        expect(helloLine('hsb-DE', 'dsb-DE')).toBe(HELLO_LINES.en);
+        expect(helloLine(undefined, 'not a locale')).toBe(HELLO_LINES.en);
+        expect(helloLine()).toBe(HELLO_LINES.en);
+        const pinned = hello({ language: 'ar-KW' });
+        await say(pinned.hello, { locale: 'en-US' });
+        expect(pinned.preview.mock.calls[0][0].text).toBe(HELLO_LINES.ar);
+        const following = hello();
+        await say(following.hello, { locale: 'es-ES' });
+        expect(following.preview.mock.calls[0][0].text).toBe(HELLO_LINES.es);
     });
 
     it('is not made when the maker\'s voice replies are used up, and says when they come back', async () => {
         const h = hello({ allowance: { allowed: false, resetsAt: '2026-11-06T18:40:00.000Z' } });
         expect(await say(h.hello)).toEqual({ ok: false, status: 429, error: 'used_up', resetsAt: '2026-11-06T18:40:00.000Z' });
-        expect(h.write).not.toHaveBeenCalled();
         expect(h.preview).not.toHaveBeenCalled();
         expect(h.releaseVoiceReply).not.toHaveBeenCalled();
     });
@@ -134,22 +139,7 @@ describe('hearing a bot say hello', () => {
     it('says nothing out loud when Orbit cannot settle the allowance', async () => {
         const h = hello({ allowance: null });
         expect(await say(h.hello)).toEqual({ ok: false, status: 503, error: 'unavailable' });
-        expect(h.write).not.toHaveBeenCalled();
-    });
-
-    it('gives the counted reply back when the bot writes nothing', async () => {
-        const h = hello({ written: '' });
-        expect(await say(h.hello)).toEqual({ ok: false, status: 502, error: 'no_words' });
-        await flush();
-        expect(h.releaseVoiceReply).toHaveBeenCalledWith('hala', { turnId: 'hello-id1' });
         expect(h.preview).not.toHaveBeenCalled();
-    });
-
-    it('treats an AI that throws as having written nothing', async () => {
-        const h = hello({ written: () => Promise.reject(new Error('boom')) });
-        expect(await say(h.hello)).toEqual({ ok: false, status: 502, error: 'no_words' });
-        await flush();
-        expect(h.releaseVoiceReply).toHaveBeenCalledTimes(1);
     });
 
     it('gives the counted reply back when the voice company fails, and passes its status on', async () => {
@@ -183,20 +173,13 @@ describe('hearing a bot say hello', () => {
         const h = hello({ active: { speaks: false, reason: 'universe-off' } });
         expect(await say(h.hello)).toEqual({ ok: false, status: 409, error: 'voice_off', reason: 'universe-off' });
         expect(h.checkVoiceAllowance).not.toHaveBeenCalled();
-        expect(h.write).not.toHaveBeenCalled();
+        expect(h.preview).not.toHaveBeenCalled();
     });
 
     it('is not available when Orbit cannot be asked or the keys cannot be read, and not found for an unknown bot', async () => {
         expect(await say(hello({ active: { speaks: false, reason: 'orbit' } }).hello)).toEqual({ ok: false, status: 503, error: 'unavailable' });
         expect(await say(hello({ settings: null }).hello)).toEqual({ ok: false, status: 503, error: 'unavailable' });
         expect(await say(hello({ active: { speaks: false, reason: 'unknown-bot' } }).hello)).toEqual({ ok: false, status: 404, error: 'unknown_bot' });
-        expect(await say(hello({ bot: null }).hello)).toEqual({ ok: false, status: 404, error: 'unknown_bot' });
-    });
-
-    it('writes nothing for a bot with no AI to write with, and counts nothing', async () => {
-        const h = hello({ bot: { name: 'Hala' } });
-        expect(await say(h.hello)).toEqual({ ok: false, status: 502, error: 'no_words' });
-        expect(h.checkVoiceAllowance).not.toHaveBeenCalled();
     });
 
     it('makes one hello at a time for a person and bot, and lets another person make theirs', async () => {
@@ -220,30 +203,117 @@ describe('hearing a bot say hello', () => {
         expect(h.checkVoiceAllowance).toHaveBeenCalledTimes(3);
     });
 
-    it('never puts the key or the bot\'s instructions in anything it answers', async () => {
+    it('never puts the key in anything it answers', async () => {
         const failing = await say(hello({ preview: { ok: false, kind: 'provider', status: 401, rejected: true } }).hello);
         const refused = await say(hello({ allowance: { allowed: false, resetsAt: '2026-11-06T18:40:00.000Z' } }).hello);
-        for (const answer of [failing, refused]) {
-            expect(JSON.stringify(answer)).not.toContain(KEY);
-            expect(JSON.stringify(answer)).not.toContain('Zaatar');
-        }
+        for (const answer of [failing, refused]) expect(JSON.stringify(answer)).not.toContain(KEY);
     });
 });
 
-describe('the words that are spoken', () => {
-    it('are the bot\'s own, without markup, quotation marks or an emotion block', () => {
-        expect(helloWords('"Hello there, I\'m **Hala**!"')).toBe("Hello there, I'm Hala!");
-        expect(helloWords('Hi!\n\n[EMOTION_UPDATE]{"personSentiment":5}[/EMOTION_UPDATE]')).toBe('Hi!');
-        expect(helloWords('  \n ')).toBe('');
-        expect(helloWords('مرحبا، أنا هالة. كيف أخدمك؟')).toBe('مرحبا، أنا هالة. كيف أخدمك؟');
+describe('keeping a hello so trying a voice again costs nothing (#1852)', () => {
+    const minute = 60_000;
+    const kept = (over: Parameters<typeof hello>[0] = {}, settings: HelloCacheSettings = { ttlMs: 60 * minute, maxBytes: 1_000_000 }) => {
+        let at = 0;
+        const cache = new HelloCache(settings, () => at);
+        return { ...hello({ ...over, cache }), cache, later: (ms: number) => (at += ms) };
+    };
+
+    it('plays the first hello again for the same voice: nothing counted, nothing asked of the voice company', async () => {
+        const h = kept();
+        expect(await say(h.hello)).toEqual({ ok: true, text: HELLO_LINES.en, wav: WAV, ms: 2300 });
+        const again = await say(h.hello);
+        expect(again).toEqual({ ok: true, text: HELLO_LINES.en, wav: WAV, ms: 2300, cached: true });
+        expect(await say(h.hello, { personId: 'co-manager-uuid' })).toMatchObject({ ok: true, cached: true });
+        expect(h.checkVoiceAllowance).toHaveBeenCalledTimes(1);
+        expect(h.preview).toHaveBeenCalledTimes(1);
     });
 
-    it('stop at whole sentences when the bot goes on, and never say the rest is in the chat', () => {
-        const long = Array.from({ length: 40 }, (_, i) => `This is sentence number ${i}.`).join(' ');
-        const words = helloWords(long);
-        expect(words.length).toBeLessThanOrEqual(400);
-        expect(words.endsWith('.')).toBe(true);
-        expect(words).not.toContain('chat');
+    it('plays it for the maker even when their voice replies are used up, as it costs none', async () => {
+        const h = kept();
+        await say(h.hello);
+        h.checkVoiceAllowance.mockResolvedValue({ allowed: false, resetsAt: '2026-11-06T18:40:00.000Z' } as never);
+        expect(await say(h.hello)).toMatchObject({ ok: true, cached: true });
+    });
+
+    it('is the same for every bot that has that voice, since the line names none', async () => {
+        const h = kept();
+        await h.hello.say({ botId: 'hala', personId: 'maker-uuid' });
+        expect(await h.hello.say({ botId: 'omar', personId: 'maker-uuid' })).toMatchObject({ ok: true, cached: true });
+        expect(h.preview).toHaveBeenCalledTimes(1);
+    });
+
+    it.each<[string, (s: SessionSettings) => SessionSettings]>([
+        ['the voice', (s) => ({ ...s, speech: { ...s.speech, voiceId: 'omar' } })],
+        ['the model', (s) => ({ ...s, speech: { ...s.speech, model: 'eleven_flash_v2_5' } })],
+        ['the style', (s) => ({ ...s, expression: 'expressive' as never })],
+        ['the language of the voice', (s) => ({ ...s, speech: { ...s.speech, language: 'ar' } })],
+        ['the company', (s) => ({ ...s, speech: { ...s.speech, adapter: 'fish' } })],
+    ])('is a new hello when %s changes', async (_name, change) => {
+        const h = kept();
+        await say(h.hello);
+        (h.voice.sessionSettings as ReturnType<typeof vi.fn>).mockResolvedValue(change(session()));
+        expect(await say(h.hello)).toEqual({ ok: true, text: expect.any(String), wav: WAV, ms: 2300 });
+        expect(h.preview).toHaveBeenCalledTimes(2);
+    });
+
+    it('is a new hello in another language, and for another lent key, but not when the same key is replaced by a newer one', async () => {
+        const h = kept();
+        await say(h.hello, { locale: 'en-US' });
+        expect(await say(h.hello, { locale: 'fr-FR' })).not.toHaveProperty('cached');
+        expect(h.preview).toHaveBeenCalledTimes(2);
+        expect(await say(h.hello, { locale: 'fr-FR' })).toHaveProperty('cached', true);
+        (h.voice.sessionSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ ...session(), speech: { ...session().speech, key: 'sk-a-newer-key' } });
+        expect(await say(h.hello, { locale: 'fr-FR' })).toHaveProperty('cached', true);
+        (h.voice.active as ReturnType<typeof vi.fn>).mockResolvedValue({ ...speaking(true), providers: { recognition: { providerId: 'ears', owner: true }, speech: { providerId: 'another-key', owner: true } } });
+        expect(await say(h.hello, { locale: 'fr-FR' })).not.toHaveProperty('cached');
+    });
+
+    it('is made again once the time it is kept for has passed', async () => {
+        const h = kept();
+        await say(h.hello);
+        h.later(59 * minute);
+        expect(await say(h.hello)).toHaveProperty('cached', true);
+        h.later(2 * minute);
+        expect(await say(h.hello)).not.toHaveProperty('cached');
+        expect(h.preview).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps nothing when the time is set to 0, and nothing that failed', async () => {
+        const off = kept({}, { ttlMs: 0, maxBytes: 1_000_000 });
+        await say(off.hello);
+        expect(await say(off.hello)).not.toHaveProperty('cached');
+        const failing = kept({ preview: { ok: false, kind: 'provider', status: 402, rejected: false } });
+        await say(failing.hello);
+        failing.preview.mockResolvedValue({ ok: true, wav: WAV, ms: 1 });
+        expect(await say(failing.hello)).not.toHaveProperty('cached');
+        expect(failing.preview).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps no more than the room it is given: the one used longest ago goes first, and one too big is not kept', () => {
+        let at = 0;
+        const cache = new HelloCache({ ttlMs: 60 * minute, maxBytes: 100 }, () => at);
+        const wav = (n: number) => Buffer.alloc(n);
+        cache.set('a', { text: 'a', wav: wav(40), ms: 1 });
+        cache.set('b', { text: 'b', wav: wav(40), ms: 1 });
+        expect(cache.get('a')).toBeDefined(); // a is the newest now
+        cache.set('c', { text: 'c', wav: wav(40), ms: 1 });
+        expect(cache.get('b')).toBeUndefined();
+        expect(cache.get('a')).toBeDefined();
+        expect(cache.get('c')).toBeDefined();
+        cache.set('big', { text: 'big', wav: wav(101), ms: 1 });
+        expect(cache.get('big')).toBeUndefined();
+        // Setting a key again replaces it without counting it twice
+        cache.set('a', { text: 'a2', wav: wav(40), ms: 1 });
+        cache.set('c', { text: 'c2', wav: wav(40), ms: 1 });
+        expect(cache.get('a')?.text).toBe('a2');
+        expect(cache.get('c')?.text).toBe('c2');
+    });
+
+    it('is read from the settings: an hour and 32 MB unless told otherwise, 0 minutes for none', () => {
+        expect(voiceHelloCacheSettings({})).toEqual({ ttlMs: 60 * minute, maxBytes: 32 * 1024 * 1024 });
+        expect(voiceHelloCacheSettings({ VOICE_HELLO_CACHE_MINUTES: '5', VOICE_HELLO_CACHE_MB: '8' })).toEqual({ ttlMs: 5 * minute, maxBytes: 8 * 1024 * 1024 });
+        expect(voiceHelloCacheSettings({ VOICE_HELLO_CACHE_MINUTES: '0' }).ttlMs).toBe(0);
+        expect(voiceHelloCacheSettings({ VOICE_HELLO_CACHE_MINUTES: 'soon', VOICE_HELLO_CACHE_MB: '-3' })).toEqual({ ttlMs: 60 * minute, maxBytes: 32 * 1024 * 1024 });
     });
 });
 
@@ -328,12 +398,18 @@ describe('the route', () => {
     }
 
     it('gives the audio as base64 with the words, for the person behind the session', async () => {
-        const say = vi.fn(async () => ({ ok: true, text: 'Hi, I am Hala.', wav: WAV, ms: 2300 }));
+        const say = vi.fn(async () => ({ ok: true, text: HELLO_LINES.en, wav: WAV, ms: 2300 }));
         const { post } = await api({ hello: { say } });
         const response = await post({ locale: 'ar-SA' });
         expect(response.status).toBe(200);
-        expect(await response.json()).toEqual({ text: 'Hi, I am Hala.', mime: 'audio/wav', audio: WAV.toString('base64'), ms: 2300 });
+        expect(await response.json()).toEqual({ text: HELLO_LINES.en, mime: 'audio/wav', audio: WAV.toString('base64'), ms: 2300 });
         expect(say).toHaveBeenCalledWith({ botId: 'hala', personId: 'maker-uuid', locale: 'ar-SA' });
+    });
+
+    it('says when the hello was kept from earlier', async () => {
+        const say = vi.fn(async () => ({ ok: true, text: HELLO_LINES.en, wav: WAV, ms: 2300, cached: true }));
+        const { post } = await api({ hello: { say } });
+        expect(await (await post()).json()).toEqual({ text: HELLO_LINES.en, mime: 'audio/wav', audio: WAV.toString('base64'), ms: 2300, cached: true });
     });
 
     it('answers a failure with its status and its reason, and nothing else', async () => {

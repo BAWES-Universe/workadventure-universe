@@ -459,19 +459,19 @@ describe("the bot page's Voice group (#1668)", () => {
         expect(byTestId("bot-voice-picker-title")).toHaveLength(0);
     });
 
-    describe("Hear <bot> say hello (#1852)", () => {
+    describe("Hear this voice say hello (#1852)", () => {
         const hello = () => byTestId("bot-voice-hello")[0] as HTMLButtonElement | undefined;
 
         it("is a row under the voice card while voice is on, and says it costs one of the person's voice replies on Universe AI", async () => {
             mocks.api.getBotVoice.mockResolvedValue(turnedOn());
             await mount();
-            expect(hello()?.textContent).toContain("Hear Tinyfish say hello");
-            expect(hello()?.textContent).toContain("Uses 1 of your voice replies.");
+            expect(hello()?.textContent).toContain("Hear this voice say hello");
+            expect(hello()?.textContent).toContain("Uses 1 of your voice replies; hearing it again soon is free.");
             // Under the voice card, above How it speaks
             const card = byTestId("bot-voice-card")[0];
             const row = hello()!;
             expect(card.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-            expect(text().indexOf("Hear Tinyfish say hello")).toBeLessThan(text().indexOf("How it speaks"));
+            expect(text().indexOf("Hear this voice say hello")).toBeLessThan(text().indexOf("How it speaks"));
         });
 
         it("names the lent key that pays instead", async () => {
@@ -482,7 +482,7 @@ describe("the bot page's Voice group (#1668)", () => {
                 )
             );
             await mount();
-            expect(hello()?.textContent).toContain("Uses a few characters of your ElevenLabs key.");
+            expect(hello()?.textContent).toContain("Uses a few characters of your ElevenLabs key;");
             expect(hello()?.textContent).not.toContain("voice replies");
         });
 

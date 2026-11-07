@@ -240,7 +240,7 @@ export interface BotAPIOptions {
     dmStatus?: (botIds: string[]) => Promise<Record<string, string>>;
     /** The room a bot lives in, for its profile in a direct message; only when Matrix DMs are on. */
     dmRoom?: (botId: string) => Promise<{ url: string; room: string; world: string; universe: string } | undefined>;
-    /** "Hear <bot> say hello" on the bot page (#1852). Left out, it is built from the bot server's own parts the first time it is asked for; null: not available. */
+    /** "Hear this voice say hello" on the bot page (#1852). Left out, it is built from the bot server's own parts the first time it is asked for; null: not available. */
     voiceHello?: VoiceHello | null;
 }
 
@@ -306,7 +306,7 @@ export class BotAPI {
     }
 
     private voiceHello(): VoiceHello | null {
-        if (this.voiceHelloOption === undefined) this.voiceHelloOption = buildVoiceHello(this.adminApiService, this.botManager.getAIService());
+        if (this.voiceHelloOption === undefined) this.voiceHelloOption = buildVoiceHello(this.adminApiService);
         return this.voiceHelloOption;
     }
 
@@ -871,8 +871,9 @@ export class BotAPI {
         });
 
         // Get available AI providers (for bot editor UI). Signed-in only; returns metadata, no credentials
-        // "Hear <bot> say hello" (#1852): the bot writes a hello with its own brain and the voice worker speaks it once, for the
-        // people who manage the bot. Counts as one of the maker's voice replies when Universe AI pays for the voice. Says why when it can't.
+        // "Hear this voice say hello" (#1852): the voice worker says one short fixed line with the bot's voice, for the people who
+        // manage the bot. The first one counts as one of the maker's voice replies when Universe AI pays for the voice; the same voice
+        // heard again soon is kept and free. Says why when it can't.
         this.app.post('/api/bots/:botId/voice/hello', requireSession, requireManager, async (req: BotAPIRequest, res: Response) => {
             const hello = this.voiceHello();
             if (!hello || !req.sessionUuid) {
@@ -889,7 +890,7 @@ export class BotAPI {
                     res.status(result.status).json(body);
                     return;
                 }
-                res.json({ text: result.text, mime: 'audio/wav', audio: result.wav.toString('base64'), ms: result.ms });
+                res.json({ text: result.text, mime: 'audio/wav', audio: result.wav.toString('base64'), ms: result.ms, ...(result.cached ? { cached: true } : {}) });
             } catch (error) {
                 // What the error holds is never sent or logged: it could be about a key
                 console.error('[BotAPI] Voice hello failed:', error instanceof Error ? error.constructor.name : 'error');

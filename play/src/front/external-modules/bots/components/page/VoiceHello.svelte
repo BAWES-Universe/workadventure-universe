@@ -1,8 +1,8 @@
 <script lang="ts">
-    // "Hear <bot> say hello" (#1852): the bot writes a hello in its own words and says it once in the voice and style it speaks
-    // with, so the maker hears the real thing. It costs what a spoken reply costs: one of the person's voice replies on
-    // Universe AI, a few characters of the lent key otherwise (the samples above stay free). While it plays, the row is the
-    // way to stop it. Nothing is said in any bubble.
+    // "Hear this voice say hello" (#1852): one short fixed line said in the voice and style the bot speaks with, so the maker
+    // hears the real thing. The first time costs what a spoken reply costs: one of the person's voice replies on Universe AI, a
+    // few characters of the lent key otherwise (the samples above stay free); the same voice heard again soon is kept and free.
+    // While it plays, the row is the way to stop it. Nothing is said in any bubble.
     import { createEventDispatcher, onDestroy } from "svelte";
     import LL from "../../../../../i18n/i18n-svelte";
     import { botApiService } from "../../services/BotApiService";
@@ -11,7 +11,6 @@
     import { IconLoader2, IconMessageCircle, IconPauseFilled } from "@wa-icons";
 
     export let botId: string;
-    export let botName: string;
     /** Whose key pays for the voice, as a phrase ("your ElevenLabs key"); null when Universe AI pays and it is one of the person's voice replies */
     export let paidByKey: string | null;
     /** The language the game is read in: the bot says hello in it unless its instructions say it speaks another */
@@ -94,20 +93,18 @@
     </span>
     <span class="vh-tx" aria-live="polite">
         <span class="vh-t">
-            {#if thinking}{v.helloThinking({ bot: botName })}{:else if saying}{v.helloSaying({
-                    bot: botName,
-                })}{:else}{v.helloTitle({ bot: botName })}{/if}
+            {#if thinking}{v.helloThinking()}{:else if saying}{v.helloSaying()}{:else}{v.helloTitle()}{/if}
         </span>
         <span class="vh-n" data-testid="bot-voice-hello-line">
             {#if saying}“{words}”{:else if usedUp}{v.helloUsedUp({ time })}{:else if !thinking}{paidByKey
-                    ? v.helloLineKey({ bot: botName, key: paidByKey })
-                    : v.helloLineUniverseAi({ bot: botName })}{/if}
+                    ? v.helloLineKey({ key: paidByKey })
+                    : v.helloLineUniverseAi()}{/if}
         </span>
     </span>
     {#if saying}<span class="vh-sr">{v.helloStop()}</span>{/if}
 </button>
 {#if failed}<p class="vh-error" role="alert" data-testid="bot-voice-hello-failed">
-        {v.helloFailed({ bot: botName })}
+        {v.helloFailed()}
     </p>{/if}
 
 <style>

@@ -58,10 +58,10 @@ describe("BotApiService.sayBotHello (#1852)", () => {
     it("asks the bot server for this bot's hello with the Orbit session and the game's language, and gives back the words and a playable address", async () => {
         const wav = Uint8Array.from([82, 73, 70, 70, 1, 2, 3]);
         fetchMock.mockResolvedValue(
-            reply(200, { text: "Hi, I’m Hala.", mime: "audio/wav", audio: btoa(String.fromCharCode(...wav)), ms: 2300 })
+            reply(200, { text: "Hello, Universe. This is how I sound.", mime: "audio/wav", audio: btoa(String.fromCharCode(...wav)), ms: 2300 })
         );
         const hello = await service().sayBotHello("b 1", "ar-SA");
-        expect(hello).toEqual({ text: "Hi, I’m Hala.", url: "blob:hello-1" });
+        expect(hello).toEqual({ text: "Hello, Universe. This is how I sound.", url: "blob:hello-1" });
         const [url, init] = fetchMock.mock.calls[0];
         expect(url).toBe("https://bots.example.com/api/bots/b%201/voice/hello");
         expect(init.method).toBe("POST");

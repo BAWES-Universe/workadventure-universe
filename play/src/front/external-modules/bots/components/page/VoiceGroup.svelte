@@ -1065,7 +1065,6 @@
                         {#key bot.id}
                             <VoiceHello
                                 botId={bot.id}
-                                {botName}
                                 paidByKey={speakingKey ? keyPhrase(speakingKey, true) : null}
                                 locale={$locale}
                                 on:refresh={() => void load(bot.id, true)}
