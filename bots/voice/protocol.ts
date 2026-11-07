@@ -20,9 +20,13 @@ export type VoiceExpression = 'restrained' | 'natural' | 'expressive';
 /** Which of the two jobs a provider does. */
 export type ProviderPart = 'recognition' | 'speech';
 /** The provider a bubble hears with, named by the adapter name Orbit stores (lowercase). The key is used for the provider call only. */
-export interface RecognitionConfig { adapter: string; model: string; key: string; endpoint?: string; region?: string; language?: string }
+export interface RecognitionConfig {
+    adapter: string; model: string; key?: string; endpoint?: string; region?: string; language?: string;
+    /** Names the hearing should expect and spell as written: this bot's own name, then the other voice bots' (#1864). */
+    terms?: string[];
+}
 /** The provider a bubble speaks with. */
-export interface SpeechConfig { adapter: string; model: string; voiceId: string; key: string; endpoint?: string; region?: string; language?: string }
+export interface SpeechConfig { adapter: string; model: string; voiceId: string; key?: string; endpoint?: string; region?: string; language?: string }
 
 export type ToWorker =
     | { type: 'session.open'; sessionId: string; bubbleId: string; botId: string; recognition?: RecognitionConfig; speech?: SpeechConfig; expression?: VoiceExpression; turnSeconds?: number }
@@ -36,7 +40,9 @@ export type ToWorker =
     | { type: 'session.end'; sessionId: string }
     | { type: 'room.join'; sessionId: string; epoch: number; serverUrl: string; token: string }
     | { type: 'room.leave'; sessionId: string; epoch: number }
-    | { type: 'room.people'; sessionId: string; epoch: number; people: { participantId: string; mode: VoiceMode }[] };
+    | { type: 'room.people'; sessionId: string; epoch: number; people: { participantId: string; mode: VoiceMode }[] }
+    /** Another voice bot came or went: the names the hearing should expect from the next stretch of speech, replacing the earlier list. */
+    | { type: 'recognition.terms'; sessionId: string; terms: string[] };
 
 /** Why a stretch of speech was not sent: the words that did come through are only offered back to the person. */
 export type LostReason = 'cap' | 'gap' | 'path' | 'stopped' | 'provider';

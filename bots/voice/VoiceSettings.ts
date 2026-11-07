@@ -50,6 +50,8 @@ export interface VoiceCredentialsAnswer {
     endpoint?: string | null;
     region?: string | null;
     apiKeyEncrypted: string | null;
+    /** Said by Orbit when this provider has no key and needs none: a speech server on a person's own computer (#1874). */
+    keyless?: boolean;
 }
 
 /** POST /api/voice/providers/:id/health. */
@@ -235,8 +237,8 @@ export class BotVoiceSettings implements VoiceSettings {
         if (!forEars || !forVoice || forEars.recognition === false || forVoice.speech === false) return null;
         const { profile } = active;
         return {
-            recognition: { adapter: forEars.adapter, model: profile.recognitionModel, key: forEars.key, ...connection(forEars), ...(profile.language ? { language: profile.language } : {}) },
-            speech: { adapter: forVoice.adapter, model: profile.speechModel, voiceId: profile.voiceId, key: forVoice.key, ...connection(forVoice), ...(profile.language ? { language: profile.language } : {}) },
+            recognition: { adapter: forEars.adapter, model: profile.recognitionModel, ...withKey(forEars), ...connection(forEars), ...(profile.language ? { language: profile.language } : {}) },
+            speech: { adapter: forVoice.adapter, model: profile.speechModel, voiceId: profile.voiceId, ...withKey(forVoice), ...connection(forVoice), ...(profile.language ? { language: profile.language } : {}) },
             expression: profile.expression,
             ...(active.turnSeconds !== undefined ? { turnSeconds: active.turnSeconds } : {}),
         };
@@ -256,13 +258,14 @@ export class BotVoiceSettings implements VoiceSettings {
         }
         let key: string | null;
         try {
-            key = decryptApiKey(answer.apiKeyEncrypted);
+            // A provider with no key that needs none says so itself; any other with no key can't be used
+            key = answer.keyless === true && !answer.apiKeyEncrypted ? '' : decryptApiKey(answer.apiKeyEncrypted);
         } catch {
             // The reason is left out on purpose: it is about the key
             this.log(`voice: the key of provider ${providerId} could not be read`);
             return null;
         }
-        if (!key) {
+        if (key === null || (!key && answer.keyless !== true)) {
             this.log(`voice: provider ${providerId} has no key`);
             return null;
         }
@@ -290,6 +293,11 @@ interface Credentials {
     speech?: boolean;
     endpoint?: string;
     region?: string;
+}
+
+/** The key of a provider, only when it has one: a speech server on a person's own computer may have none, and then none is sent. */
+function withKey(credentials: Credentials): { key?: string } {
+    return credentials.key ? { key: credentials.key } : {};
 }
 
 /** The endpoint and region of a provider, only when it has them. */
