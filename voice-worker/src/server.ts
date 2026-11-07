@@ -19,6 +19,7 @@ import { ASSEMBLYAI_ADAPTER, AssemblyAiRecognition } from './assemblyai.ts';
 import { ASYNC_ADAPTER, AsyncSpeech } from './async.ts';
 import { BLAND_ADAPTER, BlandSpeech } from './bland.ts';
 import { CAMB_ADAPTER, CambSpeech } from './camb.ts';
+import { FAL_ADAPTER, FalRecognition } from './fal.ts';
 import { ELEVENLABS_ADAPTER, ElevenLabsSpeech } from './elevenlabs.ts';
 import { CARTESIA_ADAPTER, CartesiaRecognition, CartesiaSpeech } from './cartesia.ts';
 import { FISH_ADAPTER, FishSpeech } from './fish.ts';
@@ -123,6 +124,7 @@ export class VoiceWorker {
             const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
             this.connectors.registerRecognition(CARTESIA_ADAPTER, new CartesiaRecognition({ version: options.cartesiaVersion, finalTimeoutMs }));
         }
+        if (!this.connectors.recognition(FAL_ADAPTER)) this.connectors.registerRecognition(FAL_ADAPTER, new FalRecognition());
         if (!this.connectors.speech(FISH_ADAPTER)) this.connectors.registerSpeech(FISH_ADAPTER, new FishSpeech());
         if (!this.connectors.recognition(SONIOX_ADAPTER)) {
             const finalTimeoutMs = (options.recognitionFinalTimeoutSeconds ?? DEFAULT_SONIOX_FINAL_TIMEOUT_MS / 1000) * 1000;
