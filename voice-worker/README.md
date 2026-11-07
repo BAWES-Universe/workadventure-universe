@@ -64,6 +64,12 @@ that names nothing gets) and the scripted `FakeEars` for tests, plus these real 
   The reply's language goes as `language` (base code, such as `ar`). Expression: `restrained` sends `generation_config.emotion`
   `calm` (Sonic 3 and newer only); `natural` and `expressive` send nothing, so Cartesia reads the emotion from the words. A
   refusal fails with Cartesia's status; an unreachable server or a dropped stream fails without one.
+* `fish` (speaking, `src/fish.ts`): one streamed `POST /v1/tts` per reply to `https://api.fish.audio` (or the profile's
+  `endpoint`), the key in the `Authorization: Bearer` header only, the profile's `model` in the `model` header (`s2.1-pro`, or
+  the free `s2.1-pro-free`) and its voice as `reference_id`, asking for `pcm` at 24 kHz with `latency: balanced`, which plays as it
+  arrives. A 44-byte WAV header at the start of the stream, if Fish sends one, is skipped. The reply's language goes as `language`
+  (base code, such as `ar`; Fish uses it only to read numbers and dates aloud). No expression is sent. A refusal fails with Fish's
+  status (401 a wrong key, 402 no credit, 429 too many at once); an unreachable server or a dropped stream fails without one.
 * `deepgram` (hearing, `src/deepgram.ts`): one real-time WebSocket stream per stretch of speech to
   `wss://api.deepgram.com/v1/listen` (or the profile's `endpoint`), the key in the `Authorization` header only
   (`Token <key>`), 16 kHz mono `linear16`, the profile's `model` (`nova-3` when it names none) and its `language` when it
