@@ -443,6 +443,9 @@ describe("the bot page's Voice group (#1668)", () => {
         await click("bot-voice-change");
         expect(text()).toContain("Voices for Tinyfish on Universe AI");
         expect(text()).toContain("More voices with your own voice key");
+        // Which companies a key can come from is the server's choice, so the line names none
+        expect(text()).toContain("Add a voice key from any company this server offers in AI keys, and lend it here.");
+        expect(text()).not.toMatch(/ElevenLabs, Deepgram|Deepgram or Cartesia/);
         expect((byTestId("bot-voice-use")[0] as HTMLButtonElement).disabled).toBe(true);
         await click("bot-voice-option", 1);
         expect(mocks.api.saveBotVoice).not.toHaveBeenCalled();
