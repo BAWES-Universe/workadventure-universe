@@ -130,12 +130,19 @@ describe('hearing with OpenAI', () => {
         expect(got.failures).toEqual([{ text: '', status: 401 }]);
     });
 
-    it('is registered as "openai" for hearing unless a registry already brings one', () => {
+    it('is registered as "openai" for hearing, and leaves every other OpenAI model (talking live) to the one already there', () => {
         const base = { port: 0, host: '127.0.0.1', maxLanes: 1, maxSessionsPerConnection: 1, ice: { iceServers: [] } };
         expect(new VoiceWorker(base).connectors.recognition(OPENAI_ADAPTER)).toBeInstanceOf(OpenAIRecognition);
-        const own = { listen: () => ({ push: () => undefined, finish: () => undefined, close: () => undefined }) };
-        expect(
-            new VoiceWorker({ ...base, connectors: new ConnectorRegistry().registerRecognition('openai', own as never) }).connectors.recognition('openai'),
-        ).toBe(own);
+        const asked: string[] = [];
+        const recognizer = { push: () => undefined, finish: () => undefined, close: () => undefined };
+        const talking = { listen: (settings: { model: string }) => (asked.push(settings.model), recognizer) };
+        const both = new VoiceWorker({ ...base, connectors: new ConnectorRegistry().registerRecognition('openai', talking as never) }).connectors.recognition(
+            'openai',
+        )!;
+        const { events } = heard();
+        expect(both.listen(hearing('ws://127.0.0.1:9', { model: 'gpt-realtime-2.1' }), events)).toBe(recognizer);
+        expect(asked).toEqual(['gpt-realtime-2.1']);
+        both.listen(hearing('ws://127.0.0.1:9', { model: 'gpt-transcribe' }), events).close();
+        expect(asked).toEqual(['gpt-realtime-2.1']);
     });
 });

@@ -34,9 +34,11 @@ import { SMALLEST_ADAPTER, SmallestRecognition, SmallestSpeech } from './smalles
 import { SPEECHIFY_ADAPTER, SpeechifySpeech } from './speechify.ts';
 import { SPEECHMATICS_ADAPTER, SpeechmaticsRecognition, SpeechmaticsSpeech } from './speechmatics.ts';
 import { TOGETHER_ADAPTER, TogetherRecognition, TogetherSpeech } from './together.ts';
-import { OPENAI_ADAPTER, OpenAIRecognition } from './openaiHearing.ts';
+import { OPENAI_ADAPTER, OPENAI_HEARING_MODELS, OpenAIRecognition } from './openaiHearing.ts';
 import { NVIDIA_ADAPTER, NvidiaRecognition, NvidiaSpeech } from './nvidia.ts';
 import { MINIMAX_ADAPTER, MiniMaxSpeech } from './minimax.ts';
+import { XAI_HEARING_MODELS, XAI_SPEECH_MODELS, XAI_VOICE_ADAPTER, XaiTranscription, XaiTts } from './xaiVoice.ts';
+import { recognitionByModel, speechByModel } from './kit/byModel.ts';
 import { ELEVENLABS_ADAPTER, ElevenLabsSpeech } from './elevenlabs.ts';
 import { CARTESIA_ADAPTER, CartesiaRecognition, CartesiaSpeech } from './cartesia.ts';
 import { FISH_ADAPTER, FishSpeech } from './fish.ts';
@@ -185,9 +187,12 @@ export class VoiceWorker {
             this.connectors.registerRecognition(TOGETHER_ADAPTER, new TogetherRecognition({ finalTimeoutMs }));
         }
         if (!this.connectors.speech(TOGETHER_ADAPTER)) this.connectors.registerSpeech(TOGETHER_ADAPTER, new TogetherSpeech());
-        if (!this.connectors.recognition(OPENAI_ADAPTER)) {
+        // OpenAI also talks live under the same name (#1910): its own hearing takes only its models, any other goes to what is already
+        // registered
+        {
             const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
-            this.connectors.registerRecognition(OPENAI_ADAPTER, new OpenAIRecognition({ finalTimeoutMs }));
+            const hearing = new OpenAIRecognition({ finalTimeoutMs });
+            this.connectors.registerRecognition(OPENAI_ADAPTER, recognitionByModel(OPENAI_HEARING_MODELS, hearing, this.connectors.recognition(OPENAI_ADAPTER)));
         }
         if (!this.connectors.recognition(NVIDIA_ADAPTER)) {
             const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
@@ -195,6 +200,14 @@ export class VoiceWorker {
         }
         if (!this.connectors.speech(NVIDIA_ADAPTER)) this.connectors.registerSpeech(NVIDIA_ADAPTER, new NvidiaSpeech());
         if (!this.connectors.speech(MINIMAX_ADAPTER)) this.connectors.registerSpeech(MINIMAX_ADAPTER, new MiniMaxSpeech());
+        // xAI also talks live under the same name (#1910): its own hearing and speaking take only their models, any other goes to what is
+        // already registered
+        {
+            const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
+            const hearing = new XaiTranscription({ finalTimeoutMs });
+            this.connectors.registerRecognition(XAI_VOICE_ADAPTER, recognitionByModel(XAI_HEARING_MODELS, hearing, this.connectors.recognition(XAI_VOICE_ADAPTER)));
+            this.connectors.registerSpeech(XAI_VOICE_ADAPTER, speechByModel(XAI_SPEECH_MODELS, new XaiTts(), this.connectors.speech(XAI_VOICE_ADAPTER)));
+        }
         if (!this.connectors.recognition(SONIOX_ADAPTER)) {
             const finalTimeoutMs = (options.recognitionFinalTimeoutSeconds ?? DEFAULT_SONIOX_FINAL_TIMEOUT_MS / 1000) * 1000;
             this.connectors.registerRecognition(SONIOX_ADAPTER, new SonioxRecognition({ finalTimeoutMs }));

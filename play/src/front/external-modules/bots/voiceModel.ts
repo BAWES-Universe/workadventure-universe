@@ -567,6 +567,7 @@ export function companyName(adapter: string): string {
         speechify: "Speechify",
         speechmatics: "Speechmatics",
         together: "Together AI",
+        xai: "xAI",
         elevenlabs: "ElevenLabs",
         cartesia: "Cartesia",
         fish: "Fish Audio",

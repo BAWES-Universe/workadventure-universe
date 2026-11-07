@@ -17,6 +17,8 @@ import type { Recognizer, RecognizerEvents } from './recognizer.ts';
 export const OPENAI_ADAPTER = 'openai';
 export const OPENAI_HEARING_ENDPOINT = 'wss://api.openai.com';
 const HEARING_MODEL = 'gpt-realtime-whisper';
+/** The models this connector hears with (Orbit's list); OpenAI's talking models go to its talking connector (src/kit/byModel.ts). */
+export const OPENAI_HEARING_MODELS: ReadonlySet<string> = new Set([HEARING_MODEL, 'gpt-transcribe', 'gpt-live-transcribe']);
 /** OpenAI's realtime socket takes 24 kHz audio. */
 const OPENAI_RATE = 24000;
 
