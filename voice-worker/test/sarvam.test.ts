@@ -120,6 +120,21 @@ describe('hearing with Sarvam AI', () => {
         ]);
     });
 
+    it("keeps the flush's words when an earlier segment's words arrive after the flush was sent", async () => {
+        const s = await fakeSarvam((ws, message) => {
+            if (message.type !== 'flush') return;
+            ws.send(JSON.stringify(data('aap kaise')));
+            setTimeout(() => ws.send(JSON.stringify(data('hain?'))), 100);
+        });
+        const { got, events } = heard();
+        const stream = new SarvamRecognition().listen(hearing(s.base), events);
+        stream.push(new Int16Array([1, 2]));
+        await waitFor('the audio', () => s.seen.messages.length === 1);
+        stream.finish();
+        await waitFor('the last words', () => got.finals.length === 1);
+        expect(got.finals).toEqual(['aap kaise hain?']);
+    });
+
     it('ends with what was heard when Sarvam sends nothing for the flush, and lets it work out a language it has no code for', async () => {
         const s = await fakeSarvam();
         const { got, events } = heard();

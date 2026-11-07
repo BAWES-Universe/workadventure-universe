@@ -51,15 +51,18 @@ export interface SocketHearingSpec {
     finalTimeoutMs?: number;
     /**
      * The company answers the end of the audio with one more answer and never says "finished" (Sarvam answers a flush with one
-     * transcript): the first words after finish() end the stretch, and with none within `quietMs`, it ends with what was heard.
+     * transcript): words after finish() end the stretch once `settleMs` (default 300 ms) pass with no more, so an earlier
+     * segment's words still in flight don't cut off the last ones; with none within `quietMs`, it ends with what was heard.
      */
-    lastAnswerAfterFinish?: { quietMs: number };
+    lastAnswerAfterFinish?: { quietMs: number; settleMs?: number };
     outOfCredit?: CreditCheck;
 }
 
 /** Audio held while the socket opens. Past this the oldest goes: a socket that slow is failing anyway. */
 const MAX_PENDING_MS = 10_000;
 export const DEFAULT_FINAL_TIMEOUT_MS = 10_000;
+/** With `lastAnswerAfterFinish`, how long after the latest words the stretch ends. */
+const DEFAULT_SETTLE_MS = 300;
 
 /** A hearing connector made from a spec. */
 export function socketHearing(spec: SocketHearingSpec): RecognitionConnector {
@@ -81,7 +84,11 @@ class SocketStream implements Recognizer {
     private timer?: NodeJS.Timeout;
     readonly pauseMs?: number;
 
-    constructor(private readonly spec: SocketHearingSpec, private readonly settings: RecognitionSettings, private readonly events: RecognizerEvents) {
+    constructor(
+        private readonly spec: SocketHearingSpec,
+        private readonly settings: RecognitionSettings,
+        private readonly events: RecognizerEvents,
+    ) {
         this.pauseMs = spec.pauseMs;
         const base = (settings.endpoint || spec.endpoint).replace(/\/+$/, '');
         let address: SocketAddress | Promise<SocketAddress>;
@@ -167,7 +174,9 @@ class SocketStream implements Recognizer {
             res.on('data', (d: Buffer) => {
                 if (body.length < 4096) body += d.toString('utf8');
             });
-            res.on('end', () => this.fail(failure(this.spec.adapter, 'refused the connection', answerStatus(res.statusCode ?? 0, body, this.spec.outOfCredit))));
+            res.on('end', () =>
+                this.fail(failure(this.spec.adapter, 'refused the connection', answerStatus(res.statusCode ?? 0, body, this.spec.outOfCredit))),
+            );
             res.on('error', () => this.fail(failure(this.spec.adapter, 'refused the connection', res.statusCode)));
         });
         ws.on('error', () => this.fail(failure(this.spec.adapter, 'connection error')));
@@ -227,7 +236,12 @@ class SocketStream implements Recognizer {
                 this.endpointed = true;
                 this.events.endpoint?.();
             }
-            if (this.finishing && this.spec.lastAnswerAfterFinish && (message.committed !== undefined || message.interim !== undefined)) return this.end();
+            const last = this.spec.lastAnswerAfterFinish;
+            if (this.finishing && last && (message.committed !== undefined || message.interim !== undefined)) {
+                clearTimeout(this.timer);
+                this.timer = setTimeout(() => this.end(), last.settleMs ?? DEFAULT_SETTLE_MS);
+                this.timer.unref?.();
+            }
         }
     }
 
