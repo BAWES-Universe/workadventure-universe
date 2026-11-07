@@ -596,6 +596,10 @@ describe("talking models (#1910)", () => {
         if (!list) throw new Error("the list should be readable");
         expect(voicesForOption(split, list).map((choice) => choice.voiceId)).toEqual(["alloy"]);
         expect(voicesForOption(one, list).map((choice) => choice.voiceId)).toEqual(["marin", "alloy"]);
+        // Turning voice on with the split starts on the key's own voice, even when the last version talked live
+        const door = doorVoices(voice, split.speech, voicesForOption(split, list), "marin");
+        expect(door.voices.map((choice) => choice.voiceId)).toEqual(["alloy"]);
+        expect(door.startId).toBe("alloy");
         // Listening on Universe AI and speaking on the key's own model is left as it is
         const next = full({
             ...live,

@@ -343,7 +343,9 @@
         voice && view?.kind === "off"
             ? doorOptions.find((option) => option.id === doorPayerId) ?? startingPayer(voice, previousProfile)
             : null;
-    $: doorList = doorOption ? lists[sourceKey(doorOption.speech)] : undefined;
+    // A split listens elsewhere, so the speaking place offers only voices that speak on their own (no talking model)
+    $: doorAll = doorOption ? lists[sourceKey(doorOption.speech)] : undefined;
+    $: doorList = doorOption && doorAll ? voicesForOption(doorOption, doorAll) : undefined;
     $: doorFailed = doorOption ? listFailed[sourceKey(doorOption.speech)] === true : false;
     $: door =
         voice && doorOption && doorList
@@ -687,7 +689,10 @@
     // The picker
 
     $: pickerChoice = speakChoice ?? doorOption?.speech ?? (voice ? firstSpeechChoice(voice) : null);
-    $: pickerList = pickerChoice ? lists[sourceKey(pickerChoice)] ?? null : null;
+    $: pickerAll = pickerChoice ? lists[sourceKey(pickerChoice)] ?? null : null;
+    // The same for the full list: a talking voice on a split would pull listening onto it and undo the split
+    $: pickerOption = view?.kind === "off" ? doorOption : onOption;
+    $: pickerList = pickerAll && pickerOption ? voicesForOption(pickerOption, pickerAll) : pickerAll;
     $: pickerFailed = pickerChoice ? listFailed[sourceKey(pickerChoice)] === true : false;
     $: pickerHeading = !pickerChoice
         ? ""
