@@ -11,6 +11,7 @@ import { SONIOX_ADAPTER } from './soniox.ts';
 export const SONIOX_SPEECH_ENDPOINT = 'wss://tts-rt.soniox.com/tts-websocket';
 /** One reply is one stream on its own socket, so its id never has to differ. */
 const STREAM_ID = 'reply';
+const DEFAULT_LANGUAGE = 'en';
 
 interface SonioxSpeechAnswer {
     audio?: unknown;
@@ -25,15 +26,15 @@ export class SonioxSpeech implements SpeechConnector {
         audio: { sampleRate: SPEECH_RATE, encoding: 'base64' },
         connect: (request, base) => ({ url: base, headers: { authorization: `Bearer ${request.settings.key.reveal()}` } }),
         send: (request) => {
-            const config: Record<string, unknown> = {
+            const config = {
                 stream_id: STREAM_ID,
                 model: request.settings.model,
                 voice: request.settings.voiceId,
                 audio_format: 'pcm_s16le',
                 sample_rate: SPEECH_RATE,
+                // Soniox needs a language on every stream: English when neither the reply nor the profile names one
+                language: baseLanguage(request.lang || request.settings.language || DEFAULT_LANGUAGE),
             };
-            const lang = request.lang ?? request.settings.language;
-            if (lang) config.language = baseLanguage(lang);
             return [JSON.stringify(config), JSON.stringify({ text: request.text, text_end: true, stream_id: STREAM_ID })];
         },
         read: (data, isBinary): SpeechMessage | undefined => {

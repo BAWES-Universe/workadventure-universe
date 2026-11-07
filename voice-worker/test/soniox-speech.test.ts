@@ -86,6 +86,12 @@ describe('speaking with Soniox', () => {
         expect(s.seen.messages[0].language).toBe('en');
     });
 
+    it('sends English when neither the reply nor the profile names a language', async () => {
+        const s = await fakeSoniox({ onText: (ws) => ws.send(JSON.stringify({ terminated: true })) });
+        await collect(new SonioxSpeech().speak(request(s.url, {}, { language: undefined })));
+        expect(s.seen.messages[0].language).toBe('en');
+    });
+
     it('fails with the status Soniox reports in the stream, or of a refused connection, without the key', async () => {
         const reported = await fakeSoniox({ onText: (ws) => ws.send(JSON.stringify({ stream_id: 'reply', error_code: 402, error_message: 'Out of credit' })) });
         const error = await collect(new SonioxSpeech().speak(request(reported.url))).catch((e: unknown) => e);
