@@ -17,6 +17,7 @@ import { type OutgoingMessage, Session } from './session.ts';
 import type { InputSink } from './transport.ts';
 import { ELEVENLABS_ADAPTER, ElevenLabsSpeech } from './elevenlabs.ts';
 import { CARTESIA_ADAPTER, CartesiaSpeech } from './cartesia.ts';
+import { AWS_ADAPTER, AwsRecognition, AwsSpeech } from './aws.ts';
 import { AZURE_ADAPTER, AzureRecognition, AzureSpeech } from './azure.ts';
 import { GOOGLE_ADAPTER, GoogleRecognition, GoogleSpeech } from './google.ts';
 import { OPENAI_ADAPTER, OpenAiRecognition, OpenAiSpeech } from './openai.ts';
@@ -112,6 +113,8 @@ export class VoiceWorker {
             this.connectors.registerRecognition(DEEPGRAM_ADAPTER, new DeepgramRecognition({ finalTimeoutMs }));
         }
         // A talking model (game #1910) is named for both hearing and speaking, under one adapter
+        if (!this.connectors.recognition(AWS_ADAPTER)) this.connectors.registerRecognition(AWS_ADAPTER, new AwsRecognition());
+        if (!this.connectors.speech(AWS_ADAPTER)) this.connectors.registerSpeech(AWS_ADAPTER, new AwsSpeech());
         if (!this.connectors.recognition(AZURE_ADAPTER)) this.connectors.registerRecognition(AZURE_ADAPTER, new AzureRecognition());
         if (!this.connectors.speech(AZURE_ADAPTER)) this.connectors.registerSpeech(AZURE_ADAPTER, new AzureSpeech());
         if (!this.connectors.recognition(GOOGLE_ADAPTER)) this.connectors.registerRecognition(GOOGLE_ADAPTER, new GoogleRecognition());
