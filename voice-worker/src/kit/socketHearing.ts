@@ -55,6 +55,11 @@ export interface SocketHearingSpec {
      */
     lastAnswerAfterFinish?: { quietMs: number };
     outOfCredit?: CreditCheck;
+    /**
+     * Opens something other than a WebSocket that behaves like one (NVIDIA: a gRPC call, src/kit/grpc.ts GrpcSocket): it emits
+     * open, message, close and error, and has send, terminate and readyState.
+     */
+    transport?(address: SocketAddress): WebSocket;
 }
 
 /** Audio held while the socket opens. Past this the oldest goes: a socket that slow is failing anyway. */
@@ -138,7 +143,7 @@ class SocketStream implements Recognizer {
         let ws: WebSocket;
         try {
             // Throws at once on a bad address or a header value it can't send (a key pasted with a line break)
-            ws = new WebSocket(address.url, address.protocols, { headers: address.headers });
+            ws = this.spec.transport ? this.spec.transport(address) : new WebSocket(address.url, address.protocols, { headers: address.headers });
         } catch {
             return this.fail(failure(this.spec.adapter, 'could not be reached'));
         }
