@@ -14,6 +14,19 @@ import { createHash } from 'crypto';
 import type { AllowanceOrbit } from './VoiceAllowance';
 import type { VoiceSettings } from './VoiceSettings';
 
+/** The speech adapter of a person's own OpenAI-compatible speech server (Speaches, Kokoro-FastAPI, a Whisper of their own). */
+export const OWN_SERVER_ADAPTER = 'openai-compatible';
+/** The longest voice name a bot keeps (Orbit saves up to this many characters). */
+export const VOICE_NAME_MAX = 255;
+
+/** A typed voice name as sent: one line of text of at most `VOICE_NAME_MAX` characters, trimmed, or nothing when it is not that. */
+export function typedVoiceName(value: unknown): string | undefined {
+    if (typeof value !== 'string') return undefined;
+    const name = value.trim();
+    // eslint-disable-next-line no-control-regex
+    return name.length > 0 && name.length <= VOICE_NAME_MAX && !/[\u0000-\u001f\u007f]/.test(name) ? name : undefined;
+}
+
 /** How long the worker may take to speak it, in milliseconds. */
 export const HELLO_SPEAK_TIMEOUT_MS = 30_000;
 /** The longest the hello plays, in seconds. */
@@ -175,6 +188,8 @@ export type HelloFailure =
     | { status: 429; error: 'used_up'; resetsAt: string }
     /** A hello is already being made for this person and bot. */
     | { status: 429; error: 'busy' }
+    /** A voice name was typed for a speech source that is not the person's own server: only a voice that source lists can be heard. */
+    | { status: 409; error: 'voice_name_not_typed' }
     /** The voice company refused or failed: `status` is its HTTP status, `rejected` that it refused the key itself. */
     | { status: 502; error: 'provider'; providerStatus?: number; rejected: boolean };
 
@@ -183,13 +198,27 @@ export type HelloResult = { ok: true; text: string; wav: Buffer; ms: number; cac
 
 const fail = (failure: HelloFailure): HelloResult => ({ ok: false, ...failure });
 
+/** Where a typed voice name is heard from when the bot does not speak yet: the speech server (a provider of the person's own) and the model. */
+export interface HelloSource {
+    providerId: string;
+    model: string;
+}
+
+/** The source a request names: two short texts, or nothing when it is not that. */
+export function helloSourceOf(value: unknown): HelloSource | undefined {
+    if (typeof value !== 'object' || value === null) return undefined;
+    const { providerId, model } = value as Record<string, unknown>;
+    const fit = (text: unknown): text is string => typeof text === 'string' && text.length > 0 && text.length <= 200;
+    return fit(providerId) && fit(model) ? { providerId, model } : undefined;
+}
+
 export class VoiceHello {
     /** Hellos being made, by bot and person: one at a time each. */
     private readonly making = new Set<string>();
 
     constructor(private readonly ports: HelloPorts) {}
 
-    async say(input: { botId: string; personId: string; locale?: string }): Promise<HelloResult> {
+    async say(input: { botId: string; personId: string; locale?: string; voiceId?: string; source?: HelloSource }): Promise<HelloResult> {
         const { botId, personId } = input;
         const mine = `${botId}\u0000${personId}`;
         if (this.making.has(mine)) return fail({ status: 429, error: 'busy' });
@@ -200,24 +229,51 @@ export class VoiceHello {
         let delivered = false;
         try {
             const settings = this.ports.voice(botId);
-            const active = await settings.active();
-            if ('reason' in active) {
-                if (active.reason === 'orbit') return fail({ status: 503, error: 'unavailable' });
-                if (active.reason === 'unknown-bot') return fail({ status: 404, error: 'unknown_bot' });
-                return fail({ status: 409, error: 'voice_off', reason: active.reason });
+            // Who speaks it: the bot's own voice, or (voice off, #1874) the speech server the person is setting up
+            let speech: HelloPreviewRequest['speech'];
+            let expression: string;
+            let speechProviderId: string;
+            let owner: boolean;
+            let language: string | undefined;
+            if (input.source) {
+                // A voice name typed for a speech server of the person's own, heard before voice is on: the server and the name only
+                if (input.voiceId === undefined || !settings.ownSpeech) return fail({ status: 503, error: 'unavailable' });
+                const own = await settings.ownSpeech(input.source.providerId, input.source.model, input.voiceId);
+                if (!own) return fail({ status: 503, error: 'unavailable' });
+                if (own.adapter !== OWN_SERVER_ADAPTER) return fail({ status: 409, error: 'voice_name_not_typed' });
+                speech = own;
+                expression = 'natural';
+                speechProviderId = input.source.providerId;
+                // A key someone lent pays for it (a speech server of their own pays nobody), never Universe AI
+                owner = true;
+            } else {
+                const active = await settings.active();
+                if ('reason' in active) {
+                    if (active.reason === 'orbit') return fail({ status: 503, error: 'unavailable' });
+                    if (active.reason === 'unknown-bot') return fail({ status: 404, error: 'unknown_bot' });
+                    return fail({ status: 409, error: 'voice_off', reason: active.reason });
+                }
+                const session = await settings.sessionSettings(active);
+                if (!session) return fail({ status: 503, error: 'unavailable' });
+                // A voice name typed a moment ago and not saved yet (#1874): heard only from the person's own speech server, where a name
+                // is whatever that server calls a voice. Any other source has voices of its own to pick from, and keeps them.
+                if (input.voiceId !== undefined && session.speech.adapter !== OWN_SERVER_ADAPTER) return fail({ status: 409, error: 'voice_name_not_typed' });
+                speech = input.voiceId !== undefined ? { ...session.speech, voiceId: input.voiceId } : session.speech;
+                expression = session.expression;
+                speechProviderId = active.providers.speech.providerId;
+                owner = active.providers.speech.owner;
+                language = active.profile.language;
             }
-            const session = await settings.sessionSettings(active);
-            if (!session) return fail({ status: 503, error: 'unavailable' });
 
             // The language the voice is set to speak, else the one the game is read in
-            const { text, lang } = helloIn(active.profile.language, input.locale);
-            const cacheKey = this.ports.cache ? helloCacheKey({ speechProviderId: active.providers.speech.providerId, speech: session.speech, expression: session.expression, text }) : null;
+            const { text, lang } = helloIn(language, input.locale);
+            const cacheKey = this.ports.cache ? helloCacheKey({ speechProviderId, speech, expression, text }) : null;
             const heard = cacheKey ? this.ports.cache?.get(cacheKey) : undefined;
             // Heard already, with this very voice: played again, free, and no allowance is touched
             if (heard) return { ok: true, text: heard.text, wav: heard.wav, ms: heard.ms, cached: true };
 
             // Universe AI pays for the voice: this hello is one of the maker's own voice replies, counted under its own id
-            if (!active.providers.speech.owner) {
+            if (!owner) {
                 const verdict = await this.ports.allowance.checkVoiceAllowance(botId, { userId: personId, isGuest: false, turnId });
                 if (!verdict) {
                     this.ports.log?.('voice hello: could not settle the allowance, nothing is said');
@@ -227,12 +283,13 @@ export class VoiceHello {
                 counted = true;
             }
 
-            const answer = await this.ports.preview({ speech: session.speech, text, lang, expression: session.expression, maxSeconds: HELLO_MAX_SECONDS }, HELLO_SPEAK_TIMEOUT_MS);
+            const answer = await this.ports.preview({ speech, text, lang, expression, maxSeconds: HELLO_MAX_SECONDS }, HELLO_SPEAK_TIMEOUT_MS);
             if (answer.ok === false) {
                 if (answer.kind === 'provider') {
-                    // The maker's own key tells Orbit how the call went, as it does for a bubble
-                    if (active.providers.speech.owner) {
-                        settings.report(active.providers.speech.providerId, 'speech', {
+                    // The maker's own key tells Orbit how the call went, as it does for a bubble. A typed name the server did not take
+                    // says nothing of the key, so only a refusal of the key itself is told
+                    if (owner && (input.voiceId === undefined || answer.rejected)) {
+                        settings.report(speechProviderId, 'speech', {
                             ok: false,
                             ...(answer.status !== undefined ? { status: answer.status } : {}),
                             ...(answer.rejected ? { rejected: true } : {}),
@@ -243,7 +300,7 @@ export class VoiceHello {
                 this.ports.log?.(`voice hello: the voice worker could not speak it (${answer.kind})`);
                 return fail({ status: 503, error: 'unavailable' });
             }
-            if (active.providers.speech.owner) settings.report(active.providers.speech.providerId, 'speech', { ok: true });
+            if (owner) settings.report(speechProviderId, 'speech', { ok: true });
             delivered = true;
             if (cacheKey) this.ports.cache?.set(cacheKey, { text, wav: answer.wav, ms: answer.ms });
             return { ok: true, text, wav: answer.wav, ms: answer.ms };

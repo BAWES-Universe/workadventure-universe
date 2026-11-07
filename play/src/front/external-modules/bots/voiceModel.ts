@@ -891,3 +891,40 @@ export function helloFailureOf(error: unknown): HelloFailure {
     }
     return { kind: "failed" };
 }
+
+/** What Orbit calls its refusal to list the voices of a speech server of the person's own that lists none (#1874): the page asks for a name. */
+export const NO_VOICE_LIST = "no_voice_list";
+
+/** Whether a voice list failed because the source lists no voices (a speech server of the person's own), and not because it did not answer. */
+export function isNoVoiceList(error: unknown): boolean {
+    const failure = error as { status?: unknown; code?: unknown } | null;
+    return failure?.status === 409 && failure.code === NO_VOICE_LIST;
+}
+
+/**
+ * Why a typed voice name was not taken, for the page's one red line: `rejected` when the speech server answered and refused the name
+ * (a request it did not take, a voice it does not have: 400, 404 or 422), `unreachable` when it did not answer, or answered with
+ * anything else.
+ */
+export type VoiceNameFailure = "rejected" | "unreachable";
+
+export function voiceNameFailureOf(error: unknown): VoiceNameFailure {
+    const failure = error as { status?: unknown; body?: unknown } | null;
+    const body = isRecord(failure?.body) ? failure.body : {};
+    const providerStatus =
+        failure?.status === 502 && body.error === "provider" ? count(body.providerStatus) : undefined;
+    return providerStatus === 400 || providerStatus === 404 || providerStatus === 422 ? "rejected" : "unreachable";
+}
+
+/**
+ * A voice name typed for a speech server of the person's own and not saved yet, for a hello (#1874). While the bot does not speak
+ * yet (the door), `source` says which server and model it is heard from; once it speaks, its own server is used and there is none.
+ */
+export interface TypedVoice {
+    voiceId: string;
+    source?: { providerId: string; model: string };
+}
+
+/** The adapter of a speech server of the person's own (Speaches, Kokoro-FastAPI, a Whisper of theirs): named as a server, not as a company (#1874). */
+export const OWN_SERVER_ADAPTER = "openai-compatible";
+export const isOwnServer = (key: { adapter: string }): boolean => key.adapter === OWN_SERVER_ADAPTER;

@@ -64,7 +64,7 @@ export interface VoiceOrbit {
     /** Null when Orbit does not know the bot. Throws when Orbit cannot be asked. */
     getVoiceActive(botId: string, timeoutMs: number): Promise<VoiceActiveAnswer | null>;
     /** Null when the provider is not usable by this bot (Orbit answers 404 or 400). Throws when Orbit cannot be asked. */
-    getVoiceCredentials(providerId: string, botId: string, timeoutMs: number): Promise<VoiceCredentialsAnswer | null>;
+    getVoiceCredentials(providerId: string, botId: string, timeoutMs: number, options?: { hello?: boolean }): Promise<VoiceCredentialsAnswer | null>;
     /** The server's voice limits, or null. Throws when Orbit cannot be asked. */
     getVoiceLimits(timeoutMs: number): Promise<Partial<VoiceLimits> | null>;
     /** Throws on a failure. A provider Orbit does not track (a server's own) answers 404, which is not a failure. */
@@ -116,6 +116,12 @@ export interface VoiceSettings {
     active(): Promise<ActiveVoice>;
     sessionSettings(active: SpeakingNow): Promise<SessionSettings | null>;
     report(providerId: string, part: ProviderPart, outcome: VoiceOutcome): void;
+    /**
+     * The speech settings for a voice name typed for a speech server of the person's own while the bot does not speak yet (#1874): the
+     * server named, the model and the name. Null when this bot may not use that provider (it is not lent to the bot's universe) or its
+     * key can't be read.
+     */
+    ownSpeech?(providerId: string, model: string, voiceId: string): Promise<SessionSettings['speech'] | null>;
 }
 
 const EXPRESSIONS: readonly VoiceExpression[] = ['restrained', 'natural', 'expressive'];
@@ -244,10 +250,19 @@ export class BotVoiceSettings implements VoiceSettings {
         };
     }
 
-    private async credentialsOf(providerId: string): Promise<Credentials | null> {
+    /** See `VoiceSettings.ownSpeech`: Orbit serves the key of a speech server lent to the bot's universe for a hello even before voice is on. */
+    async ownSpeech(providerId: string, model: string, voiceId: string): Promise<SessionSettings['speech'] | null> {
+        const forVoice = await this.credentialsOf(providerId, { hello: true });
+        if (!forVoice || forVoice.speech === false) return null;
+        return { adapter: forVoice.adapter, model, voiceId, ...withKey(forVoice), ...connection(forVoice) };
+    }
+
+    private async credentialsOf(providerId: string, options: { hello?: boolean } = {}): Promise<Credentials | null> {
         let answer: VoiceCredentialsAnswer | null;
         try {
-            answer = await this.orbit.getVoiceCredentials(providerId, this.botId, this.options.timeoutMs);
+            answer = options.hello
+                ? await this.orbit.getVoiceCredentials(providerId, this.botId, this.options.timeoutMs, { hello: true })
+                : await this.orbit.getVoiceCredentials(providerId, this.botId, this.options.timeoutMs);
         } catch (error) {
             this.log(`voice: could not ask Orbit for provider ${providerId} (${describe(error)})`);
             return null;
