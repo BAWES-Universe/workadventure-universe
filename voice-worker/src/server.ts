@@ -20,6 +20,7 @@ import { CARTESIA_ADAPTER, CartesiaRecognition, CartesiaSpeech } from './cartesi
 import { FISH_ADAPTER, FishSpeech } from './fish.ts';
 import { DeepgramSpeech } from './deepgramSpeech.ts';
 import { ElevenLabsRecognition } from './elevenlabsHearing.ts';
+import { SonioxSpeech } from './sonioxSpeech.ts';
 import { DEFAULT_SONIOX_FINAL_TIMEOUT_MS, SONIOX_ADAPTER, SonioxRecognition } from './soniox.ts';
 import { checkMessage } from './validate.ts';
 import { DEFAULT_MAX_PREVIEWS, DEFAULT_MAX_PREVIEW_SECONDS, type PreviewFailure, Previewer, readPreviewRequest } from './preview.ts';
@@ -116,6 +117,7 @@ export class VoiceWorker {
             const finalTimeoutMs = (options.recognitionFinalTimeoutSeconds ?? DEFAULT_SONIOX_FINAL_TIMEOUT_MS / 1000) * 1000;
             this.connectors.registerRecognition(SONIOX_ADAPTER, new SonioxRecognition({ finalTimeoutMs }));
         }
+        if (!this.connectors.speech(SONIOX_ADAPTER)) this.connectors.registerSpeech(SONIOX_ADAPTER, new SonioxSpeech());
         if (!this.connectors.speech(ELEVENLABS_ADAPTER)) this.connectors.registerSpeech(ELEVENLABS_ADAPTER, new ElevenLabsSpeech());
         if (!this.connectors.recognition(ELEVENLABS_ADAPTER)) {
             const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
