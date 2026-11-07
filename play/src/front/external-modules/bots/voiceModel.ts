@@ -413,43 +413,50 @@ export interface PayerOption {
 }
 
 /**
- * The ways to turn voice on: Universe AI for both jobs, and each lent key for the jobs it does (Universe AI does the
- * other one). A way that would leave a job with nothing to run on is left out. When no such way exists, one key that listens plus
- * another that speaks is offered, so lending the two keys the Voice row asks for always turns voice on.
+ * Every way to cover both jobs (#1911): each place that can listen paired with each place that can speak. One place for both
+ * (Universe AI, or one key whose company listens and speaks) is one option; so is a split (one company listens, another speaks).
+ * The ones that cover both jobs with one place come first, Universe AI before the keys, the keys by company name, then the splits
+ * in the same order. A key with no model for a job can't do it, so a job with nothing to run on leaves no option at all.
  */
 export function payerOptions(voice: BotVoice): PayerOption[] {
-    const uai: PayerChoice = { kind: "universe-ai" };
     const options: PayerOption[] = [];
-    if (voice.universeAi.recognition && voice.universeAi.speech) {
-        options.push({ id: "universe-ai", kind: "universe-ai", recognition: uai, speech: uai });
-    }
-    for (const key of voice.lentKeys) {
-        const listens = key.recognition && key.models.some((model) => model.kind === "recognition");
-        const speaks = key.speech && key.models.some((model) => model.kind === "speech");
-        if (!listens && !speaks) continue;
-        const own: PayerChoice = { kind: "key", key };
-        const recognition = listens ? own : voice.universeAi.recognition ? uai : null;
-        const speech = speaks ? own : voice.universeAi.speech ? uai : null;
-        if (recognition && speech) options.push({ id: key.id, kind: "key", key, recognition, speech });
-    }
-    if (options.length > 0) return options;
-    // Nothing above covers both jobs (no Universe AI voice and no one key that does both): one key that listens and another that
-    // speaks, together. The speaking key is the one the voices are read from.
-    const listeners = choicesFor(voice, "recognition").filter((choice) => choice.kind === "key");
-    const speakers = choicesFor(voice, "speech").filter((choice) => choice.kind === "key");
-    for (const speech of speakers) {
-        for (const recognition of listeners) {
-            if (speech.kind !== "key" || recognition.kind !== "key" || speech.key.id === recognition.key.id) continue;
+    for (const recognition of splitChoices(voice, "recognition")) {
+        for (const speech of splitChoices(voice, "speech")) {
+            const key = speech.kind === "key" ? speech.key : recognition.kind === "key" ? recognition.key : undefined;
             options.push({
-                id: `${recognition.key.id}+${speech.key.id}`,
-                kind: "key",
-                key: speech.key,
+                id: optionId(recognition, speech),
+                kind: key ? "key" : "universe-ai",
+                key,
                 recognition,
                 speech,
             });
         }
     }
-    return options;
+    return [...options.filter(coversBoth), ...options.filter((option) => !coversBoth(option))];
+}
+
+/**
+ * One option's id: the place when one place does both jobs ("universe-ai" or a key's id),
+ * else where it listens and where it speaks, joined by "+".
+ */
+export const optionId = (recognition: PayerChoice, speech: PayerChoice): string =>
+    sameChoice(recognition, speech) ? sourceKey(speech) : `${sourceKey(recognition)}+${sourceKey(speech)}`;
+
+/** One place does both jobs: Universe AI, or one key from a company that listens and speaks. */
+export const coversBoth = (option: PayerOption): boolean => sameChoice(option.recognition, option.speech);
+
+/** The option that listens on one place and speaks on another (undefined when either can't do its job here). */
+export function optionOf(voice: BotVoice, recognition: PayerChoice, speech: PayerChoice): PayerOption | undefined {
+    return payerOptions(voice).find((option) => option.id === optionId(recognition, speech));
+}
+
+/** The places a job can run on, as the split lists show them: Universe AI first, then the keys by company name. */
+export function splitChoices(voice: BotVoice, part: VoicePart): PayerChoice[] {
+    const name = (choice: PayerChoice) => (choice.kind === "key" ? companyName(choice.key.adapter) : "");
+    return choicesFor(voice, part)
+        .map((choice, index) => ({ choice, index }))
+        .sort((a, b) => name(a.choice).localeCompare(name(b.choice)) || a.index - b.index)
+        .map((entry) => entry.choice);
 }
 
 /**
@@ -507,9 +514,9 @@ export type VoiceView =
 export function viewOf(voice: BotVoice): VoiceView {
     if (!voice.universeAllows) return { kind: "not-allowed" };
     const revision = liveRevision(voice);
-    // Nothing to run a job on, or no way to cover both jobs (two keys that each do one job and no Universe AI to do the other)
+    // Nothing to run a job on: each job that has a place pairs with the other's, so a job with none is the only way to be stuck
     if (!voice.enabled || !revision) {
-        return noService(voice) || payerOptions(voice).length === 0 ? { kind: "no-service" } : { kind: "off" };
+        return noService(voice) ? { kind: "no-service" } : { kind: "off" };
     }
     return { kind: "on", profile: revision.profile, pause: pauseOf(voice, revision.profile) };
 }
@@ -614,21 +621,36 @@ export function doorVoices(
     return { voices, startId: first?.voiceId };
 }
 
-/** The place to pay from that the Voice row starts on: the one the last version used when it is still there, else a lent key, else Universe AI. */
+/**
+ * Where the Voice row starts: the places the last version used when they still work; else one lent key that listens and
+ * speaks; else a lent key for its job with Universe AI doing the other; else two keys (one listens, one speaks); else Universe AI.
+ */
 export function startingPayer(voice: BotVoice, previous: VoiceProfile | null): PayerOption | null {
     const options = payerOptions(voice);
-    const before = previous?.speech?.providerId;
     // A key that is down would turn voice on already paused: it is never the one to start on while another way works
     const working = (option: PayerOption) =>
         ![option.recognition, option.speech].some(
             (choice) => choice.kind === "key" && choice.key.health.status === "down"
         );
-    const same = before
-        ? options.find((option) => working(option) && providerOf(voice, "speech", option.speech)?.providerId === before)
-        : undefined;
+    const keys = (option: PayerOption) => [option.recognition, option.speech].filter((c) => c.kind === "key").length;
+    const speaksAsBefore = (option: PayerOption) =>
+        !!previous?.speech &&
+        working(option) &&
+        providerOf(voice, "speech", option.speech)?.providerId === previous.speech.providerId;
+    const same = options.find(
+        (option) =>
+            speaksAsBefore(option) &&
+            providerOf(voice, "recognition", option.recognition)?.providerId === previous?.recognition?.providerId
+    );
+    // A version that kept no listening provider: the place it spoke on, doing both jobs when it can
+    const sameSpeech =
+        options.find((option) => speaksAsBefore(option) && coversBoth(option)) ?? options.find(speaksAsBefore);
     return (
         same ??
-        options.find((option) => option.kind === "key" && working(option)) ??
+        sameSpeech ??
+        options.find((option) => working(option) && option.kind === "key" && coversBoth(option)) ??
+        options.find((option) => working(option) && keys(option) === 1) ??
+        options.find((option) => working(option) && keys(option) === 2) ??
         options.find(working) ??
         options[0] ??
         null

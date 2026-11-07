@@ -140,7 +140,7 @@ export function helloCacheKey(input: { speechProviderId: string; speech: HelloPr
 
 /** What the worker is asked (its /preview): the speech settings of a bubble, with the words. */
 export interface HelloPreviewRequest {
-    speech: { adapter: string; model: string; voiceId: string; key: string; endpoint?: string; region?: string; language?: string };
+    speech: { adapter: string; model: string; voiceId: string; key?: string; endpoint?: string; region?: string; language?: string };
     text: string;
     /** The language the text is in, for a voice that follows the person's language. */
     lang?: string;
