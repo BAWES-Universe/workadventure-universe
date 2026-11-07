@@ -8,6 +8,8 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { PrivateEventPusherToFront } from '@workadventure/messages';
 import { BotSpeech } from '../voice/BotSpeech';
 import { VoiceCalls, type GameSide, type LinkHandlers } from '../voice/VoiceCalls';
+import { VOICE_BOT_TAG } from '../voice/VoiceBotTag';
+import { hearingTerms } from '../voice/VoiceTerms';
 import type { FromWorker, ToWorker } from '../voice/protocol';
 import type { VoiceLink } from '../voice/VoiceLink';
 import { DEFAULT_REPLY_LIMITS, DEFAULT_VOICE_ORBIT_SETTINGS, voiceOrbitSettings } from '../voice/settings';
@@ -184,6 +186,18 @@ describe('each bot opens its bubble with its own settings', () => {
         });
     });
 
+    it("opens a session with no key for a speech server on a person's own computer when Orbit says it needs none (#1874)", async () => {
+        const o = orbit();
+        o.state.active.alice = speaking({ profile: profile({ recognition: { providerId: 'own', model: 'whisper' }, speech: { providerId: 'own', model: 'kokoro', voiceId: 'af_heart' } }) });
+        o.state.providers.own = provider('own', 'openai-compatible', '', { apiKeyEncrypted: null, keyless: true, endpoint: 'https://speech.example.com/v1' });
+        const alice = bot('alice', o.fake);
+        await alice.connect();
+        const open = alice.opens()[0];
+        // No key is sent at all, and the address goes with it
+        expect(open.recognition).toEqual({ adapter: 'openai-compatible', model: 'whisper', endpoint: 'https://speech.example.com/v1' });
+        expect(open.speech).toEqual({ adapter: 'openai-compatible', model: 'kokoro', voiceId: 'af_heart', endpoint: 'https://speech.example.com/v1' });
+    });
+
     it('fetches each provider once, with the bot it is for', async () => {
         const o = orbit();
         // One provider that hears and speaks
@@ -242,6 +256,7 @@ describe('a bot that does not speak answers in text', () => {
         ['Orbit will not serve a provider to this bot', (s) => ((s.active.alice = speaking()), (s.providers.ears = provider('ears', 'soniox', KEYS.ears)), (s.providers['voice-a'] = null))],
         ['Orbit cannot be asked for a provider', (s) => ((s.active.alice = speaking()), (s.providers.ears = new Error('boom')), (s.providers['voice-a'] = provider('voice-a', 'elevenlabs', KEYS.voiceA)))],
         ['a provider has no key', (s) => ((s.active.alice = speaking()), (s.providers.ears = provider('ears', 'soniox', KEYS.ears)), (s.providers['voice-a'] = provider('voice-a', 'elevenlabs', KEYS.voiceA, { apiKeyEncrypted: null })))],
+        ['Orbit sends no key but doesn’t say the provider needs none', (s) => ((s.active.alice = speaking()), (s.providers.ears = provider('ears', 'soniox', KEYS.ears)), (s.providers['voice-a'] = provider('voice-a', 'openai-compatible', '', { apiKeyEncrypted: null, keyless: false })))],
         ['a key cannot be decrypted', (s) => ((s.active.alice = speaking()), (s.providers.ears = provider('ears', 'soniox', KEYS.ears)), (s.providers['voice-a'] = provider('voice-a', 'elevenlabs', KEYS.voiceA, { apiKeyEncrypted: 'zz:zz:zz' })))],
         ['a provider does not do the job it is named for', (s) => ((s.active.alice = speaking()), (s.providers.ears = provider('ears', 'soniox', KEYS.ears, { recognition: false })), (s.providers['voice-a'] = provider('voice-a', 'elevenlabs', KEYS.voiceA)))],
     ];
@@ -730,5 +745,74 @@ describe('settings for talking to Orbit', () => {
         expect(await settings.active()).toEqual({ speaks: false, reason: 'orbit' });
         o.state.active.alice = speaking();
         expect(await settings.active()).toMatchObject({ speaks: true });
+    });
+});
+
+describe('the hearing is told the names to expect (#1864)', () => {
+    const setup = () => {
+        const o = orbit();
+        o.state.active.nora = speaking();
+        o.state.providers.ears = provider('ears', 'soniox', KEYS.ears);
+        o.state.providers['voice-a'] = provider('voice-a', 'elevenlabs', KEYS.voiceA);
+        const nora = bot('nora', o.fake);
+        nora.calls.botName = 'Nora';
+        return nora;
+    };
+    const voiceBot = (id: string, name: string) => ({ spaceUserId: id, uuid: `bot-${id}`, tags: ['bot', VOICE_BOT_TAG], name }) as never;
+    const termMessages = (t: ReturnType<typeof bot>) => t.sent.filter((m) => m.type === 'recognition.terms') as Extract<ToWorker, { type: 'recognition.terms' }>[];
+
+    it('sends the bot\'s own name with the session, and never anything a person said', async () => {
+        const nora = setup();
+        await nora.connect();
+        expect(nora.opens()[0].recognition?.terms).toEqual(['Nora']);
+        // Only the hearing is told: the speaking side takes no names
+        expect(nora.opens()[0].speech).not.toHaveProperty('terms');
+    });
+
+    it('sends no names when the bot has none, so nothing changes for a setup without one', async () => {
+        const nora = setup();
+        nora.calls.botName = '';
+        await nora.connect();
+        expect(nora.opens()[0].recognition).not.toHaveProperty('terms');
+    });
+
+    it('adds the names of the other voice bots already in the bubble, after its own', async () => {
+        const nora = setup();
+        nora.calls.spaceUsers(SPACE, [{ spaceUserId: 'room_7', uuid: 'uuid-room_7', tags: [], name: 'Sam' } as never, voiceBot('room_8', 'Max'), voiceBot('room_9x', 'Alma')]);
+        nora.calls.handlePrivateEvent(({ spaceName: SPACE, receiverUserId: BOT_SPACE_ID, sender: { spaceUserId: 'room_7', uuid: 'uuid-room_7', tags: [], name: 'Sam' }, spaceEvent: { event: { $case: 'webRtcStartMessage', webRtcStartMessage: { userId: 'room_7', initiator: false } } } }) as never);
+        await flush();
+        expect(nora.opens()[0].recognition?.terms).toEqual(['Nora', 'Alma', 'Max']);
+    });
+
+    it('tells an open session when another voice bot arrives or leaves, once for each change', async () => {
+        const nora = setup();
+        await nora.connect();
+        nora.calls.spaceUserJoined(SPACE, voiceBot('room_8', 'Max'));
+        expect(termMessages(nora).map((m) => m.terms)).toEqual([['Nora', 'Max']]);
+        // The same bot again changes nothing
+        nora.calls.spaceUserJoined(SPACE, voiceBot('room_8', 'Max'));
+        expect(termMessages(nora)).toHaveLength(1);
+        nora.calls.spaceUserLeft(SPACE, 'room_8');
+        expect(termMessages(nora).map((m) => m.terms)).toEqual([['Nora', 'Max'], ['Nora']]);
+        expect(termMessages(nora).every((m) => m.sessionId === nora.opens()[0].sessionId)).toBe(true);
+    });
+
+    it('says nothing about names before the session is open, and opens it with the latest', async () => {
+        const nora = setup();
+        nora.start();
+        // Orbit has not answered yet: this joins before the session opens
+        nora.calls.spaceUserJoined(SPACE, voiceBot('room_8', 'Max'));
+        await flush();
+        expect(termMessages(nora)).toEqual([]);
+        expect(nora.opens()[0].recognition?.terms).toEqual(['Nora', 'Max']);
+    });
+
+    it('keeps names tidy: trimmed, none twice, at most 16 of 64 characters, own name first', () => {
+        expect(hearingTerms('  Nora  ', ['Max', 'Nora', '', '  ', 'Max'])).toEqual(['Nora', 'Max']);
+        expect(hearingTerms('Nora', ['x'.repeat(100)])[1]).toHaveLength(64);
+        const many = hearingTerms('Nora', Array.from({ length: 40 }, (_, i) => `Bot ${String(i).padStart(2, '0')}`));
+        expect(many).toHaveLength(16);
+        expect(many[0]).toBe('Nora');
+        expect(hearingTerms('', [])).toEqual([]);
     });
 });
