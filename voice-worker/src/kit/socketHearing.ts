@@ -49,6 +49,11 @@ export interface SocketHearingSpec {
     pauseMs?: number;
     /** How long the last words may take after finish(). Default 10 s. */
     finalTimeoutMs?: number;
+    /**
+     * The company answers the end of the audio with one more answer and never says "finished" (Sarvam answers a flush with one
+     * transcript): the first words after finish() end the stretch, and with none within `quietMs`, it ends with what was heard.
+     */
+    lastAnswerAfterFinish?: { quietMs: number };
     outOfCredit?: CreditCheck;
 }
 
@@ -115,7 +120,10 @@ class SocketStream implements Recognizer {
         if (this.done || this.finishing) return;
         this.finishing = true;
         if (this.accepting && this.ws?.readyState === WebSocket.OPEN) this.sendFinish();
-        this.timer = setTimeout(() => this.fail(failure(this.spec.adapter, 'took too long for the last words')), this.spec.finalTimeoutMs ?? DEFAULT_FINAL_TIMEOUT_MS);
+        const last = this.spec.lastAnswerAfterFinish;
+        this.timer = last
+            ? setTimeout(() => this.end(), last.quietMs)
+            : setTimeout(() => this.fail(failure(this.spec.adapter, 'took too long for the last words')), this.spec.finalTimeoutMs ?? DEFAULT_FINAL_TIMEOUT_MS);
         this.timer.unref?.();
     }
 
@@ -219,6 +227,7 @@ class SocketStream implements Recognizer {
                 this.endpointed = true;
                 this.events.endpoint?.();
             }
+            if (this.finishing && this.spec.lastAnswerAfterFinish && (message.committed !== undefined || message.interim !== undefined)) return this.end();
         }
     }
 

@@ -29,6 +29,7 @@ import { MISTRAL_ADAPTER, MistralRecognition, MistralSpeech } from './mistral.ts
 import { NEUPHONIC_ADAPTER, NeuphonicSpeech } from './neuphonic.ts';
 import { RESEMBLE_ADAPTER, ResembleSpeech } from './resemble.ts';
 import { RIME_ADAPTER, RimeSpeech } from './rime.ts';
+import { SARVAM_ADAPTER, SarvamRecognition, SarvamSpeech } from './sarvam.ts';
 import { ELEVENLABS_ADAPTER, ElevenLabsSpeech } from './elevenlabs.ts';
 import { CARTESIA_ADAPTER, CartesiaRecognition, CartesiaSpeech } from './cartesia.ts';
 import { FISH_ADAPTER, FishSpeech } from './fish.ts';
@@ -159,6 +160,8 @@ export class VoiceWorker {
         if (!this.connectors.speech(NEUPHONIC_ADAPTER)) this.connectors.registerSpeech(NEUPHONIC_ADAPTER, new NeuphonicSpeech());
         if (!this.connectors.speech(RESEMBLE_ADAPTER)) this.connectors.registerSpeech(RESEMBLE_ADAPTER, new ResembleSpeech());
         if (!this.connectors.speech(RIME_ADAPTER)) this.connectors.registerSpeech(RIME_ADAPTER, new RimeSpeech());
+        if (!this.connectors.recognition(SARVAM_ADAPTER)) this.connectors.registerRecognition(SARVAM_ADAPTER, new SarvamRecognition());
+        if (!this.connectors.speech(SARVAM_ADAPTER)) this.connectors.registerSpeech(SARVAM_ADAPTER, new SarvamSpeech());
         if (!this.connectors.recognition(SONIOX_ADAPTER)) {
             const finalTimeoutMs = (options.recognitionFinalTimeoutSeconds ?? DEFAULT_SONIOX_FINAL_TIMEOUT_MS / 1000) * 1000;
             this.connectors.registerRecognition(SONIOX_ADAPTER, new SonioxRecognition({ finalTimeoutMs }));
