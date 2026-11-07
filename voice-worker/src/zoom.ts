@@ -114,6 +114,14 @@ export class ZoomRecognition implements RecognitionConnector {
                         const said = typeof event.transcript === 'string' ? event.transcript : typeof event.text === 'string' ? event.text : '';
                         return [...(said.trim() ? [{ committed: said.trim() }] : []), ...done()];
                     }
+                    case 'conversation.item.input_audio_transcription.failed': {
+                        // A refused key or no credit ends the stretch: the next piece would fail the same way
+                        const failed = zoomError(event);
+                        if (failed.status) return { error: failed };
+                        // Anything else loses only that piece: it counts as written down, with no words
+                        open = Math.max(0, open - 1);
+                        return done();
+                    }
                     case 'error':
                         return { error: zoomError(event) };
                     default:

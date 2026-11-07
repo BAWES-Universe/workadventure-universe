@@ -163,6 +163,48 @@ describe('hearing', () => {
         expect(heard.finals).toEqual(['Two teas']);
     });
 
+    it('finishes at once when a piece can’t be written down, keeping the words written down before it', async () => {
+        const server = await zoom({
+            onEvent: (event, send) => {
+                if (event.type !== 'session.update') return;
+                send({ type: 'session.updated' });
+                if (server.received.filter((e) => e.type === 'session.update').length > 1) return;
+                send({ type: 'input_audio_buffer.speech_started' });
+                send({ type: 'conversation.item.input_audio_transcription.completed', transcript: 'One coffee' });
+                send({ type: 'input_audio_buffer.speech_started' });
+                send({ type: 'conversation.item.input_audio_transcription.failed', error: { code: 'audio_unintelligible' } });
+            },
+        });
+        const { heard, events } = listener();
+        const stream = new ZoomRecognition().listen(settings(server.url), events);
+        stream.push(new Int16Array(320).fill(1000));
+        await waitFor('both pieces', () => server.received.length >= 2);
+        const started = Date.now();
+        stream.finish();
+        await waitFor('the last words', () => heard.finals.length === 1);
+        expect(heard.finals).toEqual(['One coffee']);
+        expect(heard.failed).toEqual([]);
+        // Not the wait for words that never come
+        expect(Date.now() - started).toBeLessThan(2000);
+    });
+
+    it('fails with 401 when a piece can’t be written down because the key is refused', async () => {
+        const server = await zoom({
+            onEvent: (event, send) => {
+                if (event.type !== 'session.update') return;
+                send({ type: 'session.updated' });
+                send({ type: 'input_audio_buffer.speech_started' });
+                send({ type: 'conversation.item.input_audio_transcription.failed', error: { code: 'invalid_api_key' } });
+            },
+        });
+        const { heard, events } = listener();
+        const stream = new ZoomRecognition().listen(settings(server.url), events);
+        stream.push(new Int16Array(320).fill(1000));
+        await waitFor('the failure', () => heard.failed.length === 1);
+        expect(heard.failed[0].status).toBe(401);
+        expect(JSON.stringify(heard)).not.toContain(KEY);
+    });
+
     it('ends with nothing heard when Zoom heard no speech', async () => {
         const server = await zoom({ onEvent: (event, send) => event.type === 'session.update' && send({ type: 'session.updated' }) });
         const { heard, events } = listener();
