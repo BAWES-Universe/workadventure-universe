@@ -94,6 +94,9 @@ export class CartesiaRecognition implements RecognitionConnector {
                 return { url: `${base}/stt/websocket?${query}`, headers: { 'X-API-Key': settings.key.reveal() } };
             },
             finish: () => ['close'],
+            // Glued with no space on purpose: each final `text` is a delta from the last final chunk and carries its own spaces.
+            // Cartesia: "Do not strip whitespace from `text` or add whitespace between chunks as this will produce an incorrect
+            // transcript." https://docs.cartesia.ai/api-reference/stt/stt
             join: 'tokens',
             finalTimeoutMs: options.finalTimeoutMs,
             read: (data, isBinary) => {
