@@ -28,6 +28,13 @@ export interface SocketHearingSpec {
     connect(settings: RecognitionSettings, base: string): SocketAddress | Promise<SocketAddress>;
     /** Messages sent once the socket opens, before any audio: usually the setup. */
     start?(settings: RecognitionSettings): (string | Uint8Array)[];
+    /**
+     * Set when the company must answer the setup before it takes audio (Google's setupComplete): audio and the end of it wait for
+     * the first answer this says yes to. That answer is not read as words.
+     */
+    ready?(data: Buffer, isBinary: boolean): boolean;
+    /** Messages sent once the company is ready, before the audio held meanwhile (Google: the start of the person's speech). */
+    afterReady?(settings: RecognitionSettings): (string | Uint8Array)[];
     /** One piece of 16 kHz mono s16 audio as the company takes it. Default: the raw bytes, as a binary message. */
     frame?(pcm16k: Int16Array): string | Uint8Array;
     /** Messages that end the audio, after which the company sends the last words. */
@@ -63,6 +70,8 @@ class SocketStream implements Recognizer {
     private finishing = false;
     private done = false;
     private endpointed = false;
+    /** The socket is open but the company hasn't said it is ready for audio (only with `spec.ready`). */
+    private waiting = false;
     private timer?: NodeJS.Timeout;
     readonly pauseMs?: number;
 
@@ -88,7 +97,7 @@ class SocketStream implements Recognizer {
         } catch {
             return this.fail(failure(this.spec.adapter, 'audio could not be prepared'));
         }
-        if (this.ws?.readyState === WebSocket.OPEN) {
+        if (this.ws?.readyState === WebSocket.OPEN && !this.waiting) {
             this.ws.send(message);
             return;
         }
@@ -104,7 +113,7 @@ class SocketStream implements Recognizer {
     finish(): void {
         if (this.done || this.finishing) return;
         this.finishing = true;
-        if (this.ws?.readyState === WebSocket.OPEN) this.sendFinish();
+        if (this.ws?.readyState === WebSocket.OPEN && !this.waiting) this.sendFinish();
         this.timer = setTimeout(() => this.fail(failure(this.spec.adapter, 'took too long for the last words')), this.spec.finalTimeoutMs ?? DEFAULT_FINAL_TIMEOUT_MS);
         this.timer.unref?.();
     }
@@ -129,10 +138,8 @@ class SocketStream implements Recognizer {
             if (this.done) return;
             try {
                 for (const message of this.spec.start?.(this.settings) ?? []) ws.send(message);
-                for (const message of this.pending) ws.send(message);
-                this.pending = [];
-                this.pendingMs = 0;
-                if (this.finishing) this.sendFinish();
+                if (this.spec.ready) this.waiting = true;
+                else this.flush();
             } catch {
                 this.fail(failure(this.spec.adapter, 'could not be sent the audio'));
             }
@@ -141,6 +148,14 @@ class SocketStream implements Recognizer {
             // Nothing the company sends may throw out of here: a socket handler that throws takes the whole worker down
             try {
                 const buffer = Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data as ArrayBuffer);
+                if (this.waiting) {
+                    if (this.spec.ready?.(buffer, isBinary)) {
+                        this.waiting = false;
+                        for (const message of this.spec.afterReady?.(this.settings) ?? []) ws.send(message);
+                        this.flush();
+                        return;
+                    }
+                }
                 this.answer(this.spec.read(buffer, isBinary));
             } catch {
                 this.fail(failure(this.spec.adapter, 'sent an answer that could not be read'));
@@ -160,6 +175,14 @@ class SocketStream implements Recognizer {
             if (this.spec.closeIsFinished && this.finishing) return this.end();
             this.fail(failure(this.spec.adapter, 'closed the stream before the last words'));
         });
+    }
+
+    /** Sends the audio held while the socket opened (and the company got ready), then the end of it if that came already. */
+    private flush(): void {
+        for (const message of this.pending) this.ws?.send(message);
+        this.pending = [];
+        this.pendingMs = 0;
+        if (this.finishing) this.sendFinish();
     }
 
     private sendFinish(): void {

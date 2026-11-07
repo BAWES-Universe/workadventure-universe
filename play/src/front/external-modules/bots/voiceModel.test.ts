@@ -475,6 +475,7 @@ describe("talking models (#1910)", () => {
         expect(companyName("openai")).toBe("OpenAI");
         expect(companyName("xai")).toBe("xAI");
         expect(companyName("azure")).toBe("Azure OpenAI");
+        expect(companyName("google")).toBe("Google");
     });
 
     it("reads which voices talk live", () => {
