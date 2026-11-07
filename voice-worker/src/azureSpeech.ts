@@ -7,7 +7,7 @@
 // headers (Path, X-RequestId, X-Timestamp) before its body: text messages separate them with a blank line, audio messages
 // put their length in the first two bytes. speech.config opens; then audio, the first piece a WAV header that says 16 kHz
 // mono s16; an empty audio message ends it. Azure answers speech.hypothesis (words that may change), speech.phrase (a phrase
-// that won't) and turn.end once the last words are in.
+// that won't) and turn.end once the last words are in. A turn.end before the audio ends starts a new turn on the same socket.
 // https://learn.microsoft.com/azure/ai-services/speech-service/speech-to-text
 //
 // Speaking: one request per reply, SSML to https://<region>.tts.speech.microsoft.com/cognitiveservices/v1, answered with raw
@@ -211,8 +211,21 @@ export class AzureSpeechRecognition implements RecognitionConnector {
     constructor(private readonly options: { finalTimeoutMs?: number } = {}) {}
 
     listen(settings: RecognitionSettings, events: RecognizerEvents): Recognizer {
-        // One request per stretch: every message of this socket carries its id
-        const requestId = randomUUID().replace(/-/g, '');
+        // One request (a turn, in Azure's words) per stretch: every message of it carries its id. Azure may end a turn on its own
+        // before the stretch ends (a long pause, or its own limit); audio after that goes in a new turn on the same socket, opened
+        // with its own WAV header, so no words the person goes on to say are lost
+        const newId = () => randomUUID().replace(/-/g, '');
+        let requestId = newId();
+        let turnOpen = true;
+        let finishing = false;
+        const openTurn = (audio: Uint8Array): Uint8Array => {
+            requestId = newId();
+            turnOpen = true;
+            const first = new Uint8Array(44 + audio.length);
+            first.set(wavHeader());
+            first.set(audio, 44);
+            return audioMessage(requestId, first);
+        };
         return socketHearing({
             adapter: AZURE_SPEECH_ADAPTER,
             endpoint: 'wss://eastus.stt.speech.microsoft.com',
@@ -233,8 +246,13 @@ export class AzureSpeechRecognition implements RecognitionConnector {
                 }),
                 audioMessage(requestId, wavHeader()),
             ],
-            frame: (pcm16k: Int16Array) => audioMessage(requestId, pcmBytes(pcm16k)),
-            finish: () => [audioMessage(requestId, new Uint8Array(0))],
+            frame: (pcm16k: Int16Array) => (turnOpen ? audioMessage(requestId, pcmBytes(pcm16k)) : openTurn(pcmBytes(pcm16k))),
+            finish: () => {
+                finishing = true;
+                // A turn Azure already ended gets an empty one, so a turn.end still answers the end of the audio
+                const last = turnOpen ? [] : [openTurn(new Uint8Array(0))];
+                return [...last, audioMessage(requestId, new Uint8Array(0))];
+            },
             read: (data, isBinary): HearingMessage | undefined => {
                 if (isBinary) return undefined;
                 const message = readMessage(data.toString());
@@ -256,7 +274,12 @@ export class AzureSpeechRecognition implements RecognitionConnector {
                     if (status === 'Error') return { error: {} };
                     return undefined;
                 }
-                if (path === 'turn.end') return { finished: true };
+                if (path === 'turn.end') {
+                    // The end of the stretch only once its audio has ended; before that, Azure ended the turn on its own
+                    if (finishing) return { finished: true };
+                    turnOpen = false;
+                    return undefined;
+                }
                 return undefined;
             },
             closed: closedStatus,

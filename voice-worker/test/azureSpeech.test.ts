@@ -136,6 +136,40 @@ describe('hearing with Azure AI Speech', () => {
             expect(message.headers).toMatch(new RegExp(`^Path: audio\\r\\nX-RequestId: ${requestId}\\r\\n.*Content-Type: audio/x-wav\\r\\n$`, 's'));
     });
 
+    it('keeps listening in a new turn when Azure ends one before the audio does, and ends only at the turn.end after it', async () => {
+        let pieces = 0;
+        const s = await fakeAzure((ws, audio, end) => {
+            if (audio.length === 4 && ++pieces === 1) {
+                ws.send(answer('speech.phrase', { RecognitionStatus: 'Success', DisplayText: 'Marhaba.', Offset: 0, Duration: 1 }));
+                ws.send(answer('turn.end', {}));
+            }
+            if (end) {
+                ws.send(answer('speech.phrase', { RecognitionStatus: 'Success', DisplayText: 'Shlonik?', Offset: 0, Duration: 1 }));
+                ws.send(answer('turn.end', {}));
+            }
+        });
+        const { got, events } = heard();
+        const stream = new AzureSpeechRecognition().listen(hearing(s.base), events);
+        stream.push(new Int16Array([1, -2]));
+        await waitFor('the first words', () => got.partials.length === 1);
+        // Azure ended its turn: the stretch goes on
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        expect(got.finals).toEqual([]);
+        stream.push(new Int16Array([3, 4]));
+        stream.finish();
+        await waitFor('the last words', () => got.finals.length === 1);
+        expect(got.finals).toEqual(['Marhaba. Shlonik?']);
+        expect(got.failures).toEqual([]);
+        // The audio after it opens a new turn with its own WAV header, and the empty message ends that turn
+        const ids = s.seen.audio.map((message) => /X-RequestId: (\w+)/.exec(message.headers)![1]);
+        expect(s.seen.audio.map((message) => message.audio.length)).toEqual([44, 4, 48, 0]);
+        expect(s.seen.audio[2].audio.subarray(0, 4).toString('ascii')).toBe('RIFF');
+        expect([...new Int16Array(new Uint8Array(s.seen.audio[2].audio.subarray(44)).buffer)]).toEqual([3, 4]);
+        expect(ids[1]).toBe(ids[0]);
+        expect(ids[2]).not.toBe(ids[1]);
+        expect(ids[3]).toBe(ids[2]);
+    });
+
     it('ends with no words after silence, and fails on a refused key or a missing region', async () => {
         const s = await fakeAzure((ws, _audio, end) => {
             if (!end) return;
