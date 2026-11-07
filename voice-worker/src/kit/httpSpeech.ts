@@ -53,6 +53,8 @@ export interface HttpSpeechSpec {
     call(request: SpeechRequest, base: string): HttpCall;
     audio: RawAudio | FramedAudio;
     outOfCredit?: CreditCheck;
+    /** A refusal that means the key itself is wrong, for a company that doesn't say so with 401 or 403 (Google answers 400). */
+    wrongKey?: CreditCheck;
 }
 
 /** Turns little-endian 32-bit float samples into s16 bytes, keeping a sample split across two pieces for the next one. */
@@ -98,7 +100,8 @@ async function* speakOverHttp(spec: HttpSpeechSpec, request: SpeechRequest): Asy
     }
     if (!response.ok || !response.body) {
         const body = await readSome(response.body);
-        throw failure(spec.adapter, 'refused the reply', answerStatus(response.status, body, spec.outOfCredit));
+        const status = spec.wrongKey?.(response.status, body) ? 401 : answerStatus(response.status, body, spec.outOfCredit);
+        throw failure(spec.adapter, 'refused the reply', status);
     }
 
     const reader = new PcmReader({ skipWavHeader: spec.audio.mayStartWithWav === true });

@@ -85,15 +85,23 @@ describe('speaking with Gemini text to speech', () => {
         expect(geminiLanguage('ja')).toBe('ja');
     });
 
-    it("fails with Google's status, whether it refuses the call or reports an error in the stream, the key in no failure", async () => {
+    it("fails with Google's status, whether it refuses the call or reports an error in the stream, a wrong key as refused, the key in no failure", async () => {
         const refused = await fakeGemini((res) => {
             res.statusCode = 400;
             res.end('{"error":{"code":400,"message":"API key not valid.","status":"INVALID_ARGUMENT","details":[{"reason":"API_KEY_INVALID"}]}}');
         });
         const first = await collect(new GeminiSpeech().speak(speaking(refused.base))).catch((e: unknown) => e);
         expect(first).toBeInstanceOf(ProviderError);
-        expect((first as ProviderError).status).toBe(400);
+        // Google's 400 for a wrong key is a refused key, so the bot shows it and Orbit is asked for the key again
+        expect((first as ProviderError).status).toBe(401);
         expect(`${(first as Error).message} ${JSON.stringify(first)}`).not.toContain(KEY);
+
+        const badSetting = await fakeGemini((res) => {
+            res.statusCode = 400;
+            res.end('{"error":{"code":400,"message":"Voice not found.","status":"INVALID_ARGUMENT"}}');
+        });
+        const other = await collect(new GeminiSpeech().speak(speaking(badSetting.base))).catch((e: unknown) => e);
+        expect((other as ProviderError).status).toBe(400);
 
         const broken = await fakeGemini((res) => res.end(`${event(b64(1))}data: {"error":{"code":429,"status":"RESOURCE_EXHAUSTED"}}\r\n\r\n`));
         const second = await collect(new GeminiSpeech().speak(speaking(broken.base))).catch((e: unknown) => e);
