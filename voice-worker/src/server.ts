@@ -35,7 +35,8 @@ import { SMALLEST_ADAPTER, SmallestRecognition, SmallestSpeech } from './smalles
 import { SPEECHIFY_ADAPTER, SpeechifySpeech } from './speechify.ts';
 import { SPEECHMATICS_ADAPTER, SpeechmaticsRecognition, SpeechmaticsSpeech } from './speechmatics.ts';
 import { TOGETHER_ADAPTER, TogetherRecognition, TogetherSpeech } from './together.ts';
-import { OPENAI_ADAPTER, OpenAIRecognition } from './openaiHearing.ts';
+import { OPENAI_HEARING_MODELS, OpenAIRecognition } from './openaiHearing.ts';
+import { recognitionByModel } from './kit/byModel.ts';
 import { NVIDIA_ADAPTER, NvidiaRecognition, NvidiaSpeech } from './nvidia.ts';
 import { MINIMAX_ADAPTER, MiniMaxSpeech } from './minimax.ts';
 import { ELEVENLABS_ADAPTER, ElevenLabsSpeech } from './elevenlabs.ts';
@@ -143,6 +144,24 @@ export class VoiceWorker {
         // Each real provider is one file registered by name; a registry passed in (tests) keeps what it already has
         this.connectors = options.connectors ?? new ConnectorRegistry();
         if (!this.connectors.speech(FAKE_ADAPTER)) this.connectors.registerSpeech(FAKE_ADAPTER, this.speech);
+        // A talking model (game #1910) is named for both hearing and speaking, under one adapter. Registered first: a company that
+        // also hears or speaks with models of its own (OpenAI) takes only those, and leaves the talking models to these
+        if (!this.connectors.recognition(AWS_ADAPTER)) this.connectors.registerRecognition(AWS_ADAPTER, new AwsRecognition());
+        if (!this.connectors.speech(AWS_ADAPTER)) this.connectors.registerSpeech(AWS_ADAPTER, new AwsSpeech());
+        if (!this.connectors.recognition(AZURE_ADAPTER)) this.connectors.registerRecognition(AZURE_ADAPTER, new AzureRecognition());
+        if (!this.connectors.speech(AZURE_ADAPTER)) this.connectors.registerSpeech(AZURE_ADAPTER, new AzureSpeech());
+        if (!this.connectors.recognition(GOOGLE_ADAPTER)) this.connectors.registerRecognition(GOOGLE_ADAPTER, new GoogleRecognition());
+        if (!this.connectors.speech(GOOGLE_ADAPTER)) this.connectors.registerSpeech(GOOGLE_ADAPTER, new GoogleSpeech());
+        if (!this.connectors.recognition(INWORLD_ADAPTER)) this.connectors.registerRecognition(INWORLD_ADAPTER, new InworldRecognition());
+        if (!this.connectors.speech(INWORLD_ADAPTER)) this.connectors.registerSpeech(INWORLD_ADAPTER, new InworldSpeech());
+        if (!this.connectors.recognition(ULTRAVOX_ADAPTER)) this.connectors.registerRecognition(ULTRAVOX_ADAPTER, new UltravoxRecognition());
+        if (!this.connectors.speech(ULTRAVOX_ADAPTER)) this.connectors.registerSpeech(ULTRAVOX_ADAPTER, new UltravoxSpeech());
+        if (!this.connectors.recognition(ZOOM_ADAPTER)) this.connectors.registerRecognition(ZOOM_ADAPTER, new ZoomRecognition());
+        if (!this.connectors.speech(ZOOM_ADAPTER)) this.connectors.registerSpeech(ZOOM_ADAPTER, new ZoomSpeech());
+        if (!this.connectors.recognition(OPENAI_ADAPTER)) this.connectors.registerRecognition(OPENAI_ADAPTER, new OpenAiRecognition());
+        if (!this.connectors.speech(OPENAI_ADAPTER)) this.connectors.registerSpeech(OPENAI_ADAPTER, new OpenAiSpeech());
+        if (!this.connectors.recognition(XAI_ADAPTER)) this.connectors.registerRecognition(XAI_ADAPTER, new XaiRecognition());
+        if (!this.connectors.speech(XAI_ADAPTER)) this.connectors.registerSpeech(XAI_ADAPTER, new XaiSpeech());
         if (!this.connectors.recognition(ASSEMBLYAI_ADAPTER)) {
             const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
             this.connectors.registerRecognition(ASSEMBLYAI_ADAPTER, new AssemblyAiRecognition({ finalTimeoutMs }));
@@ -199,9 +218,12 @@ export class VoiceWorker {
             this.connectors.registerRecognition(TOGETHER_ADAPTER, new TogetherRecognition({ finalTimeoutMs }));
         }
         if (!this.connectors.speech(TOGETHER_ADAPTER)) this.connectors.registerSpeech(TOGETHER_ADAPTER, new TogetherSpeech());
-        if (!this.connectors.recognition(OPENAI_ADAPTER)) {
+        // OpenAI also talks live under the same name (#1910): its own hearing takes only its models, any other goes to what is already
+        // registered
+        {
             const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
-            this.connectors.registerRecognition(OPENAI_ADAPTER, new OpenAIRecognition({ finalTimeoutMs }));
+            const hearing = new OpenAIRecognition({ finalTimeoutMs });
+            this.connectors.registerRecognition(OPENAI_ADAPTER, recognitionByModel(OPENAI_HEARING_MODELS, hearing, this.connectors.recognition(OPENAI_ADAPTER)));
         }
         if (!this.connectors.recognition(NVIDIA_ADAPTER)) {
             const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
@@ -224,23 +246,6 @@ export class VoiceWorker {
             this.connectors.registerRecognition(DEEPGRAM_ADAPTER, new DeepgramRecognition({ finalTimeoutMs }));
         }
         if (!this.connectors.speech(DEEPGRAM_ADAPTER)) this.connectors.registerSpeech(DEEPGRAM_ADAPTER, new DeepgramSpeech());
-        // A talking model (game #1910) is named for both hearing and speaking, under one adapter
-        if (!this.connectors.recognition(AWS_ADAPTER)) this.connectors.registerRecognition(AWS_ADAPTER, new AwsRecognition());
-        if (!this.connectors.speech(AWS_ADAPTER)) this.connectors.registerSpeech(AWS_ADAPTER, new AwsSpeech());
-        if (!this.connectors.recognition(AZURE_ADAPTER)) this.connectors.registerRecognition(AZURE_ADAPTER, new AzureRecognition());
-        if (!this.connectors.speech(AZURE_ADAPTER)) this.connectors.registerSpeech(AZURE_ADAPTER, new AzureSpeech());
-        if (!this.connectors.recognition(GOOGLE_ADAPTER)) this.connectors.registerRecognition(GOOGLE_ADAPTER, new GoogleRecognition());
-        if (!this.connectors.speech(GOOGLE_ADAPTER)) this.connectors.registerSpeech(GOOGLE_ADAPTER, new GoogleSpeech());
-        if (!this.connectors.recognition(INWORLD_ADAPTER)) this.connectors.registerRecognition(INWORLD_ADAPTER, new InworldRecognition());
-        if (!this.connectors.speech(INWORLD_ADAPTER)) this.connectors.registerSpeech(INWORLD_ADAPTER, new InworldSpeech());
-        if (!this.connectors.recognition(ULTRAVOX_ADAPTER)) this.connectors.registerRecognition(ULTRAVOX_ADAPTER, new UltravoxRecognition());
-        if (!this.connectors.speech(ULTRAVOX_ADAPTER)) this.connectors.registerSpeech(ULTRAVOX_ADAPTER, new UltravoxSpeech());
-        if (!this.connectors.recognition(ZOOM_ADAPTER)) this.connectors.registerRecognition(ZOOM_ADAPTER, new ZoomRecognition());
-        if (!this.connectors.speech(ZOOM_ADAPTER)) this.connectors.registerSpeech(ZOOM_ADAPTER, new ZoomSpeech());
-        if (!this.connectors.recognition(OPENAI_ADAPTER)) this.connectors.registerRecognition(OPENAI_ADAPTER, new OpenAiRecognition());
-        if (!this.connectors.speech(OPENAI_ADAPTER)) this.connectors.registerSpeech(OPENAI_ADAPTER, new OpenAiSpeech());
-        if (!this.connectors.recognition(XAI_ADAPTER)) this.connectors.registerRecognition(XAI_ADAPTER, new XaiRecognition());
-        if (!this.connectors.speech(XAI_ADAPTER)) this.connectors.registerSpeech(XAI_ADAPTER, new XaiSpeech());
         // A person's own speech server (#1874): hears and speaks, at the https address they typed, through the address guard
         if (!this.connectors.speech(OPENAI_COMPATIBLE_ADAPTER)) this.connectors.registerSpeech(OPENAI_COMPATIBLE_ADAPTER, new OpenAiCompatibleSpeech({ sampleRate: options.ownSpeechSampleRate }));
         if (!this.connectors.recognition(OPENAI_COMPATIBLE_ADAPTER)) this.connectors.registerRecognition(OPENAI_COMPATIBLE_ADAPTER, new OpenAiCompatibleRecognition());
