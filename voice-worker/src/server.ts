@@ -17,7 +17,7 @@ import type { RoomTransport } from './roomTransport.ts';
 import { type OutgoingMessage, Session } from './session.ts';
 import type { InputSink } from './transport.ts';
 import { ELEVENLABS_ADAPTER, ElevenLabsSpeech } from './elevenlabs.ts';
-import { CARTESIA_ADAPTER, CartesiaSpeech } from './cartesia.ts';
+import { CARTESIA_ADAPTER, CartesiaRecognition, CartesiaSpeech } from './cartesia.ts';
 import { FISH_ADAPTER, FishSpeech } from './fish.ts';
 import { OPENAI_COMPATIBLE_ADAPTER, OpenAiCompatibleRecognition, OpenAiCompatibleSpeech } from './openaiCompatible.ts';
 import { DEFAULT_SONIOX_FINAL_TIMEOUT_MS, SONIOX_ADAPTER, SonioxRecognition } from './soniox.ts';
@@ -111,6 +111,10 @@ export class VoiceWorker {
         this.connectors = options.connectors ?? new ConnectorRegistry();
         if (!this.connectors.speech(FAKE_ADAPTER)) this.connectors.registerSpeech(FAKE_ADAPTER, this.speech);
         if (!this.connectors.speech(CARTESIA_ADAPTER)) this.connectors.registerSpeech(CARTESIA_ADAPTER, new CartesiaSpeech({ version: options.cartesiaVersion }));
+        if (!this.connectors.recognition(CARTESIA_ADAPTER)) {
+            const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
+            this.connectors.registerRecognition(CARTESIA_ADAPTER, new CartesiaRecognition({ version: options.cartesiaVersion, finalTimeoutMs }));
+        }
         if (!this.connectors.speech(FISH_ADAPTER)) this.connectors.registerSpeech(FISH_ADAPTER, new FishSpeech());
         if (!this.connectors.recognition(SONIOX_ADAPTER)) {
             const finalTimeoutMs = (options.recognitionFinalTimeoutSeconds ?? DEFAULT_SONIOX_FINAL_TIMEOUT_MS / 1000) * 1000;
