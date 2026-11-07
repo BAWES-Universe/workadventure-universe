@@ -519,6 +519,25 @@ describe('hearing over a WebSocket with the kit', () => {
         expect(refused.got.failures).toEqual([{ text: '', status: 401 }]);
     });
 
+    it('waits for the last answer from when the end of the audio goes out, and fails when the socket never opens', async () => {
+        const fake = await fakeHearing((f) => setTimeout(() => f.send({ committed: 'late words' }), 50));
+        const { got, events } = heard();
+        const lastAnswer = { lastAnswerAfterFinish: { quietMs: 100 }, finalTimeoutMs: 1_000 };
+        const slow = spec({ ...lastAnswer, connect: async () => (await sleep(150), { url: `${fake.url}/listen` }) });
+        const stream = slow.listen(hearingSettings(''), events);
+        stream.finish();
+        await waitFor('the last words', () => got.finals.length === 1);
+        expect(got.finals).toEqual(['late words']);
+
+        const stuck = heard();
+        spec({ lastAnswerAfterFinish: { quietMs: 50 }, finalTimeoutMs: 150, connect: () => new Promise<never>(() => undefined) })
+            .listen(hearingSettings(''), stuck.events)
+            .finish();
+        await waitFor('the failure', () => stuck.got.failures.length === 1);
+        expect(stuck.got.finals).toEqual([]);
+        expect(stuck.got.failures).toEqual([{ text: '' }]);
+    });
+
     it('fails, without crashing the worker, when the key cannot be sent in a header', async () => {
         const fake = await fakeHearing();
         const { got, events } = heard();
