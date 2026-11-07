@@ -18,6 +18,8 @@ export interface HearingMessage {
     endpoint?: boolean;
     /** The company sent the last words after the end of the audio. */
     finished?: boolean;
+    /** The company accepted the setup and now takes audio (only read when the spec sets `readyFirst`). */
+    ready?: boolean;
     error?: { status?: number };
 }
 
@@ -28,6 +30,8 @@ export interface SocketHearingSpec {
     connect(settings: RecognitionSettings, base: string): SocketAddress | Promise<SocketAddress>;
     /** Messages sent once the socket opens, before any audio: usually the setup. */
     start?(settings: RecognitionSettings): (string | Uint8Array)[];
+    /** The company answers the setup before it takes audio (Meta): audio is held until an answer says `ready`. */
+    readyFirst?: boolean;
     /** One piece of 16 kHz mono s16 audio as the company takes it. Default: the raw bytes, as a binary message. */
     frame?(pcm16k: Int16Array): string | Uint8Array;
     /** Messages that end the audio, after which the company sends the last words. */
@@ -65,6 +69,8 @@ class SocketStream implements Recognizer {
     private finishing = false;
     private done = false;
     private endpointed = false;
+    /** The socket is open and the company takes audio. */
+    private accepting = false;
     private timer?: NodeJS.Timeout;
     readonly pauseMs?: number;
 
@@ -90,7 +96,7 @@ class SocketStream implements Recognizer {
         } catch {
             return this.fail(failure(this.spec.adapter, 'audio could not be prepared'));
         }
-        if (this.ws?.readyState === WebSocket.OPEN) {
+        if (this.accepting && this.ws?.readyState === WebSocket.OPEN) {
             this.ws.send(message);
             return;
         }
@@ -106,7 +112,7 @@ class SocketStream implements Recognizer {
     finish(): void {
         if (this.done || this.finishing) return;
         this.finishing = true;
-        if (this.ws?.readyState === WebSocket.OPEN) this.sendFinish();
+        if (this.accepting && this.ws?.readyState === WebSocket.OPEN) this.sendFinish();
         this.timer = setTimeout(() => this.fail(failure(this.spec.adapter, 'took too long for the last words')), this.spec.finalTimeoutMs ?? DEFAULT_FINAL_TIMEOUT_MS);
         this.timer.unref?.();
     }
@@ -131,13 +137,10 @@ class SocketStream implements Recognizer {
             if (this.done) return;
             try {
                 for (const message of this.spec.start?.(this.settings) ?? []) ws.send(message);
-                for (const message of this.pending) ws.send(message);
-                this.pending = [];
-                this.pendingMs = 0;
-                if (this.finishing) this.sendFinish();
             } catch {
-                this.fail(failure(this.spec.adapter, 'could not be sent the audio'));
+                return this.fail(failure(this.spec.adapter, 'could not be sent the audio'));
             }
+            if (!this.spec.readyFirst) this.accept();
         });
         ws.on('message', (data: WebSocket.RawData, isBinary: boolean) => {
             // Nothing the company sends may throw out of here: a socket handler that throws takes the whole worker down
@@ -172,6 +175,20 @@ class SocketStream implements Recognizer {
         });
     }
 
+    /** Sends the audio held so far, and the end of it when that already came; from now on audio goes straight out. */
+    private accept(): void {
+        if (this.accepting || this.done) return;
+        this.accepting = true;
+        try {
+            for (const message of this.pending) this.ws?.send(message);
+            this.pending = [];
+            this.pendingMs = 0;
+            if (this.finishing) this.sendFinish();
+        } catch {
+            this.fail(failure(this.spec.adapter, 'could not be sent the audio'));
+        }
+    }
+
     private sendFinish(): void {
         for (const message of this.spec.finish(this.settings)) this.ws?.send(message);
     }
@@ -181,6 +198,7 @@ class SocketStream implements Recognizer {
         for (const message of Array.isArray(answer) ? answer : [answer]) {
             if (this.done) return;
             if (message.error) return this.fail(failure(this.spec.adapter, 'answered with an error', message.error.status));
+            if (message.ready) this.accept();
             if (message.committed) {
                 const glue = this.spec.join === 'tokens' || !this.committed ? '' : ' ';
                 this.committed += glue + message.committed;
