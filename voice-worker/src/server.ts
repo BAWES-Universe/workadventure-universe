@@ -30,6 +30,7 @@ import { NEUPHONIC_ADAPTER, NeuphonicSpeech } from './neuphonic.ts';
 import { RESEMBLE_ADAPTER, ResembleSpeech } from './resemble.ts';
 import { RIME_ADAPTER, RimeSpeech } from './rime.ts';
 import { SARVAM_ADAPTER, SarvamRecognition, SarvamSpeech } from './sarvam.ts';
+import { SMALLEST_ADAPTER, SmallestRecognition, SmallestSpeech } from './smallest.ts';
 import { ELEVENLABS_ADAPTER, ElevenLabsSpeech } from './elevenlabs.ts';
 import { CARTESIA_ADAPTER, CartesiaRecognition, CartesiaSpeech } from './cartesia.ts';
 import { FISH_ADAPTER, FishSpeech } from './fish.ts';
@@ -162,6 +163,11 @@ export class VoiceWorker {
         if (!this.connectors.speech(RIME_ADAPTER)) this.connectors.registerSpeech(RIME_ADAPTER, new RimeSpeech());
         if (!this.connectors.recognition(SARVAM_ADAPTER)) this.connectors.registerRecognition(SARVAM_ADAPTER, new SarvamRecognition());
         if (!this.connectors.speech(SARVAM_ADAPTER)) this.connectors.registerSpeech(SARVAM_ADAPTER, new SarvamSpeech());
+        if (!this.connectors.recognition(SMALLEST_ADAPTER)) {
+            const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
+            this.connectors.registerRecognition(SMALLEST_ADAPTER, new SmallestRecognition({ finalTimeoutMs }));
+        }
+        if (!this.connectors.speech(SMALLEST_ADAPTER)) this.connectors.registerSpeech(SMALLEST_ADAPTER, new SmallestSpeech());
         if (!this.connectors.recognition(SONIOX_ADAPTER)) {
             const finalTimeoutMs = (options.recognitionFinalTimeoutSeconds ?? DEFAULT_SONIOX_FINAL_TIMEOUT_MS / 1000) * 1000;
             this.connectors.registerRecognition(SONIOX_ADAPTER, new SonioxRecognition({ finalTimeoutMs }));
