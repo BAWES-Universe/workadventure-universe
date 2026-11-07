@@ -15,6 +15,7 @@ vi.mock('../utils/MovementLogger', () => ({ movementLogger: {} }));
 
 import { BotAPI } from '../server/BotAPI';
 import { voiceHelloCacheSettings } from '../voice/settings';
+
 import {
     HELLO_LINES,
     HELLO_MAX_SECONDS,
@@ -90,7 +91,7 @@ describe('hearing a voice say hello', () => {
         expect(h.checkVoiceAllowance).toHaveBeenCalledWith('hala', { userId: 'maker-uuid', isGuest: false, turnId: 'hello-id1' });
         // Spoken exactly as a bubble would: the provider, model, voice and key of the session, and the style
         const [request] = h.preview.mock.calls[0];
-        expect(request).toEqual({ speech: session().speech, text: HELLO_LINES.en, expression: 'natural', maxSeconds: HELLO_MAX_SECONDS });
+        expect(request).toEqual({ speech: session().speech, text: HELLO_LINES.en, lang: 'en', expression: 'natural', maxSeconds: HELLO_MAX_SECONDS });
         // Heard, so nothing is given back
         await flush();
         expect(h.releaseVoiceReply).not.toHaveBeenCalled();
@@ -124,9 +125,15 @@ describe('hearing a voice say hello', () => {
         const pinned = hello({ language: 'ar-KW' });
         await say(pinned.hello, { locale: 'en-US' });
         expect(pinned.preview.mock.calls[0][0].text).toBe(HELLO_LINES.ar);
+        expect(pinned.preview.mock.calls[0][0].lang).toBe('ar');
         const following = hello();
         await say(following.hello, { locale: 'es-ES' });
         expect(following.preview.mock.calls[0][0].text).toBe(HELLO_LINES.es);
+        // A voice that follows the person's language is told which one the line is in, so it does not say it with an English model
+        expect(following.preview.mock.calls[0][0].lang).toBe('es');
+        const noLine = hello();
+        await say(noLine.hello, { locale: 'dsb-DE' });
+        expect(noLine.preview.mock.calls[0][0]).toMatchObject({ text: HELLO_LINES.en, lang: 'en' });
     });
 
     it('is not made when the maker\'s voice replies are used up, and says when they come back', async () => {

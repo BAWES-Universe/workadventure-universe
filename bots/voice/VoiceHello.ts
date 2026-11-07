@@ -38,15 +38,22 @@ export const HELLO_LINES: Readonly<Record<string, string>> = {
     zh: '你好，Universe。这就是我的声音。',
 };
 
-/** The line for a language code such as "ar-KW", or a game locale such as "fr-FR"; English where there is none (or no language). */
-export function helloLine(...languages: Array<string | undefined>): string {
+/**
+ * The line for a language code such as "ar-KW", or a game locale such as "fr-FR", and the code of the language it is in: the first
+ * one there is a line for, else English. The code goes to the voice company with the line, so a voice that follows the person's
+ * language says it in that language and not with an English model.
+ */
+export function helloIn(...languages: Array<string | undefined>): { lang: string; text: string } {
     for (const language of languages) {
         if (!language || !/^[A-Za-z]{2,3}([-_][A-Za-z0-9]{2,8})?$/.test(language)) continue;
-        const line = HELLO_LINES[language.split(/[-_]/)[0].toLowerCase()];
-        if (line) return line;
+        const lang = language.split(/[-_]/)[0].toLowerCase();
+        const text = HELLO_LINES[lang];
+        if (text) return { lang, text };
     }
-    return HELLO_LINES.en;
+    return { lang: 'en', text: HELLO_LINES.en };
 }
+
+export const helloLine = (...languages: Array<string | undefined>): string => helloIn(...languages).text;
 
 /** How long a hello is kept and how much of it, so a maker testing the same voice again and again is not paying for it each time. */
 export interface HelloCacheSettings {
@@ -135,6 +142,8 @@ export function helloCacheKey(input: { speechProviderId: string; speech: HelloPr
 export interface HelloPreviewRequest {
     speech: { adapter: string; model: string; voiceId: string; key: string; endpoint?: string; region?: string; language?: string };
     text: string;
+    /** The language the text is in, for a voice that follows the person's language. */
+    lang?: string;
     expression: string;
     maxSeconds: number;
 }
@@ -201,7 +210,7 @@ export class VoiceHello {
             if (!session) return fail({ status: 503, error: 'unavailable' });
 
             // The language the voice is set to speak, else the one the game is read in
-            const text = helloLine(active.profile.language, input.locale);
+            const { text, lang } = helloIn(active.profile.language, input.locale);
             const cacheKey = this.ports.cache ? helloCacheKey({ speechProviderId: active.providers.speech.providerId, speech: session.speech, expression: session.expression, text }) : null;
             const heard = cacheKey ? this.ports.cache?.get(cacheKey) : undefined;
             // Heard already, with this very voice: played again, free, and no allowance is touched
@@ -218,7 +227,7 @@ export class VoiceHello {
                 counted = true;
             }
 
-            const answer = await this.ports.preview({ speech: session.speech, text, expression: session.expression, maxSeconds: HELLO_MAX_SECONDS }, HELLO_SPEAK_TIMEOUT_MS);
+            const answer = await this.ports.preview({ speech: session.speech, text, lang, expression: session.expression, maxSeconds: HELLO_MAX_SECONDS }, HELLO_SPEAK_TIMEOUT_MS);
             if (answer.ok === false) {
                 if (answer.kind === 'provider') {
                     // The maker's own key tells Orbit how the call went, as it does for a bubble
