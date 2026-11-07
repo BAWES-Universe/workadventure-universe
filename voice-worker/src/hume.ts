@@ -38,7 +38,8 @@ export class HumeSpeech implements SpeechConnector {
         },
         call: (request) => {
             const voice = request.settings.voiceId;
-            const version = octaveVersion(request.settings.model);
+            // Hume rejects version 2 without a voice: with none picked, Hume routes the request to the model that fits
+            const version = voice ? octaveVersion(request.settings.model) : undefined;
             return {
                 url: '/v0/tts/stream/json',
                 headers: { 'X-Hume-Api-Key': request.settings.key.reveal(), 'content-type': 'application/json' },
