@@ -15,6 +15,7 @@ import type { RecognizerFactory } from './recognizer.ts';
 import type { RoomTransport } from './roomTransport.ts';
 import { type OutgoingMessage, Session } from './session.ts';
 import type { InputSink } from './transport.ts';
+import { ASSEMBLYAI_ADAPTER, AssemblyAiRecognition } from './assemblyai.ts';
 import { ELEVENLABS_ADAPTER, ElevenLabsSpeech } from './elevenlabs.ts';
 import { CARTESIA_ADAPTER, CartesiaRecognition, CartesiaSpeech } from './cartesia.ts';
 import { FISH_ADAPTER, FishSpeech } from './fish.ts';
@@ -107,6 +108,10 @@ export class VoiceWorker {
         // Each real provider is one file registered by name; a registry passed in (tests) keeps what it already has
         this.connectors = options.connectors ?? new ConnectorRegistry();
         if (!this.connectors.speech(FAKE_ADAPTER)) this.connectors.registerSpeech(FAKE_ADAPTER, this.speech);
+        if (!this.connectors.recognition(ASSEMBLYAI_ADAPTER)) {
+            const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
+            this.connectors.registerRecognition(ASSEMBLYAI_ADAPTER, new AssemblyAiRecognition({ finalTimeoutMs }));
+        }
         if (!this.connectors.speech(CARTESIA_ADAPTER)) this.connectors.registerSpeech(CARTESIA_ADAPTER, new CartesiaSpeech({ version: options.cartesiaVersion }));
         if (!this.connectors.recognition(CARTESIA_ADAPTER)) {
             const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
