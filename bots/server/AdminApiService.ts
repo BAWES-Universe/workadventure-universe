@@ -862,11 +862,11 @@ export class AdminApiService {
     }
 
     /** One voice provider for one bot, the key still encrypted. Null when the bot may not use it (404, or 400). */
-    async getVoiceCredentials(providerId: string, botId: string, timeoutMs: number): Promise<VoiceCredentialsAnswer | null> {
+    async getVoiceCredentials(providerId: string, botId: string, timeoutMs: number, options: { hello?: boolean } = {}): Promise<VoiceCredentialsAnswer | null> {
         try {
             const response: AxiosResponse<VoiceCredentialsAnswer> = await axios.get(
                 resolveAdminApiEndpoint(this.adminApiUrl, `api/voice/providers/${encodeURIComponent(providerId)}/credentials`),
-                { headers: { ...this.voiceHeaders(), 'Cache-Control': 'no-store' }, params: { botId }, timeout: timeoutMs }
+                { headers: { ...this.voiceHeaders(), 'Cache-Control': 'no-store' }, params: { botId, ...(options.hello ? { hello: 1 } : {}) }, timeout: timeoutMs }
             );
             return response.data;
         } catch (error) {
