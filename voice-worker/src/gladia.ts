@@ -8,7 +8,8 @@
 import type { RecognitionConnector, RecognitionSettings } from './connectors.ts';
 import { answerStatus, failure, readSome } from './kit/errors.ts';
 import { baseLanguage } from './kit/signIn.ts';
-import { socketHearing, type HearingMessage, type SocketAddress } from './kit/socketHearing.ts';
+import { socketHearing, type HearingMessage } from './kit/socketHearing.ts';
+import type { SocketAddress } from './kit/socketSpeech.ts';
 import type { Recognizer, RecognizerEvents } from './recognizer.ts';
 
 export const GLADIA_ADAPTER = 'gladia';
