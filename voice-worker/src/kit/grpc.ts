@@ -173,13 +173,20 @@ export class GrpcCall {
         };
         this.session = http2.connect(address.origin);
         this.session.on('error', () => end({ ok: false }));
-        this.stream = this.session.request({
-            ':method': 'POST',
-            ':path': address.path,
-            'content-type': 'application/grpc',
-            te: 'trailers',
-            ...(address.headers ?? {}),
-        });
+        try {
+            this.stream = this.session.request({
+                ':method': 'POST',
+                ':path': address.path,
+                'content-type': 'application/grpc',
+                te: 'trailers',
+                ...(address.headers ?? {}),
+            });
+        } catch (error) {
+            // A call that can't be asked for (a header Node refuses) leaves no session behind to fail later on its own
+            this.ended = true;
+            this.session.destroy();
+            throw error;
+        }
         this.stream.on('response', (headers) => {
             this.httpStatus = Number(headers[':status']);
             // A refusal can come as headers only, with the status in them ("trailers-only")
@@ -192,7 +199,8 @@ export class GrpcCall {
             try {
                 messages = frames.take(chunk);
             } catch {
-                return end({ ok: false });
+                // A body that isn't gRPC (a proxy's error page) still fails with the HTTP status it came with
+                return end({ ok: false, ...(this.httpStatus !== undefined && this.httpStatus !== 200 ? { status: this.httpStatus } : {}) });
             }
             for (const message of messages) {
                 if (this.ended) return;
