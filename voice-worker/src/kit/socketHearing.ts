@@ -75,10 +75,9 @@ class SocketStream implements Recognizer {
         } catch (error) {
             address = Promise.reject(error);
         }
-        Promise.resolve(address).then(
-            (resolved) => this.open(resolved),
-            (error: unknown) => this.fail(error instanceof ProviderError ? error : failure(spec.adapter, 'could not be reached'))
-        );
+        Promise.resolve(address)
+            .then((resolved) => this.open(resolved))
+            .catch((error: unknown) => this.fail(error instanceof ProviderError ? error : failure(spec.adapter, 'could not be reached')));
     }
 
     push(pcm16k: Int16Array): void {
@@ -118,7 +117,13 @@ class SocketStream implements Recognizer {
 
     private open(address: SocketAddress): void {
         if (this.done) return;
-        const ws = new WebSocket(address.url, address.protocols, { headers: address.headers });
+        let ws: WebSocket;
+        try {
+            // Throws at once on a bad address or a header value it can't send (a key pasted with a line break)
+            ws = new WebSocket(address.url, address.protocols, { headers: address.headers });
+        } catch {
+            return this.fail(failure(this.spec.adapter, 'could not be reached'));
+        }
         this.ws = ws;
         ws.on('open', () => {
             if (this.done) return;

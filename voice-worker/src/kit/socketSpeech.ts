@@ -2,7 +2,7 @@
 // read what comes back; this file does the rest the same way for every company: waiting for audio, stopping when the reply
 // is no longer wanted, turning bytes into 24 kHz samples, and saying why it failed.
 import WebSocket from 'ws';
-import { type SpeechConnector, type SpeechRequest } from '../connectors.ts';
+import { ProviderError, type SpeechConnector, type SpeechRequest } from '../connectors.ts';
 import { answerStatus, failure, type CreditCheck } from './errors.ts';
 import { decodeAudioText, PcmReader, Resampler } from './pcm.ts';
 import { SPEECH_RATE } from './httpSpeech.ts';
@@ -46,8 +46,14 @@ type Event = { samples: Int16Array } | { end: true } | { error: Error };
 async function* speakOverSocket(spec: SocketSpeechSpec, request: SpeechRequest): AsyncGenerator<Int16Array> {
     if (request.signal.aborted) return;
     const base = (request.settings.endpoint || spec.endpoint).replace(/\/+$/, '');
-    const address = spec.connect(request, base);
-    const ws = new WebSocket(address.url, address.protocols, { headers: address.headers });
+    let ws: WebSocket;
+    try {
+        const address = spec.connect(request, base);
+        // Throws at once on a bad address or a header value it can't send (a key pasted with a line break)
+        ws = new WebSocket(address.url, address.protocols, { headers: address.headers });
+    } catch (error) {
+        throw error instanceof ProviderError ? error : failure(spec.adapter, 'could not be reached');
+    }
     const reader = new PcmReader({ skipWavHeader: spec.audio.mayStartWithWav === true });
     const resampler = spec.audio.sampleRate === SPEECH_RATE ? undefined : new Resampler(spec.audio.sampleRate, SPEECH_RATE);
     const queue: Event[] = [];
