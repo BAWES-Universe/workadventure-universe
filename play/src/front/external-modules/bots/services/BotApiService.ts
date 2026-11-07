@@ -23,7 +23,14 @@ import {
     type ServerTools,
     type Setting,
 } from "../toolsModel";
-import { readBotVoice, readVoiceChoices, type BotVoice, type FullVoiceProfile, type VoiceChoice } from "../voiceModel";
+import {
+    readBotVoice,
+    readHello,
+    readVoiceChoices,
+    type BotVoice,
+    type FullVoiceProfile,
+    type VoiceChoice,
+} from "../voiceModel";
 import { classifySummonFailure, type SummonResult } from "./summonFailure";
 
 interface AuthError extends Error {
@@ -39,6 +46,8 @@ const OPAQUE_SESSION_PATTERN = /^orb_sess_v2_[0-9a-f]{64}$/;
 const ACCESS_CHECK_TIMEOUT_MS = 3000;
 /** How long a read or change of who may use a bot waits for Orbit before it counts as failed */
 const PERMISSIONS_TIMEOUT_MS = 20000;
+/** How long "Hear <bot> say hello" waits for the bot to write its hello and the voice to speak it */
+const HELLO_TIMEOUT_MS = 60000;
 /** How long a lookup of bot states waits before it counts as failed (and is asked again on the next look) */
 const DM_STATUS_TIMEOUT_MS = 10000;
 
@@ -617,6 +626,31 @@ export class BotApiService {
         });
     }
 
+    /**
+     * "Hear <bot> say hello" (#1852): the bot writes a hello with its own brain and the voice worker speaks it once with the
+     * voice and style it speaks with. Answers with the words and an address to play the audio from (the caller hands it back with
+     * `revoke`, as for a sample). Throws the bot server's error, with its status and answer, when no hello could be made.
+     */
+    async sayBotHello(botId: string, locale: string): Promise<{ text: string; url: string }> {
+        // Writing the hello and speaking it can take a while; past this it is not coming
+        const stop = new AbortController();
+        const timer = setTimeout(() => stop.abort(), HELLO_TIMEOUT_MS);
+        let hello: ReturnType<typeof readHello>;
+        try {
+            const response = await this.fetchBotServer(`/api/bots/${encodeURIComponent(botId)}/voice/hello`, {
+                method: "POST",
+                body: JSON.stringify({ locale }),
+                signal: stop.signal,
+            });
+            hello = readHello(await response.json());
+        } finally {
+            clearTimeout(timer);
+        }
+        if (!hello) throw new Error("The bot server answered with a hello the game can't read.");
+        const bytes = Uint8Array.from(atob(hello.audio), (character) => character.charCodeAt(0));
+        return { text: hello.text, url: URL.createObjectURL(new Blob([bytes], { type: hello.mime })) };
+    }
+
     /** "Check now" on a voice key that is Down: the next bot that needs it tries it without waiting. */
     async checkVoiceKey(keyId: string): Promise<boolean> {
         try {
@@ -1147,9 +1181,11 @@ export class BotApiService {
             let errorMessage = `Bot-server API error: ${response.status}`;
             let isSessionExpired = false;
             let errorCode: string | undefined;
+            let errorBody: unknown;
 
             try {
                 const errorJson = JSON.parse(errorText);
+                errorBody = errorJson;
                 errorMessage = errorJson.message || errorJson.error || errorMessage;
                 errorCode = typeof errorJson.code === "string" ? errorJson.code : undefined;
                 // Check if it's a session expiration error
@@ -1206,9 +1242,11 @@ export class BotApiService {
                 throw authError;
             }
 
-            const failure = new Error(errorMessage) as Error & { status?: number; code?: string };
+            const failure = new Error(errorMessage) as Error & { status?: number; code?: string; body?: unknown };
             failure.status = response.status;
             failure.code = errorCode;
+            // What the bot server answered with, for a caller that reads more than its message (a hello that is used up says until when)
+            failure.body = errorBody;
             throw failure;
         }
 
