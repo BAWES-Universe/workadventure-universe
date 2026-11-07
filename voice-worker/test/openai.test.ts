@@ -2,7 +2,7 @@
 // spend. The model hears and speaks; the bot's own Mind writes every answer, so the model is never asked to answer.
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { ConnectorRegistry, ProviderError, Secret, type SpeechRequest } from '../src/connectors.ts';
 import { LISTEN_ONLY, OPENAI_ADAPTER, OPENAI_TRANSCRIPTION_MODEL, OpenAiRecognition, OpenAiSpeech, READ_ALOUD, realtimeAddress } from '../src/openai.ts';
@@ -374,9 +374,15 @@ describe('speaking', () => {
 });
 
 describe('the worker', () => {
-    it('has OpenAI for hearing and speaking under one adapter', () => {
+    it('has OpenAI for hearing and speaking under one adapter, a talking model going to the talking connector', () => {
         const worker = new VoiceWorker({ connectors: new ConnectorRegistry() } as ConstructorParameters<typeof VoiceWorker>[0]);
-        expect(worker.connectors.recognition('openai')).toBeInstanceOf(OpenAiRecognition);
+        // Hearing is shared with OpenAI's own transcription models (src/openaiHearing.ts): a talking model still talks
+        const recognizer = { push: () => undefined, finish: () => undefined, close: () => undefined };
+        const talking = vi.spyOn(OpenAiRecognition.prototype, 'listen').mockReturnValue(recognizer as never);
+        const events = { partial: () => undefined, final: () => undefined, failed: () => undefined };
+        expect(worker.connectors.recognition('openai')!.listen({ adapter: 'openai', model: 'gpt-realtime-2.1', key: new Secret('k'), endpoint: '' }, events)).toBe(recognizer);
+        expect(talking).toHaveBeenCalledTimes(1);
+        talking.mockRestore();
         expect(worker.connectors.speech('openai')).toBeInstanceOf(OpenAiSpeech);
     });
 });
