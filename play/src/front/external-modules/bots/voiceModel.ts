@@ -529,6 +529,7 @@ export function companyName(adapter: string): string {
     const known: Record<string, string> = {
         elevenlabs: "ElevenLabs",
         cartesia: "Cartesia",
+        fish: "Fish Audio",
         deepgram: "Deepgram",
         soniox: "Soniox",
     };
