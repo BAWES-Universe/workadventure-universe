@@ -7,6 +7,7 @@ import type { Duplex } from 'node:stream';
 import { type RawData, WebSocket, WebSocketServer } from 'ws';
 import { ConnectorRegistry } from './connectors.ts';
 import { Counters } from './counters.ts';
+import { Latency } from './latency.ts';
 import { DEEPGRAM_ADAPTER, DEFAULT_DEEPGRAM_FINAL_TIMEOUT_MS, DeepgramRecognition } from './deepgram.ts';
 import { FAKE_ADAPTER, FakeSpeech } from './fakeSpeech.ts';
 import type { IceConfig } from './lane.ts';
@@ -20,6 +21,7 @@ import { CARTESIA_ADAPTER, CartesiaRecognition, CartesiaSpeech } from './cartesi
 import { FISH_ADAPTER, FishSpeech } from './fish.ts';
 import { DeepgramSpeech } from './deepgramSpeech.ts';
 import { ElevenLabsRecognition } from './elevenlabsHearing.ts';
+import { OPENAI_COMPATIBLE_ADAPTER, OpenAiCompatibleRecognition, OpenAiCompatibleSpeech } from './openaiCompatible.ts';
 import { DEFAULT_SONIOX_FINAL_TIMEOUT_MS, SONIOX_ADAPTER, SonioxRecognition } from './soniox.ts';
 import { checkMessage } from './validate.ts';
 import { DEFAULT_MAX_PREVIEWS, DEFAULT_MAX_PREVIEW_SECONDS, type PreviewFailure, Previewer, readPreviewRequest } from './preview.ts';
@@ -49,6 +51,8 @@ export interface WorkerOptions {
     bargeInMs?: number;
     /** The Cartesia API version every Cartesia request names. Default DEFAULT_CARTESIA_VERSION. */
     cartesiaVersion?: string;
+    /** The sample rate of a person's own speech server's raw audio, when it isn't the usual 24 kHz (VOICE_OPENAI_COMPATIBLE_SAMPLE_RATE). */
+    ownSpeechSampleRate?: number;
     /** How long a hearing provider may take for the last words after a person paused, in seconds, before it counts as failed. Default 10. */
     recognitionFinalTimeoutSeconds?: number;
     /** The longest one line spoken outside a bubble (the bot page's "Hear it say hello") plays, in seconds. Default 20. */
@@ -84,6 +88,8 @@ const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
 
 export class VoiceWorker {
     readonly counters = new Counters();
+    /** How long turns take, per provider (#1865). */
+    readonly latency = new Latency();
     /**
      * CPU is measured on the worker's own clock, not per /stats read, so every reader (and a second read soon after the
      * first) sees the same figure: the start of the current sample, and the last minute's samples in percent.
@@ -126,6 +132,9 @@ export class VoiceWorker {
             this.connectors.registerRecognition(DEEPGRAM_ADAPTER, new DeepgramRecognition({ finalTimeoutMs }));
         }
         if (!this.connectors.speech(DEEPGRAM_ADAPTER)) this.connectors.registerSpeech(DEEPGRAM_ADAPTER, new DeepgramSpeech());
+        // A person's own speech server (#1874): hears and speaks, at the https address they typed, through the address guard
+        if (!this.connectors.speech(OPENAI_COMPATIBLE_ADAPTER)) this.connectors.registerSpeech(OPENAI_COMPATIBLE_ADAPTER, new OpenAiCompatibleSpeech({ sampleRate: options.ownSpeechSampleRate }));
+        if (!this.connectors.recognition(OPENAI_COMPATIBLE_ADAPTER)) this.connectors.registerRecognition(OPENAI_COMPATIBLE_ADAPTER, new OpenAiCompatibleRecognition());
         this.previewer = new Previewer({
             connectors: this.connectors,
             speechTimeoutMs: (options.speechTimeoutSeconds ?? DEFAULT_SPEECH_TIMEOUT_SECONDS) * 1000,
@@ -193,6 +202,7 @@ export class VoiceWorker {
             memoryMb: Math.round(process.memoryUsage().rss / (1024 * 1024)),
             uptimeSeconds: Math.round(process.uptime()),
             counters: this.counters.snapshot(),
+            latency: this.latency.snapshot(),
         };
     }
 
@@ -220,6 +230,7 @@ export class VoiceWorker {
         return {
             engineId: this.engineId,
             counters: this.counters,
+            latency: this.latency,
             ice: this.options.ice,
             input: this.options.input ?? (() => undefined),
             connectors: this.connectors,
@@ -496,6 +507,9 @@ class BridgeConnection {
                 break;
             case 'bot.retract':
                 session.retract(msg.segmentId);
+                break;
+            case 'recognition.terms':
+                session.setTerms(msg.terms);
                 break;
             case 'voice.stop':
                 session.stopVoice();
