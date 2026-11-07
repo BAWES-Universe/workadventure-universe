@@ -51,6 +51,7 @@ describe("Hear this voice say hello (#1852)", () => {
         vi.clearAllMocks();
         vi.stubGlobal("Audio", FakeAudio);
         revoked.length = 0;
+        problems.length = 0;
         // jsdom has no object URLs: the page's own are blob: addresses it hands back to be let go
         URL.revokeObjectURL = (url: string) => void revoked.push(url);
         FakeAudio.last = undefined;
@@ -75,16 +76,27 @@ describe("Hear this voice say hello (#1852)", () => {
         await settle();
     };
 
-    async function mount(props: Partial<{ paidByKey: string | null; locale: string }> = {}) {
+    const problems: string[] = [];
+    async function mount(
+        props: Partial<{
+            paidByKey: string | null;
+            locale: string;
+            free: boolean;
+            voiceName: string;
+            source: { providerId: string; model: string };
+            blocked: boolean;
+        }> = {}
+    ) {
         const refresh = vi.fn();
         const component = new VoiceHello({
             target,
             props: { botId: "b1", paidByKey: null, locale: "en-US", ...props },
         });
         component.$on("refresh", refresh);
+        component.$on("problem", (e: CustomEvent<string>) => problems.push(e.detail));
         destroy = () => component.$destroy();
         await settle();
-        return refresh;
+        return Object.assign(refresh, { component });
     }
 
     it("is one row that says what it does and what it costs: a voice reply on Universe AI", async () => {
@@ -242,5 +254,107 @@ describe("Hear this voice say hello (#1852)", () => {
         } finally {
             setLocale("en-US");
         }
+    });
+
+    describe("on a speech server of the person's own (#1874)", () => {
+        it("says it is free: no voice company is paid", async () => {
+            await mount({ paidByKey: "your speech server", free: true });
+            expect(text()).toBe(
+                "Hear this voice say hello A short line said by your speech server. Free: no voice company is paid."
+            );
+            expect(text()).not.toContain("voice replies");
+            expect(text()).not.toContain("characters");
+        });
+
+        it("hears the name that was typed, before it is kept, and asks the server it is on", async () => {
+            mocks.api.sayBotHello.mockResolvedValue({ text: "Hello!", url: "blob:hello-5" });
+            await mount({
+                paidByKey: "your speech server",
+                free: true,
+                voiceName: "bm_george",
+                source: { providerId: "my-server", model: "kokoro" },
+            });
+            expect(text()).toContain("Hear bm_george say hello");
+            await click();
+            expect(mocks.api.sayBotHello).toHaveBeenCalledWith("b1", "en-US", {
+                voiceId: "bm_george",
+                source: { providerId: "my-server", model: "kokoro" },
+            });
+        });
+
+        it("has nothing to hear until a name is typed", async () => {
+            await mount({ paidByKey: "your speech server", free: true, voiceName: "" });
+            expect(button().disabled).toBe(true);
+            expect(text()).toContain("Hear this voice say hello");
+            await click();
+            expect(mocks.api.sayBotHello).not.toHaveBeenCalled();
+        });
+
+        it("says a name the server did not take, or a server that did not answer, to the field and not by itself", async () => {
+            mocks.api.sayBotHello.mockRejectedValueOnce(
+                refused(502, { error: "provider", providerStatus: 404, rejected: false })
+            );
+            await mount({ paidByKey: "your speech server", free: true, voiceName: "nope" });
+            await click();
+            expect(problems).toEqual(["rejected"]);
+            expect(target.querySelector("[data-testid=bot-voice-hello-failed]")).toBeNull();
+            mocks.api.sayBotHello.mockRejectedValueOnce(refused(503, { error: "unavailable" }));
+            await click();
+            expect(problems).toEqual(["rejected", "unreachable"]);
+        });
+
+        it("does not ask the page to look again when the server only refused the name: that would wipe the field", async () => {
+            mocks.api.sayBotHello.mockRejectedValueOnce(
+                refused(502, { error: "provider", providerStatus: 404, rejected: false })
+            );
+            const refresh = await mount({ paidByKey: "your speech server", free: true, voiceName: "nope" });
+            await click();
+            expect(refresh).not.toHaveBeenCalled();
+            expect(problems).toEqual(["rejected"]);
+        });
+
+        it("says nothing of a refusal that came back for a name that has been changed since", async () => {
+            let fail: (e: unknown) => void = () => undefined;
+            mocks.api.sayBotHello.mockImplementation(
+                () =>
+                    new Promise((_resolve, reject) => {
+                        fail = reject;
+                    })
+            );
+            const mounted = await mount({ paidByKey: "your speech server", free: true, voiceName: "nope" });
+            await click();
+            mounted.component.$set({ voiceName: "af_heart" });
+            await settle();
+            fail(refused(502, { error: "provider", providerStatus: 404, rejected: false }));
+            await settle();
+            expect(problems).toEqual([]);
+        });
+
+        it("waits while something else asks the server, which makes one hello at a time", async () => {
+            await mount({ paidByKey: "your speech server", free: true, voiceName: "af_heart", blocked: true });
+            expect(button().disabled).toBe(true);
+            await click();
+            expect(mocks.api.sayBotHello).not.toHaveBeenCalled();
+        });
+
+        it("does not call the saved voice's failure a typed name's", async () => {
+            mocks.api.sayBotHello.mockRejectedValueOnce(
+                refused(502, { error: "provider", providerStatus: 404, rejected: false })
+            );
+            await mount();
+            await click();
+            expect(problems).toEqual([]);
+            expect(target.querySelector("[data-testid=bot-voice-hello-failed]")).not.toBeNull();
+        });
+
+        it("stops the hello being said when another name is typed", async () => {
+            mocks.api.sayBotHello.mockResolvedValue({ text: "Hello!", url: "blob:hello-6" });
+            const mounted = await mount({ paidByKey: "your speech server", free: true, voiceName: "af_heart" });
+            await click();
+            expect(FakeAudio.last!.paused).toBe(false);
+            mounted.component.$set({ voiceName: "af_sky" });
+            await settle();
+            expect(FakeAudio.last!.paused).toBe(true);
+        });
     });
 });
