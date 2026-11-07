@@ -196,9 +196,9 @@ describe("the bot page's Voice group (#1668)", () => {
         expect(mocks.api.getBotVoices).toHaveBeenCalledWith("b1", "universe-ai");
         const rows = byTestId("bot-voice-option");
         expect(rows).toHaveLength(2);
-        // Universe AI's own voice (River, set by a super admin) is first, tagged and picked
+        // Universe AI's own voice (River, set by a super admin) is first and picked, with no tag on it
         expect(rows[0].textContent).toContain("River");
-        expect(rows[0].textContent).toContain("Recommended");
+        expect(rows[0].textContent).not.toContain("Recommended");
         expect(rows[0].getAttribute("aria-checked")).toBe("true");
         expect(text()).toContain("Use River’s voice");
         expect(text()).toContain(
@@ -359,7 +359,7 @@ describe("the bot page's Voice group (#1668)", () => {
         );
         await mount();
         expect(mocks.api.getBotVoices).toHaveBeenCalledWith("b1", "key-el");
-        expect(text()).toContain("Paid by your ElevenLabs key");
+        expect(text()).toContain("Universe AI listens. Your ElevenLabs key speaks.");
         expect(text()).toContain("You pay; people talking with Tinyfish pay nothing.");
         expect(text()).toContain("Voices on your ElevenLabs key");
         expect(text()).not.toContain("Who pays for");
@@ -369,7 +369,7 @@ describe("the bot page's Voice group (#1668)", () => {
             speech: { providerId: "key-el", voiceId: "v-river" },
         });
         expect(text()).toContain("Tinyfish talks in bubbles now, with River’s voice on your ElevenLabs key.");
-        expect(text()).toContain("Your ElevenLabs key ••••a1b2 speaks. Universe AI listens.");
+        expect(text()).toContain("Universe AI listens. Your ElevenLabs key speaks.");
     });
 
     it("lets the maker change who pays before turning on, and Universe AI's voices come in", async () => {
@@ -383,9 +383,15 @@ describe("the bot page's Voice group (#1668)", () => {
         mocks.api.setBotVoiceEnabled.mockResolvedValue(turnedOn());
         await mount();
         await click("bot-voice-payer-change");
-        expect(byTestId("bot-voice-ask-universe-ai")).toHaveLength(1);
-        expect(byTestId("bot-voice-ask-key")).toHaveLength(1);
-        await click("bot-voice-ask-universe-ai");
+        // The key only speaks, so Universe AI is the one place for both jobs; the split is open, as the voice starts split
+        expect(byTestId("bot-voice-both-universe-ai")).toHaveLength(1);
+        expect(byTestId("bot-voice-both-key-el")).toHaveLength(0);
+        expect(byTestId("bot-voice-split")[0].getAttribute("aria-expanded")).toBe("true");
+        expect(byTestId("bot-voice-speech-key-el")[0].getAttribute("aria-checked")).toBe("true");
+        expect(byTestId("bot-voice-recognition-universe-ai")[0].getAttribute("aria-checked")).toBe("true");
+        expect(byTestId("bot-voice-recognition-key-el")).toHaveLength(0);
+        expect(text()).toContain("Why split?");
+        await click("bot-voice-both-universe-ai");
         expect(mocks.api.getBotVoices).toHaveBeenCalledWith("b1", "universe-ai");
         expect(text()).toContain("Paid by Universe AI");
         await click("bot-voice-go");
@@ -401,7 +407,7 @@ describe("the bot page's Voice group (#1668)", () => {
             turnedOn({ ...uaiProfile, speech: { ...uaiProfile.speech, providerId: "key-el" } }, { lentKeys: [key()] })
         );
         await mount();
-        expect(text()).toContain("Khalid’s ElevenLabs key ••••a1b2 speaks. Universe AI listens.");
+        expect(text()).toContain("Universe AI listens. Khalid’s ElevenLabs key speaks.");
         expect(text()).toContain(
             "Only Khalid’s keys or Universe AI can pay for Tinyfish’s voice, because Khalid made it."
         );
@@ -535,7 +541,9 @@ describe("the bot page's Voice group (#1668)", () => {
         mocks.api.getBotVoice.mockResolvedValue(answer({ universeAi: { recognition: null, speech: null } }));
         await mount();
         expect(text()).toContain("No voice is set up here yet");
-        expect(text()).toContain("Add voice keys of your own in AI keys, one that listens and one that speaks");
+        expect(text()).toContain(
+            "Add a voice key in AI keys and lend it to this universe: one key from a company that listens and speaks is enough, or use two companies."
+        );
         expect(byTestId("bot-voice-add-keys")).toHaveLength(1);
         await click("bot-voice-add-keys");
         expect(mocks.openOrbitPage).toHaveBeenCalledWith("/admin/you/ai-keys");
@@ -555,18 +563,62 @@ describe("the bot page's Voice group (#1668)", () => {
         mocks.api.getBotVoice.mockResolvedValue(
             answer({ ...none, lentKeys: [ear("ear-1", "soniox", "1111"), ear("ear-2", "deepgram", "2222"), key()] })
         );
-        mocks.api.getBotVoices.mockResolvedValue(voices);
+        mocks.api.getBotVoices.mockResolvedValue(voices.map((voice) => ({ ...voice, providerId: "key-el" })));
         await mount();
         expect(text()).not.toContain("No voice is set up here yet");
         expect(byTestId("bot-voice-add-keys")).toHaveLength(0);
+        // No key does both jobs: the two that pair up start picked, listening keys A to Z
+        expect(text()).toContain("Your Deepgram key listens. Your ElevenLabs key speaks.");
         await click("bot-voice-payer-change");
-        const cards = byTestId("bot-voice-ask-key").map((card) => card.textContent?.replace(/\s+/g, " ") ?? "");
-        expect(cards).toHaveLength(2);
-        expect(cards[0]).toContain("Soniox");
-        expect(cards[0]).toContain("ElevenLabs");
-        expect(cards[1]).toContain("Deepgram");
-        expect(cards[1]).toContain("ElevenLabs");
-        expect(cards[0]).not.toEqual(cards[1]);
+        expect(byTestId("bot-voice-both")).toHaveLength(0);
+        const ears = [...byTestId("bot-voice-split-recognition")[0].querySelectorAll("[role=radio]")].map((card) =>
+            card.getAttribute("data-testid")
+        );
+        expect(ears).toEqual(["bot-voice-recognition-ear-2", "bot-voice-recognition-ear-1"]);
+        await click("bot-voice-recognition-ear-1");
+        expect(text()).toContain("Your Soniox key listens. Your ElevenLabs key speaks.");
+        mocks.api.saveBotVoice.mockResolvedValue(answer(none));
+        mocks.api.setBotVoiceEnabled.mockResolvedValue(answer(none));
+        await click("bot-voice-go");
+        expect(mocks.api.saveBotVoice.mock.calls[0][1]).toMatchObject({
+            recognition: { providerId: "ear-1" },
+            speech: { providerId: "key-el" },
+        });
+    });
+
+    it("starts on one key whose company listens and speaks, and splits it in a tap", async () => {
+        const both = key({
+            id: "key-dg",
+            adapter: "deepgram",
+            recognition: true,
+            speech: true,
+            models: [
+                { id: "nova-3", label: "Nova 3", kind: "recognition" },
+                { id: "aura-2", label: "Aura 2", kind: "speech" },
+            ],
+        });
+        mocks.api.getBotVoice.mockResolvedValue(answer({ lentKeys: [key(), both] }));
+        mocks.api.getBotVoices.mockImplementation((_bot: string, source: string) =>
+            Promise.resolve(voices.map((voice) => ({ ...voice, providerId: source })))
+        );
+        mocks.api.saveBotVoice.mockResolvedValue(answer());
+        mocks.api.setBotVoiceEnabled.mockResolvedValue(turnedOn());
+        await mount();
+        expect(text()).toContain("Paid by your Deepgram key");
+        await click("bot-voice-payer-change");
+        expect(byTestId("bot-voice-both-key-dg")[0].getAttribute("aria-checked")).toBe("true");
+        expect(byTestId("bot-voice-both-universe-ai")[0].getAttribute("aria-checked")).toBe("false");
+        // Splitting is one row away, closed while one key does both
+        expect(byTestId("bot-voice-split")[0].getAttribute("aria-expanded")).toBe("false");
+        expect(byTestId("bot-voice-speech-key-el")).toHaveLength(0);
+        await click("bot-voice-split");
+        await click("bot-voice-speech-key-el");
+        expect(text()).toContain("Your Deepgram key listens. Your ElevenLabs key speaks.");
+        await click("bot-voice-go");
+        expect(mocks.api.saveBotVoice.mock.calls[0][1]).toMatchObject({
+            recognition: { providerId: "key-dg", model: "nova-3" },
+            speech: { providerId: "key-el" },
+        });
     });
 
     it("tells a co-manager, who can't lend keys for the bot, only that voice isn't set up, with no button", async () => {
@@ -663,7 +715,7 @@ describe("the bot page's Voice group (#1668)", () => {
             expect(mocks.openOrbitPage).toHaveBeenCalledWith("/admin/you/ai-keys");
         });
 
-        it("keeps the model of a key one row, preselected and tagged, and Change opens the whole list", async () => {
+        it("keeps the model of a key one row, preselected with no tag, and Change opens the whole list", async () => {
             mocks.api.getBotVoice.mockResolvedValue(onKey());
             mocks.api.saveBotVoice.mockResolvedValue(onKey());
             await mount();
@@ -671,7 +723,7 @@ describe("the bot page's Voice group (#1668)", () => {
             expect(text()).toContain("Language, who pays, model, versions");
             const row = byTestId("bot-voice-speech-model-change")[0].textContent ?? "";
             expect(row).toContain("Speaking model · Eleven v4 Turbo");
-            expect(row).toContain("Recommended");
+            expect(row).not.toContain("Recommended");
             expect(byTestId("bot-voice-speech-model")).toHaveLength(0);
             await click("bot-voice-speech-model-change");
             const select = byTestId("bot-voice-speech-model")[0] as HTMLSelectElement;
@@ -721,10 +773,14 @@ describe("the bot page's Voice group (#1668)", () => {
             await click("bot-voice-more");
             expect(byTestId("bot-voice-speech-key")).toHaveLength(0);
             await click("bot-voice-sources-change");
-            expect(text()).toContain("Speaks on");
-            expect(text()).toContain("Listens on");
+            expect(text()).toContain("One company for both");
+            expect(byTestId("bot-voice-both-universe-ai")[0].getAttribute("aria-checked")).toBe("true");
+            await click("bot-voice-split");
+            expect(text()).toContain("Listens with");
+            expect(text()).toContain("Speaks with");
+            expect(text()).toContain("Why split?");
             expect(byTestId("bot-voice-speech-universe-ai")[0].getAttribute("aria-checked")).toBe("true");
-            await click("bot-voice-speech-key");
+            await click("bot-voice-speech-key-el");
             expect(mocks.api.saveBotVoice.mock.calls[0][1]).toMatchObject({
                 recognition: { providerId: "uai-listen" },
                 speech: { providerId: "key-el", model: "eleven_v4_turbo", voiceId: "v-river" },
@@ -744,7 +800,7 @@ describe("the bot page's Voice group (#1668)", () => {
             );
             expect(byTestId("bot-voice-language-follow")).toHaveLength(0);
             await click("bot-voice-language-change");
-            expect(byTestId("bot-voice-language-follow")[0].textContent).toContain("Recommended");
+            expect(byTestId("bot-voice-language-follow")[0].textContent).not.toContain("Recommended");
             expect(byTestId("bot-voice-language-follow")[0].getAttribute("aria-checked")).toBe("true");
             expect(byTestId("bot-voice-language-fixed")[0].textContent).toContain("Always one language");
             expect(byTestId("bot-voice-language-fixed")[0].textContent).toContain(
