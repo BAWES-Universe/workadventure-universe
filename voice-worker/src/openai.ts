@@ -70,12 +70,28 @@ export function errorOf(event: Record<string, unknown>): { harmless: boolean; st
 }
 
 /**
+ * Where a company runs OpenAI's Realtime API (OpenAI itself, or Azure on a person's own resource): its adapter, its own address
+ * when the key has none, how to open the socket there, and the model that writes down what the person said.
+ */
+export interface RealtimeHost {
+    adapter: string;
+    endpoint: string;
+    connect(model: string, key: { reveal(): string }, base: string): SocketAddress;
+    transcriptionModel: string;
+}
+
+export const OPENAI_HOST: RealtimeHost = { adapter: OPENAI_ADAPTER, endpoint: OPENAI_ENDPOINT, connect: realtimeAddress, transcriptionModel: OPENAI_TRANSCRIPTION_MODEL };
+
+/**
  * Hearing with a talking model. Each stretch of speech gets its own socket and its own record of what was committed and written
  * down: the model's turn detection may commit the audio more than once in a stretch (the person paused and went on), and the
  * stretch's last words come only when every committed piece is written down.
  */
 export class OpenAiRecognition implements RecognitionConnector {
+    constructor(private readonly host: RealtimeHost = OPENAI_HOST) {}
+
     listen(settings: RecognitionSettings, events: RecognizerEvents): Recognizer {
+        const host = this.host;
         const resampler = new Resampler(16_000, OPENAI_RATE);
         let committed = 0;
         let written = 0;
@@ -85,10 +101,10 @@ export class OpenAiRecognition implements RecognitionConnector {
         const lang = settings.language ? baseLanguage(settings.language) : undefined;
         const allWritten = (): HearingMessage[] => (finishing && written >= committed ? [{ finished: true }] : []);
         return socketHearing({
-            adapter: OPENAI_ADAPTER,
-            endpoint: OPENAI_ENDPOINT,
+            adapter: host.adapter,
+            endpoint: host.endpoint,
             pauseMs: OPENAI_FALLBACK_PAUSE_MS,
-            connect: (s, base) => realtimeAddress(s.model, s.key, base),
+            connect: (s, base) => host.connect(s.model, s.key, base),
             start: () => [
                 json({
                     type: 'session.update',
@@ -99,7 +115,7 @@ export class OpenAiRecognition implements RecognitionConnector {
                         audio: {
                             input: {
                                 format: { type: 'audio/pcm', rate: OPENAI_RATE },
-                                transcription: { model: OPENAI_TRANSCRIPTION_MODEL, ...(lang ? { language: lang } : {}) },
+                                transcription: { model: host.transcriptionModel, ...(lang ? { language: lang } : {}) },
                                 // The model says when the person finished; it never answers on its own
                                 turn_detection: { type: 'semantic_vad', create_response: false, interrupt_response: false },
                             },
@@ -154,11 +170,23 @@ export class OpenAiRecognition implements RecognitionConnector {
 
 /** Speaking with a talking model: one socket per reply, the Mind's words read aloud out of band. */
 export class OpenAiSpeech implements SpeechConnector {
-    private readonly connector = socketSpeech({
-        adapter: OPENAI_ADAPTER,
-        endpoint: OPENAI_ENDPOINT,
+    private readonly connector: SpeechConnector;
+
+    constructor(host: RealtimeHost = OPENAI_HOST) {
+        this.connector = openAiSpeech(host);
+    }
+
+    speak(request: SpeechRequest): AsyncIterable<Int16Array> {
+        return this.connector.speak(request);
+    }
+}
+
+function openAiSpeech(host: RealtimeHost): SpeechConnector {
+    return socketSpeech({
+        adapter: host.adapter,
+        endpoint: host.endpoint,
         audio: { sampleRate: OPENAI_RATE, encoding: 'base64' },
-        connect: (request, base) => realtimeAddress(request.settings.model, request.settings.key, base),
+        connect: (request, base) => host.connect(request.settings.model, request.settings.key, base),
         send: (request) => [
             json({
                 type: 'session.update',
@@ -202,8 +230,4 @@ export class OpenAiSpeech implements SpeechConnector {
             }
         },
     });
-
-    speak(request: SpeechRequest): AsyncIterable<Int16Array> {
-        return this.connector.speak(request);
-    }
 }

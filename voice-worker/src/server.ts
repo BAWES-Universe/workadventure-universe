@@ -17,6 +17,7 @@ import { type OutgoingMessage, Session } from './session.ts';
 import type { InputSink } from './transport.ts';
 import { ELEVENLABS_ADAPTER, ElevenLabsSpeech } from './elevenlabs.ts';
 import { CARTESIA_ADAPTER, CartesiaSpeech } from './cartesia.ts';
+import { AZURE_ADAPTER, AzureRecognition, AzureSpeech } from './azure.ts';
 import { OPENAI_ADAPTER, OpenAiRecognition, OpenAiSpeech } from './openai.ts';
 import { XAI_ADAPTER, XaiRecognition, XaiSpeech } from './xai.ts';
 import { FISH_ADAPTER, FishSpeech } from './fish.ts';
@@ -110,6 +111,8 @@ export class VoiceWorker {
             this.connectors.registerRecognition(DEEPGRAM_ADAPTER, new DeepgramRecognition({ finalTimeoutMs }));
         }
         // A talking model (game #1910) is named for both hearing and speaking, under one adapter
+        if (!this.connectors.recognition(AZURE_ADAPTER)) this.connectors.registerRecognition(AZURE_ADAPTER, new AzureRecognition());
+        if (!this.connectors.speech(AZURE_ADAPTER)) this.connectors.registerSpeech(AZURE_ADAPTER, new AzureSpeech());
         if (!this.connectors.recognition(OPENAI_ADAPTER)) this.connectors.registerRecognition(OPENAI_ADAPTER, new OpenAiRecognition());
         if (!this.connectors.speech(OPENAI_ADAPTER)) this.connectors.registerSpeech(OPENAI_ADAPTER, new OpenAiSpeech());
         if (!this.connectors.recognition(XAI_ADAPTER)) this.connectors.registerRecognition(XAI_ADAPTER, new XaiRecognition());
