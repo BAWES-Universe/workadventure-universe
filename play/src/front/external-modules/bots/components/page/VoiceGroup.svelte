@@ -57,6 +57,7 @@
     import VoicePicker from "./VoicePicker.svelte";
     import VoiceRows from "./VoiceRows.svelte";
     import VoicePayerPicker from "./VoicePayerPicker.svelte";
+    import VoiceHello from "./VoiceHello.svelte";
     import {
         IconAlertTriangle,
         IconCheck,
@@ -1082,6 +1083,17 @@
                         >
                     </div>
                     {#if sampleError}<p class="bp-m" role="alert">{v.sampleFailed()}</p>{/if}
+
+                    {#if !pause}
+                        {#key bot.id}
+                            <VoiceHello
+                                botId={bot.id}
+                                paidByKey={speakingKey ? keyPhrase(speakingKey, true) : null}
+                                locale={$locale}
+                                on:refresh={() => void load(bot.id, true)}
+                            />
+                        {/key}
+                    {/if}
 
                     <PageField title={v.howItSpeaks()} hint={v.styleHint[expression]()}>
                         <PageSegment
