@@ -233,6 +233,27 @@ describe('the worker speaks one line on its own', () => {
         expect((await ask(url, { speech: speech(), text: 'Hello' }, { authorization: 'Bearer worker-secret' })).status).toBe(200);
     });
 
+    it('reads a line whose characters arrive split across two pieces of the request', async () => {
+        const { url } = await start();
+        const text = 'مرحبًا يا Universe. هذا هو صوتي.';
+        const bytes = Buffer.from(JSON.stringify({ speech: speech(), text }));
+        // Cut in the middle of the first Arabic letter, which takes two bytes
+        const cut = bytes.indexOf(Buffer.from('مرحبًا')) + 1;
+        const wav = await new Promise<Buffer>((resolve, reject) => {
+            const req = http.request(`${url}/preview`, { method: 'POST', headers: { 'content-type': 'application/json' } }, (res) => {
+                const parts: Buffer[] = [];
+                res.on('data', (part: Buffer) => parts.push(part));
+                res.on('end', () => (res.statusCode === 200 ? resolve(Buffer.concat(parts)) : reject(new Error(`status ${res.statusCode}`))));
+            });
+            req.on('error', reject);
+            req.write(bytes.subarray(0, cut));
+            setTimeout(() => req.end(bytes.subarray(cut)), 50);
+        });
+        // The very samples the test engine makes for the line as it was written
+        expect(wav.readUInt32LE(40)).toBe(new FakeSpeech().synth(text).length * 2);
+        expect(wav.readUInt32LE(40)).not.toBe(new FakeSpeech().synth(text.replace('م', '\uFFFD\uFFFD')).length * 2);
+    });
+
     it('refuses what is not a usable request', async () => {
         const { url } = await start();
         expect((await ask(url, 'not json')).status).toBe(400);

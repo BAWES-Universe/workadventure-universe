@@ -263,15 +263,19 @@ export class VoiceWorker {
      * The answer never carries the key or the provider's own words.
      */
     private async onPreview(req: http.IncomingMessage, res: http.ServerResponse, json: (code: number, body: unknown) => void): Promise<void> {
-        let raw = '';
+        // Bytes first, text once the whole body is in: a character can be split across two pieces
+        const pieces: Buffer[] = [];
+        let received = 0;
         let tooBig = false;
         try {
             for await (const piece of req) {
-                raw += piece.toString();
-                if (raw.length > MAX_PREVIEW_BODY_BYTES) {
+                const bytes = Buffer.isBuffer(piece) ? piece : Buffer.from(piece as string);
+                received += bytes.length;
+                if (received > MAX_PREVIEW_BODY_BYTES) {
                     tooBig = true;
                     break;
                 }
+                pieces.push(bytes);
             }
         } catch {
             return json(400, { error: 'bad_request', message: 'the request could not be read' });
@@ -279,7 +283,7 @@ export class VoiceWorker {
         if (tooBig) return json(413, { error: 'bad_request', message: 'the request is too big' });
         let body: unknown;
         try {
-            body = JSON.parse(raw);
+            body = JSON.parse(Buffer.concat(pieces).toString('utf8'));
         } catch {
             return json(400, { error: 'bad_request', message: 'the request is not JSON' });
         }
