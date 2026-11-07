@@ -67,8 +67,13 @@ that names nothing gets) and the scripted `FakeEars` for tests, plus these real 
 * `deepgram` (hearing, `src/deepgram.ts`): one real-time WebSocket stream per stretch of speech to
   `wss://api.deepgram.com/v1/listen` (or the profile's `endpoint`), the key in the `Authorization` header only
   (`Token <key>`), 16 kHz mono `linear16`, the profile's `model` (`nova-3` when it names none) and its `language` when it
-  fixes one (otherwise Deepgram's own default applies). Deepgram's own end-of-speech cutting is off: the worker decides where
-  speech ends. Partial words are the final segments so far plus the latest guess; when the person pauses a `CloseStream`
+  fixes one (otherwise Deepgram's own default applies). Where the person's turn ends (#1866) follows Deepgram's own guidance
+  for voice agents: `endpointing=500` makes Deepgram finalize at a short quiet and say `speech_final`, which ends the turn only
+  when the words so far end a sentence (a full stop, `?`, `!`, `؟`, `。`; "..." is hesitation); a pause in the middle of a
+  sentence is waited through. `utterance_end_ms=1500` makes Deepgram send `UtteranceEnd` after a long gap between words (from word
+  timings, so background noise does not hold it off), which ends the turn when no sentence ended; and the worker's own quiet
+  timer, 1.8 s as with Soniox, is the last fallback (it also applies when the sender sends no audio at all while silent).
+  Before this a Deepgram turn ended after 0.8 s of quiet whatever was said. Partial words are the final segments so far plus the latest guess; when the person pauses a `CloseStream`
   message ends the audio and the words are final once Deepgram has sent its last answer (`Metadata`) or closed the stream
   normally. A refused key (401/403), an `Error` answer, a stream closed any other way or no last answer within
   `VOICE_RECOGNITION_FINAL_TIMEOUT_SECONDS` (default 10) fails the turn with the words heard so far.

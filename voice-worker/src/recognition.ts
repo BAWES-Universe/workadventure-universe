@@ -177,10 +177,12 @@ export class Recognition {
 
     /** Ends a stretch no audio has come for in a while, as a pause. */
     private watch(person: Person, turn: Turn): void {
-        const wait = this.idleMs - (performance.now() - turn.lastAt);
+        // A recognizer that waits longer for quiet (its own end-of-speech detection is the main signal) is waited longer for here too
+        const idleMs = Math.max(this.idleMs, turn.recognizer.pauseMs ?? 0);
+        const wait = idleMs - (performance.now() - turn.lastAt);
         turn.timer = setTimeout(() => {
             if (turn.over || person.speaking !== turn) return;
-            if (performance.now() - turn.lastAt >= this.idleMs) this.pause(person, turn);
+            if (performance.now() - turn.lastAt >= idleMs) this.pause(person, turn);
             else this.watch(person, turn);
         }, Math.max(1, wait));
         turn.timer.unref?.();
