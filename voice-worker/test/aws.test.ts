@@ -329,9 +329,19 @@ describe('speaking with Nova Sonic', () => {
 });
 
 describe('the worker', () => {
-    it('hears and speaks with AWS under "aws"', () => {
+    it('hears and speaks with Nova Sonic under "aws", Transcribe and Polly sharing the name for their own models', async () => {
         const worker = new VoiceWorker({ connectors: new ConnectorRegistry() } as ConstructorParameters<typeof VoiceWorker>[0]);
-        expect(worker.connectors.recognition(AWS_ADAPTER)).toBeInstanceOf(AwsRecognition);
-        expect(worker.connectors.speech(AWS_ADAPTER)).toBeInstanceOf(AwsSpeech);
+        // Transcribe and Polly share the name (src/awsVoice.ts): the talking model still hears and speaks with Nova Sonic
+        const recognizer = { push: () => undefined, finish: () => undefined, close: () => undefined };
+        const listen = vi.spyOn(AwsRecognition.prototype, 'listen').mockReturnValue(recognizer as never);
+        const speak = vi.spyOn(AwsSpeech.prototype, 'speak').mockImplementation(async function* () {
+            yield new Int16Array([5]);
+        });
+        const events = { partial: () => undefined, final: () => undefined, failed: () => undefined };
+        expect(worker.connectors.recognition(AWS_ADAPTER)!.listen(settings(), events)).toBe(recognizer);
+        expect(await collect(worker.connectors.speech(AWS_ADAPTER)!.speak(speechRequest()))).toEqual([5]);
+        expect(listen).toHaveBeenCalledTimes(1);
+        expect(speak).toHaveBeenCalledTimes(1);
+        vi.restoreAllMocks();
     });
 });

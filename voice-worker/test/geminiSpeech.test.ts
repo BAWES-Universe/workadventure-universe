@@ -2,7 +2,7 @@
 // network, no spend.
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ConnectorRegistry, ProviderError, Secret, type SpeechRequest } from '../src/connectors.ts';
 import { GEMINI_SPEECH_ADAPTER, GeminiSpeech, geminiLanguage } from '../src/geminiSpeech.ts';
 import { VoiceWorker } from '../src/server.ts';
@@ -125,7 +125,13 @@ describe('speaking with Gemini text to speech', () => {
 
     it('is registered as "google" for speaking, leaving every other Google model (talking live) to the one already there', async () => {
         const base = { port: 0, host: '127.0.0.1', maxLanes: 1, maxSessionsPerConnection: 1, ice: { iceServers: [] } };
-        expect(new VoiceWorker(base).connectors.speech(GEMINI_SPEECH_ADAPTER)).toBeInstanceOf(GeminiSpeech);
+        // On its own, the worker has Google's talking connector too, under the same name: a Gemini speech model still goes to Gemini
+        const own = vi.spyOn(GeminiSpeech.prototype, 'speak').mockImplementation(async function* () {
+            yield new Int16Array([1]);
+        });
+        expect(await collect(new VoiceWorker(base).connectors.speech(GEMINI_SPEECH_ADAPTER)!.speak(speaking('http://127.0.0.1:9')))).toEqual([1]);
+        expect(own).toHaveBeenCalledTimes(1);
+        vi.restoreAllMocks();
         const said: string[] = [];
         const talking = {
             speak: async function* (request: SpeechRequest) {
