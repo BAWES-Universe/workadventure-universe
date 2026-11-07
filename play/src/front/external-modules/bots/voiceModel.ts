@@ -391,19 +391,25 @@ export type PayerChoice = { kind: "universe-ai" } | { kind: "key"; key: VoiceKey
 export const sameChoice = (a: PayerChoice, b: PayerChoice): boolean =>
     a.kind === b.kind && (a.kind === "universe-ai" || (b.kind === "key" && a.key.id === b.key.id));
 
-/** What a part can run on: Universe AI when the server has a default for it, and each lent key that does the job. */
+/**
+ * What a part can run on: Universe AI when the server has a default for it, and each lent key that does the job. A talking model
+ * only listens with the voice it speaks in (#1910), so it is picked under speaking: a key that listens only through one is not
+ * offered for listening on its own.
+ */
 export function choicesFor(voice: BotVoice, part: VoicePart): PayerChoice[] {
     const choices: PayerChoice[] = [];
     if (voice.universeAi[part]) choices.push({ kind: "universe-ai" });
     for (const key of voice.lentKeys) {
-        if (key[part] && key.models.some((model) => modelDoes(model, part))) choices.push({ kind: "key", key });
+        const does = part === "speech" ? (model: VoiceModel) => modelDoes(model, part) : (model: VoiceModel) => model.kind === part;
+        if (key[part] && key.models.some(does)) choices.push({ kind: "key", key });
     }
     return choices;
 }
 
-/** No voice company is set up for a job (nothing to run it on): voice can't be turned on. */
+/** No voice company is set up for a job (nothing to run it on): voice can't be turned on. A talking model covers both. */
 export function noService(voice: BotVoice): boolean {
-    return choicesFor(voice, "speech").length === 0 || choicesFor(voice, "recognition").length === 0;
+    const talks = voice.lentKeys.some((key) => key.recognition && key.speech && key.models.some((model) => model.kind === "talk"));
+    return choicesFor(voice, "speech").length === 0 || (choicesFor(voice, "recognition").length === 0 && !talks);
 }
 
 /** Who pays, for the question when voice is turned on: each way both jobs can be covered. */

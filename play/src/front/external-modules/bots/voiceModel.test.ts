@@ -449,8 +449,15 @@ describe("talking models (#1910)", () => {
         expect(modelDoes({ kind: "talk" }, "recognition")).toBe(true);
         expect(modelDoes({ kind: "talk" }, "speech")).toBe(true);
         expect(modelDoes({ kind: "speech" }, "recognition")).toBe(false);
-        expect(choicesFor(voice, "recognition")).toContainEqual({ kind: "key", key: voice.lentKeys[0] });
         expect(choicesFor(voice, "speech")).toContainEqual({ kind: "key", key: voice.lentKeys[0] });
+    });
+
+    it("offers a key that only talks live under speaking, not on its own for listening, and still counts it as a service", () => {
+        const voice = read({ lentKeys: [openAi()] });
+        expect(choicesFor(voice, "recognition")).not.toContainEqual({ kind: "key", key: voice.lentKeys[0] });
+        expect(choicesFor(voice, "speech")).toContainEqual({ kind: "key", key: voice.lentKeys[0] });
+        const keyOnly = read({ universeAi: { recognition: null, speech: null }, lentKeys: [openAi()] });
+        expect(noService(keyOnly)).toBe(false);
     });
 
     it("starts a key with only talking models on its first one, for either part", () => {
