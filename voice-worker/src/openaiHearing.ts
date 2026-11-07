@@ -27,14 +27,18 @@ interface OpenAIAnswer {
     error?: unknown;
 }
 
-/** The status an OpenAI error reads as, from its code or type. */
+/** The status an OpenAI error reads as: from its code and type, and from its message only when they say nothing that maps. */
 function openaiStatus(answer: OpenAIAnswer): number | undefined {
     const error = typeof answer.error === 'object' && answer.error !== null ? (answer.error as Record<string, unknown>) : {};
-    const text = `${String(error.code ?? '')} ${String(error.type ?? '')} ${String(error.message ?? '')}`;
+    // A rate limit's message can point to the billing page, so the message can't outrank the code
+    return statusIn(`${String(error.code ?? '')} ${String(error.type ?? '')}`) ?? statusIn(String(error.message ?? ''));
+}
+
+function statusIn(text: string): number | undefined {
+    if (/rate_limit|rate limit/i.test(text)) return 429;
     if (/invalid_api_key|unauthori[sz]ed|authentication/i.test(text)) return 401;
     if (/insufficient_quota|billing/i.test(text)) return 402;
     if (/model_not_found|permission|forbidden/i.test(text)) return 403;
-    if (/rate_limit/i.test(text)) return 429;
     return undefined;
 }
 

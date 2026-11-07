@@ -130,6 +130,23 @@ describe('hearing with OpenAI', () => {
         expect(got.failures).toEqual([{ text: '', status: 401 }]);
     });
 
+    it('reads a rate limit as one even when its message points to billing', async () => {
+        const s = await fakeRealtime();
+        const { got, events } = heard();
+        new OpenAIRecognition().listen(hearing(s.base), events);
+        await waitFor('the socket', () => s.seen.sockets.length === 1);
+        s.send({
+            type: 'error',
+            error: {
+                type: 'requests',
+                code: 'rate_limit_exceeded',
+                message: 'Rate limit reached for requests. Add a payment method at https://platform.openai.com/account/billing to raise it.',
+            },
+        });
+        await waitFor('the failure', () => got.failures.length === 1);
+        expect(got.failures).toEqual([{ text: '', status: 429 }]);
+    });
+
     it('is registered as "openai" for hearing unless a registry already brings one', () => {
         const base = { port: 0, host: '127.0.0.1', maxLanes: 1, maxSessionsPerConnection: 1, ice: { iceServers: [] } };
         expect(new VoiceWorker(base).connectors.recognition(OPENAI_ADAPTER)).toBeInstanceOf(OpenAIRecognition);

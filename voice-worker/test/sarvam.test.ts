@@ -104,7 +104,7 @@ describe('hearing with Sarvam AI', () => {
         expect(got.finals).toEqual(['Namaste, aap kaise hain?']);
         expect(s.seen.sockets).toEqual([
             {
-                url: '/speech-to-text/ws?model=saaras%3Av4&language-code=hi-IN&sample_rate=16000&input_audio_codec=pcm_s16le&flush_signal=true',
+                url: '/speech-to-text/ws?model=saaras%3Av4&language-code=hi-IN&sample_rate=16000&input_audio_codec=pcm_s16le&flush_signal=true&vad_signals=true',
                 key: KEY,
             },
         ]);
@@ -150,6 +150,42 @@ describe('hearing with Sarvam AI', () => {
         expect(Date.now() - started).toBeGreaterThanOrEqual(250);
         expect(got.finals).toEqual(['Shukriya.']);
         expect(got.failures).toEqual([]);
+    });
+
+    it("ends soon after the flush when Sarvam's VAD says all the speech it heard is answered", async () => {
+        const s = await fakeSarvam();
+        const { got, events } = heard();
+        const stream = new SarvamRecognition().listen(hearing(s.base), events);
+        stream.push(new Int16Array([3]));
+        await waitFor('the audio', () => s.seen.messages.length === 1);
+        s.send({ type: 'events', data: { signal_type: 'START_SPEECH', occured_at: 1 } });
+        s.send({ type: 'events', data: { signal_type: 'END_SPEECH', occured_at: 2 } });
+        s.send(data('Dhanyavaad.'));
+        await waitFor('the words', () => got.partials.length === 1);
+        const started = Date.now();
+        stream.finish();
+        await waitFor('the end', () => got.finals.length === 1);
+        // Not the 5 s Sarvam's last words may take when it may still hold some
+        expect(Date.now() - started).toBeLessThan(2_000);
+        expect(got.finals).toEqual(['Dhanyavaad.']);
+        expect(s.seen.messages.at(-1)).toEqual({ type: 'flush' });
+    });
+
+    it('still waits for the flush answer while speech Sarvam heard has no words yet', async () => {
+        const s = await fakeSarvam((ws, message) => {
+            if (message.type === 'flush') setTimeout(() => ws.send(JSON.stringify(data('phir milenge.'))), 600);
+        });
+        const { got, events } = heard();
+        const stream = new SarvamRecognition().listen(hearing(s.base), events);
+        stream.push(new Int16Array([3]));
+        await waitFor('the audio', () => s.seen.messages.length === 1);
+        s.send({ type: 'events', data: { signal_type: 'START_SPEECH', occured_at: 1 } });
+        s.send(data('Achha,'));
+        s.send({ type: 'events', data: { signal_type: 'START_SPEECH', occured_at: 3 } });
+        await waitFor('the words', () => got.partials.length === 1);
+        stream.finish();
+        await waitFor('the end', () => got.finals.length === 1);
+        expect(got.finals).toEqual(['Achha, phir milenge.']);
     });
 
     it('fails with the status of an error Sarvam sends', async () => {

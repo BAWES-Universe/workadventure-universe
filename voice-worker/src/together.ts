@@ -50,9 +50,10 @@ function togetherStatus(answer: TogetherAnswer): number | undefined {
     const code = Number(error.code);
     if (Number.isInteger(code) && code >= 400 && code < 600) return code;
     const text = `${String(error.code ?? '')} ${String(error.type ?? '')} ${String(error.message ?? '')} ${typeof answer.message === 'string' ? answer.message : ''}`;
+    // First: a rate limit's words can name the key or the quota it counts against
+    if (/rate.?limit/i.test(text)) return 429;
     if (/api.?key|unauthori[sz]ed|authentication/i.test(text)) return 401;
     if (/credit|quota|balance|payment/i.test(text)) return 402;
-    if (/rate.?limit/i.test(text)) return 429;
     return undefined;
 }
 
