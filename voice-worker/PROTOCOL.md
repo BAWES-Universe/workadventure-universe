@@ -25,7 +25,7 @@ directions. `src/protocol.ts` and `bots/voice/protocol.ts` mirror it as TypeScri
 Bot server to worker: `session.open` (optionally naming the bubble's providers, see Providers), `lane.open`, `lane.signal` (the person's offer or candidates), `lane.close`,
 `mode.set`, `bot.say`, `bot.retract`, `voice.stop`, `session.end`, and for LiveKit `room.join` (the address and the token the
 game made for the bot's identity), `room.people` (whose microphone the bot may subscribe to, with their modes; replaces the
-earlier list) and `room.leave`.
+earlier list) and `room.leave`. `recognition.terms` replaces the names the hearing is asked to expect (see Providers).
 
 Worker to bot server: `session.start` (session accepted), `participant.join` (audio is connected both ways),
 `participant.leave`, `lane.signal` (the answer), `playback.progress`, `engine.status` (with `room` while in a room),
@@ -109,7 +109,11 @@ sends nothing for `VOICE_SPEECH_TIMEOUT_SECONDS` (default 15) counts as failed.
 
 Each bubble picks its own hearing and speaking provider. `session.open` may carry, all optional:
 
-* `recognition`: `{ adapter, model, key?, endpoint?, region?, language? }`, who hears the people in this bubble.
+* `recognition`: `{ adapter, model, key?, endpoint?, region?, language?, terms? }`, who hears the people in this bubble. `terms` is up to 16
+  names of at most 64 characters (the bot's own name first, then the other voice bots' in the bubble): the hearing provider is asked to expect
+  them and spell them as written, so "Nora" said in Arabic is not heard as "نورا" and the bot answers when called (#1864). Names only, never
+  anything a person said. A later `recognition.terms { terms }` replaces the list (another voice bot came or went); a stretch of speech that is
+  already open keeps the names it started with.
 * `speech`: `{ adapter, model, voiceId, key?, endpoint?, region?, language? }`, who speaks for the bot in this bubble.
   `key` is left out only for a speech server on a person's own computer that has none (`openai-compatible`, #1874); it is never an empty string.
 * `expression`: `restrained`, `natural` or `expressive`, how much feeling the voice puts in (each connector maps it to what
