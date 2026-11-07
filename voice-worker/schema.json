@@ -14,7 +14,7 @@
       "properties": {
         "adapter": { "$ref": "#/$defs/adapter" },
         "model": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "key": { "type": "string", "minLength": 1, "maxLength": 4096, "description": "The provider's API key. Used for the provider call only: never logged, counted, stored or sent back." },
+        "key": { "type": "string", "minLength": 1, "maxLength": 4096, "description": "The provider's API key. Used for the provider call only: never logged, counted, stored or sent back. Left out for a speech server on a person's own computer that has none." },
         "endpoint": { "type": "string", "pattern": "^(https?|wss?)://", "maxLength": 2048 },
         "region": { "type": "string", "maxLength": 64 },
         "language": { "type": "string", "maxLength": 16 }
@@ -25,11 +25,11 @@
       "description": "Names the hearing should expect and spell as written (the bot's own name, the other voice bots' names). Names only: the hearing provider is asked to favour them."
     },
     "recognitionConfig": {
-      "allOf": [{ "$ref": "#/$defs/providerSettings" }, { "type": "object", "required": ["adapter", "model", "key"],
+      "allOf": [{ "$ref": "#/$defs/providerSettings" }, { "type": "object", "required": ["adapter", "model"],
         "properties": { "terms": { "$ref": "#/$defs/terms" } } }]
     },
     "speechConfig": {
-      "allOf": [{ "$ref": "#/$defs/providerSettings" }, { "type": "object", "required": ["adapter", "model", "voiceId", "key"],
+      "allOf": [{ "$ref": "#/$defs/providerSettings" }, { "type": "object", "required": ["adapter", "model", "voiceId"],
         "properties": { "voiceId": { "type": "string", "minLength": 1, "maxLength": 256 } } }]
     },
     "expression": { "enum": ["restrained", "natural", "expressive"] },

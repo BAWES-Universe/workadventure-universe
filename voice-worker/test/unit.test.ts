@@ -126,7 +126,9 @@ describe('bridge messages', () => {
         const voice = { adapter: 'elevenlabs', model: 'flash', voiceId: 'v1', key: 'k', endpoint: 'https://api.example', region: 'eu', language: 'en' };
         expect(checkMessage('fromBot', { ...base, type: 'session.open', bubbleId: 'b', botId: 'x', recognition: ears, speech: voice, expression: 'natural' })).toBeNull();
         expect(checkMessage('fromBot', { ...base, type: 'session.open', bubbleId: 'b', botId: 'x', speech: voice })).toBeNull();
-        expect(checkMessage('fromBot', { ...base, type: 'session.open', bubbleId: 'b', botId: 'x', recognition: { ...ears, key: undefined } })).not.toBeNull();
+        expect(checkMessage('fromBot', { ...base, type: 'session.open', bubbleId: 'b', botId: 'x', recognition: { ...ears, key: '' } })).not.toBeNull();
+        // A speech server on a person's own computer may have no key (#1874): the key is left out, never empty
+        expect(checkMessage('fromBot', { ...base, type: 'session.open', bubbleId: 'b', botId: 'x', recognition: { ...ears, adapter: 'openai-compatible', key: undefined }, speech: { ...voice, adapter: 'openai-compatible', key: undefined } })).toBeNull();
         expect(checkMessage('fromBot', { ...base, type: 'session.open', bubbleId: 'b', botId: 'x', speech: { ...voice, voiceId: undefined } })).not.toBeNull();
         expect(checkMessage('fromBot', { ...base, type: 'session.open', bubbleId: 'b', botId: 'x', speech: { ...voice, adapter: 'ElevenLabs' } })).not.toBeNull();
         expect(checkMessage('fromBot', { ...base, type: 'session.open', bubbleId: 'b', botId: 'x', speech: { ...voice, endpoint: 'file:///etc/passwd' } })).not.toBeNull();

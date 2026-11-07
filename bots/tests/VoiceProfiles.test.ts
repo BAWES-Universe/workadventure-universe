@@ -186,6 +186,18 @@ describe('each bot opens its bubble with its own settings', () => {
         });
     });
 
+    it("opens a session with no key for a speech server on a person's own computer when Orbit says it needs none (#1874)", async () => {
+        const o = orbit();
+        o.state.active.alice = speaking({ profile: profile({ recognition: { providerId: 'own', model: 'whisper' }, speech: { providerId: 'own', model: 'kokoro', voiceId: 'af_heart' } }) });
+        o.state.providers.own = provider('own', 'openai-compatible', '', { apiKeyEncrypted: null, keyless: true, endpoint: 'https://speech.example.com/v1' });
+        const alice = bot('alice', o.fake);
+        await alice.connect();
+        const open = alice.opens()[0];
+        // No key is sent at all, and the address goes with it
+        expect(open.recognition).toEqual({ adapter: 'openai-compatible', model: 'whisper', endpoint: 'https://speech.example.com/v1' });
+        expect(open.speech).toEqual({ adapter: 'openai-compatible', model: 'kokoro', voiceId: 'af_heart', endpoint: 'https://speech.example.com/v1' });
+    });
+
     it('fetches each provider once, with the bot it is for', async () => {
         const o = orbit();
         // One provider that hears and speaks
@@ -244,6 +256,7 @@ describe('a bot that does not speak answers in text', () => {
         ['Orbit will not serve a provider to this bot', (s) => ((s.active.alice = speaking()), (s.providers.ears = provider('ears', 'soniox', KEYS.ears)), (s.providers['voice-a'] = null))],
         ['Orbit cannot be asked for a provider', (s) => ((s.active.alice = speaking()), (s.providers.ears = new Error('boom')), (s.providers['voice-a'] = provider('voice-a', 'elevenlabs', KEYS.voiceA)))],
         ['a provider has no key', (s) => ((s.active.alice = speaking()), (s.providers.ears = provider('ears', 'soniox', KEYS.ears)), (s.providers['voice-a'] = provider('voice-a', 'elevenlabs', KEYS.voiceA, { apiKeyEncrypted: null })))],
+        ['Orbit sends no key but doesn’t say the provider needs none', (s) => ((s.active.alice = speaking()), (s.providers.ears = provider('ears', 'soniox', KEYS.ears)), (s.providers['voice-a'] = provider('voice-a', 'openai-compatible', '', { apiKeyEncrypted: null, keyless: false })))],
         ['a key cannot be decrypted', (s) => ((s.active.alice = speaking()), (s.providers.ears = provider('ears', 'soniox', KEYS.ears)), (s.providers['voice-a'] = provider('voice-a', 'elevenlabs', KEYS.voiceA, { apiKeyEncrypted: 'zz:zz:zz' })))],
         ['a provider does not do the job it is named for', (s) => ((s.active.alice = speaking()), (s.providers.ears = provider('ears', 'soniox', KEYS.ears, { recognition: false })), (s.providers['voice-a'] = provider('voice-a', 'elevenlabs', KEYS.voiceA)))],
     ];

@@ -21,12 +21,12 @@ export type VoiceExpression = 'restrained' | 'natural' | 'expressive';
 export type ProviderPart = 'recognition' | 'speech';
 /** The provider a bubble hears with, named by the adapter name Orbit stores (lowercase). The key is used for the provider call only. */
 export interface RecognitionConfig {
-    adapter: string; model: string; key: string; endpoint?: string; region?: string; language?: string;
+    adapter: string; model: string; key?: string; endpoint?: string; region?: string; language?: string;
     /** Names the hearing should expect and spell as written: this bot's own name, then the other voice bots' (#1864). */
     terms?: string[];
 }
 /** The provider a bubble speaks with. */
-export interface SpeechConfig { adapter: string; model: string; voiceId: string; key: string; endpoint?: string; region?: string; language?: string }
+export interface SpeechConfig { adapter: string; model: string; voiceId: string; key?: string; endpoint?: string; region?: string; language?: string }
 
 export type ToWorker =
     | { type: 'session.open'; sessionId: string; bubbleId: string; botId: string; recognition?: RecognitionConfig; speech?: SpeechConfig; expression?: VoiceExpression; turnSeconds?: number }

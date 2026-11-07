@@ -179,7 +179,7 @@ export class Session {
         const settings: RecognitionSettings = {
             adapter: config.adapter,
             model: config.model,
-            key: new Secret(config.key),
+            key: new Secret(config.key ?? ''),
             endpoint: config.endpoint,
             region: config.region,
             language: config.language,
@@ -206,7 +206,7 @@ export class Session {
             const speech = this.host.defaultSpeech;
             return { voice: { speak: (request) => speech.speak({ ...request, settings: FAKE_SPEECH_SETTINGS, expression }) } };
         }
-        const settings: SpeechSettings = { adapter: config.adapter, model: config.model, voiceId: config.voiceId, key: new Secret(config.key), endpoint: config.endpoint, region: config.region, language: config.language };
+        const settings: SpeechSettings = { adapter: config.adapter, model: config.model, voiceId: config.voiceId, key: new Secret(config.key ?? ''), endpoint: config.endpoint, region: config.region, language: config.language };
         const connector = this.host.connectors.speech(config.adapter);
         const voice: Voice = {
             speak: (request) =>

@@ -28,15 +28,16 @@ export type ProviderPart = 'recognition' | 'speech';
 
 /**
  * What the bot server names for hearing in `session.open`: an adapter (lowercase, as Orbit stores it), the model, and the
- * key. The key is only ever used for the provider call: it is never logged, counted or sent back.
+ * key. The key is only ever used for the provider call: it is never logged, counted or sent back. A speech server on a person's
+ * own computer may have no key: it is left out (game #1874), and the connector sends no Authorization header.
  */
 export interface RecognitionConfig {
-    adapter: string; model: string; key: string; endpoint?: string; region?: string; language?: string;
+    adapter: string; model: string; key?: string; endpoint?: string; region?: string; language?: string;
     /** Names the hearing should expect and spell as written here (the bot's own name, the other voice bots' names). At most 16, 64 characters each. */
     terms?: string[];
 }
 /** The same for speaking, with the voice. */
-export interface SpeechConfig { adapter: string; model: string; voiceId: string; key: string; endpoint?: string; region?: string; language?: string }
+export interface SpeechConfig { adapter: string; model: string; voiceId: string; key?: string; endpoint?: string; region?: string; language?: string }
 
 interface Base {
     sessionId: string;
