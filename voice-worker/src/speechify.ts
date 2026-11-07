@@ -1,8 +1,8 @@
 // Speaking with Speechify (#1905), on the shared kit (#1883): one streamed request per reply to Speechify's
 // /v1/audio/stream/with-timestamps, as Pipecat's SpeechifyHttpTTSService does. https://docs.speechify.ai
 //
-// The key goes as a bearer in that one request and nowhere else. The answer is server-sent events whose data names its own
-// type: speech.chunk holds base64 s16 PCM at the rate asked for (24 kHz, the worker's own), speech.done ends the reply and
+// The key goes as a bearer in that one request and nowhere else. The answer is server-sent events named by their `event:`
+// line (the data holds no type of its own): speech.chunk holds base64 s16 PCM at the rate asked for (24 kHz, the worker's own), speech.done ends the reply and
 // speech.error is a failure after the stream began. The API version is pinned, as Pipecat pins it, so a workspace's own default
 // never changes what comes back.
 import type { SpeechConnector, SpeechRequest } from './connectors.ts';
@@ -45,13 +45,14 @@ export class SpeechifySpeech implements SpeechConnector {
             kind: 'lines',
             sampleRate: SPEECH_RATE,
             encoding: 'base64',
-            read: (message: unknown): AudioFrame | undefined => {
+            read: (message: unknown, name?: string): AudioFrame | undefined => {
                 if (typeof message !== 'object' || message === null) return undefined;
                 const event = message as SpeechifyEvent;
-                if (event.type === 'speech.error') return { error: {} };
-                if (event.type === 'speech.done') return { done: true };
+                const type = name ?? event.type;
+                if (type === 'speech.error') return { error: {} };
+                if (type === 'speech.done') return { done: true };
                 // Speech marks alone (often the last chunk) carry no audio
-                if (event.type === 'speech.chunk') return { audio: typeof event.audio === 'string' && event.audio ? event.audio : undefined };
+                if (type === 'speech.chunk') return { audio: typeof event.audio === 'string' && event.audio ? event.audio : undefined };
                 return undefined;
             },
         },
