@@ -986,7 +986,6 @@ const mapEditor: BaseTranslation = {
                     doorVoicesOn: "Voices on {key:string}",
                     paidByKey: "Paid by {key:string}",
                     paidByUniverseAi: "Paid by Universe AI",
-                    recommended: "Recommended",
                     usedBefore: "Used before",
                     allVoices: "All voices",
                     allVoicesLine: "Search all {count:number} voices by name or language",
@@ -1004,8 +1003,8 @@ const mapEditor: BaseTranslation = {
                     noServiceLine:
                         "{bot:string} keeps chatting in text. This row turns into a voice list by itself once it is.",
                     noServiceLineMaker:
-                        "Universe AI has no voice here yet. Add voice keys of your own in AI keys, one that listens and one that speaks, and lend them to this universe. {bot:string} keeps chatting in text until then.",
-                    addVoiceKeys: "Add voice keys",
+                        "Universe AI has no voice here yet. Add a voice key in AI keys and lend it to this universe: one key from a company that listens and speaks is enough, or use two companies. {bot:string} keeps chatting in text until then.",
+                    addVoiceKeys: "Add a voice key",
                     askUniverseAi: "Universe AI",
                     askUniverseAiLine:
                         "Each person uses their own voice replies: up to {replies:number} every {hours:number} hours.",
@@ -1036,6 +1035,26 @@ const mapEditor: BaseTranslation = {
                     payerKeysTitle: "{speaks:string} speaks. {listens:string} listens.",
                     payerKeySpeaksTitle: "{speaks:string} speaks. Universe AI listens.",
                     payerKeyListensTitle: "Universe AI speaks. {listens:string} listens.",
+                    payerBothKeyLine: "It listens and speaks. You pay; people talking with {bot:string} pay nothing.",
+                    payerBothKeyLineTheirs:
+                        "It listens and speaks. {owner:string} pays; people talking with {bot:string} pay nothing.",
+                    payerBothUniverseAiLine:
+                        "It listens and speaks. Each person uses their own voice replies: up to {replies:number} every {hours:number} hours.",
+                    payerSplitTitle: "{listens:string} listens. {speaks:string} speaks.",
+                    payerTwoKeysLine: "Two companies, both paid by you. People talking with {bot:string} pay nothing.",
+                    payerTwoKeysLineTheirs:
+                        "Two companies, both paid by {owner:string}. People talking with {bot:string} pay nothing.",
+                    bothCaption: "One company for both",
+                    bothKeyCard: "Listens and speaks · you pay",
+                    bothKeyCardTheirs: "Listens and speaks · {owner:string} pays",
+                    bothUniverseAiCard: "Listens and speaks · people use their own voice replies",
+                    split: "Split listening and speaking",
+                    splitLine: "Listen with one company, speak with another",
+                    listensWith: "Listens with",
+                    speaksWith: "Speaks with",
+                    whySplit: "Why split?",
+                    whySplitLine:
+                        "Each company prices the two jobs on its own: listening by the minutes people talk, speaking by what {bot:string} says. A free credit, a lower price or a voice you like can sit with a different company for each job.",
                     payerKeyNote:
                         "People talking with {bot:string} pay nothing. This month: {replies:number} voice repl{{y|ies}} on this key.",
                     limitsLine:
@@ -1055,6 +1074,13 @@ const mapEditor: BaseTranslation = {
                     speakingModel: "Speaking model",
                     listensOn: "Listens on",
                     listeningModel: "Listening model",
+                    talkingModel: "Talking model",
+                    talkingModelHint:
+                        "Listens and speaks in one live connection. {bot:string}’s Mind writes every answer, out loud and in text.",
+                    talksLive: "Talks live",
+                    payerTalksLiveTitle: "{key:string} listens and speaks live, in one model.",
+                    payerTalksLive:
+                        "{key:string} listens and speaks live. {bot:string}’s Mind writes every answer, out loud and in text.",
                     universeAiPeople: "People use their own voice replies",
                     universeAiListens: "Free for people talking with it",
                     keyYouPay: "You pay · lent to this universe",
@@ -1118,6 +1144,26 @@ const mapEditor: BaseTranslation = {
                         "Add a voice key from any company this server offers in AI keys, and lend it here. You pay for {bot:string}’s voice on it; nobody’s replies are used.",
                     keep: "Back",
                     use: "Use {voice:string}",
+                    ownServerMine: "your speech server",
+                    ownServerMineStart: "Your speech server",
+                    ownServerTheirs: "{owner:string}’s speech server",
+                    payerOwnTitle: "Runs on {server:string}",
+                    payerOwnLine:
+                        "It listens and speaks. No voice company is paid, and people talking with {bot:string} pay nothing.",
+                    helloLineOwn: "A short line said by {server:string}. Free: no voice company is paid.",
+                    helloTitleNamed: "Hear {voice:string} say hello",
+                    cardAboutTyped: "Name typed for {server:string}",
+                    typedCaption: "Voice on {server:string}",
+                    typedTitle: "Voice for {bot:string} on {server:string}",
+                    typedLabel: "Voice name",
+                    typedPlaceholder: "Voice name, such as af_heart",
+                    typedHelp:
+                        "{server:string} doesn’t list its voices. Type a voice’s name exactly as your server uses it.",
+                    useThisVoice: "Use this voice",
+                    checkingVoice: "Checking {voice:string}…",
+                    voiceNameRejected:
+                        "{server:string} didn’t take “{voice:string}” as a voice name. Check how your server spells it, then try again.",
+                    speechServerSilent: "{server:string} didn’t answer. Is it running and the tunnel up?",
                 },
                 tools: {
                     title: "Tools",
