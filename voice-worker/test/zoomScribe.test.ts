@@ -1,7 +1,7 @@
 // Hearing with Zoom's Scribe (#1908), against a stand-in Scribe socket on loopback: no key, no network, no spend.
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { ConnectorRegistry, Secret } from '../src/connectors.ts';
 import type { RecognizerEvents } from '../src/recognizer.ts';
@@ -117,7 +117,12 @@ describe("hearing with Zoom's Scribe", () => {
 
     it('is registered as "zoom" for hearing, leaving every other Zoom model (talking live) to the one already there', () => {
         const base = { port: 0, host: '127.0.0.1', maxLanes: 1, maxSessionsPerConnection: 1, ice: { iceServers: [] } };
-        expect(new VoiceWorker(base).connectors.recognition(ZOOM_SCRIBE_ADAPTER)).toBeInstanceOf(ZoomScribeRecognition);
+        // On its own, the worker has Zoom's talking connector too, under the same name: a Scribe model still goes to Scribe
+        const recognizer0 = { push: () => undefined, finish: () => undefined, close: () => undefined };
+        const own = vi.spyOn(ZoomScribeRecognition.prototype, 'listen').mockReturnValue(recognizer0 as never);
+        expect(new VoiceWorker(base).connectors.recognition(ZOOM_SCRIBE_ADAPTER)!.listen(hearing('ws://127.0.0.1:9'), heard().events)).toBe(recognizer0);
+        expect(own).toHaveBeenCalledTimes(1);
+        vi.restoreAllMocks();
         const asked: string[] = [];
         const recognizer = { push: () => undefined, finish: () => undefined, close: () => undefined };
         const talking = { listen: (settings: { model: string }) => (asked.push(settings.model), recognizer) };
