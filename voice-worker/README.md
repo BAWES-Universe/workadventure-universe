@@ -114,8 +114,9 @@ minute for its load events and warnings (game #1751).
 `/stats` also has `latency` (#1865): how long a spoken turn takes, in milliseconds, as the median (`p50`), the 95th percentile
 (`p95`) and the number of turns (`samples`) over the last ten minutes (at most 200 turns each), per stage and provider. Times and
 provider names only, never a word anyone said. `hear`: the person stops talking until their last words are final (the hearing
-provider). `think`: those words are final until the bot's reply arrives (the bot and its AI model; the first reply after a spoken
-turn is taken as its answer, within two minutes). `speak`: the reply is handed to the voice until its first audio (the speaking
+provider). `think`: those words are final until the bot's reply arrives (the bot and its AI model; measured only when exactly one person's
+turn is waiting for an answer and the reply comes within two minutes: with two people waiting, or a reply nobody spoke to, the
+reply could answer any of them, so `think` and `total` skip it rather than guess; `speak` and `play` are still timed). `speak`: the reply is handed to the voice until its first audio (the speaking
 provider). `play`: that audio until its first frame is on its way out (this worker). `total`: the person stops talking until the
 first frame of the answer goes out (provider `soniox>elevenlabs`, the hearing and the speaking one). A bubble on the built-in test
 engine is not timed.

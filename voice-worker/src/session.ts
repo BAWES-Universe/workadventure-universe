@@ -100,8 +100,8 @@ export class Session {
     private readonly recognition?: Recognition;
     private readonly statusTimer: NodeJS.Timeout;
     private closing = false;
-    /** The last turn that came through whole, until a reply is handed over for it (#1865). */
-    private lastFinal?: { at: number; endOfSpeechAt: number };
+    /** Each person's latest turn that came through whole, until a reply is handed over (#1865). Kept per person so two people never share one slot. */
+    private readonly unanswered = new Map<string, { at: number; endOfSpeechAt: number }>();
     /** When the person stopped talking, for each reply that answers a spoken turn and has not started yet. */
     private readonly answering = new Map<string, number>();
 
@@ -123,7 +123,7 @@ export class Session {
                   send: (message) => host.send(message),
                   next: host.input,
                   bargeInMs: host.bargeInMs,
-                  onFinal: ({ hearMs }) => this.heardTurn(settings.recognition?.adapter, hearMs),
+                  onFinal: ({ participantId, hearMs }) => this.heardTurn(settings.recognition?.adapter, participantId, hearMs),
                   // A person speaking over the bot stops its voice at once, here, with no round trip; and a reply is
                   // likely soon, so the speaking provider gets ready for it
                   onSpeaking: () => {
@@ -398,23 +398,27 @@ export class Session {
     // ---- how long a turn takes (#1865): times and provider names only ----
 
     /** A person's stretch of speech came through whole: how long after they stopped talking (a bubble with a real hearing provider only). */
-    private heardTurn(adapter: string | undefined, hearMs: number): void {
+    private heardTurn(adapter: string | undefined, participantId: string, hearMs: number): void {
         if (!adapter) return;
         const now = performance.now();
         this.host.latency?.record('hear', adapter, hearMs);
-        this.lastFinal = { at: now, endOfSpeechAt: now - hearMs };
+        this.unanswered.set(participantId, { at: now, endOfSpeechAt: now - hearMs });
     }
 
     /**
-     * The bot's reply arrived. The first one after a person's turn answers it: the time since their words were final is the bot's
-     * to think. Which turn a reply is for is not in the message, so this is the best guess: the latest one not yet answered, and
-     * only within two minutes (anything older was ignored, as a group's chatter is).
+     * The bot's reply arrived. Which turn a reply answers is not in the message, so it is paired only when there is no doubt: exactly
+     * one person has a turn not yet answered, and it is under two minutes old. Then the time since their words were final is the
+     * bot's to think, and the whole turn can be timed. With two people waiting, or none, the reply may answer either (or a typed or
+     * unprompted message), so nothing is recorded for it: a missing number is better than a wrong one. Either way the turns waiting
+     * are cleared, so a later reply is never matched to an older turn.
      */
     private pairReply(segmentId: string): void {
-        const turn = this.lastFinal;
-        if (!turn || performance.now() - turn.at > 120_000) return;
-        this.lastFinal = undefined;
-        this.host.latency?.record('think', 'bot', performance.now() - turn.at);
+        const now = performance.now();
+        const waiting = [...this.unanswered.values()].filter((turn) => now - turn.at <= 120_000);
+        this.unanswered.clear();
+        if (waiting.length !== 1) return;
+        const turn = waiting[0];
+        this.host.latency?.record('think', 'bot', now - turn.at);
         this.answering.set(segmentId, turn.endOfSpeechAt);
         for (const oldest of this.answering.keys()) {
             if (this.answering.size <= 32) break;

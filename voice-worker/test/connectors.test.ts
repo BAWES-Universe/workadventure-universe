@@ -769,6 +769,51 @@ describe('how long a spoken turn takes is timed (#1865)', () => {
         expect(bot.violations).toEqual([]);
     }, 30000);
 
+    it('does not guess which of two people a reply answers: speak and play are timed, think and total are not', async () => {
+        const ears = new FakeEars(['first person talking', 'second person talking', 'first person again']);
+        const hearing: RecognitionConnector = { listen: (_settings, events) => ears.factory(events) };
+        const voice: SpeechConnector = {
+            async *speak() {
+                yield tone(200);
+            },
+        };
+        const { worker, bot } = await start(new ConnectorRegistry().registerRecognition('ears', hearing).registerSpeech('voice', voice));
+        const alice = new FakeHuman('alice');
+        const bob = new FakeHuman('bob');
+        humans.push(alice, bob);
+        open(bot, 's1', { recognition: recognition('ears', KEY_A), speech: speech('voice', KEY_B) });
+        await waitFor('the session', () => bot.of('session.start').length === 1);
+        await bot.join('s1', alice);
+        await bot.join('s1', bob);
+        const turns = (outcome: string) => bot.of('user.turn', 's1').filter((t) => t.outcome === outcome).length;
+        for (const [index, person] of [alice, bob].entries()) {
+            person.startMic(440);
+            await sleep(600);
+            person.stopMic();
+            await waitFor(`the words of person ${index + 1}`, () => turns('final') === index + 1, 6000);
+        }
+        // Two people are waiting: the reply may answer either, so it is not paired with a turn
+        bot.send({ type: 'bot.say', sessionId: 's1', segmentId: 'g1', text: 'for one of you', committed: true });
+        await waitFor('the first sound', () => (worker.stats().latency as { speak?: unknown }).speak !== undefined, 6000);
+        let latency = worker.stats().latency as Record<string, Record<string, { samples: number }>>;
+        expect(latency.hear.ears.samples).toBe(2);
+        expect(latency.think).toBeUndefined();
+        expect(latency.total).toBeUndefined();
+        expect(latency.speak.voice.samples).toBe(1);
+
+        // The waiting turns were cleared with that reply: one person speaks again and is the only one waiting, so this one is paired
+        alice.startMic(440);
+        await sleep(600);
+        alice.stopMic();
+        await waitFor('the words of the third turn', () => turns('final') === 3, 6000);
+        bot.send({ type: 'bot.say', sessionId: 's1', segmentId: 'g2', text: 'for you', committed: true });
+        await waitFor('the whole turn', () => (worker.stats().latency as { total?: unknown }).total !== undefined, 6000);
+        latency = worker.stats().latency as Record<string, Record<string, { samples: number }>>;
+        expect(latency.think.bot.samples).toBe(1);
+        expect(latency.total['ears>voice'].samples).toBe(1);
+        expect(bot.violations).toEqual([]);
+    }, 40000);
+
     it('times a reply that answers no spoken turn as speak and play only, and a built-in test engine not at all', async () => {
         const voice: SpeechConnector = {
             async *speak() {
