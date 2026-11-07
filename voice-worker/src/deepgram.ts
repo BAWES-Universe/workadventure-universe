@@ -1,6 +1,12 @@
 // Hearing with Deepgram (#1748): one real-time WebSocket stream per stretch of speech. The key goes in the Authorization
 // header of that one connection and nowhere else. Deepgram answers in segments: a segment that is not final is replaced by
 // the next answer, a final one is kept, so what the person said so far is the final segments followed by the latest guess.
+//
+// Where the person's turn ends (#1866): Deepgram's own signals, used the way its documentation says
+// (https://developers.deepgram.com/docs/understanding-end-of-speech-detection). `endpointing` finalizes at a short quiet and says
+// `speech_final`; that alone cuts a person who pauses to think, so it ends the turn only when the words so far end a sentence.
+// `UtteranceEnd` (a long gap between words, from word timings, so noise does not hold it off) ends it otherwise, and the
+// worker's own quiet timer is the last fallback. A pause in the middle of a sentence is waited through.
 import WebSocket from 'ws';
 import { ProviderError, type RecognitionConnector, type RecognitionSettings } from './connectors.ts';
 import type { Recognizer, RecognizerEvents } from './recognizer.ts';
@@ -19,6 +25,18 @@ const MAX_PENDING_MS = 10_000;
 const MAX_KEYTERM_CHARS = 200;
 /** How long a model and language Deepgram refused key terms for are connected to without them. */
 const KEYTERM_REFUSED_MS = 60 * 60 * 1000;
+/**
+ * Quiet that makes Deepgram finalize what it has and say `speech_final` (its examples use 300 to 500). Short, because it only ends
+ * the person's turn when the words so far end a sentence; a pause in the middle of one is not cut by it.
+ */
+export const DEEPGRAM_ENDPOINTING_MS = 500;
+/**
+ * A gap between words this long makes Deepgram send `UtteranceEnd` (1000 to 5000). Set past the longest pause a person takes to
+ * think mid-sentence, so it is the noise-proof twin of the quiet fallback below, not a way to cut them off.
+ */
+export const DEEPGRAM_UTTERANCE_END_MS = 1500;
+/** Quiet that still ends a stretch when Deepgram has not said so: past `UtteranceEnd`, as long as Soniox's. */
+export const DEEPGRAM_FALLBACK_PAUSE_MS = 1800;
 
 export interface DeepgramOptions {
     finalTimeoutMs?: number;
@@ -27,6 +45,8 @@ export interface DeepgramOptions {
 interface DeepgramAnswer {
     type?: unknown;
     is_final?: unknown;
+    speech_final?: unknown;
+    last_word_end?: unknown;
     channel?: { alternatives?: unknown };
 }
 
@@ -54,7 +74,7 @@ export function keytermsFor(settings: RecognitionSettings): string[] {
     return /^nova-3\b/.test(model) ? termsWithin(settings.terms ?? [], MAX_KEYTERM_CHARS) : [];
 }
 
-/** The address of one stream: 16 kHz mono s16le, guesses on, and no cutting by Deepgram (the worker decides where speech ends). */
+/** The address of one stream: 16 kHz mono s16le, guesses on, and Deepgram's end-of-speech signals (see the top of this file). */
 function streamUrl(settings: RecognitionSettings, keyterms: readonly string[]): string {
     const url = new URL(settings.endpoint || DEEPGRAM_ENDPOINT);
     const query = url.searchParams;
@@ -64,7 +84,8 @@ function streamUrl(settings: RecognitionSettings, keyterms: readonly string[]): 
     query.set('sample_rate', '16000');
     query.set('channels', '1');
     query.set('interim_results', 'true');
-    query.set('endpointing', 'false');
+    query.set('endpointing', String(DEEPGRAM_ENDPOINTING_MS));
+    query.set('utterance_end_ms', String(DEEPGRAM_UTTERANCE_END_MS));
     query.set('smart_format', 'true');
     // What the person says is not used to train Deepgram's models (https://developers.deepgram.com/trust-security/your-data)
     query.set('mip_opt_out', 'true');
@@ -83,6 +104,17 @@ export function followLanguage(model: string): string | undefined {
     return /^nova-[23]\b/.test(model) ? 'multi' : undefined;
 }
 
+/**
+ * Whether the words end a sentence: a full stop, question or exclamation mark (Latin, Arabic, CJK, Devanagari) with any closing
+ * quote or bracket after it. "..." and "…" are hesitation, not an end. Deepgram punctuates with `smart_format`, in the languages it
+ * has punctuation for; where it does not, this never holds and the turn ends on `UtteranceEnd` or the quiet fallback instead.
+ */
+export function endsSentence(text: string): boolean {
+    const words = text.trim();
+    if (!words || /(\.\.\.|…)["')\]»”’]*$/u.test(words)) return false;
+    return /[.!?؟。！？।]["')\]»”’]*$/u.test(words);
+}
+
 class DeepgramStream implements Recognizer {
     private ws!: WebSocket;
     private pending: Buffer[] = [];
@@ -93,6 +125,8 @@ class DeepgramStream implements Recognizer {
     private finishing = false;
     private done = false;
     private timer?: NodeJS.Timeout;
+    private endpointed = false;
+    readonly pauseMs = DEEPGRAM_FALLBACK_PAUSE_MS;
 
     constructor(
         private readonly settings: RecognitionSettings,
@@ -196,6 +230,11 @@ class DeepgramStream implements Recognizer {
             if (this.finishing) this.complete();
             return;
         }
+        // A long gap between words: the person is done, even if no sentence ended. -1 means everything was already final
+        if (message.type === 'UtteranceEnd') {
+            if (message.last_word_end !== -1) this.endOfTurn();
+            return;
+        }
         if (message.type !== 'Results') return;
         const alternatives: unknown[] = Array.isArray(message.channel?.alternatives) ? (message.channel.alternatives as unknown[]) : [];
         const first = alternatives[0];
@@ -214,6 +253,15 @@ class DeepgramStream implements Recognizer {
             this.lastShown = heard;
             this.events.partial(heard);
         }
+        // A short quiet that follows the end of a sentence is the person finishing. One mid-sentence is a pause to think
+        if (message.speech_final === true && endsSentence(heard)) this.endOfTurn();
+    }
+
+    /** Deepgram heard the person finish: the stretch ends now, as if they had paused. Said once; it then ends with finish(). */
+    private endOfTurn(): void {
+        if (this.endpointed || this.finishing || this.done || !this.heard()) return;
+        this.endpointed = true;
+        this.events.endpoint?.();
     }
 
     private heard(): string {

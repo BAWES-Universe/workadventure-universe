@@ -1000,9 +1000,12 @@ const mapEditor: BaseTranslation = {
                     notAllowedLine:
                         "An Admin can turn on Allow voice bots in Universe settings. {bot:string} keeps chatting in text.",
                     universeSettings: "Universe settings",
-                    noServiceTitle: "Voice isn’t available on this server yet",
+                    noServiceTitle: "No voice is set up here yet",
                     noServiceLine:
                         "{bot:string} keeps chatting in text. This row turns into a voice list by itself once it is.",
+                    noServiceLineMaker:
+                        "Universe AI has no voice here yet. Add voice keys of your own in AI keys, one that listens and one that speaks, and lend them to this universe. {bot:string} keeps chatting in text until then.",
+                    addVoiceKeys: "Add voice keys",
                     askUniverseAi: "Universe AI",
                     askUniverseAiLine:
                         "Each person uses their own voice replies: up to {replies:number} every {hours:number} hours.",
@@ -1014,6 +1017,17 @@ const mapEditor: BaseTranslation = {
                     hear: "Hear {voice:string}",
                     noSample: "{voice:string} has no sample",
                     sampleFailed: "Couldn’t play the sample. Try again.",
+                    helloTitle: "Hear this voice say hello",
+                    helloLineUniverseAi:
+                        "A short line to hear this voice. Uses 1 of your voice replies; hearing it again soon is free.",
+                    helloLineKey:
+                        "A short line to hear this voice. Uses a few characters of {key:string}; hearing it again soon is free.",
+                    helloThinking: "Getting the voice ready…",
+                    helloSaying: "Saying hello…",
+                    helloStop: "Stop",
+                    helloUsedUp:
+                        "Your voice replies are used up until {time:string}. The samples above still play, free.",
+                    helloFailed: "Couldn’t play the voice just now. Try again.",
                     change: "Change",
                     howItSpeaks: "How it speaks",
                     payerUniverseAiTitle: "Universe AI pays for listening and speaking.",
@@ -1101,7 +1115,7 @@ const mapEditor: BaseTranslation = {
                     retry: "Try again",
                     moreVoicesTitle: "More voices with your own voice key",
                     moreVoicesLine:
-                        "Add an ElevenLabs, Deepgram or Cartesia key in AI keys and lend it here. You pay for {bot:string}’s voice on it; nobody’s replies are used.",
+                        "Add a voice key from any company this server offers in AI keys, and lend it here. You pay for {bot:string}’s voice on it; nobody’s replies are used.",
                     keep: "Back",
                     use: "Use {voice:string}",
                 },
