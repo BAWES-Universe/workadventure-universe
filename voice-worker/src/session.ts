@@ -87,6 +87,9 @@ function guardedRecognizer(inner: Recognizer, events: RecognizerEvents): Recogni
     return { push: (pcm) => guard(() => inner.push(pcm)), finish: () => guard(() => inner.finish()), close: () => { broken = true; inner.close(); }, pauseMs: inner.pauseMs };
 }
 
+/** A reply counts as the answer to a spoken turn only if it comes this soon after it (#1865). */
+const PAIR_WITHIN_MS = 60_000;
+
 export class Session {
     voice: 'active' | 'stopped' = 'active';
     readonly lanes = new Map<string, Lane>();
@@ -407,14 +410,14 @@ export class Session {
 
     /**
      * The bot's reply arrived. Which turn a reply answers is not in the message, so it is paired only when there is no doubt: exactly
-     * one person has a turn not yet answered, and it is under two minutes old. Then the time since their words were final is the
+     * one person has a turn not yet answered, and it is under a minute old (a reply slower than that is a failure to answer, and an old turn the bot chose not to answer must not be matched with a later, unprompted message). Then the time since their words were final is the
      * bot's to think, and the whole turn can be timed. With two people waiting, or none, the reply may answer either (or a typed or
      * unprompted message), so nothing is recorded for it: a missing number is better than a wrong one. Either way the turns waiting
      * are cleared, so a later reply is never matched to an older turn.
      */
     private pairReply(segmentId: string): void {
         const now = performance.now();
-        const waiting = [...this.unanswered.values()].filter((turn) => now - turn.at <= 120_000);
+        const waiting = [...this.unanswered.values()].filter((turn) => now - turn.at <= PAIR_WITHIN_MS);
         this.unanswered.clear();
         if (waiting.length !== 1) return;
         const turn = waiting[0];
