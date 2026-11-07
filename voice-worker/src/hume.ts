@@ -2,7 +2,8 @@
 // Pipecat's HumeTTSService does (instant mode, raw PCM). https://dev.hume.ai/docs/text-to-speech-tts/overview
 //
 // The key goes in the X-Hume-Api-Key header of that one request and nowhere else. The answer is one JSON object a line: an
-// "audio" chunk holds base64 48 kHz s16 PCM, and the last one says so. The model picks Octave's version ("octave-2" is 2).
+// "audio" chunk holds base64 48 kHz s16 PCM. Hume may split the text into several snippets, each with its own last chunk, so
+// the reply ends when the stream does, as in Pipecat. The model picks Octave's version ("octave-2" is 2).
 // Hume needs a voice for instant mode; with none picked, Hume chooses one and instant mode is off.
 import type { SpeechConnector, SpeechRequest } from './connectors.ts';
 import { httpSpeech, type AudioFrame } from './kit/httpSpeech.ts';
@@ -30,9 +31,9 @@ export class HumeSpeech implements SpeechConnector {
             mayStartWithWav: true,
             read: (message: unknown): AudioFrame | undefined => {
                 if (typeof message !== 'object' || message === null) return undefined;
-                const chunk = message as { type?: unknown; audio?: unknown; is_last_chunk?: unknown };
+                const chunk = message as { type?: unknown; audio?: unknown };
                 if (chunk.type !== 'audio') return undefined;
-                return { audio: typeof chunk.audio === 'string' && chunk.audio ? chunk.audio : undefined, done: chunk.is_last_chunk === true };
+                return { audio: typeof chunk.audio === 'string' && chunk.audio ? chunk.audio : undefined };
             },
         },
         call: (request) => {
