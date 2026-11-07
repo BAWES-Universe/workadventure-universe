@@ -563,6 +563,7 @@ export function companyName(adapter: string): string {
         smallest: "Smallest AI",
         speechify: "Speechify",
         speechmatics: "Speechmatics",
+        together: "Together AI",
         elevenlabs: "ElevenLabs",
         cartesia: "Cartesia",
         fish: "Fish Audio",

@@ -33,6 +33,7 @@ import { SARVAM_ADAPTER, SarvamRecognition, SarvamSpeech } from './sarvam.ts';
 import { SMALLEST_ADAPTER, SmallestRecognition, SmallestSpeech } from './smallest.ts';
 import { SPEECHIFY_ADAPTER, SpeechifySpeech } from './speechify.ts';
 import { SPEECHMATICS_ADAPTER, SpeechmaticsRecognition, SpeechmaticsSpeech } from './speechmatics.ts';
+import { TOGETHER_ADAPTER, TogetherRecognition, TogetherSpeech } from './together.ts';
 import { ELEVENLABS_ADAPTER, ElevenLabsSpeech } from './elevenlabs.ts';
 import { CARTESIA_ADAPTER, CartesiaRecognition, CartesiaSpeech } from './cartesia.ts';
 import { FISH_ADAPTER, FishSpeech } from './fish.ts';
@@ -176,6 +177,11 @@ export class VoiceWorker {
             this.connectors.registerRecognition(SPEECHMATICS_ADAPTER, new SpeechmaticsRecognition({ finalTimeoutMs }));
         }
         if (!this.connectors.speech(SPEECHMATICS_ADAPTER)) this.connectors.registerSpeech(SPEECHMATICS_ADAPTER, new SpeechmaticsSpeech());
+        if (!this.connectors.recognition(TOGETHER_ADAPTER)) {
+            const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
+            this.connectors.registerRecognition(TOGETHER_ADAPTER, new TogetherRecognition({ finalTimeoutMs }));
+        }
+        if (!this.connectors.speech(TOGETHER_ADAPTER)) this.connectors.registerSpeech(TOGETHER_ADAPTER, new TogetherSpeech());
         if (!this.connectors.recognition(SONIOX_ADAPTER)) {
             const finalTimeoutMs = (options.recognitionFinalTimeoutSeconds ?? DEFAULT_SONIOX_FINAL_TIMEOUT_MS / 1000) * 1000;
             this.connectors.registerRecognition(SONIOX_ADAPTER, new SonioxRecognition({ finalTimeoutMs }));
