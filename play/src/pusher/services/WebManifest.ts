@@ -4,6 +4,41 @@ import type { RequiredMetaTagsData } from "@workadventure/messages";
 export const INSTALL_ROOM_PARAMETER = "installRoom";
 
 /**
+ * Default Universe PWA manifest icons covering standard 192x192, 512x512, and maskable 512x512 safe-zone assets
+ * when Orbit room metadata is unavailable (such as bare "/" start-page redirects or standalone deployments).
+ */
+export const DEFAULT_MANIFEST_ICONS: RequiredMetaTagsData["manifestIcons"] = [
+    {
+        src: "/static/universe-icon-192.png",
+        sizes: "192x192",
+        type: "image/png",
+        purpose: "any",
+    },
+    {
+        src: "/static/images/favicons/icon-512x512.png",
+        sizes: "512x512",
+        type: "image/png",
+        purpose: "any",
+    },
+    {
+        src: "/static/universe-icon-512.png",
+        sizes: "512x512",
+        type: "image/png",
+        purpose: "maskable any",
+    },
+];
+
+/**
+ * Rejects bare root paths and protocol-relative origins so only internal room paths are persisted in the manifest.
+ */
+function isValidRoomPath(path: string | null): path is string {
+    if (path === null || path === "/") {
+        return false;
+    }
+    return path.startsWith("/") && !path.startsWith("//");
+}
+
+/**
  * The room a page shows, as a path ("/@/universe/world/room"), or undefined for the start page without one.
  * Only the path is kept: a query or a hash can hold a login token and must never end up in a manifest.
  * The installed app's own start page ("/?installRoom=<path>") hands its room on, so the manifest the browser
@@ -17,10 +52,7 @@ export function roomPathOfPage(pageUrl: string): string | undefined {
         return undefined;
     }
     const path = url.pathname === "/" ? url.searchParams.get(INSTALL_ROOM_PARAMETER) : url.pathname;
-    if (path === null || path === "/" || !path.startsWith("/") || path.startsWith("//")) {
-        return undefined;
-    }
-    return path;
+    return isValidRoomPath(path) ? path : undefined;
 }
 
 /**
@@ -74,11 +106,12 @@ export function manifestUrlOfPage(pageUrl: string): string | undefined {
 export function buildWebManifest(metaTagsData: RequiredMetaTagsData, pageUrl: string) {
     const roomPath = roomPathOfPage(pageUrl);
     const manifestUrl = manifestUrlOfPage(pageUrl);
+    const icons = metaTagsData.manifestIcons.length > 0 ? metaTagsData.manifestIcons : DEFAULT_MANIFEST_ICONS;
     return {
         id: "/",
         name: metaTagsData.appName,
         short_name: metaTagsData.shortAppName,
-        icons: metaTagsData.manifestIcons,
+        icons,
         start_url: roomPath ? `/?${INSTALL_ROOM_PARAMETER}=${encodeURIComponent(roomPath)}` : "/",
         background_color: metaTagsData.themeColor,
         // Standalone: a window of its own, with no browser bar. Any orientation: a phone turns sideways too.
@@ -97,7 +130,7 @@ export function buildWebManifest(metaTagsData: RequiredMetaTagsData, pageUrl: st
                 short_name: metaTagsData.shortAppName,
                 description: metaTagsData.description,
                 url: "/",
-                icons: metaTagsData.manifestIcons,
+                icons,
             },
         ],
         description: metaTagsData.description,

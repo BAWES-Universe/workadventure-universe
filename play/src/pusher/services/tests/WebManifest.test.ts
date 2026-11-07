@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { RequiredMetaTagsData } from "@workadventure/messages";
 import {
+    DEFAULT_MANIFEST_ICONS,
     buildWebManifest,
     installRoomUrlOfPage,
     isInstalledAppStart,
@@ -146,5 +147,23 @@ describe("buildWebManifest", () => {
         expect(manifest.icons).toEqual(meta.manifestIcons);
         expect(manifest.theme_color).toBe("#14121E");
         expect(manifest.background_color).toBe("#14121E");
+    });
+
+    it("falls back to the bundled 192x192 and maskable 512x512 Universe icons when Orbit sends none", () => {
+        const fallback = buildWebManifest({ ...meta, manifestIcons: [] }, "https://play.test/");
+        expect(fallback.icons).toEqual(DEFAULT_MANIFEST_ICONS);
+        expect(fallback.shortcuts[0].icons).toEqual(DEFAULT_MANIFEST_ICONS);
+        expect(fallback.icons).toContainEqual({
+            src: "/static/universe-icon-192.png",
+            sizes: "192x192",
+            type: "image/png",
+            purpose: "any",
+        });
+        expect(fallback.icons).toContainEqual({
+            src: "/static/universe-icon-512.png",
+            sizes: "512x512",
+            type: "image/png",
+            purpose: "maskable any",
+        });
     });
 });
