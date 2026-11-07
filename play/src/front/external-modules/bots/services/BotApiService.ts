@@ -29,6 +29,7 @@ import {
     readVoiceChoices,
     type BotVoice,
     type FullVoiceProfile,
+    type TypedVoice,
     type VoiceChoice,
 } from "../voiceModel";
 import { classifySummonFailure, type SummonResult } from "./summonFailure";
@@ -445,10 +446,12 @@ export class BotApiService {
             const errorText = await response.text();
             let errorMessage = `API error: ${response.status}`;
             let isSessionExpired = false;
+            let errorCode: string | undefined;
 
             try {
                 const errorJson = JSON.parse(errorText);
                 errorMessage = errorJson.message || errorJson.error || errorMessage;
+                errorCode = typeof errorJson.code === "string" ? errorJson.code : undefined;
                 // Check if it's a session expiration error
                 if (
                     errorMessage.toLowerCase().includes("session expired") ||
@@ -499,8 +502,10 @@ export class BotApiService {
                 throw authError;
             }
 
-            const error = new Error(errorMessage) as Error & { status?: number };
+            const error = new Error(errorMessage) as Error & { status?: number; code?: string };
             error.status = response.status;
+            // What Orbit calls this refusal, for a caller that acts on more than the words (a speech server that lists no voices)
+            if (errorCode !== undefined) error.code = errorCode;
             throw error;
         }
 
@@ -631,7 +636,26 @@ export class BotApiService {
      * voice and style it speaks with. Answers with the words and an address to play the audio from (the caller hands it back with
      * `revoke`, as for a sample). Throws the bot server's error, with its status and answer, when no hello could be made.
      */
-    async sayBotHello(botId: string, locale: string): Promise<{ text: string; url: string }> {
+    async sayBotHello(botId: string, locale: string, typed?: TypedVoice): Promise<{ text: string; url: string }> {
+        const hello = await this.requestHello(botId, locale, typed);
+        const bytes = Uint8Array.from(atob(hello.audio), (character) => character.charCodeAt(0));
+        return { text: hello.text, url: URL.createObjectURL(new Blob([bytes], { type: hello.mime })) };
+    }
+
+    /**
+     * Asks a speech server of the person's own whether it takes a voice name (#1874): the same hello as `sayBotHello`, with the
+     * name typed and not saved yet, and nothing played. Resolves when audio came back (the name works); throws the bot server's
+     * error, with its status and answer, when it did not.
+     */
+    async checkBotVoiceName(botId: string, locale: string, typed: TypedVoice): Promise<void> {
+        await this.requestHello(botId, locale, typed);
+    }
+
+    private async requestHello(
+        botId: string,
+        locale: string,
+        typed?: TypedVoice
+    ): Promise<NonNullable<ReturnType<typeof readHello>>> {
         // Writing the hello and speaking it can take a while; past this it is not coming
         const stop = new AbortController();
         const timer = setTimeout(() => stop.abort(), HELLO_TIMEOUT_MS);
@@ -639,7 +663,11 @@ export class BotApiService {
         try {
             const response = await this.fetchBotServer(`/api/bots/${encodeURIComponent(botId)}/voice/hello`, {
                 method: "POST",
-                body: JSON.stringify({ locale }),
+                body: JSON.stringify(
+                    typed === undefined
+                        ? { locale }
+                        : { locale, voiceId: typed.voiceId, ...(typed.source ? { source: typed.source } : {}) }
+                ),
                 signal: stop.signal,
             });
             hello = readHello(await response.json());
@@ -647,8 +675,7 @@ export class BotApiService {
             clearTimeout(timer);
         }
         if (!hello) throw new Error("The bot server answered with a hello the game can't read.");
-        const bytes = Uint8Array.from(atob(hello.audio), (character) => character.charCodeAt(0));
-        return { text: hello.text, url: URL.createObjectURL(new Blob([bytes], { type: hello.mime })) };
+        return hello;
     }
 
     /** "Check now" on a voice key that is Down: the next bot that needs it tries it without waiting. */

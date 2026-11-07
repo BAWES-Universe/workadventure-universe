@@ -20,6 +20,8 @@
         describeVoice,
         doorVoices,
         fullProfile,
+        isNoVoiceList,
+        isOwnServer,
         languageName,
         limitsOf,
         liveRevision,
@@ -58,6 +60,7 @@
     import VoiceRows from "./VoiceRows.svelte";
     import VoicePayerPicker from "./VoicePayerPicker.svelte";
     import VoiceHello from "./VoiceHello.svelte";
+    import VoiceTyped from "./VoiceTyped.svelte";
     import {
         IconAlertTriangle,
         IconCheck,
@@ -71,6 +74,7 @@
         IconPauseFilled,
         IconPlayerPlayFilled,
         IconSearch,
+        IconServer,
         IconSparkles,
         IconVolume,
     } from "@wa-icons";
@@ -112,6 +116,8 @@
     /** The voices each source lists, by "universe-ai" or a key's id */
     let lists: Record<string, VoiceChoice[]> = {};
     let listFailed: Record<string, boolean> = {};
+    /** The sources that list no voices because they never do (a speech server of the person's own): the page asks for a name (#1874) */
+    let listTyped: Record<string, boolean> = {};
     const listLoading: Record<string, Promise<VoiceChoice[]>> = {};
 
     async function load(botId: string | undefined, quiet = false) {
@@ -141,6 +147,7 @@
             viewerIsMaker = options?.viewerIsMaker === true;
             lists = {};
             listFailed = {};
+            listTyped = {};
         } catch (e) {
             if (mine !== loadCount) return;
             if ((e as { status?: number }).status === 403 || (e as { status?: number }).status === 404) {
@@ -173,6 +180,7 @@
         myKeys = null;
         lists = {};
         listFailed = {};
+        listTyped = {};
         stopSample();
         void load(botId);
     }
@@ -218,7 +226,13 @@
     $: voiceName = profile?.speech?.voiceName ?? currentVoice?.name ?? profile?.speech?.voiceId ?? "";
     $: busyClass = saving;
 
+    /** A speech server of the person's own is named as one, not as a company's key (#1874): "your speech server", "Sara’s speech server" */
+    function ownName(middle: boolean): string {
+        if (!viewerIsMaker) return v.ownServerTheirs({ owner: maker });
+        return middle ? v.ownServerMine() : v.ownServerMineStart();
+    }
     function keyPhrase(key: VoiceKey, middle = false): string {
+        if (isOwnServer(key)) return ownName(middle);
         const company = companyName(key.adapter);
         // Inside a sentence or an uppercase caption the digits only add noise: the company and whose key it is say enough.
         if (middle) return viewerIsMaker ? v.keyMineMidShort({ company }) : v.keyTheirsShort({ owner: maker, company });
@@ -226,6 +240,7 @@
         return viewerIsMaker ? v.keyMine(args) : v.keyTheirs({ owner: maker, ...args });
     }
     function keyShort(key: VoiceKey): string {
+        if (isOwnServer(key)) return ownName(false);
         const company = companyName(key.adapter);
         return viewerIsMaker ? v.keyMineShort({ company }) : v.keyTheirsShort({ owner: maker, company });
     }
@@ -239,6 +254,9 @@
 
     /** What pays for both jobs (#1911): one place for both, or the two places of a split */
     function payerTitle(option: PayerOption): string {
+        if (coversBoth(option) && option.speech.kind === "key" && isOwnServer(option.speech.key)) {
+            return v.payerOwnTitle({ server: ownName(true) });
+        }
         if (coversBoth(option)) {
             return option.speech.kind === "key"
                 ? v.paidByKey({ key: keyPhrase(option.speech.key, true) })
@@ -252,6 +270,9 @@
         const keyLine = viewerIsMaker
             ? v.askKeyLine({ bot: botName })
             : v.askKeyLineTheirs({ owner: maker, bot: botName });
+        if (coversBoth(option) && option.speech.kind === "key" && isOwnServer(option.speech.key)) {
+            return v.payerOwnLine({ bot: botName });
+        }
         if (coversBoth(option)) {
             if (option.speech.kind === "universe-ai") {
                 return v.payerBothUniverseAiLine({ replies: data.window.voiceReplies, hours: data.window.hours });
@@ -315,7 +336,10 @@
     $: brief = briefOf(voice, view, failed, voiceName, expression, whoKey, botName);
 
     // The voice card's second line
-    $: cardAbout = describeVoice(currentVoice, $locale);
+    $: speaksOwn = speaksSource?.kind === "key" && isOwnServer(speaksSource.key);
+    // A speech server that lists no voices has no sample either: the voice is a name that was typed
+    $: speaksTyped = speaksOwn && speakChoice !== null && listTyped[sourceKey(speakChoice)] === true;
+    $: cardAbout = speaksTyped ? v.cardAboutTyped({ server: ownName(true) }) : describeVoice(currentVoice, $locale);
 
     $: payerKindNow = voice && profile ? payerKind(voice, profile) : "universe-ai";
     $: speakingKey = speaksSource?.kind === "key" ? speaksSource.key : null;
@@ -334,6 +358,10 @@
             : null;
     $: doorList = doorOption ? lists[sourceKey(doorOption.speech)] : undefined;
     $: doorFailed = doorOption ? listFailed[sourceKey(doorOption.speech)] === true : false;
+    $: doorTyped = doorOption ? listTyped[sourceKey(doorOption.speech)] === true : false;
+    $: doorOwn = doorOption?.speech.kind === "key" && isOwnServer(doorOption.speech.key);
+    /** Before voice is on, the typed name is heard from the speech server the door is on */
+    $: doorSource = voice && doorOption ? providerOf(voice, "speech", doorOption.speech) ?? undefined : undefined;
     $: door =
         voice && doorOption && doorList
             ? doorVoices(voice, doorOption.speech, doorList, previousProfile?.speech?.voiceId)
@@ -372,6 +400,8 @@
             .catch((e) => {
                 // eslint-disable-next-line svelte/infinite-reactive-loop
                 if (bot.id === botId) listFailed = { ...listFailed, [id]: true };
+                // A speech server that lists no voices never will: no Try again, the voice's name is asked for instead
+                if (bot.id === botId && isNoVoiceList(e)) listTyped = { ...listTyped, [id]: true };
                 throw e;
             })
             .finally(() => {
@@ -673,6 +703,7 @@
     $: pickerChoice = speakChoice ?? doorOption?.speech ?? (voice ? firstSpeechChoice(voice) : null);
     $: pickerList = pickerChoice ? lists[sourceKey(pickerChoice)] ?? null : null;
     $: pickerFailed = pickerChoice ? listFailed[sourceKey(pickerChoice)] === true : false;
+    $: pickerTyped = pickerChoice ? listTyped[sourceKey(pickerChoice)] === true : false;
     $: pickerHeading = !pickerChoice
         ? ""
         : pickerChoice.kind === "universe-ai"
@@ -691,6 +722,8 @@
         sampleError = false;
         stopSample();
         const choice = pickerChoice;
+        // A server that lists no voices does not start listing them: the name is asked for at once
+        if (listTyped[sourceKey(choice)]) return;
         delete listFailed[sourceKey(choice)];
         listFailed = listFailed;
         voicesFor(choice).catch(() => undefined);
@@ -709,6 +742,16 @@
         listFailed = listFailed;
         voicesFor(choice).catch(() => undefined);
     }
+    /** A voice name typed for the speech server, as the voice the page saves (it has no list to pick it from) */
+    const typedChoice = (name: string): VoiceChoice => ({
+        voiceId: name,
+        name,
+        description: "",
+        languages: [],
+        previewUrl: null,
+        providerId: "",
+        model: "",
+    });
     function closePicker() {
         stopSample();
         screen = "page";
@@ -796,6 +839,20 @@
                     <p class="bp-m">{v.loadFailed()}</p>
                     <PageButton on:click={() => void load(bot.id)}>{v.retry()}</PageButton>
                 </div>
+            {:else if screen === "picker" && view.kind === "on" && pickerTyped}
+                <VoiceTyped
+                    botId={bot.id}
+                    {botName}
+                    mode="change"
+                    server={ownName(true)}
+                    serverStart={ownName(false)}
+                    currentName={voiceName}
+                    busy={saving}
+                    onBack={closePicker}
+                    onUse={(name) => useVoice(typedChoice(name))}
+                    on:refresh={() => void load(bot.id, true)}
+                />
+                {#if saveError}<p class="vg-error" role="alert">{saveError}</p>{/if}
             {:else if screen === "picker" && (view.kind === "on" || view.kind === "off")}
                 <VoicePicker
                     {botName}
@@ -895,7 +952,9 @@
                             on:click={() => (payerOpen = !payerOpen)}
                         >
                             <span class="vg-ico">
-                                {#if doorOption.speech.kind === "key" || doorOption.recognition.kind === "key"}<IconKey
+                                {#if doorOwn}<IconServer
+                                        font-size="20"
+                                    />{:else if doorOption.speech.kind === "key" || doorOption.recognition.kind === "key"}<IconKey
                                         font-size="20"
                                     />{:else}<IconSparkles font-size="20" />{/if}
                             </span>
@@ -922,11 +981,13 @@
                             />
                         {/if}
                     {/if}
-                    <div class="bp-cap" data-testid="bot-voice-door-caption">
-                        {doorOption.speech.kind === "key"
-                            ? v.doorVoicesOn({ key: keyPhrase(doorOption.speech.key, true) })
-                            : v.doorVoices()}
-                    </div>
+                    {#if !doorTyped}
+                        <div class="bp-cap" data-testid="bot-voice-door-caption">
+                            {doorOption.speech.kind === "key"
+                                ? v.doorVoicesOn({ key: keyPhrase(doorOption.speech.key, true) })
+                                : v.doorVoices()}
+                        </div>
+                    {/if}
                     {#if door && doorList}
                         <VoiceRows
                             voices={door.voices}
@@ -974,6 +1035,23 @@
                                 >
                             </p>
                         {/if}
+                    {:else if doorTyped}
+                        {#key doorOption.id}
+                            <VoiceTyped
+                                botId={bot.id}
+                                {botName}
+                                mode="door"
+                                server={ownName(true)}
+                                serverStart={ownName(false)}
+                                source={doorSource}
+                                busy={saving}
+                                onUse={(name) => turnOnWith(doorOption, typedChoice(name))}
+                                on:refresh={() => void load(bot.id, true)}
+                            />
+                        {/key}
+                        {#if saveError}<p class="vg-error" role="alert" data-testid="bot-voice-error">
+                                {saveError}
+                            </p>{/if}
                     {:else if doorFailed}
                         <div class="bp-line">
                             <p class="bp-m">{v.voicesFailed()}</p>
@@ -1063,21 +1141,23 @@
                             <span class="bp-mid">{voiceName}</span>
                             {#if cardAbout}<span class="bp-cn">{cardAbout}</span>{/if}
                         </div>
-                        <button
-                            type="button"
-                            class="vg-play"
-                            class:on={$playingSample === "card"}
-                            disabled={!currentVoice?.previewUrl}
-                            aria-label={currentVoice?.previewUrl
-                                ? v.hear({ voice: voiceName })
-                                : v.noSample({ voice: voiceName })}
-                            data-testid="bot-voice-card-play"
-                            on:click={() => void playChoice("card", currentVoice)}
-                        >
-                            {#if $playingSample === "card"}<IconPauseFilled
-                                    font-size="16"
-                                />{:else}<IconPlayerPlayFilled font-size="16" />{/if}
-                        </button>
+                        {#if !speaksTyped}
+                            <button
+                                type="button"
+                                class="vg-play"
+                                class:on={$playingSample === "card"}
+                                disabled={!currentVoice?.previewUrl}
+                                aria-label={currentVoice?.previewUrl
+                                    ? v.hear({ voice: voiceName })
+                                    : v.noSample({ voice: voiceName })}
+                                data-testid="bot-voice-card-play"
+                                on:click={() => void playChoice("card", currentVoice)}
+                            >
+                                {#if $playingSample === "card"}<IconPauseFilled
+                                        font-size="16"
+                                    />{:else}<IconPlayerPlayFilled font-size="16" />{/if}
+                            </button>
+                        {/if}
                         <PageButton tall testId="bot-voice-change" disabled={!pickerChoice} on:click={openPicker}
                             >{v.change()}</PageButton
                         >
@@ -1089,6 +1169,7 @@
                             <VoiceHello
                                 botId={bot.id}
                                 paidByKey={speakingKey ? keyPhrase(speakingKey, true) : null}
+                                free={speaksOwn}
                                 locale={$locale}
                                 on:refresh={() => void load(bot.id, true)}
                             />
@@ -1110,7 +1191,9 @@
 
                     {#if !moreOpen}
                         <p class="bp-note" data-testid="bot-voice-payer">
-                            {#if payerKindNow === "universe-ai"}<IconSparkles font-size="14" />{:else}<IconKey
+                            {#if payerKindNow === "universe-ai"}<IconSparkles
+                                    font-size="14"
+                                />{:else if speaksOwn}<IconServer font-size="14" />{:else}<IconKey
                                     font-size="14"
                                 />{/if}
                             <span>
@@ -1245,7 +1328,9 @@
                             <div class="bp-cap">{v.whoPays()}</div>
                             <div class="vg-tap vg-still" data-testid="bot-voice-payer">
                                 <span class="vg-ico">
-                                    {#if payerKindNow === "universe-ai"}<IconSparkles font-size="20" />{:else}<IconKey
+                                    {#if payerKindNow === "universe-ai"}<IconSparkles
+                                            font-size="20"
+                                        />{:else if speaksOwn}<IconServer font-size="20" />{:else}<IconKey
                                             font-size="20"
                                         />{/if}
                                 </span>

@@ -1137,6 +1137,26 @@ const mapEditor: BaseTranslation = {
                         "Add a voice key from any company this server offers in AI keys, and lend it here. You pay for {bot:string}’s voice on it; nobody’s replies are used.",
                     keep: "Back",
                     use: "Use {voice:string}",
+                    ownServerMine: "your speech server",
+                    ownServerMineStart: "Your speech server",
+                    ownServerTheirs: "{owner:string}’s speech server",
+                    payerOwnTitle: "Runs on {server:string}",
+                    payerOwnLine:
+                        "It listens and speaks. No voice company is paid, and people talking with {bot:string} pay nothing.",
+                    helloLineOwn: "A short line said by {server:string}. Free: no voice company is paid.",
+                    helloTitleNamed: "Hear {voice:string} say hello",
+                    cardAboutTyped: "Name typed for {server:string}",
+                    typedCaption: "Voice on {server:string}",
+                    typedTitle: "Voice for {bot:string} on {server:string}",
+                    typedLabel: "Voice name",
+                    typedPlaceholder: "Voice name, such as af_heart",
+                    typedHelp:
+                        "{server:string} doesn’t list its voices. Type a voice’s name exactly as your server uses it.",
+                    useThisVoice: "Use this voice",
+                    checkingVoice: "Checking {voice:string}…",
+                    voiceNameRejected:
+                        "{server:string} didn’t take “{voice:string}” as a voice name. Check how your server spells it, then try again.",
+                    speechServerSilent: "{server:string} didn’t answer. Is it running and the tunnel up?",
                 },
                 tools: {
                     title: "Tools",

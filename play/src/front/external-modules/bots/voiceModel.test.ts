@@ -4,6 +4,9 @@ import {
     coversBoth,
     fullProfile,
     helloFailureOf,
+    isNoVoiceList,
+    isOwnServer,
+    voiceNameFailureOf,
     limitsOf,
     modelLabel,
     noService,
@@ -548,5 +551,37 @@ describe("hearing a bot say hello (#1852)", () => {
         expect(helloFailureOf(new Error("network"))).toEqual({ kind: "failed" });
         expect(helloFailureOf(null)).toEqual({ kind: "failed" });
         expect(helloFailureOf("boom")).toEqual({ kind: "failed" });
+    });
+});
+
+describe("a speech server that lists no voices (#1874)", () => {
+    it("knows Orbit's refusal to list them by its status and its code, and no other failure for it", () => {
+        expect(isNoVoiceList(Object.assign(new Error("x"), { status: 409, code: "no_voice_list" }))).toBe(true);
+        // A server that is down or refused is a 502 with no code: Try again stays
+        expect(isNoVoiceList(Object.assign(new Error("x"), { status: 502 }))).toBe(false);
+        expect(isNoVoiceList(Object.assign(new Error("x"), { status: 409 }))).toBe(false);
+        expect(isNoVoiceList(Object.assign(new Error("x"), { status: 502, code: "no_voice_list" }))).toBe(false);
+        expect(isNoVoiceList(null)).toBe(false);
+        expect(isNoVoiceList("no_voice_list")).toBe(false);
+    });
+
+    it("names a refused typed name when the server answered 400, 404 or 422, and a silent server for anything else", () => {
+        const provider = (providerStatus?: number) => ({
+            status: 502,
+            body: { error: "provider", ...(providerStatus === undefined ? {} : { providerStatus }), rejected: false },
+        });
+        for (const status of [400, 404, 422]) expect(voiceNameFailureOf(provider(status))).toBe("rejected");
+        for (const status of [401, 402, 429, 500, 503, undefined]) {
+            expect(voiceNameFailureOf(provider(status))).toBe("unreachable");
+        }
+        // The bot server could not reach the voice worker, or the worker the speech server
+        expect(voiceNameFailureOf({ status: 503, body: { error: "unavailable" } })).toBe("unreachable");
+        expect(voiceNameFailureOf(new Error("network"))).toBe("unreachable");
+        expect(voiceNameFailureOf(null)).toBe("unreachable");
+    });
+
+    it("tells a speech server of the person's own by its adapter", () => {
+        expect(isOwnServer({ adapter: "openai-compatible" })).toBe(true);
+        expect(isOwnServer({ adapter: "elevenlabs" })).toBe(false);
     });
 });
