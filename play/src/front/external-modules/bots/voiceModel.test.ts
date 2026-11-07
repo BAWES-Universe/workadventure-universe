@@ -126,6 +126,20 @@ describe("where each part of the voice runs", () => {
         expect(sourceOf(voice, gone, "speech")).toEqual({ kind: "gone", providerId: "key-old" });
     });
 
+    it("keeps a bot on the server company it started on as Universe AI after the operator switches company (Orbit #840)", () => {
+        const stayed: VoiceProfile = {
+            ...uaiProfile,
+            speech: { providerId: "uai-old-speak", model: "eleven_flash_v2_5", voiceId: "v-aria", voiceName: "Aria" },
+        };
+        const voice = on(stayed, { serverProviderIds: ["uai-listen", "uai-old-speak"] });
+        expect(voice.serverProviderIds).toEqual(["uai-listen", "uai-old-speak"]);
+        expect(sourceOf(voice, stayed, "speech")).toEqual({ kind: "universe-ai" });
+        expect(pauseOf(voice, stayed)).toBeNull();
+        // An older Orbit doesn't say, so the page reads it as before
+        expect(read().serverProviderIds).toEqual([]);
+        expect(pauseOf(on(stayed), stayed)).toMatchObject({ kind: "key-gone", part: "speech" });
+    });
+
     it("says how the two jobs are paid for", () => {
         const voice = on(uaiProfile, { lentKeys: [keyAnswer()] });
         expect(payerKind(voice, uaiProfile)).toBe("universe-ai");
