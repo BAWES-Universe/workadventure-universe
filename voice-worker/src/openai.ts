@@ -30,7 +30,7 @@ export const OPENAI_FALLBACK_PAUSE_MS = 2_000;
 const HARMLESS_ERRORS = new Set(['input_audio_buffer_commit_empty']);
 
 /** How the voice reads a reply, for each expression the maker can pick. The words never change. */
-const TONE: Record<Expression, string> = {
+export const TONE: Record<Expression, string> = {
     restrained: 'Read it in a calm, even voice.',
     natural: 'Read it in a natural, conversational voice.',
     expressive: 'Read it with feeling, following what the words say.',
@@ -52,14 +52,14 @@ export function realtimeAddress(model: string, key: { reveal(): string }, base: 
 
 const json = (value: unknown) => JSON.stringify(value);
 
-function readEvent(data: Buffer, isBinary: boolean): { type?: string; [field: string]: unknown } | undefined {
+export function readEvent(data: Buffer, isBinary: boolean): { type?: string; [field: string]: unknown } | undefined {
     if (isBinary) return undefined;
     const event: unknown = JSON.parse(data.toString('utf8'));
     return typeof event === 'object' && event !== null ? (event as { type?: string }) : undefined;
 }
 
 /** An error event's code, and whether it is one to ignore. */
-function errorOf(event: Record<string, unknown>): { harmless: boolean; status?: number } {
+export function errorOf(event: Record<string, unknown>): { harmless: boolean; status?: number } {
     const error = (event.error ?? {}) as { code?: unknown };
     const code = typeof error.code === 'string' ? error.code : '';
     if (HARMLESS_ERRORS.has(code)) return { harmless: true };
