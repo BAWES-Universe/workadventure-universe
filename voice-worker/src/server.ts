@@ -16,6 +16,7 @@ import type { RecognizerFactory } from './recognizer.ts';
 import type { RoomTransport } from './roomTransport.ts';
 import { type OutgoingMessage, Session } from './session.ts';
 import type { InputSink } from './transport.ts';
+import { ASSEMBLYAI_ADAPTER, AssemblyAiRecognition } from './assemblyai.ts';
 import { ELEVENLABS_ADAPTER, ElevenLabsSpeech } from './elevenlabs.ts';
 import { CARTESIA_ADAPTER, CartesiaRecognition, CartesiaSpeech } from './cartesia.ts';
 import { AWS_ADAPTER, AwsRecognition, AwsSpeech } from './aws.ts';
@@ -28,6 +29,8 @@ import { OPENAI_ADAPTER, OpenAiRecognition, OpenAiSpeech } from './openai.ts';
 import { XAI_ADAPTER, XaiRecognition, XaiSpeech } from './xai.ts';
 import { FISH_ADAPTER, FishSpeech } from './fish.ts';
 import { DeepgramSpeech } from './deepgramSpeech.ts';
+import { ElevenLabsRecognition } from './elevenlabsHearing.ts';
+import { SonioxSpeech } from './sonioxSpeech.ts';
 import { OPENAI_COMPATIBLE_ADAPTER, OpenAiCompatibleRecognition, OpenAiCompatibleSpeech } from './openaiCompatible.ts';
 import { DEFAULT_SONIOX_FINAL_TIMEOUT_MS, SONIOX_ADAPTER, SonioxRecognition } from './soniox.ts';
 import { checkMessage } from './validate.ts';
@@ -119,6 +122,10 @@ export class VoiceWorker {
         // Each real provider is one file registered by name; a registry passed in (tests) keeps what it already has
         this.connectors = options.connectors ?? new ConnectorRegistry();
         if (!this.connectors.speech(FAKE_ADAPTER)) this.connectors.registerSpeech(FAKE_ADAPTER, this.speech);
+        if (!this.connectors.recognition(ASSEMBLYAI_ADAPTER)) {
+            const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
+            this.connectors.registerRecognition(ASSEMBLYAI_ADAPTER, new AssemblyAiRecognition({ finalTimeoutMs }));
+        }
         if (!this.connectors.speech(CARTESIA_ADAPTER)) this.connectors.registerSpeech(CARTESIA_ADAPTER, new CartesiaSpeech({ version: options.cartesiaVersion }));
         if (!this.connectors.recognition(CARTESIA_ADAPTER)) {
             const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
@@ -129,7 +136,12 @@ export class VoiceWorker {
             const finalTimeoutMs = (options.recognitionFinalTimeoutSeconds ?? DEFAULT_SONIOX_FINAL_TIMEOUT_MS / 1000) * 1000;
             this.connectors.registerRecognition(SONIOX_ADAPTER, new SonioxRecognition({ finalTimeoutMs }));
         }
+        if (!this.connectors.speech(SONIOX_ADAPTER)) this.connectors.registerSpeech(SONIOX_ADAPTER, new SonioxSpeech());
         if (!this.connectors.speech(ELEVENLABS_ADAPTER)) this.connectors.registerSpeech(ELEVENLABS_ADAPTER, new ElevenLabsSpeech());
+        if (!this.connectors.recognition(ELEVENLABS_ADAPTER)) {
+            const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
+            this.connectors.registerRecognition(ELEVENLABS_ADAPTER, new ElevenLabsRecognition({ finalTimeoutMs }));
+        }
         if (!this.connectors.recognition(DEEPGRAM_ADAPTER)) {
             const finalTimeoutMs = (options.recognitionFinalTimeoutSeconds ?? DEFAULT_DEEPGRAM_FINAL_TIMEOUT_MS / 1000) * 1000;
             this.connectors.registerRecognition(DEEPGRAM_ADAPTER, new DeepgramRecognition({ finalTimeoutMs }));

@@ -44,6 +44,8 @@ export interface SocketHearingSpec {
     join?: 'words' | 'tokens';
     /** The company closes the socket after the last words instead of saying so. */
     closeIsFinished?: boolean;
+    /** The company says why with the close itself (AssemblyAI: 1008 "Invalid API key"): what that close means, if anything. */
+    closed?(code: number, reason: string): HearingMessage | undefined;
     /** Set when the company detects the end of speech itself: quiet this long still ends a stretch. */
     pauseMs?: number;
     /**
@@ -179,7 +181,15 @@ class SocketStream implements Recognizer {
             res.on('error', () => this.fail(failure(this.spec.adapter, 'refused the connection', res.statusCode)));
         });
         ws.on('error', () => this.fail(failure(this.spec.adapter, 'connection error')));
-        ws.on('close', () => {
+        ws.on('close', (code: number, reason: Buffer) => {
+            let told: HearingMessage | undefined;
+            try {
+                told = this.spec.closed?.(code, reason.toString('utf8'));
+            } catch {
+                told = undefined;
+            }
+            if (told) this.answer(told);
+            if (this.done) return;
             if (this.spec.closeIsFinished && this.finishing) return this.end();
             this.fail(failure(this.spec.adapter, 'closed the stream before the last words'));
         });

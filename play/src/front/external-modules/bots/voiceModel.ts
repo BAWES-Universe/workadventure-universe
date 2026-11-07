@@ -671,6 +671,7 @@ export function limitsOf(
 /** A key a person sees named by its company: "ElevenLabs". Orbit lists the companies it supports by adapter. */
 export function companyName(adapter: string): string {
     const known: Record<string, string> = {
+        assemblyai: "AssemblyAI",
         aws: "AWS",
         azure: "Azure OpenAI",
         elevenlabs: "ElevenLabs",
