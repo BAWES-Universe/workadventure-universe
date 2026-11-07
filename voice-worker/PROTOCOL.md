@@ -109,8 +109,9 @@ sends nothing for `VOICE_SPEECH_TIMEOUT_SECONDS` (default 15) counts as failed.
 
 Each bubble picks its own hearing and speaking provider. `session.open` may carry, all optional:
 
-* `recognition`: `{ adapter, model, key, endpoint?, region?, language? }`, who hears the people in this bubble.
-* `speech`: `{ adapter, model, voiceId, key, endpoint?, region?, language? }`, who speaks for the bot in this bubble.
+* `recognition`: `{ adapter, model, key?, endpoint?, region?, language? }`, who hears the people in this bubble.
+* `speech`: `{ adapter, model, voiceId, key?, endpoint?, region?, language? }`, who speaks for the bot in this bubble.
+  `key` is left out only for a speech server on a person's own computer that has none (`openai-compatible`, #1874); it is never an empty string.
 * `expression`: `restrained`, `natural` or `expressive`, how much feeling the voice puts in (each connector maps it to what
   its provider offers). Handed to the speech connector with every reply.
 * `turnSeconds`: a whole number from 5 to 3600, the longest stretch of one person's speech taken in this bubble (Orbit's voice limit, #1669).

@@ -986,7 +986,6 @@ const mapEditor: BaseTranslation = {
                     doorVoicesOn: "Voices on {key:string}",
                     paidByKey: "Paid by {key:string}",
                     paidByUniverseAi: "Paid by Universe AI",
-                    recommended: "Recommended",
                     usedBefore: "Used before",
                     allVoices: "All voices",
                     allVoicesLine: "Search all {count:number} voices by name or language",
@@ -1000,9 +999,12 @@ const mapEditor: BaseTranslation = {
                     notAllowedLine:
                         "An Admin can turn on Allow voice bots in Universe settings. {bot:string} keeps chatting in text.",
                     universeSettings: "Universe settings",
-                    noServiceTitle: "Voice isn’t available on this server yet",
+                    noServiceTitle: "No voice is set up here yet",
                     noServiceLine:
                         "{bot:string} keeps chatting in text. This row turns into a voice list by itself once it is.",
+                    noServiceLineMaker:
+                        "Universe AI has no voice here yet. Add a voice key in AI keys and lend it to this universe: one key from a company that listens and speaks is enough, or use two companies. {bot:string} keeps chatting in text until then.",
+                    addVoiceKeys: "Add a voice key",
                     askUniverseAi: "Universe AI",
                     askUniverseAiLine:
                         "Each person uses their own voice replies: up to {replies:number} every {hours:number} hours.",
@@ -1014,6 +1016,17 @@ const mapEditor: BaseTranslation = {
                     hear: "Hear {voice:string}",
                     noSample: "{voice:string} has no sample",
                     sampleFailed: "Couldn’t play the sample. Try again.",
+                    helloTitle: "Hear this voice say hello",
+                    helloLineUniverseAi:
+                        "A short line to hear this voice. Uses 1 of your voice replies; hearing it again soon is free.",
+                    helloLineKey:
+                        "A short line to hear this voice. Uses a few characters of {key:string}; hearing it again soon is free.",
+                    helloThinking: "Getting the voice ready…",
+                    helloSaying: "Saying hello…",
+                    helloStop: "Stop",
+                    helloUsedUp:
+                        "Your voice replies are used up until {time:string}. The samples above still play, free.",
+                    helloFailed: "Couldn’t play the voice just now. Try again.",
                     change: "Change",
                     howItSpeaks: "How it speaks",
                     payerUniverseAiTitle: "Universe AI pays for listening and speaking.",
@@ -1022,6 +1035,26 @@ const mapEditor: BaseTranslation = {
                     payerKeysTitle: "{speaks:string} speaks. {listens:string} listens.",
                     payerKeySpeaksTitle: "{speaks:string} speaks. Universe AI listens.",
                     payerKeyListensTitle: "Universe AI speaks. {listens:string} listens.",
+                    payerBothKeyLine: "It listens and speaks. You pay; people talking with {bot:string} pay nothing.",
+                    payerBothKeyLineTheirs:
+                        "It listens and speaks. {owner:string} pays; people talking with {bot:string} pay nothing.",
+                    payerBothUniverseAiLine:
+                        "It listens and speaks. Each person uses their own voice replies: up to {replies:number} every {hours:number} hours.",
+                    payerSplitTitle: "{listens:string} listens. {speaks:string} speaks.",
+                    payerTwoKeysLine: "Two companies, both paid by you. People talking with {bot:string} pay nothing.",
+                    payerTwoKeysLineTheirs:
+                        "Two companies, both paid by {owner:string}. People talking with {bot:string} pay nothing.",
+                    bothCaption: "One company for both",
+                    bothKeyCard: "Listens and speaks · you pay",
+                    bothKeyCardTheirs: "Listens and speaks · {owner:string} pays",
+                    bothUniverseAiCard: "Listens and speaks · people use their own voice replies",
+                    split: "Split listening and speaking",
+                    splitLine: "Listen with one company, speak with another",
+                    listensWith: "Listens with",
+                    speaksWith: "Speaks with",
+                    whySplit: "Why split?",
+                    whySplitLine:
+                        "Each company prices the two jobs on its own: listening by the minutes people talk, speaking by what {bot:string} says. A free credit, a lower price or a voice you like can sit with a different company for each job.",
                     payerKeyNote:
                         "People talking with {bot:string} pay nothing. This month: {replies:number} voice repl{{y|ies}} on this key.",
                     limitsLine:
