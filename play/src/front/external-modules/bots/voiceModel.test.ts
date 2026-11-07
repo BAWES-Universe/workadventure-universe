@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
     choicesFor,
+    companyName,
     coversBoth,
     fullProfile,
     helloFailureOf,
+    isNoVoiceList,
+    isOwnServer,
+    voiceNameFailureOf,
     limitsOf,
     modelLabel,
     noService,
@@ -14,9 +18,17 @@ import {
     previewKind,
     providerOf,
     readBotVoice,
+    readVoiceChoices,
+    settleTalk,
+    talkingModelsOf,
+    talksLive,
+    modelDoes,
     readHello,
     sourceOf,
     splitChoices,
+    splitPlaces,
+    speaksLive as speaksOnTalkingModel,
+    voicesForOption,
     startingVoice,
     viewOf,
     filterVoices,
@@ -24,6 +36,7 @@ import {
     startingPayer,
     voiceLanguages,
     type BotVoice,
+    type FullVoiceProfile,
     type VoiceChoice,
     type VoiceProfile,
 } from "./voiceModel";
@@ -312,6 +325,7 @@ describe("the Voice row's door", () => {
             previewUrl: null,
             providerId: "p",
             model: "m",
+            talk: false,
         })
     );
 
@@ -422,6 +436,7 @@ describe("voices", () => {
             previewUrl: null,
             providerId: "p",
             model: "m",
+            talk: false,
         },
         {
             voiceId: "b",
@@ -431,6 +446,7 @@ describe("voices", () => {
             previewUrl: null,
             providerId: "p",
             model: "m",
+            talk: false,
         },
     ];
 
@@ -479,6 +495,204 @@ describe("voices", () => {
     it("a profile missing a part isn't finished", () => {
         expect(fullProfile({})).toBeNull();
         expect(fullProfile(uaiProfile)).toMatchObject({ expression: "natural", language: { mode: "follow" } });
+    });
+});
+
+describe("talking models (#1910)", () => {
+    const openAi = (over: Record<string, unknown> = {}) =>
+        keyAnswer({
+            id: "key-oa",
+            adapter: "openai",
+            name: "My OpenAI",
+            recognition: true,
+            speech: true,
+            models: [
+                { id: "gpt-realtime-2.1", label: "GPT Realtime 2.1", kind: "talk" },
+                { id: "gpt-realtime-2.1-mini", label: "GPT Realtime 2.1 mini", kind: "talk" },
+            ],
+            ...over,
+        });
+    const live = {
+        recognition: { providerId: "key-oa", model: "gpt-realtime-2.1" },
+        speech: { providerId: "key-oa", model: "gpt-realtime-2.1", voiceId: "marin", voiceName: "Marin" },
+    };
+    const uai = {
+        recognition: { providerId: "uai-listen", model: "stt-rt-v6" },
+        speech: { providerId: "uai-speak", model: "eleven_v4_turbo", voiceId: "v-default", voiceName: "River" },
+    };
+    type Parts = Pick<FullVoiceProfile, "recognition" | "speech">;
+    const full = (profile: Parts): FullVoiceProfile => ({
+        recognition: profile.recognition,
+        speech: profile.speech,
+        expression: "natural",
+        language: { mode: "follow" },
+    });
+
+    it("reads a talking model as one that both listens and speaks", () => {
+        const voice = read({ lentKeys: [openAi()] });
+        expect(voice.lentKeys[0].models.map((model) => model.kind)).toEqual(["talk", "talk"]);
+        expect(modelDoes({ kind: "talk" }, "recognition")).toBe(true);
+        expect(modelDoes({ kind: "talk" }, "speech")).toBe(true);
+        expect(modelDoes({ kind: "speech" }, "recognition")).toBe(false);
+        expect(choicesFor(voice, "speech")).toContainEqual({ kind: "key", key: voice.lentKeys[0] });
+    });
+
+    it("offers a key that only talks live under speaking, not on its own for listening, and still counts it as a service", () => {
+        const voice = read({ lentKeys: [openAi()] });
+        expect(choicesFor(voice, "recognition")).not.toContainEqual({ kind: "key", key: voice.lentKeys[0] });
+        expect(choicesFor(voice, "speech")).toContainEqual({ kind: "key", key: voice.lentKeys[0] });
+        const keyOnly = read({ universeAi: { recognition: null, speech: null }, lentKeys: [openAi()] });
+        expect(noService(keyOnly)).toBe(false);
+    });
+
+    it("offers a key that only talks live as one place for both jobs, never as half of a split", () => {
+        const voice = read({ lentKeys: [openAi()] });
+        const ids = payerOptions(voice).map((option) => option.id);
+        expect(ids).toContain("key-oa");
+        expect(ids.some((id) => id.includes("+") && id.includes("key-oa"))).toBe(false);
+        const own = payerOptions(voice).find((option) => option.id === "key-oa");
+        expect(own?.recognition).toEqual({ kind: "key", key: voice.lentKeys[0] });
+        expect(own?.speech).toEqual({ kind: "key", key: voice.lentKeys[0] });
+        const keyOnly = read({ universeAi: { recognition: null, speech: null }, lentKeys: [openAi()] });
+        expect(payerOptions(keyOnly).map((option) => option.id)).toEqual(["key-oa"]);
+    });
+
+    it("leaves a key that only talks live out of the split lists, so every place there can be half of a split", () => {
+        const withOwn = openAi({
+            id: "key-ob",
+            name: "Also OpenAI",
+            models: [...openAi().models, { id: "gpt-listen", kind: "recognition" }, { id: "gpt-tts", kind: "speech" }],
+        });
+        const voice = read({ lentKeys: [openAi(), withOwn] });
+        const id = (choice: { kind: string; key?: { id: string } }) => choice.key?.id ?? choice.kind;
+        for (const part of ["recognition", "speech"] as const) {
+            const places = splitPlaces(voice, part).map(id);
+            expect(places).not.toContain("key-oa");
+            expect(places).toContain("key-ob");
+        }
+        // Each place offered for speaking pairs with Universe AI listening, so picking one always does something
+        const uaiListens = { kind: "universe-ai" as const };
+        for (const place of splitPlaces(voice, "speech")) {
+            expect(optionOf(voice, uaiListens, place)).toBeDefined();
+        }
+        // The key that only talks live is still offered as one place for both jobs
+        expect(
+            payerOptions(voice)
+                .filter(coversBoth)
+                .map((option) => option.id)
+        ).toContain("key-oa");
+    });
+
+    it("speaks a split on the key's own speaking voices, never a talking model's, so the split holds", () => {
+        const withOwn = openAi({
+            models: [...openAi().models, { id: "gpt-listen", kind: "recognition" }, { id: "gpt-tts", kind: "speech" }],
+        });
+        const voice = on(live, { lentKeys: [withOwn] });
+        expect(speaksOnTalkingModel(voice, live)).toBe(true);
+        const key = { kind: "key" as const, key: voice.lentKeys[0] };
+        const split = optionOf(voice, { kind: "universe-ai" }, key);
+        const one = optionOf(voice, key, key);
+        if (!split || !one) throw new Error("both options should be offered");
+        const list = readVoiceChoices([
+            { voiceId: "marin", name: "Marin", providerId: "key-oa", model: "gpt-realtime-2.1", talk: true },
+            { voiceId: "alloy", name: "Alloy", providerId: "key-oa", model: "gpt-tts", talk: false },
+        ]);
+        if (!list) throw new Error("the list should be readable");
+        expect(voicesForOption(split, list).map((choice) => choice.voiceId)).toEqual(["alloy"]);
+        expect(voicesForOption(one, list).map((choice) => choice.voiceId)).toEqual(["marin", "alloy"]);
+        // Turning voice on with the split starts on the key's own voice, even when the last version talked live
+        const door = doorVoices(voice, split.speech, voicesForOption(split, list), "marin");
+        expect(door.voices.map((choice) => choice.voiceId)).toEqual(["alloy"]);
+        expect(door.startId).toBe("alloy");
+        // Listening on Universe AI and speaking on the key's own model is left as it is
+        const next = full({
+            ...live,
+            recognition: uai.recognition,
+            speech: { ...live.speech, model: "gpt-tts", voiceId: "alloy" },
+        });
+        expect(speaksOnTalkingModel(voice, next)).toBe(false);
+        expect(settleTalk(voice, next).recognition).toEqual(uai.recognition);
+    });
+
+    it("starts a key with only talking models on its first one, for either part", () => {
+        const voice = read({ lentKeys: [openAi()] });
+        const key = { kind: "key" as const, key: voice.lentKeys[0] };
+        expect(providerOf(voice, "speech", key)).toEqual({ providerId: "key-oa", model: "gpt-realtime-2.1" });
+        expect(providerOf(voice, "recognition", key, "gpt-realtime-2.1-mini")).toEqual({
+            providerId: "key-oa",
+            model: "gpt-realtime-2.1-mini",
+        });
+    });
+
+    it("names the talking-model companies as they write their own names", () => {
+        expect(companyName("openai")).toBe("OpenAI");
+        expect(companyName("xai")).toBe("xAI");
+        expect(companyName("azure")).toBe("Azure OpenAI");
+        expect(companyName("google")).toBe("Google");
+        expect(companyName("aws")).toBe("AWS");
+        expect(companyName("inworld")).toBe("Inworld");
+        expect(companyName("ultravox")).toBe("Ultravox");
+        expect(companyName("zoom")).toBe("Zoom");
+    });
+
+    it("reads which voices talk live", () => {
+        const choices = readVoiceChoices([
+            { voiceId: "marin", name: "Marin", providerId: "key-oa", model: "gpt-realtime-2.1", talk: true },
+            { voiceId: "v1", name: "River" },
+        ]);
+        expect(choices?.map((choice) => choice.talk)).toEqual([true, false]);
+    });
+
+    it("talks live only when one talking model is named for both parts", () => {
+        const voice = on(live, { lentKeys: [openAi()] });
+        expect(talksLive(voice, live)).toBe(true);
+        expect(talkingModelsOf(voice, live).map((model) => model.id)).toEqual([
+            "gpt-realtime-2.1",
+            "gpt-realtime-2.1-mini",
+        ]);
+        const split: VoiceProfile = { ...live, recognition: { providerId: "uai-listen", model: "stt-rt-v6" } };
+        expect(talksLive(voice, split)).toBe(false);
+        expect(talkingModelsOf(voice, split)).toEqual([]);
+        expect(talksLive(voice, uaiProfile)).toBe(false);
+    });
+
+    it("names a talking model for listening too, whatever changed", () => {
+        const voice = on(live, { lentKeys: [openAi()] });
+        const speaksLive = full({ ...uai, speech: live.speech });
+        expect(settleTalk(voice, speaksLive).recognition).toEqual(live.recognition);
+        const mini = full({ ...live, speech: { ...live.speech, model: "gpt-realtime-2.1-mini" } });
+        expect(settleTalk(voice, mini).recognition).toEqual({ providerId: "key-oa", model: "gpt-realtime-2.1-mini" });
+        const settled = full(live);
+        expect(settleTalk(voice, settled)).toBe(settled);
+    });
+
+    it("moves listening off a talking model when speaking moved off it", () => {
+        const voice = on(live, { lentKeys: [openAi()] });
+        const spoken = full({ ...live, speech: uai.speech });
+        expect(settleTalk(voice, spoken).recognition).toEqual({ providerId: "uai-listen", model: "stt-rt-v6" });
+        // A key that also listens on its own model keeps listening there
+        const both = on(live, {
+            lentKeys: [openAi({ models: [...openAi().models, { id: "gpt-listen", kind: "recognition" }] })],
+        });
+        expect(settleTalk(both, spoken).recognition).toEqual({ providerId: "key-oa", model: "gpt-listen" });
+        // A server with no Universe AI listening: another lent key that listens takes it
+        const noUaiListening = on(live, {
+            universeAi: { recognition: null, speech: orbitAnswer().universeAi.speech },
+            lentKeys: [
+                openAi(),
+                keyAnswer({
+                    id: "key-dg",
+                    adapter: "deepgram",
+                    recognition: true,
+                    speech: false,
+                    models: [{ id: "nova-3", kind: "recognition" }],
+                }),
+            ],
+        });
+        expect(settleTalk(noUaiListening, spoken).recognition).toEqual({ providerId: "key-dg", model: "nova-3" });
+        // Nothing to do for a voice that never talked live
+        const plain = full(uai);
+        expect(settleTalk(voice, plain)).toBe(plain);
     });
 });
 
@@ -548,5 +762,37 @@ describe("hearing a bot say hello (#1852)", () => {
         expect(helloFailureOf(new Error("network"))).toEqual({ kind: "failed" });
         expect(helloFailureOf(null)).toEqual({ kind: "failed" });
         expect(helloFailureOf("boom")).toEqual({ kind: "failed" });
+    });
+});
+
+describe("a speech server that lists no voices (#1874)", () => {
+    it("knows Orbit's refusal to list them by its status and its code, and no other failure for it", () => {
+        expect(isNoVoiceList(Object.assign(new Error("x"), { status: 409, code: "no_voice_list" }))).toBe(true);
+        // A server that is down or refused is a 502 with no code: Try again stays
+        expect(isNoVoiceList(Object.assign(new Error("x"), { status: 502 }))).toBe(false);
+        expect(isNoVoiceList(Object.assign(new Error("x"), { status: 409 }))).toBe(false);
+        expect(isNoVoiceList(Object.assign(new Error("x"), { status: 502, code: "no_voice_list" }))).toBe(false);
+        expect(isNoVoiceList(null)).toBe(false);
+        expect(isNoVoiceList("no_voice_list")).toBe(false);
+    });
+
+    it("names a refused typed name when the server answered 400, 404 or 422, and a silent server for anything else", () => {
+        const provider = (providerStatus?: number) => ({
+            status: 502,
+            body: { error: "provider", ...(providerStatus === undefined ? {} : { providerStatus }), rejected: false },
+        });
+        for (const status of [400, 404, 422]) expect(voiceNameFailureOf(provider(status))).toBe("rejected");
+        for (const status of [401, 402, 429, 500, 503, undefined]) {
+            expect(voiceNameFailureOf(provider(status))).toBe("unreachable");
+        }
+        // The bot server could not reach the voice worker, or the worker the speech server
+        expect(voiceNameFailureOf({ status: 503, body: { error: "unavailable" } })).toBe("unreachable");
+        expect(voiceNameFailureOf(new Error("network"))).toBe("unreachable");
+        expect(voiceNameFailureOf(null)).toBe("unreachable");
+    });
+
+    it("tells a speech server of the person's own by its adapter", () => {
+        expect(isOwnServer({ adapter: "openai-compatible" })).toBe(true);
+        expect(isOwnServer({ adapter: "elevenlabs" })).toBe(false);
     });
 });

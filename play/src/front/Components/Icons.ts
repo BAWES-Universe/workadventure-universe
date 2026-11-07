@@ -25,6 +25,7 @@ export { default as IconTrash } from "~icons/tabler/trash";
 export { default as IconBan } from "~icons/tabler/ban";
 export { default as IconFlag } from "~icons/tabler/flag";
 export { default as IconSend } from "~icons/tabler/send";
+export { default as IconServer } from "~icons/tabler/server";
 export { default as IconPhoto } from "~icons/tabler/photo";
 export { default as IconPhotoOff } from "~icons/tabler/photo-off";
 export { default as IconEdit } from "~icons/tabler/edit";
