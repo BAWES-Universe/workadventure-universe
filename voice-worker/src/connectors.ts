@@ -44,7 +44,13 @@ interface ProviderSettings {
     region?: string;
     language?: string;
 }
-export type RecognitionSettings = ProviderSettings;
+export interface RecognitionSettings extends ProviderSettings {
+    /**
+     * Names the hearing should expect and spell as written: the bot's own name and the other voice bots' (#1864). Read
+     * when a stretch of speech opens, so a change applies from the next one. A provider that cannot take names ignores it.
+     */
+    readonly terms?: readonly string[];
+}
 export interface SpeechSettings extends ProviderSettings {
     voiceId: string;
 }
