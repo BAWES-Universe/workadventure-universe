@@ -594,6 +594,7 @@ export function companyName(adapter: string): string {
         google: "Google",
         inworld: "Inworld",
         openai: "OpenAI",
+        ultravox: "Ultravox",
         xai: "xAI",
         deepgram: "Deepgram",
         soniox: "Soniox",
