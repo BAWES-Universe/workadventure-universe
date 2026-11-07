@@ -31,6 +31,7 @@ import { RESEMBLE_ADAPTER, ResembleSpeech } from './resemble.ts';
 import { RIME_ADAPTER, RimeSpeech } from './rime.ts';
 import { SARVAM_ADAPTER, SarvamRecognition, SarvamSpeech } from './sarvam.ts';
 import { SMALLEST_ADAPTER, SmallestRecognition, SmallestSpeech } from './smallest.ts';
+import { SPEECHIFY_ADAPTER, SpeechifySpeech } from './speechify.ts';
 import { ELEVENLABS_ADAPTER, ElevenLabsSpeech } from './elevenlabs.ts';
 import { CARTESIA_ADAPTER, CartesiaRecognition, CartesiaSpeech } from './cartesia.ts';
 import { FISH_ADAPTER, FishSpeech } from './fish.ts';
@@ -168,6 +169,7 @@ export class VoiceWorker {
             this.connectors.registerRecognition(SMALLEST_ADAPTER, new SmallestRecognition({ finalTimeoutMs }));
         }
         if (!this.connectors.speech(SMALLEST_ADAPTER)) this.connectors.registerSpeech(SMALLEST_ADAPTER, new SmallestSpeech());
+        if (!this.connectors.speech(SPEECHIFY_ADAPTER)) this.connectors.registerSpeech(SPEECHIFY_ADAPTER, new SpeechifySpeech());
         if (!this.connectors.recognition(SONIOX_ADAPTER)) {
             const finalTimeoutMs = (options.recognitionFinalTimeoutSeconds ?? DEFAULT_SONIOX_FINAL_TIMEOUT_MS / 1000) * 1000;
             this.connectors.registerRecognition(SONIOX_ADAPTER, new SonioxRecognition({ finalTimeoutMs }));
