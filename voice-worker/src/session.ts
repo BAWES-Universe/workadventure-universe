@@ -156,7 +156,7 @@ export class Session {
     /** Hearing for this bubble: the provider it names, else the worker's own engine. An adapter the worker does not have hears nothing and says so. */
     private hearingFor(config?: RecognitionConfig): { factory: RecognizerFactory; provider?: ProviderReporter } | undefined {
         if (!config) return this.host.recognizer ? { factory: this.host.recognizer } : undefined;
-        const settings = { adapter: config.adapter, model: config.model, key: new Secret(config.key), endpoint: config.endpoint, region: config.region, language: config.language };
+        const settings = { adapter: config.adapter, model: config.model, key: new Secret(config.key ?? ''), endpoint: config.endpoint, region: config.region, language: config.language };
         const connector = this.host.connectors.recognition(config.adapter);
         const factory: RecognizerFactory = (events) => {
             if (!connector) return failingRecognizer(events);
@@ -175,7 +175,7 @@ export class Session {
             const speech = this.host.defaultSpeech;
             return { voice: { speak: (request) => speech.speak({ ...request, settings: FAKE_SPEECH_SETTINGS, expression }) } };
         }
-        const settings: SpeechSettings = { adapter: config.adapter, model: config.model, voiceId: config.voiceId, key: new Secret(config.key), endpoint: config.endpoint, region: config.region, language: config.language };
+        const settings: SpeechSettings = { adapter: config.adapter, model: config.model, voiceId: config.voiceId, key: new Secret(config.key ?? ''), endpoint: config.endpoint, region: config.region, language: config.language };
         const connector = this.host.connectors.speech(config.adapter);
         const voice: Voice = {
             speak: (request) =>

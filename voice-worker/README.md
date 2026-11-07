@@ -70,6 +70,18 @@ that names nothing gets) and the scripted `FakeEars` for tests, plus these real 
   arrives. A 44-byte WAV header at the start of the stream, if Fish sends one, is skipped. The reply's language goes as `language`
   (base code, such as `ar`; Fish uses it only to read numbers and dates aloud). No expression is sent. A refusal fails with Fish's
   status (401 a wrong key, 402 no credit, 429 too many at once); an unreachable server or a dropped stream fails without one.
+* `openai-compatible` (hearing and speaking, `src/openaiCompatible.ts`, game #1874): a speech server on a person's own computer,
+  reached at the https address Orbit saved with the key (`<origin>/v1`, the profile's `endpoint`; there is no default). It is
+  one entry, not a company: Speaches, Kokoro-FastAPI, a Whisper of their own, anything that answers the OpenAI speech shape.
+  Hearing sends one `POST /audio/transcriptions` per stretch of speech, when the person pauses (a 16 kHz WAV with `model`,
+  `response_format=json` and the base `language` when the bot has one), so no words show while they talk, like Pipecat's
+  `BaseWhisperSTTService`. Speaking sends one streamed `POST /audio/speech` per reply with `model`, `input`, `voice` and
+  `response_format: pcm`; the audio is 24 kHz unless `VOICE_OPENAI_COMPATIBLE_SAMPLE_RATE` says the server's raw audio is another
+  rate, and a WAV header in front is skipped. The key is optional: with none, no `Authorization` header is sent; with one it goes
+  there only. Every call goes through the address guard (`src/kit/publicFetch.ts`, the worker's copy of the bot server's
+  own-computer guard): https and a name only, every address the name gives public, the connection pinned to the address that was
+  checked, only the two audio paths, no redirect followed, a size cap. A private, loopback or unresolvable address fails the call
+  without a status; a refusal fails with the server's status.
 * `deepgram` (hearing, `src/deepgram.ts`): one real-time WebSocket stream per stretch of speech to
   `wss://api.deepgram.com/v1/listen` (or the profile's `endpoint`), the key in the `Authorization` header only
   (`Token <key>`), 16 kHz mono `linear16`, the profile's `model` (`nova-3` when it names none) and its `language` when it
@@ -163,6 +175,7 @@ npm test
 | `VOICE_RECOGNITION_FINAL_TIMEOUT_SECONDS` | `10` | The longest a hearing provider may take for a person's last words after they paused before the call counts as failed. |
 | `VOICE_BARGE_IN_MS` | `100` | Speech this long, from a person the bot hears, stops the bot's voice. A click or a cough is shorter. |
 | `VOICE_CARTESIA_VERSION` | `2026-08-14` | The `Cartesia-Version` every Cartesia request names. Change it only together with `src/cartesia.ts`. |
+| `VOICE_OPENAI_COMPATIBLE_SAMPLE_RATE` | `24000` | The sample rate of the raw audio a person's own speech server (`openai-compatible`) sends. OpenAI's `pcm`, and the usual one, is 24 kHz. |
 | `VOICE_ICE_SERVERS` | Google STUN | JSON list of STUN/TURN servers, like the game's. |
 | `VOICE_ICE_PORT_RANGE` | any | `40000-40100`: the UDP ports to open on the host. |
 | `VOICE_PUBLIC_IP` | none | Public address(es) of the host when it is behind a NAT. |
