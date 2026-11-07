@@ -34,30 +34,73 @@ that names nothing gets) and the scripted `FakeEars` for tests, plus these real 
 
 * `soniox` (hearing, `src/soniox.ts`): one real-time WebSocket stream per stretch of speech to
   `wss://stt-rt.soniox.com/transcribe-websocket` (or the profile's `endpoint`), the key in the `Authorization` header only,
-  16 kHz mono `s16le`, the profile's `model`, and its `language` as the only language hint when it fixes one. Partial words
-  are the final tokens so far plus the latest guesses; when the person pauses an empty text frame ends the audio and the
+  16 kHz mono `s16le`, the profile's `model`, and its `language` (the plain code, "ar" for "ar-KW") as the only language
+  hint when it fixes one. A model Soniox has retired or deprecated (`stt-rt-v5`, removed 15 Dec 2026, its alias
+  `stt-rt-v4`, and older) listens with the current `stt-rt-v6`. Soniox's own end-of-speech detection is on, with the
+  starting point Soniox recommends for voice AI (`max_endpoint_delay_ms` 1500, latency level 2, sensitivity 0.3; the last
+  two from v5 on): when it hears the person finish (its `<end>` token) the stretch ends at once, and the worker's own
+  quiet timer waits 1.8 s instead of 0.8 s as a fallback, so a mid-sentence pause is not cut. Partial words
+  are the final tokens so far plus the latest guesses; when the stretch ends an empty text frame ends the audio and the
   words are final on Soniox's `finished`. A refused key (401/403), an error answer (its `error_code`), a dropped stream or
   no `finished` within `VOICE_RECOGNITION_FINAL_TIMEOUT_SECONDS` (default 10) fails the turn with the words heard so far.
-* `elevenlabs` (speaking, `src/elevenlabs.ts`): one streamed `POST /v1/text-to-speech/{voiceId}/stream?output_format=pcm_24000`
-  per reply to `https://api.elevenlabs.io` (or the profile's `endpoint`), the key in the `xi-api-key` header only, the
-  profile's `model` as `model_id`. Raw 24 kHz PCM plays as it arrives. The reply's language goes as `language_code`
-  (only to the v2.5 and v3 models; the others refuse one, so they go without it). Expression: `restrained` sends stability 0.75, `expressive` 0.3,
-  `natural` nothing (the voice's saved settings). A refusal fails with ElevenLabs' status; an unreachable server or a
-  dropped stream fails without one.
+  The names the bubble gives (`recognition.terms`: the bot's own name and the other voice bots') go as `context.terms`, so Soniox
+  spells them as written (#1864).
+* `elevenlabs` (speaking, `src/elevenlabs.ts`): one connection per reply to `https://api.elevenlabs.io` (or the profile's
+  `endpoint`), the key in the `xi-api-key` header only, raw 24 kHz PCM that plays as it arrives. How each model is asked
+  comes from one table of ElevenLabs' documented models (`ELEVENLABS_MODELS`, #1847). The superseded Turbo v2 ids speak
+  with the Flash model ElevenLabs replaced them with. The real-time v3 and v4 models (`eleven_v4_turbo`,
+  `eleven_v3_conversational`) are served only over the Text to Dialogue WebSocket (`/v1/text-to-dialogue/stream-input`):
+  the socket is opened and set up (voice, settings) as soon as someone in the bubble starts talking, kept alive while it
+  waits and closed after 45 s unused, so the reply does not wait for a connection; the reply is the whole text then
+  `close_socket`, which flushes it, and the socket closes at once when the reply is no longer wanted. Text normalization is
+  on there, so numbers, dates and amounts are read as words (the reply's text is also what the chat shows). Every other
+  model streams over `POST /v1/text-to-speech/{voiceId}/stream?output_format=pcm_24000`. The reply's language goes
+  as `language_code` to every model but the old ones that refuse it (multilingual v1/v2 and the English-only ones); a
+  model newer than the table gets it too, since ElevenLabs ignores a code a model cannot use. Expression: `restrained`
+  sends stability 0.75, `expressive` 0.3 (on v3, which takes only 0, 0.5 or 1: 1 Robust and 0 Creative), `natural`
+  nothing (the voice's saved settings). A refusal fails with ElevenLabs' status (a WebSocket error answer maps its id to
+  the status the same failure has over HTTP); an unreachable server or a dropped stream fails without one.
 * `cartesia` (speaking, `src/cartesia.ts`): one streamed `POST /tts/bytes` per reply to `https://api.cartesia.ai` (or the
   profile's `endpoint`), the key in the `Authorization: Bearer` header only, `Cartesia-Version` from `VOICE_CARTESIA_VERSION`,
   the profile's `model` as `model_id` and voice as `voice.id`, asking for raw `pcm_s16le` at 24 kHz, which plays as it arrives.
   The reply's language goes as `language` (base code, such as `ar`). Expression: `restrained` sends `generation_config.emotion`
   `calm` (Sonic 3 and newer only); `natural` and `expressive` send nothing, so Cartesia reads the emotion from the words. A
   refusal fails with Cartesia's status; an unreachable server or a dropped stream fails without one.
+* `fish` (speaking, `src/fish.ts`): one streamed `POST /v1/tts` per reply to `https://api.fish.audio` (or the profile's
+  `endpoint`), the key in the `Authorization: Bearer` header only, the profile's `model` in the `model` header (`s2.1-pro`, or
+  the free `s2.1-pro-free`) and its voice as `reference_id`, asking for `pcm` at 24 kHz with `latency: balanced`, which plays as it
+  arrives. A 44-byte WAV header at the start of the stream, if Fish sends one, is skipped. The reply's language goes as `language`
+  (base code, such as `ar`; Fish uses it only to read numbers and dates aloud). No expression is sent. A refusal fails with Fish's
+  status (401 a wrong key, 402 no credit, 429 too many at once); an unreachable server or a dropped stream fails without one.
+* `openai-compatible` (hearing and speaking, `src/openaiCompatible.ts`, game #1874): a speech server on a person's own computer,
+  reached at the https address Orbit saved with the key (`<origin>/v1`, the profile's `endpoint`; there is no default). It is
+  one entry, not a company: Speaches, Kokoro-FastAPI, a Whisper of their own, anything that answers the OpenAI speech shape.
+  Hearing sends one `POST /audio/transcriptions` per stretch of speech, when the person pauses (a 16 kHz WAV with `model`,
+  `response_format=json` and the base `language` when the bot has one), so no words show while they talk, like Pipecat's
+  `BaseWhisperSTTService`. Speaking sends one streamed `POST /audio/speech` per reply with `model`, `input`, `voice` and
+  `response_format: pcm`; the audio is 24 kHz unless `VOICE_OPENAI_COMPATIBLE_SAMPLE_RATE` says the server's raw audio is another
+  rate, and a WAV header in front is skipped. The key is optional: with none, no `Authorization` header is sent; with one it goes
+  there only. Every call goes through the address guard (`src/kit/publicFetch.ts`, the worker's copy of the bot server's
+  own-computer guard): https and a name only, every address the name gives public, the connection pinned to the address that was
+  checked, only the two audio paths, no redirect followed, a size cap. A private, loopback or unresolvable address fails the call
+  without a status; a refusal fails with the server's status.
 * `deepgram` (hearing, `src/deepgram.ts`): one real-time WebSocket stream per stretch of speech to
   `wss://api.deepgram.com/v1/listen` (or the profile's `endpoint`), the key in the `Authorization` header only
   (`Token <key>`), 16 kHz mono `linear16`, the profile's `model` (`nova-3` when it names none) and its `language` when it
-  fixes one (otherwise Deepgram's own default applies). Deepgram's own end-of-speech cutting is off: the worker decides where
-  speech ends. Partial words are the final segments so far plus the latest guess; when the person pauses a `CloseStream`
+  fixes one (otherwise Deepgram's own default applies). Where the person's turn ends (#1866) follows Deepgram's own guidance
+  for voice agents: `endpointing=500` makes Deepgram finalize at a short quiet and say `speech_final`, which ends the turn only
+  when the words so far end a sentence (a full stop, `?`, `!`, `؟`, `。`; "..." is hesitation); a pause in the middle of a
+  sentence is waited through. `utterance_end_ms=1500` makes Deepgram send `UtteranceEnd` after a long gap between words (from word
+  timings, so background noise does not hold it off), which ends the turn when no sentence ended; and the worker's own quiet
+  timer, 1.8 s as with Soniox, is the last fallback (it also applies when the sender sends no audio at all while silent).
+  Before this a Deepgram turn ended after 0.8 s of quiet whatever was said. Partial words are the final segments so far plus the latest guess; when the person pauses a `CloseStream`
   message ends the audio and the words are final once Deepgram has sent its last answer (`Metadata`) or closed the stream
   normally. A refused key (401/403), an `Error` answer, a stream closed any other way or no last answer within
   `VOICE_RECOGNITION_FINAL_TIMEOUT_SECONDS` (default 10) fails the turn with the words heard so far.
+  The bubble's names (`recognition.terms`) go as `keyterm` parameters on Nova-3 (up to 200 characters in all, under Deepgram's
+  500 tokens; an older model has a different feature and gets none). Should Deepgram refuse them with a 400 (a Nova-3 model
+  that does not take key terms), the stretch is opened again without them, nothing heard is lost, and the next stretches of
+  that model and language skip them for an hour (#1864).
 
 To add a provider, write one file that implements a connector and register it by its lowercase adapter name:
 
@@ -97,6 +140,27 @@ process's share of one core, averaged over the last minute; reading it changes n
 `lanes_refused` and `sessions_refused` for those turned away because the worker was full. The bot server reads it every
 minute for its load events and warnings (game #1751).
 
+`/stats` also has `latency` (#1865): how long a spoken turn takes, in milliseconds, as the median (`p50`), the 95th percentile
+(`p95`) and the number of turns (`samples`) over the last ten minutes (at most 200 turns each), per stage and provider. Times and
+provider names only, never a word anyone said. `hear`: the person stops talking until their last words are final (the hearing
+provider). `think`: those words are final until the bot's reply arrives (the bot and its AI model; measured only when exactly one person's
+turn is waiting for an answer and the reply comes within a minute: with two people waiting, or a reply nobody spoke to, the
+reply could answer any of them, so `think` and `total` skip it rather than guess; `speak` and `play` are still timed). `speak`: the reply is handed to the voice until its first audio (the speaking
+provider). `play`: that audio until its first frame is on its way out (this worker). `total`: the person stops talking until the
+first frame of the answer goes out (provider `soniox>elevenlabs`, the hearing and the speaking one). A bubble on the built-in test
+engine is not timed.
+
+### One-shot lines: `POST /preview`
+
+The bot server asks the worker to speak one line once, with the speech settings of a bubble, and plays the audio back to the
+maker's browser ("Hear the bot say hello", game #1852). Same bearer secret as `/stats`. Body: `{ speech: { adapter, model,
+voiceId, key, endpoint?, region?, language? }, text, expression?, maxSeconds? }` (text up to 1000 characters, body up to
+16 KB). The answer is `200 audio/wav` (24 kHz mono 16-bit, `x-audio-ms` is its length), `400` for a request or an adapter the
+worker does not have, `401`, `413`, `429 {error:"busy"}` over `VOICE_MAX_PREVIEWS`, or `502 {error:"provider", status?,
+rejected}` when the voice company refused or failed (`rejected`: it refused the key). It uses the same connectors as a bubble,
+so ElevenLabs `eleven_v4_turbo` goes over the Text-to-Dialogue socket. The key is held for the call only and never logged. The
+call is cancelled if the caller goes away.
+
 ### LiveKit tests
 
 `test/livekit.test.ts` runs against a real local `livekit-server` and is skipped when none answers on
@@ -121,10 +185,13 @@ npm test
 | `VOICE_MAX_SESSIONS_PER_BOT` | `64` | Bubbles one bot may have open. |
 | `VOICE_MAX_UTTERANCE_SECONDS` | `180` | The longest stretch of one person's speech taken, in seconds of audio. Past it the words are offered back to them, never sent. |
 | `VOICE_MAX_REPLY_SECONDS` | `60` | The longest one spoken reply plays, whatever the bot server asks (it asks for its own, up to this). |
+| `VOICE_MAX_PREVIEWS` | `8` | One-shot lines ("Hear the bot say hello", game #1852) rendered at once. Over it, `POST /preview` answers 429. |
+| `VOICE_MAX_PREVIEW_SECONDS` | `20` | The longest a one-shot line plays, whatever the bot server asks. |
 | `VOICE_SPEECH_TIMEOUT_SECONDS` | `15` | The longest a speech provider may go without sending the next piece of a reply's audio before the call counts as failed. |
 | `VOICE_RECOGNITION_FINAL_TIMEOUT_SECONDS` | `10` | The longest a hearing provider may take for a person's last words after they paused before the call counts as failed. |
 | `VOICE_BARGE_IN_MS` | `100` | Speech this long, from a person the bot hears, stops the bot's voice. A click or a cough is shorter. |
 | `VOICE_CARTESIA_VERSION` | `2026-08-14` | The `Cartesia-Version` every Cartesia request names. Change it only together with `src/cartesia.ts`. |
+| `VOICE_OPENAI_COMPATIBLE_SAMPLE_RATE` | `24000` | The sample rate of the raw audio a person's own speech server (`openai-compatible`) sends. OpenAI's `pcm`, and the usual one, is 24 kHz. |
 | `VOICE_ICE_SERVERS` | Google STUN | JSON list of STUN/TURN servers, like the game's. |
 | `VOICE_ICE_PORT_RANGE` | any | `40000-40100`: the UDP ports to open on the host. |
 | `VOICE_PUBLIC_IP` | none | Public address(es) of the host when it is behind a NAT. |

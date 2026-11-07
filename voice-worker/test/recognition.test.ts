@@ -22,7 +22,7 @@ interface Rig {
     partials(): string[];
 }
 
-function rig(script: (string | FakeUtterance)[], options: { maxUtteranceMs?: number; pauseMs?: number; idleMs?: number } = {}): Rig {
+function rig(script: (string | FakeUtterance)[], options: { maxUtteranceMs?: number; pauseMs?: number; idleMs?: number; onFinal?: (timing: { participantId: string; hearMs: number }) => void } = {}): Rig {
     const sent: OutgoingMessage[] = [];
     const tapped: number[] = [];
     const ears = new FakeEars(script);
@@ -38,6 +38,7 @@ function rig(script: (string | FakeUtterance)[], options: { maxUtteranceMs?: num
             expect(checkMessage('fromWorker', { ...message, sessionId: 's' })).toBeNull();
         },
         next: (frame) => tapped.push(frame.pcm16k.length),
+        onFinal: options.onFinal,
     });
     const feed = (pcm: () => Int16Array, ms: number, who: string, epoch: number, droppedMs = 0) => {
         for (let t = 0; t < ms; t += FRAME) recognition.sink({ participantId: who, epoch, pcm16k: pcm(), droppedMs: t === 0 ? droppedMs : 0 });
@@ -53,6 +54,35 @@ function rig(script: (string | FakeUtterance)[], options: { maxUtteranceMs?: num
         partials: () => sent.filter((m) => m.type === 'user.partial').map((m) => (m as { text: string }).text),
     };
 }
+
+describe('how long after they stop talking the words come through (#1865)', () => {
+    it('says it once for a stretch that became the person\'s line, with the time since they stopped talking and no words', async () => {
+        const timings: { participantId: string; hearMs: number }[] = [];
+        const r = rig([{ text: 'hello there', finalDelayMs: 120 }], { onFinal: (timing) => timings.push(timing) });
+        r.speak(400);
+        r.pause(440);
+        await sleep(200);
+        expect(r.turns()).toMatchObject([{ outcome: 'final' }]);
+        expect(timings).toHaveLength(1);
+        expect(timings[0].participantId).toBe('p1');
+        // At least the wait for the final words; frames are fed at once here, so the quiet itself costs no real time
+        expect(timings[0].hearMs).toBeGreaterThanOrEqual(100);
+        expect(timings[0].hearMs).toBeLessThan(2000);
+        expect(Object.keys(timings[0]).sort()).toEqual(['hearMs', 'participantId']);
+    });
+
+    it('says nothing for a stretch that was lost or had nothing in it', () => {
+        const timings: unknown[] = [];
+        const lost = rig([{ text: 'one two three four', failAfterWords: 2 }], { onFinal: (timing) => timings.push(timing) });
+        lost.speak(1500);
+        const empty = rig([''], { onFinal: (timing) => timings.push(timing) });
+        empty.speak(400);
+        empty.pause(440);
+        expect(lost.turns().map((t) => t.outcome)).toEqual(['lost']);
+        expect(empty.turns().map((t) => t.outcome)).toEqual(['cleared']);
+        expect(timings).toEqual([]);
+    });
+});
 
 describe('a short noise is not someone speaking', () => {
     it('sends no speech_started for a click shorter than the barge-in, and only the cleared end', () => {
@@ -291,5 +321,78 @@ describe('words nobody asked to keep', () => {
         r.speak(400);
         expect(r.sent).toHaveLength(before);
         expect(r.ears.closed).toBe(1);
+    });
+});
+
+describe("a provider that hears the end of speech itself (#1847)", () => {
+    /** A recognizer that hears "hello there", ends the stretch when told, and waits `pauseMs` of quiet otherwise. */
+    function endpointing(pauseMs: number) {
+        const sent: OutgoingMessage[] = [];
+        const said: { endpoint?: () => void } = {};
+        let finished = 0;
+        const recognition = new Recognition({
+            factory: (events) => {
+                said.endpoint = events.endpoint;
+                return {
+                    pauseMs,
+                    push: () => events.partial('hello there'),
+                    finish: () => {
+                        finished++;
+                        events.final('hello there');
+                    },
+                    close: () => undefined,
+                };
+            },
+            maxUtteranceMs: 180000,
+            pauseMs: 400,
+            counters: new Counters(),
+            send: (message) => sent.push(message),
+        });
+        const feed = (pcm: () => Int16Array, ms: number) => {
+            for (let t = 0; t < ms; t += FRAME) recognition.sink({ participantId: 'p1', epoch: 1, pcm16k: pcm(), droppedMs: 0 });
+        };
+        return {
+            said,
+            finished: () => finished,
+            speak: (ms: number) => feed(loud, ms),
+            pause: (ms: number) => feed(quiet, ms),
+            turns: () => sent.filter((m) => m.type === 'user.turn'),
+            dispose: () => recognition.dispose(),
+        };
+    }
+
+    it('ends the stretch as soon as the provider says the person finished, before any long quiet', () => {
+        const r = endpointing(1800);
+        r.speak(400);
+        r.pause(100);
+        expect(r.turns()).toHaveLength(0);
+        r.said.endpoint?.();
+        expect(r.finished()).toBe(1);
+        expect(r.turns()).toEqual([expect.objectContaining({ outcome: 'final', text: 'hello there' })]);
+        // Said again for a stretch that is over: nothing more
+        r.said.endpoint?.();
+        expect(r.finished()).toBe(1);
+        r.dispose();
+    });
+
+    it("waits through a pause longer than the worker's own while the provider has not said so, then ends on quiet as a fallback", () => {
+        const r = endpointing(1000);
+        r.speak(400);
+        r.pause(600);
+        expect(r.turns()).toHaveLength(0);
+        r.pause(400);
+        expect(r.turns()).toEqual([expect.objectContaining({ outcome: 'final' })]);
+        r.dispose();
+    });
+
+    it("also waits that long when the audio simply stops (a sender that sends nothing while silent), not the worker's own shorter wait (#1866)", async () => {
+        const r = endpointing(900);
+        r.speak(400);
+        // No more audio at all: past the worker's own wait (400 ms), before the provider's (900 ms)
+        await sleep(600);
+        expect(r.turns()).toHaveLength(0);
+        await sleep(500);
+        expect(r.turns()).toEqual([expect.objectContaining({ outcome: 'final' })]);
+        r.dispose();
     });
 });
