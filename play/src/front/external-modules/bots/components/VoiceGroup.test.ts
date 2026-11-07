@@ -541,8 +541,38 @@ describe("the bot page's Voice group (#1668)", () => {
         expect(mocks.openOrbitPage).toHaveBeenCalledWith("/admin/you/ai-keys");
     });
 
+    it("turns voice on from a listening key and a speaking key when Universe AI has no voice, naming both keys", async () => {
+        const none = { universeAi: { recognition: null, speech: null } };
+        const ear = (id: string, adapter: string, last4: string) =>
+            key({
+                id,
+                adapter,
+                last4,
+                recognition: true,
+                speech: false,
+                models: [{ id: "stt", label: "STT", kind: "recognition" }],
+            });
+        mocks.api.getBotVoice.mockResolvedValue(
+            answer({ ...none, lentKeys: [ear("ear-1", "soniox", "1111"), ear("ear-2", "deepgram", "2222"), key()] })
+        );
+        mocks.api.getBotVoices.mockResolvedValue(voices);
+        await mount();
+        expect(text()).not.toContain("No voice is set up here yet");
+        expect(byTestId("bot-voice-add-keys")).toHaveLength(0);
+        await click("bot-voice-payer-change");
+        const cards = byTestId("bot-voice-ask-key").map((card) => card.textContent?.replace(/\s+/g, " ") ?? "");
+        expect(cards).toHaveLength(2);
+        expect(cards[0]).toContain("Soniox");
+        expect(cards[0]).toContain("ElevenLabs");
+        expect(cards[1]).toContain("Deepgram");
+        expect(cards[1]).toContain("ElevenLabs");
+        expect(cards[0]).not.toEqual(cards[1]);
+    });
+
     it("tells a co-manager, who can't lend keys for the bot, only that voice isn't set up, with no button", async () => {
-        mocks.api.getBotAiOptions.mockResolvedValue(options({ viewerIsMaker: false, maker: { id: "u9", name: "Khalid" } }));
+        mocks.api.getBotAiOptions.mockResolvedValue(
+            options({ viewerIsMaker: false, maker: { id: "u9", name: "Khalid" } })
+        );
         mocks.api.getBotVoice.mockResolvedValue(answer({ universeAi: { recognition: null, speech: null } }));
         await mount();
         expect(text()).toContain("No voice is set up here yet");

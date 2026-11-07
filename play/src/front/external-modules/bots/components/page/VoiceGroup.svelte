@@ -227,6 +227,18 @@
     }
     $: whoKey = viewerIsMaker ? v.yourKey() : v.theirKey({ maker });
 
+    /** The name of a way to pay with keys: both keys when one listens and another speaks, else the one key. */
+    function payerTitle(option: PayerOption, middle: boolean): string {
+        if (option.recognition.kind === "key" && option.speech.kind === "key") {
+            return v.payerKeysTitle({
+                speaks: keyPhrase(option.speech.key, middle),
+                listens: keyPhrase(option.recognition.key, middle),
+            });
+        }
+        if (!option.key) return "";
+        return middle ? v.paidByKey({ key: keyPhrase(option.key, true) }) : keyPhrase(option.key);
+    }
+
     function payerBrief(data: BotVoice, current: VoiceProfile): string {
         switch (payerKind(data, current)) {
             case "universe-ai":
@@ -844,7 +856,7 @@
                             <span class="bp-mtx">
                                 <span class="vg-t"
                                     >{doorOption.kind === "key" && doorOption.key
-                                        ? v.paidByKey({ key: keyPhrase(doorOption.key, true) })
+                                        ? payerTitle(doorOption, true)
                                         : v.paidByUniverseAi()}</span
                                 >
                                 <span class="bp-cn">
@@ -886,7 +898,7 @@
                                             <span class="bp-ct"
                                                 >{option.kind === "universe-ai" || !option.key
                                                     ? v.askUniverseAi()
-                                                    : keyPhrase(option.key)}</span
+                                                    : payerTitle(option, false)}</span
                                             >
                                             <span class="bp-cn">
                                                 {#if option.kind === "universe-ai" && voice}
