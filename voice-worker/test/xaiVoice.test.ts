@@ -2,11 +2,12 @@
 // key, no network, no spend.
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { ConnectorRegistry, ProviderError, Secret, type SpeechRequest } from '../src/connectors.ts';
 import type { RecognizerEvents } from '../src/recognizer.ts';
 import { VoiceWorker } from '../src/server.ts';
+import { XaiRecognition, XaiSpeech } from '../src/xai.ts';
 import { XAI_VOICE_ADAPTER, XaiTranscription, XaiTts, xaiSpeechLanguage } from '../src/xaiVoice.ts';
 import { waitFor } from './harness.ts';
 
@@ -195,10 +196,26 @@ describe("speaking with xAI's text to speech", () => {
 describe('xAI under one name with its talking models', () => {
     const base = { port: 0, host: '127.0.0.1', maxLanes: 1, maxSessionsPerConnection: 1, ice: { iceServers: [] } };
 
-    it('is registered as "xai" for hearing and speaking', () => {
+    it('is registered as "xai" for hearing and speaking, beside the talking connectors under the same name', async () => {
         const worker = new VoiceWorker(base);
-        expect(worker.connectors.recognition(XAI_VOICE_ADAPTER)).toBeInstanceOf(XaiTranscription);
-        expect(worker.connectors.speech(XAI_VOICE_ADAPTER)).toBeInstanceOf(XaiTts);
+        const recognizer = { push: () => undefined, finish: () => undefined, close: () => undefined };
+        const events = { partial: () => undefined, final: () => undefined, failed: () => undefined };
+        const own = vi.spyOn(XaiTranscription.prototype, 'listen').mockReturnValue(recognizer as never);
+        const talking = vi.spyOn(XaiRecognition.prototype, 'listen').mockReturnValue(recognizer as never);
+        const hearing = worker.connectors.recognition(XAI_VOICE_ADAPTER)!;
+        hearing.listen({ adapter: 'xai', model: 'grok-voice-transcribe-2.0', key: new Secret(KEY), endpoint: '' }, events);
+        hearing.listen({ adapter: 'xai', model: 'grok-voice-latest', key: new Secret(KEY), endpoint: '' }, events);
+        expect([own.mock.calls.length, talking.mock.calls.length]).toEqual([1, 1]);
+        vi.spyOn(XaiTts.prototype, 'speak').mockImplementation(async function* () {
+            yield new Int16Array([1]);
+        });
+        vi.spyOn(XaiSpeech.prototype, 'speak').mockImplementation(async function* () {
+            yield new Int16Array([2]);
+        });
+        const speech = worker.connectors.speech(XAI_VOICE_ADAPTER)!;
+        expect(await collect(speech.speak(speaking('http://127.0.0.1:9')))).toEqual([1]);
+        expect(await collect(speech.speak(speaking('http://127.0.0.1:9', {}, { model: 'grok-voice-latest' })))).toEqual([2]);
+        vi.restoreAllMocks();
     });
 
     it('leaves every other xAI model (talking live) to the connectors already there', async () => {
