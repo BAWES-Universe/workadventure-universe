@@ -226,6 +226,13 @@ describe('speaking with NVIDIA', () => {
         expect(`${(failure as Error).message} ${JSON.stringify(failure)}`).not.toContain(KEY);
     });
 
+    it('fails, without taking the worker down, when NVIDIA sends a message it cannot read', async () => {
+        // Field 1 says 127 bytes follow, and none do
+        const riva = await fakeRiva({ onEnd: (call) => sendMessage(call, Buffer.from([0x0a, 0x7f])) });
+        const failure = await collect(new NvidiaSpeech().speak(speaking(riva.base))).catch((e: unknown) => e);
+        expect(failure).toBeInstanceOf(ProviderError);
+    });
+
     it('stops when the reply is no longer wanted', async () => {
         const riva = await fakeRiva({ onEnd: (call) => sendMessage(call, audio(5)) });
         const controller = new AbortController();
