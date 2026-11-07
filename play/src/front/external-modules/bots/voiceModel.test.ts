@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
     choicesFor,
     fullProfile,
+    helloFailureOf,
     limitsOf,
     modelLabel,
     noService,
@@ -11,6 +12,7 @@ import {
     previewKind,
     providerOf,
     readBotVoice,
+    readHello,
     sourceOf,
     startingVoice,
     viewOf,
@@ -415,5 +417,74 @@ describe("voices", () => {
     it("a profile missing a part isn't finished", () => {
         expect(fullProfile({})).toBeNull();
         expect(fullProfile(uaiProfile)).toMatchObject({ expression: "natural", language: { mode: "follow" } });
+    });
+});
+
+describe("hearing a bot say hello (#1852)", () => {
+    it("reads the hello the bot server sends, and nothing without words and audio", () => {
+        expect(readHello({ text: "Hi, I’m Hala.", mime: "audio/wav", audio: "UklGRg==", ms: 2300 })).toEqual({
+            text: "Hi, I’m Hala.",
+            mime: "audio/wav",
+            audio: "UklGRg==",
+        });
+        // A WAV unless it says otherwise
+        expect(readHello({ text: "Hi", audio: "UklGRg==" })?.mime).toBe("audio/wav");
+        for (const bad of [
+            null,
+            "hello",
+            [],
+            {},
+            { text: "Hi" },
+            { audio: "UklGRg==" },
+            { text: "", audio: "UklGRg==" },
+            { text: 3, audio: 4 },
+        ]) {
+            expect(readHello(bad)).toBeNull();
+        }
+    });
+
+    const refused = (status: number, body: unknown) => Object.assign(new Error("refused"), { status, body });
+
+    it("says when the voice replies come back for a hello that is used up", () => {
+        expect(helloFailureOf(refused(429, { error: "used_up", resetsAt: "2026-11-06T18:40:00.000Z" }))).toEqual({
+            kind: "used-up",
+            resetsAt: new Date("2026-11-06T18:40:00.000Z"),
+        });
+        // No time, or one that is not a time: nothing to wait for, so it is just a failure
+        expect(helloFailureOf(refused(429, { error: "used_up" }))).toEqual({ kind: "failed" });
+        expect(helloFailureOf(refused(429, { error: "used_up", resetsAt: "tomorrow" }))).toEqual({ kind: "failed" });
+    });
+
+    it("says the voice was turned off, the voice company's refusal and a key out of credit", () => {
+        expect(helloFailureOf(refused(409, { error: "voice_off", reason: "off" }))).toEqual({ kind: "off" });
+        expect(helloFailureOf(refused(502, { error: "provider", providerStatus: 401, rejected: true }))).toEqual({
+            kind: "provider",
+            rejected: true,
+            credit: false,
+        });
+        expect(helloFailureOf(refused(502, { error: "provider", providerStatus: 403, rejected: false }))).toEqual({
+            kind: "provider",
+            rejected: true,
+            credit: false,
+        });
+        expect(helloFailureOf(refused(502, { error: "provider", providerStatus: 402, rejected: false }))).toEqual({
+            kind: "provider",
+            rejected: false,
+            credit: true,
+        });
+        expect(helloFailureOf(refused(502, { error: "provider", rejected: false }))).toEqual({
+            kind: "provider",
+            rejected: false,
+            credit: false,
+        });
+    });
+
+    it("calls anything else a failure, however it came", () => {
+        expect(helloFailureOf(refused(502, { error: "no_words" }))).toEqual({ kind: "failed" });
+        expect(helloFailureOf(refused(503, { error: "unavailable" }))).toEqual({ kind: "failed" });
+        expect(helloFailureOf(refused(429, { error: "busy" }))).toEqual({ kind: "failed" });
+        expect(helloFailureOf(new Error("network"))).toEqual({ kind: "failed" });
+        expect(helloFailureOf(null)).toEqual({ kind: "failed" });
+        expect(helloFailureOf("boom")).toEqual({ kind: "failed" });
     });
 });

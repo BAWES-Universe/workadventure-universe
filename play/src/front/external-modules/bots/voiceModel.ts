@@ -670,3 +670,56 @@ export function describeVoice(choice: VoiceChoice | undefined, lang: string): st
     const names = choice.languages.slice(0, 1).map((code) => languageName(code, lang));
     return [choice.description, ...names].filter(Boolean).join(" · ");
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// "Hear <bot> say hello" (#1852): the bot writes a hello with its own brain and says it once in the voice it speaks with.
+
+/** The hello the bot server answers with: the words, and the audio as base64 (a WAV file). */
+export interface BotHello {
+    text: string;
+    mime: string;
+    audio: string;
+}
+
+/** The hello as the bot server sends it, or null when the answer is not one. */
+export function readHello(data: unknown): BotHello | null {
+    if (!isRecord(data)) return null;
+    const words = text(data.text);
+    const audio = text(data.audio);
+    if (!words || !audio) return null;
+    return { text: words, mime: text(data.mime) ?? "audio/wav", audio };
+}
+
+/**
+ * Why a hello was not heard, for the page to say:
+ * - used-up: the person's voice replies are used up until `resetsAt` (Universe AI pays for this voice);
+ * - off: the bot does not speak any more (turned off, or not allowed here), so the page is out of date;
+ * - provider: the voice company refused or failed (`rejected`: it refused the key itself; `credit`: the key is out of credit);
+ * - failed: anything else, nothing was said (the bot wrote nothing, the voice server is busy or away).
+ */
+export type HelloFailure =
+    | { kind: "used-up"; resetsAt: Date }
+    | { kind: "off" }
+    | { kind: "provider"; rejected: boolean; credit: boolean }
+    | { kind: "failed" };
+
+/** What went wrong with a hello, from the bot server's error (its status, and the parsed answer it carried as `body`). */
+export function helloFailureOf(error: unknown): HelloFailure {
+    const failure = error as { status?: unknown; body?: unknown } | null;
+    const status = typeof failure?.status === "number" ? failure.status : undefined;
+    const body = isRecord(failure?.body) ? failure.body : {};
+    if (status === 429 && body.error === "used_up" && typeof body.resetsAt === "string") {
+        const resetsAt = new Date(body.resetsAt);
+        if (!Number.isNaN(resetsAt.getTime())) return { kind: "used-up", resetsAt };
+    }
+    if (status === 409 && body.error === "voice_off") return { kind: "off" };
+    if (status === 502 && body.error === "provider") {
+        const providerStatus = count(body.providerStatus);
+        return {
+            kind: "provider",
+            rejected: body.rejected === true || providerStatus === 401 || providerStatus === 403,
+            credit: providerStatus === 402,
+        };
+    }
+    return { kind: "failed" };
+}
