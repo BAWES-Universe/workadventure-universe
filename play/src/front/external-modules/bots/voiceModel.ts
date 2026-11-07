@@ -547,6 +547,7 @@ export function companyName(adapter: string): string {
     const known: Record<string, string> = {
         assemblyai: "AssemblyAI",
         async: "Async",
+        bland: "Bland",
         elevenlabs: "ElevenLabs",
         cartesia: "Cartesia",
         fish: "Fish Audio",

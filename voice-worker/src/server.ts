@@ -17,6 +17,7 @@ import { type OutgoingMessage, Session } from './session.ts';
 import type { InputSink } from './transport.ts';
 import { ASSEMBLYAI_ADAPTER, AssemblyAiRecognition } from './assemblyai.ts';
 import { ASYNC_ADAPTER, AsyncSpeech } from './async.ts';
+import { BLAND_ADAPTER, BlandSpeech } from './bland.ts';
 import { ELEVENLABS_ADAPTER, ElevenLabsSpeech } from './elevenlabs.ts';
 import { CARTESIA_ADAPTER, CartesiaRecognition, CartesiaSpeech } from './cartesia.ts';
 import { FISH_ADAPTER, FishSpeech } from './fish.ts';
@@ -114,6 +115,7 @@ export class VoiceWorker {
             this.connectors.registerRecognition(ASSEMBLYAI_ADAPTER, new AssemblyAiRecognition({ finalTimeoutMs }));
         }
         if (!this.connectors.speech(ASYNC_ADAPTER)) this.connectors.registerSpeech(ASYNC_ADAPTER, new AsyncSpeech());
+        if (!this.connectors.speech(BLAND_ADAPTER)) this.connectors.registerSpeech(BLAND_ADAPTER, new BlandSpeech());
         if (!this.connectors.speech(CARTESIA_ADAPTER)) this.connectors.registerSpeech(CARTESIA_ADAPTER, new CartesiaSpeech({ version: options.cartesiaVersion }));
         if (!this.connectors.recognition(CARTESIA_ADAPTER)) {
             const finalTimeoutMs = options.recognitionFinalTimeoutSeconds === undefined ? undefined : options.recognitionFinalTimeoutSeconds * 1000;
