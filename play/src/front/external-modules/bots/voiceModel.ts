@@ -91,6 +91,11 @@ export interface BotVoice {
     enabled: boolean;
     universeAllows: boolean;
     parts: { recognition: "universe-ai" | "owner"; speech: "universe-ai" | "owner" };
+    /**
+     * The server's own providers the live version names (Orbit #840). A bot can stay on one that is no longer Universe AI's
+     * default after the operator switches company; Universe AI still pays for it. Empty from an older Orbit.
+     */
+    serverProviderIds: string[];
     revision: number | null;
     revisions: VoiceRevision[];
     lentKeys: VoiceKey[];
@@ -263,6 +268,9 @@ export function readBotVoice(data: unknown): BotVoice | null {
             recognition: parts.recognition === "owner" ? "owner" : "universe-ai",
             speech: parts.speech === "owner" ? "owner" : "universe-ai",
         },
+        serverProviderIds: Array.isArray(data.serverProviderIds)
+            ? data.serverProviderIds.filter((id): id is string => typeof id === "string" && id !== "")
+            : [],
         revision: count(data.revision) ?? null,
         revisions: data.revisions.flatMap((item) => {
             if (!isRecord(item)) return [];
@@ -340,8 +348,9 @@ export function liveRevision(voice: BotVoice): VoiceRevision | null {
 
 /**
  * Where a part of a profile runs. A provider that is one of the lent keys is that key; Universe AI's own provider is
- * Universe AI; anything else is a key that is no longer lent here (the page only ever writes Universe AI's providers
- * and the lent keys).
+ * Universe AI, and so is any server provider Orbit names (a bot keeps the company it started on when the operator switches
+ * Universe AI to another one); anything else is a key that is no longer lent here (the page only ever writes Universe AI's
+ * providers and the lent keys).
  */
 export function sourceOf(voice: BotVoice, profile: VoiceProfile, part: VoicePart): PartSource {
     const providerId = profile[part]?.providerId;
@@ -351,6 +360,7 @@ export function sourceOf(voice: BotVoice, profile: VoiceProfile, part: VoicePart
     const uai = voice.universeAi[part];
     // Universe AI is off for this job (no usable provider on the server), or the provider is its own
     if (!uai || uai.providerId === providerId) return { kind: "universe-ai" };
+    if (voice.serverProviderIds.includes(providerId)) return { kind: "universe-ai" };
     return { kind: "gone", providerId };
 }
 
@@ -427,26 +437,92 @@ export interface PayerOption {
 }
 
 /**
- * The ways to turn voice on: Universe AI for both jobs, and each lent key for the jobs it does (Universe AI does the
- * other one). A way that would leave a job with nothing to run on is left out.
+ * A key that does a job only through a talking model (#1910): it listens with the voice it speaks in, so it runs both jobs on its
+ * own and is never half of a split.
+ */
+const talkOnly = (choice: PayerChoice, part: VoicePart): boolean =>
+    choice.kind === "key" &&
+    !choice.key.models.some((model) => model.kind === part) &&
+    choice.key.models.some((model) => model.kind === "talk");
+
+/**
+ * Every way to cover both jobs (#1911): each place that can listen paired with each place that can speak. One place for both
+ * (Universe AI, or one key whose company listens and speaks) is one option; so is a split (one company listens, another speaks).
+ * The ones that cover both jobs with one place come first, Universe AI before the keys, the keys by company name, then the splits
+ * in the same order. A key with no model for a job can't do it, so a job with nothing to run on leaves no option at all.
  */
 export function payerOptions(voice: BotVoice): PayerOption[] {
-    const uai: PayerChoice = { kind: "universe-ai" };
     const options: PayerOption[] = [];
-    if (voice.universeAi.recognition && voice.universeAi.speech) {
-        options.push({ id: "universe-ai", kind: "universe-ai", recognition: uai, speech: uai });
-    }
+    const listening = splitChoices(voice, "recognition");
     for (const key of voice.lentKeys) {
-        const listens = key.recognition && key.models.some((model) => modelDoes(model, "recognition"));
-        const speaks = key.speech && key.models.some((model) => modelDoes(model, "speech"));
-        if (!listens && !speaks) continue;
         const own: PayerChoice = { kind: "key", key };
-        const recognition = listens ? own : voice.universeAi.recognition ? uai : null;
-        const speech = speaks ? own : voice.universeAi.speech ? uai : null;
-        if (recognition && speech) options.push({ id: key.id, kind: "key", key, recognition, speech });
+        if (key.recognition && talkOnly(own, "recognition") && !listening.some((choice) => sameChoice(choice, own))) {
+            listening.push(own);
+        }
     }
-    return options;
+    for (const recognition of listening) {
+        for (const speech of splitChoices(voice, "speech")) {
+            if (
+                !sameChoice(recognition, speech) &&
+                (talkOnly(recognition, "recognition") || talkOnly(speech, "speech"))
+            ) {
+                continue;
+            }
+            const key = speech.kind === "key" ? speech.key : recognition.kind === "key" ? recognition.key : undefined;
+            options.push({
+                id: optionId(recognition, speech),
+                kind: key ? "key" : "universe-ai",
+                key,
+                recognition,
+                speech,
+            });
+        }
+    }
+    return [...options.filter(coversBoth), ...options.filter((option) => !coversBoth(option))];
 }
+
+/**
+ * One option's id: the place when one place does both jobs ("universe-ai" or a key's id),
+ * else where it listens and where it speaks, joined by "+".
+ */
+export const optionId = (recognition: PayerChoice, speech: PayerChoice): string =>
+    sameChoice(recognition, speech) ? sourceKey(speech) : `${sourceKey(recognition)}+${sourceKey(speech)}`;
+
+/** One place does both jobs: Universe AI, or one key from a company that listens and speaks. */
+export const coversBoth = (option: PayerOption): boolean => sameChoice(option.recognition, option.speech);
+
+/** The option that listens on one place and speaks on another (undefined when either can't do its job here). */
+export function optionOf(voice: BotVoice, recognition: PayerChoice, speech: PayerChoice): PayerOption | undefined {
+    return payerOptions(voice).find((option) => option.id === optionId(recognition, speech));
+}
+
+/** The places a job can run on, as the split lists show them: Universe AI first, then the keys by company name. */
+export function splitChoices(voice: BotVoice, part: VoicePart): PayerChoice[] {
+    const name = (choice: PayerChoice) => (choice.kind === "key" ? companyName(choice.key.adapter) : "");
+    return choicesFor(voice, part)
+        .map((choice, index) => ({ choice, index }))
+        .sort((a, b) => name(a.choice).localeCompare(name(b.choice)) || a.index - b.index)
+        .map((entry) => entry.choice);
+}
+
+/**
+ * The places the split lists offer for a job: those of splitChoices that can be half of a split. A key that only talks live is
+ * left out, since it can't listen or speak without doing the other job too; it is offered among the places that do both.
+ */
+export function splitPlaces(voice: BotVoice, part: VoicePart): PayerChoice[] {
+    return splitChoices(voice, part).filter((choice) => !talkOnly(choice, part));
+}
+
+/** Whether a profile's speaking part names a talking model on a lent key (#1910). */
+export const speaksLive = (voice: BotVoice, profile: VoiceProfile): boolean =>
+    talkingModel(voice, profile) !== undefined;
+
+/**
+ * The voices a speaking place starts on for an option. A split speaks without a talking model, since a talking model always listens
+ * too: its voices are left out, so the place speaks on its own speaking model.
+ */
+export const voicesForOption = (option: PayerOption, list: VoiceChoice[]): VoiceChoice[] =>
+    coversBoth(option) ? list : list.filter((choice) => !choice.talk);
 
 /**
  * The provider and model a part runs on for a choice. Universe AI's part always starts on the model Universe AI uses now (Orbit
@@ -557,9 +633,9 @@ export type VoiceView =
 export function viewOf(voice: BotVoice): VoiceView {
     if (!voice.universeAllows) return { kind: "not-allowed" };
     const revision = liveRevision(voice);
-    // Nothing to run a job on, or no way to cover both jobs (two keys that each do one job and no Universe AI to do the other)
+    // Nothing to run a job on: each job that has a place pairs with the other's, so a job with none is the only way to be stuck
     if (!voice.enabled || !revision) {
-        return noService(voice) || payerOptions(voice).length === 0 ? { kind: "no-service" } : { kind: "off" };
+        return noService(voice) ? { kind: "no-service" } : { kind: "off" };
     }
     return { kind: "on", profile: revision.profile, pause: pauseOf(voice, revision.profile) };
 }
@@ -666,21 +742,36 @@ export function doorVoices(
     return { voices, startId: first?.voiceId };
 }
 
-/** The place to pay from that the Voice row starts on: the one the last version used when it is still there, else a lent key, else Universe AI. */
+/**
+ * Where the Voice row starts: the places the last version used when they still work; else one lent key that listens and
+ * speaks; else a lent key for its job with Universe AI doing the other; else two keys (one listens, one speaks); else Universe AI.
+ */
 export function startingPayer(voice: BotVoice, previous: VoiceProfile | null): PayerOption | null {
     const options = payerOptions(voice);
-    const before = previous?.speech?.providerId;
     // A key that is down would turn voice on already paused: it is never the one to start on while another way works
     const working = (option: PayerOption) =>
         ![option.recognition, option.speech].some(
             (choice) => choice.kind === "key" && choice.key.health.status === "down"
         );
-    const same = before
-        ? options.find((option) => working(option) && providerOf(voice, "speech", option.speech)?.providerId === before)
-        : undefined;
+    const keys = (option: PayerOption) => [option.recognition, option.speech].filter((c) => c.kind === "key").length;
+    const speaksAsBefore = (option: PayerOption) =>
+        !!previous?.speech &&
+        working(option) &&
+        providerOf(voice, "speech", option.speech)?.providerId === previous.speech.providerId;
+    const same = options.find(
+        (option) =>
+            speaksAsBefore(option) &&
+            providerOf(voice, "recognition", option.recognition)?.providerId === previous?.recognition?.providerId
+    );
+    // A version that kept no listening provider: the place it spoke on, doing both jobs when it can
+    const sameSpeech =
+        options.find((option) => speaksAsBefore(option) && coversBoth(option)) ?? options.find(speaksAsBefore);
     return (
         same ??
-        options.find((option) => option.kind === "key" && working(option)) ??
+        sameSpeech ??
+        options.find((option) => working(option) && option.kind === "key" && coversBoth(option)) ??
+        options.find((option) => working(option) && keys(option) === 1) ??
+        options.find((option) => working(option) && keys(option) === 2) ??
         options.find(working) ??
         options[0] ??
         null
@@ -739,4 +830,57 @@ export function describeVoice(choice: VoiceChoice | undefined, lang: string): st
     if (!choice) return "";
     const names = choice.languages.slice(0, 1).map((code) => languageName(code, lang));
     return [choice.description, ...names].filter(Boolean).join(" · ");
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// "Hear <bot> say hello" (#1852): the bot writes a hello with its own brain and says it once in the voice it speaks with.
+
+/** The hello the bot server answers with: the words, and the audio as base64 (a WAV file). */
+export interface BotHello {
+    text: string;
+    mime: string;
+    audio: string;
+}
+
+/** The hello as the bot server sends it, or null when the answer is not one. */
+export function readHello(data: unknown): BotHello | null {
+    if (!isRecord(data)) return null;
+    const words = text(data.text);
+    const audio = text(data.audio);
+    if (!words || !audio) return null;
+    return { text: words, mime: text(data.mime) ?? "audio/wav", audio };
+}
+
+/**
+ * Why a hello was not heard, for the page to say:
+ * - used-up: the person's voice replies are used up until `resetsAt` (Universe AI pays for this voice);
+ * - off: the bot does not speak any more (turned off, or not allowed here), so the page is out of date;
+ * - provider: the voice company refused or failed (`rejected`: it refused the key itself; `credit`: the key is out of credit);
+ * - failed: anything else, nothing was said (the bot wrote nothing, the voice server is busy or away).
+ */
+export type HelloFailure =
+    | { kind: "used-up"; resetsAt: Date }
+    | { kind: "off" }
+    | { kind: "provider"; rejected: boolean; credit: boolean }
+    | { kind: "failed" };
+
+/** What went wrong with a hello, from the bot server's error (its status, and the parsed answer it carried as `body`). */
+export function helloFailureOf(error: unknown): HelloFailure {
+    const failure = error as { status?: unknown; body?: unknown } | null;
+    const status = typeof failure?.status === "number" ? failure.status : undefined;
+    const body = isRecord(failure?.body) ? failure.body : {};
+    if (status === 429 && body.error === "used_up" && typeof body.resetsAt === "string") {
+        const resetsAt = new Date(body.resetsAt);
+        if (!Number.isNaN(resetsAt.getTime())) return { kind: "used-up", resetsAt };
+    }
+    if (status === 409 && body.error === "voice_off") return { kind: "off" };
+    if (status === 502 && body.error === "provider") {
+        const providerStatus = count(body.providerStatus);
+        return {
+            kind: "provider",
+            rejected: body.rejected === true || providerStatus === 401 || providerStatus === 403,
+            credit: providerStatus === 402,
+        };
+    }
+    return { kind: "failed" };
 }

@@ -80,8 +80,24 @@ export class OpenAiRecognition implements RecognitionConnector {
         let committed = 0;
         let written = 0;
         let finishing = false;
+        // The model's turn detection ended a turn and the person has not started again: what is left is only the quiet after it
+        let afterTurn = false;
         let interimItem = '';
         let interim = '';
+        // Pieces are written down in the order they were committed, whatever order their words arrive in
+        const order: string[] = [];
+        const waiting = new Map<string, string>();
+        let next = 0;
+        const inOrder = (): HearingMessage[] => {
+            const out: HearingMessage[] = [];
+            while (next < order.length && waiting.has(order[next])) {
+                const text = waiting.get(order[next]) ?? '';
+                waiting.delete(order[next]);
+                next++;
+                if (text) out.push({ committed: text });
+            }
+            return out;
+        };
         const lang = settings.language ? baseLanguage(settings.language) : undefined;
         const allWritten = (): HearingMessage[] => (finishing && written >= committed ? [{ finished: true }] : []);
         return socketHearing({
@@ -110,16 +126,25 @@ export class OpenAiRecognition implements RecognitionConnector {
             frame: (pcm16k) => json({ type: 'input_audio_buffer.append', audio: pcmBytes(resampler.process(pcm16k)).toString('base64') }),
             finish: () => {
                 finishing = true;
-                return [json({ type: 'input_audio_buffer.commit' })];
+                // Committing the quiet after a turn would make one more piece to write down: slower, and a model may hear words in it
+                return [json({ type: afterTurn ? 'input_audio_buffer.clear' : 'input_audio_buffer.commit' })];
             },
             read: (data, isBinary) => {
                 const event = readEvent(data, isBinary);
                 switch (event?.type) {
                     case 'input_audio_buffer.committed':
                         committed++;
+                        if (typeof event.item_id === 'string' && event.item_id) order.push(event.item_id);
+                        return undefined;
+                    case 'input_audio_buffer.speech_started':
+                        afterTurn = false;
                         return undefined;
                     case 'input_audio_buffer.speech_stopped':
+                        afterTurn = true;
                         return { endpoint: true };
+                    case 'input_audio_buffer.cleared':
+                        // Nothing more was committed: done once every piece is written down
+                        return allWritten();
                     case 'conversation.item.input_audio_transcription.delta': {
                         const item = typeof event.item_id === 'string' ? event.item_id : '';
                         if (item !== interimItem) {
@@ -134,10 +159,26 @@ export class OpenAiRecognition implements RecognitionConnector {
                         interim = '';
                         interimItem = '';
                         const transcript = typeof event.transcript === 'string' ? event.transcript.trim() : '';
-                        return [{ ...(transcript ? { committed: transcript } : {}), interim: '' }, ...allWritten()];
+                        const item = typeof event.item_id === 'string' ? event.item_id : '';
+                        // A piece whose commit was never seen has no place in the order: its words go out as they come
+                        if (!item || !order.includes(item)) return [...(transcript ? [{ committed: transcript }] : []), { interim: '' }, ...allWritten()];
+                        waiting.set(item, transcript);
+                        return [...inOrder(), { interim: '' }, ...allWritten()];
                     }
-                    case 'conversation.item.input_audio_transcription.failed':
-                        return { error: {} };
+                    case 'conversation.item.input_audio_transcription.failed': {
+                        // A refused key or no credit is the key's own problem, the same as on the socket: the stretch fails
+                        const error = errorOf(event);
+                        if (error.status) return { error: { status: error.status } };
+                        // Any other failure loses only this piece: the rest of the stretch is still written down
+                        written++;
+                        const item = typeof event.item_id === 'string' ? event.item_id : '';
+                        if (item === interimItem) {
+                            interim = '';
+                            interimItem = '';
+                        }
+                        if (item && order.includes(item)) waiting.set(item, '');
+                        return [...inOrder(), { interim: '' }, ...allWritten()];
+                    }
                     case 'error': {
                         const error = errorOf(event);
                         // Nothing left to commit: the turn detection already did. Done once every piece is written down
@@ -190,8 +231,11 @@ export class OpenAiSpeech implements SpeechConnector {
                 case 'response.audio.delta':
                     return typeof event.delta === 'string' ? { audio: event.delta } : undefined;
                 case 'response.done': {
-                    const status = (event.response as { status?: unknown } | undefined)?.status;
-                    return status === 'failed' ? { error: {} } : { done: true };
+                    const response = (event.response ?? {}) as { status?: unknown; status_details?: { error?: unknown } };
+                    if (response.status !== 'failed') return { done: true };
+                    // Why it failed, when the model says: a refused key or no credit is reported as the key's own problem
+                    const error = errorOf({ error: response.status_details?.error });
+                    return { error: error.status ? { status: error.status } : {} };
                 }
                 case 'error': {
                     const error = errorOf(event);
