@@ -1,5 +1,10 @@
 name: Build, push, test and deploy Docker image
 
+# Upstream WorkAdventure workflow for the `master` and `develop` branches.
+# BAWES Universe builds, releases, and Coolify deployments for `universe` and
+# `universe-develop` run through `.github/workflows/build-universe-images.yml`
+# and `.github/workflows/test-universe-images.yml` (see `docs/cicd.md`).
+
 on:
   push:
     branches: [master, develop]
