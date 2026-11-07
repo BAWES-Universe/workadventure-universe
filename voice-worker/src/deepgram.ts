@@ -10,6 +10,7 @@
 import WebSocket from 'ws';
 import { ProviderError, type RecognitionConnector, type RecognitionSettings } from './connectors.ts';
 import type { Recognizer, RecognizerEvents } from './recognizer.ts';
+import { termsWithin } from './terms.ts';
 
 export const DEEPGRAM_ADAPTER = 'deepgram';
 export const DEEPGRAM_ENDPOINT = 'wss://api.deepgram.com/v1/listen';
@@ -20,6 +21,10 @@ export const DEFAULT_DEEPGRAM_FINAL_TIMEOUT_MS = 10_000;
 /** Audio held while the connection opens. Past this the oldest goes: a stream that slow is failing anyway. */
 const MAX_PENDING_MS = 10_000;
 
+/** Deepgram takes 500 tokens of key terms in all (https://developers.deepgram.com/docs/keyterm), and a stream over it is refused. A name is a few tokens: this keeps well under. */
+const MAX_KEYTERM_CHARS = 200;
+/** How long a model and language Deepgram refused key terms for are connected to without them. */
+const KEYTERM_REFUSED_MS = 60 * 60 * 1000;
 /**
  * Quiet that makes Deepgram finalize what it has and say `speech_final` (its examples use 300 to 500). Short, because it only ends
  * the person's turn when the words so far end a sentence; a pause in the middle of one is not cut by it.
@@ -46,15 +51,31 @@ interface DeepgramAnswer {
 }
 
 export class DeepgramRecognition implements RecognitionConnector {
+    /** Model and language Deepgram answered 400 to when key terms were sent, and when that was: they connect without for a while. */
+    private readonly keytermRefused = new Map<string, number>();
+
     constructor(private readonly options: DeepgramOptions = {}) {}
 
     listen(settings: RecognitionSettings, events: RecognizerEvents): Recognizer {
-        return new DeepgramStream(settings, events, this.options.finalTimeoutMs ?? DEFAULT_DEEPGRAM_FINAL_TIMEOUT_MS);
+        const kind = `${settings.model || DEFAULT_DEEPGRAM_MODEL}|${settings.language ?? ''}`;
+        const refusedAt = this.keytermRefused.get(kind);
+        const refused = refusedAt !== undefined && Date.now() - refusedAt < KEYTERM_REFUSED_MS;
+        const keyterms = refused ? [] : keytermsFor(settings);
+        return new DeepgramStream(settings, events, this.options.finalTimeoutMs ?? DEFAULT_DEEPGRAM_FINAL_TIMEOUT_MS, keyterms, () => this.keytermRefused.set(kind, Date.now()));
     }
 }
 
+/**
+ * The names to send as key terms: only Nova-3 takes them (an older model has a different feature and is refused), and only
+ * as many as fit. The bot's own name comes first.
+ */
+export function keytermsFor(settings: RecognitionSettings): string[] {
+    const model = settings.model || DEFAULT_DEEPGRAM_MODEL;
+    return /^nova-3\b/.test(model) ? termsWithin(settings.terms ?? [], MAX_KEYTERM_CHARS) : [];
+}
+
 /** The address of one stream: 16 kHz mono s16le, guesses on, and Deepgram's end-of-speech signals (see the top of this file). */
-function streamUrl(settings: RecognitionSettings): string {
+function streamUrl(settings: RecognitionSettings, keyterms: readonly string[]): string {
     const url = new URL(settings.endpoint || DEEPGRAM_ENDPOINT);
     const query = url.searchParams;
     const model = settings.model || DEFAULT_DEEPGRAM_MODEL;
@@ -73,6 +94,8 @@ function streamUrl(settings: RecognitionSettings): string {
     // switches language mid-sentence (https://developers.deepgram.com/docs/language)
     const language = settings.language || followLanguage(model);
     if (language) query.set('language', language);
+    // Names to expect, one parameter each (Nova-3, https://developers.deepgram.com/docs/keyterm)
+    for (const keyterm of keyterms) query.append('keyterm', keyterm);
     return url.toString();
 }
 
@@ -93,7 +116,7 @@ export function endsSentence(text: string): boolean {
 }
 
 class DeepgramStream implements Recognizer {
-    private readonly ws: WebSocket;
+    private ws!: WebSocket;
     private pending: Buffer[] = [];
     private pendingMs = 0;
     private finalText = '';
@@ -105,15 +128,25 @@ class DeepgramStream implements Recognizer {
     private endpointed = false;
     readonly pauseMs = DEEPGRAM_FALLBACK_PAUSE_MS;
 
-    constructor(settings: RecognitionSettings, private readonly events: RecognizerEvents, private readonly finalTimeoutMs: number) {
-        this.ws = new WebSocket(streamUrl(settings), { headers: { Authorization: `Token ${settings.key.reveal()}` } });
-        this.ws.on('open', () => {
-            for (const chunk of this.pending) this.ws.send(chunk);
+    constructor(
+        private readonly settings: RecognitionSettings,
+        private readonly events: RecognizerEvents,
+        private readonly finalTimeoutMs: number,
+        keyterms: readonly string[] = [],
+        private readonly onKeytermRefused: () => void = () => undefined
+    ) {
+        this.connect(keyterms);
+    }
+
+    private connect(keyterms: readonly string[]): void {
+        const ws = (this.ws = new WebSocket(streamUrl(this.settings, keyterms), { headers: { Authorization: `Token ${this.settings.key.reveal()}` } }));
+        ws.on('open', () => {
+            for (const chunk of this.pending) ws.send(chunk);
             this.pending = [];
             this.pendingMs = 0;
             if (this.finishing) this.endAudio();
         });
-        this.ws.on('message', (data, isBinary) => {
+        ws.on('message', (data, isBinary) => {
             if (isBinary) return;
             // Nothing Deepgram sends may throw out of here: a socket handler that throws takes the whole worker down
             try {
@@ -123,14 +156,23 @@ class DeepgramStream implements Recognizer {
             }
         });
         // Refused before the stream started (a wrong key answers 401 here)
-        this.ws.on('unexpected-response', (_req, res) => {
-            this.fail(new ProviderError('deepgram refused the connection', res.statusCode));
+        ws.on('unexpected-response', (_req, res) => {
             res.resume();
-            this.ws.terminate();
+            ws.terminate();
+            // A model that does not take key terms answers 400 to them. The audio is still held, so the stretch is opened again
+            // without them rather than lost, and the next ones skip them for a while
+            if (res.statusCode === 400 && keyterms.length > 0 && !this.done) {
+                ws.removeAllListeners();
+                ws.on('error', () => undefined);
+                this.onKeytermRefused();
+                this.connect([]);
+                return;
+            }
+            this.fail(new ProviderError('deepgram refused the connection', res.statusCode));
         });
-        this.ws.on('error', () => this.fail(new ProviderError('deepgram connection error')));
+        ws.on('error', () => this.fail(new ProviderError('deepgram connection error')));
         // After the audio ended, Deepgram sends the last words and closes the stream normally
-        this.ws.on('close', (code) => {
+        ws.on('close', (code) => {
             if (this.finishing && code === 1000) this.complete();
             else this.fail(new ProviderError('deepgram closed the stream before the last words'));
         });
