@@ -596,6 +596,7 @@ export function companyName(adapter: string): string {
         openai: "OpenAI",
         ultravox: "Ultravox",
         xai: "xAI",
+        zoom: "Zoom",
         deepgram: "Deepgram",
         soniox: "Soniox",
     };

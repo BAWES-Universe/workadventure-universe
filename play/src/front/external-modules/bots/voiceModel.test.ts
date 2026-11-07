@@ -479,6 +479,7 @@ describe("talking models (#1910)", () => {
         expect(companyName("aws")).toBe("AWS");
         expect(companyName("inworld")).toBe("Inworld");
         expect(companyName("ultravox")).toBe("Ultravox");
+        expect(companyName("zoom")).toBe("Zoom");
     });
 
     it("reads which voices talk live", () => {
