@@ -35,9 +35,12 @@ const AZURE_REGION = /^[a-z][a-z0-9]{1,30}$/;
 /** The locale Azure hears and speaks for a language with no region of its own, its most spoken one. */
 const LOCALES: Record<string, string> = {
     af: 'af-ZA',
+    am: 'am-ET',
     ar: 'ar-SA',
+    az: 'az-AZ',
     bg: 'bg-BG',
     bn: 'bn-IN',
+    bs: 'bs-BA',
     ca: 'ca-ES',
     cs: 'cs-CZ',
     cy: 'cy-GB',
@@ -47,49 +50,69 @@ const LOCALES: Record<string, string> = {
     en: 'en-US',
     es: 'es-ES',
     et: 'et-EE',
+    eu: 'eu-ES',
     fa: 'fa-IR',
     fi: 'fi-FI',
     fil: 'fil-PH',
     fr: 'fr-FR',
     ga: 'ga-IE',
+    gl: 'gl-ES',
     gu: 'gu-IN',
     he: 'he-IL',
     hi: 'hi-IN',
     hr: 'hr-HR',
     hu: 'hu-HU',
+    hy: 'hy-AM',
     id: 'id-ID',
     is: 'is-IS',
     it: 'it-IT',
     ja: 'ja-JP',
+    jv: 'jv-ID',
+    ka: 'ka-GE',
     kk: 'kk-KZ',
+    km: 'km-KH',
     kn: 'kn-IN',
     ko: 'ko-KR',
+    lo: 'lo-LA',
     lt: 'lt-LT',
     lv: 'lv-LV',
+    mk: 'mk-MK',
     ml: 'ml-IN',
+    mn: 'mn-MN',
     mr: 'mr-IN',
     ms: 'ms-MY',
+    mt: 'mt-MT',
+    my: 'my-MM',
     nb: 'nb-NO',
+    ne: 'ne-NP',
     nl: 'nl-NL',
+    no: 'nb-NO',
     pa: 'pa-IN',
     pl: 'pl-PL',
+    ps: 'ps-AF',
     pt: 'pt-BR',
     ro: 'ro-RO',
     ru: 'ru-RU',
+    si: 'si-LK',
     sk: 'sk-SK',
     sl: 'sl-SI',
+    so: 'so-SO',
+    sq: 'sq-AL',
     sr: 'sr-RS',
     sv: 'sv-SE',
     sw: 'sw-KE',
     ta: 'ta-IN',
     te: 'te-IN',
     th: 'th-TH',
+    tl: 'fil-PH',
     tr: 'tr-TR',
     uk: 'uk-UA',
     ur: 'ur-PK',
+    uz: 'uz-UZ',
     vi: 'vi-VN',
     yue: 'zh-HK',
     zh: 'zh-CN',
+    zu: 'zu-ZA',
 };
 
 /**
@@ -100,6 +123,8 @@ export function azureLocale(language: string | undefined): string {
     if (!language) return 'en-US';
     const [base = '', region = ''] = language.split(/[-_]/);
     if (/^[a-z]{2,3}$/i.test(base) && /^[a-z]{2}$/i.test(region)) return `${base.toLowerCase()}-${region.toUpperCase()}`;
+    // Traditional Chinese (zh-Hant) is Taiwan's; any other script tag (zh-Hans, sr-Latn) reads as its language
+    if (base.toLowerCase() === 'zh' && /^hant$/i.test(region)) return 'zh-TW';
     return LOCALES[baseLanguage(language)] ?? 'en-US';
 }
 
@@ -170,13 +195,16 @@ export function readMessage(data: string): { path: string; body: Record<string, 
     return { path, body: typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : {} };
 }
 
-/** What a close from Azure means: it closes with 1007 or 1008 and a reason when it turns a call away. */
+/** What a close from Azure means: it closes with 1007 or 1008 and a reason when it turns a call away; 1000 is a clean end. */
 function closedStatus(code: number, reason: string): HearingMessage | undefined {
     if (code === 1000 || code === 1005) return undefined;
     if (/quota|limit|throttl|too many/i.test(reason)) return { error: { status: 429 } };
     if (/auth|subscription|key|token/i.test(reason)) return { error: { status: 401 } };
     if (code === 1007 || code === 1008) return { error: { status: 400 } };
-    return undefined;
+    // Any other close (1006 a dropped connection, 1011 a server error, 1012/1013 a restart) is a failure, even while the last
+    // words are awaited: never the end of what was heard
+    const status = code === 1011 ? 500 : code === 1012 || code === 1013 ? 503 : undefined;
+    return { error: status === undefined ? {} : { status } };
 }
 
 export class AzureSpeechRecognition implements RecognitionConnector {

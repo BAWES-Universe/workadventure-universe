@@ -171,11 +171,31 @@ describe('hearing with Azure AI Speech', () => {
         expect(got.failures).toEqual([{ text: '', status: 429 }]);
     });
 
+    it('fails, rather than ending with what was heard, when Azure drops the socket while the last words are awaited', async () => {
+        const s = await fakeAzure((ws, audio, end) => {
+            if (audio.length === 4) ws.send(answer('speech.hypothesis', { Text: 'marhaba', Offset: 0, Duration: 1 }));
+            if (end) ws.close(1011, 'Internal error');
+        });
+        const { got, events } = heard();
+        const stream = new AzureSpeechRecognition().listen(hearing(s.base), events);
+        stream.push(new Int16Array([1, -2]));
+        await waitFor('the partial', () => got.partials.length === 1);
+        stream.finish();
+        await waitFor('the failure', () => got.failures.length === 1);
+        expect(got.failures).toEqual([{ text: 'marhaba', status: 500 }]);
+        expect(got.finals).toEqual([]);
+    });
+
     it("hears each language in its own locale, or that language's most spoken one", () => {
         expect(azureLocale('ar-KW')).toBe('ar-KW');
         expect(azureLocale('ar_ae')).toBe('ar-AE');
         expect(azureLocale('ar')).toBe('ar-SA');
         expect(azureLocale('fil')).toBe('fil-PH');
+        expect(azureLocale('no')).toBe('nb-NO');
+        expect(azureLocale('tl')).toBe('fil-PH');
+        expect(azureLocale('km')).toBe('km-KH');
+        expect(azureLocale('zh-Hans')).toBe('zh-CN');
+        expect(azureLocale('zh-Hant')).toBe('zh-TW');
         expect(azureLocale('xx')).toBe('en-US');
         expect(azureLocale(undefined)).toBe('en-US');
     });
