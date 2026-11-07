@@ -546,6 +546,7 @@ export function limitsOf(
 export function companyName(adapter: string): string {
     const known: Record<string, string> = {
         assemblyai: "AssemblyAI",
+        async: "Async",
         elevenlabs: "ElevenLabs",
         cartesia: "Cartesia",
         fish: "Fish Audio",
