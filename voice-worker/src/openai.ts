@@ -82,6 +82,20 @@ export class OpenAiRecognition implements RecognitionConnector {
         let finishing = false;
         let interimItem = '';
         let interim = '';
+        // Pieces are written down in the order they were committed, whatever order their words arrive in
+        const order: string[] = [];
+        const waiting = new Map<string, string>();
+        let next = 0;
+        const inOrder = (): HearingMessage[] => {
+            const out: HearingMessage[] = [];
+            while (next < order.length && waiting.has(order[next])) {
+                const text = waiting.get(order[next]) ?? '';
+                waiting.delete(order[next]);
+                next++;
+                if (text) out.push({ committed: text });
+            }
+            return out;
+        };
         const lang = settings.language ? baseLanguage(settings.language) : undefined;
         const allWritten = (): HearingMessage[] => (finishing && written >= committed ? [{ finished: true }] : []);
         return socketHearing({
@@ -117,6 +131,7 @@ export class OpenAiRecognition implements RecognitionConnector {
                 switch (event?.type) {
                     case 'input_audio_buffer.committed':
                         committed++;
+                        if (typeof event.item_id === 'string' && event.item_id) order.push(event.item_id);
                         return undefined;
                     case 'input_audio_buffer.speech_stopped':
                         return { endpoint: true };
@@ -134,10 +149,17 @@ export class OpenAiRecognition implements RecognitionConnector {
                         interim = '';
                         interimItem = '';
                         const transcript = typeof event.transcript === 'string' ? event.transcript.trim() : '';
-                        return [{ ...(transcript ? { committed: transcript } : {}), interim: '' }, ...allWritten()];
+                        const item = typeof event.item_id === 'string' ? event.item_id : '';
+                        // A piece whose commit was never seen has no place in the order: its words go out as they come
+                        if (!item || !order.includes(item)) return [...(transcript ? [{ committed: transcript }] : []), { interim: '' }, ...allWritten()];
+                        waiting.set(item, transcript);
+                        return [...inOrder(), { interim: '' }, ...allWritten()];
                     }
-                    case 'conversation.item.input_audio_transcription.failed':
-                        return { error: {} };
+                    case 'conversation.item.input_audio_transcription.failed': {
+                        // A refused key or no credit is the key's own problem, the same as on the socket
+                        const error = errorOf(event);
+                        return { error: error.status ? { status: error.status } : {} };
+                    }
                     case 'error': {
                         const error = errorOf(event);
                         // Nothing left to commit: the turn detection already did. Done once every piece is written down
@@ -190,8 +212,11 @@ export class OpenAiSpeech implements SpeechConnector {
                 case 'response.audio.delta':
                     return typeof event.delta === 'string' ? { audio: event.delta } : undefined;
                 case 'response.done': {
-                    const status = (event.response as { status?: unknown } | undefined)?.status;
-                    return status === 'failed' ? { error: {} } : { done: true };
+                    const response = (event.response ?? {}) as { status?: unknown; status_details?: { error?: unknown } };
+                    if (response.status !== 'failed') return { done: true };
+                    // Why it failed, when the model says: a refused key or no credit is reported as the key's own problem
+                    const error = errorOf({ error: response.status_details?.error });
+                    return { error: error.status ? { status: error.status } : {} };
                 }
                 case 'error': {
                     const error = errorOf(event);
