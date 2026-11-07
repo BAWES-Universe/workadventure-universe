@@ -11,6 +11,18 @@ import { isMapDetailsData, isRoomRedirect } from "@workadventure/messages";
 import type { AxiosResponse } from "axios";
 import { ADMIN_API_URL } from "../enums/EnvironmentVariable";
 import { adminService } from "./AdminService";
+import { DEFAULT_MANIFEST_ICONS } from "./WebManifest";
+
+const SOCIAL_CRAWLER_TOKENS = ["bot", "facebook", "preview"] as const;
+
+/**
+ * Identifies social link-preview crawlers (Twitter/Google bots, Facebook, and Bing/Microsoft preview fetchers)
+ * so map metadata is only fetched from disk when generating link-preview cards.
+ */
+function isSocialCrawlerUserAgent(userAgent: string | undefined): boolean {
+    const normalized = (userAgent || "").toLowerCase();
+    return SOCIAL_CRAWLER_TOKENS.some((token) => normalized.includes(token));
+}
 
 export const MetaTagsDefaultValue: RequiredMetaTagsData = {
     title: "Universe",
@@ -24,14 +36,13 @@ export const MetaTagsDefaultValue: RequiredMetaTagsData = {
             sizes: "512x512",
             src: "/static/images/favicons/favicon-512x512.svg",
         },
-    ],
-    manifestIcons: [
         {
-            src: "/static/images/favicons/icon-512x512.png",
-            sizes: "512x512",
-            type: "image/png",
+            rel: "apple-touch-icon",
+            sizes: "180x180",
+            src: "/static/images/favicons/apple-icon-180x180.png",
         },
     ],
+    manifestIcons: DEFAULT_MANIFEST_ICONS,
     appName: "Universe",
     shortAppName: "Universe",
     // Universe ink, as Orbit sends for every room: the start page the installed app opens on (#949) and its manifest
@@ -53,14 +64,9 @@ export class MetaTagsBuilder {
                 return { ...MetaTagsDefaultValue, ...metaTags };
             }
         }
-        userAgent = userAgent || "";
         // Let's only populate the metadata for bots. For normal users, this is useless, and it wastes time
         // downloading the map from the Pusher.
-        userAgent = userAgent.toLowerCase();
-        // "bot" covers Twitter and Google
-        // "facebook" covers obviously Facebook
-        // "preview" covers Bing and Microsoft products
-        if (userAgent.includes("bot") || userAgent.includes("facebook") || userAgent.includes("preview")) {
+        if (isSocialCrawlerUserAgent(userAgent)) {
             return (await this.getMetaFromFile()) || MetaTagsDefaultValue;
         }
 

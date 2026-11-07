@@ -1,0 +1,61 @@
+{
+    "id": "/",
+    "name": "BAWES Universe",
+    "short_name": "Universe",
+    "description": "BAWES Universe — a virtual world",
+    "start_url": "/",
+    "scope": "/",
+    "lang": "en",
+    "display": "fullscreen",
+    "display_override": ["window-controls-overlay"],
+    "orientation": "landscape",
+    "background_color": "#14121E",
+    "theme_color": "#14121E",
+    "launch_handler": {
+        "client_mode": ["navigate-existing", "auto"]
+    },
+    "icons": [
+        {
+            "src": "/static/universe-icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "any"
+        },
+        {
+            "src": "/static/images/favicons/icon-512x512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "any"
+        },
+        {
+            "src": "/static/universe-icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable any"
+        }
+    ],
+    "shortcuts": [
+        {
+            "name": "Universe",
+            "short_name": "Universe",
+            "description": "BAWES Universe — a virtual world",
+            "url": "/",
+            "icons": [
+                {
+                    "src": "/static/universe-icon-192.png",
+                    "sizes": "192x192",
+                    "type": "image/png",
+                    "purpose": "any"
+                },
+                {
+                    "src": "/static/universe-icon-512.png",
+                    "sizes": "512x512",
+                    "type": "image/png",
+                    "purpose": "maskable any"
+                }
+            ]
+        }
+    ],
+    "related_applications": [],
+    "screenshots": []
+}
