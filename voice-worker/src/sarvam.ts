@@ -5,7 +5,8 @@
 //
 // Hearing (wss://api.sarvam.ai/speech-to-text/ws): 16 kHz s16 audio goes as base64 in {"audio": {...}} messages. Sarvam answers
 // each stretch it hears with one "data" message holding its words, and none that may still change. {"type":"flush"} ends the
-// audio: Sarvam then sends the words it still holds, the last answer of the stretch.
+// audio: Sarvam then sends the words it still holds, the last answer of the stretch. Its VAD signals ("events" START_SPEECH and
+// END_SPEECH) count the speech it heard: once each start has its "data", a flush with nothing left to answer doesn't wait.
 //
 // Speaking (wss://api.sarvam.ai/text-to-speech/ws): a "config" message, the text, then "flush". "audio" messages hold base64
 // 24 kHz s16 PCM, and an "event" of type "final" says the reply is complete.
@@ -46,6 +47,7 @@ export function sarvamLanguage(language: string | undefined): string | undefined
 interface SarvamMessage {
     type?: unknown;
     data?: {
+        signal_type?: unknown;
         transcript?: unknown;
         audio?: unknown;
         event_type?: unknown;
@@ -83,6 +85,7 @@ export class SarvamRecognition implements RecognitionConnector {
                     sample_rate: '16000',
                     input_audio_codec: 'pcm_s16le',
                     flush_signal: 'true',
+                    vad_signals: 'true',
                 });
                 return {
                     url: `${base}/speech-to-text/ws?${query}`,
@@ -103,9 +106,11 @@ export class SarvamRecognition implements RecognitionConnector {
                 if (isBinary) return undefined;
                 const message = parse(data);
                 if (message?.type === 'error') return { error: { status: sarvamStatus(message.data) } };
+                // Speech Sarvam heard and has not answered yet; its answer comes as the next "data"
+                if (message?.type === 'events' && message.data?.signal_type === 'START_SPEECH') return { speech: 'started' };
                 if (message?.type === 'data') {
                     const words = typeof message.data?.transcript === 'string' ? message.data.transcript.trim() : '';
-                    return { committed: words };
+                    return { committed: words, speech: 'answered' };
                 }
                 return undefined;
             },
