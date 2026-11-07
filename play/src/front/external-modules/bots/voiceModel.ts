@@ -555,6 +555,7 @@ export function companyName(adapter: string): string {
         groq: "Groq",
         hume: "Hume",
         meta: "Meta",
+        minimax: "MiniMax",
         mistral: "Mistral",
         neuphonic: "Neuphonic",
         nvidia: "NVIDIA",
