@@ -64,7 +64,7 @@ describe('publicFetch', () => {
     let seen: any;
     let written: Buffer[];
 
-    function fakeServer(status: number, body: string | Buffer, headers: Record<string, string> = {}) {
+    function fakeServer(status: number, body: string | Buffer, headers: Record<string, string> = {}, statusMessage = 'x') {
         vi.spyOn(https, 'request').mockImplementation(((options: any, callback: (res: any) => void) => {
             seen = options;
             written = [];
@@ -74,7 +74,7 @@ describe('publicFetch', () => {
                 end: () => {
                     const res: any = new PassThrough();
                     res.statusCode = status;
-                    res.statusMessage = 'x';
+                    res.statusMessage = statusMessage;
                     res.headers = headers;
                     callback(res);
                     res.end(body);
@@ -138,6 +138,17 @@ describe('publicFetch', () => {
         expect(response.status).toBe(302);
         expect(response.headers.get('location')).toBe('https://169.254.169.254/latest');
         expect(https.request).toHaveBeenCalledTimes(1);
+    });
+
+    it('answers, rather than crashes, when a server sends a reason phrase or headers a Response would refuse', async () => {
+        lookupMock.mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
+        fakeServer(200, '{}', {}, 'bad\u0100phrase');
+        const response = await publicFetch('https://speech.example.com/v1/audio/speech');
+        expect(response.status).toBe(200);
+        expect(await response.text()).toBe('{}');
+        // Anything else that makes Response throw rejects the call, never an uncaught error
+        fakeServer(200, '{}', { 'bad header': 'x' });
+        await expect(publicFetch('https://speech.example.com/v1/audio/speech')).rejects.toThrow();
     });
 
     it('sends a recording and its settings as a form, with the boundary in the content type', async () => {

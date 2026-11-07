@@ -53,6 +53,8 @@ const ALLOWED_PATHS = new Set(['/v1/audio/transcriptions', '/v1/audio/speech', '
 /** The largest answer read from a speech server: a long spoken reply is well under this. */
 export const MAX_RESPONSE_BYTES = 30_000_000;
 const CONNECT_TIMEOUT_MS = 10_000;
+/** What Response accepts as a reason phrase. */
+const REASON_PHRASE = /^[\t\x20-\x7e\x80-\xff]*$/;
 
 /** Everything about the address that can be checked without a lookup; throws an AddressError. */
 export function parsePublicHttpsUrl(raw: string): URL {
@@ -157,20 +159,28 @@ export async function publicFetch(input: string | URL, init: RequestInit = {}): 
                 response.on('error', (error) => stream.destroy(error));
                 // A reader that cancels, or an answer past the cap, ends the stream: close the connection too
                 stream.on('close', () => response.destroy());
-                const noBody = [101, 204, 205, 304].includes(response.statusCode ?? 0);
-                const responseHeaders = new Headers();
-                for (const [key, value] of Object.entries(response.headers)) {
-                    if (Array.isArray(value)) value.forEach((entry) => responseHeaders.append(key, entry));
-                    else if (value !== undefined) responseHeaders.set(key, value);
+                try {
+                    const noBody = [101, 204, 205, 304].includes(response.statusCode ?? 0);
+                    const responseHeaders = new Headers();
+                    for (const [key, value] of Object.entries(response.headers)) {
+                        if (Array.isArray(value)) value.forEach((entry) => responseHeaders.append(key, entry));
+                        else if (value !== undefined) responseHeaders.set(key, value);
+                    }
+                    // A reason phrase a server made up can hold what Response refuses: it is only text, so it is dropped rather than thrown
+                    const statusText = response.statusMessage && REASON_PHRASE.test(response.statusMessage) ? response.statusMessage : '';
+                    resolve(
+                        new Response(noBody ? null : (Readable.toWeb(stream) as unknown as ReadableStream), {
+                            // Response throws on anything outside 200-599, which an odd server can send
+                            status: response.statusCode && response.statusCode >= 200 && response.statusCode <= 599 ? response.statusCode : 502,
+                            statusText,
+                            headers: responseHeaders,
+                        })
+                    );
+                } catch (error) {
+                    // This runs outside the promise's own body: a throw here would be an uncaught error that ends the worker
+                    stream.destroy();
+                    reject(error);
                 }
-                resolve(
-                    new Response(noBody ? null : (Readable.toWeb(stream) as unknown as ReadableStream), {
-                        // Response throws on anything outside 200-599, which an odd server can send
-                        status: response.statusCode && response.statusCode >= 200 && response.statusCode <= 599 ? response.statusCode : 502,
-                        statusText: response.statusMessage,
-                        headers: responseHeaders,
-                    })
-                );
             }
         );
         const connectTimer = setTimeout(() => request.destroy(new Error('Timed out connecting')), CONNECT_TIMEOUT_MS);
