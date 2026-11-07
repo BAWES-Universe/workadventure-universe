@@ -404,7 +404,8 @@ export interface PayerOption {
 
 /**
  * The ways to turn voice on: Universe AI for both jobs, and each lent key for the jobs it does (Universe AI does the
- * other one). A way that would leave a job with nothing to run on is left out.
+ * other one). A way that would leave a job with nothing to run on is left out. When no such way exists, one key that listens plus
+ * another that speaks is offered, so lending the two keys the Voice row asks for always turns voice on.
  */
 export function payerOptions(voice: BotVoice): PayerOption[] {
     const uai: PayerChoice = { kind: "universe-ai" };
@@ -420,6 +421,23 @@ export function payerOptions(voice: BotVoice): PayerOption[] {
         const recognition = listens ? own : voice.universeAi.recognition ? uai : null;
         const speech = speaks ? own : voice.universeAi.speech ? uai : null;
         if (recognition && speech) options.push({ id: key.id, kind: "key", key, recognition, speech });
+    }
+    if (options.length > 0) return options;
+    // Nothing above covers both jobs (no Universe AI voice and no one key that does both): one key that listens and another that
+    // speaks, together. The speaking key is the one the voices are read from.
+    const listeners = choicesFor(voice, "recognition").filter((choice) => choice.kind === "key");
+    const speakers = choicesFor(voice, "speech").filter((choice) => choice.kind === "key");
+    for (const speech of speakers) {
+        for (const recognition of listeners) {
+            if (speech.kind !== "key" || recognition.kind !== "key" || speech.key.id === recognition.key.id) continue;
+            options.push({
+                id: `${recognition.key.id}+${speech.key.id}`,
+                kind: "key",
+                key: speech.key,
+                recognition,
+                speech,
+            });
+        }
     }
     return options;
 }
