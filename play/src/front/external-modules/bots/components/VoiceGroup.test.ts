@@ -508,6 +508,30 @@ describe("the bot page's Voice group (#1668)", () => {
         expect(mocks.api.saveBotVoice.mock.calls[0][1].speech.providerId).toBe("uai-speak");
     });
 
+    it("still lets the maker move a job off a key that is no longer lent, onto another lent key", async () => {
+        mocks.api.getBotVoice.mockResolvedValue(
+            turnedOn({ ...uaiProfile, speech: { ...uaiProfile.speech, providerId: "key-old" } }, { lentKeys: [key()] })
+        );
+        mocks.api.getMyVoiceKeys.mockResolvedValue([{ id: "key-old", adapter: "elevenlabs" }]);
+        mocks.api.getBotVoices.mockResolvedValue(voices.map((voice) => ({ ...voice, providerId: "key-el" })));
+        mocks.api.saveBotVoice.mockResolvedValue(
+            turnedOn({ ...uaiProfile, speech: { ...uaiProfile.speech, providerId: "key-el" } }, { lentKeys: [key()] })
+        );
+        await mount();
+        await click("bot-voice-more");
+        await click("bot-voice-sources-change");
+        // Nothing speaks now, so no card is picked for speaking, and the split is open to pick one
+        expect(byTestId("bot-voice-split")[0].getAttribute("aria-expanded")).toBe("true");
+        expect(byTestId("bot-voice-recognition-universe-ai")[0].getAttribute("aria-checked")).toBe("true");
+        expect(byTestId("bot-voice-speech-key-el")[0].getAttribute("aria-checked")).toBe("false");
+        expect(byTestId("bot-voice-both-universe-ai")[0].getAttribute("aria-checked")).toBe("false");
+        await click("bot-voice-speech-key-el");
+        expect(mocks.api.saveBotVoice.mock.calls[0][1]).toMatchObject({
+            recognition: { providerId: "uai-listen" },
+            speech: { providerId: "key-el" },
+        });
+    });
+
     it("says Universe AI's voice is off, with no buttons", async () => {
         mocks.api.getBotVoice.mockResolvedValue(
             turnedOn(uaiProfile, { universeAi: { recognition: uai.recognition, speech: null } })

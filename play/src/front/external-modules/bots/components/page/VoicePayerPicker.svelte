@@ -19,8 +19,9 @@
     import { IconArrowsSplit2, IconInfoCircle, IconKey, IconSparkles, IconChevronDown } from "@wa-icons";
 
     export let voice: BotVoice;
-    /** Where both jobs run now (or will, once voice is turned on) */
-    export let current: PayerOption;
+    /** Where each job runs now (or will, once voice is turned on); null for a job whose key is no longer lent here */
+    export let listens: PayerChoice | null;
+    export let speaks: PayerChoice | null;
     export let botName: string;
     export let viewerIsMaker: boolean;
     export let maker: string;
@@ -33,21 +34,33 @@
 
     $: v = $LL.mapEditor.edit.bots.page.voice;
     $: both = payerOptions(voice).filter(coversBoth);
-    // The split lists start open when the jobs already run on two places
-    let splitOpen = !coversBoth(current);
+    $: current = { recognition: listens, speech: speaks };
+    // The split lists start open unless one place does both jobs now
+    let splitOpen = !(listens && speaks && sameChoice(listens, speaks));
 
     function pickPart(part: "recognition" | "speech", choice: PayerChoice) {
-        const next =
-            part === "speech" ? optionOf(voice, current.recognition, choice) : optionOf(voice, choice, current.speech);
+        const other = part === "speech" ? "recognition" : "speech";
+        const pair = (place: PayerChoice) =>
+            part === "speech" ? optionOf(voice, place, choice) : optionOf(voice, choice, place);
+        // The other job stays where it is; when its key went away, it takes the first place that can do it
+        const kept = current[other];
+        const next = kept
+            ? pair(kept)
+            : splitChoices(voice, other)
+                  .map(pair)
+                  .find((option) => option !== undefined);
         if (next) onPick(next);
     }
+
+    const isCurrent = (option: PayerOption) =>
+        !!listens && !!speaks && sameChoice(listens, option.recognition) && sameChoice(speaks, option.speech);
 </script>
 
 {#if both.length > 0}
     <div class="bp-cap" id="voice-both-{place}">{v.bothCaption()}</div>
     <div class="bp-cards" role="radiogroup" aria-labelledby="voice-both-{place}" data-testid="bot-voice-both">
         {#each both as option (option.id)}
-            {@const picked = current.id === option.id}
+            {@const picked = isCurrent(option)}
             <button
                 type="button"
                 role="radio"
@@ -105,7 +118,8 @@
             data-testid="bot-voice-split-{part}"
         >
             {#each splitChoices(voice, part) as choice (sourceKey(choice))}
-                {@const picked = sameChoice(current[part], choice)}
+                {@const now = current[part]}
+                {@const picked = now !== null && sameChoice(now, choice)}
                 <button
                     type="button"
                     role="radio"

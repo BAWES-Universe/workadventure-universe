@@ -907,7 +907,8 @@
                         {#if payerOpen && doorOptions.length > 1}
                             <VoicePayerPicker
                                 {voice}
-                                current={doorOption}
+                                listens={doorOption.recognition}
+                                speaks={doorOption.speech}
                                 {botName}
                                 {viewerIsMaker}
                                 {maker}
@@ -1270,10 +1271,11 @@
                                     >
                                 {/if}
                             </div>
-                            {#if hasKeyChoice && sourcesOpen && onOption}
+                            {#if hasKeyChoice && sourcesOpen}
                                 <VoicePayerPicker
                                     {voice}
-                                    current={onOption}
+                                    listens={listensChoice}
+                                    speaks={speakChoice}
                                     {botName}
                                     {viewerIsMaker}
                                     {maker}
