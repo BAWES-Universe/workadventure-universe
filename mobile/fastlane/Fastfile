@@ -1,0 +1,74 @@
+# frozen_string_literal: true
+
+# Resolve the private Git repository URL storing encrypted Fastlane Match
+# certificates and provisioning profiles for BAWES Universe iOS builds.
+def match_git_repository_url
+  ENV.fetch("MATCH_GIT_URL", "https://github.com/BAWES-Universe/fastlane-certs.git")
+end
+
+# Read an environment variable with a primary and fallback key name so both
+# standard Fastlane and shorthand GitHub Actions secret names work seamlessly.
+def fetch_env_pair(primary_key, fallback_key)
+  primary_val = ENV[primary_key].to_s
+  return primary_val unless primary_val.empty?
+
+  ENV[fallback_key].to_s
+end
+
+# Construct the App Store Connect API key configuration when CI secrets are present
+# so TestFlight uploads authenticate without interactive Apple ID 2FA prompts.
+def resolve_asc_api_key
+  key_id = fetch_env_pair("APP_STORE_CONNECT_API_KEY_ID", "ASC_KEY_ID")
+  issuer_id = fetch_env_pair("APP_STORE_CONNECT_API_ISSUER_ID", "ASC_ISSUER_ID")
+  key_content = fetch_env_pair("APP_STORE_CONNECT_API_KEY_CONTENT", "ASC_KEY_CONTENT")
+  return nil if [key_id, issuer_id, key_content].any?(&:empty?)
+
+  app_store_connect_api_key(
+    key_id: key_id,
+    issuer_id: issuer_id,
+    key_content: key_content
+  )
+end
+
+platform :ios do
+  desc "Sync certificates and profiles"
+  lane :certs do
+    match(
+      type: "appstore",
+      app_identifier: "net.bawes.universe",
+      git_url: match_git_repository_url,
+      readonly: is_ci
+    )
+  end
+
+  desc "Build signed IPA"
+  lane :build do
+    certs
+    increment_build_number(
+      xcodeproj: "ios/App/App.xcodeproj"
+    )
+    build_app(
+      workspace: "ios/App/App.xcworkspace",
+      scheme: "App",
+      export_method: "app-store"
+    )
+  end
+
+  desc "Upload to TestFlight"
+  lane :beta do
+    api_key = resolve_asc_api_key
+    build
+    upload_to_testflight(
+      api_key: api_key,
+      skip_waiting_for_build_processing: true
+    )
+  end
+
+  desc "Run tests"
+  lane :test do
+    run_tests(
+      workspace: "ios/App/App.xcworkspace",
+      scheme: "App"
+    )
+  end
+end

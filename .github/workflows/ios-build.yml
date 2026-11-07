@@ -1,0 +1,79 @@
+name: iOS Build & TestFlight
+
+# Automates iOS Capacitor synchronization, Xcode validation, and Fastlane TestFlight
+# delivery for the BAWES Universe native shell targeting universe.bawes.net.
+on:
+  workflow_dispatch:
+  push:
+    branches: [universe]
+    paths:
+      - 'mobile/ios/**'
+      - 'mobile/fastlane/**'
+      - 'mobile/Gemfile'
+      - '.github/workflows/ios-build.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and upload to TestFlight
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Set up Ruby and Bundler
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+          working-directory: mobile
+
+      - name: Install Capacitor dependencies
+        run: |
+          npm ci || npm install --no-save --registry=https://registry.npmjs.org \
+            @capacitor/core@8.3.4 \
+            @capacitor/cli@8.3.4 \
+            @capacitor/ios@8.3.4 \
+            @capacitor/push-notifications@8.1.1 \
+            @capacitor/splash-screen@8.0.1 \
+            typescript@5.8.3
+
+      - name: Sync iOS Capacitor project
+        run: npx cap sync ios
+
+      - name: Validate Info.plist and Xcode project configuration
+        run: |
+          plutil -lint ios/App/App/Info.plist
+          xcodebuild -list -project ios/App/App.xcodeproj
+
+      - name: Build signed IPA and upload to TestFlight via Fastlane
+        run: |
+          if [ -z "$APPLE_ID" ] || [ -z "$APPLE_TEAM_ID" ] || [ -z "$MATCH_PASSWORD" ] || [ -z "$MATCH_GIT_BASIC_AUTHORIZATION" ] || [ -z "$APP_STORE_CONNECT_API_KEY_ID" ] || [ -z "$APP_STORE_CONNECT_API_ISSUER_ID" ] || [ -z "$APP_STORE_CONNECT_API_KEY_CONTENT" ]; then
+            echo "Required Apple signing or App Store Connect secrets are not configured; skipping TestFlight upload."
+            exit 0
+          fi
+          bundle exec fastlane ios beta
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}

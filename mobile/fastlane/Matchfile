@@ -1,0 +1,13 @@
+# frozen_string_literal: true
+
+# Return the Git repository URL storing encrypted Fastlane Match signing assets.
+def match_certificate_repo_url
+  ENV.fetch("MATCH_GIT_URL", "https://github.com/BAWES-Universe/fastlane-certs.git")
+end
+
+# Store encrypted App Store distribution certificates and provisioning profiles
+# in the dedicated private BAWES-Universe repository for reproducible CI signing.
+git_url(match_certificate_repo_url)
+storage_mode("git")
+type("appstore")
+app_identifier(["net.bawes.universe"])
