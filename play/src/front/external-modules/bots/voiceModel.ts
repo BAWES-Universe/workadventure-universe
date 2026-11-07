@@ -601,6 +601,7 @@ export function companyName(adapter: string): string {
         cartesia: "Cartesia",
         fish: "Fish Audio",
         google: "Google",
+        inworld: "Inworld",
         openai: "OpenAI",
         xai: "xAI",
         deepgram: "Deepgram",
