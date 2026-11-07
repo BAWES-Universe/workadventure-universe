@@ -80,10 +80,11 @@ describe('speaking with Hume', () => {
         expect(samples.length).toBeGreaterThan(440);
     });
 
-    it('lets Hume choose a voice when none is picked, with instant mode off', async () => {
+    it('lets Hume choose a voice and its model when none is picked, with instant mode off and no version (Hume refuses version 2 without a voice)', async () => {
         const h = await fakeHume((res) => res.end(chunk(10, true)));
         await collect(new HumeSpeech().speak(request(h.base, { voiceId: '' })));
         expect(h.seen[0].body).toMatchObject({ utterances: [{ text: 'Hello there.' }], instant_mode: false });
+        expect(h.seen[0].body).not.toHaveProperty('version');
     });
 
     it("reads Octave's version from the model", () => {
