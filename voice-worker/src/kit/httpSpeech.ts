@@ -43,7 +43,8 @@ export interface FramedAudio {
     samples?: 's16' | 'f32';
     /** The first audio may be a WAV file: its header is skipped. */
     mayStartWithWav?: boolean;
-    read(message: unknown): AudioFrame | undefined;
+    /** Reads one message; for server-sent events, `event` is the name its `event:` line gave, when it had one. */
+    read(message: unknown, event?: string): AudioFrame | undefined;
 }
 
 export interface HttpSpeechSpec {
@@ -53,6 +54,8 @@ export interface HttpSpeechSpec {
     call(request: SpeechRequest, base: string): HttpCall;
     audio: RawAudio | FramedAudio;
     outOfCredit?: CreditCheck;
+    /** A refusal that means the key itself is wrong, for a company that doesn't say so with 401 or 403 (Google answers 400). */
+    wrongKey?: CreditCheck;
 }
 
 /** Turns little-endian 32-bit float samples into s16 bytes, keeping a sample split across two pieces for the next one. */
@@ -98,7 +101,8 @@ async function* speakOverHttp(spec: HttpSpeechSpec, request: SpeechRequest): Asy
     }
     if (!response.ok || !response.body) {
         const body = await readSome(response.body);
-        throw failure(spec.adapter, 'refused the reply', answerStatus(response.status, body, spec.outOfCredit));
+        const status = spec.wrongKey?.(response.status, body) ? 401 : answerStatus(response.status, body, spec.outOfCredit);
+        throw failure(spec.adapter, 'refused the reply', status);
     }
 
     const reader = new PcmReader({ skipWavHeader: spec.audio.mayStartWithWav === true });
@@ -122,16 +126,24 @@ async function* speakOverHttp(spec: HttpSpeechSpec, request: SpeechRequest): Asy
             let text = '';
             const decoder = new TextDecoder();
             let finished = false;
+            // The name an `event:` line gave the server-sent event now arriving; a blank line ends that event
+            let eventName: string | undefined;
             const handle = function* (line: string): Generator<Int16Array> {
+                const named = /^event:\s?(.*)$/.exec(line.trim());
+                if (named) {
+                    eventName = named[1].trim() || undefined;
+                    return;
+                }
                 const trimmed = line.replace(/^data:\s?/, '').trim();
-                if (!trimmed || trimmed.startsWith(':') || trimmed === '[DONE]' || /^(event|id|retry):/.test(trimmed)) return;
+                if (!trimmed) eventName = undefined;
+                if (!trimmed || trimmed.startsWith(':') || trimmed === '[DONE]' || /^(id|retry):/.test(trimmed)) return;
                 let message: unknown;
                 try {
                     message = JSON.parse(trimmed);
                 } catch {
                     return;
                 }
-                const frame = framed.read(message);
+                const frame = framed.read(message, eventName);
                 if (!frame) return;
                 if (frame.error) throw failure(spec.adapter, 'reported an error in the reply', frame.error.status);
                 if (frame.audio) {

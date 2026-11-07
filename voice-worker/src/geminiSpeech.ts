@@ -7,7 +7,8 @@
 //
 // One streamed request per reply (POST /v1beta/models/{model}:streamGenerateContent?alt=sse): the text as the one user part,
 // audio as the only answer, the voice and the language. Each server-sent event holds base64 24 kHz s16 audio in a part's
-// inlineData; Gemini 3.8 may put a WAV header first, which is skipped. Google answers a wrong key 400 (API_KEY_INVALID).
+// inlineData; Gemini 3.8 may put a WAV header first, which is skipped. Google answers a wrong key 400 (API_KEY_INVALID), which
+// is read as the key being refused.
 import type { SpeechConnector, SpeechRequest } from './connectors.ts';
 import { httpSpeech, SPEECH_RATE, type AudioFrame } from './kit/httpSpeech.ts';
 
@@ -30,10 +31,14 @@ interface GeminiAnswer {
     error?: { code?: unknown; status?: unknown; message?: unknown };
 }
 
+/** Google's word for a wrong key, inside its 400 answer. */
+export const geminiWrongKey = (status: number, body: string): boolean => status === 400 && body.includes('API_KEY_INVALID');
+
 export class GeminiSpeech implements SpeechConnector {
     private readonly connector = httpSpeech({
         adapter: GEMINI_SPEECH_ADAPTER,
         endpoint: GEMINI_SPEECH_ENDPOINT,
+        wrongKey: geminiWrongKey,
         audio: {
             kind: 'lines',
             sampleRate: SPEECH_RATE,
@@ -43,6 +48,7 @@ export class GeminiSpeech implements SpeechConnector {
                 if (typeof message !== 'object' || message === null) return undefined;
                 const answer = message as GeminiAnswer;
                 if (answer.error) {
+                    if (geminiWrongKey(Number(answer.error.code), JSON.stringify(answer.error))) return { error: { status: 401 } };
                     const code = Number(answer.error.code);
                     return { error: { status: Number.isInteger(code) && code >= 400 && code < 600 ? code : undefined } };
                 }

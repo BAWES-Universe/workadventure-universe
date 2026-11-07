@@ -196,7 +196,12 @@ export class GrpcCall {
             }
             for (const message of messages) {
                 if (this.ended) return;
-                onMessage(message);
+                // A message the reader can't make sense of ends the call; thrown out of this listener it would end the worker
+                try {
+                    onMessage(message);
+                } catch {
+                    return end({ ok: false });
+                }
             }
         });
         this.stream.on('trailers', (trailers) => {

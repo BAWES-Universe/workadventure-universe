@@ -104,6 +104,10 @@ describe('speaking with MiniMax', () => {
         expect(second).toBeInstanceOf(ProviderError);
         expect((second as ProviderError).status).toBe(401);
 
+        const unknownKey = await fakeMiniMax((res) => res.end('{"data":null,"base_resp":{"status_code":2049,"status_msg":"invalid api key"}}'));
+        const unknown = await collect(new MiniMaxSpeech().speak(speaking(unknownKey.base))).catch((e: unknown) => e);
+        expect((unknown as ProviderError).status).toBe(401);
+
         const broke = await fakeMiniMax((res) =>
             res.end(block({ audio: hex(5), status: 1 }) + block({}, { status_code: 1008, status_msg: 'insufficient balance' })),
         );
