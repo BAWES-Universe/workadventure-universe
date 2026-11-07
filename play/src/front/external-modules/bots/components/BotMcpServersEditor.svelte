@@ -49,6 +49,8 @@
     // Test connection state
     let testingServerId: string | null = null;
     let testError: Record<string, string> = {};
+    /** Why the last Test server read nothing, by server id (empty when it did): shown under the buttons so a press is never silent */
+    let testProblem: Record<string, string> = {};
 
     // Remove confirmation state
     let removingServerId: string | null = null;
@@ -408,6 +410,7 @@
 
     async function handleTestConnection(serverId: string) {
         testingServerId = serverId;
+        testProblem = { ...testProblem, [serverId]: "" };
         try {
             const rawResult = await botApiService.testBotMcpServer(botId, serverId);
             const result: McpServerTestResult = {
@@ -417,7 +420,18 @@
             };
 
             if (result.success) {
-                // Reload servers from API to get updated lastTestResult / lastTestedAt
+                // Orbit only checked that the server answers. The bot server reads the whole list and saves it to Orbit
+                // (#1654): that is what fills the server's page, so wait for it before reading the page again.
+                try {
+                    await botApiService.refreshMcpServerTools(botId, serverId);
+                } catch (error) {
+                    console.error("[BotMcpServersEditor] Error reading the tools of an MCP server:", error);
+                    testProblem = {
+                        ...testProblem,
+                        [serverId]: "Couldn't read the tools right now. Tap Test server to try again.",
+                    };
+                }
+                // Reload servers from API to get updated lastTestResult / lastTestedAt, and the tools just saved
                 void loadServers();
             } else {
                 testError = { ...testError, [serverId]: result.error || "Connection failed" };
@@ -429,6 +443,7 @@
         } catch (error) {
             console.error("[BotMcpServersEditor] Error testing MCP server:", error);
             testError = { ...testError, [serverId]: "Connection test failed" };
+            testProblem = { ...testProblem, [serverId]: "Connection test failed" };
         } finally {
             testingServerId = null;
         }
@@ -670,6 +685,11 @@
                     <span class:mcp-bad={getStatusDot(server) === "failed"}>{headLine(server)}</span>
                 </div>
                 <div class="mcp-url" title={server.serverUrl}>{server.serverUrl}</div>
+                {#if testProblem[server.id]}
+                    <div class="mcp-m mcp-bad" role="alert" data-testid="bot-test-problem">
+                        {testProblem[server.id]}
+                    </div>
+                {/if}
                 <div class="mcp-actions">
                     {#if server.authType !== "oauth" || server.oauthConnected}
                         <button
