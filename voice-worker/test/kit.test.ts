@@ -293,6 +293,15 @@ describe('speaking over a WebSocket with the kit', () => {
         expect(s.seen[0]).toEqual({ url: '/speak?model=m1', authorization: `Bearer ${KEY}` });
     });
 
+    it('fails as the company, without crashing the worker, when the key cannot be sent in a header', async () => {
+        const s = await socketServer({});
+        const request = speechRequest(s.url);
+        const error = await collect(spec(s.url).speak({ ...request, settings: { ...request.settings, key: new Secret('pasted\nkey') } })).catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(ProviderError);
+        expect((error as ProviderError).message).not.toContain('pasted');
+        expect(s.seen).toEqual([]);
+    });
+
     it('fails with the status of a refused connection, without the key', async () => {
         const s = await socketServer({ refuse: 401 });
         const error = await collect(spec(s.url).speak(speechRequest(s.url))).catch((e: unknown) => e);
@@ -498,6 +507,15 @@ describe('hearing over a WebSocket with the kit', () => {
         spec({ connect: async () => Promise.reject(new ProviderError('test refused the session', 401)) }).listen(hearingSettings(''), refused.events);
         await waitFor('the failure', () => refused.got.failures.length === 1);
         expect(refused.got.failures).toEqual([{ text: '', status: 401 }]);
+    });
+
+    it('fails, without crashing the worker, when the key cannot be sent in a header', async () => {
+        const fake = await fakeHearing();
+        const { got, events } = heard();
+        spec().listen({ ...hearingSettings(fake.url), key: new Secret('pasted\nkey') }, events);
+        await waitFor('the failure', () => got.failures.length === 1);
+        expect(got.failures).toEqual([{ text: '' }]);
+        expect(fake.seen).toEqual([]);
     });
 
     it('says nothing after close', async () => {
