@@ -1,0 +1,12 @@
+# frozen_string_literal: true
+
+# Return the canonical Apple bundle identifier for the BAWES Universe iOS shell.
+def universe_ios_bundle_id
+  "net.bawes.universe"
+end
+
+# Bind Fastlane iOS automation to the registered BAWES Universe bundle identifier
+# and read Apple Developer credentials from CI environment variables.
+app_identifier(universe_ios_bundle_id)
+apple_id(ENV["APPLE_ID"])
+team_id(ENV["APPLE_TEAM_ID"])
