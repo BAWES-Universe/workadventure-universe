@@ -2,7 +2,7 @@
 // network, no spend. The signer is checked against AWS's own published example.
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { ConnectorRegistry, ProviderError, Secret, type SpeechRequest } from '../src/connectors.ts';
 import { AWS_VOICE_ADAPTER, AwsPolly, AwsTranscribe, transcribeLocale } from '../src/awsVoice.ts';
@@ -268,8 +268,18 @@ describe('AWS under one name with its talking model', () => {
     it('is registered as "aws" for hearing and speaking, leaving Nova Sonic to the one already there', async () => {
         const base = { port: 0, host: '127.0.0.1', maxLanes: 1, maxSessionsPerConnection: 1, ice: { iceServers: [] } };
         const worker = new VoiceWorker(base);
-        expect(worker.connectors.recognition(AWS_VOICE_ADAPTER)).toBeInstanceOf(AwsTranscribe);
-        expect(worker.connectors.speech(AWS_VOICE_ADAPTER)).toBeInstanceOf(AwsPolly);
+        const recognizer = { push: () => undefined, finish: () => undefined, close: () => undefined };
+        const listen = vi.spyOn(AwsTranscribe.prototype, 'listen').mockReturnValue(recognizer as never);
+        const polly = vi.spyOn(AwsPolly.prototype, 'speak').mockImplementation(async function* () {
+            yield new Int16Array([3]);
+        });
+        const events = { partial: () => undefined, final: () => undefined, failed: () => undefined };
+        const own = { adapter: AWS_VOICE_ADAPTER, model: 'amazon-transcribe', key: new Secret('k'), endpoint: '' };
+        expect(worker.connectors.recognition(AWS_VOICE_ADAPTER)!.listen(own, events)).toBe(recognizer);
+        expect(await collect(worker.connectors.speech(AWS_VOICE_ADAPTER)!.speak(speaking('http://127.0.0.1:9', {}, { model: 'generative' })))).toEqual([3]);
+        expect(listen).toHaveBeenCalledTimes(1);
+        expect(polly).toHaveBeenCalledTimes(1);
+        vi.restoreAllMocks();
         const said: string[] = [];
         const talking = {
             speak: async function* (request: SpeechRequest) {
