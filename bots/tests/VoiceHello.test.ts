@@ -23,6 +23,8 @@ import {
     VoiceHello,
     helloLine,
     previewAtWorker,
+    helloSourceOf,
+    typedVoiceName,
     workerPreviewUrl,
     type HelloCacheSettings,
     type HelloPorts,
@@ -55,12 +57,15 @@ function hello(options: {
     cache?: HelloCache;
     allowance?: Awaited<ReturnType<HelloPorts['allowance']['checkVoiceAllowance']>>;
     preview?: HelloPreviewAnswer | (() => Promise<HelloPreviewAnswer>);
+    /** What the voice of a speech server typed for at the door reads as (see `VoiceSettings.ownSpeech`) */
+    ownSpeech?: SessionSettings['speech'] | null;
 } = {}) {
     const report = vi.fn();
     const voice: VoiceSettings = {
         active: vi.fn(async () => options.active ?? speaking(options.owner ?? false, options.language)),
         sessionSettings: vi.fn(async () => (options.settings === undefined ? session() : options.settings)),
         report,
+        ...(options.ownSpeech !== undefined ? { ownSpeech: vi.fn(async () => options.ownSpeech ?? null) } : {}),
     };
     const checkVoiceAllowance = vi.fn(async () => (options.allowance === undefined ? { allowed: true as const, left: 17 } : options.allowance));
     const releaseVoiceReply = vi.fn(async () => true as boolean | null);
@@ -78,7 +83,7 @@ function hello(options: {
     return { hello: new VoiceHello(ports), voice, report, checkVoiceAllowance, releaseVoiceReply, preview };
 }
 
-const say = (h: VoiceHello, extra: Partial<{ locale: string; personId: string }> = {}) => h.say({ botId: 'hala', personId: 'maker-uuid', ...extra });
+const say = (h: VoiceHello, extra: Partial<{ locale: string; personId: string; voiceId: string; source: { providerId: string; model: string } }> = {}) => h.say({ botId: 'hala', personId: 'maker-uuid', ...extra });
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 describe('hearing a voice say hello', () => {
@@ -324,6 +329,115 @@ describe('keeping a hello so trying a voice again costs nothing (#1852)', () => 
     });
 });
 
+describe('a voice name typed for a person\'s own speech server (#1874)', () => {
+    const own = (): SessionSettings => ({
+        recognition: { adapter: 'openai-compatible', model: 'whisper-1', endpoint: 'https://speech.example.com/v1' },
+        speech: { adapter: 'openai-compatible', model: 'kokoro', voiceId: 'af_heart', endpoint: 'https://speech.example.com/v1' },
+        expression: 'natural',
+    });
+
+    it('says the line with the typed name, for the speech server only, and nothing of it is saved', async () => {
+        const h = hello({ owner: true, settings: own() });
+        expect((await say(h.hello, { voiceId: 'bm_george' })).ok).toBe(true);
+        const [request] = h.preview.mock.calls[0];
+        expect(request.speech).toEqual({ ...own().speech, voiceId: 'bm_george' });
+        // The own server is free: no allowance is touched
+        expect(h.checkVoiceAllowance).not.toHaveBeenCalled();
+    });
+
+    it('hears the saved name when none is typed', async () => {
+        const h = hello({ owner: true, settings: own() });
+        await say(h.hello);
+        expect(h.preview.mock.calls[0][0].speech.voiceId).toBe('af_heart');
+    });
+
+    it('keeps one hello for each typed name', async () => {
+        const cache = new HelloCache({ ttlMs: 60_000, maxBytes: 1_000_000 });
+        const h = hello({ owner: true, settings: own(), cache });
+        await say(h.hello, { voiceId: 'bm_george' });
+        await say(h.hello, { voiceId: 'bm_george' });
+        await say(h.hello, { voiceId: 'af_sky' });
+        expect(h.preview).toHaveBeenCalledTimes(2);
+    });
+
+    it('refuses a typed name for any other speech source, and says nothing out loud nor counts anything', async () => {
+        const h = hello({ owner: false });
+        expect(await say(h.hello, { voiceId: 'bm_george' })).toEqual({ ok: false, status: 409, error: 'voice_name_not_typed' });
+        expect(h.preview).not.toHaveBeenCalled();
+        expect(h.checkVoiceAllowance).not.toHaveBeenCalled();
+    });
+
+    it('passes on how the server answered a name it did not take', async () => {
+        const h = hello({ owner: true, settings: own(), preview: { ok: false, kind: 'provider', status: 404, rejected: false } });
+        expect(await say(h.hello, { voiceId: 'nope' })).toEqual({ ok: false, status: 502, error: 'provider', providerStatus: 404, rejected: false });
+    });
+
+    it('takes one line of text of at most 255 characters, trimmed, and nothing else', () => {
+        expect(typedVoiceName('  af_heart ')).toBe('af_heart');
+        expect(typedVoiceName('a'.repeat(255))).toHaveLength(255);
+        for (const bad of ['', '   ', 'a'.repeat(256), 'two\nlines', 'tab\there', 'nul\u0000', 42, null, undefined, {}]) {
+            expect(typedVoiceName(bad)).toBeUndefined();
+        }
+    });
+});
+
+describe('a voice name typed at the door, before voice is on (#1874)', () => {
+    const SOURCE = { providerId: 'my-server', model: 'kokoro' };
+    const OWN_SPEECH = { adapter: 'openai-compatible', model: 'kokoro', voiceId: 'bm_george', endpoint: 'https://speech.example.com/v1' };
+    // The bot does not speak yet: Orbit would say voice is off
+    const off: ActiveVoice = { speaks: false, reason: 'off' };
+
+    it('speaks it from the server named, without the bot\'s own voice being on, and counts nothing', async () => {
+        const h = hello({ active: off, ownSpeech: OWN_SPEECH });
+        expect((await say(h.hello, { voiceId: 'bm_george', source: SOURCE })).ok).toBe(true);
+        expect(h.voice.ownSpeech).toHaveBeenCalledWith('my-server', 'kokoro', 'bm_george');
+        expect(h.preview.mock.calls[0][0]).toMatchObject({ speech: OWN_SPEECH, text: HELLO_LINES.en, expression: 'natural' });
+        expect(h.checkVoiceAllowance).not.toHaveBeenCalled();
+        expect(h.report).toHaveBeenCalledWith('my-server', 'speech', { ok: true });
+    });
+
+    it('keeps one hello for each name, as the bot\'s own does', async () => {
+        const cache = new HelloCache({ ttlMs: 60_000, maxBytes: 1_000_000 });
+        const h = hello({ active: off, ownSpeech: OWN_SPEECH, cache });
+        await say(h.hello, { voiceId: 'bm_george', source: SOURCE });
+        expect((await say(h.hello, { voiceId: 'bm_george', source: SOURCE })).ok).toBe(true);
+        expect(h.preview).toHaveBeenCalledTimes(1);
+    });
+
+    it('is not available when the bot may not use that server (not lent here), and says nothing out loud', async () => {
+        const h = hello({ active: off, ownSpeech: null });
+        expect(await say(h.hello, { voiceId: 'bm_george', source: SOURCE })).toEqual({ ok: false, status: 503, error: 'unavailable' });
+        expect(h.preview).not.toHaveBeenCalled();
+    });
+
+    it('is only for a speech server of the person\'s own: another company\'s key is not spoken with a typed name', async () => {
+        const h = hello({ active: off, ownSpeech: { ...OWN_SPEECH, adapter: 'elevenlabs', key: KEY } });
+        expect(await say(h.hello, { voiceId: 'sarah', source: SOURCE })).toEqual({ ok: false, status: 409, error: 'voice_name_not_typed' });
+        expect(h.preview).not.toHaveBeenCalled();
+    });
+
+    it('does not take a name from a bot server that cannot read keys for it', async () => {
+        const h = hello({ active: off });
+        expect(await say(h.hello, { voiceId: 'bm_george', source: SOURCE })).toEqual({ ok: false, status: 503, error: 'unavailable' });
+    });
+
+    it('does not tell Orbit the key failed when the server only did not take the name, but does when the key is refused', async () => {
+        const named = hello({ active: off, ownSpeech: OWN_SPEECH, preview: { ok: false, kind: 'provider', status: 404, rejected: false } });
+        expect(await say(named.hello, { voiceId: 'nope', source: SOURCE })).toMatchObject({ ok: false, status: 502, providerStatus: 404 });
+        expect(named.report).not.toHaveBeenCalled();
+        const refused = hello({ active: off, ownSpeech: OWN_SPEECH, preview: { ok: false, kind: 'provider', status: 401, rejected: true } });
+        await say(refused.hello, { voiceId: 'af_heart', source: SOURCE });
+        expect(refused.report).toHaveBeenCalledWith('my-server', 'speech', { ok: false, status: 401, rejected: true });
+    });
+
+    it('reads a source from a request: two short texts, else nothing', () => {
+        expect(helloSourceOf({ providerId: 'p', model: 'm' })).toEqual({ providerId: 'p', model: 'm' });
+        for (const bad of [null, 'p', {}, { providerId: 'p' }, { providerId: '', model: 'm' }, { providerId: 'p', model: 5 }, { providerId: 'x'.repeat(201), model: 'm' }]) {
+            expect(helloSourceOf(bad)).toBeUndefined();
+        }
+    });
+});
+
 describe('asking the worker', () => {
     const request: HelloPreviewRequest = { speech: session().speech, text: 'Hello', expression: 'natural', maxSeconds: 20 };
     const servers: http.Server[] = [];
@@ -411,6 +525,30 @@ describe('the route', () => {
         expect(response.status).toBe(200);
         expect(await response.json()).toEqual({ text: HELLO_LINES.en, mime: 'audio/wav', audio: WAV.toString('base64'), ms: 2300 });
         expect(say).toHaveBeenCalledWith({ botId: 'hala', personId: 'maker-uuid', locale: 'ar-SA' });
+    });
+
+    it('hands on a typed voice name, and refuses one that is not a name before asking anything', async () => {
+        const say = vi.fn(async () => ({ ok: true, text: HELLO_LINES.en, wav: WAV, ms: 2300 }));
+        const { post } = await api({ hello: { say } });
+        expect((await post({ voiceId: ' bm_george ' })).status).toBe(200);
+        expect(say).toHaveBeenCalledWith({ botId: 'hala', personId: 'maker-uuid', locale: undefined, voiceId: 'bm_george' });
+        say.mockClear();
+        expect((await post({ voiceId: 'bm_george', source: { providerId: 'my-server', model: 'kokoro' } })).status).toBe(200);
+        expect(say).toHaveBeenCalledWith({ botId: 'hala', personId: 'maker-uuid', locale: undefined, voiceId: 'bm_george', source: { providerId: 'my-server', model: 'kokoro' } });
+        say.mockClear();
+        // A source without a name, or one that is not a source, is refused before anything is asked
+        for (const body of [{ source: { providerId: 'p', model: 'm' } }, { voiceId: 'x', source: 'p' }, { voiceId: 'x', source: { providerId: 'p' } }]) {
+            const response = await post(body);
+            expect(response.status).toBe(400);
+            expect(await response.json()).toEqual({ error: 'bad_source' });
+        }
+        expect(say).not.toHaveBeenCalled();
+        for (const voiceId of ['', 'x'.repeat(256), 7, 'a\nb']) {
+            const response = await post({ voiceId });
+            expect(response.status).toBe(400);
+            expect(await response.json()).toEqual({ error: 'bad_voice_name' });
+        }
+        expect(say).not.toHaveBeenCalled();
     });
 
     it('says when the hello was kept from earlier', async () => {

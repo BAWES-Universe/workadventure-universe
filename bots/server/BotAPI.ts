@@ -12,7 +12,7 @@ import type { BotConfiguration } from './AdminApiService';
 import { movementLogger } from '../utils/MovementLogger';
 import { MCPConnector } from '../mcp/MCPConnector';
 import { BotBusyError, BotUnavailableError } from '../utils/summonErrors';
-import type { VoiceHello } from '../voice/VoiceHello';
+import { helloSourceOf, typedVoiceName, type HelloSource, type VoiceHello } from '../voice/VoiceHello';
 import { buildVoiceHello } from '../voice/VoiceHelloWiring';
 
 export interface BotAPIRequest extends Request {
@@ -881,8 +881,32 @@ export class BotAPI {
                 return;
             }
             const locale = typeof req.body?.locale === 'string' ? req.body.locale.slice(0, 16) : undefined;
+            // A voice name typed and not saved yet (#1874), heard from the person's own speech server only. One that is not a name is refused
+            let voiceId: string | undefined;
+            if (req.body?.voiceId !== undefined) {
+                voiceId = typedVoiceName(req.body.voiceId);
+                if (voiceId === undefined) {
+                    res.status(400).json({ error: 'bad_voice_name' });
+                    return;
+                }
+            }
+            // Where it is heard from when voice is not on yet (the door): the speech server and its model. It needs the name to hear
+            let source: HelloSource | undefined;
+            if (req.body?.source !== undefined) {
+                source = helloSourceOf(req.body.source);
+                if (!source || voiceId === undefined) {
+                    res.status(400).json({ error: 'bad_source' });
+                    return;
+                }
+            }
             try {
-                const result = await hello.say({ botId: req.params.botId as string, personId: req.sessionUuid, locale });
+                const result = await hello.say({
+                    botId: req.params.botId as string,
+                    personId: req.sessionUuid,
+                    locale,
+                    ...(voiceId !== undefined ? { voiceId } : {}),
+                    ...(source ? { source } : {}),
+                });
                 if (result.ok === false) {
                     const body: Record<string, unknown> = { ...result };
                     delete body.ok;
