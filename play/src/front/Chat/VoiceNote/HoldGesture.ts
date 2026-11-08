@@ -28,13 +28,17 @@ export interface HoldMove {
 }
 
 /**
- * Where the finger is, `dx` and `dy` from where it first touched. The first direction past a few pixels is kept: a
- * slide to the left that wanders up does not lock, and the other way round.
+ * Where the finger is, `dx` and `dy` from where it first touched. The first slide the right way (left, or up) past a few
+ * pixels is kept: a slide to the left that wanders up does not lock, and the other way round. Drifting down or toward the
+ * mic first chooses nothing.
  */
 export function holdMove(dx: number, dy: number, previous: HoldAxis): HoldMove {
     // Back where it started: the direction is chosen again.
     let axis = Math.hypot(dx, dy) < HOLD_DIRECTION_PX / 2 ? undefined : previous;
-    if (axis === undefined && Math.hypot(dx, dy) > HOLD_DIRECTION_PX) axis = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+    // Only a slide the right way chooses: a thumb that settles down or away from the mic first has chosen nothing yet.
+    const toCancel = Math.max(0, -dx);
+    const toLock = Math.max(0, -dy);
+    if (axis === undefined && Math.max(toCancel, toLock) > HOLD_DIRECTION_PX) axis = toCancel > toLock ? "x" : "y";
     if (axis === "x") {
         const left = Math.max(0, -dx);
         return {

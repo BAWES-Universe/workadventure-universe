@@ -42,6 +42,21 @@ describe("a finger holding the mic", () => {
         expect(wandering.lock).toBe(0);
     });
 
+    it("does not choose a direction from a drift down or toward the mic, so the slide that follows still counts", () => {
+        // The thumb settles down and to the right before it slides: nothing is chosen.
+        const drift = holdMove(20, 30, undefined);
+        expect(drift.axis).toBeUndefined();
+        expect(drift).toMatchObject({ cancel: 0, lock: 0 });
+        // Then it slides left from there: that is a cancel.
+        const slide = holdMove(-HOLD_CANCEL_PX, 30, drift.axis);
+        expect(slide.axis).toBe("x");
+        expect(slide.cancel).toBe(1);
+        // Or up from there: that is a lock.
+        const up = holdMove(20, -HOLD_LOCK_PX, drift.axis);
+        expect(up.axis).toBe("y");
+        expect(up.lock).toBe(1);
+    });
+
     it("chooses again when the finger comes back to where it started", () => {
         const back = holdMove(1, 1, "x");
         expect(back.axis).toBeUndefined();
