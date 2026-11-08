@@ -106,15 +106,27 @@ describe('NoteHearing', () => {
         expect(allowance.spend).not.toHaveBeenCalled();
     });
 
-    it('counts the seconds heard and reports a refused key to Orbit', async () => {
+    it('counts the seconds heard for Universe AI, and tells Orbit nothing about its key', async () => {
         const allowance = { allowed: async () => true, spend: vi.fn() };
         const s = settings();
         await build(hearer(), s, { allowance }).hear('$m7', clip);
         expect(allowance.spend).toHaveBeenCalledWith(5);
+        expect(s.report).not.toHaveBeenCalled();
         const refused: ClipHearer = { hear: async () => { throw new HearingError('no', 401); } };
         const s2 = settings();
         expect(await build(refused, s2).hear('$m8', clip)).toEqual({ ok: false, reason: 'rejected', status: 401 });
-        expect(s2.report).toHaveBeenCalledWith('p1', 'recognition', { ok: false, status: 401, rejected: true });
+        expect(s2.report).not.toHaveBeenCalled();
+    });
+
+    it('tells Orbit how a person\'s own key did: a success clears a refusal, a refusal is reported', async () => {
+        const own = () => settings({ recognition: async () => ({ recognition: soniox, providerId: 'p1', owner: true }) });
+        const good = own();
+        await build(hearer(), good).hear('$m7b', clip);
+        expect(good.report).toHaveBeenCalledWith('p1', 'recognition', { ok: true });
+        const refused: ClipHearer = { hear: async () => { throw new HearingError('no', 401); } };
+        const bad = own();
+        await build(refused, bad).hear('$m8b', clip);
+        expect(bad.report).toHaveBeenCalledWith('p1', 'recognition', { ok: false, status: 401, rejected: true });
     });
 
     it('tries a note again after a failure, and says busy instead of queueing', async () => {

@@ -141,7 +141,8 @@ export class NoteHearing {
             const downloadMs = now() - started;
             try {
                 const heard = await hearer.hear(found.recognition, { bytes, filename: clip.filename });
-                if (!found.owner) settings.report(found.providerId, 'recognition', { ok: true });
+                // Only a person's own key has a health to report; Universe AI's is not tracked per bot
+                if (found.owner) settings.report(found.providerId, 'recognition', { ok: true });
                 const seconds = heard.seconds ?? clip.seconds;
                 if (!found.owner && allowance && seconds) allowance.spend(seconds);
                 if (seconds !== undefined && seconds > limits.maxSeconds) return { ok: false, reason: 'too-long' };
@@ -156,7 +157,7 @@ export class NoteHearing {
                 };
             } catch (error) {
                 if (error instanceof HearingError) {
-                    settings.report(found.providerId, 'recognition', { ok: false, ...(error.status !== undefined ? { status: error.status } : {}), ...(error.rejected ? { rejected: true } : {}) });
+                    if (found.owner) settings.report(found.providerId, 'recognition', { ok: false, ...(error.status !== undefined ? { status: error.status } : {}), ...(error.rejected ? { rejected: true } : {}) });
                     if (error.rejected) return { ok: false, reason: 'rejected', status: error.status };
                     if (error.exhausted) return { ok: false, reason: 'allowance', status: error.status };
                     return { ok: false, reason: 'failed', ...(error.status !== undefined ? { status: error.status } : {}) };
