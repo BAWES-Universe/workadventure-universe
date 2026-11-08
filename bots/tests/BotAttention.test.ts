@@ -220,14 +220,46 @@ describe('a person who says they are done (#1670)', () => {
         expect(attention.attention(SPACE, SARA, 'and one more thing')).toBe('follow-up');
     });
 
-    it('opens a window again only with a later answer', () => {
+    it('opens a window again only when they say the name and the bot then answers them', () => {
         const { attention } = setup();
         attention.personJoined(SPACE, KHALID);
         attention.personJoined(SPACE, SARA);
         attention.answered(SPACE, KHALID);
         attention.ended(SPACE, KHALID);
+        // An answer that was still on its way does not bring them back
+        attention.answered(SPACE, KHALID);
+        expect(attention.attention(SPACE, KHALID, 'go on')).toBe('ignored');
+        // The name does, and the answer to it opens the window as it always does
+        expect(attention.hears(SPACE, KHALID, 'Sales Researcher, go on')).toBe(true);
+        expect(attention.hears(SPACE, KHALID, 'go on')).toBe(false);
         attention.answered(SPACE, KHALID);
         expect(attention.attention(SPACE, KHALID, 'go on')).toBe('follow-up');
+    });
+
+    it('does not take their talk for the bot\'s while it is still busy with a line of theirs', () => {
+        const { attention, busyWith } = setup();
+        attention.personJoined(SPACE, KHALID);
+        attention.personJoined(SPACE, SARA);
+        busyWith.add(KHALID);
+        attention.ended(SPACE, KHALID);
+        expect(attention.attention(SPACE, KHALID, 'so as I was saying')).toBe('ignored');
+        expect(attention.attention(SPACE, SARA, 'so as I was saying')).toBe('ignored');
+        busyWith.add(SARA);
+        expect(attention.attention(SPACE, SARA, 'so as I was saying')).toBe('follow-up');
+    });
+
+    it('a summon still wins, and leaving the bubble forgets it', () => {
+        const { attention, summonedTo } = setup();
+        attention.personJoined(SPACE, KHALID);
+        attention.personJoined(SPACE, SARA);
+        attention.ended(SPACE, KHALID);
+        summonedTo.add(KHALID);
+        expect(attention.attention(SPACE, KHALID, 'anything')).toBe('summoned');
+        summonedTo.delete(KHALID);
+        attention.personLeft(SPACE, KHALID);
+        attention.personJoined(SPACE, KHALID);
+        attention.answered(SPACE, KHALID);
+        expect(attention.attention(SPACE, KHALID, 'anything')).toBe('follow-up');
     });
 
     it('can end something only when others are here and the bot is not on a summon to the person', () => {

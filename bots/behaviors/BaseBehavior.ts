@@ -2096,6 +2096,14 @@ export abstract class BaseBehavior {
         const state = this.activeConversations.get(senderId);
         if (!state || !state.isGenerating) return 'proceed';
 
+        // Several people around a voice bot: what a person says while it answers them is kept in line, and never asked about
+        // (it costs a call each) nor allowed to cancel or rewrite the answer: the answer may be the one to "stop", and
+        // room talk would replace it with an answer to the talk
+        if (this.bot?.mayEndFollowUp?.(state.spaceName, senderId)) {
+            await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, 'queue');
+            return 'queued';
+        }
+
         const interruptedGen = state.generation;
         const currentTask = state.currentTask || originalMessage;
 
@@ -2232,7 +2240,12 @@ export abstract class BaseBehavior {
     protected personIsDone(spaceName: string, playerId: number, emotions: AIEmotionData | null | undefined): boolean {
         if (emotions?.doneTalking !== true || !this.bot?.endFollowUp(spaceName, playerId)) return false;
         const state = this.activeConversations.get(playerId);
-        if (state) state.endedByPerson = true;
+        if (state) {
+            state.endedByPerson = true;
+            // What they said after "stop" while the bot was thinking about it was said after it: none of it is for the bot
+            state.messageQueue = [];
+            state.pendingAnswers = [];
+        }
         return true;
     }
 

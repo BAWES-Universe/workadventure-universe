@@ -189,6 +189,46 @@ describe('a voice bot told "stop" by one of several people', () => {
         expect(t.onChatMessage).toHaveBeenCalledTimes(2);
     });
 
+    it('does not answer what was said while it thought about "stop", nor ask the classifier about it, and stays quiet after', async () => {
+        const t = setup();
+        await bothAnswered(t);
+
+        // The bot is slow to judge "stop": people go on talking meanwhile, and each line waits behind it
+        let release: () => void = () => undefined;
+        const gate = new Promise<void>((resolve) => (release = resolve));
+        t.ai.generateBotResponseStream.mockImplementationOnce((async function* () {
+            await gate;
+            yield { content: block(', "doneTalking": true'), done: false };
+            yield { content: '', done: true };
+        }) as never);
+        t.ai.quickClassify.mockClear();
+        const stop = t.receive(chatFrom(KHALID, 'ok that is all, stop'));
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        await t.receive(chatFrom(KHALID, 'so what did you think of the plan'));
+        await t.receive(chatFrom(KHALID, 'and the budget'));
+        expect(t.ai.quickClassify).not.toHaveBeenCalled();
+        release();
+        await stop;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        // The stop was judged, the lines said meanwhile were dropped unanswered, and nothing was said
+        expect(t.ai.generateBotResponseStream).toHaveBeenCalledTimes(3);
+        expect(privateTo(t.sent, 'botVoiceDone')).toEqual(['room_7']);
+        const finals = t.streamed.mock.calls.filter((call) => call[3] === true);
+        expect(finals.map((call) => call[4])).toEqual(['']);
+
+        // Talk after it is not for the bot, however long it goes on; only the name brings Khalid back
+        t.onChatMessage.mockClear();
+        for (const line of ['yes the budget is fine', 'what about Tuesday', 'and the plan']) await t.receive(chatFrom(KHALID, line));
+        expect(t.onChatMessage).not.toHaveBeenCalled();
+        script(t, 'Back.');
+        await t.receive(chatFrom(KHALID, 'Nora, one more thing'));
+        expect(t.onChatMessage).toHaveBeenCalledTimes(1);
+        // ...and once it answered him, he can follow up again as before
+        await t.receive(chatFrom(KHALID, 'and the day after'));
+        expect(t.onChatMessage).toHaveBeenCalledTimes(2);
+    });
+
     it('drops words the bot wrote anyway, so nothing is said or spoken', async () => {
         const t = setup();
         await bothAnswered(t);
