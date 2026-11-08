@@ -300,8 +300,9 @@ class SocketStream implements Recognizer {
                 this.events.endpoint?.();
             }
             const last = this.spec.lastAnswerAfterFinish;
+            // Speech the company heard and has not answered yet may take longer than a moment
             if (this.finishing && last && (message.committed !== undefined || message.interim !== undefined)) {
-                this.restartTimer(() => this.end(), last.settleMs ?? DEFAULT_SETTLE_MS);
+                this.restartTimer(() => this.end(), this.unanswered ? last.quietMs : (last.settleMs ?? DEFAULT_SETTLE_MS));
             }
         }
     }
