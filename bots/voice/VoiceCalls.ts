@@ -199,6 +199,13 @@ export class VoiceCalls {
     onPaused?: (spaceName: string) => void;
     /** Who is paused by the allowance or a key, by bubble and person: the line is said once, and the button is put back when voice speaks for them again. */
     private readonly pausedFor = new Set<string>();
+    /**
+     * People whose spoken replies ran out of the Universe AI allowance, by bubble and person, with when their window ends in ms (NaN while
+     * Orbit gave no end time). Their microphone is not taken meanwhile (see `modeOf`): what they say out loud becomes a text reply that comes
+     * out of the same window, so listening on would spend the replies kept for typing.
+     */
+    private readonly heldBack = new Map<string, number>();
+    private readonly heldTimers = new Map<string, ReturnType<typeof setTimeout>>();
     private epoch = 0;
     private bubbleSeq = 0;
 
@@ -344,8 +351,57 @@ export class VoiceCalls {
      */
     private modeOf(spaceName: string, personId: string): VoiceMode {
         const chosen = this.chosenModeOf(spaceName, personId);
-        if (!this.listening?.isSpent() || !this.inGroup(spaceName)) return chosen;
+        const held = (this.listening?.isSpent() && this.inGroup(spaceName)) || this.isHeldBack(spaceName, personId);
+        if (!held) return chosen;
         return chosen === 'talk' ? 'type_and_listen' : chosen === 'speak_and_read' ? 'off' : chosen;
+    }
+
+    /** Whether this person's spoken replies are used up, so their microphone is not taken until their window ends or voice speaks for them again. */
+    private isHeldBack(spaceName: string, personId: string): boolean {
+        const until = this.heldBack.get(callKey(spaceName, personId));
+        if (until === undefined) return false;
+        return Number.isNaN(until) || until > Date.now();
+    }
+
+    /**
+     * The allowance for spoken replies is used for this person: what they say out loud would only become text replies that spend the
+     * replies kept for typing, so their microphone is left alone (the same as typing and listening) until their window ends. A reply
+     * of theirs that speaks again (typed, after the window ended, or after a limit was raised) puts it back (see `resume`).
+     */
+    private holdBack(spaceName: string, personId: string, resetsAt: string | undefined): void {
+        const key = callKey(spaceName, personId);
+        const until = resetsAt ? Date.parse(resetsAt) : NaN;
+        this.heldBack.set(key, until);
+        const old = this.heldTimers.get(key);
+        if (old) clearTimeout(old);
+        this.heldTimers.delete(key);
+        // The window ending puts the microphone back by itself, without waiting for them to type
+        const wait = until - Date.now();
+        if (!Number.isNaN(wait) && wait > 0) {
+            const timer = setTimeout(() => {
+                this.heldTimers.delete(key);
+                if (this.heldBack.get(key) === until) this.releaseHold(spaceName, personId);
+            }, Math.min(wait + 1000, 2 ** 31 - 1));
+            timer.unref?.();
+            this.heldTimers.set(key, timer);
+        }
+        this.syncListening(spaceName);
+    }
+
+    /** Takes the hold off and tells the worker, when there was one. */
+    private releaseHold(spaceName: string, personId: string): void {
+        const key = callKey(spaceName, personId);
+        const timer = this.heldTimers.get(key);
+        if (timer) clearTimeout(timer);
+        this.heldTimers.delete(key);
+        if (this.heldBack.delete(key)) this.syncListening(spaceName);
+    }
+
+    private forgetHold(key: string): void {
+        const timer = this.heldTimers.get(key);
+        if (timer) clearTimeout(timer);
+        this.heldTimers.delete(key);
+        this.heldBack.delete(key);
     }
 
     /**
@@ -513,6 +569,7 @@ export class VoiceCalls {
         for (const [key, lost] of this.lost) if (lost.spaceName === spaceName) this.lost.delete(key);
         for (const key of this.spoken.keys()) if (key.startsWith(`${spaceName}\n`)) this.spoken.delete(key);
         for (const key of this.pausedFor) if (key.startsWith(`${spaceName}\n`)) this.pausedFor.delete(key);
+        for (const key of [...this.heldBack.keys()]) if (key.startsWith(`${spaceName}\n`)) this.forgetHold(key);
         for (const [key, live] of this.live) if (live.spaceName === spaceName) this.live.delete(key);
         for (const key of this.joined.keys()) if (key.startsWith(`${spaceName}\n`)) this.joined.delete(key);
         for (const key of this.modes.keys()) if (key.startsWith(`${spaceName}\n`)) this.modes.delete(key);
@@ -635,6 +692,7 @@ export class VoiceCalls {
         this.left.delete(callKey(spaceName, spaceUserId));
         this.toldLeft.delete(callKey(spaceName, spaceUserId));
         this.pausedFor.delete(callKey(spaceName, spaceUserId));
+        this.forgetHold(callKey(spaceName, spaceUserId));
         this.actual.delete(callKey(spaceName, spaceUserId));
         if (this.roster.get(spaceName)?.delete(spaceUserId)) this.rosterChanged(spaceName);
     }
@@ -1112,7 +1170,10 @@ export class VoiceCalls {
             if (left && who) this.noteLeft(spaceName, who, left, verdict === 'yes');
             if (verdict !== 'yes') {
                 this.log(`voice: ${spaceName} answers in text this time (${verdict === 'no' ? 'the allowance for spoken replies is used' : 'the allowance could not be settled'})`);
-                if (verdict === 'no') this.pause(spaceName, turn);
+                if (verdict === 'no') {
+                    this.pause(spaceName, turn);
+                    if (who) this.holdBack(spaceName, who, left?.resetsAt);
+                }
                 return { action: 'text' };
             }
         }
@@ -1161,8 +1222,9 @@ export class VoiceCalls {
 
     /** Voice speaks for the person again (on a later turn, by itself): their button is put back. */
     private resume(spaceName: string, turn: SpeechTurn): void {
-        if (this.pausedFor.size === 0) return;
+        if (this.pausedFor.size === 0 && this.heldBack.size === 0) return;
         const { key, personId } = this.spaceUserFor(spaceName, turn);
+        if (personId) this.releaseHold(spaceName, personId);
         if (!this.pausedFor.delete(key)) return;
         if (personId && (this.joined.has(key) || this.rooms.get(spaceName)?.connected)) this.tell(spaceName, personId, 'on');
     }
@@ -1234,6 +1296,9 @@ export class VoiceCalls {
         this.left.clear();
         this.toldLeft.clear();
         this.pausedFor.clear();
+        for (const timer of this.heldTimers.values()) clearTimeout(timer);
+        this.heldTimers.clear();
+        this.heldBack.clear();
         this.actual.clear();
         this.otherVoiceBots.clear();
         this.voiceBotNames.clear();
