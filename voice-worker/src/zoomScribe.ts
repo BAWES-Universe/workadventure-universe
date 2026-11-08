@@ -5,7 +5,7 @@
 // src/kit/byModel.ts sends every other model to the talking one. The key (an AI Services key) goes as a bearer in each socket's
 // opening request and nowhere else.
 //
-// One socket per stretch (wss://api.zoom.us/v2/aiservices/scribe/live): session.update sets 16 kHz PCM, the locale, the model
+// One socket per stretch (wss://api.zoom.us/v2/aiservices/scribe/live, subprotocol live-asr): session.update sets 16 kHz PCM, the locale, the model
 // and Scribe's own turn detection off, so the worker says when a stretch ends. Audio waits for session.updated, then goes as
 // binary frames; input_audio_buffer.commit ends it, and Scribe answers with transcription.completed. Scribe sends no words
 // before that. Its speaker tags, when it adds them, are taken out.
@@ -17,6 +17,7 @@ import type { Recognizer, RecognizerEvents } from './recognizer.ts';
 
 export const ZOOM_SCRIBE_ADAPTER = 'zoom';
 export const ZOOM_SCRIBE_ENDPOINT = 'wss://api.zoom.us';
+const SCRIBE_SUBPROTOCOL = 'live-asr';
 const DEFAULT_MODEL = 'zoom-scribe-multilingual';
 export const ZOOM_SCRIBE_MODELS: ReadonlySet<string> = new Set([DEFAULT_MODEL, 'whisper']);
 
@@ -106,6 +107,8 @@ export class ZoomScribeRecognition implements RecognitionConnector {
             finalTimeoutMs: this.options.finalTimeoutMs,
             connect: (settings: RecognitionSettings, base) => ({
                 url: `${base.replace(/^http/, 'ws')}/v2/aiservices/scribe/live`,
+                // Scribe Live takes only sockets that ask for its subprotocol
+                protocols: [SCRIBE_SUBPROTOCOL],
                 headers: { authorization: `Bearer ${settings.key.reveal()}` },
             }),
             start: (settings: RecognitionSettings) => [
