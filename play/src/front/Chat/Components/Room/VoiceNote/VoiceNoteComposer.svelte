@@ -164,7 +164,21 @@
         hintTimer = setTimeout(() => (hint = ""), 2600);
     }
 
+    // The finger is watched on the window, not only on the mic: locking swaps the mic for the recorder bar, and the
+    // lift that follows must still be seen (to let sound run on iOS, and to end the press).
+    function watchLift() {
+        unwatchLift();
+        window.addEventListener("pointerup", onPressEnd);
+        window.addEventListener("pointercancel", onPressEnd);
+    }
+
+    function unwatchLift() {
+        window.removeEventListener("pointerup", onPressEnd);
+        window.removeEventListener("pointercancel", onPressEnd);
+    }
+
     function endHold() {
+        unwatchLift();
         releasedWhileStarting = undefined;
         clearTimeout(holdTimer);
         holdTimer = undefined;
@@ -200,6 +214,7 @@
             // The pointer is already gone.
         }
         pressContext ??= makeVoiceNoteContext();
+        watchLift();
         holdTimer = setTimeout(beginHold, HOLD_START_MS);
     }
 

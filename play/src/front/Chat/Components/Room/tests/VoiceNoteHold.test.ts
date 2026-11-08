@@ -258,4 +258,30 @@ describe("recording a voice note by holding the mic", () => {
         await settle();
         expect(resume).toHaveBeenCalledTimes(1);
     });
+
+    it("still sees the finger lift after locking swapped the mic for the recorder bar", async () => {
+        const resume = vi.fn();
+        recorder.start.mockResolvedValueOnce({
+            level: () => 0,
+            metering: () => false,
+            resume,
+            cancel,
+            stop: () => Promise.resolve({ file: new File([new Uint8Array(10)], "Voice message.m4a"), details }),
+        });
+        await press();
+        await settle(1200);
+        pointer("pointermove", 200, 360);
+        pointer("pointermove", 200, 320);
+        await settle();
+        expect(find("voiceRecordButton")).toBeNull();
+
+        // The button is gone: the lift arrives on the window.
+        const lift = new Event("pointerup", { bubbles: true });
+        Object.assign(lift, { pointerType: "touch", pointerId: 1, isPrimary: true, clientX: 200, clientY: 320 });
+        window.dispatchEvent(lift);
+        await settle();
+        expect(resume).toHaveBeenCalledTimes(1);
+        expect(onSend).not.toHaveBeenCalled();
+        expect(find("voiceRecording")).not.toBeNull();
+    });
 });
