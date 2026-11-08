@@ -2100,7 +2100,8 @@ export abstract class BaseBehavior {
         // (it costs a call each) nor allowed to cancel or rewrite the answer: the answer may be the one to "stop", and
         // room talk would replace it with an answer to the talk
         if (this.bot?.mayEndFollowUp?.(state.spaceName, senderId)) {
-            await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, 'queue');
+            // A full line is dropped without a word: "I'll answer once I've finished" would be spoken to a room that was only talking
+            await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, 'queue', true);
             return 'queued';
         }
 
@@ -2203,14 +2204,15 @@ export abstract class BaseBehavior {
         mediaType?: string,
         mimeType?: string,
         galleryUrls?: string[],
-        classification?: string
+        classification?: string,
+        quiet = false
     ): Promise<void> {
         const state = this.activeConversations.get(senderId);
         if (!state) return;
 
         if (state.messageQueue.length >= this.MAX_QUEUED_MESSAGES) {
             // The busy line is fixed text, never an AI call (#1159): a burst of messages must not cost replies
-            this.sendStatusAck(state.spaceName, BUSY_LINE);
+            if (!quiet) this.sendStatusAck(state.spaceName, BUSY_LINE);
             return;
         }
 

@@ -206,7 +206,10 @@ describe('a voice bot told "stop" by one of several people', () => {
         await new Promise((resolve) => setTimeout(resolve, 30));
         await t.receive(chatFrom(KHALID, 'so what did you think of the plan'));
         await t.receive(chatFrom(KHALID, 'and the budget'));
+        // More than the queue holds: the rest is dropped without the "I'll answer once I've finished" line, which would be spoken to the room
+        for (const line of ['and the dates', 'and the team', 'and the risks']) await t.receive(chatFrom(KHALID, line));
         expect(t.ai.quickClassify).not.toHaveBeenCalled();
+        expect(t.streamed.mock.calls.some((call) => String(call[4]).includes("I'll answer your messages"))).toBe(false);
         release();
         await stop;
         await new Promise((resolve) => setTimeout(resolve, 50));
