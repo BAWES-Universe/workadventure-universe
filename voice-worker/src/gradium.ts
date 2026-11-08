@@ -62,6 +62,8 @@ export class GradiumRecognition implements RecognitionConnector {
             start: (settings) => [
                 JSON.stringify({ type: 'setup', model_name: settings.model, input_format: 'pcm_16000', json_config: { language: gradiumLanguage(settings.language) } }),
             ],
+            // Gradium answers the setup with "ready" before it takes audio (Pipecat waits for it too)
+            ready: (data, isBinary) => parse(data, isBinary)?.type === 'ready',
             frame: (pcm16k) => JSON.stringify({ type: 'audio', audio: pcmBytes(pcm16k).toString('base64') }),
             finish: () => [JSON.stringify({ type: 'end_of_stream' })],
             closeIsFinished: true,
