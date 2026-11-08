@@ -78,6 +78,13 @@ describe('speaking with CAMB.AI', () => {
         expect((c.seen[1].body?.text as string).length).toBe(3000);
     });
 
+    it('ends a reply shorter than CAMB.AI takes with dots, and leaves a longer one as it is', async () => {
+        const c = await fakeCamb((res) => res.end(pcm(10)));
+        await collect(new CambSpeech().speak(request(c.base, {}, { text: 'Ok' })));
+        await collect(new CambSpeech().speak(request(c.base, {}, { text: 'Hello' })));
+        expect(c.seen.map((seen) => seen.body?.text)).toEqual(['Ok.', 'Hello']);
+    });
+
     it('turns a language into a locale CAMB.AI takes', () => {
         expect(cambLocale('ar-KW')).toBe('ar-kw');
         expect(cambLocale('ar')).toBe('ar-sa');
