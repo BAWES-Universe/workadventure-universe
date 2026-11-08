@@ -445,12 +445,15 @@
         -webkit-line-clamp: unset;
         line-clamp: unset;
     }
-    /* A 44px target with a small word in it. */
+    /* A 44px by 44px target with a small word in it, from either side of the line. */
     .transcript-more {
         display: inline-block;
         min-height: 44px;
+        min-width: 44px;
         margin: -6px 0 -10px;
-        padding: 6px 12px 6px 0;
+        padding: 6px 12px;
+        padding-inline-start: 0;
+        text-align: start;
         background: none;
         border: 0;
         color: rgba(255, 255, 255, 0.55);
