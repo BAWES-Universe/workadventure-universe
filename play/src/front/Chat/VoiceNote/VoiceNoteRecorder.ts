@@ -1,3 +1,4 @@
+import { readAudioShape } from "./AudioShape";
 import {
     VOICE_NOTE_MAX_SECONDS,
     voiceNoteDetails,
@@ -12,9 +13,28 @@ const LEVEL_INTERVAL_MS = 100;
 /** Speech is mono, so 48 kbit/s is plenty: a two minute note is under 720 KB. */
 const AUDIO_BITS_PER_SECOND = 48000;
 
+/** A meter that never rose above this saw no sound at all. */
+const SILENT_METER = 0.02;
+
+async function shapeOf(file: File): Promise<number[] | undefined> {
+    let url: string | undefined;
+    try {
+        url = URL.createObjectURL(file);
+        return (await readAudioShape(url))?.levels;
+    } catch {
+        return undefined;
+    } finally {
+        if (url) URL.revokeObjectURL(url);
+    }
+}
+
 export interface VoiceNoteRecording {
     /** The level (0 to 1) of the latest slice, read by the meter. */
     readonly level: () => number;
+    /** False while the browser keeps sound from running (an iPhone before a tap lets it): the meter then reads nothing. */
+    readonly metering: () => boolean;
+    /** Asks the browser again to let sound run: called from a finger lifting, which iOS counts as a tap. */
+    readonly resume: () => void;
     /** Stops recording and returns the note as a file (its length and shape are kept with it). */
     stop: () => Promise<{ file: File; details: VoiceNoteDetails }>;
     /** Stops recording and throws the audio away. */
@@ -25,13 +45,10 @@ export interface VoiceNoteRecording {
  * Starts recording the microphone. Rejects when the microphone is blocked or missing: the caller says how to allow it.
  * The level of each slice is read from the live stream, so the shape of the note is known without decoding the file.
  */
-export async function startVoiceNoteRecording(format: RecordingFormat): Promise<VoiceNoteRecording> {
-    // Made and started in the tap itself, before the wait for the microphone: an iPhone only lets sound run from a
-    // tap, and a context made after that wait stays silent when nothing else is playing (a direct message, not a
-    // bubble). The meter and the note's shape then read nothing.
-    // Not waited for: a context the browser will not start yet must not hold up the recording itself.
-    const context = new AudioContext();
-    context.resume().catch(() => {});
+export async function startVoiceNoteRecording(
+    format: RecordingFormat,
+    context: AudioContext = makeVoiceNoteContext()
+): Promise<VoiceNoteRecording> {
     let stream: MediaStream | undefined;
     try {
         stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
@@ -42,6 +59,18 @@ export async function startVoiceNoteRecording(format: RecordingFormat): Promise<
         await context.close().catch(() => {});
         throw e;
     }
+}
+
+/**
+ * Made and started in the tap itself, before the wait for the microphone: an iPhone only lets sound run from a tap, and
+ * a context made after that wait stays silent when nothing else is playing (a direct message, not a bubble). The meter
+ * and the note's shape then read nothing. A press-and-hold makes it when the finger lands and hands it to the recording.
+ * Not waited for: a context the browser will not start yet must not hold up the recording itself.
+ */
+export function makeVoiceNoteContext(): AudioContext {
+    const context = new AudioContext();
+    context.resume().catch(() => {});
+    return context;
 }
 
 function wire(stream: MediaStream, context: AudioContext, format: RecordingFormat): VoiceNoteRecording {
@@ -70,6 +99,9 @@ function wire(stream: MediaStream, context: AudioContext, format: RecordingForma
 
     const levels: number[] = [];
     let level = 0;
+    // True once the meter was read while the browser kept sound from running: the levels may then be silence the
+    // microphone never made.
+    let contextWasIdle = false;
     let finished = false;
 
     // A slice each second, so a crash or a closed tab does not lose the whole note, and `stop` has little left to wait for.
@@ -77,6 +109,7 @@ function wire(stream: MediaStream, context: AudioContext, format: RecordingForma
     recorder.start(1000);
     const startedAt = performance.now();
     const meter = setInterval(() => {
+        if (context.state !== "running") contextWasIdle = true;
         analyser.getFloatTimeDomainData(samples);
         let sum = 0;
         for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
@@ -92,6 +125,10 @@ function wire(stream: MediaStream, context: AudioContext, format: RecordingForma
 
     return {
         level: () => level,
+        metering: () => context.state === "running",
+        resume: () => {
+            if (context.state !== "running" && context.state !== "closed") context.resume().catch(() => {});
+        },
         stop: async () => {
             if (finished) throw new Error("The recording is already finished");
             finished = true;
@@ -100,7 +137,14 @@ function wire(stream: MediaStream, context: AudioContext, format: RecordingForma
             await release();
             const duration = Math.min(VOICE_NOTE_MAX_SECONDS, (performance.now() - startedAt) / 1000);
             const file = new File(chunks, voiceNoteFileName(format), { type: format.fileType });
-            const details = { duration, waveform: waveformOf(levels, levels.length > 0 ? levels.length : 1) };
+            let waveform = waveformOf(levels, levels.length > 0 ? levels.length : 1);
+            // The meter read nothing because the browser kept sound from running (an iPhone before a tap): the shape
+            // is read from the recorded file instead, as it is for a note that arrives without one.
+            if (contextWasIdle && Math.max(0, ...levels) < SILENT_METER) {
+                const heard = await shapeOf(file);
+                if (heard) waveform = heard;
+            }
+            const details = { duration, waveform };
             voiceNoteDetails.set(file, details);
             return { file, details };
         },
