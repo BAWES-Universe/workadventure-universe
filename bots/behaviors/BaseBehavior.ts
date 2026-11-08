@@ -217,6 +217,8 @@ export abstract class BaseBehavior {
     // This helps match addSpaceUserMessage when it arrives after a chat message
     protected pendingSpaceUserIdToUserId: Map<string, number> = new Map();
     protected readonly PROXIMITY_RADIUS = 64; // Pixels - react when player is inside bubble
+    protected readonly SUMMON_RELEASE_RADIUS = 200; // A summoned bot goes back once its person is further away than this
+    protected readonly SUMMON_SETTING_OFF_GRACE_MS = 5000;
     protected readonly DISENGAGE_RADIUS = 80; // Slightly larger to prevent flickering at edge
     /** A bot standing still turns to look at someone walking by within 4 tiles. Looking never stops it or starts a chat. */
     protected readonly LOOK_RADIUS = 128;
@@ -236,6 +238,7 @@ export abstract class BaseBehavior {
     // Summon state - track when bot is summoned to a player
     protected isSummoned = false;
     protected summonedPlayerUuid: string | null = null;
+    protected summonStartedAt = 0; // When the current summon began, so a bot still setting off is not read as left behind
     protected originalPosition: PositionInterface | null = null; // Position to return to after summon (set on first summon only)
     protected spawnPosition: PositionInterface | null = null; // Bot's spawn/assigned position (set when bot is initialized)
     protected isReturning = false; // Track if bot is returning to original position (for speed matching)
@@ -370,27 +373,9 @@ export abstract class BaseBehavior {
             return;
         }
         
-        // If summoned, check if the summoned player moved far away (> 200px)
-        if (this.isSummoned) {
-            const playerPos = this.getSummonedPlayerPosition();
-            if (!playerPos) {
-                // Player not found - they likely left, end summon
-                console.log(`[Behavior] Summoned player not found, ending summon and returning`);
-                this.endSummon();
-                return;
-            }
-            
-            const botPos = this.bot.getState().getPosition();
-            const dx = playerPos.x - botPos.x;
-            const dy = playerPos.y - botPos.y;
-            const distance = Math.sqrt(dx * dx + dy * dy);
-            
-            // If player moved far away (> 200px) and we're not in a conversation, return
-            if (distance > 200 && this.engagedWithUsers.size === 0) {
-                console.log(`[Behavior] Summoned player moved far away (${Math.round(distance)}px), ending summon and returning`);
-                this.endSummon();
-                return;
-            }
+        // If summoned, let the bot go back once the person it came for has left or walked far away
+        if (this.isSummoned && this.endSummonIfPersonAway()) {
+            return;
         }
         
         const behaviorType = (this.config as any).type;
@@ -452,6 +437,10 @@ export abstract class BaseBehavior {
         }
         if (this.nearbyPlayers.delete(playerId)) {
             this.updateProximityEngagement();
+        }
+        // They send no last move, so a summon to the person who just left would otherwise never end
+        if (this.isSummoned) {
+            this.endSummonIfPersonAway();
         }
     }
 
@@ -843,6 +832,7 @@ export abstract class BaseBehavior {
         
         this.isSummoned = true;
         this.summonedPlayerUuid = playerUuid;
+        this.summonStartedAt = Date.now();
         
         // Only store original position on FIRST summon (don't overwrite on subsequent summons)
         // This ensures bot always returns to its spawn/assigned position, not the last summon position
@@ -862,30 +852,52 @@ export abstract class BaseBehavior {
     }
 
     /**
-     * Get the position of the summoned player (if available)
+     * Where the person this bot was summoned to stands now, found by who they are. Null once they are not in the
+     * room. It must never be "whoever is close": another person, or another bot, standing near this one would then
+     * stand in for the summoner and the bot would never be released.
      */
     protected getSummonedPlayerPosition(): PositionInterface | null {
         if (!this.bot || !this.summonedPlayerUuid) return null;
-        
-        // Try to find the player by checking all players
-        // Since we don't have UUID in PlayerInfo, we'll use the first nearby player
-        // or check engaged users
-        const allPlayers = this.bot.getAllPlayers();
-        for (const player of allPlayers) {
-            // Check if this player is nearby (within reasonable range)
-            const botPos = this.bot.getState().getPosition();
-            const dx = player.position.x - botPos.x;
-            const dy = player.position.y - botPos.y;
-            const distance = Math.sqrt(dx * dx + dy * dy);
-            
-            // If player is within 200px, assume it might be the summoned player
-            if (distance < 200) {
-                return player.position;
-            }
+        return this.bot.getPlayerPositionByUuid(this.summonedPlayerUuid) ?? null;
+    }
+
+    /**
+     * Let the bot go back to where it was when the person it came for has left the room or walked far away, unless
+     * it is still on its way to them or is in a conversation with someone else. Checked on every move, when somebody
+     * leaves and on every tick, so it does not hang on one more step from the person.
+     * @returns true when the summon was ended
+     */
+    protected endSummonIfPersonAway(): boolean {
+        if (!this.bot || !this.isSummoned) return false;
+
+        const playerPos = this.getSummonedPlayerPosition();
+        if (!playerPos) {
+            console.log(`[Behavior] Summoned player not found, ending summon and returning`);
+            this.endSummon();
+            return true;
         }
-        
-        // If no nearby player found, return null (player might have left)
-        return null;
+
+        // Still setting off (or walking) towards them
+        if (this.bot.getIsFollowingPath() || Date.now() - this.summonStartedAt < this.SUMMON_SETTING_OFF_GRACE_MS) {
+            return false;
+        }
+
+        const botPos = this.bot.getState().getPosition();
+        const distance = Math.hypot(playerPos.x - botPos.x, playerPos.y - botPos.y);
+        if (distance <= this.SUMMON_RELEASE_RADIUS) {
+            return false;
+        }
+
+        // The person who summoned it does not keep it here by being in its list, only someone else does
+        const summonerId = this.summonedPlayerUuid ? this.getUserIdForUuid(this.summonedPlayerUuid) : undefined;
+        const withSomeoneElse = [...this.engagedWithUsers.keys()].some((userId) => userId !== summonerId);
+        if (withSomeoneElse) {
+            return false;
+        }
+
+        console.log(`[Behavior] Summoned player moved far away (${Math.round(distance)}px), ending summon and returning`);
+        this.endSummon();
+        return true;
     }
 
     /**
@@ -907,7 +919,7 @@ export abstract class BaseBehavior {
         const dy = playerPos.y - botPos.y;
         const distance = Math.sqrt(dx * dx + dy * dy);
         
-        return distance < 200; // Player is still nearby
+        return distance < this.SUMMON_RELEASE_RADIUS; // Player is still nearby
     }
 
     /**

@@ -100,6 +100,11 @@ export class SocialBehavior extends BaseBehavior {
         const config = this.config as SocialBehaviorConfig;
         const currentTime = Date.now();
 
+        // A summon ends when its person has left or walked off, even if they send no more moves
+        if (this.isSummoned) {
+            this.endSummonIfPersonAway();
+        }
+
         // If bot is summoned or leading, allow movement (don't stop for normal behavior logic)
         // The bot will stop when it reaches the target position
         if (this.isSummoned || this.isLeading) {

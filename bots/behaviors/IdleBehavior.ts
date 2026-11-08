@@ -45,6 +45,11 @@ export class IdleBehavior extends BaseBehavior {
         const config = this.config as IdleBehaviorConfig;
         const currentTime = Date.now();
 
+        // A summon ends when its person has left or walked off, even if they send no more moves
+        if (this.isSummoned) {
+            this.endSummonIfPersonAway();
+        }
+
         // If bot is summoned or leading, allow movement (idle bots can move when summoned or leading)
         if (this.isSummoned || this.isLeading) {
             // When leading, get the target from leadingTarget instead of summonedPlayerUuid
