@@ -21,6 +21,7 @@
     import { HOLD_START_MS, holdMove, holdRelease, type HoldAxis, type HoldMove } from "../../../VoiceNote/HoldGesture";
     import {
         IconChevronLeft,
+        IconChevronRight,
         IconChevronUp,
         IconLock,
         IconLockOpen,
@@ -142,6 +143,9 @@
     let pressY = 0;
     let pressedAt = 0;
     let axis: HoldAxis;
+    // Which way the page reads (the mic sits at the end of the line): -1 when right to left, so "away from the mic" is the way a finger slides to cancel.
+    let side = 1;
+    $: rtl = side < 0;
     let move: HoldMove = holdMove(0, 0, undefined);
     let holdTimer: ReturnType<typeof setTimeout> | undefined;
     // Made when the finger lands (a tap on an iPhone is what lets sound run), used by the recording that may follow.
@@ -158,20 +162,10 @@
 
     $: cancelArmed = move.cancel >= 1;
 
-    // The hint may carry a second way in, for a finger that cannot hold (one hand, switch access): tap it to record.
-    let hintTap = false;
-
-    function showHint(text: string, tapToo = false) {
+    function showHint(text: string) {
         hint = text;
-        hintTap = tapToo;
         clearTimeout(hintTimer);
-        hintTimer = setTimeout(() => (hint = ""), tapToo ? 5000 : 2600);
-    }
-
-    function recordFromHint() {
-        hint = "";
-        clearTimeout(hintTimer);
-        start().catch((error) => console.error(error));
+        hintTimer = setTimeout(() => (hint = ""), 2600);
     }
 
     // The finger is watched on the window, not only on the mic: locking swaps the mic for the recorder bar, and the
@@ -214,6 +208,7 @@
         pressId = event.pointerId;
         pressX = event.clientX;
         pressY = event.clientY;
+        side = getComputedStyle(event.currentTarget as HTMLElement).direction === "rtl" ? -1 : 1;
         pressedAt = Date.now();
         axis = undefined;
         move = holdMove(0, 0, undefined);
@@ -241,7 +236,7 @@
 
     function onPressMove(event: PointerEvent) {
         if (!pressed || event.pointerId !== pressId) return;
-        move = holdMove(event.clientX - pressX, event.clientY - pressY, axis);
+        move = holdMove((event.clientX - pressX) * side, event.clientY - pressY, axis);
         axis = move.axis;
         if (holding && move.lock >= 1 && !lockWanted) {
             // Locked: the finger can lift. The bar becomes the recorder (delete, timer, meter, stop, send).
@@ -268,7 +263,7 @@
         if (!wasHolding && !wasLocked) {
             // A tap: nothing is recorded. It says how.
             endHold();
-            showHint($LL.chat.voiceNote.holdToRecord(), true);
+            showHint($LL.chat.voiceNote.holdToRecord());
             return;
         }
         pressed = false;
@@ -306,7 +301,7 @@
         }
         if (holdRelease(false, seconds) === "tooShort") {
             discard();
-            showHint($LL.chat.voiceNote.holdToRecord(), true);
+            showHint($LL.chat.voiceNote.holdToRecord());
             return;
         }
         // The bar stays quiet while the note goes: the recorder's buttons come back only if it could not be sent.
@@ -472,8 +467,13 @@
                 barWidth={3}
                 classList="flex-1 min-w-0 overflow-hidden justify-end"
             />
-            <span class="voice-slide" style="transform: translateX({move.offsetX * 0.6}px); opacity: {1 - move.cancel}">
-                <IconChevronLeft font-size={16} />{$LL.chat.voiceNote.slideToCancel()}
+            <span
+                class="voice-slide"
+                style="transform: translateX({move.offsetX * 0.6 * side}px); opacity: {1 - move.cancel}"
+            >
+                {#if rtl}<IconChevronRight font-size={16} />{:else}<IconChevronLeft
+                        font-size={16}
+                    />{/if}{$LL.chat.voiceNote.slideToCancel()}
             </span>
         {/if}
     </div>
@@ -565,7 +565,7 @@
         class="voice-record text-white"
         class:voice-held={holding}
         class:voice-held-cancel={holding && cancelArmed}
-        style={holding ? `translate: ${move.offsetX}px ${move.offsetY}px;` : undefined}
+        style={holding ? `translate: ${move.offsetX * side}px ${move.offsetY}px;` : undefined}
         data-testid="voiceRecordButton"
         aria-label={$LL.chat.voiceNote.record()}
         title={$LL.chat.voiceNote.record()}
@@ -591,14 +591,7 @@
     </button>
 {/if}
 {#if hint}
-    <div class="voice-hint" class:voice-hint-tap={hintTap} role="status" data-testid="voiceHint">
-        <span>{hint}</span>
-        {#if hintTap}
-            <button type="button" class="voice-hint-action" data-testid="voiceHintRecord" on:click={recordFromHint}>
-                {$LL.chat.voiceNote.tapToRecord()}
-            </button>
-        {/if}
-    </div>
+    <div class="voice-hint" role="status" data-testid="voiceHint">{hint}</div>
 {/if}
 
 <style>
@@ -612,8 +605,16 @@
         place-items: center;
         flex: none;
     }
-    .voice-record:hover {
-        background: rgba(255, 255, 255, 0.1);
+    /* The recorder's own buttons (delete, stop, send) are 44px, the least a thumb should be asked to hit. */
+    .voice-button {
+        width: 44px;
+        height: 44px;
+    }
+    /* Not on a touch screen: there a tap leaves the hover behind, a grey disc that stays until the next touch. */
+    @media (hover: hover) {
+        .voice-record:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
     }
     /* A finger decides here: no text selection, no touch menu, no scrolling started from the mic. */
     .voice-record {
@@ -643,7 +644,7 @@
         box-shadow: 0 0 0 8px rgba(233, 109, 81, 0.25);
     }
     .voice-hold {
-        padding-right: 4px;
+        padding-inline-end: 4px;
     }
     .voice-sending {
         font-weight: 400;
@@ -657,19 +658,19 @@
         font-size: 13px;
         color: rgba(255, 255, 255, 0.7);
         white-space: nowrap;
-        padding-right: 36px;
+        padding-inline-end: 36px;
     }
     .voice-slide-armed {
         flex: 1;
         min-width: 0;
-        padding-right: 0;
+        padding-inline-end: 0;
         color: #e96d51;
         font-weight: 600;
     }
     .voice-hold-trash {
         flex: none;
         width: 18px;
-        margin-left: -4px;
+        margin-inline-start: -4px;
         display: grid;
         place-items: center;
         color: #e96d51;
@@ -677,7 +678,7 @@
     /* Above the mic: the padlock a slide up closes. */
     .voice-lock {
         position: absolute;
-        right: 6px;
+        inset-inline-end: 6px;
         bottom: calc(100% + 18px);
         width: 40px;
         height: 84px;
@@ -709,7 +710,7 @@
     }
     .voice-hint {
         position: absolute;
-        right: 6px;
+        inset-inline-end: 6px;
         bottom: calc(100% + 10px);
         max-width: calc(100% - 12px);
         padding: 8px 14px;
@@ -720,26 +721,6 @@
         border: 1px solid rgba(255, 255, 255, 0.16);
         pointer-events: none;
         z-index: 2;
-    }
-    .voice-hint-tap {
-        pointer-events: auto;
-        display: flex;
-        flex-direction: column;
-        align-items: flex-end;
-        gap: 4px;
-    }
-    /* A tap target as big as the mic's own: the way in for a finger that cannot hold. */
-    .voice-hint-action {
-        min-height: 44px;
-        padding: 0 4px;
-        font-size: 14px;
-        font-weight: 600;
-        color: #fff;
-        text-decoration: underline;
-        text-underline-offset: 3px;
-        background: none;
-        border: 0;
-        cursor: pointer;
     }
     /* Send is the one filled button: the brand gradient, as in the message box. */
     .voice-send {

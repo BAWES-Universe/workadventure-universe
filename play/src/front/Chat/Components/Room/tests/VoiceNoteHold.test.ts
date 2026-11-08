@@ -285,22 +285,42 @@ describe("recording a voice note by holding the mic", () => {
         expect(find("voiceRecording")).not.toBeNull();
     });
 
-    it("offers a tap on the hint for a finger that cannot hold, and opens a locked recording", async () => {
-        pointer("pointerdown", 200, 400);
-        await settle(50);
-        pointer("pointerup", 200, 400);
-        await settle();
-        expect(recorder.start).not.toHaveBeenCalled();
-        // The hint stays long enough to be reached.
-        await settle(3500);
-        const action = find("voiceHintRecord");
-        expect(action).not.toBeNull();
+    describe("in a language read right to left, the mic is at the left end", () => {
+        const rtl = () => {
+            const button = find("voiceRecordButton");
+            if (button) button.style.direction = "rtl";
+        };
 
-        action?.click();
-        await settle();
-        expect(recorder.start).toHaveBeenCalledTimes(1);
-        expect(find("voiceRecording")).not.toBeNull();
-        expect(find("voiceHint")).toBeNull();
-        expect(onSend).not.toHaveBeenCalled();
+        it("cancels by sliding to the right, away from the mic, and ignores a slide to the left", async () => {
+            rtl();
+            await press();
+            await settle(1200);
+            // Toward the text: nothing is armed.
+            pointer("pointermove", 100, 400);
+            await settle();
+            expect(find("voiceHolding")?.textContent).toContain("slideToCancel");
+            expect(find("voiceHolding")?.textContent).not.toContain("releaseToCancel");
+
+            // Back, then away from the mic: it arms, and letting go drops the note.
+            pointer("pointermove", 200, 400);
+            pointer("pointermove", 320, 400);
+            await settle();
+            expect(find("voiceHolding")?.textContent).toContain("releaseToCancel");
+            pointer("pointerup", 320, 400);
+            await settle();
+            expect(onSend).not.toHaveBeenCalled();
+            expect(cancel).toHaveBeenCalled();
+        });
+
+        it("locks by sliding up, as on the other side", async () => {
+            rtl();
+            await press();
+            await settle(1200);
+            pointer("pointermove", 200, 360);
+            pointer("pointermove", 200, 320);
+            await settle();
+            expect(find("voiceRecordButton")).toBeNull();
+            expect(find("voiceRecording")).not.toBeNull();
+        });
     });
 });
