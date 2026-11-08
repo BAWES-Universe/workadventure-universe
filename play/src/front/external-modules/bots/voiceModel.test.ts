@@ -818,6 +818,7 @@ describe("How it speaks is offered only where the company uses it", () => {
         expect(styleReaches(withKey("deepgram", "speech"), keyed)).toBe(false);
         expect(styleReaches(withKey("soniox", "speech"), keyed)).toBe(false);
         expect(styleReaches(withKey("openai", "talk"), keyed)).toBe(true);
+        expect(styleReaches(withKey("azure", "talk"), keyed)).toBe(true);
         expect(styleReaches(withKey("inworld", "talk"), keyed)).toBe(false);
         // A company's plain speaking job can ignore it even where its talking model uses it
         expect(styleReaches(withKey("google", "speech"), keyed)).toBe(false);

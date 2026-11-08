@@ -372,7 +372,8 @@ export function sourceOf(voice: BotVoice, profile: VoiceProfile, part: VoicePart
  */
 const STYLE_REACHES: Record<"speech" | "talk", ReadonlySet<string>> = {
     speech: new Set(["cartesia", "elevenlabs"]),
-    talk: new Set(["aws", "google", "openai", "ultravox", "xai", "zoom"]),
+    // Azure OpenAI runs on the OpenAI connector, so it passes the style on the same way
+    talk: new Set(["aws", "azure", "google", "openai", "ultravox", "xai", "zoom"]),
 };
 
 /**
