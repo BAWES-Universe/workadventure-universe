@@ -789,6 +789,25 @@ export function startingPayer(voice: BotVoice, previous: VoiceProfile | null): P
 export const sourceKey = (choice: PayerChoice): string =>
     choice.kind === "universe-ai" ? "universe-ai" : choice.key.id;
 
+/** Which voices a list is: a speaking model's, or a talking model's (#1910). */
+export type VoiceListPart = "speech" | "talk";
+
+/**
+ * Which voices to list for a place speaking with `model`. Orbit lists a key's speaking voices by default, and a talking model's
+ * only when asked (`part=talk`) if the key also speaks on its own (Amazon Polly and Nova Sonic): their voices differ. A key that
+ * speaks only through a talking model already lists that model's voices.
+ */
+export function voiceListPart(choice: PayerChoice, model: string | undefined): VoiceListPart {
+    if (choice.kind !== "key" || !model) return "speech";
+    const speaksOnItsOwn = choice.key.models.some((candidate) => candidate.kind === "speech");
+    const talks = choice.key.models.some((candidate) => candidate.kind === "talk" && candidate.id === model);
+    return speaksOnItsOwn && talks ? "talk" : "speech";
+}
+
+/** Where a voice list is kept on the page: one per source, and a second for a key's talking voices. */
+export const listKey = (choice: PayerChoice, part: VoiceListPart = "speech"): string =>
+    part === "talk" ? `${sourceKey(choice)}#talk` : sourceKey(choice);
+
 export function choiceOfSource(source: PartSource): PayerChoice | null {
     if (source.kind === "key") return { kind: "key", key: source.key };
     if (source.kind === "universe-ai") return { kind: "universe-ai" };

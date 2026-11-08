@@ -31,6 +31,7 @@ import {
     type FullVoiceProfile,
     type TypedVoice,
     type VoiceChoice,
+    type VoiceListPart,
 } from "../voiceModel";
 import { classifySummonFailure, type SummonResult } from "./summonFailure";
 
@@ -610,10 +611,13 @@ export class BotApiService {
         });
     }
 
-    /** The speaking voices of one source, "universe-ai" or a lent key's id, from the voice company's free list. */
-    async getBotVoices(botId: string, source: string): Promise<VoiceChoice[]> {
+    /**
+     * The speaking voices of one source, "universe-ai" or a lent key's id, from the voice company's free list. `talk` asks for a
+     * talking model's voices instead, for a key that also speaks on its own (#1910).
+     */
+    async getBotVoices(botId: string, source: string, part: VoiceListPart = "speech"): Promise<VoiceChoice[]> {
         return this.withPermissionsTimeout(async (signal) => {
-            const query = `part=speech&source=${encodeURIComponent(source)}`;
+            const query = `part=${part}&source=${encodeURIComponent(source)}`;
             const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/voice/voices?${query}`, {
                 signal,
             });

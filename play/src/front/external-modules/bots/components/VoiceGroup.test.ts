@@ -197,7 +197,7 @@ describe("the bot page's Voice group (#1668)", () => {
         expect(text()).toContain(
             "Pick a voice and people next to Tinyfish can talk with it out loud. Text chat stays as it is."
         );
-        expect(mocks.api.getBotVoices).toHaveBeenCalledWith("b1", "universe-ai");
+        expect(mocks.api.getBotVoices).toHaveBeenCalledWith("b1", "universe-ai", "speech");
         const rows = byTestId("bot-voice-option");
         expect(rows).toHaveLength(2);
         // Universe AI's own voice (River, set by a super admin) is first and picked, with no tag on it
@@ -363,7 +363,7 @@ describe("the bot page's Voice group (#1668)", () => {
             turnedOn({ ...uaiProfile, speech: { ...uaiProfile.speech, providerId: "key-el" } }, { lentKeys: [key()] })
         );
         await mount();
-        expect(mocks.api.getBotVoices).toHaveBeenCalledWith("b1", "key-el");
+        expect(mocks.api.getBotVoices).toHaveBeenCalledWith("b1", "key-el", "speech");
         expect(text()).toContain("Universe AI listens. Your ElevenLabs key speaks.");
         expect(text()).toContain("You pay; people talking with Tinyfish pay nothing.");
         expect(text()).toContain("Voices on your ElevenLabs key");
@@ -397,7 +397,7 @@ describe("the bot page's Voice group (#1668)", () => {
         expect(byTestId("bot-voice-recognition-key-el")).toHaveLength(0);
         expect(text()).toContain("Why split?");
         await click("bot-voice-both-universe-ai");
-        expect(mocks.api.getBotVoices).toHaveBeenCalledWith("b1", "universe-ai");
+        expect(mocks.api.getBotVoices).toHaveBeenCalledWith("b1", "universe-ai", "speech");
         expect(text()).toContain("Paid by Universe AI");
         await click("bot-voice-go");
         expect(mocks.api.saveBotVoice.mock.calls[0][1].speech).toMatchObject({ providerId: "uai-speak" });
@@ -919,6 +919,53 @@ describe("the bot page's Voice group (#1668)", () => {
             const saved = mocks.api.saveBotVoice.mock.calls[0][1];
             expect(saved.speech).toMatchObject({ providerId: "key-oa", model: "gpt-realtime-2.1-mini" });
             expect(saved.recognition).toEqual({ providerId: "key-oa", model: "gpt-realtime-2.1-mini" });
+        });
+
+        describe("a key that speaks on its own and talks live, whose voices differ (Amazon Polly and Nova Sonic)", () => {
+            const SONIC = "amazon.nova-2-sonic-v1:0";
+            const aws = key({
+                id: "key-aws",
+                adapter: "aws",
+                name: "My AWS",
+                recognition: true,
+                speech: true,
+                models: [
+                    { id: "generative", label: "Generative", kind: "speech" },
+                    { id: SONIC, label: "Nova 2 Sonic", kind: "talk" },
+                ],
+            });
+            const voiceOf = (voiceId: string, name: string, model: string, talk: boolean): VoiceChoice => ({
+                voiceId,
+                name,
+                description: "",
+                languages: ["en"],
+                previewUrl: null,
+                providerId: "key-aws",
+                model,
+                talk,
+            });
+            const polly = [
+                voiceOf("Matthew", "Matthew", "generative", false),
+                voiceOf("Ruth", "Ruth", "generative", false),
+            ];
+            const sonic = [voiceOf("tiffany", "Tiffany", SONIC, true), voiceOf("matthew", "Matthew", SONIC, true)];
+            beforeEach(() => {
+                mocks.api.getBotVoices.mockImplementation((_bot: string, _source: string, part: string) =>
+                    Promise.resolve(part === "talk" ? sonic : polly)
+                );
+            });
+
+            it("lists Nova Sonic's own voices while the bot talks live on it", async () => {
+                const live = {
+                    ...uaiProfile,
+                    recognition: { providerId: "key-aws", model: SONIC },
+                    speech: { providerId: "key-aws", model: SONIC, voiceId: "tiffany", voiceName: "Tiffany" },
+                };
+                mocks.api.getBotVoice.mockResolvedValue(turnedOn(live, { lentKeys: [aws] }));
+                await mount();
+                expect(mocks.api.getBotVoices).toHaveBeenCalledWith("b1", "key-aws", "talk");
+                expect(mocks.api.getBotVoices).not.toHaveBeenCalledWith("b1", "key-aws", "speech");
+            });
         });
 
         it("keeps the choice of where each job runs one tap away when a key is lent, and saves it", async () => {

@@ -33,6 +33,7 @@
         pauseOf,
         providerOf,
         sameChoice,
+        listKey,
         sourceKey,
         sourceOf,
         startingPayer,
@@ -43,6 +44,7 @@
         settleTalk,
         speaksLive,
         voicesForOption,
+        voiceListPart,
         talkingModelsOf,
         talksLive,
         type BotVoice,
@@ -52,6 +54,7 @@
         type VoiceChoice,
         type VoiceExpression,
         type VoiceKey,
+        type VoiceListPart,
         type VoicePart,
         type VoiceProfile,
     } from "../../voiceModel";
@@ -227,7 +230,9 @@
     $: speaksSource = voice && profile ? sourceOf(voice, profile, "speech") : null;
     $: listensSource = voice && profile ? sourceOf(voice, profile, "recognition") : null;
     $: speakChoice = speaksSource ? choiceOfSource(speaksSource) : null;
-    $: currentList = speakChoice ? lists[sourceKey(speakChoice)] : undefined;
+    // A key that speaks on its own and talks live lists its talking voices apart (#1910): the place talking live shows those
+    $: speakPart = speakChoice && profile ? voiceListPart(speakChoice, profile.speech?.model) : "speech";
+    $: currentList = speakChoice ? lists[listKey(speakChoice, speakPart)] : undefined;
     $: currentVoice = currentList?.find((candidate) => candidate.voiceId === profile?.speech?.voiceId);
     $: expression = profile?.expression ?? "natural";
     $: language = profile?.language ?? { mode: "follow" as const };
@@ -346,7 +351,7 @@
     // The voice card's second line
     $: speaksOwn = speaksSource?.kind === "key" && isOwnServer(speaksSource.key);
     // A speech server that lists no voices has no sample either: the voice is a name that was typed
-    $: speaksTyped = speaksOwn && speakChoice !== null && listTyped[sourceKey(speakChoice)] === true;
+    $: speaksTyped = speaksOwn && speakChoice !== null && listTyped[listKey(speakChoice, speakPart)] === true;
     $: cardAbout = [
         currentVoice?.talk ? v.talksLive() : "",
         speaksTyped ? v.cardAboutTyped({ server: ownName(true) }) : describeVoice(currentVoice, $locale),
@@ -398,15 +403,15 @@
     // ---------------------------------------------------------------------------------------------------------------
     // Voice lists and samples
 
-    function voicesFor(choice: PayerChoice): Promise<VoiceChoice[]> {
-        const id = sourceKey(choice);
+    function voicesFor(choice: PayerChoice, part: VoiceListPart = "speech"): Promise<VoiceChoice[]> {
+        const id = listKey(choice, part);
         const known = lists[id];
         if (known) return Promise.resolve(known);
         const botId = bot.id;
         // One request per bot and source: the panel may move to another bot while one is on its way
         const slot = `${botId}/${id}`;
         listLoading[slot] ??= botApiService
-            .getBotVoices(botId, id)
+            .getBotVoices(botId, sourceKey(choice), part)
             .then((list) => {
                 // A source that lists no voice is a failure to load, not a list: the page offers Try again instead of a dead button
                 const stored = list.length > 0;
@@ -430,9 +435,14 @@
     }
 
     // The voice on the card shows what its company says about it once the list is in; the card works without it
-    $: if (open && speakChoice && !lists[sourceKey(speakChoice)] && !listFailed[sourceKey(speakChoice)]) {
+    $: if (
+        open &&
+        speakChoice &&
+        !lists[listKey(speakChoice, speakPart)] &&
+        !listFailed[listKey(speakChoice, speakPart)]
+    ) {
         // eslint-disable-next-line svelte/infinite-reactive-loop
-        voicesFor(speakChoice).catch(() => undefined);
+        voicesFor(speakChoice, speakPart).catch(() => undefined);
     }
 
     $: if (open && doorOption && !lists[sourceKey(doorOption.speech)] && !listFailed[sourceKey(doorOption.speech)]) {
@@ -764,12 +774,14 @@
     // The picker
 
     $: pickerChoice = speakChoice ?? doorOption?.speech ?? (voice ? firstSpeechChoice(voice) : null);
-    $: pickerAll = pickerChoice ? lists[sourceKey(pickerChoice)] ?? null : null;
+    // Only the place the bot speaks from can be talking live; any other starts on its speaking voices
+    $: pickerPart = speakChoice && pickerChoice === speakChoice ? speakPart : "speech";
+    $: pickerAll = pickerChoice ? lists[listKey(pickerChoice, pickerPart)] ?? null : null;
     // The same for the full list: a talking voice on a split would pull listening onto it and undo the split
     $: pickerOption = view?.kind === "off" ? doorOption : onOption;
     $: pickerList = pickerAll && pickerOption ? voicesForOption(pickerOption, pickerAll) : pickerAll;
-    $: pickerFailed = pickerChoice ? listFailed[sourceKey(pickerChoice)] === true : false;
-    $: pickerTyped = pickerChoice ? listTyped[sourceKey(pickerChoice)] === true : false;
+    $: pickerFailed = pickerChoice ? listFailed[listKey(pickerChoice, pickerPart)] === true : false;
+    $: pickerTyped = pickerChoice ? listTyped[listKey(pickerChoice, pickerPart)] === true : false;
     $: pickerHeading = !pickerChoice
         ? ""
         : pickerChoice.kind === "universe-ai"
@@ -788,18 +800,20 @@
         sampleError = false;
         stopSample();
         const choice = pickerChoice;
+        const part = pickerPart;
         // A server that lists no voices does not start listing them: the name is asked for at once
-        if (listTyped[sourceKey(choice)]) return;
-        delete listFailed[sourceKey(choice)];
+        if (listTyped[listKey(choice, part)]) return;
+        delete listFailed[listKey(choice, part)];
         listFailed = listFailed;
-        voicesFor(choice).catch(() => undefined);
+        voicesFor(choice, part).catch(() => undefined);
     }
     function retryPicker() {
         if (!pickerChoice) return;
         const choice = pickerChoice;
-        delete listFailed[sourceKey(choice)];
+        const part = pickerPart;
+        delete listFailed[listKey(choice, part)];
         listFailed = listFailed;
-        voicesFor(choice).catch(() => undefined);
+        voicesFor(choice, part).catch(() => undefined);
     }
     function retryDoor() {
         if (!doorOption) return;
