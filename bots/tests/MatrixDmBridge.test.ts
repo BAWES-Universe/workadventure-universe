@@ -1218,6 +1218,61 @@ describe('MatrixDmBridge', () => {
         expect(deps.reply).toHaveBeenCalledWith(BOT, expect.anything(), '', [expect.objectContaining({ mediaType: 'image' })], expect.anything());
     });
 
+    describe('a voice note the bot can hear', () => {
+        const note: MatrixEvent = {
+            ...message('Voice message.m4a'),
+            event_id: '$note1',
+            content: {
+                msgtype: 'm.audio',
+                body: 'Voice message.m4a',
+                url: 'mxc://matrix.test/note',
+                info: { mimetype: 'audio/mp4', duration: 4000 },
+                'org.matrix.msc3245.voice': {},
+            },
+        };
+        const transcripts = () =>
+            client.sendMessage.mock.calls.map((call: any[]) => call[2]).filter((content: any) => content?.['universe.transcript'] || content?.['m.new_content']?.['universe.transcript']);
+
+        beforeEach(async () => {
+            deps.uploadAttachment = vi.fn(async () => 'https://files.test/note.m4a');
+            deps.noteHearing = {
+                canHear: vi.fn(async () => true),
+                hear: vi.fn(async () => ({ ok: true, text: ' Remind me   about the\nmeeting ', provider: 'soniox', timings: {} })),
+                limits: { maxSeconds: 300, maxBytes: 1e6, maxChars: 4000 },
+            };
+            await bridge.onEvent(invite());
+        });
+
+        it('shows Listening, then the words under the note, and gives the bot the words', async () => {
+            await bridge.onEvent(note);
+            expect(deps.noteHearing.hear).toHaveBeenCalledWith(BOT, '$note1', expect.objectContaining({ filename: 'Voice message.m4a', seconds: 4 }));
+            const [listening, heard] = transcripts();
+            expect(listening['universe.transcript']).toEqual({ v: 1, for: '$note1', state: 'listening' });
+            expect(heard['m.new_content']['universe.transcript']).toEqual({ v: 1, for: '$note1', state: 'heard', text: 'Remind me about the meeting' });
+            expect(deps.reply.mock.calls.at(-1)[2]).toBe('[Voice note] Remind me about the meeting');
+        });
+
+        it('says it could not listen, and the bot is not made to answer a file it cannot read', async () => {
+            deps.noteHearing.hear.mockResolvedValue({ ok: false, reason: 'failed' });
+            await bridge.onEvent(note);
+            expect(transcripts().at(-1)['m.new_content']['universe.transcript']).toEqual({ v: 1, for: '$note1', state: 'failed' });
+            expect(deps.reply).not.toHaveBeenCalled();
+        });
+
+        it('promises nothing to a bot that cannot hear: no row, and the note reaches it as the file', async () => {
+            deps.noteHearing.canHear.mockResolvedValue(false);
+            await bridge.onEvent(note);
+            expect(deps.noteHearing.hear).not.toHaveBeenCalled();
+            expect(transcripts()).toEqual([]);
+            expect(deps.reply).toHaveBeenCalledWith(BOT, expect.anything(), '', [expect.objectContaining({ mediaType: 'audio' })], expect.anything());
+        });
+
+        it('treats an audio file that is not a voice note as a file', async () => {
+            await bridge.onEvent({ ...note, content: { ...note.content, 'org.matrix.msc3245.voice': undefined, body: 'song.mp3' } });
+            expect(deps.noteHearing.hear).not.toHaveBeenCalled();
+        });
+    });
+
     it('a message kept here while the shared store was down is replaced by a newer one in the store, so it is answered once', async () => {
         const store = new Map<string, string>();
         let storeUp = false;

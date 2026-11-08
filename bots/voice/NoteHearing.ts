@@ -81,6 +81,14 @@ const KEEP_MS = 60 * 60_000;
 const KEEP_MAX = 500;
 const DEFAULT_CONCURRENT = 4;
 
+/** The clip: its bytes when the caller already has them (a direct message is downloaded from Matrix), else its address. */
+export interface Clip {
+    url?: string;
+    bytes?: Uint8Array;
+    filename: string;
+    seconds?: number;
+}
+
 export class NoteHearing {
     private readonly done = new Map<string, { at: number; result: Promise<HeardNote> }>();
     private running = 0;
@@ -91,7 +99,7 @@ export class NoteHearing {
      * Hears one note. `messageId` is the chat's own id for the message, so the same note is heard once. `seconds` is the length the
      * sender's app wrote on the note, when it did: a note over the limit is refused before anything is downloaded.
      */
-    hear(messageId: string, clip: { url: string; filename: string; seconds?: number }): Promise<HeardNote> {
+    hear(messageId: string, clip: Clip): Promise<HeardNote> {
         const now = (this.options.now ?? Date.now)();
         this.forget(now);
         const kept = this.done.get(messageId);
@@ -108,7 +116,7 @@ export class NoteHearing {
         return result;
     }
 
-    private async run(clip: { url: string; filename: string; seconds?: number }): Promise<HeardNote> {
+    private async run(clip: Clip): Promise<HeardNote> {
         const { limits, settings, allowance } = this.options;
         const now = this.options.now ?? Date.now;
         const started = now();
@@ -124,7 +132,8 @@ export class NoteHearing {
         try {
             let bytes: Uint8Array;
             try {
-                bytes = await this.options.fetchClip(clip.url, limits.maxBytes);
+                bytes = clip.bytes ?? (await this.options.fetchClip(clip.url ?? '', limits.maxBytes));
+                if (bytes.byteLength > limits.maxBytes) return { ok: false, reason: 'too-big' };
             } catch (error) {
                 if (/too large/i.test((error as Error)?.message ?? '')) return { ok: false, reason: 'too-big' };
                 throw error;

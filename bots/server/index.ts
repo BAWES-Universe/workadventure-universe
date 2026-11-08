@@ -35,6 +35,7 @@ import * as path from 'path';
 import * as Sentry from '@sentry/node';
 import { VoiceLoadWatch, readWorkerLoad, voiceLoadSettings, workerStatsUrl } from '../voice/VoiceLoad';
 import { voiceWorkerSettings } from '../voice/settings';
+import { buildNoteHearing } from '../voice/NoteHearingWiring';
 import { captureServerEvent } from '../ai/PostHogClient';
 
 // Before anything calls Orbit or an MCP server: a failed call must never put a token or a transcript in the logs
@@ -146,6 +147,7 @@ async function setupMatrix(): Promise<void> {
         reply: (botId, person, text, attachments, hooks) => dmReplyService.reply(botId, person, text, attachments, hooks),
         rooms: botRegistry,
         uploadAttachment,
+        noteHearing: buildNoteHearing(adminApiService) ?? undefined,
         restingLine: (config, text) => dmReplyService.restingLine(config, text),
         waiting: botRegistry,
         wokaPicture: (config) => botWokaPicture(config, { wokaList: (roomUrl, botId) => adminApiService.getBotWokaList(roomUrl, botId) }),
