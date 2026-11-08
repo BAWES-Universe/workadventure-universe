@@ -15,6 +15,8 @@ const AUDIO_BITS_PER_SECOND = 48000;
 export interface VoiceNoteRecording {
     /** The level (0 to 1) of the latest slice, read by the meter. */
     readonly level: () => number;
+    /** False while the browser keeps sound from running (an iPhone before a tap lets it): the meter then reads nothing. */
+    readonly metering: () => boolean;
     /** Stops recording and returns the note as a file (its length and shape are kept with it). */
     stop: () => Promise<{ file: File; details: VoiceNoteDetails }>;
     /** Stops recording and throws the audio away. */
@@ -25,13 +27,10 @@ export interface VoiceNoteRecording {
  * Starts recording the microphone. Rejects when the microphone is blocked or missing: the caller says how to allow it.
  * The level of each slice is read from the live stream, so the shape of the note is known without decoding the file.
  */
-export async function startVoiceNoteRecording(format: RecordingFormat): Promise<VoiceNoteRecording> {
-    // Made and started in the tap itself, before the wait for the microphone: an iPhone only lets sound run from a
-    // tap, and a context made after that wait stays silent when nothing else is playing (a direct message, not a
-    // bubble). The meter and the note's shape then read nothing.
-    // Not waited for: a context the browser will not start yet must not hold up the recording itself.
-    const context = new AudioContext();
-    context.resume().catch(() => {});
+export async function startVoiceNoteRecording(
+    format: RecordingFormat,
+    context: AudioContext = makeVoiceNoteContext()
+): Promise<VoiceNoteRecording> {
     let stream: MediaStream | undefined;
     try {
         stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
@@ -42,6 +41,18 @@ export async function startVoiceNoteRecording(format: RecordingFormat): Promise<
         await context.close().catch(() => {});
         throw e;
     }
+}
+
+/**
+ * Made and started in the tap itself, before the wait for the microphone: an iPhone only lets sound run from a tap, and
+ * a context made after that wait stays silent when nothing else is playing (a direct message, not a bubble). The meter
+ * and the note's shape then read nothing. A press-and-hold makes it when the finger lands and hands it to the recording.
+ * Not waited for: a context the browser will not start yet must not hold up the recording itself.
+ */
+export function makeVoiceNoteContext(): AudioContext {
+    const context = new AudioContext();
+    context.resume().catch(() => {});
+    return context;
 }
 
 function wire(stream: MediaStream, context: AudioContext, format: RecordingFormat): VoiceNoteRecording {
@@ -92,6 +103,7 @@ function wire(stream: MediaStream, context: AudioContext, format: RecordingForma
 
     return {
         level: () => level,
+        metering: () => context.state === "running",
         stop: async () => {
             if (finished) throw new Error("The recording is already finished");
             finished = true;

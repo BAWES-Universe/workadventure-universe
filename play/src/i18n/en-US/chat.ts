@@ -706,6 +706,11 @@ const chat: BaseTranslation = {
         micBlocked: "Your microphone is blocked. Allow it in your browser's settings for this site, then try again.",
         micMissing: "No microphone was found. Plug one in, then try again.",
         recordingFailed: "The recording could not start. Try again.",
+        holdToRecord: "Hold to record, release to send",
+        holdAgain: "Hold again to record",
+        slideToCancel: "Slide to cancel",
+        releaseToCancel: "Release to cancel",
+        sending: "Sending…",
         notSent: "The voice note wasn't sent.",
     },
     audioFile: {
