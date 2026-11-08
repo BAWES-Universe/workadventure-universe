@@ -68,6 +68,8 @@ export class GladiaRecognition implements RecognitionConnector {
             connect: openSession,
             finish: () => [JSON.stringify({ type: 'stop_recording' })],
             closeIsFinished: true,
+            // Only a normal close ends with the last words: any other close (a dropped line, an error code) is a failure
+            closed: (code) => (code === 1000 ? undefined : { error: {} }),
             read: (data, isBinary): HearingMessage | undefined => {
                 if (isBinary) return undefined;
                 const answer = JSON.parse(data.toString()) as GladiaAnswer;
