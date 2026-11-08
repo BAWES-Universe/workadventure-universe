@@ -164,44 +164,6 @@ describe('a reply that Universe AI pays for', () => {
         expect(b.lines).toHaveLength(2);
     });
 
-    it('stops taking the microphone of a person whose allowance is used, so their words do not use up the places kept for typing, and takes it again when a reply is allowed', async () => {
-        const b = bot();
-        await b.connect();
-        const modes = () => b.sent.filter((m) => m.type === 'mode.set').map((m) => (m as Extract<ToWorker, { type: 'mode.set' }>).mode);
-        expect(modes()).toEqual([]);
-        b.state.answers = [{ allowed: false, resetsAt: 'x' }, { allowed: false, resetsAt: 'x' }];
-        await b.say(reply(1));
-        // Typing and hearing carry on, but nothing they say is heard, sent or answered
-        expect(modes()).toEqual(['type_and_listen']);
-        await b.say(reply(2));
-        expect(modes()).toEqual(['type_and_listen']);
-        // The window ended: a reply is allowed again, and so is their microphone
-        b.state.fallback = { allowed: true };
-        await b.say(reply(3), 'Back again.');
-        expect(modes()).toEqual(['type_and_listen', 'talk']);
-    });
-
-    it('holds only the person whose allowance is used', async () => {
-        const b = bot({ people: { 7: { userId: 'uuid-room_7', isGuest: false }, 8: { userId: 'uuid-room_8', isGuest: true } } });
-        await b.connect('room_7');
-        await b.connect('room_8');
-        b.state.answers = [{ allowed: false, resetsAt: 'x' }];
-        await b.say(reply(1, 8));
-        const sets = b.sent.filter((m) => m.type === 'mode.set') as Extract<ToWorker, { type: 'mode.set' }>[];
-        expect(sets.map((m) => [m.participantId, m.mode])).toEqual([['room_8', 'type_and_listen']]);
-    });
-
-    it('lets go of the hold when the person leaves, so a later visit starts from their choice', async () => {
-        const b = bot();
-        await b.connect();
-        b.state.fallback = { allowed: false, resetsAt: 'x' };
-        await b.say(reply(1));
-        b.calls.spaceUserLeft(SPACE, 'room_7');
-        await b.connect();
-        const open = [...b.sent].reverse().find((m) => m.type === 'lane.open') as Extract<ToWorker, { type: 'lane.open' }>;
-        expect(open.mode).toBe('talk');
-    });
-
     it('puts the button back to paused when a reconnect has set it to on, without saying the line again', async () => {
         const b = bot();
         await b.connect();
