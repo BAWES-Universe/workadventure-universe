@@ -16,6 +16,8 @@ export const CAMB_ENDPOINT = 'https://client.camb.ai/apis';
 export const CAMB_DEFAULT_VOICE = 147320;
 /** CAMB.AI's limit on one request's text. */
 export const CAMB_MAX_TEXT = 3000;
+/** The shortest text CAMB.AI is said to take: a shorter reply ("Ok") is ended with dots so it is still spoken. */
+export const CAMB_MIN_TEXT = 3;
 /** The rate each model speaks at; a model not named here is taken to speak like Flash. */
 const MODEL_RATES: Record<string, number> = { 'mars-flash': 22_050, 'mars-instruct': 22_050, 'mars-pro': 48_000 };
 const DEFAULT_RATE = 22_050;
@@ -57,7 +59,7 @@ function specAt(sampleRate: number): HttpSpeechSpec {
             url: '/tts-stream',
             headers: { 'x-api-key': request.settings.key.reveal(), 'content-type': 'application/json' },
             body: JSON.stringify({
-                text: request.text.slice(0, CAMB_MAX_TEXT),
+                text: request.text.slice(0, CAMB_MAX_TEXT).padEnd(CAMB_MIN_TEXT, '.'),
                 voice_id: voiceOf(request.settings.voiceId),
                 language: cambLocale(request.lang || request.settings.language),
                 speech_model: request.settings.model,
