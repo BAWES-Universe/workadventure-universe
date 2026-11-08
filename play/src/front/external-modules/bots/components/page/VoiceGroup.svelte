@@ -28,11 +28,13 @@
         modelLabel,
         modelName,
         modelsOf,
+        speakingRowModels,
         payerKind,
         payerOptions,
         pauseOf,
         providerOf,
         sameChoice,
+        listKey,
         sourceKey,
         sourceOf,
         startingPayer,
@@ -43,7 +45,7 @@
         settleTalk,
         speaksLive,
         voicesForOption,
-        talkingModelsOf,
+        voiceListPart,
         talksLive,
         type BotVoice,
         type FullVoiceProfile,
@@ -52,6 +54,7 @@
         type VoiceChoice,
         type VoiceExpression,
         type VoiceKey,
+        type VoiceListPart,
         type VoicePart,
         type VoiceProfile,
     } from "../../voiceModel";
@@ -231,7 +234,9 @@
     $: speaksSource = voice && profile ? sourceOf(voice, profile, "speech") : null;
     $: listensSource = voice && profile ? sourceOf(voice, profile, "recognition") : null;
     $: speakChoice = speaksSource ? choiceOfSource(speaksSource) : null;
-    $: currentList = speakChoice ? lists[sourceKey(speakChoice)] : undefined;
+    // A key that speaks on its own and talks live lists its talking voices apart (#1910): the place talking live shows those
+    $: speakPart = speakChoice && profile ? voiceListPart(speakChoice, profile.speech?.model) : "speech";
+    $: currentList = speakChoice ? lists[listKey(speakChoice, speakPart)] : undefined;
     $: currentVoice = currentList?.find((candidate) => candidate.voiceId === profile?.speech?.voiceId);
     $: expression = profile?.expression ?? "natural";
     $: language = profile?.language ?? { mode: "follow" as const };
@@ -353,7 +358,7 @@
     // The voice card's second line
     $: speaksOwn = speaksSource?.kind === "key" && isOwnServer(speaksSource.key);
     // A speech server that lists no voices has no sample either: the voice is a name that was typed
-    $: speaksTyped = speaksOwn && speakChoice !== null && listTyped[sourceKey(speakChoice)] === true;
+    $: speaksTyped = speaksOwn && speakChoice !== null && listTyped[listKey(speakChoice, speakPart)] === true;
     $: cardAbout = [
         currentVoice?.talk ? v.talksLive() : "",
         speaksTyped ? v.cardAboutTyped({ server: ownName(true) }) : describeVoice(currentVoice, $locale),
@@ -363,7 +368,6 @@
 
     // A talking model (#1910): one model on a lent key listens and speaks; the bot's Mind still writes every answer
     $: live = voice && profile ? talksLive(voice, profile) : false;
-    $: talkingModels = voice && profile ? talkingModelsOf(voice, profile) : [];
 
     $: payerKindNow = voice && profile ? payerKind(voice, profile) : "universe-ai";
     $: speakingKey = speaksSource?.kind === "key" ? speaksSource.key : null;
@@ -418,15 +422,15 @@
     // ---------------------------------------------------------------------------------------------------------------
     // Voice lists and samples
 
-    function voicesFor(choice: PayerChoice): Promise<VoiceChoice[]> {
-        const id = sourceKey(choice);
+    function voicesFor(choice: PayerChoice, part: VoiceListPart = "speech"): Promise<VoiceChoice[]> {
+        const id = listKey(choice, part);
         const known = lists[id];
         if (known) return Promise.resolve(known);
         const botId = bot.id;
         // One request per bot and source: the panel may move to another bot while one is on its way
         const slot = `${botId}/${id}`;
         listLoading[slot] ??= botApiService
-            .getBotVoices(botId, id)
+            .getBotVoices(botId, sourceKey(choice), part)
             .then((list) => {
                 // A source that lists no voice is a failure to load, not a list: the page offers Try again instead of a dead button
                 const stored = list.length > 0;
@@ -450,9 +454,14 @@
     }
 
     // The voice on the card shows what its company says about it once the list is in; the card works without it
-    $: if (open && speakChoice && !lists[sourceKey(speakChoice)] && !listFailed[sourceKey(speakChoice)]) {
+    $: if (
+        open &&
+        speakChoice &&
+        !lists[listKey(speakChoice, speakPart)] &&
+        !listFailed[listKey(speakChoice, speakPart)]
+    ) {
         // eslint-disable-next-line svelte/infinite-reactive-loop
-        voicesFor(speakChoice).catch(() => undefined);
+        voicesFor(speakChoice, speakPart).catch(() => undefined);
     }
 
     $: if (
@@ -698,7 +707,26 @@
             ...current,
             [part]: { ...current[part], model },
         };
-        void commit(next);
+        // Between a key's own speaking and its talking model the voices differ (#1910): the voice is kept if the other list has
+        // it, else the other list's first is taken
+        const choice = part === "speech" ? speakChoice : null;
+        const from = choice ? voiceListPart(choice, current.speech.model) : "speech";
+        const to = choice ? voiceListPart(choice, model) : "speech";
+        if (!voice || !choice || from === to) {
+            void commit(next);
+            return;
+        }
+        const data = voice;
+        const botId = bot.id;
+        void run(async () => {
+            const list = await voicesFor(choice, to);
+            const picked = startingVoice(data, choice, list, current.speech.voiceId);
+            if (!picked) throw new Error(v.voicesFailed());
+            const speech = { ...next.speech, voiceId: picked.voiceId };
+            delete speech.voiceName;
+            if (picked.voiceName) speech.voiceName = picked.voiceName;
+            return botApiService.saveBotVoice(botId, settleTalk(data, { ...next, speech }));
+        });
     }
 
     function chooseExpression(next: VoiceExpression) {
@@ -812,12 +840,14 @@
     // The picker
 
     $: pickerChoice = speakChoice ?? doorOption?.speech ?? (voice ? firstSpeechChoice(voice) : null);
-    $: pickerAll = pickerChoice ? lists[sourceKey(pickerChoice)] ?? null : null;
+    // Only the place the bot speaks from can be talking live; any other starts on its speaking voices
+    $: pickerPart = speakChoice && pickerChoice === speakChoice ? speakPart : "speech";
+    $: pickerAll = pickerChoice ? lists[listKey(pickerChoice, pickerPart)] ?? null : null;
     // The same for the full list: a talking voice on a split would pull listening onto it and undo the split
     $: pickerOption = view?.kind === "off" ? doorOption : onOption;
     $: pickerList = pickerAll && pickerOption ? voicesForOption(pickerOption, pickerAll) : pickerAll;
-    $: pickerFailed = pickerChoice ? listFailed[sourceKey(pickerChoice)] === true : false;
-    $: pickerTyped = pickerChoice ? listTyped[sourceKey(pickerChoice)] === true : false;
+    $: pickerFailed = pickerChoice ? listFailed[listKey(pickerChoice, pickerPart)] === true : false;
+    $: pickerTyped = pickerChoice ? listTyped[listKey(pickerChoice, pickerPart)] === true : false;
     $: pickerHeading = !pickerChoice
         ? ""
         : pickerChoice.kind === "universe-ai"
@@ -836,18 +866,20 @@
         sampleError = false;
         stopSample();
         const choice = pickerChoice;
+        const part = pickerPart;
         // A server that lists no voices does not start listing them: the name is asked for at once
-        if (listTyped[sourceKey(choice)]) return;
-        delete listFailed[sourceKey(choice)];
+        if (listTyped[listKey(choice, part)]) return;
+        delete listFailed[listKey(choice, part)];
         listFailed = listFailed;
-        voicesFor(choice).catch(() => undefined);
+        voicesFor(choice, part).catch(() => undefined);
     }
     function retryPicker() {
         if (!pickerChoice) return;
         const choice = pickerChoice;
-        delete listFailed[sourceKey(choice)];
+        const part = pickerPart;
+        delete listFailed[listKey(choice, part)];
         listFailed = listFailed;
-        voicesFor(choice).catch(() => undefined);
+        voicesFor(choice, part).catch(() => undefined);
     }
     function retryDoor() {
         if (!doorOption) return;
@@ -1551,7 +1583,10 @@
                             {#each live ? [{ part: "speech", title: v.talkingModel(), source: speaksSource }] : [{ part: "speech", title: v.speakingModel(), source: speaksSource }, { part: "recognition", title: v.listeningModel(), source: listensSource }] as row (row.part)}
                                 {@const part = row.part === "speech" ? "speech" : "recognition"}
                                 {#if row.source && row.source.kind === "key"}
-                                    {@const models = live ? talkingModels : modelsOf(voice, part, row.source)}
+                                    {@const models =
+                                        part === "speech"
+                                            ? speakingRowModels(voice, row.source)
+                                            : modelsOf(voice, part, row.source)}
                                     {@const chosen = profile[part]?.model}
                                     {@const shown = models.find((model) => model.id === chosen)}
                                     <button
