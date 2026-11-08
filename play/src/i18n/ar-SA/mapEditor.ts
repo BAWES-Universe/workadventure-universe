@@ -420,6 +420,13 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
                 voice: {
                     title: "الصوت",
                     offDoor: "متوقف · امنح {bot} صوتًا",
+                    offRemembered: "متوقف · صوت {voice} محفوظ",
+                    offHint: "الصوت متوقف لدى {bot}.",
+                    turnOn: "تشغيل",
+                    pickAnother: "اختر صوتًا آخر",
+                    pickFirst: "اختر صوتًا",
+                    pickNone: "اختر صوتًا",
+                    pickCancel: "إلغاء",
                     notAllowedBrief: "متوقف في هذا الكون",
                     noServiceBrief: "غير متاح هنا بعد",
                     loading: "جارٍ التحميل…",

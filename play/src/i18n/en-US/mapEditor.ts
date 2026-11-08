@@ -942,6 +942,13 @@ const mapEditor: BaseTranslation = {
                 voice: {
                     title: "Voice",
                     offDoor: "Off · Give {bot:string} a voice",
+                    offRemembered: "Off · {voice:string} is remembered",
+                    offHint: "Voice is off for {bot:string}.",
+                    turnOn: "Turn on",
+                    pickAnother: "Choose another voice",
+                    pickFirst: "Choose a voice",
+                    pickNone: "Pick a voice",
+                    pickCancel: "Cancel",
                     notAllowedBrief: "Off in this universe",
                     noServiceBrief: "Not available here yet",
                     loading: "Loading…",

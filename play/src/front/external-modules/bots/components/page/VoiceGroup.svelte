@@ -113,6 +113,8 @@
     let doorPayerId: string | null = null;
     let doorPickedId: string | undefined;
     let payerOpen = false;
+    /** While voice is off, the voices are hidden until someone chooses one to turn it on with (nothing is picked by default) */
+    let choosing = false;
     /** More voice settings: which of the choices are open (each is one row with Change until it is tapped) */
     let languageOpen = false;
     let sourcesOpen = false;
@@ -179,6 +181,7 @@
         doorPayerId = null;
         doorPickedId = undefined;
         payerOpen = false;
+        choosing = false;
         languageOpen = false;
         sourcesOpen = false;
         modelOpen = { speech: false, recognition: false };
@@ -322,7 +325,8 @@
         speaking: string,
         style: VoiceExpression,
         whose: string,
-        who: string
+        who: string,
+        remembered: string | null
     ): string {
         if (!data || !now) return hasFailed ? v.loadFailed() : v.loading();
         switch (now.kind) {
@@ -331,7 +335,9 @@
             case "no-service":
                 return v.noServiceBrief();
             case "off":
-                return v.offDoor({ bot: who });
+                return remembered
+                    ? v.offRemembered({ voice: remembered.split(/\s[-–—]\s|,/)[0].trim() })
+                    : v.offDoor({ bot: who });
             case "on":
                 if (now.pause?.kind === "key-down") {
                     return now.pause.reason === "credit" ? v.pausedCredit({ key: whose }) : v.pausedKey({ key: whose });
@@ -341,7 +347,7 @@
                 return v.briefOn({ voice: speaking, style: v.style[style](), payer: payerBrief(data, now.profile) });
         }
     }
-    $: brief = briefOf(voice, view, failed, voiceName, expression, whoKey, botName);
+    $: brief = briefOf(voice, view, failed, voiceName, expression, whoKey, botName, rememberedName);
 
     // The voice card's second line
     $: speaksOwn = speaksSource?.kind === "key" && isOwnServer(speaksSource.key);
@@ -368,6 +374,16 @@
     // The Voice row while voice is off: a few voices to hear, and one button
 
     $: previousProfile = voice ? liveRevision(voice)?.profile ?? null : null;
+    /** The voice it was turned off with, when that still works: kept while off, and turning on again uses it at once */
+    $: remembered =
+        voice &&
+        view?.kind === "off" &&
+        previousProfile &&
+        fullProfile(previousProfile) &&
+        !pauseOf(voice, previousProfile)
+            ? previousProfile
+            : null;
+    $: rememberedName = remembered?.speech?.voiceName || null;
     $: doorOptions = voice && view?.kind === "off" ? payerOptions(voice) : [];
     $: doorOption =
         voice && view?.kind === "off"
@@ -385,8 +401,11 @@
         voice && doorOption && doorList
             ? doorVoices(voice, doorOption.speech, doorList, previousProfile?.speech?.voiceId)
             : null;
-    // The first voice is picked until another is; a new list (another payer) starts again
-    $: if (door && !door.voices.some((candidate) => candidate.voiceId === doorPickedId)) doorPickedId = door.startId;
+    // Nothing is picked until someone taps a voice (a filled radio would read as the voice in use); a new list (another
+    // payer) starts empty again
+    $: if (door && doorPickedId !== undefined && !door.voices.some((candidate) => candidate.voiceId === doorPickedId)) {
+        doorPickedId = undefined;
+    }
     $: doorPicked = doorList?.find((candidate) => candidate.voiceId === doorPickedId);
     $: doorTags =
         door?.startId === undefined
@@ -435,7 +454,13 @@
         voicesFor(speakChoice).catch(() => undefined);
     }
 
-    $: if (open && doorOption && !lists[sourceKey(doorOption.speech)] && !listFailed[sourceKey(doorOption.speech)]) {
+    $: if (
+        open &&
+        choosing &&
+        doorOption &&
+        !lists[sourceKey(doorOption.speech)] &&
+        !listFailed[sourceKey(doorOption.speech)]
+    ) {
         // eslint-disable-next-line svelte/infinite-reactive-loop
         voicesFor(doorOption.speech).catch(() => undefined);
     }
@@ -543,6 +568,7 @@
         if (saved) {
             note = pendingNote;
             payerOpen = false;
+            choosing = false;
             doorPayerId = null;
             doorPickedId = undefined;
             stopSample();
@@ -552,10 +578,56 @@
     }
     let pendingNote: Note | null = null;
 
-    /** The switch is a native checkbox that has already flipped when this runs: when nothing changed (a failed save), put it
-     *  back to what the page says. It is only on the page while voice is on, so this turns voice off. */
+    /** Turns voice on again with the voice it was turned off with: nothing new is saved, so no new version. */
+    async function resumeBefore() {
+        if (!voice || !remembered || !rememberedName) return;
+        const data = voice;
+        const botId = bot.id;
+        const speaks = sourceOf(data, remembered, "speech");
+        const saved = await run(async () => {
+            const on = await botApiService.setBotVoiceEnabled(botId, true);
+            pendingNote = {
+                kind: "first-on",
+                voice: rememberedName,
+                key: speaks.kind === "key" ? keyPhrase(speaks.key, true) : null,
+            };
+            return on;
+        });
+        if (saved) {
+            note = pendingNote;
+            choosing = false;
+            stopSample();
+            screen = "page";
+        }
+        pendingNote = null;
+    }
+
+    function startChoosing() {
+        saveError = null;
+        choosing = true;
+    }
+
+    function stopChoosing() {
+        choosing = false;
+        payerOpen = false;
+        doorPayerId = null;
+        doorPickedId = undefined;
+        saveError = null;
+        sampleError = false;
+        stopSample();
+    }
+
+    /** The switch is a native checkbox that has already flipped when this runs: when nothing changed (a failed save, or voices
+     *  still to pick), put it back to what the page says. Off turns voice off (the voice it had is kept); on turns it on
+     *  with the voice it had, or opens the voices to pick one. */
     async function onSwitch(next: boolean) {
-        if (!next && voice && !saving) await run(() => botApiService.setBotVoiceEnabled(bot.id, false));
+        if (voice && !saving) {
+            if (!next) await run(() => botApiService.setBotVoiceEnabled(bot.id, false));
+            else if (view?.kind === "off") {
+                if (remembered && rememberedName) await resumeBefore();
+                else startChoosing();
+            }
+        }
         await tick();
         const input = document.getElementById("bot-voice-switch");
         if (input instanceof HTMLInputElement) input.checked = view?.kind === "on";
@@ -1022,8 +1094,58 @@
                             onChange={onSwitch}
                         />
                     </label>
-                {:else if doorOption}
-                    <p class="bp-m" data-testid="bot-voice-off-line">{v.doorLead({ bot: botName })}</p>
+                {:else}
+                    <label class="vg-set" for="bot-voice-switch">
+                        <span class="bp-mtx"
+                            ><span class="vg-t">{v.switchTitle()}</span><span
+                                class="bp-cn"
+                                data-testid="bot-voice-off-line">{v.offHint({ bot: botName })}</span
+                            ></span
+                        >
+                        <PageSwitch
+                            id="bot-voice-switch"
+                            testId="bot-voice-switch"
+                            checked={false}
+                            disabled={saving}
+                            label={v.switchLabel()}
+                            onChange={onSwitch}
+                        />
+                    </label>
+                    {#if saveError && !choosing}<p class="vg-error" role="alert" data-testid="bot-voice-error">
+                            {saveError}
+                        </p>{/if}
+                    {#if !choosing && rememberedName}
+                        <div class="vg-last" data-testid="bot-voice-last">
+                            <span class="vg-ico"><IconHistory font-size="20" /></span>
+                            <span class="bp-mtx">
+                                <span class="vg-t">{rememberedName}</span>
+                                <span class="bp-cn">{v.usedBefore()}</span>
+                            </span>
+                            <PageButton tall testId="bot-voice-turn-on" on:click={() => void resumeBefore()}>
+                                {v.turnOn()}
+                            </PageButton>
+                        </div>
+                    {/if}
+                    {#if !choosing && doorOption}
+                        <button
+                            type="button"
+                            class="vg-tap"
+                            data-testid="bot-voice-pick-another"
+                            on:click={startChoosing}
+                        >
+                            <span class="vg-ico"><IconSearch font-size="20" /></span>
+                            <span class="bp-mtx"
+                                ><span class="vg-t">{rememberedName ? v.pickAnother() : v.pickFirst()}</span></span
+                            >
+                            <IconChevronRight font-size="18" />
+                        </button>
+                    {/if}
+                {/if}
+                {#if view.kind === "off" && choosing && doorOption}
+                    <div class="bp-line">
+                        <p class="bp-m" data-testid="bot-voice-door-lead">{v.doorLead({ bot: botName })}</p>
+                        <PageButton testId="bot-voice-door-cancel" on:click={stopChoosing}>{v.pickCancel()}</PageButton>
+                    </div>
                     <!-- Universe AI alone needs no row: the note under the voices says it is free -->
                     {#if voice && (doorOptions.length > 1 || doorOption.kind === "key")}
                         <button
@@ -1106,7 +1228,7 @@
                             disabled={saving || !doorPicked}
                             on:click={() => doorPicked && void turnOnWith(doorOption, doorPicked)}
                         >
-                            {v.useVoice({ voice: doorPicked?.name ?? "" }).trim()}
+                            {doorPicked ? v.useVoice({ voice: doorPicked.name }).trim() : v.pickNone()}
                         </button>
                         {#if doorOption.speech.kind === "universe-ai" && voice}
                             <p class="bp-note" data-testid="bot-voice-door-note">
@@ -1746,6 +1868,14 @@
     }
     :global([dir="rtl"]) .vg-tap > :global(svg) {
         transform: scaleX(-1);
+    }
+    /* The voice it was turned off with: its name, "Used before", and Turn on */
+    .vg-last {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-height: 56px;
+        padding: 6px 4px 6px 8px;
     }
     .vg-ico {
         display: grid;
