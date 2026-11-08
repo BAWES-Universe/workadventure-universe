@@ -151,6 +151,22 @@ setCameraRetryHandler(() => {
 });
 
 /**
+ * Asks the browser for the microphone again, as the player would by turning it off and on (the phone took it away and
+ * did not give it back, see MicrophoneRecovery). A microphone the player muted stays muted: only the kept track, which
+ * may be dead, is dropped, so that unmuting asks for a new one.
+ */
+export function reopenMicrophone(): void {
+    if (!get(requestedMicrophoneState)) {
+        releaseWarmAudio();
+        return;
+    }
+    // Not in a batch, and the kept track is dropped between the two: the first releases the device, the second asks.
+    requestedMicrophoneState.disableMicrophone();
+    releaseWarmAudio();
+    requestedMicrophoneState.enableMicrophone();
+}
+
+/**
  * A store containing whether the webcam was enabled in the last 10 seconds
  */
 const enabledWebCam10secondsAgoStore = readable(false, function start(set) {
@@ -697,6 +713,8 @@ function takeWarmAudio(audioConstraints: false | MediaTrackConstraints): MediaSt
         warmAudio === undefined ||
         audioConstraints === false ||
         warmAudio.track.readyState !== "live" ||
+        // The phone took the microphone away while it was kept (the app was in the background): ask for a new one.
+        warmAudio.track.muted ||
         !deepEqual(warmAudio.constraints, audioConstraints)
     ) {
         return undefined;
