@@ -3501,11 +3501,11 @@ export class BotClient {
             case 'removeSpaceUserMessage':
                 this.voice?.spaceUserLeft(message.removeSpaceUserMessage.spaceName, message.removeSpaceUserMessage.spaceUserId);
                 if (this.behavior && !this.isMeetingSpace(message.removeSpaceUserMessage.spaceName)) {
-                    this.attention.personLeft(
-                        message.removeSpaceUserMessage.spaceName,
-                        BotClient.playerIdOf(message.removeSpaceUserMessage.spaceUserId) || (message.removeSpaceUserMessage.userId ?? 0)
-                    );
-                    this.behavior.onSpaceUserLeft(message.removeSpaceUserMessage.spaceName, message.removeSpaceUserMessage.userId);
+                    // The message names the person by their space user id only, so the number comes from that
+                    const leftPlayerId =
+                        BotClient.playerIdOf(message.removeSpaceUserMessage.spaceUserId) || (message.removeSpaceUserMessage.userId ?? 0);
+                    this.attention.personLeft(message.removeSpaceUserMessage.spaceName, leftPlayerId);
+                    this.behavior.onSpaceUserLeft(message.removeSpaceUserMessage.spaceName, leftPlayerId);
                 }
                 break;
 
