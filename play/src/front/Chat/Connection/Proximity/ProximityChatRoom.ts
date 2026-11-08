@@ -50,7 +50,7 @@ import {
     type SpokenLine,
 } from "../../Bots/BotVoiceDraft";
 import { parseBotSteps, workKindOf, type BotSteps } from "../../Bots/BotSteps";
-import { forgetBotFeelings, setBotMood, setBotWork, WAVE_MOOD } from "../../Bots/BotMood";
+import { forgetBotFeelings, setBotMood, setBotWork, setBotWriting, WAVE_MOOD } from "../../Bots/BotMood";
 import { isVoiceBotUser, voiceBotCount } from "../../Bots/TwoVoiceBots";
 import { gameManager } from "../../../Phaser/Game/GameManager";
 import { availabilityStatusStore, requestedCameraState, requestedMicrophoneState } from "../../../Stores/MediaStore";
@@ -110,6 +110,12 @@ const debug = Debug("ProximityChatRoom");
 // A typing entry expires on its own if no new "typing" event refreshes it, so a lost "stopped typing" event
 // can never leave the indicator stuck. The sender says "typing" again every few seconds while keys keep coming.
 export const TYPING_EXPIRY_MS = 12000;
+
+/**
+ * A bot whose reply words keep coming counts as writing for this long after the last one, so a bot that dies mid-reply
+ * can't leave its pen beside the Woka for good. Every new chunk starts it again.
+ */
+export const BOT_WRITING_EXPIRY_MS = 15000;
 
 /**
  * A person in the space the proximity chat is currently connected to (bubble, meeting or zone).
@@ -307,6 +313,8 @@ export class ProximityChatRoom implements ChatRoom {
     private spaceStreamMessageSubscription: Subscription | undefined;
     // Active stream messages by responseId — updated incrementally as tokens arrive
     private streamMessages: Map<string, ProximityChatMessage> = new Map();
+    // The bots whose reply words are coming in, by spaceUserId, each with the timer that ends it if the words stop
+    private botStreaming: Map<string, ReturnType<typeof setTimeout>> = new Map();
     // The last replies of bots, by responseId and the bot that wrote them, kept after they finish so a voice bot can mark one
     private botReplies: Map<string, { message: ProximityChatMessage; sender: string }> = new Map();
     private observeUserJoinedSubscription: Subscription | undefined;
@@ -789,6 +797,7 @@ export class ProximityChatRoom implements ChatRoom {
     }
 
     private addOutcomingUser(spaceUser: SpaceUserExtended): void {
+        this.noteBotStreaming(spaceUser.spaceUserId, false);
         forgetBotFeelings(spaceUser.spaceUserId);
         this.sendMessage(get(LL).chat.timeLine.outcoming({ userName: spaceUser.name }), "outcoming", false);
         this.removeTypingUserbyID(spaceUser.spaceUserId.toString());
@@ -1038,6 +1047,44 @@ export class ProximityChatRoom implements ChatRoom {
         const spaceUser = this.users?.get(senderId);
         if (!spaceUser || !isBotUser(spaceUser)) return;
         setBotMood(senderId, mood);
+    }
+
+    /**
+     * Whether a bot writes a reply in this nearby chat right now, for the pen beside its Woka: it is typing, or its
+     * words are coming in. This covers the writing that has no tool call, which the steps line cannot show. Nothing here
+     * is kept for a direct message: that chat never comes through this room.
+     */
+    private refreshBotWriting(senderId: string): void {
+        const typing = get(this.typingMembers).some((member) => member.id === senderId);
+        const writing = typing || this.botStreaming.has(senderId);
+        if (writing) {
+            const spaceUser = this.users?.get(senderId);
+            if (!spaceUser || !isBotUser(spaceUser)) return;
+        }
+        setBotWriting(senderId, writing);
+    }
+
+    /** A chunk of a bot's reply came (it is writing), or its last one (it is done): the pen follows. */
+    private noteBotStreaming(senderId: string, streaming: boolean): void {
+        const timer = this.botStreaming.get(senderId);
+        if (timer) clearTimeout(timer);
+        if (streaming) {
+            this.botStreaming.set(
+                senderId,
+                setTimeout(() => {
+                    this.botStreaming.delete(senderId);
+                    this.refreshBotWriting(senderId);
+                }, BOT_WRITING_EXPIRY_MS)
+            );
+        } else {
+            this.botStreaming.delete(senderId);
+        }
+        this.refreshBotWriting(senderId);
+    }
+
+    private clearBotStreaming(): void {
+        for (const timer of this.botStreaming.values()) clearTimeout(timer);
+        this.botStreaming.clear();
     }
 
     /**
@@ -1577,6 +1624,7 @@ export class ProximityChatRoom implements ChatRoom {
             }
             return typingMembers;
         });
+        this.refreshBotWriting(senderUserId);
     }
 
     /** A "stopped" keeps the dots a moment (TYPING_STOP_GRACE_MS), in case typing starts again right away. */
@@ -1599,14 +1647,17 @@ export class ProximityChatRoom implements ChatRoom {
         this.typingMembers.update((typingMembers) => {
             return typingMembers.filter((user) => user.id !== id);
         });
+        this.refreshBotWriting(id);
     }
 
     private clearTypingMembers() {
+        const ids = get(this.typingMembers).map((member) => member.id);
         for (const timer of this.typingExpiryTimers.values()) {
             clearTimeout(timer);
         }
         this.typingExpiryTimers.clear();
         this.typingMembers.set([]);
+        ids.forEach((id) => this.refreshBotWriting(id));
     }
 
     addExternalTypingUser(id: string, name: string, avatarUrl: string | null): void {
@@ -1728,6 +1779,7 @@ export class ProximityChatRoom implements ChatRoom {
         this.spaceStreamMessageSubscription?.unsubscribe();
         this.streamMessages.clear();
         this.botReplies.clear();
+        this.clearBotStreaming();
         forgetBotFeelings();
         this.spaceMessageSubscription = this._space.observePublicEvent("spaceMessage").subscribe((event) => {
             if (isBlackListed(event.sender)) {
@@ -1859,6 +1911,9 @@ export class ProximityChatRoom implements ChatRoom {
                     );
                     return;
                 }
+                // The pen beside the bot's Woka while its reply words come in, with or without a tool call. Its last
+                // chunk, or an error, ends it.
+                this.noteBotStreaming(event.sender, !stream.isFinal && !stream.isError);
                 const existing = this.streamMessages.get(stream.responseId);
 
                 if (stream.reset && existing) {
@@ -2037,6 +2092,7 @@ export class ProximityChatRoom implements ChatRoom {
                 this.spaceStreamMessageSubscription?.unsubscribe();
                 this.streamMessages.clear();
                 this.botReplies.clear();
+                this.clearBotStreaming();
                 forgetBotFeelings();
                 this.closeScriptingAudioStreamManagers();
                 if (this._space) {
@@ -2276,6 +2332,7 @@ export class ProximityChatRoom implements ChatRoom {
         this.spaceStreamMessageSubscription?.unsubscribe();
         this.streamMessages.clear();
         this.botReplies.clear();
+        this.clearBotStreaming();
         forgetBotFeelings();
 
         this.closeScriptingAudioStreamManagers();
@@ -2360,6 +2417,7 @@ export class ProximityChatRoom implements ChatRoom {
         this.spaceStreamMessageSubscription?.unsubscribe();
         this.streamMessages.clear();
         this.botReplies.clear();
+        this.clearBotStreaming();
         forgetBotFeelings();
         this.clearTypingMembers();
 
