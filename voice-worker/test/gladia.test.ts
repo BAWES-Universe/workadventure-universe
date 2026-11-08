@@ -111,6 +111,20 @@ describe('hearing with Gladia', () => {
         expect(g.seen.sockets[0]).not.toContain(KEY);
     });
 
+    it('fails, keeping the words heard, when Gladia closes any way but normally after the end of the audio', async () => {
+        const g = await fakeGladia({ onStop: (ws) => ws.close(1011) });
+        const { got, events } = heard();
+        const stream = new GladiaRecognition().listen(settings(g.base), events);
+        stream.push(new Int16Array(320));
+        await waitFor('the socket', () => g.seen.sockets.length === 1);
+        g.send(transcript('Marhaba.', true));
+        await waitFor('the words so far', () => got.partials.includes('Marhaba.'));
+        stream.finish();
+        await waitFor('the failure', () => got.failures.length === 1);
+        expect(got.finals).toEqual([]);
+        expect(got.failures).toEqual([{ text: 'Marhaba.' }]);
+    });
+
     it('lets Gladia work out the language when none is set', async () => {
         const g = await fakeGladia();
         const stream = new GladiaRecognition().listen(settings(g.base, { language: undefined }), heard().events);

@@ -97,6 +97,22 @@ describe('hearing with Gradium', () => {
         expect(g.seen.messages.at(-1)).toEqual({ type: 'end_of_stream' });
     });
 
+    it('fails, keeping the words heard, when Gradium closes any way but normally after the end of the audio', async () => {
+        const g = await fakeGradium((ws, message) => {
+            if (message.type === 'end_of_stream') ws.close(1011);
+        });
+        const { got, events } = heard();
+        const stream = new GradiumRecognition().listen(hearing(g.base), events);
+        stream.push(new Int16Array([1, 2]));
+        await waitFor('the audio', () => g.seen.messages.some((m) => m.type === 'audio'));
+        g.send({ type: 'text', text: 'Hello', start_s: 0 });
+        await waitFor('the words so far', () => got.partials.length === 1);
+        stream.finish();
+        await waitFor('the failure', () => got.failures.length === 1);
+        expect(got.finals).toEqual([]);
+        expect(got.failures).toEqual([{ text: 'Hello' }]);
+    });
+
     it('lets Gradium work out a language it does not list, and fails with a refused key', async () => {
         expect(gradiumLanguage('ar-KW')).toBe('any');
         expect(gradiumLanguage(undefined)).toBe('any');
