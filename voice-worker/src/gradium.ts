@@ -65,6 +65,8 @@ export class GradiumRecognition implements RecognitionConnector {
             frame: (pcm16k) => JSON.stringify({ type: 'audio', audio: pcmBytes(pcm16k).toString('base64') }),
             finish: () => [JSON.stringify({ type: 'end_of_stream' })],
             closeIsFinished: true,
+            // Only a normal close ends with the last words: any other close (a dropped line, an error code) is a failure
+            closed: (code) => (code === 1000 ? undefined : { error: {} }),
             read: (data, isBinary): HearingMessage | undefined => {
                 const answer = parse(data, isBinary);
                 if (!answer) return undefined;
