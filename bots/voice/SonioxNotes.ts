@@ -23,8 +23,10 @@ export interface SonioxNotesOptions {
     fetch?: typeof fetch;
     /** Where the API is. Settings, not decisions of this file. */
     api?: string;
-    /** How long a clip may take from upload to words before it counts as failed. */
+    /** How long a clip may take from upload to words before it counts as failed: also the most any one call may hang, so a stalled provider never holds a slot. */
     timeoutMs?: number;
+    /** The most the clean-up calls may take, after the words are read or the hearing failed. */
+    cleanupMs?: number;
     /** The first wait between asks, doubled each time up to the cap. */
     pollFirstMs?: number;
     pollCapMs?: number;
@@ -49,13 +51,15 @@ export class SonioxNotes implements ClipHearer {
         const sleep = this.options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
         const timeoutMs = this.options.timeoutMs ?? 90_000;
         const headers = { Authorization: `Bearer ${settings.key ?? ''}` };
+        // One limit for the whole hearing, put on every call: a call that stalls ends with the hearing instead of keeping its slot
+        const signal = AbortSignal.timeout(timeoutMs);
         const started = now();
         let fileId: string | undefined;
         let transcriptionId: string | undefined;
         try {
             const form = new FormData();
             form.append('file', new Blob([clip.bytes as BlobPart]), clip.filename);
-            const uploaded = await send(call, `${api}/files`, { method: 'POST', headers, body: form });
+            const uploaded = await send(call, `${api}/files`, { method: 'POST', headers, body: form, signal });
             fileId = typeof uploaded.id === 'string' ? uploaded.id : undefined;
             if (!fileId) throw new HearingError('soniox did not name the file');
             const uploadMs = now() - started;
@@ -65,7 +69,7 @@ export class SonioxNotes implements ClipHearer {
             if (settings.language) body.language_hints = [settings.language.split(/[-_]/)[0].toLowerCase()];
             // Names to expect, spelled as listed
             if (settings.terms?.length) body.context = { terms: settings.terms };
-            const made = (await send(call, `${api}/transcriptions`, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(body) })) as Transcription;
+            const made = (await send(call, `${api}/transcriptions`, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal })) as Transcription;
             transcriptionId = typeof made.id === 'string' ? made.id : undefined;
             if (!transcriptionId) throw new HearingError('soniox did not name the transcription');
 
@@ -77,18 +81,19 @@ export class SonioxNotes implements ClipHearer {
                 if (now() - started > timeoutMs) throw new HearingError('soniox took too long', 504);
                 await sleep(wait);
                 wait = Math.min(wait * 2, this.options.pollCapMs ?? 1500);
-                state = (await send(call, `${api}/transcriptions/${transcriptionId}`, { headers })) as Transcription;
+                state = (await send(call, `${api}/transcriptions/${transcriptionId}`, { headers, signal })) as Transcription;
             }
             const waitMs = now() - waitStarted;
-            const answer = await send(call, `${api}/transcriptions/${transcriptionId}/transcript`, { headers });
+            const answer = await send(call, `${api}/transcriptions/${transcriptionId}/transcript`, { headers, signal });
             const text = typeof answer.text === 'string' ? answer.text : '';
             const ms = typeof state.audio_duration_ms === 'number' ? state.audio_duration_ms : undefined;
             return { text, ...(ms !== undefined ? { seconds: ms / 1000 } : {}), uploadMs, waitMs };
         } finally {
             // Nothing stays at the provider: the clip and its words are deleted whether or not they were read
             const gone: Promise<unknown>[] = [];
-            if (transcriptionId) gone.push(call(`${api}/transcriptions/${transcriptionId}`, { method: 'DELETE', headers }).catch(() => undefined));
-            if (fileId) gone.push(call(`${api}/files/${fileId}`, { method: 'DELETE', headers }).catch(() => undefined));
+            const cleanup = AbortSignal.timeout(this.options.cleanupMs ?? 10_000);
+            if (transcriptionId) gone.push(call(`${api}/transcriptions/${transcriptionId}`, { method: 'DELETE', headers, signal: cleanup }).catch(() => undefined));
+            if (fileId) gone.push(call(`${api}/files/${fileId}`, { method: 'DELETE', headers, signal: cleanup }).catch(() => undefined));
             await Promise.all(gone);
         }
     }
@@ -99,8 +104,8 @@ async function send(call: typeof fetch, url: string, init: RequestInit): Promise
     let response: Response;
     try {
         response = await call(url, init);
-    } catch {
-        throw new HearingError('soniox could not be reached');
+    } catch (error) {
+        throw timedOut(error) ? new HearingError('soniox took too long', 504) : new HearingError('soniox could not be reached');
     }
     if (!response.ok) {
         await response.body?.cancel().catch(() => undefined);
@@ -108,7 +113,13 @@ async function send(call: typeof fetch, url: string, init: RequestInit): Promise
     }
     try {
         return (await response.json()) as Record<string, unknown> & Transcription;
-    } catch {
-        throw new HearingError('soniox sent an answer that could not be read', response.status);
+    } catch (error) {
+        throw timedOut(error) ? new HearingError('soniox took too long', 504) : new HearingError('soniox sent an answer that could not be read', response.status);
     }
+}
+
+/** Whether a call ended because its time ran out. */
+function timedOut(error: unknown): boolean {
+    const name = (error as { name?: string } | null)?.name;
+    return name === 'TimeoutError' || name === 'AbortError';
 }

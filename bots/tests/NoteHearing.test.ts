@@ -48,6 +48,23 @@ describe('Soniox note hearing', () => {
         expect(fake.calls.filter((c) => c.method === 'DELETE')).toHaveLength(2);
     });
 
+    it('ends a call that stalls instead of holding its slot, and still cleans up', async () => {
+        const calls: { method: string; signalled: boolean }[] = [];
+        const stalled = vi.fn((url: string, init: RequestInit = {}) => {
+            calls.push({ method: init.method ?? 'GET', signalled: init.signal instanceof AbortSignal });
+            if (init.method === 'DELETE') return Promise.resolve(new Response(null, { status: 204 }));
+            if (init.method === 'POST' && url.endsWith('/files')) return Promise.resolve(new Response(JSON.stringify({ id: 'file-1' })));
+            // The transcription call never answers until its time runs out
+            return new Promise<Response>((_resolve, reject) => init.signal?.addEventListener('abort', () => reject(init.signal?.reason)));
+        });
+        const hearing = new SonioxNotes({ fetch: stalled as unknown as typeof fetch, timeoutMs: 30 });
+        const error = await hearing.hear(soniox, { bytes: new Uint8Array([1]), filename: 'Voice message.m4a' }).catch((e: unknown) => e as HearingError);
+        expect(error).toBeInstanceOf(HearingError);
+        expect((error as HearingError).status).toBe(504);
+        expect(calls.every((c) => c.signalled)).toBe(true);
+        expect(calls.filter((c) => c.method === 'DELETE')).toHaveLength(1);
+    });
+
     it('reports the status of a refusal and never the key', async () => {
         const fake = fakeSoniox({ failAt: 'POST /files', status: 401 });
         const error = await run(fake).catch((e: unknown) => e as HearingError);
