@@ -230,4 +230,22 @@ describe('a summon ends when its person has gone', () => {
             expect(behavior.summoned()).toBe(true);
         });
     });
+
+    describe('on the way to a person far off', () => {
+        it('is not sent back by a bubble it passed through', () => {
+            behavior.attach(room({ me: { x: 1800, y: 1000 } }, { walking: true }));
+            behavior.startSummon('me', { x: 1800, y: 1000 });
+            vi.advanceTimersByTime(60_000);
+            behavior.onSpaceLeft('s');
+            expect(behavior.summoned()).toBe(true);
+        });
+    });
+
+    it('is not kept by another bot sharing the bubble', () => {
+        summonAndSettle({ me: { x: 1500, y: 1000 } });
+        behavior.know(7, 'me');
+        behavior.engage(7);
+        behavior.engage(1001); // another bot
+        expect(behavior.tick()).toBe(true);
+    });
 });

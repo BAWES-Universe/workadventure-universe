@@ -863,6 +863,20 @@ export abstract class BaseBehavior {
         return this.bot.getPlayerPositionByUuid(this.summonedPlayerUuid) ?? null;
     }
 
+    /** Still setting off, or walking, towards the person it was called to. */
+    protected isSummonOnItsWay(): boolean {
+        return !!this.bot && (this.bot.getIsFollowingPath() || Date.now() - this.summonStartedAt < this.SUMMON_SETTING_OFF_GRACE_MS);
+    }
+
+    /**
+     * Whether a person other than the summoner is in a conversation with the bot. Neither the summoner themselves
+     * nor another bot sharing the bubble keeps a summon going.
+     */
+    protected isTalkingWithSomeoneElse(): boolean {
+        const summonerId = this.summonedPlayerUuid ? this.getUserIdForUuid(this.summonedPlayerUuid) : undefined;
+        return [...this.engagedWithUsers.keys()].some((userId) => userId !== summonerId && !this.bot?.isOtherBot(userId));
+    }
+
     /**
      * Let the bot go back to where it was when the person it came for has left the room or walked far away, unless
      * it is still on its way to them or is in a conversation with someone else. Checked on every move, when somebody
@@ -879,8 +893,7 @@ export abstract class BaseBehavior {
             return true;
         }
 
-        // Still setting off (or walking) towards them
-        if (this.bot.getIsFollowingPath() || Date.now() - this.summonStartedAt < this.SUMMON_SETTING_OFF_GRACE_MS) {
+        if (this.isSummonOnItsWay()) {
             return false;
         }
 
@@ -890,10 +903,7 @@ export abstract class BaseBehavior {
             return false;
         }
 
-        // The person who summoned it does not keep it here by being in its list, only someone else does
-        const summonerId = this.summonedPlayerUuid ? this.getUserIdForUuid(this.summonedPlayerUuid) : undefined;
-        const withSomeoneElse = [...this.engagedWithUsers.keys()].some((userId) => userId !== summonerId);
-        if (withSomeoneElse) {
+        if (this.isTalkingWithSomeoneElse()) {
             return false;
         }
 
@@ -911,6 +921,9 @@ export abstract class BaseBehavior {
 
         // Called when the bot's bubble is gone. If the person had stood in it with the bot, they stepped out of it.
         if (this.summonerJoinedBubble) return false;
+
+        // The bubble it passed through on the way to a person far off is not a person leaving
+        if (this.isSummonOnItsWay()) return true;
 
         // Check if we can find the player position
         const playerPos = this.getSummonedPlayerPosition();
@@ -1493,7 +1506,7 @@ export abstract class BaseBehavior {
         this.userIdToIsLogged.delete(userId);
 
         // The person it came for stepped out of the bubble: go back, unless it is still talking with someone else
-        if (summonerLeftBubble && this.engagedWithUsers.size === 0) {
+        if (summonerLeftBubble && !this.isTalkingWithSomeoneElse()) {
             console.log(`[Behavior] Summoned player stepped out of the bubble, ending summon and returning`);
             this.endSummon();
             return;
