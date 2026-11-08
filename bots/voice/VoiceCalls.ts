@@ -199,6 +199,12 @@ export class VoiceCalls {
     onPaused?: (spaceName: string) => void;
     /** Who is paused by the allowance or a key, by bubble and person: the line is said once, and the button is put back when voice speaks for them again. */
     private readonly pausedFor = new Set<string>();
+    /**
+     * Who the Universe AI allowance for spoken replies turned down, by bubble and person: their microphone is not taken until a reply
+     * of theirs is allowed again. Without this their words went on being heard, sent and answered in text, and every one of those
+     * replies came out of the places the allowance keeps for typing, until the typing was gone too.
+     */
+    private readonly micHeld = new Set<string>();
     private epoch = 0;
     private bubbleSeq = 0;
 
@@ -344,8 +350,11 @@ export class VoiceCalls {
      */
     private modeOf(spaceName: string, personId: string): VoiceMode {
         const chosen = this.chosenModeOf(spaceName, personId);
-        if (!this.listening?.isSpent() || !this.inGroup(spaceName)) return chosen;
-        return chosen === 'talk' ? 'type_and_listen' : chosen === 'speak_and_read' ? 'off' : chosen;
+        const withoutMic = (mode: VoiceMode): VoiceMode => (mode === 'talk' ? 'type_and_listen' : mode === 'speak_and_read' ? 'off' : mode);
+        // The allowance for spoken replies turned them down (#1669): they type until a reply of theirs is allowed again
+        const asked = this.micHeld.has(callKey(spaceName, personId)) ? withoutMic(chosen) : chosen;
+        if (!this.listening?.isSpent() || !this.inGroup(spaceName)) return asked;
+        return withoutMic(asked);
     }
 
     /**
@@ -513,6 +522,7 @@ export class VoiceCalls {
         for (const [key, lost] of this.lost) if (lost.spaceName === spaceName) this.lost.delete(key);
         for (const key of this.spoken.keys()) if (key.startsWith(`${spaceName}\n`)) this.spoken.delete(key);
         for (const key of this.pausedFor) if (key.startsWith(`${spaceName}\n`)) this.pausedFor.delete(key);
+        for (const key of this.micHeld) if (key.startsWith(`${spaceName}\n`)) this.micHeld.delete(key);
         for (const [key, live] of this.live) if (live.spaceName === spaceName) this.live.delete(key);
         for (const key of this.joined.keys()) if (key.startsWith(`${spaceName}\n`)) this.joined.delete(key);
         for (const key of this.modes.keys()) if (key.startsWith(`${spaceName}\n`)) this.modes.delete(key);
@@ -635,6 +645,7 @@ export class VoiceCalls {
         this.left.delete(callKey(spaceName, spaceUserId));
         this.toldLeft.delete(callKey(spaceName, spaceUserId));
         this.pausedFor.delete(callKey(spaceName, spaceUserId));
+        this.micHeld.delete(callKey(spaceName, spaceUserId));
         this.actual.delete(callKey(spaceName, spaceUserId));
         if (this.roster.get(spaceName)?.delete(spaceUserId)) this.rosterChanged(spaceName);
     }
@@ -1112,7 +1123,7 @@ export class VoiceCalls {
             if (left && who) this.noteLeft(spaceName, who, left, verdict === 'yes');
             if (verdict !== 'yes') {
                 this.log(`voice: ${spaceName} answers in text this time (${verdict === 'no' ? 'the allowance for spoken replies is used' : 'the allowance could not be settled'})`);
-                if (verdict === 'no') this.pause(spaceName, turn);
+                if (verdict === 'no') this.pause(spaceName, turn, true);
                 return { action: 'text' };
             }
         }
@@ -1150,10 +1161,15 @@ export class VoiceCalls {
     }
 
     /** Voice is paused for the person this turn is for: their button shows it, and one line says so, once until it speaks for them again. */
-    private pause(spaceName: string, turn: SpeechTurn): void {
+    private pause(spaceName: string, turn: SpeechTurn, holdMic = false): void {
         const { key, personId } = this.spaceUserFor(spaceName, turn);
         // The button is put to paused every time (a reconnect since may have set it to on; `tell` sends only a change), the line once
         if (personId) this.tell(spaceName, personId, 'paused');
+        // The allowance is used: what they say is no longer taken, so it does not use up the places kept for their typing
+        if (holdMic && personId && !this.micHeld.has(callKey(spaceName, personId))) {
+            this.micHeld.add(callKey(spaceName, personId));
+            this.syncListening(spaceName);
+        }
         if (this.pausedFor.has(key)) return;
         this.pausedFor.add(key);
         this.onPaused?.(spaceName);
@@ -1164,6 +1180,7 @@ export class VoiceCalls {
         if (this.pausedFor.size === 0) return;
         const { key, personId } = this.spaceUserFor(spaceName, turn);
         if (!this.pausedFor.delete(key)) return;
+        if (personId && this.micHeld.delete(callKey(spaceName, personId))) this.syncListening(spaceName);
         if (personId && (this.joined.has(key) || this.rooms.get(spaceName)?.connected)) this.tell(spaceName, personId, 'on');
     }
 
@@ -1234,6 +1251,7 @@ export class VoiceCalls {
         this.left.clear();
         this.toldLeft.clear();
         this.pausedFor.clear();
+        this.micHeld.clear();
         this.actual.clear();
         this.otherVoiceBots.clear();
         this.voiceBotNames.clear();
