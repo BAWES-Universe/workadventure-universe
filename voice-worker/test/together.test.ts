@@ -105,6 +105,21 @@ describe('hearing with Together AI', () => {
         expect(got.failures).toEqual([{ text: '', status: 401 }]);
     });
 
+    it('ends with what was heard, not a failure, when Together says the commit had no audio', async () => {
+        const s = await fakeRealtime((ws, message) => {
+            if (message.type === 'input_audio_buffer.commit') {
+                ws.send(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', code: 'input_audio_buffer_commit_empty' } }));
+            }
+        });
+        const { got, events } = heard();
+        const stream = new TogetherRecognition().listen(hearing(s.base), events);
+        await waitFor('the socket', () => s.seen.sockets.length === 1);
+        stream.finish();
+        await waitFor('the end', () => got.finals.length + got.failures.length === 1);
+        expect(got.failures).toEqual([]);
+        expect(got.finals).toEqual(['']);
+    });
+
     it('reads a rate limit as one even when its words name the key', async () => {
         const s = await fakeRealtime();
         const { got, events } = heard();
