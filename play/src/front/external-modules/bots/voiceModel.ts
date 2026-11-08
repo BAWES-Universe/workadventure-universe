@@ -385,8 +385,9 @@ export function styleReaches(voice: BotVoice, profile: VoiceProfile): boolean {
         const model = source.key.models.find(
             (candidate) => candidate.id === profile.speech?.model && modelDoes(candidate, "speech")
         );
-        const kind = model?.kind === "talk" ? "talk" : "speech";
-        return STYLE_REACHES[kind].has(source.key.adapter);
+        // A model the key no longer lists can't say whether it speaks or talks live, so nothing is hidden on a guess
+        if (!model) return true;
+        return STYLE_REACHES[model.kind === "talk" ? "talk" : "speech"].has(source.key.adapter);
     }
     if (source.kind === "universe-ai") {
         const uai = voice.universeAi.speech;

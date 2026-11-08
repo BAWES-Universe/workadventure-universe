@@ -821,6 +821,11 @@ describe("How it speaks is offered only where the company uses it", () => {
         expect(styleReaches(withKey("inworld", "talk"), keyed)).toBe(false);
         // A company's plain speaking job can ignore it even where its talking model uses it
         expect(styleReaches(withKey("google", "speech"), keyed)).toBe(false);
+        // A model the key no longer lists can't be told apart, so the row stays
+        const unlisted = on(keyed, {
+            lentKeys: [keyAnswer({ id: "key-1", adapter: "openai", models: [{ id: "other", kind: "talk" }] })],
+        });
+        expect(styleReaches(unlisted, keyed)).toBe(true);
     });
 
     it("stays offered when the company can't be told", () => {
