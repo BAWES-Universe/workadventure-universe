@@ -57,6 +57,8 @@ export class BotAttention {
     private readonly people = new Map<string, Set<number>>();
     /** When the bot last answered each person, by space. */
     private readonly answeredAt = new Map<string, Map<number, number>>();
+    /** Who told the bot they are done, by space: nothing but its name (or a summon) reaches it from them until they say it. */
+    private readonly closed = new Map<string, Set<number>>();
 
     constructor(
         botName: string,
@@ -93,12 +95,14 @@ export class BotAttention {
     personLeft(spaceName: string, userId: number): void {
         this.people.get(spaceName)?.delete(userId);
         this.answeredAt.get(spaceName)?.delete(userId);
+        this.closed.get(spaceName)?.delete(userId);
     }
 
     /** The bot left the space: nobody's window carries over to the next time. */
     spaceLeft(spaceName: string): void {
         this.people.delete(spaceName);
         this.answeredAt.delete(spaceName);
+        this.closed.delete(spaceName);
     }
 
     /** More than the speaker is in the bubble. The speaker counts even if their join was not seen yet. */
@@ -126,6 +130,8 @@ export class BotAttention {
         if (!this.isGroup(spaceName, speakerId)) return 'alone';
         if (this.isNamed(text)) return 'named';
         if (this.isSummonedBy(speakerId)) return 'summoned';
+        // They told the bot they are done: not even the answer to an earlier line, or a line of theirs waiting, brings them back
+        if (this.closed.get(spaceName)?.has(speakerId)) return 'ignored';
         // A follow-up sent while the bot is still answering is part of that conversation (it may change or add to the ask)
         if (this.isBusyWith(speakerId)) return 'follow-up';
         const last = this.answeredAt.get(spaceName)?.get(speakerId);
@@ -133,9 +139,14 @@ export class BotAttention {
         return 'ignored';
     }
 
-    /** Whether what this person said is for the bot. */
+    /**
+     * Whether what this person said is for the bot. Their name from someone who had said they were done is what brings
+     * them back (asking again about the same line gives the same answer: it is already back).
+     */
     hears(spaceName: string, speakerId: number, text: string): boolean {
-        return this.attention(spaceName, speakerId, text) !== 'ignored';
+        const attention = this.attention(spaceName, speakerId, text);
+        if (attention === 'named') this.closed.get(spaceName)?.delete(speakerId);
+        return attention !== 'ignored';
     }
 
     /** Whether this person shares the bubble with at least one other person (#1670: only then does a window exist to end). */
@@ -145,10 +156,15 @@ export class BotAttention {
 
     /**
      * The person told the bot they are done talking with it (#1670): their window is over at once, and they need the
-     * name again. Nobody else's window is touched, and a summon is not ended by it (see `endable`).
+     * name again. Nobody else's window is touched, and a summon is not ended by it (see `endable`). It stays over until
+     * they say the name: an answer still on its way to them (a line said while the bot was thinking about "stop") does
+     * not open a window again, so their talk with others around is not taken for the bot's.
      */
     ended(spaceName: string, speakerId: number): void {
         this.answeredAt.get(spaceName)?.delete(speakerId);
+        let set = this.closed.get(spaceName);
+        if (!set) this.closed.set(spaceName, (set = new Set()));
+        set.add(speakerId);
     }
 
     /** Whether "stop" from this person can end something: others are here and the bot is not on a summon to them. */
@@ -156,8 +172,9 @@ export class BotAttention {
         return this.isGroup(spaceName, speakerId) && !this.isSummonedBy(speakerId);
     }
 
-    /** The bot has answered this person: they can go on without its name for the follow-up window. */
+    /** The bot has answered this person: they can go on without its name for the follow-up window (not after they said they are done: see `ended`). */
     answered(spaceName: string, speakerId: number): void {
+        if (this.closed.get(spaceName)?.has(speakerId)) return;
         let answers = this.answeredAt.get(spaceName);
         if (!answers) this.answeredAt.set(spaceName, (answers = new Map()));
         answers.set(speakerId, this.now());

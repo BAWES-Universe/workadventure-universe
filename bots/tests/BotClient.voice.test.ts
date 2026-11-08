@@ -279,4 +279,27 @@ describe('BotClient in a meeting room', () => {
         expect(behavior.onSpaceUserLeft).not.toHaveBeenCalled();
         expect(await inner.mayChat('area__board', 3, {})).toBe(false);
     });
+
+    it('works like a bubble for who is spoken to: with two people in the room only the bot\'s name is for it, and "stop" can apply', async () => {
+        const { bot, internals } = setup(true);
+        const inner = internals as Internals & { voice: { hears?: (s: string, p: string, t: string) => boolean } | null };
+        inner.behavior = { onSpaceUserJoined: vi.fn(), onSpaceUserLeft: vi.fn(), onSpaceLeft: vi.fn() };
+        inner.meeting = { owns: (space: string) => space === 'area__board' };
+        internals.startVoice();
+        const one = { spaceUserId: 'room_3', uuid: 'u3', tags: [], name: 'Sam' };
+        const two = { spaceUserId: 'room_4', uuid: 'u4', tags: [], name: 'Sara' };
+        const hears = (text: string) => inner.voice!.hears!('area__board', 'room_3', text);
+        // Alone with the bot, everything is for it
+        await internals.handleSubMessage({ $case: 'initSpaceUsersMessage', initSpaceUsersMessage: { spaceName: 'area__board', users: [one] } });
+        expect(hears('what time is lunch')).toBe(true);
+        // A second person comes in: talk between them is not for the bot, its name is
+        await internals.handleSubMessage({ $case: 'addSpaceUserMessage', addSpaceUserMessage: { spaceName: 'area__board', user: two } });
+        expect(hears('what time is lunch')).toBe(false);
+        expect(hears('Echo, what time is lunch')).toBe(true);
+        vi.spyOn(bot, 'isVoiceBot').mockReturnValue(true);
+        expect(bot.mayEndFollowUp('area__board', 3)).toBe(true);
+        // They leave: alone again
+        await internals.handleSubMessage({ $case: 'removeSpaceUserMessage', removeSpaceUserMessage: { spaceName: 'area__board', spaceUserId: 'room_4' } });
+        expect(hears('what time is lunch')).toBe(true);
+    });
 });

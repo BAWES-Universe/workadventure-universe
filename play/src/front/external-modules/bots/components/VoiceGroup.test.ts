@@ -183,6 +183,8 @@ describe("the bot page's Voice group (#1668)", () => {
         byTestId(id)[index].click();
         await settle();
     };
+    /** Voice is off and the voices are hidden: the switch opens them to pick one */
+    const startChoosing = () => click("bot-voice-switch");
 
     async function mount(open = true) {
         const component = new VoiceGroup({ target, props: { bot, open, onToggle: vi.fn() } });
@@ -190,31 +192,71 @@ describe("the bot page's Voice group (#1668)", () => {
         await settle();
     }
 
-    it("is off by default, and the row opens on voices to hear with Universe AI's own voice first", async () => {
+    it("is off by default: a switch that is off says so, and no voice is picked or listed", async () => {
         mocks.api.getBotVoice.mockResolvedValue(answer());
         await mount();
         expect(text()).toContain("Voice Off · Give Tinyfish a voice");
+        expect(text()).toContain("Voice is off for Tinyfish.");
+        const toggle = byTestId("bot-voice-switch")[0] as HTMLInputElement;
+        expect(toggle.checked).toBe(false);
+        expect(toggle.disabled).toBe(false);
+        // Nothing to pick from while off, nothing selected, and nothing is fetched yet
+        expect(byTestId("bot-voice-option")).toHaveLength(0);
+        expect(byTestId("bot-voice-go")).toHaveLength(0);
+        // Only the switch: no rows to turn it on or pick a voice from
+        expect(byTestId("bot-voice-last")).toHaveLength(0);
+        expect(byTestId("bot-voice-pick-another")).toHaveLength(0);
+        expect(text()).not.toContain("Use River’s voice");
+        expect(mocks.api.getBotVoices).not.toHaveBeenCalled();
+        expect(byTestId("bot-voice-card")).toHaveLength(0);
+    });
+
+    it("opens on voices to hear with Universe AI's own voice first when the switch is turned on for the first time", async () => {
+        mocks.api.getBotVoice.mockResolvedValue(answer());
+        await mount();
+        await startChoosing();
         expect(text()).toContain(
             "Pick a voice and people next to Tinyfish can talk with it out loud. Text chat stays as it is."
         );
         expect(mocks.api.getBotVoices).toHaveBeenCalledWith("b1", "universe-ai", "speech");
         const rows = byTestId("bot-voice-option");
         expect(rows).toHaveLength(2);
-        // Universe AI's own voice (River, set by a super admin) is first and picked, with no tag on it
+        // Universe AI's own voice (River, set by a super admin) is first, with no tag on it, and nothing is picked yet
         expect(rows[0].textContent).toContain("River");
         expect(rows[0].textContent).not.toContain("Recommended");
-        expect(rows[0].getAttribute("aria-checked")).toBe("true");
+        expect(rows.map((row) => row.getAttribute("aria-checked"))).toEqual(["false", "false"]);
+        expect(text()).toContain("Pick a voice");
+        expect((byTestId("bot-voice-go")[0] as HTMLButtonElement).disabled).toBe(true);
+        await click("bot-voice-option");
+        expect(byTestId("bot-voice-option")[0].getAttribute("aria-checked")).toBe("true");
         expect(text()).toContain("Use River’s voice");
         expect(text()).toContain(
             "Free for you. Each person gets up to 25 voice replies every 5 hours, then Tinyfish answers them in text."
         );
-        // No company, model or who-pays question, and no switch, while off
+        // The switch shows on while a voice is picked, but nothing is saved until Use is tapped
+        expect((byTestId("bot-voice-switch")[0] as HTMLInputElement).checked).toBe(true);
+        expect(mocks.api.setBotVoiceEnabled).not.toHaveBeenCalled();
+        // No company, model or who-pays question
         expect(text()).not.toContain("Who pays");
         expect(text()).not.toContain("Eleven");
         expect(text()).not.toContain("eleven_v4_turbo");
-        expect(byTestId("bot-voice-switch")).toHaveLength(0);
         expect(byTestId("bot-voice-payer-change")).toHaveLength(0);
         expect(byTestId("bot-voice-card")).toHaveLength(0);
+    });
+
+    it("closes the voices again when the switch is flipped back off, with nothing saved", async () => {
+        mocks.api.getBotVoice.mockResolvedValue(answer());
+        await mount();
+        await startChoosing();
+        expect(byTestId("bot-voice-option")).toHaveLength(2);
+        expect(byTestId("bot-voice-door-cancel")).toHaveLength(0);
+        await click("bot-voice-switch");
+        expect(text()).toContain("Voice is off for Tinyfish.");
+        expect(byTestId("bot-voice-option")).toHaveLength(0);
+        expect(byTestId("bot-voice-go")).toHaveLength(0);
+        expect(mocks.api.saveBotVoice).not.toHaveBeenCalled();
+        expect(mocks.api.setBotVoiceEnabled).not.toHaveBeenCalled();
+        expect((byTestId("bot-voice-switch")[0] as HTMLInputElement).checked).toBe(false);
     });
 
     it("turns on with one tap on Use, with the picked voice and Universe AI's current models", async () => {
@@ -222,6 +264,8 @@ describe("the bot page's Voice group (#1668)", () => {
         mocks.api.saveBotVoice.mockResolvedValue(answer());
         mocks.api.setBotVoiceEnabled.mockResolvedValue(turnedOn());
         await mount();
+        await startChoosing();
+        await click("bot-voice-option");
         await click("bot-voice-go");
         expect(mocks.api.saveBotVoice).toHaveBeenCalledWith("b1", {
             recognition: { providerId: "uai-listen", model: "stt-rt-v6" },
@@ -230,7 +274,9 @@ describe("the bot page's Voice group (#1668)", () => {
             language: { mode: "follow" },
         });
         expect(mocks.api.setBotVoiceEnabled).toHaveBeenCalledWith("b1", true);
-        expect(text()).toContain("Tinyfish talks in bubbles now, with River’s voice.");
+        // No note repeating what the header and the voice card already say
+        expect(text()).not.toContain("talks in bubbles now");
+        expect(byTestId("bot-voice-first-on")).toHaveLength(0);
         expect(text()).toContain("Free for you. Each person gets up to 25 voice replies every 5 hours.");
         expect(text()).toContain("River · Natural · Universe AI");
         // Models, companies and who pays stay out of sight until a key is involved
@@ -244,6 +290,7 @@ describe("the bot page's Voice group (#1668)", () => {
         mocks.api.saveBotVoice.mockResolvedValue(answer());
         mocks.api.setBotVoiceEnabled.mockResolvedValue(turnedOn());
         await mount();
+        await startChoosing();
         await click("bot-voice-option", 1);
         expect(text()).toContain("Use Fahad’s voice");
         expect(mocks.api.saveBotVoice).not.toHaveBeenCalled();
@@ -272,6 +319,7 @@ describe("the bot page's Voice group (#1668)", () => {
         mocks.api.saveBotVoice.mockResolvedValue(answer());
         mocks.api.setBotVoiceEnabled.mockResolvedValue(turnedOn());
         await mount();
+        await startChoosing();
         expect(byTestId("bot-voice-option")).toHaveLength(2);
         expect(text()).toContain("Search all 4 voices by name or language");
         await click("bot-voice-all-voices");
@@ -295,6 +343,7 @@ describe("the bot page's Voice group (#1668)", () => {
         mocks.api.getBotVoice.mockResolvedValue(answer());
         mocks.api.getBotVoices.mockRejectedValueOnce(new Error("offline")).mockResolvedValue(voices);
         await mount();
+        await startChoosing();
         expect(text()).toContain("Couldn’t load the voices.");
         expect(byTestId("bot-voice-go")).toHaveLength(0);
         await click("bot-voice-door-retry");
@@ -305,54 +354,64 @@ describe("the bot page's Voice group (#1668)", () => {
         mocks.api.getBotVoice.mockResolvedValue(answer());
         mocks.api.getBotVoices.mockResolvedValueOnce([]).mockResolvedValue(voices);
         await mount();
+        await startChoosing();
         expect(text()).toContain("Couldn’t load the voices.");
         expect(byTestId("bot-voice-go")).toHaveLength(0);
         await click("bot-voice-door-retry");
         expect(byTestId("bot-voice-option")).toHaveLength(2);
     });
 
-    it("turns on again with the voice it had, without making a new version", async () => {
+    it("keeps the voice it was turned off with, says so in the header, and shows only the switch", async () => {
+        mocks.api.getBotVoice.mockResolvedValue({ ...turnedOn(), enabled: false });
+        await mount();
+        expect(text()).toContain("Voice Off · River is remembered");
+        expect(text()).toContain("Voice is off for Tinyfish.");
+        expect((byTestId("bot-voice-switch")[0] as HTMLInputElement).checked).toBe(false);
+        expect(byTestId("bot-voice-option")).toHaveLength(0);
+        expect(byTestId("bot-voice-go")).toHaveLength(0);
+        expect(byTestId("bot-voice-last")).toHaveLength(0);
+        expect(byTestId("bot-voice-turn-on")).toHaveLength(0);
+        expect(byTestId("bot-voice-pick-another")).toHaveLength(0);
+        expect(text()).not.toContain("Used before");
+        expect(mocks.api.getBotVoices).not.toHaveBeenCalled();
+    });
+
+    it("turns on again with the voice it had in one tap, without making a new version", async () => {
         mocks.api.getBotVoice.mockResolvedValue({ ...turnedOn(), enabled: false });
         mocks.api.setBotVoiceEnabled.mockResolvedValue(turnedOn());
         await mount();
-        expect(byTestId("bot-voice-option")[0].textContent).toContain("Used before");
-        await click("bot-voice-go");
+        await click("bot-voice-switch");
         expect(mocks.api.saveBotVoice).not.toHaveBeenCalled();
         expect(mocks.api.setBotVoiceEnabled).toHaveBeenCalledWith("b1", true);
+        expect((byTestId("bot-voice-switch")[0] as HTMLInputElement).checked).toBe(true);
+        expect(byTestId("bot-voice-option")).toHaveLength(0);
+        expect(byTestId("bot-voice-card")).toHaveLength(1);
+        expect(text()).not.toContain("talks in bubbles now");
     });
 
-    it("makes a new version when it is turned on again with another voice", async () => {
+    it("stays off, with the voice list still hidden, when turning on again fails", async () => {
         mocks.api.getBotVoice.mockResolvedValue({ ...turnedOn(), enabled: false });
-        mocks.api.saveBotVoice.mockResolvedValue(answer());
-        mocks.api.setBotVoiceEnabled.mockResolvedValue(turnedOn());
+        mocks.api.setBotVoiceEnabled.mockRejectedValue(new Error("nope"));
         await mount();
-        await click("bot-voice-option", 1);
-        await click("bot-voice-go");
-        expect(mocks.api.saveBotVoice.mock.calls[0][1].speech).toMatchObject({ voiceId: "v-fahad" });
+        await click("bot-voice-switch");
+        expect(text()).toContain("Couldn’t save that. nope");
+        expect(text()).toContain("Voice Off · River is remembered");
+        expect((byTestId("bot-voice-switch")[0] as HTMLInputElement).checked).toBe(false);
+        expect(byTestId("bot-voice-option")).toHaveLength(0);
     });
 
-    it("keeps the style and language it had when it is turned on again with another voice", async () => {
-        const styled = { ...uaiProfile, expression: "expressive", language: { mode: "fixed", code: "ar" } };
-        mocks.api.getBotVoice.mockResolvedValue({ ...turnedOn(styled), enabled: false });
-        mocks.api.saveBotVoice.mockResolvedValue(answer());
-        mocks.api.setBotVoiceEnabled.mockResolvedValue(turnedOn());
-        await mount();
-        await click("bot-voice-option", 1);
-        await click("bot-voice-go");
-        expect(mocks.api.saveBotVoice.mock.calls[0][1]).toMatchObject({
-            expression: "expressive",
-            language: { mode: "fixed", code: "ar" },
-        });
-    });
-
-    it("turns off from the switch, and the row opens on voices again", async () => {
+    it("turns off from the switch, and shows it off with the voice it had kept", async () => {
         mocks.api.getBotVoice.mockResolvedValue(turnedOn());
         mocks.api.setBotVoiceEnabled.mockResolvedValue({ ...turnedOn(), enabled: false });
         await mount();
         await click("bot-voice-switch");
         expect(mocks.api.setBotVoiceEnabled).toHaveBeenCalledWith("b1", false);
-        expect(text()).toContain("Voice Off · Give Tinyfish a voice");
-        expect(byTestId("bot-voice-go")).toHaveLength(1);
+        // Off is plain: the switch is off, the voice it had is remembered, and the voice list is gone
+        expect(text()).toContain("Voice Off · River is remembered");
+        expect((byTestId("bot-voice-switch")[0] as HTMLInputElement).checked).toBe(false);
+        expect(byTestId("bot-voice-option")).toHaveLength(0);
+        expect(byTestId("bot-voice-go")).toHaveLength(0);
+        expect(text()).not.toContain("Talks in bubbles now");
     });
 
     it("picks the lent key for you, with its voices, and turns on without asking who pays", async () => {
@@ -363,17 +422,18 @@ describe("the bot page's Voice group (#1668)", () => {
             turnedOn({ ...uaiProfile, speech: { ...uaiProfile.speech, providerId: "key-el" } }, { lentKeys: [key()] })
         );
         await mount();
+        await startChoosing();
         expect(mocks.api.getBotVoices).toHaveBeenCalledWith("b1", "key-el", "speech");
         expect(text()).toContain("Universe AI listens. Your ElevenLabs key speaks.");
         expect(text()).toContain("You pay; people talking with Tinyfish pay nothing.");
         expect(text()).toContain("Voices on your ElevenLabs key");
         expect(text()).not.toContain("Who pays for");
+        await click("bot-voice-option");
         await click("bot-voice-go");
         expect(mocks.api.saveBotVoice.mock.calls[0][1]).toMatchObject({
             recognition: { providerId: "uai-listen" },
             speech: { providerId: "key-el", voiceId: "v-river" },
         });
-        expect(text()).toContain("Tinyfish talks in bubbles now, with River’s voice on your ElevenLabs key.");
         expect(text()).toContain("Universe AI listens. Your ElevenLabs key speaks.");
     });
 
@@ -387,6 +447,7 @@ describe("the bot page's Voice group (#1668)", () => {
         mocks.api.saveBotVoice.mockResolvedValue(answer());
         mocks.api.setBotVoiceEnabled.mockResolvedValue(turnedOn());
         await mount();
+        await startChoosing();
         await click("bot-voice-payer-change");
         // The key only speaks, so Universe AI is the one place for both jobs; the split is open, as the voice starts split
         expect(byTestId("bot-voice-both-universe-ai")).toHaveLength(1);
@@ -399,6 +460,7 @@ describe("the bot page's Voice group (#1668)", () => {
         await click("bot-voice-both-universe-ai");
         expect(mocks.api.getBotVoices).toHaveBeenCalledWith("b1", "universe-ai", "speech");
         expect(text()).toContain("Paid by Universe AI");
+        await click("bot-voice-option");
         await click("bot-voice-go");
         expect(mocks.api.saveBotVoice.mock.calls[0][1].speech).toMatchObject({ providerId: "uai-speak" });
         expect(mocks.api.saveBotVoice).toHaveBeenCalledTimes(1);
@@ -663,6 +725,7 @@ describe("the bot page's Voice group (#1668)", () => {
         );
         mocks.api.getBotVoices.mockResolvedValue(voices.map((voice) => ({ ...voice, providerId: "key-el" })));
         await mount();
+        await startChoosing();
         expect(text()).not.toContain("No voice is set up here yet");
         expect(byTestId("bot-voice-add-keys")).toHaveLength(0);
         // No key does both jobs: the two that pair up start picked, listening keys A to Z
@@ -677,6 +740,7 @@ describe("the bot page's Voice group (#1668)", () => {
         expect(text()).toContain("Your Soniox key listens. Your ElevenLabs key speaks.");
         mocks.api.saveBotVoice.mockResolvedValue(answer(none));
         mocks.api.setBotVoiceEnabled.mockResolvedValue(answer(none));
+        await click("bot-voice-option");
         await click("bot-voice-go");
         expect(mocks.api.saveBotVoice.mock.calls[0][1]).toMatchObject({
             recognition: { providerId: "ear-1" },
@@ -702,6 +766,7 @@ describe("the bot page's Voice group (#1668)", () => {
         mocks.api.saveBotVoice.mockResolvedValue(answer());
         mocks.api.setBotVoiceEnabled.mockResolvedValue(turnedOn());
         await mount();
+        await startChoosing();
         expect(text()).toContain("Paid by your Deepgram key");
         await click("bot-voice-payer-change");
         expect(byTestId("bot-voice-both-key-dg")[0].getAttribute("aria-checked")).toBe("true");
@@ -715,6 +780,7 @@ describe("the bot page's Voice group (#1668)", () => {
         // The card for one key doing both is no longer picked once the jobs are split
         expect(byTestId("bot-voice-both-key-dg")[0].getAttribute("aria-checked")).toBe("false");
         expect(byTestId("bot-voice-speech-key-el")[0].getAttribute("aria-checked")).toBe("true");
+        await click("bot-voice-option");
         await click("bot-voice-go");
         expect(mocks.api.saveBotVoice.mock.calls[0][1]).toMatchObject({
             recognition: { providerId: "key-dg", model: "nova-3" },
@@ -750,7 +816,7 @@ describe("the bot page's Voice group (#1668)", () => {
         );
         retry?.click();
         await settle();
-        expect(text()).toContain("Pick a voice and people next to Tinyfish can talk with it out loud.");
+        expect(text()).toContain("Voice is off for Tinyfish.");
     });
 
     it("shows the line Orbit refused a change with, and keeps the voice as it was", async () => {
@@ -762,14 +828,17 @@ describe("the bot page's Voice group (#1668)", () => {
         expect(text()).toContain("River · Natural · Universe AI");
     });
 
-    it("says why turning voice on failed, and stays off", async () => {
+    it("says why turning voice on failed, and stays off with the voices still open to try again", async () => {
         mocks.api.getBotVoice.mockResolvedValue(answer());
         mocks.api.saveBotVoice.mockRejectedValue(new Error("nope"));
         await mount();
+        await startChoosing();
+        await click("bot-voice-option");
         await click("bot-voice-go");
         expect(text()).toContain("Couldn’t save that. nope");
         expect(text()).toContain("Voice Off · Give Tinyfish a voice");
-        expect(byTestId("bot-voice-switch")).toHaveLength(0);
+        expect(byTestId("bot-voice-option")).toHaveLength(2);
+        expect((byTestId("bot-voice-go")[0] as HTMLButtonElement).disabled).toBe(false);
         expect(mocks.api.setBotVoiceEnabled).not.toHaveBeenCalled();
     });
 
@@ -1204,6 +1273,7 @@ describe("the bot page's Voice group (#1668)", () => {
         it("at the door asks for the voice's name in place of the list, with no Try again, and names the server as one", async () => {
             mocks.api.getBotVoice.mockResolvedValue(answer({ ...none, lentKeys: [own] }));
             await mount();
+            await startChoosing();
             expect(typedField()).toBeDefined();
             expect(text()).toContain("Voice on your speech server");
             expect(text()).toContain("Your speech server doesn’t list its voices.");
@@ -1229,6 +1299,7 @@ describe("the bot page's Voice group (#1668)", () => {
                 turnedOn(ownProfile("bm_george"), { ...none, lentKeys: [own] })
             );
             await mount();
+            await startChoosing();
             await type("bm_george");
             await click("bot-voice-go");
             expect(mocks.api.checkBotVoiceName).toHaveBeenCalledWith("b1", "en-US", {
@@ -1242,7 +1313,7 @@ describe("the bot page's Voice group (#1668)", () => {
                 language: { mode: "follow" },
             });
             expect(mocks.api.setBotVoiceEnabled).toHaveBeenCalledWith("b1", true);
-            expect(text()).toContain("Tinyfish talks in bubbles now, with bm_george’s voice on your speech server.");
+            expect(byTestId("bot-voice-card")[0].textContent).toContain("bm_george");
         });
 
         it("saves nothing when the server did not take the name, and says so once", async () => {
@@ -1254,6 +1325,7 @@ describe("the bot page's Voice group (#1668)", () => {
                 })
             );
             await mount();
+            await startChoosing();
             await type("nope");
             await click("bot-voice-go");
             expect(mocks.api.saveBotVoice).not.toHaveBeenCalled();
@@ -1266,6 +1338,7 @@ describe("the bot page's Voice group (#1668)", () => {
             mocks.api.getBotVoice.mockResolvedValue(answer({ ...none, lentKeys: [own] }));
             mocks.api.getBotVoices.mockRejectedValue(Object.assign(new Error("down"), { status: 502 }));
             await mount();
+            await startChoosing();
             expect(byTestId("bot-voice-typed")).toHaveLength(0);
             expect(byTestId("bot-voice-door-retry")).toHaveLength(1);
         });
@@ -1276,6 +1349,7 @@ describe("the bot page's Voice group (#1668)", () => {
                 .mockRejectedValueOnce(Object.assign(new Error("down"), { status: 502 }))
                 .mockResolvedValue(voices.map((voice) => ({ ...voice, providerId: "key-own", model: "kokoro" })));
             await mount();
+            await startChoosing();
             await click("bot-voice-door-retry");
             expect(byTestId("bot-voice-option")).toHaveLength(2);
             expect(byTestId("bot-voice-typed")).toHaveLength(0);
@@ -1353,6 +1427,7 @@ describe("the bot page's Voice group (#1668)", () => {
             );
             mocks.api.getBotVoice.mockResolvedValue(answer({ ...none, lentKeys: [own] }));
             await mount();
+            await startChoosing();
             expect(text()).toContain("Voice on Sara’s speech server");
             expect(text()).toContain("Runs on Sara’s speech server");
         });

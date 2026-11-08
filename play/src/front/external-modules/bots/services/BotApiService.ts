@@ -574,9 +574,14 @@ export class BotApiService {
         });
     }
 
-    /** Voice on or off for one bot. Answers with how it stands; a 409 says why it can't be turned on. */
+    /**
+     * Voice on or off for one bot. Answers with how it stands; a 409 says why it can't be turned on. Once Orbit has saved it,
+     * the bot server is told to look at this room again: the voice tag is part of the bot's token, and the bot server only
+     * reads Orbit when a player enters a room, so without this the bot keeps its old tag (no Voice button, no speech) until
+     * someone walks back in.
+     */
     async setBotVoiceEnabled(botId: string, enabled: boolean): Promise<BotVoice> {
-        return this.withPermissionsTimeout(async (signal) => {
+        const answer = await this.withPermissionsTimeout(async (signal) => {
             const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/voice`, {
                 method: "PUT",
                 body: JSON.stringify({ enabled }),
@@ -584,6 +589,10 @@ export class BotApiService {
             });
             return this.voiceAnswer(await response.json());
         });
+        // Not awaited: the bot reconnects on its own time and the switch must not wait for it. A failure here changes nothing
+        // on the page (the saved choice is right and the next room entry brings the bot along), so it is only swallowed.
+        void this.notifyRoomEnter().catch(() => undefined);
+        return answer;
     }
 
     /**
