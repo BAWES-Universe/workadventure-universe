@@ -26,6 +26,7 @@ import type { AdminMessageInterface } from "../models/Websocket/Admin/AdminMessa
 import { isAdminMessageInterface } from "../models/Websocket/Admin/AdminMessages";
 import { adminService } from "../services/AdminService";
 import { chatIdVerifier } from "../services/ChatIdVerifier";
+import { memberTagsFor } from "../services/BotTokenTags";
 import { worldSpaceNamespace } from "../services/SpaceNamespace";
 import { validateWebsocketQuery } from "../services/QueryValidator";
 import type { SocketData, SpaceName } from "../models/Websocket/SocketData";
@@ -447,7 +448,8 @@ export class IoSocketController {
                                 }
                                 throw err;
                             }
-                            memberTags = userData.tags;
+                            // Orbit answers a bot with no tags: the bot keeps the "bot" and "voice-bot" its token carries
+                            memberTags = memberTagsFor(userIdentifier, isLogged, tokenData?.tags, userData.tags);
                             memberVisitCardUrl = userData.visitCardUrl;
                             characterTextures = userData.characterTextures;
                             companionTexture = userData.companionTexture ?? undefined;
