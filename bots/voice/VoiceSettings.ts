@@ -50,6 +50,8 @@ export interface VoiceCredentialsAnswer {
     endpoint?: string | null;
     region?: string | null;
     apiKeyEncrypted: string | null;
+    /** Said by Orbit when this provider has no key and needs none: a speech server on a person's own computer (#1874). */
+    keyless?: boolean;
 }
 
 /** POST /api/voice/providers/:id/health. */
@@ -62,7 +64,7 @@ export interface VoiceOrbit {
     /** Null when Orbit does not know the bot. Throws when Orbit cannot be asked. */
     getVoiceActive(botId: string, timeoutMs: number): Promise<VoiceActiveAnswer | null>;
     /** Null when the provider is not usable by this bot (Orbit answers 404 or 400). Throws when Orbit cannot be asked. */
-    getVoiceCredentials(providerId: string, botId: string, timeoutMs: number): Promise<VoiceCredentialsAnswer | null>;
+    getVoiceCredentials(providerId: string, botId: string, timeoutMs: number, options?: { hello?: boolean }): Promise<VoiceCredentialsAnswer | null>;
     /** The server's voice limits, or null. Throws when Orbit cannot be asked. */
     getVoiceLimits(timeoutMs: number): Promise<Partial<VoiceLimits> | null>;
     /** Throws on a failure. A provider Orbit does not track (a server's own) answers 404, which is not a failure. */
@@ -89,6 +91,11 @@ export interface SpeakingNow {
      * `signature`: a changed value reaches a bubble the next time its session is opened, so one limit edit does not cut every call.
      */
     turnSeconds?: number;
+    /**
+     * Seconds after the bot answers someone in which they can go on without its name (Orbit's voice limit), when Orbit gave
+     * one. Not part of `signature`: it changes who the bot listens to, not the bubble's audio.
+     */
+    followUpSeconds?: number;
 }
 
 export type ActiveVoice = { speaks: false; reason: string } | SpeakingNow;
@@ -109,6 +116,12 @@ export interface VoiceSettings {
     active(): Promise<ActiveVoice>;
     sessionSettings(active: SpeakingNow): Promise<SessionSettings | null>;
     report(providerId: string, part: ProviderPart, outcome: VoiceOutcome): void;
+    /**
+     * The speech settings for a voice name typed for a speech server of the person's own while the bot does not speak yet (#1874): the
+     * server named, the model and the name. Null when this bot may not use that provider (it is not lent to the bot's universe) or its
+     * key can't be read.
+     */
+    ownSpeech?(providerId: string, model: string, voiceId: string): Promise<SessionSettings['speech'] | null>;
 }
 
 const EXPRESSIONS: readonly VoiceExpression[] = ['restrained', 'natural', 'expressive'];
@@ -167,7 +180,7 @@ export class BotVoiceSettings implements VoiceSettings {
         const language = profile?.language?.mode === 'fixed' && profile.language.code ? profile.language.code : undefined;
         // A part that Orbit says Universe AI pays for has no health to report; when Orbit does not say, the report is sent and ignored
         const paidBy = (part: ProviderPart): boolean => answer!.parts?.[part] !== 'universe-ai';
-        const { replyLimits, turnSeconds } = await this.limitsFor(answer.limits);
+        const { replyLimits, turnSeconds, followUpSeconds } = await this.limitsFor(answer.limits);
         return {
             keep: true,
             value: {
@@ -180,6 +193,7 @@ export class BotVoiceSettings implements VoiceSettings {
                 profile: { recognitionModel: recognition.model, speechModel: speech.model, voiceId: speech.voiceId, expression, language },
                 replyLimits,
                 ...(turnSeconds !== undefined ? { turnSeconds } : {}),
+                ...(followUpSeconds !== undefined ? { followUpSeconds } : {}),
             },
         };
     }
@@ -189,14 +203,18 @@ export class BotVoiceSettings implements VoiceSettings {
      * server's, else none (the settings from the environment apply). Each limit is read on its own, so a bot that sent only some
      * takes the rest from the server's.
      */
-    private async limitsFor(fromBot: Partial<VoiceLimits> | null | undefined): Promise<{ replyLimits?: SpeakingNow['replyLimits']; turnSeconds?: number }> {
+    private async limitsFor(
+        fromBot: Partial<VoiceLimits> | null | undefined
+    ): Promise<{ replyLimits?: SpeakingNow['replyLimits']; turnSeconds?: number; followUpSeconds?: number }> {
         let replyLimits = replyLimitsOf(fromBot);
         let turnSeconds = turnSecondsOf(fromBot);
-        if (replyLimits !== undefined && turnSeconds !== undefined) return { replyLimits, turnSeconds };
+        let followUpSeconds = followUpSecondsOf(fromBot);
+        if (replyLimits !== undefined && turnSeconds !== undefined && followUpSeconds !== undefined) return { replyLimits, turnSeconds, followUpSeconds };
         const server = await this.serverLimits();
         replyLimits ??= replyLimitsOf(server);
         turnSeconds ??= turnSecondsOf(server);
-        return { replyLimits, turnSeconds };
+        followUpSeconds ??= followUpSecondsOf(server);
+        return { replyLimits, turnSeconds, followUpSeconds };
     }
 
     private async serverLimits(): Promise<Partial<VoiceLimits> | null | undefined> {
@@ -225,17 +243,26 @@ export class BotVoiceSettings implements VoiceSettings {
         if (!forEars || !forVoice || forEars.recognition === false || forVoice.speech === false) return null;
         const { profile } = active;
         return {
-            recognition: { adapter: forEars.adapter, model: profile.recognitionModel, key: forEars.key, ...connection(forEars), ...(profile.language ? { language: profile.language } : {}) },
-            speech: { adapter: forVoice.adapter, model: profile.speechModel, voiceId: profile.voiceId, key: forVoice.key, ...connection(forVoice), ...(profile.language ? { language: profile.language } : {}) },
+            recognition: { adapter: forEars.adapter, model: profile.recognitionModel, ...withKey(forEars), ...connection(forEars), ...(profile.language ? { language: profile.language } : {}) },
+            speech: { adapter: forVoice.adapter, model: profile.speechModel, voiceId: profile.voiceId, ...withKey(forVoice), ...connection(forVoice), ...(profile.language ? { language: profile.language } : {}) },
             expression: profile.expression,
             ...(active.turnSeconds !== undefined ? { turnSeconds: active.turnSeconds } : {}),
         };
     }
 
-    private async credentialsOf(providerId: string): Promise<Credentials | null> {
+    /** See `VoiceSettings.ownSpeech`: Orbit serves the key of a speech server lent to the bot's universe for a hello even before voice is on. */
+    async ownSpeech(providerId: string, model: string, voiceId: string): Promise<SessionSettings['speech'] | null> {
+        const forVoice = await this.credentialsOf(providerId, { hello: true });
+        if (!forVoice || forVoice.speech === false) return null;
+        return { adapter: forVoice.adapter, model, voiceId, ...withKey(forVoice), ...connection(forVoice) };
+    }
+
+    private async credentialsOf(providerId: string, options: { hello?: boolean } = {}): Promise<Credentials | null> {
         let answer: VoiceCredentialsAnswer | null;
         try {
-            answer = await this.orbit.getVoiceCredentials(providerId, this.botId, this.options.timeoutMs);
+            answer = options.hello
+                ? await this.orbit.getVoiceCredentials(providerId, this.botId, this.options.timeoutMs, { hello: true })
+                : await this.orbit.getVoiceCredentials(providerId, this.botId, this.options.timeoutMs);
         } catch (error) {
             this.log(`voice: could not ask Orbit for provider ${providerId} (${describe(error)})`);
             return null;
@@ -246,13 +273,14 @@ export class BotVoiceSettings implements VoiceSettings {
         }
         let key: string | null;
         try {
-            key = decryptApiKey(answer.apiKeyEncrypted);
+            // A provider with no key that needs none says so itself; any other with no key can't be used
+            key = answer.keyless === true && !answer.apiKeyEncrypted ? '' : decryptApiKey(answer.apiKeyEncrypted);
         } catch {
             // The reason is left out on purpose: it is about the key
             this.log(`voice: the key of provider ${providerId} could not be read`);
             return null;
         }
-        if (!key) {
+        if (key === null || (!key && answer.keyless !== true)) {
             this.log(`voice: provider ${providerId} has no key`);
             return null;
         }
@@ -282,6 +310,11 @@ interface Credentials {
     region?: string;
 }
 
+/** The key of a provider, only when it has one: a speech server on a person's own computer may have none, and then none is sent. */
+function withKey(credentials: Credentials): { key?: string } {
+    return credentials.key ? { key: credentials.key } : {};
+}
+
 /** The endpoint and region of a provider, only when it has them. */
 function connection(credentials: Credentials): { endpoint?: string; region?: string } {
     return { ...(credentials.endpoint ? { endpoint: credentials.endpoint } : {}), ...(credentials.region ? { region: credentials.region } : {}) };
@@ -299,6 +332,12 @@ function replyLimitsOf(limits: Partial<VoiceLimits> | null | undefined): Speakin
 function turnSecondsOf(limits: Partial<VoiceLimits> | null | undefined): number | undefined {
     const seconds = limits?.turnSeconds;
     return typeof seconds === 'number' && Number.isInteger(seconds) && seconds >= 5 && seconds <= 3600 ? seconds : undefined;
+}
+
+/** The follow-up window, only when it is a whole number Orbit keeps (5 to 600 seconds). */
+function followUpSecondsOf(limits: Partial<VoiceLimits> | null | undefined): number | undefined {
+    const seconds = limits?.followUpSeconds;
+    return typeof seconds === 'number' && Number.isInteger(seconds) && seconds >= 5 && seconds <= 600 ? seconds : undefined;
 }
 
 /** A line about a failed call that cannot carry a key: the status or the error's code, never its request or answer. */

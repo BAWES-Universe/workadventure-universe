@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AudioPlayback, clampAudioVolume } from "../../../../src/front/Components/AudioManager/AudioPlayback";
+import {
+    AudioPlayback,
+    clampAudioVolume,
+    elementVolumeApplies,
+} from "../../../../src/front/Components/AudioManager/AudioPlayback";
 import type { AudioControls } from "../../../../src/front/Components/AudioManager/AudioPlayback";
 
 class FakeAudio {
@@ -54,7 +58,7 @@ describe("native audio playback", () => {
         nextPlayPromise = undefined;
         state = vi.fn();
         ended = vi.fn();
-        player = new AudioPlayback(state, ended, () => {
+        const create = () => {
             const audio = new FakeAudio();
             if (!writableVolume) {
                 Object.defineProperty(audio, "volume", { get: () => 1, set: () => undefined });
@@ -69,7 +73,9 @@ describe("native audio playback", () => {
             }
             media.push(audio);
             return audio as unknown as HTMLAudioElement;
-        });
+        };
+        // A computer: the browser applies element volume.
+        player = new AudioPlayback(state, ended, create, undefined, undefined, undefined, undefined, () => true);
         player.setControls(controls);
     });
     afterEach(() => {
@@ -986,5 +992,207 @@ describe("audio playback on browsers that ignore element volume (iPhone)", () =>
         expect(laterState).toHaveBeenLastCalledWith("playing");
         expect(context.gains.at(-1)?.gain.value).toBeCloseTo(0.3 * controls.volume);
         later.destroy();
+    });
+});
+
+/**
+ * A media element whose volume is locked the way today's WebKit locks it on iPhone (HTMLMediaElement::setVolume): the
+ * value set reads back at once, then the old value comes back on a later task, with no "volumechange" event.
+ */
+function lockVolume<T extends object>(element: T): T {
+    let volume = 1;
+    let reverting = false;
+    Object.defineProperty(element, "volume", {
+        get: () => volume,
+        set: (value: number) => {
+            const old = volume;
+            volume = value;
+            if (reverting) return;
+            reverting = true;
+            setTimeout(() => {
+                volume = old;
+                reverting = false;
+            }, 0);
+        },
+    });
+    return element;
+}
+
+/** A media element that applies its volume, as on a computer: the value holds and "volumechange" follows. */
+function applyingVolume(): HTMLMediaElement {
+    const element = new EventTarget() as EventTarget & { volume: number };
+    let volume = 1;
+    Object.defineProperty(element, "volume", {
+        get: () => volume,
+        set: (value: number) => {
+            volume = value;
+            setTimeout(() => element.dispatchEvent(new Event("volumechange")), 0);
+        },
+    });
+    return element as unknown as HTMLMediaElement;
+}
+
+describe("asking the browser whether it applies element volume", () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+    });
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    it("says yes when the volume holds and the browser confirms it (computers, iPad)", async () => {
+        const answer = elementVolumeApplies(applyingVolume());
+        await vi.advanceTimersByTimeAsync(0);
+        await expect(answer).resolves.toBe(true);
+    });
+
+    it("says no on today's iPhone, where the volume reads back at once and is then put back", async () => {
+        const element = lockVolume(new EventTarget()) as unknown as HTMLMediaElement;
+        const answer = elementVolumeApplies(element);
+        // The read-back right after setting still says 0.5: the old check stopped here and said yes.
+        expect(element.volume).toBe(0.5);
+        await vi.advanceTimersByTimeAsync(1000);
+        await expect(answer).resolves.toBe(false);
+    });
+
+    it("says no at once on an older iPhone, where the volume reads back 1", async () => {
+        const element = new EventTarget();
+        Object.defineProperty(element, "volume", { get: () => 1, set: () => undefined });
+        await expect(elementVolumeApplies(element as unknown as HTMLMediaElement)).resolves.toBe(false);
+    });
+
+    it("says no when setting the volume throws", async () => {
+        const element = new EventTarget();
+        Object.defineProperty(element, "volume", {
+            get: () => 1,
+            set: () => {
+                throw new Error("locked");
+            },
+        });
+        await expect(elementVolumeApplies(element as unknown as HTMLMediaElement)).resolves.toBe(false);
+    });
+
+    it("says yes after the wait when the volume holds but no event comes", async () => {
+        const element = new EventTarget() as EventTarget & { volume: number };
+        element.volume = 1;
+        const answer = elementVolumeApplies(element as unknown as HTMLMediaElement);
+        await vi.advanceTimersByTimeAsync(1000);
+        await expect(answer).resolves.toBe(true);
+    });
+});
+
+describe("audio playback on today's iPhone, where element volume reads back but is ignored", () => {
+    let media: (FakeAudio & { crossOrigin?: string | null })[];
+    let context: FakeContext;
+    let state: ReturnType<typeof vi.fn>;
+    let elementVolume: boolean | undefined;
+    const players: AudioPlayback[] = [];
+    const newPlayer = () => {
+        const player = new AudioPlayback(
+            state,
+            vi.fn(),
+            () => {
+                const fake: FakeAudio & { crossOrigin?: string | null } = new FakeAudio();
+                // Once the browser has said it applies element volume, the elements are a computer's
+                const audio = elementVolume === true ? fake : lockVolume(fake);
+                media.push(audio);
+                return audio as unknown as HTMLAudioElement;
+            },
+            1600,
+            undefined,
+            () => context as unknown as AudioContext,
+            () => Promise.resolve(true),
+            () => elementVolume
+        );
+        player.setControls(controls);
+        players.push(player);
+        return player;
+    };
+    beforeEach(() => {
+        vi.useFakeTimers();
+        media = [];
+        context = new FakeContext();
+        state = vi.fn();
+        elementVolume = false;
+    });
+    afterEach(() => {
+        for (const player of players.splice(0)) player.destroy();
+        vi.useRealTimers();
+    });
+
+    it("sets the level with a gain node, so the volume slider works down to 0%", async () => {
+        const player = newPlayer();
+        player.setSource(source("https://maps.example/music.mp3", 1));
+        await flush();
+        expect(context.createMediaElementSource).toHaveBeenCalledWith(media[0]);
+        expect(media[0].crossOrigin).toBe("anonymous");
+        expect(context.gains[0].gain.value).toBeCloseTo(0.8);
+        player.setControls({ ...controls, volume: 0.25 });
+        expect(context.gains[0].gain.value).toBeCloseTo(0.25);
+        player.setControls({ ...controls, volume: 0 });
+        expect(context.gains[0].gain.value).toBe(0);
+    });
+
+    it("follows the distance to an object: its sound gets quieter walking away and louder coming back", async () => {
+        const player = newPlayer();
+        player.setSource(source("https://maps.example/speaker.mp3", 1));
+        await flush();
+        vi.advanceTimersByTime(2000);
+        const near = context.gains[0].gain.value;
+        // ObjectSounds sends the same sound again with the volume for the new distance
+        player.setSource(source("https://maps.example/speaker.mp3", 0.2));
+        const far = context.gains[0].gain.value;
+        player.setSource(source("https://maps.example/speaker.mp3", 0));
+        const outOfRange = context.gains[0].gain.value;
+        player.setSource(source("https://maps.example/speaker.mp3", 0.9));
+        expect(near).toBeCloseTo(0.8);
+        expect(far).toBeCloseTo(0.16);
+        expect(outOfRange).toBe(0);
+        expect(context.gains[0].gain.value).toBeCloseTo(0.72);
+        expect(context.createMediaElementSource).toHaveBeenCalledTimes(1);
+    });
+
+    it("uses a gain node while the browser has not answered yet, then asks again for the next sound", async () => {
+        elementVolume = undefined;
+        const player = newPlayer();
+        player.setSource(source("https://maps.example/a.mp3", 0.5));
+        await flush();
+        expect(context.createMediaElementSource).toHaveBeenCalledTimes(1);
+        expect(context.gains[0].gain.value).toBeCloseTo(0.4);
+        // A computer answers yes: the next sound plays through a plain element at the volume set on it
+        elementVolume = true;
+        player.setSource(source("https://maps.example/b.mp3", 0.5));
+        await flush();
+        vi.advanceTimersByTime(2000);
+        const plain = media.at(-1);
+        expect(context.createMediaElementSource).toHaveBeenCalledTimes(1);
+        expect(plain?.crossOrigin).toBeUndefined();
+        expect(plain?.volume).toBeCloseTo(0.4);
+    });
+
+    it("never trusts the immediate read-back alone", async () => {
+        const player = newPlayer();
+        player.setSource(source("https://maps.example/a.mp3"));
+        await flush();
+        // The element read back 0.5 when probed, yet the browser's answer (no) chose the gain node
+        expect(context.createMediaElementSource).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe("asking a browser that sends the volume event while the volume is set", () => {
+    it("answers at once and leaves no timer behind", async () => {
+        vi.useFakeTimers();
+        const element = new EventTarget() as EventTarget & { volume: number };
+        let volume = 1;
+        Object.defineProperty(element, "volume", {
+            get: () => volume,
+            set: (value: number) => {
+                volume = value;
+                element.dispatchEvent(new Event("volumechange"));
+            },
+        });
+        await expect(elementVolumeApplies(element as unknown as HTMLMediaElement)).resolves.toBe(true);
+        expect(vi.getTimerCount()).toBe(0);
+        vi.useRealTimers();
     });
 });

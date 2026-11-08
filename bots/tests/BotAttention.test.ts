@@ -49,6 +49,38 @@ describe('BotAttention', () => {
         }
     });
 
+    it('hears a person who calls it in Arabic, French or Spanish (#1856)', () => {
+        const { attention } = setup('Nora');
+        attention.personJoined(SPACE, KHALID);
+        attention.personJoined(SPACE, SARA);
+        for (const line of ['يا Nora وين الاجتماع؟', 'Ya Nora, where is the meeting?', 'أهلا Nora', 'Salut Nora, ça va ?', 'Hé Nora', 'Hola Nora, ¿qué tal?', 'Oye Nora']) {
+            expect(attention.attention(SPACE, SARA, line), line).toBe('named');
+        }
+        const arabic = setup('نورة').attention;
+        for (const id of [KHALID, SARA]) arabic.personJoined(SPACE, id);
+        for (const line of ['يا نورة، وين غرفة الاجتماعات؟', 'نورة شنو رايج؟', 'يا نُورَة']) {
+            expect(arabic.attention(SPACE, SARA, line), line).toBe('named');
+        }
+        // A calling word with someone else's name is not for the bot
+        expect(arabic.hears(SPACE, SARA, 'يا خالد تعال')).toBe(false);
+        expect(attention.hears(SPACE, SARA, 'Hola Khalid')).toBe(false);
+    });
+
+    it("uses Orbit's follow-up window once it is given, and ignores one that isn't a usable number (#1857)", () => {
+        let now = 1_000_000;
+        const attention = new BotAttention('Nora', 30, () => false, () => false, () => now);
+        attention.personJoined(SPACE, KHALID);
+        attention.personJoined(SPACE, SARA);
+        attention.answered(SPACE, SARA);
+        now += 45_000;
+        expect(attention.attention(SPACE, SARA, 'and then?')).toBe('ignored');
+        attention.useFollowUpSeconds(60);
+        expect(attention.followUpSeconds).toBe(60);
+        expect(attention.attention(SPACE, SARA, 'and then?')).toBe('follow-up');
+        for (const bad of [-1, 1.5, Number.NaN, 24 * 60 * 60 + 1]) attention.useFollowUpSeconds(bad);
+        expect(attention.followUpSeconds).toBe(60);
+    });
+
     it('does not take the name in the middle of a line, or inside another word, for being called', () => {
         const { attention } = setup('Nora');
         attention.personJoined(SPACE, KHALID);

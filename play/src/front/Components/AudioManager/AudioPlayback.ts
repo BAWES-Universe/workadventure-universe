@@ -59,6 +59,67 @@ function sharedBrowserContext(): AudioContext | undefined {
     return sharedContext;
 }
 
+/** How long the browser has to confirm that it applied a volume set on a media element. */
+const ELEMENT_VOLUME_CHECK_MS = 300;
+
+/**
+ * Whether this browser really plays a media element at the volume a page sets on it. iPhone Safari never does, and
+ * today's WebKit hides it: the value set reads back at once, then is quietly put back a moment later, with no
+ * "volumechange" event. So the answer is the "volumechange" event, or the value still holding after a short wait;
+ * never an immediate read-back (that is why the level stayed at the phone's volume, #1849).
+ */
+export function elementVolumeApplies(media: HTMLMediaElement, waitMs = ELEMENT_VOLUME_CHECK_MS): Promise<boolean> {
+    const target = 0.5;
+    const holds = () => Math.abs(media.volume - target) < 0.001;
+    return new Promise((resolve) => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        let answered = false;
+        const finish = (): void => {
+            if (answered) return;
+            answered = true;
+            clearTimeout(timer);
+            media.removeEventListener("volumechange", finish);
+            resolve(holds());
+        };
+        // Listening before setting: some browsers send the event at once
+        media.addEventListener("volumechange", finish);
+        try {
+            media.volume = target;
+        } catch {
+            media.removeEventListener("volumechange", finish);
+            resolve(false);
+            return;
+        }
+        // Older iPhones read back 1 at once
+        if (!holds()) {
+            media.removeEventListener("volumechange", finish);
+            resolve(false);
+            return;
+        }
+        if (!answered) timer = setTimeout(finish, waitMs);
+    });
+}
+
+let elementVolume: boolean | undefined;
+let elementVolumeCheck: Promise<boolean> | undefined;
+
+/**
+ * This browser's answer to elementVolumeApplies, asked once with a silent element of its own; undefined until it has
+ * answered (a fraction of a second, long before the first sound of a map).
+ */
+export function browserElementVolume(): boolean | undefined {
+    if (elementVolume === undefined && !elementVolumeCheck && typeof Audio === "function") {
+        elementVolumeCheck = elementVolumeApplies(new Audio());
+        void elementVolumeCheck.then((applies) => {
+            elementVolume = applies;
+        });
+    }
+    return elementVolume;
+}
+
+// Ask as soon as the game loads, so the answer is there before the first sound
+if (typeof window !== "undefined") browserElementVolume();
+
 /** How long a host may take to answer the CORS check before the player stops waiting and treats it as unknown. */
 const CORS_CHECK_TIMEOUT_MS = 8000;
 
@@ -96,8 +157,10 @@ export class AudioPlayback {
     private current: Slot | undefined;
     private outgoing: Slot | undefined;
     private fadeTimer: ReturnType<typeof setTimeout> | undefined;
+    // true: the browser applies element volume. false: it ignores it (iPhone). undefined: not known yet.
     private volumeSupported: boolean | undefined;
-    // iOS Safari ignores element volume, so there the level is set with a Web Audio gain node instead.
+    // iOS Safari ignores element volume, so there (and while it is not known yet) the level is set with a Web Audio
+    // gain node instead.
     private context: AudioContext | undefined;
     private contextBlocked = false;
     private readonly gains = new WeakMap<HTMLAudioElement, GainNode>();
@@ -129,7 +192,8 @@ export class AudioPlayback {
         private readonly duration = 1600,
         private readonly audioContainer?: HTMLElement,
         private readonly createContext: () => AudioContext | undefined = sharedBrowserContext,
-        private readonly checkCors: (url: string, signal: AbortSignal) => Promise<boolean> = hostAllowsCors
+        private readonly checkCors: (url: string, signal: AbortSignal) => Promise<boolean> = hostAllowsCors,
+        private readonly elementVolume: () => boolean | undefined = browserElementVolume
     ) {}
 
     setSource(source: AudioSource | undefined): void {
@@ -170,7 +234,7 @@ export class AudioPlayback {
         let media = this.idleMedia.pop() ?? this.createAudio();
         this.detectVolumeSupport(media);
         const useGraph =
-            this.volumeSupported === false &&
+            this.volumeSupported !== true &&
             this.originCors.get(originOf(source.url)) !== false &&
             !this.plainRetryUrls.has(source.url);
         if (!useGraph && this.gains.has(media)) {
@@ -197,7 +261,7 @@ export class AudioPlayback {
             graph,
         };
         this.current = slot;
-        if (this.volumeSupported === false && !this.swapping) this.probeCors(source.url);
+        if (this.volumeSupported !== true && !this.swapping) this.probeCors(source.url);
         media.preload = "auto";
         media.onended = () => {
             if (this.current !== slot) return;
@@ -447,13 +511,21 @@ export class AudioPlayback {
         // Probe a newly created, silent element before assigning a source. Avoid
         // browser/OS sniffing, including assumptions about future iOS versions.
         const initial = media.volume;
+        let readsBack: boolean;
         try {
             media.volume = 0.5;
-            this.volumeSupported = Math.abs(media.volume - 0.5) < 0.001;
+            readsBack = Math.abs(media.volume - 0.5) < 0.001;
             media.volume = initial;
         } catch {
-            this.volumeSupported = false;
+            readsBack = false;
         }
+        if (!readsBack) {
+            this.volumeSupported = false;
+            return;
+        }
+        // Reading back the value proves nothing on today's iPhone (see elementVolumeApplies): the browser's own answer
+        // decides. Not known yet, it is asked again for the next sound, and this one gets a gain node to be safe.
+        this.volumeSupported = this.elementVolume();
     }
 
     private applyVolumes(): void {
@@ -464,7 +536,7 @@ export class AudioPlayback {
             const level = clampAudioVolume(master * slot.source.volume * slot.envelope);
             if (slot.graph) {
                 this.setGain(slot.graph, this.controls.muted ? 0 : level);
-            } else if (this.volumeSupported) {
+            } else if (this.volumeSupported !== false) {
                 slot.media.volume = level;
             }
             slot.media.loop = slot.source.loop;
@@ -472,7 +544,7 @@ export class AudioPlayback {
     }
 
     private canSetLevel(slot: Slot): boolean {
-        return !!slot.graph || !!this.volumeSupported;
+        return !!slot.graph || this.volumeSupported === true;
     }
 
     private ensureContext(): AudioContext | undefined {
