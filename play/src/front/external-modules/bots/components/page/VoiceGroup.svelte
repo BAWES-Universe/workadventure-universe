@@ -35,6 +35,7 @@
         sameChoice,
         sourceKey,
         sourceOf,
+        styleReaches,
         startingPayer,
         startingVoice,
         viewOf,
@@ -230,6 +231,8 @@
     $: currentList = speakChoice ? lists[sourceKey(speakChoice)] : undefined;
     $: currentVoice = currentList?.find((candidate) => candidate.voiceId === profile?.speech?.voiceId);
     $: expression = profile?.expression ?? "natural";
+    // "How it speaks" is offered only where the company uses it
+    $: styleShown = voice && profile ? styleReaches(voice, profile) : true;
     $: language = profile?.language ?? { mode: "follow" as const };
     $: voiceName = profile?.speech?.voiceName ?? currentVoice?.name ?? profile?.speech?.voiceId ?? "";
     $: busyClass = saving;
@@ -320,7 +323,7 @@
         now: ReturnType<typeof viewOf> | null,
         hasFailed: boolean,
         speaking: string,
-        style: VoiceExpression,
+        style: VoiceExpression | null,
         whose: string,
         who: string
     ): string {
@@ -338,10 +341,12 @@
                 }
                 if (now.pause?.kind === "key-gone") return v.pausedGone({ key: whose });
                 if (now.pause?.kind === "universe-ai-off") return v.pausedUniverseAi();
-                return v.briefOn({ voice: speaking, style: v.style[style](), payer: payerBrief(data, now.profile) });
+                return style
+                    ? v.briefOn({ voice: speaking, style: v.style[style](), payer: payerBrief(data, now.profile) })
+                    : v.briefOnPlain({ voice: speaking, payer: payerBrief(data, now.profile) });
         }
     }
-    $: brief = briefOf(voice, view, failed, voiceName, expression, whoKey, botName);
+    $: brief = briefOf(voice, view, failed, voiceName, styleShown ? expression : null, whoKey, botName);
 
     // The voice card's second line
     $: speaksOwn = speaksSource?.kind === "key" && isOwnServer(speaksSource.key);
@@ -1260,18 +1265,20 @@
                         {/key}
                     {/if}
 
-                    <PageField title={v.howItSpeaks()} hint={v.styleHint[expression]()}>
-                        <PageSegment
-                            label={v.howItSpeaks()}
-                            options={VOICE_EXPRESSIONS.map((value) => ({
-                                value,
-                                label: v.style[value](),
-                                testId: `bot-voice-style-${value}`,
-                            }))}
-                            value={expression}
-                            onPick={chooseExpression}
-                        />
-                    </PageField>
+                    {#if styleShown}
+                        <PageField title={v.howItSpeaks()} hint={v.styleHint[expression]()}>
+                            <PageSegment
+                                label={v.howItSpeaks()}
+                                options={VOICE_EXPRESSIONS.map((value) => ({
+                                    value,
+                                    label: v.style[value](),
+                                    testId: `bot-voice-style-${value}`,
+                                }))}
+                                value={expression}
+                                onPick={chooseExpression}
+                            />
+                        </PageField>
+                    {/if}
 
                     {#if !moreOpen}
                         <p class="bp-note" data-testid="bot-voice-payer">
@@ -1557,15 +1564,24 @@
                                     <div class="vg-ver" class:now={speaking}>
                                         <div class="bp-mtx">
                                             <span class="vg-t"
-                                                >{v.version({
-                                                    number: revision.number,
-                                                    voice:
-                                                        revision.profile.speech?.voiceName ??
-                                                        revision.profile.speech?.voiceId ??
-                                                        "",
-                                                    style: v.style[revision.profile.expression ?? "natural"](),
-                                                    payer: payerBrief(voice, revision.profile),
-                                                })}</span
+                                                >{styleReaches(voice, revision.profile)
+                                                    ? v.version({
+                                                          number: revision.number,
+                                                          voice:
+                                                              revision.profile.speech?.voiceName ??
+                                                              revision.profile.speech?.voiceId ??
+                                                              "",
+                                                          style: v.style[revision.profile.expression ?? "natural"](),
+                                                          payer: payerBrief(voice, revision.profile),
+                                                      })
+                                                    : v.versionPlain({
+                                                          number: revision.number,
+                                                          voice:
+                                                              revision.profile.speech?.voiceName ??
+                                                              revision.profile.speech?.voiceId ??
+                                                              "",
+                                                          payer: payerBrief(voice, revision.profile),
+                                                      })}</span
                                             >
                                             <span class="bp-cn"
                                                 >{who

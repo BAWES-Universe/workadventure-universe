@@ -25,6 +25,7 @@ import {
     modelDoes,
     readHello,
     sourceOf,
+    styleReaches,
     splitChoices,
     splitPlaces,
     speaksLive as speaksOnTalkingModel,
@@ -794,5 +795,47 @@ describe("a speech server that lists no voices (#1874)", () => {
     it("tells a speech server of the person's own by its adapter", () => {
         expect(isOwnServer({ adapter: "openai-compatible" })).toBe(true);
         expect(isOwnServer({ adapter: "elevenlabs" })).toBe(false);
+    });
+});
+
+describe("How it speaks is offered only where the company uses it", () => {
+    it("is offered on Universe AI's speaking company when its connector passes the style on", () => {
+        expect(styleReaches(on(uaiProfile), uaiProfile)).toBe(true);
+        const fish = on(uaiProfile, {
+            universeAi: {
+                ...orbitAnswer().universeAi,
+                speech: { ...orbitAnswer().universeAi.speech, adapter: "fish" },
+            },
+        });
+        expect(styleReaches(fish, uaiProfile)).toBe(false);
+    });
+
+    it("follows the lent key's company, and whether its model speaks or talks live", () => {
+        const keyed: VoiceProfile = { ...uaiProfile, speech: { providerId: "key-1", model: "m", voiceId: "v" } };
+        const withKey = (adapter: string, kind: string) =>
+            on(keyed, { lentKeys: [keyAnswer({ id: "key-1", adapter, models: [{ id: "m", kind }] })] });
+        expect(styleReaches(withKey("elevenlabs", "speech"), keyed)).toBe(true);
+        expect(styleReaches(withKey("deepgram", "speech"), keyed)).toBe(false);
+        expect(styleReaches(withKey("soniox", "speech"), keyed)).toBe(false);
+        expect(styleReaches(withKey("openai", "talk"), keyed)).toBe(true);
+        expect(styleReaches(withKey("azure", "talk"), keyed)).toBe(true);
+        expect(styleReaches(withKey("inworld", "talk"), keyed)).toBe(false);
+        // A company's plain speaking job can ignore it even where its talking model uses it
+        expect(styleReaches(withKey("google", "speech"), keyed)).toBe(false);
+        // A model the key no longer lists can't be told apart, so the row stays
+        const unlisted = on(keyed, {
+            lentKeys: [keyAnswer({ id: "key-1", adapter: "openai", models: [{ id: "other", kind: "talk" }] })],
+        });
+        expect(styleReaches(unlisted, keyed)).toBe(true);
+    });
+
+    it("stays offered when the company can't be told", () => {
+        const gone: VoiceProfile = { ...uaiProfile, speech: { providerId: "key-old", model: "m", voiceId: "v" } };
+        expect(styleReaches(on(gone), gone)).toBe(true);
+        const stayed: VoiceProfile = {
+            ...uaiProfile,
+            speech: { providerId: "uai-old-speak", model: "m", voiceId: "v" },
+        };
+        expect(styleReaches(on(stayed, { serverProviderIds: ["uai-old-speak"] }), stayed)).toBe(true);
     });
 });
