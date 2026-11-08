@@ -145,8 +145,6 @@ export class VoiceCalls {
      * bot (its name, a summon, or the follow-up right after an answer); without this every turn is the bot's to hear.
      */
     hears?: (spaceName: string, personId: string, text: string) => boolean;
-    /** Whether a space is a meeting room, where the bot takes everything as said to it (see `inGroup`). */
-    isMeeting?: (spaceName: string) => boolean;
     /** Called when someone's audio is connected (a call or the room): what was waiting for an audience can be said. */
     onAudience?: (spaceName: string) => void;
     /** What each person's mode is, as they chose it. Missing: the default. Kept so a choice made before the audio connects still applies. */
@@ -405,12 +403,11 @@ export class VoiceCalls {
     }
 
     /**
-     * Several people are in this bubble, so what one of them says is not necessarily for the bot. A meeting room is not a group in this
-     * sense: the bot is there to hear the meeting and takes everything as said to it (it has no "said to the bot" to count), so the
-     * daily listening neither counts nor holds back what is said there.
+     * Several people are in this bubble or meeting room, so what one of them says is not necessarily for the bot: a bubble and a meeting
+     * room work the same.
      */
     private inGroup(spaceName: string): boolean {
-        return (this.roster.get(spaceName)?.size ?? 0) > 1 && !this.isMeeting?.(spaceName);
+        return (this.roster.get(spaceName)?.size ?? 0) > 1;
     }
 
     /**
@@ -928,6 +925,8 @@ export class VoiceCalls {
         } else if (message.type === 'user.partial') {
             if (!current) {
                 this.stats.staleFromWorker++;
+            } else if (this.hears && !this.hears(spaceName, to, message.text)) {
+                // Others are here and these words so far are not for the bot: they are not put on the person's screen as if they were
             } else {
                 this.live.set(callKey(spaceName, to), { spaceName, personId: to, turnId: message.turnId, text: message.text });
                 this.draft(spaceName, to, { turnId: message.turnId, state: 'live', text: message.text });

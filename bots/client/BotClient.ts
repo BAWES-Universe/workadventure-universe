@@ -189,6 +189,16 @@ export class BotClient {
         this.attention.personJoined(spaceName, userId);
     }
 
+    /**
+     * Who is in a meeting room. The behaviour is not told about a meeting room, but who is in it still decides whose words are
+     * the bot's: with more than one person there, only what is said to the bot (its name, or inside a conversation with it) is
+     * for it, as in a bubble. Without this every meeting would look like one person alone with the bot.
+     */
+    private rememberMeetingPerson(spaceName: string, user: { spaceUserId?: string; tags?: string[]; uuid?: string }): void {
+        const userId = BotClient.playerIdOf(user.spaceUserId);
+        if (userId) this.rememberPerson(spaceName, userId, user);
+    }
+
     /** The numeric player id in a space user id ("roomID_userID"), or 0. */
     private static playerIdOf(spaceUserId: string | undefined): number {
         const at = spaceUserId?.lastIndexOf('_') ?? -1;
@@ -2209,6 +2219,14 @@ export class BotClient {
         return true;
     }
 
+    /**
+     * Whether a line this person said is for the bot now: after they said they are done only their name counts, and saying it brings them
+     * back. A line already waiting for its turn is asked this once the stop is settled, so a call by name that came in meanwhile is kept.
+     */
+    isForBot(spaceName: string, playerId: number, text: string): boolean {
+        return this.attention.hears(spaceName, playerId, text);
+    }
+
     /** Tells one person, and only them, that the bot stopped listening to them without its name (#1670). */
     private sendVoiceDone(spaceName: string, playerId: number): void {
         const spaceUserId = this.spaces.get(spaceName);
@@ -2692,8 +2710,6 @@ export class BotClient {
         // With others in the bubble, a spoken turn is the bot's only when it was said to the bot (#1220)
         this.voice.hears = (spaceName, personId, text) => this.attention.hears(spaceName, BotClient.playerIdOf(personId), text);
         this.voice.playerIdOf = (personId) => BotClient.playerIdOf(personId);
-        // In a meeting room the bot takes everything as said to it, so the daily listening does not count or hold it back there (#1859)
-        this.voice.isMeeting = (spaceName) => this.isMeetingSpace(spaceName);
         this.voice.onAudience = (spaceName) => this.speech?.audience(spaceName);
         this.voice.onUnplayed = (spaceName, segmentId) => this.speech?.unplayed(spaceName, segmentId);
         this.voice.onHeard = (spaceName, segmentId) => this.speech?.heard(spaceName, segmentId);
@@ -2761,6 +2777,7 @@ export class BotClient {
             this.emitRemoveSpaceFilter(spaceName);
             this.voice?.spaceLeft(spaceName);
             this.speech?.spaceLeft(spaceName);
+            this.attention.spaceLeft(spaceName);
             await this.emitLeaveSpace(spaceName);
         } catch (error) {
             console.warn(`[Bot ${this.config.botId}] Could not leave meeting room ${spaceName}:`, error);
@@ -3215,6 +3232,9 @@ export class BotClient {
 
             case 'initSpaceUsersMessage':
                 this.voice?.spaceUsers(message.initSpaceUsersMessage.spaceName, message.initSpaceUsersMessage.users ?? []);
+                if (this.isMeetingSpace(message.initSpaceUsersMessage.spaceName)) {
+                    for (const user of message.initSpaceUsersMessage.users ?? []) this.rememberMeetingPerson(message.initSpaceUsersMessage.spaceName, user);
+                }
                 // When bot joins a space, backend sends all existing users with their UUIDs
                 // This ensures we have UUID tracking before any chat messages arrive
                 if (this.behavior && message.initSpaceUsersMessage && !this.isMeetingSpace(message.initSpaceUsersMessage.spaceName)) {
@@ -3278,6 +3298,9 @@ export class BotClient {
                 if (message.addSpaceUserMessage.user && this.asks && !isBotSpaceUser(message.addSpaceUserMessage.user)) {
                     const joined = BotClient.playerIdOf(message.addSpaceUserMessage.user.spaceUserId);
                     if (joined) this.asks.personBack(this, message.addSpaceUserMessage.spaceName, joined);
+                }
+                if (message.addSpaceUserMessage?.user && this.isMeetingSpace(message.addSpaceUserMessage.spaceName)) {
+                    this.rememberMeetingPerson(message.addSpaceUserMessage.spaceName, message.addSpaceUserMessage.user);
                 }
                 // When a user joins a space, we get their SpaceUser info
                 // Extract numeric userId from spaceUserId to avoid name collisions
@@ -3500,6 +3523,12 @@ export class BotClient {
 
             case 'removeSpaceUserMessage':
                 this.voice?.spaceUserLeft(message.removeSpaceUserMessage.spaceName, message.removeSpaceUserMessage.spaceUserId);
+                if (this.isMeetingSpace(message.removeSpaceUserMessage.spaceName)) {
+                    this.attention.personLeft(
+                        message.removeSpaceUserMessage.spaceName,
+                        BotClient.playerIdOf(message.removeSpaceUserMessage.spaceUserId) || (message.removeSpaceUserMessage.userId ?? 0)
+                    );
+                }
                 if (this.behavior && !this.isMeetingSpace(message.removeSpaceUserMessage.spaceName)) {
                     // The message names the person by their space user id only, so the number comes from that
                     const leftPlayerId =

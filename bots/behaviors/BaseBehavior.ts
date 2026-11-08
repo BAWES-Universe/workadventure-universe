@@ -2141,6 +2141,15 @@ export abstract class BaseBehavior {
         const state = this.activeConversations.get(senderId);
         if (!state || !state.isGenerating) return 'proceed';
 
+        // Several people around a voice bot: what a person says while it answers them is kept in line, and never asked about
+        // (it costs a call each) nor allowed to cancel or rewrite the answer: the answer may be the one to "stop", and
+        // room talk would replace it with an answer to the talk
+        if (this.bot?.mayEndFollowUp?.(state.spaceName, senderId)) {
+            // A full line is dropped without a word: "I'll answer once I've finished" would be spoken to a room that was only talking
+            await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, 'queue', true);
+            return 'queued';
+        }
+
         const interruptedGen = state.generation;
         const currentTask = state.currentTask || originalMessage;
 
@@ -2240,14 +2249,15 @@ export abstract class BaseBehavior {
         mediaType?: string,
         mimeType?: string,
         galleryUrls?: string[],
-        classification?: string
+        classification?: string,
+        quiet = false
     ): Promise<void> {
         const state = this.activeConversations.get(senderId);
         if (!state) return;
 
         if (state.messageQueue.length >= this.MAX_QUEUED_MESSAGES) {
             // The busy line is fixed text, never an AI call (#1159): a burst of messages must not cost replies
-            this.sendStatusAck(state.spaceName, BUSY_LINE);
+            if (!quiet) this.sendStatusAck(state.spaceName, BUSY_LINE);
             return;
         }
 
@@ -2277,7 +2287,12 @@ export abstract class BaseBehavior {
     protected personIsDone(spaceName: string, playerId: number, emotions: AIEmotionData | null | undefined): boolean {
         if (emotions?.doneTalking !== true || !this.bot?.endFollowUp(spaceName, playerId)) return false;
         const state = this.activeConversations.get(playerId);
-        if (state) state.endedByPerson = true;
+        if (state) {
+            state.endedByPerson = true;
+            // What they said after "stop" while the bot was thinking about it is not for the bot, unless it calls the bot by name
+            state.messageQueue = state.messageQueue.filter((queued) => this.bot?.isForBot(spaceName, playerId, queued.originalMessage) === true);
+            state.pendingAnswers = [];
+        }
         return true;
     }
 
