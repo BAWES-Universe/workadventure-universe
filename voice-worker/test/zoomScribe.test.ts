@@ -20,10 +20,10 @@ afterEach(async () => {
 async function fakeScribe(onText: (ws: WebSocket, message: Record<string, unknown>) => void) {
     const server = http.createServer();
     const wss = new WebSocketServer({ noServer: true });
-    const seen = { sockets: [] as { url: string; auth?: string }[], audio: [] as Buffer[], messages: [] as Record<string, unknown>[] };
+    const seen = { sockets: [] as { url: string; auth?: string; protocol?: string }[], audio: [] as Buffer[], messages: [] as Record<string, unknown>[] };
     let current: WebSocket | undefined;
     server.on('upgrade', (req, socket, head) => {
-        seen.sockets.push({ url: req.url ?? '', auth: req.headers.authorization });
+        seen.sockets.push({ url: req.url ?? '', auth: req.headers.authorization, protocol: req.headers['sec-websocket-protocol'] });
         wss.handleUpgrade(req, socket, head, (ws) => {
             current = ws;
             ws.on('message', (data, isBinary) => {
@@ -85,7 +85,7 @@ describe("hearing with Zoom's Scribe", () => {
         stream.finish();
         await waitFor('the last words', () => got.finals.length === 1);
         expect(got.finals).toEqual(['Hello there.']);
-        expect(s.seen.sockets).toEqual([{ url: '/v2/aiservices/scribe/live', auth: `Bearer ${KEY}` }]);
+        expect(s.seen.sockets).toEqual([{ url: '/v2/aiservices/scribe/live', auth: `Bearer ${KEY}`, protocol: 'live-asr' }]);
         expect(s.seen.messages).toEqual([
             { type: 'session.update', language: 'ar-AE', audio: { format: 'pcm16' }, config: { model: 'whisper' }, turn_detection: { type: 'none' } },
             { type: 'input_audio_buffer.commit' },
