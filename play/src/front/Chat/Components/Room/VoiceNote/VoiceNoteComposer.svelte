@@ -162,10 +162,21 @@
 
     $: cancelArmed = move.cancel >= 1;
 
-    function showHint(text: string) {
+    // The hint after a tap also offers a way in for a finger that cannot hold (one hand, switch access, motor needs): tap it to record.
+    let hintTap = false;
+
+    function showHint(text: string, tapToo = false) {
         hint = text;
+        hintTap = tapToo;
         clearTimeout(hintTimer);
-        hintTimer = setTimeout(() => (hint = ""), 2600);
+        hintTimer = setTimeout(() => (hint = ""), tapToo ? 4000 : 2600);
+    }
+
+    // Opens the recorder locked, as the keyboard and screen readers do: no hold is needed.
+    function recordFromHint() {
+        hint = "";
+        clearTimeout(hintTimer);
+        start().catch((error) => console.error(error));
     }
 
     // The finger is watched on the window, not only on the mic: locking swaps the mic for the recorder bar, and the
@@ -263,7 +274,7 @@
         if (!wasHolding && !wasLocked) {
             // A tap: nothing is recorded. It says how.
             endHold();
-            showHint($LL.chat.voiceNote.holdToRecord());
+            showHint($LL.chat.voiceNote.holdToRecord(), true);
             return;
         }
         pressed = false;
@@ -301,7 +312,7 @@
         }
         if (holdRelease(false, seconds) === "tooShort") {
             discard();
-            showHint($LL.chat.voiceNote.holdToRecord());
+            showHint($LL.chat.voiceNote.holdToRecord(), true);
             return;
         }
         // The bar stays quiet while the note goes: the recorder's buttons come back only if it could not be sent.
@@ -591,7 +602,14 @@
     </button>
 {/if}
 {#if hint}
-    <div class="voice-hint" role="status" data-testid="voiceHint">{hint}</div>
+    <div class="voice-hint" class:voice-hint-tap={hintTap} role="status" data-testid="voiceHint">
+        <span>{hint}</span>
+        {#if hintTap}
+            <button type="button" class="voice-hint-action" data-testid="voiceHintRecord" on:click={recordFromHint}>
+                {$LL.chat.voiceNote.tapToRecord()}
+            </button>
+        {/if}
+    </div>
 {/if}
 
 <style>
@@ -721,6 +739,27 @@
         border: 1px solid rgba(255, 255, 255, 0.16);
         pointer-events: none;
         z-index: 2;
+    }
+    .voice-hint-tap {
+        pointer-events: auto;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 2px;
+    }
+    /* A 44px target: the way in for a finger that cannot hold. */
+    .voice-hint-action {
+        min-height: 44px;
+        min-width: 44px;
+        padding: 0 4px;
+        font-size: 14px;
+        font-weight: 600;
+        color: #fff;
+        text-decoration: underline;
+        text-underline-offset: 3px;
+        background: none;
+        border: 0;
+        cursor: pointer;
     }
     /* Send is the one filled button: the brand gradient, as in the message box. */
     .voice-send {

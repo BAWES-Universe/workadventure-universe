@@ -707,6 +707,7 @@ const chat: BaseTranslation = {
         micMissing: "No microphone was found. Plug one in, then try again.",
         recordingFailed: "The recording could not start. Try again.",
         holdToRecord: "Hold to record, release to send",
+        tapToRecord: "Tap to record instead",
         holdAgain: "Hold again to record",
         slideToCancel: "Slide to cancel",
         releaseToCancel: "Release to cancel",

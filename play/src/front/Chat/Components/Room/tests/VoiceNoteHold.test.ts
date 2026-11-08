@@ -285,6 +285,25 @@ describe("recording a voice note by holding the mic", () => {
         expect(find("voiceRecording")).not.toBeNull();
     });
 
+    it("offers a tap on the hint for a finger that cannot hold, and opens a locked recording", async () => {
+        pointer("pointerdown", 200, 400);
+        await settle(50);
+        pointer("pointerup", 200, 400);
+        await settle();
+        expect(recorder.start).not.toHaveBeenCalled();
+        // The hint stays long enough to be reached.
+        await settle(3000);
+        const action = find("voiceHintRecord");
+        expect(action).not.toBeNull();
+
+        action?.click();
+        await settle();
+        expect(recorder.start).toHaveBeenCalledTimes(1);
+        expect(find("voiceRecording")).not.toBeNull();
+        expect(find("voiceHint")).toBeNull();
+        expect(onSend).not.toHaveBeenCalled();
+    });
+
     describe("in a language read right to left, the mic is at the left end", () => {
         const rtl = () => {
             const button = find("voiceRecordButton");
