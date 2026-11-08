@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { getContext, hasContext, onDestroy } from "svelte";
+    import { afterUpdate, getContext, hasContext, onDestroy } from "svelte";
     import type { Readable } from "svelte/store";
     import type { ChatMessageContent } from "../../../Connection/ChatConnection";
     import LL from "../../../../../i18n/i18n-svelte";
@@ -49,6 +49,17 @@
     let playerFailed = false;
 
     $: isVoice = $content.isVoice === true;
+    // What a bot heard in the note, drawn inside its bubble: "Listening…", then two lines of words, or that it could not.
+    $: transcript = isVoice ? $content.transcript : undefined;
+    let transcriptOpen = false;
+    let transcriptOverflows = false;
+    let transcriptText: HTMLElement | undefined;
+    afterUpdate(() => {
+        // Only the folded text can tell whether it was cut: opened, "less" stays.
+        if (transcriptText && !transcriptOpen) {
+            transcriptOverflows = transcriptText.scrollHeight > transcriptText.clientHeight + 1;
+        }
+    });
     $: levels = resampleWaveform($content.voiceWaveform ?? readLevels ?? [], VOICE_NOTE_BARS);
     $: duration = $content.voiceDuration ?? readDuration ?? playerDuration;
     // What a voice note has to say about itself is its shape. An audio file shows a title above its shape, and its
@@ -172,6 +183,7 @@
     class:audio-file={!isVoice}
     class:mine={isMine}
     class:with-player={canOpenInPlayer && !failed}
+    class:with-transcript={transcript !== undefined}
     data-testid={isVoice ? "voiceNote" : "audioFile"}
     on:click={dropClickFocus}
 >
@@ -251,6 +263,36 @@
         >
             {SPEEDS[speed]}×
         </button>
+    {/if}
+    {#if transcript}
+        <div class="transcript transcript-in" class:open={transcriptOpen} data-testid="voiceTranscript">
+            {#if transcript.state === "listening"}
+                <div class="transcript-status" role="status" data-testid="voiceTranscriptListening">
+                    <span class="transcript-dots" aria-hidden="true"><i /><i /><i /></span>
+                    {$LL.chat.voiceNote.listening()}
+                </div>
+            {:else if transcript.state === "failed"}
+                <div class="transcript-status" data-testid="voiceTranscriptFailed">
+                    <IconAlertTriangle font-size="14" />
+                    {$LL.chat.voiceNote.couldntListen()}
+                </div>
+            {:else}
+                <div class="transcript-text" dir="auto" bind:this={transcriptText} data-testid="voiceTranscriptText">
+                    {transcript.text}
+                </div>
+                {#if transcriptOverflows || transcriptOpen}
+                    <button
+                        type="button"
+                        class="transcript-more"
+                        aria-expanded={transcriptOpen}
+                        data-testid="voiceTranscriptMore"
+                        on:click={() => (transcriptOpen = !transcriptOpen)}
+                    >
+                        {transcriptOpen ? $LL.chat.voiceNote.lessWords() : $LL.chat.voiceNote.moreWords()}
+                    </button>
+                {/if}
+            {/if}
+        </div>
     {/if}
     {#if canOpenInPlayer && !failed}
         <button
@@ -377,6 +419,101 @@
     }
     .voice-speed:disabled {
         opacity: 0.5;
+    }
+
+    /* What a bot heard: inside the note's own bubble, with no line and no box, so the note and its words read as one message. */
+    .transcript {
+        grid-column: 1 / -1;
+        margin-top: 8px;
+        padding: 0 4px 2px 2px;
+        font-size: 13px;
+        line-height: 18px;
+        color: rgba(255, 255, 255, 0.9);
+        text-align: start;
+    }
+    .transcript-text {
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        overflow-wrap: anywhere;
+        unicode-bidi: plaintext;
+    }
+    .transcript.open .transcript-text {
+        display: block;
+        -webkit-line-clamp: unset;
+        line-clamp: unset;
+    }
+    /* A 44px by 44px target with a small word in it, from either side of the line. */
+    .transcript-more {
+        display: inline-block;
+        min-height: 44px;
+        min-width: 44px;
+        margin: -6px 0 -10px;
+        padding: 6px 12px;
+        padding-inline-start: 0;
+        text-align: start;
+        background: none;
+        border: 0;
+        color: rgba(255, 255, 255, 0.55);
+        font-size: 12px;
+        font-family: inherit;
+        cursor: pointer;
+    }
+    .transcript-status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: rgba(255, 255, 255, 0.62);
+    }
+    .transcript-status :global(svg) {
+        flex: none;
+    }
+    .transcript-dots {
+        display: inline-flex;
+        gap: 3px;
+    }
+    .transcript-dots i {
+        width: 5px;
+        height: 5px;
+        border-radius: 9999px;
+        background: rgba(255, 255, 255, 0.6);
+        animation: transcript-dot 1.1s ease-in-out infinite;
+    }
+    .transcript-dots i:nth-child(2) {
+        animation-delay: 0.18s;
+    }
+    .transcript-dots i:nth-child(3) {
+        animation-delay: 0.36s;
+    }
+    @keyframes transcript-dot {
+        0%,
+        80%,
+        100% {
+            opacity: 0.25;
+        }
+        40% {
+            opacity: 1;
+        }
+    }
+    .transcript-in {
+        animation: transcript-in 0.35s ease-out;
+    }
+    @keyframes transcript-in {
+        from {
+            opacity: 0;
+            transform: translateY(-3px);
+        }
+    }
+    @media (prefers-reduced-motion: reduce) {
+        .transcript-dots i {
+            animation: none;
+            opacity: 0.6;
+        }
+        .transcript-in {
+            animation: none;
+        }
     }
 
     /* An audio file: the same player with its title and Download on top, in one piece. */

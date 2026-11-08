@@ -240,6 +240,8 @@ export interface BotAPIOptions {
     dmStatus?: (botIds: string[]) => Promise<Record<string, string>>;
     /** The room a bot lives in, for its profile in a direct message; only when Matrix DMs are on. */
     dmRoom?: (botId: string) => Promise<{ url: string; room: string; world: string; universe: string } | undefined>;
+    /** Whether a bot hears voice notes, for the mic in its chat: the same hearing its voice calls use. Left out, no bot is said to hear. */
+    noteHearing?: { canHear(botId: string): Promise<boolean> };
     /** "Hear this voice say hello" on the bot page (#1852). Left out, it is built from the bot server's own parts the first time it is asked for; null: not available. */
     voiceHello?: VoiceHello | null;
 }
@@ -276,6 +278,7 @@ export class BotAPI {
     private botRegistry: BotRegistry;
     private server: any = null;
     private dmStatus: BotAPIOptions['dmStatus'];
+    private noteHearing: BotAPIOptions['noteHearing'];
     private dmRoom: BotAPIOptions['dmRoom'];
     private voiceHelloOption: BotAPIOptions['voiceHello'];
 
@@ -292,6 +295,7 @@ export class BotAPI {
         this.adminApiService = adminApiService;
         this.botRegistry = botRegistry;
         this.dmStatus = options.dmStatus;
+        this.noteHearing = options.noteHearing;
         this.dmRoom = options.dmRoom;
         this.voiceHelloOption = options.voiceHello;
 
@@ -867,6 +871,27 @@ export class BotAPI {
             } catch (error) {
                 console.error(`[BotAPI] Error reading the room of bot ${botId}:`, error);
                 res.status(500).json({ error: 'Could not read the room' });
+            }
+        });
+
+        // Whether a bot hears voice notes, for the mic in its chat: shown only on a yes. Only for someone who may message it, the same
+        // people the room route answers, so nobody else learns how a bot is set up.
+        this.app.get('/api/bots/:botId/hears', requireSession, async (req: BotAPIRequest, res: Response) => {
+            const { botId } = req.params;
+            if (!/^[A-Za-z0-9_-]{1,64}$/.test(botId)) {
+                res.status(400).json({ error: 'Not a bot id' });
+                return;
+            }
+            try {
+                const person = { signedIn: true, identifier: req.sessionUuid };
+                if (!this.noteHearing || !(await this.botManager.getAccessGate().check(botId, 'dm', person)).allowed) {
+                    res.json({ hears: false });
+                    return;
+                }
+                res.json({ hears: await this.noteHearing.canHear(botId) });
+            } catch (error) {
+                console.error(`[BotAPI] Error reading whether bot ${botId} hears:`, error);
+                res.status(500).json({ error: 'Could not read whether the bot hears' });
             }
         });
 

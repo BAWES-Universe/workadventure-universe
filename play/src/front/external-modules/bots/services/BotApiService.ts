@@ -1482,6 +1482,24 @@ export class BotApiService {
      * `playerUuid` is who is asking. A signed-in player whose Orbit session did not come along is then told so
      * (`signIn`) instead of being asked about as a guest.
      */
+    /** Whether a bot hears voice notes (its chat shows the mic only on a yes); null when that could not be found out. */
+    async getBotHears(botId: string): Promise<boolean | null> {
+        if (!this.botServerUrl) return null;
+        const stop = new AbortController();
+        const timer = setTimeout(() => stop.abort(), DM_STATUS_TIMEOUT_MS);
+        try {
+            const response = await this.fetchBotServer(`/api/bots/${encodeURIComponent(botId)}/hears`, {
+                signal: stop.signal,
+            });
+            const data = (await response.json()) as { hears?: unknown };
+            return typeof data.hears === "boolean" ? data.hears : null;
+        } catch {
+            return null;
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
     async getBotAccess(botId: string, action: "summon" | "chat" | "dm", playerUuid?: string): Promise<BotAccessAnswer> {
         // A bot server or sign-in that stalls must not hold the Summon button back: after a few seconds it is "unknown"
         const stop = new AbortController();

@@ -1401,6 +1401,7 @@ message SpaceEvent {
     SpaceStreamMessage spaceStreamMessage = 5;
     LowerAllHandsPublicMessage lowerAllHands = 6;
     SpaceMessageReaction spaceMessageReaction = 7;
+    SpaceMessageTranscript spaceMessageTranscript = 8;
   }
 }
 
@@ -1592,6 +1593,16 @@ message SpaceMessageReaction {
   string reaction = 2;
   bool add = 3;                     // false removes it
   optional string name = 4;         // Filled in by the server from the sender
+}
+
+/**
+ * What a bot heard in a voice note sent to the nearby chat. Sent by the bot, to everyone who got the note, and edited by
+ * sending it again: the newest state of a note wins. Receivers accept it only from a bot.
+ */
+message SpaceMessageTranscript {
+  string messageId = 1;       // the voice note it is about: the id its sender chose
+  string state = 2;           // "listening", "heard" or "failed"
+  optional string text = 3;   // the words, once heard
 }
 
 message SpaceIsTyping {

@@ -58,6 +58,27 @@ eventProcessor.registerPublicEventProcessor("spaceMessageReaction", (event, send
     };
 });
 
+eventProcessor.registerPublicEventProcessor("spaceMessageTranscript", (event, senderId, users) => {
+    if (event.$case !== "spaceMessageTranscript") {
+        // FIXME: improve the typing of the method to avoid this
+        throw new Error("Invalid event type");
+    }
+
+    if (!users.some((user) => user.spaceUserId === senderId)) {
+        throw new Error("Sender not found");
+    }
+
+    // Passed on as it is: receivers accept it only from a bot, and only the words and the state are read.
+    return {
+        $case: "spaceMessageTranscript",
+        spaceMessageTranscript: {
+            messageId: event.spaceMessageTranscript.messageId,
+            state: event.spaceMessageTranscript.state,
+            text: event.spaceMessageTranscript.text,
+        },
+    };
+});
+
 eventProcessor.registerPublicEventProcessor("spaceIsTyping", (event, senderId, users) => {
     if (event.$case !== "spaceIsTyping") {
         // FIXME: improve the typing of the method to avoid this

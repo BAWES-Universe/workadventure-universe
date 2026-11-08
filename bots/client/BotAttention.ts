@@ -149,6 +149,21 @@ export class BotAttention {
         return attention !== 'ignored';
     }
 
+    /**
+     * Whether a voice note is for the bot, which decides if its clip is ever fetched and sent to a hearing provider. On its own with
+     * one person, every note is for it. With others in the bubble only a note that replies to the bot's own message is (as good as its
+     * name: it brings back someone who said they were done), or one from the person the bot is summoned to. A follow-up window never
+     * is: it was made for typed lines and speech the person chose to send, and a note in a group can be meant for anyone.
+     */
+    noteIsForBot(spaceName: string, speakerId: number, repliesToBot: boolean): boolean {
+        if (!this.isGroup(spaceName, speakerId)) return true;
+        if (repliesToBot) {
+            this.closed.get(spaceName)?.delete(speakerId);
+            return true;
+        }
+        return this.isSummonedBy(speakerId);
+    }
+
     /** Whether this person shares the bubble with at least one other person (#1670: only then does a window exist to end). */
     inGroup(spaceName: string, speakerId: number): boolean {
         return this.isGroup(spaceName, speakerId);
