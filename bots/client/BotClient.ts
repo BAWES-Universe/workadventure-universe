@@ -48,6 +48,8 @@ import { BotVoiceSettings } from '../voice/VoiceSettings';
 import { BotSpeech } from '../voice/BotSpeech';
 import { OrbitTurnGate, pausedLine } from '../voice/VoiceAllowance';
 import { ListeningBudget } from '../voice/VoiceListening';
+import { sharedNoteHearing } from '../voice/NoteHearingWiring';
+import { tidyTranscript } from '../voice/NoteHearing';
 import { pausedAtCapacityEvent } from '../voice/VoiceLoad';
 import { captureServerEvent } from '../ai/PostHogClient';
 import { BotAttention, followUpSeconds } from './BotAttention';
@@ -2542,6 +2544,70 @@ export class BotClient {
         return { signedIn: access.signedIn, identifier: access.identifier, name };
     }
 
+    /** A recorded voice note, as the game names it: an audio file called "Voice message". */
+    static isVoiceNote(spaceMessage: { mediaType?: string; fileName?: string }): boolean {
+        return spaceMessage.mediaType === 'audio' && /^voice message\.[a-z0-9]{1,5}$/i.test((spaceMessage.fileName ?? '').trim());
+    }
+
+    /**
+     * Whether a voice note in nearby chat is for this bot and the bot can hear it: sent to it (alone with it, as a reply to its own
+     * message, or from the person it is summoned to) and its hearing is set up. When not, the note is handled as it always was.
+     */
+    private async noteIsForMe(
+        spaceName: string,
+        senderId: number,
+        spaceMessage: { id?: string; url?: string; mediaType?: string; fileName?: string; replyTo?: { senderUserId?: string } }
+    ): Promise<boolean> {
+        if (!BotClient.isVoiceNote(spaceMessage) || !spaceMessage.url || !spaceMessage.id) return false;
+        const hearing = sharedNoteHearing(adminApiService);
+        if (!hearing) return false;
+        const mine = this.spaces.get(spaceName);
+        const repliesToMe = mine !== undefined && spaceMessage.replyTo?.senderUserId === mine;
+        if (!this.attention.noteIsForBot(spaceName, senderId, repliesToMe)) return false;
+        return hearing.canHear(this.config.botId);
+    }
+
+    /**
+     * Hears a voice note and tells everyone who got it, so each shows "Listening…" and then the words under the note (or that it could
+     * not be heard). Returns the words for the bot, or 'unheard' when there are none to give: the bot then does not answer a file it
+     * cannot read.
+     */
+    private async hearNearbyNote(
+        spaceName: string,
+        spaceMessage: { id?: string; url?: string; fileName?: string; voiceDurationMs?: number }
+    ): Promise<string> {
+        const hearing = sharedNoteHearing(adminApiService);
+        const id = spaceMessage.id;
+        if (!hearing || !id || !spaceMessage.url) return 'unheard';
+        this.sendTranscript(spaceName, id, 'listening');
+        const heard = await hearing.hear(this.config.botId, `${spaceName}|${id}`, {
+            url: spaceMessage.url,
+            filename: spaceMessage.fileName ?? 'Voice message',
+            ...(spaceMessage.voiceDurationMs ? { seconds: spaceMessage.voiceDurationMs / 1000 } : {}),
+        });
+        const words = 'text' in heard ? tidyTranscript(heard.text, hearing.limits.maxChars) : '';
+        if (!words) {
+            this.sendTranscript(spaceName, id, 'failed');
+            return 'unheard';
+        }
+        this.sendTranscript(spaceName, id, 'heard', words);
+        return `[Voice note] ${words}`;
+    }
+
+    /** What the bot heard in a note, for everyone in the space: the newest state of the note wins. */
+    private sendTranscript(spaceName: string, messageId: string, state: 'listening' | 'heard' | 'failed', text?: string): void {
+        if (!this.spaces.get(spaceName)) return;
+        this.send({
+            message: {
+                $case: 'publicEvent',
+                publicEvent: {
+                    spaceName,
+                    spaceEvent: { event: { $case: 'spaceMessageTranscript', spaceMessageTranscript: { messageId, state, ...(text ? { text } : {}) } } },
+                },
+            },
+        });
+    }
+
     /**
      * The files someone uploaded with a nearby chat message (#1508), with the names they were sent with: the upload and
      * the rest of its gallery, never the links typed in the text.
@@ -3467,12 +3533,22 @@ export class BotClient {
                         }
                         // With others in the bubble, a line not meant for the bot goes no further: it is not read, saved or
                         // answered, and the person is not even asked about (#1220). Before anything else is done with it.
-                        if (!this.attention.hears(spaceName, senderId, spaceMessage.message)) {
+                        // A voice note is for the bot only when it was sent to it (alone with it, or as a reply to its message): only then
+                        // is its clip ever sent to a hearing provider. A follow-up window alone never is (the note is then read as before).
+                        const noteForBot = await this.noteIsForMe(spaceName, senderId, spaceMessage);
+                        if (!noteForBot && !this.attention.hears(spaceName, senderId, spaceMessage.message)) {
                             break;
                         }
                         // Before anything is done with the message (links looked up, files read, the AI asked)
                         if (!(await this.mayChat(spaceName, senderId, message))) {
                             break;
+                        }
+                        // Heard once, here; the people who got the note see what was heard under it
+                        let lineText = spaceMessage.message;
+                        if (noteForBot) {
+                            const heard = await this.hearNearbyNote(spaceName, spaceMessage);
+                            if (heard === 'unheard') break;
+                            lineText = lineText ? `${lineText}\n${heard}` : heard;
                         }
                         // Said out loud, not typed, to this bot and let through: a card waiting for an answer says so (#1661)
                         if (spaceMessage.spoken) this.noteSpoken(spaceName, senderId);
@@ -3500,7 +3576,7 @@ export class BotClient {
                             : spaceMessage.mimeType;
                         this.behavior.onChatMessage(
                             spaceName,
-                            spaceMessage.message,
+                            lineText,
                             senderId,
                             detectedUrl,
                             spaceMessage.mediaType,

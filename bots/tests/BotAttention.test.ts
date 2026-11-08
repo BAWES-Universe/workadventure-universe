@@ -273,3 +273,49 @@ describe('a person who says they are done (#1670)', () => {
         expect(attention.endable(SPACE, SARA)).toBe(true);
     });
 });
+
+describe('a voice note in the bubble: who it is for', () => {
+    it('is for the bot when the person is on their own with it', () => {
+        const { attention } = setup();
+        attention.personJoined(SPACE, KHALID);
+        expect(attention.noteIsForBot(SPACE, KHALID, false)).toBe(true);
+    });
+
+    it('is not for the bot in a group just because the bot answered the person a moment ago', () => {
+        const { attention } = setup();
+        attention.personJoined(SPACE, KHALID);
+        attention.personJoined(SPACE, SARA);
+        attention.answered(SPACE, KHALID);
+        // A typed line would be let through by the follow-up window, a note never is
+        expect(attention.attention(SPACE, KHALID, 'and one more thing')).toBe('follow-up');
+        expect(attention.noteIsForBot(SPACE, KHALID, false)).toBe(false);
+    });
+
+    it('is not for the bot in a group when it only names the bot in a caption', () => {
+        // The caption is no proof it is meant for the bot: only a reply to the bot's own message or a summon counts
+        const { attention } = setup();
+        attention.personJoined(SPACE, KHALID);
+        attention.personJoined(SPACE, SARA);
+        expect(attention.noteIsForBot(SPACE, SARA, false)).toBe(false);
+    });
+
+    it('is for the bot in a group when it replies to the bot, and that brings back someone who said they were done', () => {
+        const { attention } = setup();
+        attention.personJoined(SPACE, KHALID);
+        attention.personJoined(SPACE, SARA);
+        attention.ended(SPACE, KHALID);
+        expect(attention.noteIsForBot(SPACE, KHALID, true)).toBe(true);
+        expect(attention.attention(SPACE, KHALID, 'go on')).toBe('ignored');
+        attention.answered(SPACE, KHALID);
+        expect(attention.attention(SPACE, KHALID, 'go on')).toBe('follow-up');
+    });
+
+    it('is for the bot in a group when the bot is summoned to the person', () => {
+        const { attention, summonedTo } = setup();
+        attention.personJoined(SPACE, KHALID);
+        attention.personJoined(SPACE, SARA);
+        summonedTo.add(KHALID);
+        expect(attention.noteIsForBot(SPACE, KHALID, false)).toBe(true);
+        expect(attention.noteIsForBot(SPACE, SARA, false)).toBe(false);
+    });
+});

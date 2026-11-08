@@ -102,3 +102,11 @@ export function buildNoteHearing(admin: AdminApiService, env: NodeJS.ProcessEnv 
         },
     };
 }
+
+let shared: NoteHearingService | null | undefined;
+
+/** One hearing for the whole bot server, so a note is heard once whether it came by direct message or in nearby chat. */
+export function sharedNoteHearing(admin: AdminApiService, env: NodeJS.ProcessEnv = process.env): NoteHearingService | null {
+    if (shared === undefined) shared = buildNoteHearing(admin, env);
+    return shared;
+}
