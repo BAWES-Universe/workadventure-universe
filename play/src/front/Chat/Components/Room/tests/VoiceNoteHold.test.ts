@@ -227,4 +227,35 @@ describe("recording a voice note by holding the mic", () => {
         expect(find("voiceRecording")).not.toBeNull();
         expect(find("voiceStopButton")).not.toBeNull();
     });
+    it("does not carry a release from a recording that failed to start into the next one", async () => {
+        recorder.start.mockRejectedValueOnce(new DOMException("no", "NotAllowedError"));
+        pointer("pointerdown", 200, 400);
+        await settle(250);
+        pointer("pointerup", 200, 400);
+        await settle();
+        expect(find("voiceRecordButton")).not.toBeNull();
+
+        // The next one is a click that opens a locked recording: no stale release ends it.
+        find("voiceRecordButton")?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 }));
+        await settle(500);
+        expect(find("voiceRecording")).not.toBeNull();
+        expect(onSend).not.toHaveBeenCalled();
+        expect(cancel).not.toHaveBeenCalled();
+    });
+
+    it("asks for sound again when the finger lifts", async () => {
+        const resume = vi.fn();
+        recorder.start.mockResolvedValueOnce({
+            level: () => 0,
+            metering: () => false,
+            resume,
+            cancel,
+            stop: () => Promise.resolve({ file: new File([new Uint8Array(10)], "Voice message.m4a"), details }),
+        });
+        await press();
+        await settle(1200);
+        pointer("pointerup", 200, 400);
+        await settle();
+        expect(resume).toHaveBeenCalledTimes(1);
+    });
 });

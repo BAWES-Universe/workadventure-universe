@@ -165,6 +165,7 @@
     }
 
     function endHold() {
+        releasedWhileStarting = undefined;
         clearTimeout(holdTimer);
         holdTimer = undefined;
         pressed = false;
@@ -227,6 +228,8 @@
 
     function onPressEnd(event: PointerEvent) {
         if (!pressed || event.pointerId !== pressId) return;
+        // A finger lifting is a tap to iOS: the one moment it lets sound run, if it had not yet.
+        recording?.resume?.();
         const cancelled = event.type === "pointercancel";
         const wasHolding = holding;
         const wasLocked = lockWanted;
@@ -372,6 +375,7 @@
     /** Drops the recording or the note held for review, and lets the microphone go. */
     export function discard() {
         dropped++;
+        releasedWhileStarting = undefined;
         if (holding || pressed) endHold();
         clearInterval(timer);
         recording?.cancel();
