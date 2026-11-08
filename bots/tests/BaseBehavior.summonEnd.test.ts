@@ -35,6 +35,9 @@ class TestableBehavior extends BaseBehavior {
     know(userId: number, uuid: string): void {
         this.userIdToUuid.set(userId, uuid);
     }
+    standNear(userId: number): void {
+        this.nearbyPlayers.set(userId, { x: 1060, y: 1000 });
+    }
     stoodInBubble(): void {
         this.summonerJoinedBubble = true;
     }
@@ -189,8 +192,9 @@ describe('a summon ends when its person has gone', () => {
             bot.getBotId = () => undefined;
             bot.getPlayerInfo = () => undefined;
             behavior.attach(bot);
-            await behavior.onSpaceUserJoined('s', { id: 7, uuid: 'someoneElse' } as never);
-            behavior.onSpaceUserLeft('s', 7);
+            behavior.standNear(7);
+            await behavior.onSpaceUserJoined('s', { id: 8, uuid: 'friend' } as never);
+            behavior.onSpaceUserLeft('s', 8);
             expect(behavior.summoned()).toBe(true);
 
             await behavior.onSpaceUserJoined('s', { id: 7, uuid: 'me' } as never);
