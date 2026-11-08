@@ -29,7 +29,7 @@
     import LL, { locale } from "../../../../i18n/i18n-svelte";
     import { formatPeopleNames } from "../TopRow/TopRowSummary";
     import { availabilityFromNote, botChatClosed, botHeaderState, botIdFromChatId } from "../../Bots/BotChatStatus";
-    import { botStatusCache } from "../../Bots/BotStatusStore";
+    import { botHearsCache, botStatusCache } from "../../Bots/BotStatusStore";
     import { nextReplyLimitExpiry, shownReplyLimitIds } from "../../Bots/BotReplyLimit";
     import BotStatusNoteCard from "../Bots/BotStatusNoteCard.svelte";
     import BotReplyLimitCard from "../Bots/BotReplyLimitCard.svelte";
@@ -409,6 +409,8 @@
     $: partnerMembership = partner?.membership ?? readable(undefined);
     $: botLeft = partnerBotId !== undefined && $partnerMembership === "leave";
     $: botAvailability = partnerBotId ? botStatusCache.store(partnerBotId) : readable(undefined);
+    // The mic shows in a bot's chat only when that bot can hear the note
+    $: botHears = partnerBotId ? botHearsCache.store(partnerBotId) : readable(false);
     $: botState = partnerBotId ? $botAvailability : undefined;
     $: botClosed = botChatClosed(botState);
     $: lastBotMessage = partnerBotId ? [...$messages].reverse().find((message) => !message.isMyMessage) : undefined;
@@ -1382,7 +1384,7 @@
                         {room}
                         partner={$directPartner}
                         inputHint={botPlaceholder}
-                        allowVoiceNotes={partnerBotId === undefined}
+                        allowVoiceNotes={partnerBotId === undefined || $botHears}
                         bind:this={messageInputBarRef}
                     />
                 {/key}

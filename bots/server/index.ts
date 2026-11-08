@@ -67,6 +67,7 @@ const botManager = new BotManager(adminApiService, botRegistry);
 const preRouters: Router[] = [];
 let matrixBridge: MatrixDmBridge | null = null;
 let matrixRouter: MatrixAppServiceRouter | null = null;
+let noteHearing: ReturnType<typeof buildNoteHearing> = null;
 let dmStatus: ((botIds: string[]) => Promise<Record<string, BotAvailability | 'unknown'>>) | undefined;
 let dmReplies: DmReplyService | undefined;
 let dmCards: CardSurface | undefined;
@@ -147,7 +148,7 @@ async function setupMatrix(): Promise<void> {
         reply: (botId, person, text, attachments, hooks) => dmReplyService.reply(botId, person, text, attachments, hooks),
         rooms: botRegistry,
         uploadAttachment,
-        noteHearing: buildNoteHearing(adminApiService) ?? undefined,
+        noteHearing: (noteHearing = buildNoteHearing(adminApiService)) ?? undefined,
         restingLine: (config, text) => dmReplyService.restingLine(config, text),
         waiting: botRegistry,
         wokaPicture: (config) => botWokaPicture(config, { wokaList: (roomUrl, botId) => adminApiService.getBotWokaList(roomUrl, botId) }),
@@ -249,7 +250,7 @@ async function start() {
 
         // Before any bot connects: a bot shows Message only when Synapse accepted the registration
         await setupMatrix();
-        botAPI = new BotAPI(botManager, adminApiService, botRegistry, preRouters, { dmStatus, dmRoom });
+        botAPI = new BotAPI(botManager, adminApiService, botRegistry, preRouters, { dmStatus, dmRoom, noteHearing: noteHearing ?? undefined });
 
         // Initialize bot manager
         await botManager.initialize();
