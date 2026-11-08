@@ -90,7 +90,7 @@ function heard() {
     return { got, events };
 }
 
-const settings = (url: string, extra: object = {}) => ({ adapter: 'soniox', model: 'stt-rt-v5', key: new Secret(KEY), endpoint: url, ...extra });
+const settings = (url: string, extra: object = {}) => ({ adapter: 'soniox', model: 'stt-rt-v6', key: new Secret(KEY), endpoint: url, ...extra });
 const audio = (ms: number) => new Int16Array(16 * ms).fill(100);
 
 describe('hearing with Soniox', () => {
@@ -104,10 +104,103 @@ describe('hearing with Soniox', () => {
         stream.push(audio(100));
         await waitFor('the audio to arrive', () => soniox.audioBytes === 2 * 16 * 200);
         expect(soniox.auth).toEqual([`Bearer ${KEY}`]);
-        expect(soniox.configs[0]).toEqual({ model: 'stt-rt-v5', audio_format: 's16le', sample_rate: 16000, num_channels: 1, language_hints: ['ar'] });
+        expect(soniox.configs[0]).toEqual({
+            model: 'stt-rt-v6',
+            audio_format: 's16le',
+            sample_rate: 16000,
+            num_channels: 1,
+            // Soniox's own end-of-speech detection, with its recommended starting point for voice AI
+            enable_endpoint_detection: true,
+            max_endpoint_delay_ms: 1500,
+            endpoint_latency_adjustment_level: 2,
+            endpoint_sensitivity: 0.3,
+            language_hints: ['ar'],
+        });
         // The key is only in the header, never in the start message
         expect(JSON.stringify(soniox.configs[0])).not.toContain(KEY);
         stream.close();
+    });
+
+    it('hints the plain language when the profile names a regional one', async () => {
+        const soniox = await fakeSoniox();
+        const stream = new SonioxRecognition().listen(settings(soniox.url, { language: 'ar-KW' }), heard().events);
+        await waitFor('the stream to be configured', () => soniox.configs.length === 1);
+        expect(soniox.configs[0].language_hints).toEqual(['ar']);
+        stream.close();
+    });
+
+    it.each(['stt-rt-v5', 'stt-rt-v4', 'stt-rt-v3', 'stt-rt-preview-v2'])('listens with the current model when the profile names %s, which Soniox retired', async (model) => {
+        const soniox = await fakeSoniox();
+        const stream = new SonioxRecognition().listen(settings(soniox.url, { model }), heard().events);
+        await waitFor('the stream to be configured', () => soniox.configs.length === 1);
+        expect(soniox.configs[0].model).toBe('stt-rt-v6');
+        stream.close();
+    });
+
+    it('keeps a model it does not know, and only sends the endpoint tuning to models from v5 on', async () => {
+        const soniox = await fakeSoniox();
+        const custom = new SonioxRecognition().listen(settings(soniox.url, { model: 'my-custom-model' }), heard().events);
+        await waitFor('the stream to be configured', () => soniox.configs.length === 1);
+        expect(soniox.configs[0]).toMatchObject({ model: 'my-custom-model', enable_endpoint_detection: true, max_endpoint_delay_ms: 1500 });
+        expect(soniox.configs[0]).not.toHaveProperty('endpoint_sensitivity');
+        custom.close();
+        const newer = new SonioxRecognition().listen(settings(soniox.url, { model: 'stt-rt-v7' }), heard().events);
+        await waitFor('the stream to be configured', () => soniox.configs.length === 2);
+        expect(soniox.configs[1]).toMatchObject({ model: 'stt-rt-v7', endpoint_sensitivity: 0.3, endpoint_latency_adjustment_level: 2 });
+        newer.close();
+    });
+
+    it('says once when Soniox hears the person finish, and waits longer than the worker for quiet alone', async () => {
+        const soniox = await fakeSoniox();
+        let endpoints = 0;
+        const { events } = heard();
+        const stream = new SonioxRecognition().listen(settings(soniox.url), { ...events, endpoint: () => endpoints++ });
+        expect(stream.pauseMs).toBe(1800);
+        await waitFor('the stream to be configured', () => soniox.configs.length === 1);
+        soniox.send({ tokens: [{ text: 'Hi', is_final: false }] });
+        soniox.send({ tokens: [{ text: 'Hi', is_final: true }, { text: ' there', is_final: true }, { text: '<end>', is_final: true }] });
+        soniox.send({ tokens: [{ text: '<end>', is_final: true }] });
+        await waitFor('the endpoint', () => endpoints === 1);
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        expect(endpoints).toBe(1);
+        stream.close();
+    });
+
+    it('tells Soniox the names to expect as context terms, spelled as given (#1864)', async () => {
+        const soniox = await fakeSoniox();
+        const stream = new SonioxRecognition().listen(settings(soniox.url, { language: 'ar-KW', terms: ['Nora', 'Max'] }), heard().events);
+        await waitFor('the stream to be configured', () => soniox.configs.length === 1);
+        expect(soniox.configs[0]).toMatchObject({ language_hints: ['ar'], context: { terms: ['Nora', 'Max'] } });
+        stream.close();
+    });
+
+    it('sends no context when there are no names, and never more names than fit', async () => {
+        const soniox = await fakeSoniox();
+        const first = new SonioxRecognition().listen(settings(soniox.url), heard().events);
+        await waitFor('the stream to be configured', () => soniox.configs.length === 1);
+        expect(soniox.configs[0]).not.toHaveProperty('context');
+        first.close();
+        const long = Array.from({ length: 16 }, (_, i) => `${i}`.padEnd(64, 'x'));
+        const second = new SonioxRecognition().listen(settings(soniox.url, { terms: long }), heard().events);
+        await waitFor('the second stream to be configured', () => soniox.configs.length === 2);
+        second.close();
+        const sent = (soniox.configs[1].context as { terms: string[] }).terms;
+        expect(sent.join('').length).toBeLessThanOrEqual(1000);
+        expect(sent).toEqual(long.slice(0, sent.length));
+    });
+
+    it('reads the names when the stretch opens, so a change applies from the next one', async () => {
+        const soniox = await fakeSoniox();
+        let names = ['Nora'];
+        const live = { ...settings(soniox.url), get terms() { return names; } };
+        const first = new SonioxRecognition().listen(live, heard().events);
+        await waitFor('the first stream to be configured', () => soniox.configs.length === 1);
+        first.close();
+        names = ['Nora', 'Max'];
+        const second = new SonioxRecognition().listen(live, heard().events);
+        await waitFor('the second stream to be configured', () => soniox.configs.length === 2);
+        second.close();
+        expect(soniox.configs.map((c) => (c.context as { terms: string[] }).terms)).toEqual([['Nora'], ['Nora', 'Max']]);
     });
 
     it('leaves the language to Soniox when the profile follows the person', async () => {

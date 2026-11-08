@@ -47,6 +47,7 @@ import { voiceOrbitSettings, voiceReplyLimits, voiceWorkerSettings } from '../vo
 import { BotVoiceSettings } from '../voice/VoiceSettings';
 import { BotSpeech } from '../voice/BotSpeech';
 import { OrbitTurnGate, pausedLine } from '../voice/VoiceAllowance';
+import { ListeningBudget } from '../voice/VoiceListening';
 import { pausedAtCapacityEvent } from '../voice/VoiceLoad';
 import { captureServerEvent } from '../ai/PostHogClient';
 import { BotAttention, followUpSeconds } from './BotAttention';
@@ -2672,17 +2673,32 @@ export class BotClient {
                       (playerId) => this.behavior?.getTalker(playerId) ?? null,
                       (message) => console.warn(`[Bot ${this.config.botId}] ${message}`)
                   )
+                : undefined,
+            // What it hears of group chatter comes out of its daily listening, set in Orbit (#1859)
+            adminApiService.isConfigured() && process.env.BOT_SERVICE_TOKEN
+                ? new ListeningBudget(
+                      this.config.botId,
+                      adminApiService,
+                      () => this.voice?.listeningChanged(),
+                      (message) => console.warn(`[Bot ${this.config.botId}] ${message}`)
+                  )
                 : undefined
         );
+        // People call the bot by this name, so the hearing is told to expect it (#1864)
+        this.voice.botName = this.config.name;
         // Voice paused for someone (the allowance, or a key that isn't working): the one fixed line, in the chat the reply is in
         this.voice.onPaused = (spaceName) => this.sendChatMessage(spaceName, pausedLine(this.config.name));
         this.speech = new BotSpeech(this.voice, voiceReplyLimits());
         // With others in the bubble, a spoken turn is the bot's only when it was said to the bot (#1220)
         this.voice.hears = (spaceName, personId, text) => this.attention.hears(spaceName, BotClient.playerIdOf(personId), text);
         this.voice.playerIdOf = (personId) => BotClient.playerIdOf(personId);
+        // In a meeting room the bot takes everything as said to it, so the daily listening does not count or hold it back there (#1859)
+        this.voice.isMeeting = (spaceName) => this.isMeetingSpace(spaceName);
         this.voice.onAudience = (spaceName) => this.speech?.audience(spaceName);
         this.voice.onUnplayed = (spaceName, segmentId) => this.speech?.unplayed(spaceName, segmentId);
         this.voice.onHeard = (spaceName, segmentId) => this.speech?.heard(spaceName, segmentId);
+        // Orbit's follow-up window (its voice limits) is the one the bot uses, in voice and in nearby chat alike
+        this.voice.onFollowUpSeconds = (seconds) => this.attention.useFollowUpSeconds(seconds);
         this.voice.onSessionEnded = (spaceName) => this.speech?.sessionEnded(spaceName);
         this.voice.onPlayed = (_spaceName, segmentId) => this.speech?.played(segmentId);
         // A spoken answer is over: the person can go on without the bot's name from now (#1220)

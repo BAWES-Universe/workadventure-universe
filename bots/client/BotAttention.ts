@@ -26,8 +26,20 @@ export function followUpSeconds(env: NodeJS.ProcessEnv = process.env): number {
 /** Why a line was let through (or not). Only `ignored` stops it. */
 export type Attention = 'alone' | 'named' | 'summoned' | 'follow-up' | 'ignored';
 
-/** Words people put before a name when they call someone ("hey Nora, ..."). */
-const CALLING_WORDS = ['hey', 'hi', 'hello', 'ok', 'okay', 'yo', 'hey there', 'hi there', 'hello there'];
+/**
+ * Words people put before a name when they call someone ("hey Nora, ...", "يا نورة"), in the languages people use with
+ * bots most. Written as `plainWords` leaves them: lowercase, accents and Arabic marks dropped ("أهلا" is "اهلا", "hé" is "he").
+ */
+const CALLING_WORDS = [
+    // English
+    'hey', 'hi', 'hello', 'ok', 'okay', 'yo', 'hey there', 'hi there', 'hello there',
+    // Arabic, and the same words typed in Latin letters
+    'يا', 'هلا', 'هاي', 'اهلا', 'مرحبا', 'السلام عليكم', 'ya', 'hala', 'hala wallah', 'marhaba', 'ahlan', 'salam',
+    // French
+    'salut', 'bonjour', 'coucou', 'dis', 'he', 'eh', 'allo',
+    // Spanish
+    'hola', 'oye', 'oiga', 'buenas', 'ey',
+];
 
 /** Lowercase letters and numbers only, one space between words, accents dropped: "Hey, Núra!" -> "hey nura". */
 function plainWords(text: string): string {
@@ -48,8 +60,8 @@ export class BotAttention {
 
     constructor(
         botName: string,
-        /** Seconds a person can go on without the name after the bot answered them. */
-        readonly followUpSeconds: number,
+        /** Seconds a person can go on without the name after the bot answered them, until Orbit says otherwise (see `useFollowUpSeconds`). */
+        private followUp: number,
         /** Whether the bot is on a summon to this person right now. The summon itself says when that ends. */
         private readonly isSummonedBy: (userId: number) => boolean = () => false,
         /** Whether the bot is answering this person right now, or has their earlier line waiting its turn. */
@@ -57,6 +69,16 @@ export class BotAttention {
         private readonly now: () => number = Date.now
     ) {
         this.name = plainWords(botName);
+    }
+
+    /** Seconds a person can go on without the name after the bot answered them. */
+    get followUpSeconds(): number {
+        return this.followUp;
+    }
+
+    /** Orbit's follow-up window for this bot (its voice limits), which replaces the one from the environment. Anything else is ignored. */
+    useFollowUpSeconds(seconds: number): void {
+        if (Number.isInteger(seconds) && seconds >= 0 && seconds <= MAX_FOLLOW_UP_SECONDS) this.followUp = seconds;
     }
 
     // ---- who is in the bubble ----
@@ -107,7 +129,7 @@ export class BotAttention {
         // A follow-up sent while the bot is still answering is part of that conversation (it may change or add to the ask)
         if (this.isBusyWith(speakerId)) return 'follow-up';
         const last = this.answeredAt.get(spaceName)?.get(speakerId);
-        if (last !== undefined && this.now() - last < this.followUpSeconds * 1000) return 'follow-up';
+        if (last !== undefined && this.now() - last < this.followUp * 1000) return 'follow-up';
         return 'ignored';
     }
 

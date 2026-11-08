@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
     DEFAULT_VOICE_LOAD,
     VoiceLoadWatch,
+    latencyProperties,
     pausedAtCapacityEvent,
     readWorkerLoad,
     universeOfRoom,
@@ -197,6 +198,67 @@ describe('reading the worker', () => {
         expect(await readWorkerLoad(slow, undefined, 100)).toBeNull();
         server!.closeAllConnections();
         expect(await readWorkerLoad('http://127.0.0.1:1/stats', undefined, 500)).toBeNull();
+    });
+});
+
+describe('how fast bots answer (#1865)', () => {
+    const latency = {
+        hear: { soniox: { samples: 12, p50: 640, p95: 1100 } },
+        think: { bot: { samples: 12, p50: 900, p95: 2500 } },
+        speak: { elevenlabs: { samples: 12, p50: 210, p95: 480 } },
+        play: { elevenlabs: { samples: 12, p50: 1, p95: 3 } },
+        total: { 'soniox>elevenlabs': { samples: 12, p50: 1800, p95: 3900 } },
+    };
+
+    it('goes into the per-minute event as flat numbers per stage and provider', async () => {
+        const t = watch([load({ latency })]);
+        await t.tick();
+        expect(t.events[0][1]).toMatchObject({
+            latency_hear_soniox_p50_ms: 640,
+            latency_hear_soniox_p95_ms: 1100,
+            latency_hear_soniox_turns: 12,
+            latency_think_bot_p50_ms: 900,
+            latency_speak_elevenlabs_p95_ms: 480,
+            latency_play_elevenlabs_p50_ms: 1,
+            latency_total_soniox_to_elevenlabs_p50_ms: 1800,
+            latency_total_soniox_to_elevenlabs_p95_ms: 3900,
+        });
+        // Beside the load figures, not instead of them
+        expect(t.events[0][1]).toMatchObject({ audio_connections: 10, cpu_percent: 20 });
+    });
+
+    it('adds nothing when the worker timed no turn, and keeps provider names to plain words', () => {
+        expect(latencyProperties(undefined)).toEqual({});
+        expect(latencyProperties({})).toEqual({});
+        expect(Object.keys(latencyProperties({ hear: { 'Weird Name!!': { samples: 1, p50: 1, p95: 2 } } }))).toEqual(['latency_hear_weird_name_p50_ms', 'latency_hear_weird_name_p95_ms', 'latency_hear_weird_name_turns']);
+    });
+
+    it('is bounded, so a worker that names many providers cannot make the event huge', () => {
+        const many: Record<string, { samples: number; p50: number; p95: number }> = {};
+        for (let i = 0; i < 200; i++) many[`provider${i}`] = { samples: 1, p50: 1, p95: 1 };
+        expect(Object.keys(latencyProperties({ hear: many })).length).toBe(40 * 3);
+    });
+
+    describe('read from the worker', () => {
+        let server: http.Server | undefined;
+        afterEach(() => new Promise<void>((resolve) => (server ? server.close(() => resolve()) : resolve())));
+        const read = async (body: object) => {
+            server = http.createServer((_req, res) => res.end(JSON.stringify(body)));
+            await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
+            return readWorkerLoad(`http://127.0.0.1:${(server.address() as AddressInfo).port}/stats`, undefined, 2000);
+        };
+
+        it('keeps only the numbers it reads, whatever else the answer holds', async () => {
+            const got = await read({ lanes: 1, latency: { ...latency, hear: { soniox: { samples: 12, p50: 640, p95: 1100, words: 'hello' }, bad: { samples: 'x', p50: 1, p95: 2 } }, junk: 'nope' } });
+            expect(got?.latency?.hear).toEqual({ soniox: { samples: 12, p50: 640, p95: 1100 } });
+            expect(got?.latency).not.toHaveProperty('junk');
+            expect(JSON.stringify(got)).not.toContain('hello');
+        });
+
+        it('has no latency for a worker that does not say any', async () => {
+            expect(await read({ lanes: 1 })).not.toHaveProperty('latency');
+            expect(await read({ lanes: 1, latency: [] })).not.toHaveProperty('latency');
+        });
     });
 });
 

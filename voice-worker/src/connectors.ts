@@ -44,7 +44,13 @@ interface ProviderSettings {
     region?: string;
     language?: string;
 }
-export type RecognitionSettings = ProviderSettings;
+export interface RecognitionSettings extends ProviderSettings {
+    /**
+     * Names the hearing should expect and spell as written: the bot's own name and the other voice bots' (#1864). Read
+     * when a stretch of speech opens, so a change applies from the next one. A provider that cannot take names ignores it.
+     */
+    readonly terms?: readonly string[];
+}
 export interface SpeechSettings extends ProviderSettings {
     voiceId: string;
 }
@@ -92,6 +98,14 @@ export interface SpeechRequest {
  */
 export interface SpeechConnector {
     speak(request: SpeechRequest): AsyncIterable<Int16Array>;
+    /**
+     * Optional: a reply is likely soon (someone in the bubble started talking), so a connector whose provider needs a
+     * connection set up first may open it now and use it for the next reply with the same settings. Nothing may be spoken
+     * or billed until that reply; a connection left unused is closed by the connector after a while.
+     */
+    prepare?(request: Pick<SpeechRequest, 'settings' | 'lang' | 'expression'>): void;
+    /** Optional: the bubble with these settings is closing, so anything prepared for it is closed. */
+    release?(settings: SpeechSettings): void;
 }
 
 /** Connectors by adapter name. Names are lowercase. */
@@ -121,6 +135,10 @@ export class ConnectorRegistry {
 /** What the speaker speaks with: one bubble's chosen speech connector, with its settings already bound. */
 export interface Voice {
     speak(request: { text: string; lang?: string; signal: AbortSignal }): AsyncIterable<Int16Array>;
+    /** Someone started talking: get ready for a reply (see SpeechConnector.prepare). */
+    prepare?(): void;
+    /** The bubble is closing. */
+    release?(): void;
 }
 
 /** Where a provider's outcomes go (the session turns them into messages to the bot server). */
