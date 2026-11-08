@@ -311,3 +311,66 @@ describe("myAiKeyNames", () => {
         expect(myAiKeyNames(null)).toBeNull();
     });
 });
+
+describe("BotApiService voice switch", () => {
+    beforeEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    /** A service whose Orbit calls are stubbed: the PUT answers as saved, and the room-enter call is watched */
+    function voiceService(
+        putAnswer: () => Promise<Response> = () => Promise.resolve(new Response("{}", { status: 200 }))
+    ) {
+        const service = new BotApiService();
+        service.initialize(authToken("oidc-token"), undefined, "room-1", "http://bot-server.workadventure.localhost");
+        const orbit = vi
+            .spyOn(service as never as { fetch: () => Promise<Response> }, "fetch")
+            .mockImplementation(putAnswer);
+        vi.spyOn(service as never as { voiceAnswer: () => unknown }, "voiceAnswer").mockImplementation(() => ({
+            enabled: true,
+        }));
+        const roomEnter = vi.spyOn(service, "notifyRoomEnter").mockResolvedValue({ botsSpawned: 0 });
+        return { service, orbit, roomEnter };
+    }
+
+    it("tells the bot server to look at the room again once voice is saved as on", async () => {
+        const { service, orbit, roomEnter } = voiceService();
+
+        await service.setBotVoiceEnabled("bot-1", true);
+
+        expect(orbit).toHaveBeenCalledWith(
+            "/api/bots/bot-1/voice",
+            expect.objectContaining({ method: "PUT", body: JSON.stringify({ enabled: true }) })
+        );
+        expect(roomEnter).toHaveBeenCalledTimes(1);
+        // The bot server is told after Orbit has the choice, never before
+        expect(orbit.mock.invocationCallOrder[0]).toBeLessThan(roomEnter.mock.invocationCallOrder[0]);
+    });
+
+    it("tells the bot server to look at the room again once voice is saved as off", async () => {
+        const { service, orbit, roomEnter } = voiceService();
+
+        await service.setBotVoiceEnabled("bot-1", false);
+
+        expect(orbit).toHaveBeenCalledWith(
+            "/api/bots/bot-1/voice",
+            expect.objectContaining({ method: "PUT", body: JSON.stringify({ enabled: false }) })
+        );
+        expect(roomEnter).toHaveBeenCalledTimes(1);
+    });
+
+    it("leaves the bot server alone when Orbit refuses the switch", async () => {
+        const { service, roomEnter } = voiceService(() => Promise.reject(new Error("409")));
+
+        await expect(service.setBotVoiceEnabled("bot-1", true)).rejects.toThrow("409");
+
+        expect(roomEnter).not.toHaveBeenCalled();
+    });
+
+    it("still answers when the room-enter call fails", async () => {
+        const { service, roomEnter } = voiceService();
+        roomEnter.mockRejectedValue(new Error("roomId is required"));
+
+        await expect(service.setBotVoiceEnabled("bot-1", true)).resolves.toEqual({ enabled: true });
+    });
+});

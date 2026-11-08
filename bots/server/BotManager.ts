@@ -909,13 +909,16 @@ export class BotManager {
      * NOTE: This does NOT increment playerCount - use handlePlayerEnterRoom for that
      */
     async ensureBotsForRoom(roomId: string): Promise<void> {
-        // Wait for any existing sync to complete (prevent race conditions)
-        const existingLock = this.roomSyncLocks.get(roomId);
-        if (existingLock) {
+        // Wait for any existing sync to complete (prevent race conditions). Waiters are woken together when a sync ends, so
+        // each looks again before it takes the lock: with one wait, two callers queued behind a sync would both run at once
+        // and could spawn the same bot twice (a voice switch flipped twice in a row syncs the room twice).
+        let existingLock = this.roomSyncLocks.get(roomId);
+        while (existingLock) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[BotManager] Waiting for existing sync for room: ${roomId}`);
             }
             await existingLock;
+            existingLock = this.roomSyncLocks.get(roomId);
         }
 
         // Create a new lock for this sync operation
@@ -1054,6 +1057,16 @@ export class BotManager {
             // A room without bots isn't kept, so room ids that have no bots (or don't exist) don't pile up
             if (targetRoom.botIds.size === 0) {
                 this.roomsWithBots.delete(roomId);
+            } else {
+                // Respawning the only bot of a room (a changed voice switch, a new name) despawns it, and despawning the last
+                // bot drops the room's entry while this sync still holds the old one: keep the room listed, with its bots,
+                // so the bot is still found when the room empties.
+                const listed = this.roomsWithBots.get(roomId);
+                if (!listed) {
+                    this.roomsWithBots.set(roomId, targetRoom);
+                } else if (listed !== targetRoom) {
+                    for (const botId of targetRoom.botIds) listed.botIds.add(botId);
+                }
             }
         } catch (error) {
             console.error(`[BotManager] Error ensuring bots for room ${roomId}:`, error);
