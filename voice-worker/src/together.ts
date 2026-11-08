@@ -98,8 +98,12 @@ export class TogetherRecognition implements RecognitionConnector {
                         return finishing ? [words, { finished: true }] : words;
                     }
                     case 'conversation.item.input_audio_transcription.failed':
-                    case 'error':
+                    case 'error': {
+                        // A commit with no audio (the stretch ended before any came) is nothing to hear, not a failure
+                        const code = typeof event.error === 'object' && event.error !== null ? (event.error as { code?: unknown }).code : undefined;
+                        if (code === 'input_audio_buffer_commit_empty') return finishing ? { finished: true } : undefined;
                         return { error: { status: togetherStatus(event) } };
+                    }
                     default:
                         return undefined;
                 }
