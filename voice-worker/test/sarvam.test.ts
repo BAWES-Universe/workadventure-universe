@@ -188,6 +188,24 @@ describe('hearing with Sarvam AI', () => {
         expect(got.finals).toEqual(['Achha, phir milenge.']);
     });
 
+    it("keeps waiting after an earlier segment's words while a later one Sarvam heard still has none", async () => {
+        const s = await fakeSarvam((ws, message) => {
+            if (message.type !== 'flush') return;
+            ws.send(JSON.stringify(data('Achha,')));
+            setTimeout(() => ws.send(JSON.stringify(data('phir milenge.'))), 600);
+        });
+        const { got, events } = heard();
+        const stream = new SarvamRecognition().listen(hearing(s.base), events);
+        stream.push(new Int16Array([3]));
+        await waitFor('the audio', () => s.seen.messages.length === 1);
+        s.send({ type: 'events', data: { signal_type: 'START_SPEECH', occured_at: 1 } });
+        s.send({ type: 'events', data: { signal_type: 'START_SPEECH', occured_at: 3 } });
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        stream.finish();
+        await waitFor('the end', () => got.finals.length === 1);
+        expect(got.finals).toEqual(['Achha, phir milenge.']);
+    });
+
     it('fails with the status of an error Sarvam sends', async () => {
         const s = await fakeSarvam();
         const { got, events } = heard();
