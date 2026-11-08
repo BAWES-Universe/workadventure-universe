@@ -97,8 +97,23 @@ describe('hearing with Gradium', () => {
         expect(g.seen.messages.at(-1)).toEqual({ type: 'end_of_stream' });
     });
 
+    it('holds the audio until Gradium answers the setup with ready, as Pipecat waits for it', async () => {
+        const g = await fakeGradium((ws, message) => {
+            if (message.type === 'setup') setTimeout(() => ws.send(JSON.stringify({ type: 'ready', sample_rate: 16000 })), 200);
+        });
+        const { events } = heard();
+        const stream = new GradiumRecognition().listen(hearing(g.base), events);
+        stream.push(new Int16Array([1, 2]));
+        await waitFor('the setup', () => g.seen.messages.length >= 1);
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(g.seen.messages.map((m) => m.type)).toEqual(['setup']);
+        await waitFor('the audio', () => g.seen.messages.some((m) => m.type === 'audio'));
+        expect(g.seen.messages.map((m) => m.type)).toEqual(['setup', 'audio']);
+    });
+
     it('fails, keeping the words heard, when Gradium closes any way but normally after the end of the audio', async () => {
         const g = await fakeGradium((ws, message) => {
+            if (message.type === 'setup') ws.send(JSON.stringify({ type: 'ready' }));
             if (message.type === 'end_of_stream') ws.close(1011);
         });
         const { got, events } = heard();
