@@ -159,7 +159,7 @@ describe("recording a voice note by holding the mic", () => {
         // The context made for the press is let go.
         expect(contextClose).toHaveBeenCalled();
         // And the hint goes by itself.
-        await settle(3000);
+        await settle(5000);
         expect(find("voiceHint")).toBeNull();
     });
 
@@ -283,5 +283,24 @@ describe("recording a voice note by holding the mic", () => {
         expect(resume).toHaveBeenCalledTimes(1);
         expect(onSend).not.toHaveBeenCalled();
         expect(find("voiceRecording")).not.toBeNull();
+    });
+
+    it("offers a tap on the hint for a finger that cannot hold, and opens a locked recording", async () => {
+        pointer("pointerdown", 200, 400);
+        await settle(50);
+        pointer("pointerup", 200, 400);
+        await settle();
+        expect(recorder.start).not.toHaveBeenCalled();
+        // The hint stays long enough to be reached.
+        await settle(3500);
+        const action = find("voiceHintRecord");
+        expect(action).not.toBeNull();
+
+        action?.click();
+        await settle();
+        expect(recorder.start).toHaveBeenCalledTimes(1);
+        expect(find("voiceRecording")).not.toBeNull();
+        expect(find("voiceHint")).toBeNull();
+        expect(onSend).not.toHaveBeenCalled();
     });
 });

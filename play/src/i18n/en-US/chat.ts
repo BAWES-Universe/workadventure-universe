@@ -708,6 +708,7 @@ const chat: BaseTranslation = {
         recordingFailed: "The recording could not start. Try again.",
         holdToRecord: "Hold to record, release to send",
         holdAgain: "Hold again to record",
+        tapToRecord: "Or tap here to record",
         slideToCancel: "Slide to cancel",
         releaseToCancel: "Release to cancel",
         sending: "Sending…",
