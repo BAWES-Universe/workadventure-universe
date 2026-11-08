@@ -241,6 +241,16 @@ describe('a summon ends when its person has gone', () => {
         });
     });
 
+    it('is not sent back by a stranger leaving a bubble it passed on the way', () => {
+        behavior.attach(room({ me: { x: 1800, y: 1000 } }, { walking: true }));
+        behavior.startSummon('me', { x: 1800, y: 1000 });
+        vi.advanceTimersByTime(60_000);
+        behavior.know(8, 'stranger');
+        behavior.engage(8);
+        behavior.onSpaceUserLeft('s', 8);
+        expect(behavior.summoned()).toBe(true);
+    });
+
     it('is not kept by another bot sharing the bubble', () => {
         summonAndSettle({ me: { x: 1500, y: 1000 } });
         behavior.know(7, 'me');

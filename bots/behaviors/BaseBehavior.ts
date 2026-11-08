@@ -1513,7 +1513,8 @@ export abstract class BaseBehavior {
         }
 
         // If summoned and no players left, end summon and return
-        if (this.isSummoned && this.engagedWithUsers.size === 0 && this.nearbyPlayers.size === 0) {
+        // (not while it is still on its way: a stranger leaving a bubble it passed through is not its person leaving)
+        if (this.isSummoned && !this.isSummonOnItsWay() && this.engagedWithUsers.size === 0 && this.nearbyPlayers.size === 0) {
             console.log(`[Behavior] Summoned player left space, ending summon and returning`);
             this.endSummon();
             return;
