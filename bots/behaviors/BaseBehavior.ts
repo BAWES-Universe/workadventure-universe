@@ -2244,8 +2244,8 @@ export abstract class BaseBehavior {
         const state = this.activeConversations.get(playerId);
         if (state) {
             state.endedByPerson = true;
-            // What they said after "stop" while the bot was thinking about it was said after it: none of it is for the bot
-            state.messageQueue = [];
+            // What they said after "stop" while the bot was thinking about it is not for the bot, unless it calls the bot by name
+            state.messageQueue = state.messageQueue.filter((queued) => this.bot?.isForBot(spaceName, playerId, queued.originalMessage) === true);
             state.pendingAnswers = [];
         }
         return true;

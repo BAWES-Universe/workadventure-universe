@@ -232,6 +232,36 @@ describe('a voice bot told "stop" by one of several people', () => {
         expect(t.onChatMessage).toHaveBeenCalledTimes(2);
     });
 
+    it('keeps a line that calls the bot by name even when it was said while the bot thought about "stop", and answers it', async () => {
+        const t = setup();
+        await bothAnswered(t);
+
+        let release: () => void = () => undefined;
+        const gate = new Promise<void>((resolve) => (release = resolve));
+        t.ai.generateBotResponseStream.mockImplementationOnce((async function* () {
+            await gate;
+            yield { content: block(', "doneTalking": true'), done: false };
+            yield { content: '', done: true };
+        }) as never);
+        const stop = t.receive(chatFrom(KHALID, 'ok that is all, stop'));
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        await t.receive(chatFrom(KHALID, 'so what did you think of the plan'));
+        await t.receive(chatFrom(KHALID, 'Nora, actually what about the risks'));
+        script(t, 'The risks are small.');
+        release();
+        await stop;
+        await new Promise((resolve) => setTimeout(resolve, 80));
+
+        // The plan talk was dropped; the call by name was answered, and his window is open again after it
+        expect(privateTo(t.sent, 'botVoiceDone')).toEqual(['room_7']);
+        const said = t.streamed.mock.calls.filter((call) => call[3] === true).map((call) => call[4]);
+        expect(said).toEqual(['', 'The risks are small.']);
+        t.onChatMessage.mockClear();
+        script(t, 'Sure.');
+        await t.receive(chatFrom(KHALID, 'and the day after'));
+        expect(t.onChatMessage).toHaveBeenCalledTimes(1);
+    });
+
     it('drops words the bot wrote anyway, so nothing is said or spoken', async () => {
         const t = setup();
         await bothAnswered(t);

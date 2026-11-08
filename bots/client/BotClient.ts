@@ -2219,6 +2219,14 @@ export class BotClient {
         return true;
     }
 
+    /**
+     * Whether a line this person said is for the bot now: after they said they are done only their name counts, and saying it brings them
+     * back. A line already waiting for its turn is asked this once the stop is settled, so a call by name that came in meanwhile is kept.
+     */
+    isForBot(spaceName: string, playerId: number, text: string): boolean {
+        return this.attention.hears(spaceName, playerId, text);
+    }
+
     /** Tells one person, and only them, that the bot stopped listening to them without its name (#1670). */
     private sendVoiceDone(spaceName: string, playerId: number): void {
         const spaceUserId = this.spaces.get(spaceName);
