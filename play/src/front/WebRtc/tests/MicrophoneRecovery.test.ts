@@ -53,6 +53,7 @@ describe("watchMicrophoneForRecovery", () => {
     let store: ReturnType<typeof writable<LocalStreamStoreValue>>;
     let reopen: ReturnType<typeof vi.fn>;
     let stop: () => void;
+    let failures: ReturnType<typeof writable<number>>;
 
     beforeEach(() => {
         vi.useFakeTimers();
@@ -61,9 +62,11 @@ describe("watchMicrophoneForRecovery", () => {
         doc = new FakeDocument();
         store = writable(streamOf(track));
         reopen = vi.fn();
+        failures = writable(0);
         stop = watchMicrophoneForRecovery(store, {
             document: doc as unknown as Document,
             reopen: reopen as () => void,
+            reopenFailures: failures,
         });
     });
 
@@ -201,6 +204,31 @@ describe("watchMicrophoneForRecovery", () => {
             vi.advanceTimersByTime(REOPEN_RETRY_MS);
         }
         expect(reopen).toHaveBeenCalledTimes(MAX_REOPENS);
+    });
+
+    it("asks again when the phone refused the new microphone without touching the stream (the camera keeps going)", () => {
+        doc.setVisibility("hidden");
+        track.setMuted(true);
+        doc.setVisibility("visible");
+        vi.advanceTimersByTime(MICROPHONE_BACK_GRACE_MS);
+        expect(reopen).toHaveBeenCalledTimes(1);
+
+        // The stream is back without a microphone, and the refusal is counted.
+        store.set(streamOf(undefined));
+        failures.update((n) => n + 1);
+        vi.advanceTimersByTime(REOPEN_RETRY_MS);
+        expect(reopen).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not ask again after a refusal when the page went to the background", () => {
+        doc.setVisibility("hidden");
+        track.setMuted(true);
+        doc.setVisibility("visible");
+        vi.advanceTimersByTime(MICROPHONE_BACK_GRACE_MS);
+        doc.setVisibility("hidden");
+        failures.update((n) => n + 1);
+        vi.advanceTimersByTime(REOPEN_RETRY_MS * 2);
+        expect(reopen).toHaveBeenCalledTimes(1);
     });
 
     it("stops watching", () => {

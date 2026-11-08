@@ -1,6 +1,11 @@
 import { get } from "svelte/store";
 import type { UserInputManager } from "../Phaser/UserInput/UserInputManager";
-import { localStreamStore, rawLocalStreamStore, reopenMicrophone } from "../Stores/MediaStore";
+import {
+    localStreamStore,
+    microphoneReopenFailures,
+    rawLocalStreamStore,
+    reopenMicrophone,
+} from "../Stores/MediaStore";
 import { screenSharingLocalStreamStore } from "../Stores/ScreenSharingStore";
 import { showHelpCameraSettings } from "../Stores/HelpSettingsStore";
 import {
@@ -27,7 +32,11 @@ export class MediaManager {
     constructor() {
         // A singleton: never stopped
         watchCameraForStalls(rawLocalStreamStore);
-        watchMicrophoneForRecovery(rawLocalStreamStore, { document, reopen: reopenMicrophone });
+        watchMicrophoneForRecovery(rawLocalStreamStore, {
+            document,
+            reopen: reopenMicrophone,
+            reopenFailures: microphoneReopenFailures,
+        });
         localeDetector()
             .catch((e) => {
                 console.error("Cannot load locale on media manager", e);

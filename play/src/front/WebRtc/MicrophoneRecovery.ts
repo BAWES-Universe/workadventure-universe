@@ -26,10 +26,19 @@ export const REOPEN_RETRY_MS = 3000;
 /** The player (or the system settings) said no: asking again would only ask the player again. */
 const PERMANENT_REFUSALS = ["NotAllowedError", "SecurityError"];
 
+export function isPermanentMicrophoneRefusal(error: Pick<Error, "name">): boolean {
+    return PERMANENT_REFUSALS.includes(error.name);
+}
+
 export interface MicrophoneRecoveryEnv {
     document: Pick<Document, "visibilityState" | "addEventListener" | "removeEventListener">;
     /** Asks the browser for the microphone again. */
     reopen: () => void;
+    /**
+     * Counts the times the phone refused a microphone asked for again (not the player or the settings: those come
+     * as an error of the stream). Such a refusal does not touch the stream, so the camera keeps going.
+     */
+    reopenFailures?: Readable<number>;
     now?: () => number;
 }
 
@@ -125,25 +134,32 @@ export function watchMicrophoneForRecovery(
         }
     };
 
+    // The phone refused the microphone we asked for again: it may only be too soon after the app came back.
+    const retryLater = () => {
+        if (!reopenPending || env.document.visibilityState !== "visible") return;
+        cancelRetry();
+        retryTimer = setTimeout(() => {
+            retryTimer = undefined;
+            if (env.document.visibilityState === "visible" && reopenPending) reopenNow();
+        }, REOPEN_RETRY_MS);
+    };
+
     const unsubscribe = rawLocalStreamStore.subscribe((value) => {
         const audioTrack = value.type === "success" ? value.stream?.getAudioTracks()[0] : undefined;
         watch(audioTrack);
         if (audioTrack) {
             reopenPending = false;
             cancelRetry();
-        } else if (
-            value.type === "error" &&
-            reopenPending &&
-            env.document.visibilityState === "visible" &&
-            !PERMANENT_REFUSALS.includes(value.error.name)
-        ) {
-            // The phone refused the microphone we asked for again: it may only be too soon after the app came back.
-            cancelRetry();
-            retryTimer = setTimeout(() => {
-                retryTimer = undefined;
-                if (env.document.visibilityState === "visible" && reopenPending) reopenNow();
-            }, REOPEN_RETRY_MS);
+        } else if (value.type === "error" && !isPermanentMicrophoneRefusal(value.error)) {
+            retryLater();
         }
+    });
+
+    let seenFailures: number | undefined;
+    const unsubscribeFailures = env.reopenFailures?.subscribe((failures) => {
+        const first = seenFailures === undefined;
+        seenFailures = failures;
+        if (!first) retryLater();
     });
 
     // Back on screen: the check runs, whether or not the track said anything while the page was away.
@@ -159,6 +175,7 @@ export function watchMicrophoneForRecovery(
 
     return () => {
         unsubscribe();
+        unsubscribeFailures?.();
         cancelRetry();
         env.document.removeEventListener("visibilitychange", onVisibilityChange);
         watch(undefined);

@@ -37,7 +37,7 @@ import { isLiveStreamingStore } from "./IsStreamingStore";
 import { videoStreamElementsStore } from "./PeerStore";
 import { bubbleMatesStore } from "./CurrentPlayerGroupStore";
 import { phoneMicrophoneCanRest } from "./PhoneMicrophoneRest";
-import { mustReopenMicrophone } from "../WebRtc/MicrophoneRecovery";
+import { isPermanentMicrophoneRefusal, mustReopenMicrophone } from "../WebRtc/MicrophoneRecovery";
 
 import {
     backgroundConfigStore,
@@ -486,6 +486,11 @@ let previousComputedKeepAudioWarm: false | MediaTrackConstraints = false;
 let previousComputedAudioReopen = 0;
 /** Counts the requests to open the microphone again (see reopenMicrophone). */
 const microphoneReopenStore = writable(0);
+/** Set while a microphone asked for again by reopenMicrophone has not been answered yet. */
+let reopeningMicrophone = false;
+const microphoneReopenFailuresWritable = writable(0);
+/** Counts the times the phone refused a microphone asked for again (see reopenMicrophone). */
+export const microphoneReopenFailures: Readable<number> = { subscribe: microphoneReopenFailuresWritable.subscribe };
 
 export interface MediaStreamConstraintsValue {
     video: false | MediaTrackConstraints;
@@ -933,6 +938,21 @@ export const rawLocalStreamStore = derived<[typeof mediaStreamConstraintsStore],
                                 type: "error",
                                 error: new MediaStreamConstraintsError(),
                             });
+                        } else if (
+                            reopeningMicrophone &&
+                            constraints.audio !== false &&
+                            e instanceof Error &&
+                            !isPermanentMicrophoneRefusal(e)
+                        ) {
+                            // The phone refused the microphone asked for again by the recovery, perhaps only because
+                            // the app is just back. The camera is fine: the stream stays as it is, and the recovery is
+                            // told so that it asks again.
+                            console.info("The phone refused the microphone asked for again.", e);
+                            set({
+                                type: "success",
+                                stream: currentStream,
+                            });
+                            microphoneReopenFailuresWritable.update((n) => n + 1);
                         } else {
                             console.info("Error. Unable to get microphone and/or camera access.", constraints, e);
                             set({
@@ -941,6 +961,8 @@ export const rawLocalStreamStore = derived<[typeof mediaStreamConstraintsStore],
                             });
                         }
                         return undefined;
+                    } finally {
+                        if (constraints.audio !== false && constraints.audio !== undefined) reopeningMicrophone = false;
                     }
                 })
                 .catch((e) => {
@@ -1008,6 +1030,7 @@ export const rawLocalStreamStore = derived<[typeof mediaStreamConstraintsStore],
             const mustReopen = mustReopenMicrophone(constraints.audio, seenAudioReopen, constraints.audioReopen);
             seenAudioReopen = constraints.audioReopen;
             if (mustReopen) {
+                reopeningMicrophone = true;
                 oldConstraints = { ...oldConstraints, audio: false };
                 const deadStream = currentStream;
                 const deadTracks = deadStream?.getAudioTracks() ?? [];
