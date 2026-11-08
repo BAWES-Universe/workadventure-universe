@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { HearingError, NoteHearing, tidyTranscript, type ClipHearer, type HearingSettings } from '../voice/NoteHearing';
-import { SonioxNotes, asyncModelFor } from '../voice/SonioxNotes';
+import { SonioxNotes, asyncModelFor, restApiFor } from '../voice/SonioxNotes';
 import type { RecognitionConfig } from '../voice/protocol';
 
 const soniox: RecognitionConfig = { adapter: 'soniox', model: 'stt-rt-v6', key: 'secret-key', language: 'ar-KW', terms: ['Linear'] };
@@ -71,6 +71,14 @@ describe('Soniox note hearing', () => {
         expect(error).toBeInstanceOf(HearingError);
         expect((error as HearingError).rejected).toBe(true);
         expect(String((error as HearingError).message)).not.toContain('secret-key');
+    });
+
+    it('uses the file API of the region the live endpoint is in', () => {
+        expect(restApiFor('wss://stt-rt.eu.soniox.com/transcribe-websocket')).toBe('https://api.eu.soniox.com/v1');
+        expect(restApiFor('wss://stt-rt.soniox.com/transcribe-websocket')).toBe('https://api.soniox.com/v1');
+        expect(restApiFor('https://api.jp.soniox.com/v1/')).toBe('https://api.jp.soniox.com/v1');
+        expect(restApiFor('wss://example.test/stream')).toBeUndefined();
+        expect(restApiFor(undefined)).toBeUndefined();
     });
 
     it('maps the live model to the file model', () => {

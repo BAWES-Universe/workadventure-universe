@@ -1267,6 +1267,18 @@ describe('MatrixDmBridge', () => {
             expect(deps.reply).toHaveBeenCalledWith(BOT, expect.anything(), '', [expect.objectContaining({ mediaType: 'audio' })], expect.anything());
         });
 
+        it('still hears a note left for a resting bot once it is back on', async () => {
+            const resting = { botId: BOT, name: 'Guide', enabled: false, aiProviderRef: 'p' };
+            deps.getBotConfig.mockResolvedValue(resting as never);
+            await bridge.onEvent(note);
+            expect(deps.noteHearing.hear).not.toHaveBeenCalled();
+
+            deps.getBotConfig.mockResolvedValue({ ...resting, enabled: true } as never);
+            await bridge.checkWaiting();
+            expect(deps.noteHearing.hear).toHaveBeenCalledWith(BOT, '$note1', expect.objectContaining({ seconds: 4 }));
+            expect(deps.reply.mock.calls.at(-1)[2]).toBe('[Voice note] Remind me about the meeting');
+        });
+
         it('treats an audio file that is not a voice note as a file', async () => {
             await bridge.onEvent({ ...note, content: { ...note.content, 'org.matrix.msc3245.voice': undefined, body: 'song.mp3' } });
             expect(deps.noteHearing.hear).not.toHaveBeenCalled();

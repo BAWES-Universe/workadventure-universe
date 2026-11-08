@@ -898,7 +898,12 @@ export class MatrixDmBridge implements MatrixEventHandler {
         const kept: Record<string, unknown> = { msgtype: content.msgtype, body: String(content.body ?? '').slice(0, WAITING_BODY_MAX) };
         if (typeof content.url === 'string') kept.url = content.url;
         if (typeof content.filename === 'string') kept.filename = content.filename;
-        if (typeof content.info?.mimetype === 'string') kept.info = { mimetype: content.info.mimetype };
+        const info: Record<string, unknown> = {};
+        if (typeof content.info?.mimetype === 'string') info.mimetype = content.info.mimetype;
+        // What a voice note needs when it is answered later: that it is a note, and how long it is
+        if (typeof content.info?.duration === 'number') info.duration = content.info.duration;
+        if (Object.keys(info).length > 0) kept.info = info;
+        for (const key of ['org.matrix.msc3245.voice', 'm.voice'] as const) if (content[key] !== undefined) kept[key] = {};
         const message = JSON.stringify({
             event_id: event.event_id,
             room_id: event.room_id,

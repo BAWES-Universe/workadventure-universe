@@ -19,6 +19,18 @@ export function asyncModelFor(model: string): string {
     return live ? `stt-async-v${live[1]}` : model;
 }
 
+/**
+ * Where the file API is for a bot's hearing endpoint. The endpoint is the live stream's (`wss://stt-rt.<region>.soniox.com/...`), and a
+ * key only works in its own region, so the file API of the same region is used (`https://api.<region>.soniox.com/v1`). An `https://`
+ * endpoint is taken as the API itself. Anything else is not understood: the default is used.
+ */
+export function restApiFor(endpoint: string | undefined): string | undefined {
+    if (!endpoint) return undefined;
+    if (endpoint.startsWith('https://')) return endpoint.replace(/\/+$/, '');
+    const live = /^wss:\/\/stt-rt\.((?:[a-z0-9-]+\.)*soniox\.com)(?:[:/]|$)/i.exec(endpoint);
+    return live ? `https://api.${live[1].toLowerCase()}/v1` : undefined;
+}
+
 export interface SonioxNotesOptions {
     fetch?: typeof fetch;
     /** Where the API is. Settings, not decisions of this file. */
@@ -46,7 +58,7 @@ export class SonioxNotes implements ClipHearer {
 
     async hear(settings: RecognitionConfig, clip: { bytes: Uint8Array; filename: string }): ReturnType<ClipHearer['hear']> {
         const call = this.options.fetch ?? fetch;
-        const api = settings.endpoint?.startsWith('https://') ? settings.endpoint.replace(/\/+$/, '') : (this.options.api ?? SONIOX_API);
+        const api = restApiFor(settings.endpoint) ?? this.options.api ?? SONIOX_API;
         const now = this.options.now ?? Date.now;
         const sleep = this.options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
         const timeoutMs = this.options.timeoutMs ?? 90_000;
