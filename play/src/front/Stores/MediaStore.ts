@@ -37,6 +37,7 @@ import { isLiveStreamingStore } from "./IsStreamingStore";
 import { videoStreamElementsStore } from "./PeerStore";
 import { bubbleMatesStore } from "./CurrentPlayerGroupStore";
 import { phoneMicrophoneCanRest } from "./PhoneMicrophoneRest";
+import { mustReopenMicrophone } from "../WebRtc/MicrophoneRecovery";
 
 import {
     backgroundConfigStore,
@@ -151,19 +152,15 @@ setCameraRetryHandler(() => {
 });
 
 /**
- * Asks the browser for the microphone again, as the player would by turning it off and on (the phone took it away and
- * did not give it back, see MicrophoneRecovery). A microphone the player muted stays muted: only the kept track, which
- * may be dead, is dropped, so that unmuting asks for a new one.
+ * Asks the browser for the microphone again because the phone took it away and did not give it back (see
+ * MicrophoneRecovery). This is not a mute and unmute: the requested state is never touched, so nobody sees the
+ * microphone blink off and on, and everything that decides whether the microphone may be open (the player's mute,
+ * privacy, the phone's rest, the availability status, a Jitsi or external service, the megaphone) still decides: if any
+ * of them keeps the microphone closed, nothing is asked.
  */
 export function reopenMicrophone(): void {
-    if (!get(requestedMicrophoneState)) {
-        releaseWarmAudio();
-        return;
-    }
-    // Not in a batch, and the kept track is dropped between the two: the first releases the device, the second asks.
-    requestedMicrophoneState.disableMicrophone();
-    releaseWarmAudio();
-    requestedMicrophoneState.enableMicrophone();
+    if (!get(requestedMicrophoneState)) return;
+    microphoneReopenStore.update((n) => n + 1);
 }
 
 /**
@@ -486,6 +483,9 @@ availabilityStatusStore.subscribe((newStatus: AvailabilityStatus) => {
 let previousComputedVideoConstraint: boolean | MediaTrackConstraints = false;
 let previousComputedAudioConstraint: boolean | MediaTrackConstraints = false;
 let previousComputedKeepAudioWarm: false | MediaTrackConstraints = false;
+let previousComputedAudioReopen = 0;
+/** Counts the requests to open the microphone again (see reopenMicrophone). */
+const microphoneReopenStore = writable(0);
 
 export interface MediaStreamConstraintsValue {
     video: false | MediaTrackConstraints;
@@ -497,6 +497,8 @@ export interface MediaStreamConstraintsValue {
      * noise filter while muted releases it).
      */
     keepAudioWarm: false | MediaTrackConstraints;
+    /** Changes when the microphone must be opened again even though its constraints did not change. */
+    audioReopen: number;
 }
 
 /**
@@ -523,6 +525,7 @@ export const mediaStreamConstraintsStore = derived(
         inLivekitStore,
         streamingMegaphoneStore,
         displayedMegaphoneScreenStore,
+        microphoneReopenStore,
     ],
     (
         [
@@ -545,6 +548,7 @@ export const mediaStreamConstraintsStore = derived(
             $inLivekitStore,
             $streamingMegaphoneStore,
             $displayedMegaphoneScreenStore,
+            $microphoneReopenStore,
         ],
         set
     ) => {
@@ -649,11 +653,13 @@ export const mediaStreamConstraintsStore = derived(
         if (
             !deepEqual(previousComputedVideoConstraint, currentVideoConstraint) ||
             !deepEqual(previousComputedAudioConstraint, currentAudioConstraint) ||
-            !deepEqual(previousComputedKeepAudioWarm, keepAudioWarm)
+            !deepEqual(previousComputedKeepAudioWarm, keepAudioWarm) ||
+            previousComputedAudioReopen !== $microphoneReopenStore
         ) {
             previousComputedVideoConstraint = currentVideoConstraint;
             previousComputedAudioConstraint = currentAudioConstraint;
             previousComputedKeepAudioWarm = keepAudioWarm;
+            previousComputedAudioReopen = $microphoneReopenStore;
             // Let's copy the objects.
             if (typeof previousComputedVideoConstraint !== "boolean") {
                 previousComputedVideoConstraint = { ...previousComputedVideoConstraint };
@@ -666,6 +672,7 @@ export const mediaStreamConstraintsStore = derived(
                 video: currentVideoConstraint,
                 audio: currentAudioConstraint,
                 keepAudioWarm,
+                audioReopen: $microphoneReopenStore,
             });
         }
     },
@@ -673,6 +680,7 @@ export const mediaStreamConstraintsStore = derived(
         video: false,
         audio: false,
         keepAudioWarm: false,
+        audioReopen: 0,
     } as MediaStreamConstraintsValue
 );
 
@@ -776,6 +784,8 @@ export function updateBackgroundProcessor(config: {
 // The promise to start the cam starts. Before the promise is fulfilled, the camera is stopped.
 // Then, the MediaStream of the camera start resolves (resulting in the LED being turned on instead of off)
 let currentGetUserMediaPromise: Promise<MediaStream | undefined> = Promise.resolve(undefined);
+// The last request to open the microphone again that this store has seen.
+let seenAudioReopen = 0;
 
 /**
  * A store containing the MediaStream object (or undefined if nothing requested, or Error if an error occurred)
@@ -988,6 +998,34 @@ export const rawLocalStreamStore = derived<[typeof mediaStreamConstraintsStore],
             // Nothing to put it back into: open the microphone normally.
             warmAudioTrack.stop();
             warmAudioTrack = undefined;
+        }
+
+        // The phone took the microphone away and did not give it back (see reopenMicrophone). The constraints did not
+        // change, so the microphone is asked for as if it had been off: the dead track is dropped (a refused earlier
+        // attempt left none), and the old constraints are forgotten. When the constraints say the microphone must stay
+        // closed, there is nothing to reopen.
+        if (constraints.audioReopen !== seenAudioReopen) {
+            const mustReopen = mustReopenMicrophone(constraints.audio, seenAudioReopen, constraints.audioReopen);
+            seenAudioReopen = constraints.audioReopen;
+            if (mustReopen) {
+                oldConstraints = { ...oldConstraints, audio: false };
+                const deadStream = currentStream;
+                const deadTracks = deadStream?.getAudioTracks() ?? [];
+                if (deadStream && deadTracks.length > 0) {
+                    deadTracks.forEach((t) => {
+                        t.stop();
+                        deadStream.removeTrack(t);
+                    });
+                    obtainedMediaConstraintStore.update((c) => {
+                        c.audio = false;
+                        return c;
+                    });
+                    set({
+                        type: "success",
+                        stream: deadStream,
+                    });
+                }
+            }
         }
 
         // Let's see what has changed compared to old constraints

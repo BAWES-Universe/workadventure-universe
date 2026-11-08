@@ -5,6 +5,7 @@ import {
     MAX_REOPENS,
     MICROPHONE_BACK_GRACE_MS,
     microphoneIsLost,
+    mustReopenMicrophone,
     REOPEN_RETRY_MS,
     REOPEN_WINDOW_MS,
     watchMicrophoneForRecovery,
@@ -209,5 +210,21 @@ describe("watchMicrophoneForRecovery", () => {
         doc.setVisibility("visible");
         vi.advanceTimersByTime(10_000);
         expect(reopen).not.toHaveBeenCalled();
+    });
+});
+
+describe("mustReopenMicrophone", () => {
+    const wanted: MediaTrackConstraints = { echoCancellation: true };
+
+    it("opens the microphone again for a new request when the constraints want it open", () => {
+        expect(mustReopenMicrophone(wanted, 0, 1)).toBe(true);
+    });
+
+    it("opens nothing when the constraints keep the microphone closed (muted, privacy, rest, status, Jitsi...)", () => {
+        expect(mustReopenMicrophone(false, 0, 1)).toBe(false);
+    });
+
+    it("carries a request out once", () => {
+        expect(mustReopenMicrophone(wanted, 1, 1)).toBe(false);
     });
 });

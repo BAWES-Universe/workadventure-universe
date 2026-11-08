@@ -39,6 +39,19 @@ export function microphoneIsLost(track: Pick<MediaStreamTrack, "readyState" | "m
 }
 
 /**
+ * Whether a request to open the microphone again (a new number) is carried out. The wanted constraints are the ones
+ * that already took the player's mute, privacy, the phone's rest, the availability status and the rest into account:
+ * when they say the microphone must be closed (false), nothing is opened.
+ */
+export function mustReopenMicrophone(
+    wantedAudio: false | MediaTrackConstraints,
+    seenRequest: number,
+    request: number
+): boolean {
+    return request !== seenRequest && wantedAudio !== false;
+}
+
+/**
  * Watches the raw microphone track. Returns a function that stops watching.
  */
 export function watchMicrophoneForRecovery(
