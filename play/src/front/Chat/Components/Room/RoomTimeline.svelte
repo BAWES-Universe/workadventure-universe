@@ -290,9 +290,13 @@
         (proximityRoom && $nearbySpaceKind ? nearbyChatName($nearbySpaceKind, $nearbySpaceName ?? "", $LL) : undefined);
     $: isEnded = shownSession !== undefined && !shownSession.isLive;
     $: isRoomMessages = shownSession?.id === ROOM_MESSAGES_SESSION_ID;
-    $: timelineEntries = shownSession
-        ? (shownSession.entries as TimelineEntry<ChatMessage & { session?: ProximitySessionMarker }>[])
-        : buildTimelineEntries($messages as (ChatMessage & { session?: ProximitySessionMarker })[], $spaceJoinedAt);
+    // What a bot heard in a voice note is shown inside that note's bubble: its notice is no message of the chat, so it
+    // takes no place in a run (the bot's answer after it keeps its name and picture).
+    $: timelineEntries = (
+        shownSession
+            ? (shownSession.entries as TimelineEntry<ChatMessage & { session?: ProximitySessionMarker }>[])
+            : buildTimelineEntries($messages as (ChatMessage & { session?: ProximitySessionMarker })[], $spaceJoinedAt)
+    ).filter((entry) => !entry.message.transcriptNotice);
     function isNoticeEntry(entry: TimelineEntry<ChatMessage & { session?: ProximitySessionMarker }>): boolean {
         return (
             ((entry.role === "start" || entry.role === "resume") && entry.message.session !== undefined) ||

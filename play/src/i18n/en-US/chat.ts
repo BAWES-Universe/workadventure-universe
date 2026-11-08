@@ -707,6 +707,10 @@ const chat: BaseTranslation = {
         micMissing: "No microphone was found. Plug one in, then try again.",
         recordingFailed: "The recording could not start. Try again.",
         notSent: "The voice note wasn't sent.",
+        listening: "Listening…",
+        couldntListen: "Couldn't listen to this note. Type it instead.",
+        moreWords: "more",
+        lessWords: "less",
     },
     audioFile: {
         from: "Audio from {name:string}",
