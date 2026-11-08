@@ -35,6 +35,9 @@ class TestableBehavior extends BaseBehavior {
     know(userId: number, uuid: string): void {
         this.userIdToUuid.set(userId, uuid);
     }
+    stoodInBubble(): void {
+        this.summonerJoinedBubble = true;
+    }
     tick(): boolean {
         return this.endSummonIfPersonAway();
     }
@@ -155,5 +158,72 @@ describe('a summon ends when its person has gone', () => {
         behavior.attach(room({ me: { x: 1500, y: 1000 } }));
         expect(behavior.tick()).toBe(false);
         expect(behavior.returning()).toBe(false);
+    });
+
+    describe('when the person steps out of the bubble', () => {
+        const near = { me: { x: 1060, y: 1000 } };
+
+        it('goes back at once, even though they are still close', () => {
+            summonAndSettle(near);
+            behavior.know(7, 'me');
+            behavior.engage(7);
+            behavior.stoodInBubble();
+            behavior.onSpaceUserLeft('s', 7);
+            expect(behavior.summoned()).toBe(false);
+            expect(behavior.returning()).toBe(true);
+        });
+
+        it('goes back when the bubble is gone and they had been in it', () => {
+            summonAndSettle(near);
+            behavior.know(7, 'me');
+            behavior.engage(7);
+            behavior.stoodInBubble();
+            behavior.onSpaceLeft('s');
+            expect(behavior.summoned()).toBe(false);
+        });
+
+        it('only counts once they have joined the bot in a bubble', async () => {
+            summonAndSettle(near);
+            const bot = room(near) as any;
+            bot.getUserId = () => 99;
+            bot.getBotId = () => undefined;
+            bot.getPlayerInfo = () => undefined;
+            behavior.attach(bot);
+            await behavior.onSpaceUserJoined('s', { id: 7, uuid: 'someoneElse' } as never);
+            behavior.onSpaceUserLeft('s', 7);
+            expect(behavior.summoned()).toBe(true);
+
+            await behavior.onSpaceUserJoined('s', { id: 7, uuid: 'me' } as never);
+            behavior.onSpaceUserLeft('s', 7);
+            expect(behavior.summoned()).toBe(false);
+        });
+
+        it('stays when it is still talking with someone else', () => {
+            summonAndSettle({ ...near, friend: { x: 1030, y: 1000 } });
+            behavior.know(7, 'me');
+            behavior.know(8, 'friend');
+            behavior.engage(7);
+            behavior.engage(8);
+            behavior.stoodInBubble();
+            behavior.onSpaceUserLeft('s', 7);
+            expect(behavior.summoned()).toBe(true);
+        });
+
+        it('does not send a bot back that has not met the person yet', () => {
+            summonAndSettle(near);
+            behavior.know(7, 'me');
+            behavior.onSpaceLeft('s');
+            expect(behavior.summoned()).toBe(true);
+        });
+
+        it('is not sent back by somebody else leaving the bubble', () => {
+            summonAndSettle({ ...near, friend: { x: 1030, y: 1000 } });
+            behavior.know(7, 'me');
+            behavior.know(8, 'friend');
+            behavior.engage(7);
+            behavior.stoodInBubble();
+            behavior.onSpaceUserLeft('s', 8);
+            expect(behavior.summoned()).toBe(true);
+        });
     });
 });

@@ -238,6 +238,7 @@ export abstract class BaseBehavior {
     // Summon state - track when bot is summoned to a player
     protected isSummoned = false;
     protected summonedPlayerUuid: string | null = null;
+    protected summonerJoinedBubble = false; // Whether the person has stood in a bubble with the bot since it came, so stepping out of it sends the bot back
     protected summonStartedAt = 0; // When the current summon began, so a bot still setting off is not read as left behind
     protected originalPosition: PositionInterface | null = null; // Position to return to after summon (set on first summon only)
     protected spawnPosition: PositionInterface | null = null; // Bot's spawn/assigned position (set when bot is initialized)
@@ -833,6 +834,7 @@ export abstract class BaseBehavior {
         this.isSummoned = true;
         this.summonedPlayerUuid = playerUuid;
         this.summonStartedAt = Date.now();
+        this.summonerJoinedBubble = false;
         
         // Only store original position on FIRST summon (don't overwrite on subsequent summons)
         // This ensures bot always returns to its spawn/assigned position, not the last summon position
@@ -906,6 +908,9 @@ export abstract class BaseBehavior {
      */
     protected checkSummonedPlayerStillNearby(): boolean {
         if (!this.bot || !this.summonedPlayerUuid) return false;
+
+        // Called when the bot's bubble is gone. If the person had stood in it with the bot, they stepped out of it.
+        if (this.summonerJoinedBubble) return false;
 
         // Check if we can find the player position
         const playerPos = this.getSummonedPlayerPosition();
@@ -1124,6 +1129,7 @@ export abstract class BaseBehavior {
         const originalPos = this.originalPosition;
         this.isSummoned = false;
         this.summonedPlayerUuid = null;
+        this.summonerJoinedBubble = false;
         // Don't clear originalPosition yet - we need it to check when we've reached it
         // Set returning flag so bot moves at 3x speed (matching summon speed)
         this.isReturning = true;
@@ -1386,6 +1392,9 @@ export abstract class BaseBehavior {
         // after the await would re-add the user after they'd already left.
         this.engagedWithUsers.set(user.id, { spaceName, position: undefined });
         this.isEngaged = this.engagedWithUsers.size > 0;
+        if (this.isSummoned && user.uuid && user.uuid === this.summonedPlayerUuid) {
+            this.summonerJoinedBubble = true;
+        }
         
         // Also track UUID in PersistentMemory for memory/emotion persistence
         if (user.uuid) {
@@ -1455,6 +1464,9 @@ export abstract class BaseBehavior {
      * @param userId User ID that left
      */
     onSpaceUserLeft(spaceName: string, userId: number): void {
+        // Whether the person this bot came for just stepped out of the bubble they stood in with it
+        const summonerLeftBubble = this.summonerJoinedBubble && this.isSummonedBy(userId);
+
         // Remove from engaged users
         this.engagedWithUsers.delete(userId);
         this.isEngaged = this.engagedWithUsers.size > 0;
@@ -1479,6 +1491,13 @@ export abstract class BaseBehavior {
         // Clean up UUID mapping after conversation is ended
         this.userIdToUuid.delete(userId);
         this.userIdToIsLogged.delete(userId);
+
+        // The person it came for stepped out of the bubble: go back, unless it is still talking with someone else
+        if (summonerLeftBubble && this.engagedWithUsers.size === 0) {
+            console.log(`[Behavior] Summoned player stepped out of the bubble, ending summon and returning`);
+            this.endSummon();
+            return;
+        }
 
         // If summoned and no players left, end summon and return
         if (this.isSummoned && this.engagedWithUsers.size === 0 && this.nearbyPlayers.size === 0) {
