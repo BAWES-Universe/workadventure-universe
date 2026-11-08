@@ -37,6 +37,7 @@ import {
     startingPayer,
     voiceLanguages,
     voiceListPart,
+    speakingRowModels,
     type BotVoice,
     type FullVoiceProfile,
     type VoiceChoice,
@@ -721,6 +722,12 @@ describe("talking models (#1910)", () => {
         expect(listKey(both, "talk")).toBe("key-aws#talk");
         expect(listKey(both)).toBe("key-aws");
         expect(listKey({ kind: "universe-ai" })).toBe("universe-ai");
+        // The Speaking model row offers the key's own speaking models, then its talking ones
+        expect(speakingRowModels(voice, { kind: "key", key: voice.lentKeys[0] }).map((model) => model.id)).toEqual([
+            "generative",
+            SONIC,
+        ]);
+        expect(speakingRowModels(voice, { kind: "universe-ai" }).map((model) => model.id)).toEqual(["eleven_v4_turbo"]);
     });
 });
 

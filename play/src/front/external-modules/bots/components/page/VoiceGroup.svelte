@@ -28,6 +28,7 @@
         modelLabel,
         modelName,
         modelsOf,
+        speakingRowModels,
         payerKind,
         payerOptions,
         pauseOf,
@@ -45,7 +46,6 @@
         speaksLive,
         voicesForOption,
         voiceListPart,
-        talkingModelsOf,
         talksLive,
         type BotVoice,
         type FullVoiceProfile,
@@ -361,7 +361,6 @@
 
     // A talking model (#1910): one model on a lent key listens and speaks; the bot's Mind still writes every answer
     $: live = voice && profile ? talksLive(voice, profile) : false;
-    $: talkingModels = voice && profile ? talkingModelsOf(voice, profile) : [];
 
     $: payerKindNow = voice && profile ? payerKind(voice, profile) : "universe-ai";
     $: speakingKey = speaksSource?.kind === "key" ? speaksSource.key : null;
@@ -655,7 +654,26 @@
             ...current,
             [part]: { ...current[part], model },
         };
-        void commit(next);
+        // Between a key's own speaking and its talking model the voices differ (#1910): the voice is kept if the other list has
+        // it, else the other list's first is taken
+        const choice = part === "speech" ? speakChoice : null;
+        const from = choice ? voiceListPart(choice, current.speech.model) : "speech";
+        const to = choice ? voiceListPart(choice, model) : "speech";
+        if (!voice || !choice || from === to) {
+            void commit(next);
+            return;
+        }
+        const data = voice;
+        const botId = bot.id;
+        void run(async () => {
+            const list = await voicesFor(choice, to);
+            const picked = startingVoice(data, choice, list, current.speech.voiceId);
+            if (!picked) throw new Error(v.voicesFailed());
+            const speech = { ...next.speech, voiceId: picked.voiceId };
+            delete speech.voiceName;
+            if (picked.voiceName) speech.voiceName = picked.voiceName;
+            return botApiService.saveBotVoice(botId, settleTalk(data, { ...next, speech }));
+        });
     }
 
     function chooseExpression(next: VoiceExpression) {
@@ -1503,7 +1521,10 @@
                             {#each live ? [{ part: "speech", title: v.talkingModel(), source: speaksSource }] : [{ part: "speech", title: v.speakingModel(), source: speaksSource }, { part: "recognition", title: v.listeningModel(), source: listensSource }] as row (row.part)}
                                 {@const part = row.part === "speech" ? "speech" : "recognition"}
                                 {#if row.source && row.source.kind === "key"}
-                                    {@const models = live ? talkingModels : modelsOf(voice, part, row.source)}
+                                    {@const models =
+                                        part === "speech"
+                                            ? speakingRowModels(voice, row.source)
+                                            : modelsOf(voice, part, row.source)}
                                     {@const chosen = profile[part]?.model}
                                     {@const shown = models.find((model) => model.id === chosen)}
                                     <button

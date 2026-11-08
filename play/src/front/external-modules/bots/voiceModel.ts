@@ -611,6 +611,17 @@ export function modelsOf(voice: BotVoice, part: VoicePart, source: PartSource): 
     return uai ? uai.models.map((model) => ({ id: model.id, label: model.label ?? undefined })) : [];
 }
 
+/**
+ * The models the Speaking model row offers on a key: its speaking models, then its talking models (#1910). On a key that does both
+ * (Amazon Polly and Nova Sonic) picking a talking model is how the bot starts talking live, and picking a speaking one how it stops.
+ */
+export function speakingRowModels(voice: BotVoice, source: PartSource): Array<{ id: string; label?: string }> {
+    if (source.kind !== "key") return modelsOf(voice, "speech", source);
+    const of = (kind: VoiceModelKind) =>
+        source.key.models.filter((model) => model.kind === kind).map((model) => ({ id: model.id, label: model.label }));
+    return [...of("speech"), ...of("talk")];
+}
+
 /** The label a model is shown with: its name and id ("Eleven v4 Turbo · eleven_v4_turbo"), or the id alone. */
 export function modelLabel(model: { id: string; label?: string | null }): string {
     return model.label && model.label !== model.id ? `${model.label} · ${model.id}` : model.id;
