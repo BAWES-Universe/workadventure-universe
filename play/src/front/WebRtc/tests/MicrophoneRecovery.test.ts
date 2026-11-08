@@ -5,6 +5,7 @@ import {
     MAX_REOPENS,
     MICROPHONE_BACK_GRACE_MS,
     microphoneIsLost,
+    REOPEN_RETRY_MS,
     REOPEN_WINDOW_MS,
     watchMicrophoneForRecovery,
 } from "../MicrophoneRecovery";
@@ -154,6 +155,51 @@ describe("watchMicrophoneForRecovery", () => {
         doc.setVisibility("visible");
         vi.advanceTimersByTime(MICROPHONE_BACK_GRACE_MS);
         expect(reopen).toHaveBeenCalledTimes(MAX_REOPENS + 1);
+    });
+
+    it("asks again when the phone refuses the microphone right after it came back", () => {
+        track.setMuted(true);
+        doc.setVisibility("hidden");
+        doc.setVisibility("visible");
+        vi.advanceTimersByTime(MICROPHONE_BACK_GRACE_MS);
+        expect(reopen).toHaveBeenCalledTimes(1);
+
+        // The microphone is released, then the browser refuses the new one.
+        store.set(streamOf(undefined));
+        store.set({ type: "error", error: new Error("busy") });
+        vi.advanceTimersByTime(REOPEN_RETRY_MS - 1);
+        expect(reopen).toHaveBeenCalledTimes(1);
+        vi.advanceTimersByTime(1);
+        expect(reopen).toHaveBeenCalledTimes(2);
+
+        // The second try works: no more asking.
+        store.set(streamOf(new FakeTrack()));
+        vi.advanceTimersByTime(60_000);
+        expect(reopen).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not ask again after the player or the settings refused the microphone", () => {
+        track.setMuted(true);
+        doc.setVisibility("hidden");
+        doc.setVisibility("visible");
+        vi.advanceTimersByTime(MICROPHONE_BACK_GRACE_MS);
+        const refusal = new Error("denied");
+        refusal.name = "NotAllowedError";
+        store.set({ type: "error", error: refusal });
+        vi.advanceTimersByTime(60_000);
+        expect(reopen).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps asking at most 3 times a minute when the phone keeps refusing", () => {
+        track.setMuted(true);
+        doc.setVisibility("hidden");
+        doc.setVisibility("visible");
+        vi.advanceTimersByTime(MICROPHONE_BACK_GRACE_MS);
+        for (let i = 0; i < 6; i++) {
+            store.set({ type: "error", error: new Error("busy") });
+            vi.advanceTimersByTime(REOPEN_RETRY_MS);
+        }
+        expect(reopen).toHaveBeenCalledTimes(MAX_REOPENS);
     });
 
     it("stops watching", () => {

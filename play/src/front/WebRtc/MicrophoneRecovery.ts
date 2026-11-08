@@ -20,6 +20,11 @@ export const MICROPHONE_BACK_GRACE_MS = 1500;
 /** A microphone that keeps going away is not coming back by asking again and again. */
 export const MAX_REOPENS = 3;
 export const REOPEN_WINDOW_MS = 60_000;
+/** The phone can refuse the microphone for a moment right after the app comes back: asked again after this wait. */
+export const REOPEN_RETRY_MS = 3000;
+
+/** The player (or the system settings) said no: asking again would only ask the player again. */
+const PERMANENT_REFUSALS = ["NotAllowedError", "SecurityError"];
 
 export interface MicrophoneRecoveryEnv {
     document: Pick<Document, "visibilityState" | "addEventListener" | "removeEventListener">;
@@ -38,12 +43,34 @@ export function microphoneIsLost(track: Pick<MediaStreamTrack, "readyState" | "m
  */
 export function watchMicrophoneForRecovery(
     rawLocalStreamStore: Readable<LocalStreamStoreValue>,
-    env: MicrophoneRecoveryEnv,
+    env: MicrophoneRecoveryEnv
 ): () => void {
     const now = env.now ?? (() => Date.now());
     let track: MediaStreamTrack | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let reopens: number[] = [];
+    // We asked for the microphone again and the answer has not come yet.
+    let reopenPending = false;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const cancelRetry = () => {
+        if (retryTimer === undefined) return;
+        clearTimeout(retryTimer);
+        retryTimer = undefined;
+    };
+
+    const reopenNow = () => {
+        const time = now();
+        reopens = reopens.filter((at) => time - at < REOPEN_WINDOW_MS);
+        if (reopens.length >= MAX_REOPENS) {
+            reopenPending = false;
+            return;
+        }
+        reopens.push(time);
+        reopenPending = true;
+        console.warn("The microphone is muted or ended while the page is on screen: asking for it again");
+        env.reopen();
+    };
 
     const cancel = () => {
         if (timer === undefined) return;
@@ -55,12 +82,7 @@ export function watchMicrophoneForRecovery(
         timer = undefined;
         // A page in the background cannot get the microphone: it is asked for on return.
         if (env.document.visibilityState !== "visible" || track === undefined || !microphoneIsLost(track)) return;
-        const time = now();
-        reopens = reopens.filter((at) => time - at < REOPEN_WINDOW_MS);
-        if (reopens.length >= MAX_REOPENS) return;
-        reopens.push(time);
-        console.warn("The microphone is muted or ended while the page is on screen: asking for it again");
-        env.reopen();
+        reopenNow();
     };
 
     // A mute while the page is on screen (a phone call, a hardware switch) is left alone: asking again would not help.
@@ -91,7 +113,24 @@ export function watchMicrophoneForRecovery(
     };
 
     const unsubscribe = rawLocalStreamStore.subscribe((value) => {
-        watch(value.type === "success" ? value.stream?.getAudioTracks()[0] : undefined);
+        const audioTrack = value.type === "success" ? value.stream?.getAudioTracks()[0] : undefined;
+        watch(audioTrack);
+        if (audioTrack) {
+            reopenPending = false;
+            cancelRetry();
+        } else if (
+            value.type === "error" &&
+            reopenPending &&
+            env.document.visibilityState === "visible" &&
+            !PERMANENT_REFUSALS.includes(value.error.name)
+        ) {
+            // The phone refused the microphone we asked for again: it may only be too soon after the app came back.
+            cancelRetry();
+            retryTimer = setTimeout(() => {
+                retryTimer = undefined;
+                if (env.document.visibilityState === "visible" && reopenPending) reopenNow();
+            }, REOPEN_RETRY_MS);
+        }
     });
 
     // Back on screen: the check runs, whether or not the track said anything while the page was away.
@@ -100,12 +139,14 @@ export function watchMicrophoneForRecovery(
             scheduleCheck();
         } else {
             cancel();
+            cancelRetry();
         }
     };
     env.document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
         unsubscribe();
+        cancelRetry();
         env.document.removeEventListener("visibilitychange", onVisibilityChange);
         watch(undefined);
     };
