@@ -271,7 +271,12 @@ class SocketStream implements Recognizer {
         for (const message of Array.isArray(answer) ? answer : [answer]) {
             if (this.done) return;
             if (message.error) return this.fail(failure(this.spec.adapter, 'answered with an error', message.error.status));
-            if (message.speech === 'started') this.unanswered = (this.unanswered ?? 0) + 1;
+            if (message.speech === 'started') {
+                this.unanswered = (this.unanswered ?? 0) + 1;
+                // Speech heard after finish() was sent (the company's detection runs late) still gets its words
+                const last = this.spec.lastAnswerAfterFinish;
+                if (this.finishing && last) this.restartTimer(() => this.end(), last.quietMs);
+            }
             if (message.speech === 'answered' && this.unanswered) this.unanswered -= 1;
             if (message.ready) this.accept();
             if (message.committed) {
