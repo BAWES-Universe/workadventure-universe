@@ -114,7 +114,10 @@
         clearTimeout(foldTimer);
         foldTimer = undefined;
         barShown = bar;
-        if (bar) announced = barText(bar).join(". ");
+        if (bar) {
+            announced = barText(bar).join(". ");
+            announcedFor = listening;
+        }
         armFold();
     }
 
@@ -171,6 +174,8 @@
     $: barLines = barShown ? barText(barShown) : undefined;
     /** Each change is said once, politely, by screen readers; folding says nothing. */
     let announced = "";
+    /** The listening state a bar's words were about: once listening changes without a new bar, the button's own name is said. */
+    let announcedFor = "";
     $: if (!listening) announced = "";
     /** A tall bar (large text, Arabic) moves the column above it up instead of covering it. */
     $: barExtra = barShown ? Math.max(0, barHeight - buttonHeight) : 0;
@@ -325,7 +330,7 @@
             {/if}
         </button>
         <span class="sr-only" role="status" aria-live="polite" aria-atomic="true" data-testid="voice-announce"
-            >{shown ? (listening ? announced || name : label) : ""}</span
+            >{shown ? (listening ? (announced && announcedFor === listening ? announced : name) : label) : ""}</span
         >
     </div>
 </div>

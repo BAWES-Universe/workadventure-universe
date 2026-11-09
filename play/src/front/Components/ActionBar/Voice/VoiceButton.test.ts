@@ -546,6 +546,20 @@ describe("the Voice button", () => {
             expect(mark()).toBe("off");
         });
 
+        it("tells screen readers a change in listening that comes without a bar, not the bar before it", async () => {
+            const announce = () => target.querySelector("[data-testid=voice-announce]")?.textContent;
+            t.say("on", 30, { listening: "pending", listeningReason: "" });
+            await settle();
+            t.say("on", 30, { listening: "on", listeningReason: "" });
+            await settle();
+            const heard = announce();
+            expect(heard).toBe(`${barText().replace("you ", "you. ")}`);
+            t.say("on", 30, { listening: "stopping", listeningReason: "" });
+            await settle();
+            expect(announce()).not.toBe(heard);
+            expect(announce()).toBe("Nora, checking connection, it may still hear you. Opens voice options.");
+        });
+
         it("tells someone who comes into a group that the bot isn't listening, once a visit", async () => {
             t.say("on", 30, { listening: "off", listeningReason: "" });
             await settle();
