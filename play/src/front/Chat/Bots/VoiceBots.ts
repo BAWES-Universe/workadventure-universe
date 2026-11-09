@@ -184,6 +184,8 @@ class VoiceSpaceWatcher {
     private readonly speaking = new Map<string, string>();
     /** Bots that already told us, this visit, that they don't listen in the group: that bar shows once. */
     private readonly toldNotListening = new Set<string>();
+    /** What each bot last said about listening while its voice was on: a reconnect in between is no new change. */
+    private readonly heardListening = new Map<string, Pick<BotVoiceStatus, "listening" | "listeningReason">>();
     private barSeq = 0;
     private latest: ReadonlyMap<string, ViewUser> = new Map();
     private readonly subscriptions: Subscription[] = [];
@@ -197,6 +199,7 @@ class VoiceSpaceWatcher {
                 // A bot that left no longer has a status
                 for (const id of [...this.statuses.keys()]) if (!users.has(id)) this.statuses.delete(id);
                 for (const id of [...this.bars.keys()]) if (!users.has(id)) this.bars.delete(id);
+                for (const id of [...this.heardListening.keys()]) if (!users.has(id)) this.heardListening.delete(id);
                 for (const id of [...this.speaking.keys()]) if (!users.has(id)) this.speaking.delete(id);
                 this.publish();
             })
@@ -233,7 +236,7 @@ class VoiceSpaceWatcher {
     private onStatus(botSpaceUserId: string, status: BotVoiceStatus): void {
         const before = this.statuses.get(botSpaceUserId);
         this.statuses.set(botSpaceUserId, status);
-        this.updateBar(botSpaceUserId, before, status);
+        this.updateBar(botSpaceUserId, status);
         this.publish();
         // The bot learns our choice when it first speaks to us, and when it starts a new connection
         if (!before || (before.state !== "connecting" && status.state === "connecting")) {
@@ -242,12 +245,16 @@ class VoiceSpaceWatcher {
     }
 
     /** The bar for what just changed, and the soft sound on this person's device only: listening paused, or listening confirmed. */
-    private updateBar(botSpaceUserId: string, earlier: BotVoiceStatus | undefined, latest: BotVoiceStatus): void {
-        // Listening only counts while the bot's voice is on, as the button shows it: what a connecting bot says waits for "on"
-        const heard = (s: BotVoiceStatus): Pick<BotVoiceStatus, "listening" | "listeningReason"> =>
-            s.state === "on" ? s : { listening: "", listeningReason: "" };
-        const before = earlier && heard(earlier);
-        const status = heard(latest);
+    private updateBar(botSpaceUserId: string, latest: BotVoiceStatus): void {
+        // Listening only counts while the bot's voice is on, as the button shows it: what a connecting bot says waits for "on",
+        // and a reconnect is measured against what it said before, so it brings back no bar and no sound
+        if (latest.state !== "on") {
+            this.bars.delete(botSpaceUserId);
+            return;
+        }
+        const before = this.heardListening.get(botSpaceUserId);
+        const status = { listening: latest.listening, listeningReason: latest.listeningReason };
+        this.heardListening.set(botSpaceUserId, status);
         const bar = voiceBarFor(before, status, this.toldNotListening.has(botSpaceUserId));
         if (status.listening === "off" && status.listeningReason === "") this.toldNotListening.add(botSpaceUserId);
         if (bar) {

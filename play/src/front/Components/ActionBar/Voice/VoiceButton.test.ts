@@ -567,6 +567,20 @@ describe("the Voice button", () => {
             expect(barText()).toBe("Nora isn't listening Tap for voice options");
         });
 
+        it("brings back no paused bar and no sound when the bot reconnects with the same news", async () => {
+            t.say("on", 30, { listening: "off", listeningReason: "others_joined" });
+            await settle();
+            expect(cues).toEqual(["paused"]);
+            t.say("connecting", 30, { listening: "off", listeningReason: "others_joined" });
+            await settle();
+            expect(bar()).toBeNull();
+            t.say("on", 30, { listening: "off", listeningReason: "others_joined" });
+            await settle();
+            expect(bar()).toBeNull();
+            expect(mark()).toBe("off");
+            expect(cues).toEqual(["paused"]);
+        });
+
         it("folds a bar that came after the options closed from a tap, though the focus went back to the button", async () => {
             vi.useFakeTimers();
             try {
