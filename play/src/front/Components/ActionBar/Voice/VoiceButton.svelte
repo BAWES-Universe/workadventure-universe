@@ -179,6 +179,15 @@
     let button: HTMLButtonElement | undefined;
     let wrap: HTMLDivElement | undefined;
 
+    /** The height the options may take: the room above the button on a phone, beside it up to the top on a computer. */
+    let menuMax: number | undefined;
+    function roomForMenu(): number | undefined {
+        const rect = button?.getBoundingClientRect();
+        if (!rect) return undefined;
+        const phone = window.matchMedia?.("(max-width: 639.98px)").matches ?? window.innerWidth < 640;
+        return Math.max(160, Math.floor((phone ? rect.top - 4 : rect.bottom - 8) - 12));
+    }
+
     // True between a pointer press on the button and its click: the press moves focus out of the menu first
     let pressing = false;
 
@@ -188,6 +197,11 @@
         if (!bot) return;
         if (OPENING_TAP_RESUMES_SOUND && state === "tap_to_hear" && !open) resumeBotSound(bot.spaceUserId);
         open = !open;
+        if (open) {
+            // The options say the same as the bar, so the bar folds; and they never run off the screen
+            showBar(undefined);
+            menuMax = roomForMenu();
+        }
     }
 
     async function closeMenu(refocus: boolean, to?: Node) {
@@ -220,7 +234,7 @@
         style:padding-top={barExtra ? `${barExtra}px` : undefined}
     >
         {#if open && bot && view}
-            <div class="menu-anchor">
+            <div class="menu-anchor" style:--voice-menu-max={menuMax ? `${menuMax}px` : undefined}>
                 <VoiceMenu
                     {bot}
                     {view}

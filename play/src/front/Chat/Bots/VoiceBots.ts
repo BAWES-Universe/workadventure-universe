@@ -229,13 +229,8 @@ class VoiceSpaceWatcher {
             else if (bar === "listening") playVoiceCue("ready");
             return;
         }
-        // A bar that lasts until the next change ends with it
-        const shown = this.bars.get(botSpaceUserId)?.bar;
-        if (
-            (shown === "turning_on" && status.listening !== "pending") ||
-            (shown === "checking" && status.listening !== "checking")
-        )
-            this.bars.delete(botSpaceUserId);
+        // A bar is about the change it came with: any other change in listening ends it
+        if ((before?.listening ?? "") !== status.listening) this.bars.delete(botSpaceUserId);
     }
 
     private sendChoiceToBots(): void {

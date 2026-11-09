@@ -310,7 +310,8 @@
     .voice-menu {
         width: 300px;
         max-width: calc(100vw - 96px);
-        max-height: calc(100dvh - 160px);
+        /* Never past the screen: no taller than the room the button leaves it (large text scrolls, the top first) */
+        max-height: min(calc(100dvh - 160px), var(--voice-menu-max, 100dvh));
         overflow-y: auto;
         padding: 12px 8px 8px;
         border-radius: 16px;
