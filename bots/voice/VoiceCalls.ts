@@ -555,6 +555,14 @@ export class VoiceCalls {
         if (status) this.tell(spaceName, personId, status);
     }
 
+    /**
+     * Tells everyone in a space who has been told anything again, after what the bot takes of their microphone changed for a reason
+     * that is not their own ask (the day's listening used up or starting again, a hold put on or taken off). `tell` sends only a change.
+     */
+    private retellAll(spaceName: string): void {
+        for (const personId of this.roster.get(spaceName)?.keys() ?? []) this.retell(spaceName, personId);
+    }
+
     /** The mode a person chose, or the default. */
     private chosenModeOf(spaceName: string, personId: string): VoiceMode {
         return this.modes.get(callKey(spaceName, personId)) ?? DEFAULT_PERSON_MODE;
@@ -601,6 +609,7 @@ export class VoiceCalls {
             this.heldTimers.set(key, timer);
         }
         this.syncListening(spaceName);
+        this.retellAll(spaceName);
     }
 
     /** Takes the hold off and tells the worker, when there was one. */
@@ -609,7 +618,10 @@ export class VoiceCalls {
         const timer = this.heldTimers.get(key);
         if (timer) clearTimeout(timer);
         this.heldTimers.delete(key);
-        if (this.heldBack.delete(key)) this.syncListening(spaceName);
+        if (this.heldBack.delete(key)) {
+            this.syncListening(spaceName);
+            this.retellAll(spaceName);
+        }
     }
 
     private forgetHold(key: string): void {
@@ -649,7 +661,10 @@ export class VoiceCalls {
      * Called by the listening budget.
      */
     listeningChanged(): void {
-        for (const spaceName of this.roster.keys()) this.syncListening(spaceName);
+        for (const spaceName of this.roster.keys()) {
+            this.syncListening(spaceName);
+            this.retellAll(spaceName);
+        }
     }
 
     /** Tells one person where their audio stands, once per change. */

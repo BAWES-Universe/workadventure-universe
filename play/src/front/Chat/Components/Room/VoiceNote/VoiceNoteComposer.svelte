@@ -458,26 +458,33 @@
 {#if holding}
     <!-- A finger holds the mic: the timer and meter, and how to cancel. The mic itself stays under the finger, below. -->
     <div class="voice-live voice-hold" data-testid="voiceHolding">
+        <!-- The dot, timer and meter show only once the microphone is really recording (not while a permission prompt is open). -->
         {#if cancelArmed}
             <span class="voice-hold-trash"><IconTrash font-size={18} /></span>
-        {:else}
+        {:else if state === "recording"}
             <span class="voice-rec-dot" aria-hidden="true" />
         {/if}
-        <span class="voice-clock" class:voice-ending={left <= VOICE_NOTE_WARNING_SECONDS}>
-            {formatDuration(seconds)}{#if left <= VOICE_NOTE_WARNING_SECONDS}<span class="voice-left"
-                    >&nbsp;· {$LL.chat.voiceNote.secondsLeft({ seconds: left })}</span
-                >{/if}
-        </span>
+        {#if state === "recording"}
+            <span class="voice-clock" class:voice-ending={left <= VOICE_NOTE_WARNING_SECONDS}>
+                {formatDuration(seconds)}{#if left <= VOICE_NOTE_WARNING_SECONDS}<span class="voice-left"
+                        >&nbsp;· {$LL.chat.voiceNote.secondsLeft({ seconds: left })}</span
+                    >{/if}
+            </span>
+        {/if}
         {#if cancelArmed}
             <span class="voice-slide voice-slide-armed">{$LL.chat.voiceNote.releaseToCancel()}</span>
         {:else}
-            <WaveBars
-                levels={live}
-                height={26}
-                gap={2}
-                barWidth={3}
-                classList="flex-1 min-w-0 overflow-hidden justify-end"
-            />
+            {#if state === "recording"}
+                <WaveBars
+                    levels={live}
+                    height={26}
+                    gap={2}
+                    barWidth={3}
+                    classList="flex-1 min-w-0 overflow-hidden justify-end"
+                />
+            {:else}
+                <span class="flex-1 min-w-0" />
+            {/if}
             <span
                 class="voice-slide"
                 style="transform: translateX({move.offsetX * 0.6 * side}px); opacity: {1 - move.cancel}"
