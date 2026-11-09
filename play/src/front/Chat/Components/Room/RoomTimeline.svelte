@@ -34,6 +34,7 @@
     import BotStatusNoteCard from "../Bots/BotStatusNoteCard.svelte";
     import BotReplyLimitCard from "../Bots/BotReplyLimitCard.svelte";
     import VoiceDraftCard from "../Bots/VoiceDraftCard.svelte";
+    import VoiceListeningRow from "../Bots/VoiceListeningRow.svelte";
     import BotAskCard from "../Bots/BotAskCard.svelte";
     import {
         askBarFits,
@@ -1368,6 +1369,10 @@
                         onShowQueued={() => (pagedToAskId = waitingAsks[queuedSoonIndex]?.message.id)}
                         onOpen={() => chatSheetSnapStore.set("full")}
                     />
+                {/if}
+                {#if proximityRoom}
+                    <!-- Round 8: while a voice bot takes your microphone in the group, a direct Stop listening -->
+                    <VoiceListeningRow />
                 {/if}
                 {#if voiceDraftCard}
                     <!-- One card at most: with two voice bots in a bubble, the one addressed last -->

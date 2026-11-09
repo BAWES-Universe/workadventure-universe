@@ -2190,6 +2190,24 @@ export class BotClient {
         });
     }
 
+    /** Says a voice bot's reply began to be heard, or is over (round 8): the reply in everyone's chat shows Stop speaking meanwhile. */
+    private sendSpeaking(spaceName: string, responseId: string, speaking: boolean): void {
+        this.send({
+            message: {
+                $case: 'publicEvent',
+                publicEvent: {
+                    spaceName,
+                    spaceEvent: {
+                        event: {
+                            $case: 'spaceStreamMessage',
+                            spaceStreamMessage: { responseId, token: '', isFinal: true, isError: false, reset: false, speaking },
+                        },
+                    },
+                },
+            },
+        });
+    }
+
     /** A tool round or a retry of this person's reply is under way: what finishes meanwhile is not spoken (see BotSpeech). */
     holdSpeech(spaceName: string, playerId: number): void {
         this.speech?.hold(spaceName, playerId);
@@ -2724,7 +2742,7 @@ export class BotClient {
                             reason: draft.reason ?? '',
                         },
                     }),
-                sendStatus: (spaceName, receiverUserId, status, left) =>
+                sendStatus: (spaceName, receiverUserId, status, left, listen) =>
                     this.sendPrivateEvent(spaceName, receiverUserId, {
                         $case: 'botVoiceStatus',
                         botVoiceStatus: {
@@ -2736,6 +2754,9 @@ export class BotClient {
                             // The spoken replies this person has left, when Orbit said (#1669)
                             repliesLeft: left?.count,
                             repliesResetAt: left?.resetsAt ?? '',
+                            // Whether it takes their microphone in a group, and why not (round 8)
+                            listening: listen?.state ?? '',
+                            listeningReason: listen?.reason ?? '',
                         },
                     }),
             },
@@ -2770,6 +2791,9 @@ export class BotClient {
         );
         // People call the bot by this name, so the hearing is told to expect it (#1864)
         this.voice.botName = this.config.name;
+        // In a group, the bot takes someone's microphone only after they ask it to keep listening (round 8); the confirmed ask counts as its name
+        this.voice.groupGate = true;
+        this.voice.onListenGranted = (spaceName, personId) => this.attention.listenGranted(spaceName, BotClient.playerIdOf(personId));
         // Voice paused for someone (the allowance, or a key that isn't working): the one fixed line, in the chat the reply is in
         this.voice.onPaused = (spaceName) => this.sendChatMessage(spaceName, pausedLine(this.config.name));
         this.speech = new BotSpeech(this.voice, voiceReplyLimits());
@@ -2786,6 +2810,11 @@ export class BotClient {
         // A spoken answer is over: the person can go on without the bot's name from now (#1220)
         this.speech.onOver = (spaceName, personId) => this.attention.answered(spaceName, personId);
         this.voice.onCrowded =(spaceName) => this.speech?.crowded(spaceName);
+        // A reply being heard shows Stop speaking in everyone's chat, and a tap on it stops it for the bubble as speaking over it would (round 8)
+        this.speech.onSpeaking = (spaceName, responseId, speaking) => this.sendSpeaking(spaceName, responseId, speaking);
+        this.voice.onStopSpeaking = (spaceName, responseId) => {
+            if (this.speech?.stopReply(spaceName, responseId)) this.sendSpeechStopped(spaceName, responseId);
+        };
         this.voice.onStopped = (spaceName, segmentId) => {
             const responseId = this.speech?.stopped(spaceName, segmentId);
             if (responseId) this.sendSpeechStopped(spaceName, responseId);

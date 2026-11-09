@@ -647,7 +647,7 @@ class BridgeConnection {
                 session.setRoomPeople(msg.epoch, msg.people);
                 break;
             case 'mode.set':
-                session.setMode(msg.mode, msg.participantId);
+                session.setMode(msg.mode, msg.participantId, msg.requestId);
                 break;
             case 'bot.say':
                 session.say(msg.segmentId, msg.text, msg.maxMs, msg.lang);

@@ -558,3 +558,106 @@ describe('a person who says they are done (#1670)', () => {
         expect(t.over).toEqual([8]);
     });
 });
+
+describe('Stop speaking (round 8)', () => {
+    function speakingSetup() {
+        const retracted: string[] = [];
+        const said: string[] = [];
+        const voice: SpeechVoice = {
+            say: (_space, segmentId) => {
+                said.push(segmentId);
+                return true;
+            },
+            hasAudience: () => true,
+            someoneSpeaking: () => false,
+            lastSpokenToAt: () => 0,
+            retract: (_space, segmentId) => void retracted.push(segmentId),
+        };
+        const speech = new BotSpeech(voice, DEFAULT_REPLY_LIMITS, () => 1000);
+        const events: [string, boolean][] = [];
+        speech.onSpeaking = (_space, responseId, speaking) => void events.push([responseId, speaking]);
+        const over = vi.fn();
+        speech.onOver = over;
+        return { speech, retracted, said, events, over };
+    }
+
+    it('says a reply is being heard once, from the first sound until its audio is over', () => {
+        const t = speakingSetup();
+        t.speech.final(SPACE, reply(1), 'A long answer.');
+        expect(t.events).toEqual([]);
+        t.speech.heard(SPACE, 's1');
+        t.speech.heard(SPACE, 's1');
+        expect(t.events).toEqual([[reply(1), true]]);
+        t.speech.played('s1');
+        t.speech.played('s1');
+        expect(t.events).toEqual([
+            [reply(1), true],
+            [reply(1), false],
+        ]);
+    });
+
+    it('never says a reply that was not heard is speaking, and ends it however the audio goes away', () => {
+        const t = speakingSetup();
+        t.speech.final(SPACE, reply(1), 'Never heard.');
+        t.speech.played('s1');
+        expect(t.events).toEqual([]);
+        t.speech.final(SPACE, reply(2), 'Heard, then the session ended.');
+        t.speech.heard(SPACE, 's2');
+        t.speech.sessionEnded(SPACE);
+        t.speech.final(SPACE, reply(3), 'Heard, then a second bot came.');
+        t.speech.heard(SPACE, 's3');
+        t.speech.crowded(SPACE);
+        t.speech.final(SPACE, reply(4, 8), 'Heard, then they said they are done.');
+        t.speech.heard(SPACE, 's4');
+        t.speech.endFor(SPACE, 8);
+        expect(t.events).toEqual([
+            [reply(2), true],
+            [reply(2), false],
+            [reply(3), true],
+            [reply(3), false],
+            [reply(4, 8), true],
+            [reply(4, 8), false],
+        ]);
+    });
+
+    it('stops only that reply in that space, and only one being heard counts as stopped', () => {
+        const t = speakingSetup();
+        t.speech.final(SPACE, reply(1), 'Playing now.');
+        t.speech.heard(SPACE, 's1');
+        expect(t.speech.stopReply('elsewhere', reply(1))).toBe(false);
+        expect(t.speech.stopReply(SPACE, reply(2))).toBe(false);
+        expect(t.retracted).toEqual([]);
+        expect(t.speech.stopReply(SPACE, reply(1))).toBe(true);
+        expect(t.retracted).toEqual(['s1']);
+        expect(t.events).toEqual([
+            [reply(1), true],
+            [reply(1), false],
+        ]);
+        // The worker's report of the end says nothing more, and a second tap does nothing
+        t.speech.played('s1');
+        expect(t.events).toHaveLength(2);
+        expect(t.speech.stopReply(SPACE, reply(1))).toBe(false);
+        expect(t.speech.isSpeakingTo(7)).toBe(false);
+        // A tap to stop it is not a reply having been said: no follow-up window opens from its end
+        expect(t.over).not.toHaveBeenCalled();
+    });
+
+    it('gives back a reply stopped before any of it was heard', () => {
+        const unspoken = vi.fn();
+        const voice: SpeechVoice = {
+            say: () => true,
+            hasAudience: () => true,
+            someoneSpeaking: () => false,
+            lastSpokenToAt: () => 0,
+            retract: () => undefined,
+            unspoken,
+        };
+        const speech = new BotSpeech(voice, DEFAULT_REPLY_LIMITS, () => 1000);
+        speech.final(SPACE, reply(1), 'Queued.');
+        expect(speech.stopReply(SPACE, reply(1))).toBe(false);
+        expect(unspoken).toHaveBeenCalledWith(SPACE, { turnId: reply(1), playerId: 7 });
+        // The worker's report that nothing played gives back nothing twice
+        speech.unplayed(SPACE, 's1');
+        expect(unspoken).toHaveBeenCalledTimes(1);
+    });
+});
