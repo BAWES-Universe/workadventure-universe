@@ -107,7 +107,8 @@ function fakeSpace() {
             }),
         sent: () =>
             (space.emitPrivateMessage as ReturnType<typeof vi.fn>).mock.calls.map(
-                ([message]) => (message as { voiceModeChoice: { listen: string; stopSpeaking: string } }).voiceModeChoice
+                ([message]) =>
+                    (message as { voiceModeChoice: { listen: string; stopSpeaking: string } }).voiceModeChoice
             ),
     };
 }
@@ -144,7 +145,10 @@ describe("voice in nearby chat (round 8)", () => {
 
     describe("the reply being heard", () => {
         const mount = (responseId = "r1") => {
-            const component = new SpokenReplyControl({ target, props: { reply: { responseId, botSpaceUserId: "b1" } } });
+            const component = new SpokenReplyControl({
+                target,
+                props: { reply: { responseId, botSpaceUserId: "b1" } },
+            });
             destroy.push(() => component.$destroy());
         };
         const control = () => target.querySelector<HTMLElement>("[data-testid=spokenReply]");

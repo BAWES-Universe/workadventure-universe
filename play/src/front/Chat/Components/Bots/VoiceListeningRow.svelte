@@ -46,7 +46,9 @@
         </span>
         <span class="text">
             <span class="name" dir="auto">{bot.name}</span>
-            <span class="status"><i class="dot" class:off={!on} aria-hidden="true" /><span dir="auto">{status}</span></span>
+            <span class="status"
+                ><i class="dot" class:off={!on} aria-hidden="true" /><span dir="auto">{status}</span></span
+            >
         </span>
         <!-- A stop not confirmed yet can be asked again -->
         {#if listening !== "stopping"}

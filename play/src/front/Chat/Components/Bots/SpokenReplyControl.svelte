@@ -1,11 +1,6 @@
 <script lang="ts">
     import LL from "../../../../i18n/i18n-svelte";
-    import {
-        currentVoiceSpaceStore,
-        resumeBotSound,
-        soundBlockedStore,
-        voiceChoiceStore,
-    } from "../../Bots/VoiceBots";
+    import { currentVoiceSpaceStore, resumeBotSound, soundBlockedStore, voiceChoiceStore } from "../../Bots/VoiceBots";
     import { choiceHearsBot } from "../../Bots/VoiceMode";
 
     /**
@@ -16,7 +11,8 @@
      */
     export let reply: { responseId: string; botSpaceUserId: string };
 
-    $: bot = $currentVoiceSpaceStore?.bot?.spaceUserId === reply.botSpaceUserId ? $currentVoiceSpaceStore.bot : undefined;
+    $: bot =
+        $currentVoiceSpaceStore?.bot?.spaceUserId === reply.botSpaceUserId ? $currentVoiceSpaceStore.bot : undefined;
     $: shown = !!bot && bot.speaking === reply.responseId && choiceHearsBot($voiceChoiceStore);
     $: blocked = $soundBlockedStore.has(reply.botSpaceUserId);
     /** A name kept whole inside a sentence of another direction (an English bot name in Arabic). */
