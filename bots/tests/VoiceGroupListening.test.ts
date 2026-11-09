@@ -215,6 +215,36 @@ describe('listening in a group: keep talking', () => {
         expect(t.granted).toEqual([]);
     });
 
+    it('still sends the chosen mode when a keep-listening ask comes after the group broke up', () => {
+        const t = setup();
+        t.aliceThenBob();
+        t.calls.spaceUserLeft(SPACE, 'bob');
+        // Alice's chat still showed the group: her ask carries a new mode
+        t.choose('alice', 'speak_and_read', 'keep');
+        const last = t.modeSets('alice').pop()!;
+        expect(last).toMatchObject({ mode: 'speak_and_read' });
+        expect(last.requestId).toBeUndefined();
+        expect(t.granted).toEqual([]);
+    });
+
+    it('still sends the chosen mode when a keep-listening ask comes with a mode that takes no microphone', () => {
+        const t = setup();
+        t.aliceThenBob();
+        t.choose('alice', 'type_and_listen', 'keep');
+        const last = t.modeSets('alice').pop()!;
+        expect(last).toMatchObject({ mode: 'type_and_listen' });
+        expect(last.requestId).toBeUndefined();
+        expect(t.granted).toEqual([]);
+    });
+
+    it('still sends the chosen mode with a listening ask when the group rule is off', () => {
+        const t = setup(false);
+        t.aliceThenBob();
+        t.choose('alice', 'speak_and_read', 'keep');
+        expect(t.modeSets('alice').pop()).toMatchObject({ mode: 'speak_and_read' });
+        expect(t.granted).toEqual([]);
+    });
+
     it('refuses an ask it does not know', () => {
         const t = setup();
         t.aliceThenBob();
