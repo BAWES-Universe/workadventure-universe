@@ -138,9 +138,9 @@ describe('hearing with Meta', () => {
     });
 
     it('reads only a refused key as a rejection, not a limit that mentions tokens or a key', () => {
-        for (const refused of ['Invalid access token', 'Unauthorized', 'Forbidden', 'The API key is invalid', 'Token expired', 'Authentication failed', 'missing credentials'])
+        for (const refused of ['Invalid access token', 'Unauthorized', 'Forbidden', 'The API key is invalid', 'Token expired', 'Authentication failed', 'Authentication required', 'Not authenticated', 'missing credentials'])
             expect(metaStatus(refused), refused).toBe(401);
-        for (const other of ['Token rate exceeded', 'Too many tokens per minute', 'Quota for this API key used up', 'Rate limit reached', 'Unsupported audio'])
+        for (const other of ['Token rate exceeded', 'Too many tokens per minute', 'Quota for this API key used up', 'Rate limit reached', 'Unsupported audio', 'Authentication service temporarily unavailable'])
             expect(metaStatus(other), other).toBeUndefined();
         expect(metaStatus(undefined)).toBeUndefined();
     });
