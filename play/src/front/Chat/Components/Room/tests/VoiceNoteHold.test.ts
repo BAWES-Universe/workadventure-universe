@@ -243,6 +243,32 @@ describe("recording a voice note by holding the mic", () => {
         expect(cancel).not.toHaveBeenCalled();
     });
 
+    it("shows no recording dot or timer while the microphone is still being asked for", async () => {
+        let allow!: (value: unknown) => void;
+        recorder.start.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    allow = resolve;
+                })
+        );
+        pointer("pointerdown", 200, 400);
+        await settle(250);
+        // The finger is held and the button stays under it, but nothing records yet.
+        expect(find("voiceHolding")).not.toBeNull();
+        expect(target.querySelector(".voice-rec-dot")).toBeNull();
+        expect(target.querySelector(".voice-clock")).toBeNull();
+
+        allow({
+            level: () => 0.3,
+            metering: () => true,
+            cancel,
+            stop: () => Promise.resolve({ file: new File([new Uint8Array(10)], "Voice message.m4a"), details }),
+        });
+        await settle(100);
+        expect(target.querySelector(".voice-rec-dot")).not.toBeNull();
+        expect(target.querySelector(".voice-clock")).not.toBeNull();
+    });
+
     it("asks for sound again when the finger lifts", async () => {
         const resume = vi.fn();
         recorder.start.mockResolvedValueOnce({
