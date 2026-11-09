@@ -8,7 +8,7 @@ import { ProviderError, Secret, type SpeechRequest } from '../src/connectors.ts'
 import type { RecognizerEvents } from '../src/recognizer.ts';
 import { answerStatus } from '../src/kit/errors.ts';
 import { httpSpeech } from '../src/kit/httpSpeech.ts';
-import { decodeAudioText, PcmReader, Resampler, wavFile } from '../src/kit/pcm.ts';
+import { decodeAudioText, PcmReader, Resampler, wavDataStart, wavFile } from '../src/kit/pcm.ts';
 import { baseLanguage, signInFields } from '../src/kit/signIn.ts';
 import { socketHearing, type HearingMessage } from '../src/kit/socketHearing.ts';
 import { socketSpeech } from '../src/kit/socketSpeech.ts';
@@ -100,6 +100,16 @@ describe('the kit audio pieces', () => {
         const wav = wavFile(new Int16Array([4, 5]), 16000);
         expect(new PcmReader({ skipWavHeader: true }).take(wav)).toEqual(new Int16Array([4, 5]));
         expect(new PcmReader().take(wav)?.length).toBe(24);
+    });
+
+    it('skips a WAV header with extra chunks before the samples (Resemble), even when it comes in pieces', () => {
+        const wav = withChunksBeforeData(wavFile(new Int16Array([7, -8, 9]), 48000), [['cue ', 28], ['LIST', 41]]);
+        const reader = new PcmReader({ skipWavHeader: true });
+        const got: number[] = [];
+        for (let at = 0; at < wav.length; at += 10) got.push(...(reader.take(wav.subarray(at, at + 10)) ?? []));
+        expect(got).toEqual([7, -8, 9]);
+        expect(wavDataStart(wav)).toBe(wav.length - 6);
+        expect(wavDataStart(wav.subarray(0, 60))).toBeUndefined();
     });
 
     it('reads audio sent as base64 or hex', () => {
@@ -509,6 +519,25 @@ describe('hearing over a WebSocket with the kit', () => {
         expect(refused.got.failures).toEqual([{ text: '', status: 401 }]);
     });
 
+    it('waits for the last answer from when the end of the audio goes out, and fails when the socket never opens', async () => {
+        const fake = await fakeHearing((f) => setTimeout(() => f.send({ committed: 'late words' }), 50));
+        const { got, events } = heard();
+        const lastAnswer = { lastAnswerAfterFinish: { quietMs: 100 }, finalTimeoutMs: 1_000 };
+        const slow = spec({ ...lastAnswer, connect: async () => (await sleep(150), { url: `${fake.url}/listen` }) });
+        const stream = slow.listen(hearingSettings(''), events);
+        stream.finish();
+        await waitFor('the last words', () => got.finals.length === 1);
+        expect(got.finals).toEqual(['late words']);
+
+        const stuck = heard();
+        spec({ lastAnswerAfterFinish: { quietMs: 50 }, finalTimeoutMs: 150, connect: () => new Promise<never>(() => undefined) })
+            .listen(hearingSettings(''), stuck.events)
+            .finish();
+        await waitFor('the failure', () => stuck.got.failures.length === 1);
+        expect(stuck.got.finals).toEqual([]);
+        expect(stuck.got.failures).toEqual([{ text: '' }]);
+    });
+
     it('fails, without crashing the worker, when the key cannot be sent in a header', async () => {
         const fake = await fakeHearing();
         const { got, events } = heard();
@@ -599,3 +628,14 @@ describe('hearing by upload with the kit', () => {
         expect(slow.got.failures).toEqual([{ text: '' }]);
     });
 });
+
+/** A WAV with chunks of the given ids and sizes put between its fmt chunk and its samples (an odd size is padded, as WAV wants). */
+function withChunksBeforeData(wav: Uint8Array, chunks: [string, number][]): Uint8Array {
+    const extra = chunks.map(([id, size]) => {
+        const chunk = Buffer.alloc(8 + size + (size % 2), 0x5a);
+        chunk.write(id, 0, 'ascii');
+        chunk.writeUInt32LE(size, 4);
+        return chunk;
+    });
+    return new Uint8Array(Buffer.concat([Buffer.from(wav.subarray(0, 36)), ...extra, Buffer.from(wav.subarray(36))]));
+}

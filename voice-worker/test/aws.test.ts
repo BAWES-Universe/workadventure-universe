@@ -2,6 +2,7 @@
 // stand-in HTTP/2 server on loopback: no key, no network, no spend. The model hears and speaks; the bot's own Mind writes
 // every answer.
 import http2 from 'node:http2';
+import { crc32 } from 'node:zlib';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ConnectorRegistry, ProviderError, Secret, type SpeechRequest } from '../src/connectors.ts';
@@ -176,6 +177,77 @@ describe('Bedrock’s stream', () => {
         expect(() => bedrockSonic({ ...settings(), region: undefined })).toThrow(ProviderError);
         expect(() => bedrockSonic({ ...settings(), region: 'eu-north-1.evil.com' })).toThrow(ProviderError);
     });
+
+    /** One AWS event-stream message: the prelude, string headers, the payload and the checksums. */
+    function eventMessage(headers: Record<string, string>, payload: Buffer): Buffer {
+        const head = Buffer.concat(
+            Object.entries(headers).map(([name, value]) => {
+                const length = Buffer.alloc(2);
+                length.writeUInt16BE(Buffer.byteLength(value));
+                return Buffer.concat([Buffer.from([name.length]), Buffer.from(name), Buffer.from([7]), length, Buffer.from(value)]);
+            })
+        );
+        const prelude = Buffer.alloc(8);
+        prelude.writeUInt32BE(16 + head.length + payload.length, 0);
+        prelude.writeUInt32BE(head.length, 4);
+        const preludeCrc = Buffer.alloc(4);
+        preludeCrc.writeUInt32BE(crc32(prelude));
+        const body = Buffer.concat([prelude, preludeCrc, head, payload]);
+        const crc = Buffer.alloc(4);
+        crc.writeUInt32BE(crc32(body));
+        return Buffer.concat([body, crc]);
+    }
+
+    /** The Nova Sonic events in what the SDK sent: each signed message holds the event's own message as its payload. */
+    function sentEvents(data: Buffer): string[] {
+        const kinds: string[] = [];
+        const read = (buffer: Buffer) => {
+            for (let at = 0; at + 12 <= buffer.length; ) {
+                const total = buffer.readUInt32BE(at);
+                const headLength = buffer.readUInt32BE(at + 4);
+                const payload = buffer.subarray(at + 12 + headLength, at + total - 4);
+                const head = buffer.subarray(at + 12, at + 12 + headLength).toString('latin1');
+                if (head.includes(':chunk-signature')) read(payload);
+                else if (payload.length) {
+                    const { bytes } = JSON.parse(payload.toString()) as { bytes?: string };
+                    const { event } = JSON.parse(Buffer.from(bytes ?? '', 'base64').toString()) as { event: Record<string, unknown> };
+                    kinds.push(Object.keys(event)[0]);
+                }
+                at += total;
+            }
+        };
+        read(data);
+        return kinds;
+    }
+
+    it('lets the closing events reach AWS when the reader stops early, as speaking does at the end of a reply', async () => {
+        const received: Buffer[] = [];
+        let cut = false;
+        const server = http2.createServer();
+        server.on('stream', (stream) => {
+            stream.on('data', (chunk: Buffer) => received.push(chunk));
+            stream.on('aborted', () => (cut = true));
+            stream.on('close', () => (cut ||= stream.rstCode !== http2.constants.NGHTTP2_NO_ERROR));
+            stream.respond({ ':status': 200, 'content-type': 'application/vnd.amazon.eventstream' });
+            const event = { event: { contentEnd: { role: 'ASSISTANT', type: 'AUDIO', stopReason: 'END_TURN' } } };
+            const payload = Buffer.from(JSON.stringify({ bytes: Buffer.from(JSON.stringify(event)).toString('base64') }));
+            stream.write(eventMessage({ ':message-type': 'event', ':event-type': 'chunk', ':content-type': 'application/json' }, payload));
+        });
+        await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+        closers.push(() => new Promise<void>((resolve) => server.close(() => resolve())));
+        const stream = bedrockSonic({ ...settings(), endpoint: `http://127.0.0.1:${(server.address() as AddressInfo).port}` });
+        stream.send({ sessionStart: {} });
+        for await (const event of stream.events) {
+            expect(Object.keys(event)).toEqual(['contentEnd']);
+            break;
+        }
+        // As AwsSpeech does once the reply is whole: the closing events, then the end
+        for (const kind of ['contentEnd', 'promptEnd', 'sessionEnd']) stream.send({ [kind]: {} });
+        stream.end();
+        await waitFor('the closing events at AWS', () => sentEvents(Buffer.concat(received)).includes('sessionEnd'));
+        expect(sentEvents(Buffer.concat(received))).toEqual(['sessionStart', 'contentEnd', 'promptEnd', 'sessionEnd']);
+        expect(cut).toBe(false);
+    });
 });
 
 describe('hearing with Nova Sonic', () => {
@@ -329,9 +401,19 @@ describe('speaking with Nova Sonic', () => {
 });
 
 describe('the worker', () => {
-    it('hears and speaks with AWS under "aws"', () => {
+    it('hears and speaks with Nova Sonic under "aws", Transcribe and Polly sharing the name for their own models', async () => {
         const worker = new VoiceWorker({ connectors: new ConnectorRegistry() } as ConstructorParameters<typeof VoiceWorker>[0]);
-        expect(worker.connectors.recognition(AWS_ADAPTER)).toBeInstanceOf(AwsRecognition);
-        expect(worker.connectors.speech(AWS_ADAPTER)).toBeInstanceOf(AwsSpeech);
+        // Transcribe and Polly share the name (src/awsVoice.ts): the talking model still hears and speaks with Nova Sonic
+        const recognizer = { push: () => undefined, finish: () => undefined, close: () => undefined };
+        const listen = vi.spyOn(AwsRecognition.prototype, 'listen').mockReturnValue(recognizer as never);
+        const speak = vi.spyOn(AwsSpeech.prototype, 'speak').mockImplementation(async function* () {
+            yield new Int16Array([5]);
+        });
+        const events = { partial: () => undefined, final: () => undefined, failed: () => undefined };
+        expect(worker.connectors.recognition(AWS_ADAPTER)!.listen(settings(), events)).toBe(recognizer);
+        expect(await collect(worker.connectors.speech(AWS_ADAPTER)!.speak(speechRequest()))).toEqual([5]);
+        expect(listen).toHaveBeenCalledTimes(1);
+        expect(speak).toHaveBeenCalledTimes(1);
+        vi.restoreAllMocks();
     });
 });

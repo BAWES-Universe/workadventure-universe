@@ -114,6 +114,9 @@ describe('bridge messages', () => {
         expect(checkMessage('fromBot', { ...base, type: 'lane.open', participantId: 'p', epoch: 0 })).not.toBeNull();
         expect(checkMessage('fromBot', { ...base, type: 'bot.say', segmentId: 'g', text: 'hello', committed: false })).not.toBeNull();
         expect(checkMessage('fromBot', { ...base, type: 'mode.set', mode: 'shout' })).not.toBeNull();
+        expect(checkMessage('fromBot', { ...base, type: 'mode.set', mode: 'talk', participantId: 'p1', requestId: 'l1' })).toBeNull();
+        expect(checkMessage('fromWorker', { ...base, type: 'mode.ack', participantId: 'p1', requestId: 'l1', mode: 'talk', path: 'lane', epoch: 2 })).toBeNull();
+        expect(checkMessage('fromWorker', { ...base, type: 'mode.ack', participantId: 'p1', requestId: 'l1', mode: 'talk', path: 'nowhere' })).not.toBeNull();
         expect(checkMessage('fromBot', { ...base, type: 'lane.signal', participantId: 'p', epoch: 1, signal: { type: 'offer', sdp: 'x'.repeat(70000) } })).not.toBeNull();
         expect(checkMessage('fromBot', { ...base, type: 'lane.signal', participantId: 'p', epoch: 1, signal: { type: 'renegotiate' } })).not.toBeNull();
         expect(checkMessage('fromBot', { type: 'session.end' })).not.toBeNull(); // no session
