@@ -553,7 +553,7 @@ describe("the Voice button", () => {
             t.say("on", 30, { listening: "on", listeningReason: "" });
             await settle();
             const heard = announce();
-            expect(heard).toBe(`${barText().replace("you ", "you. ")}`);
+            expect(heard).toBe("Listening to you. Hears all you say");
             t.say("on", 30, { listening: "stopping", listeningReason: "" });
             await settle();
             expect(announce()).not.toBe(heard);
