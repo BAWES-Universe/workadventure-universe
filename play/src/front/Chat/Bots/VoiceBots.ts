@@ -21,11 +21,16 @@ import { audioContextManager } from "../../WebRtc/AudioContextManager";
 import {
     choiceHearsBot,
     parseBotVoiceStatus,
+    voiceBarFor,
     voiceModeOf,
     type BotVoiceStatus,
+    type ListenReason,
+    type ListenState,
+    type VoiceBar,
     type VoiceBotState,
     type VoiceChoice,
 } from "./VoiceMode";
+import { playVoiceCue } from "./VoiceCues";
 
 /** The tag a voice bot's token carries next to "bot" (bots/voice/VoiceBotTag.ts). */
 const VOICE_BOT_TAG = "voice-bot";
@@ -63,7 +68,16 @@ export interface VoiceBotView {
     /** The spoken replies this person has left, and when their window ends (ms): what the Voice menu says at the bottom (#1669). */
     repliesLeft: number | undefined;
     repliesResetAt: number | undefined;
+    /** Whether it takes this person's microphone in a group, and why not (round 8). "": nothing to choose, as before. */
+    listening: ListenState;
+    listeningReason: ListenReason;
+    /** The short bar that explains the latest change, and a number that changes each time one is shown (so the same bar can show again). */
+    bar: VoiceBar | undefined;
+    barSeq: number;
 }
+
+/** The latest bar for each bot, by space user id (see voiceBarFor). */
+export type VoiceBars = ReadonlyMap<string, { bar: VoiceBar; seq: number }>;
 
 export interface VoiceSpaceView {
     /** A meeting room or a stage's space, not a bubble. */
@@ -76,6 +90,8 @@ export interface VoiceSpaceView {
     people: number;
     /** Another real person is here with us. */
     othersPresent: boolean;
+    /** Asks a bot here to keep listening to us in the group, or to stop (round 8). */
+    askToListen: (botSpaceUserId: string, listen: "keep" | "stop") => void;
 }
 
 type ViewUser = Pick<SpaceUserExtended, "spaceUserId" | "uuid" | "tags" | "name" | "pictureStore">;
@@ -87,7 +103,9 @@ export function computeVoiceView(
     statuses: ReadonlyMap<string, BotVoiceStatus>,
     meeting: boolean,
     /** A bot this person blocked shows nothing on the button, as with its messages and its status. */
-    isBlocked: (user: ViewUser) => boolean = () => false
+    isBlocked: (user: ViewUser) => boolean = () => false,
+    bars: VoiceBars = new Map(),
+    askToListen: VoiceSpaceView["askToListen"] = () => undefined
 ): VoiceSpaceView {
     const bots: VoiceBotView[] = [];
     const botSpaceUserIds: string[] = [];
@@ -119,10 +137,14 @@ export function computeVoiceView(
             followUpSeconds: status?.followUpSeconds ?? 0,
             repliesLeft: status?.repliesLeft,
             repliesResetAt: status?.repliesResetAt,
+            listening: status?.listening ?? "",
+            listeningReason: status?.listeningReason ?? "",
+            bar: bars.get(user.spaceUserId)?.bar,
+            barSeq: bars.get(user.spaceUserId)?.seq ?? 0,
         });
     }
     if (!meIncluded) people++;
-    return { meeting, bot: bots[0], botSpaceUserIds, people, othersPresent };
+    return { meeting, bot: bots[0], botSpaceUserIds, people, othersPresent, askToListen };
 }
 
 const views = writable<ReadonlyMap<SpaceInterface, VoiceSpaceView>>(new Map());
@@ -150,6 +172,10 @@ export const silencedVoiceBotsStore: Readable<ReadonlySet<string>> = derived(
 
 class VoiceSpaceWatcher {
     private readonly statuses = new Map<string, BotVoiceStatus>();
+    private readonly bars = new Map<string, { bar: VoiceBar; seq: number }>();
+    /** Bots that already told us, this visit, that they don't listen in the group: that bar shows once. */
+    private readonly toldNotListening = new Set<string>();
+    private barSeq = 0;
     private latest: ReadonlyMap<string, ViewUser> = new Map();
     private readonly subscriptions: Subscription[] = [];
     private readonly unsubscribers: (() => void)[] = [];
@@ -161,6 +187,7 @@ class VoiceSpaceWatcher {
                 this.latest = users;
                 // A bot that left no longer has a status
                 for (const id of [...this.statuses.keys()]) if (!users.has(id)) this.statuses.delete(id);
+                for (const id of [...this.bars.keys()]) if (!users.has(id)) this.bars.delete(id);
                 this.publish();
             })
         );
@@ -184,6 +211,7 @@ class VoiceSpaceWatcher {
     private onStatus(botSpaceUserId: string, status: BotVoiceStatus): void {
         const before = this.statuses.get(botSpaceUserId);
         this.statuses.set(botSpaceUserId, status);
+        this.updateBar(botSpaceUserId, before, status);
         this.publish();
         // The bot learns our choice when it first speaks to us, and when it starts a new connection
         if (!before || (before.state !== "connecting" && status.state === "connecting")) {
@@ -191,16 +219,41 @@ class VoiceSpaceWatcher {
         }
     }
 
+    /** The bar for what just changed, and the soft sound on this person's device only: listening paused, or listening confirmed. */
+    private updateBar(botSpaceUserId: string, before: BotVoiceStatus | undefined, status: BotVoiceStatus): void {
+        const bar = voiceBarFor(before, status, this.toldNotListening.has(botSpaceUserId));
+        if (status.listening === "off" && status.listeningReason === "") this.toldNotListening.add(botSpaceUserId);
+        if (bar) {
+            this.bars.set(botSpaceUserId, { bar, seq: ++this.barSeq });
+            if (bar === "paused") playVoiceCue("paused");
+            else if (bar === "listening") playVoiceCue("ready");
+            return;
+        }
+        // A bar that lasts until the next change ends with it
+        const shown = this.bars.get(botSpaceUserId)?.bar;
+        if (
+            (shown === "turning_on" && status.listening !== "pending") ||
+            (shown === "checking" && status.listening !== "checking")
+        )
+            this.bars.delete(botSpaceUserId);
+    }
+
     private sendChoiceToBots(): void {
         for (const id of this.statuses.keys()) this.sendChoice(id);
     }
 
-    private sendChoice(botSpaceUserId: string): void {
+    private sendChoice(botSpaceUserId: string, listen: "" | "keep" | "stop" = ""): void {
         if (this.destroyed || this.space.destroyed) return;
         this.space.emitPrivateMessage(
-            { $case: "voiceModeChoice", voiceModeChoice: { mode: voiceModeOf(get(voiceChoiceStore)) } },
+            { $case: "voiceModeChoice", voiceModeChoice: { mode: voiceModeOf(get(voiceChoiceStore)), listen } },
             botSpaceUserId
         );
+    }
+
+    /** Asks one bot here to keep listening to us in the group, or to stop. Only a bot that told us about listening is asked. */
+    private askToListen(botSpaceUserId: string, listen: "keep" | "stop"): void {
+        if (!this.statuses.get(botSpaceUserId)?.listening) return;
+        this.sendChoice(botSpaceUserId, listen);
     }
 
     private publish(): void {
@@ -210,7 +263,9 @@ class VoiceSpaceWatcher {
             this.space.mySpaceUserId,
             this.statuses,
             isAreaSpaceName(this.space.getName()),
-            (user) => !!user.uuid && blackListManager.isBlackListed(user.uuid)
+            (user) => !!user.uuid && blackListManager.isBlackListed(user.uuid),
+            this.bars,
+            (botSpaceUserId, listen) => this.askToListen(botSpaceUserId, listen)
         );
         views.update((all) => new Map(all).set(this.space, view));
     }

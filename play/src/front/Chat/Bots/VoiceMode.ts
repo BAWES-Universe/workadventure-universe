@@ -31,6 +31,19 @@ export function choiceSpeaksToBot(choice: VoiceChoice): boolean {
 /** Where a bot says its voice with this person stands. paused: the bot says voice is unavailable. */
 export type VoiceBotState = "connecting" | "on" | "paused";
 
+/**
+ * Whether the bot takes this person's microphone in a group (round 8), as the bot says (bots/voice/protocol.ts ListenState).
+ *   "": nothing to choose: alone with the bot (it hears them hands-free), or a mode that takes no microphone.
+ *   off: it doesn't take it. pending: they asked it to keep listening, not confirmed yet. on: it does (confirmed).
+ *   stopping: they asked it to stop, not confirmed yet. checking: the stop isn't confirmed after the wait, so it may still hear them.
+ */
+export type ListenState = "" | "off" | "pending" | "on" | "stopping" | "checking";
+/** Why: others_joined (it heard them hands-free until someone joined), failed (couldn't start in time), limit (used for now). */
+export type ListenReason = "" | "others_joined" | "failed" | "limit";
+
+const LISTEN_STATES: readonly ListenState[] = ["", "off", "pending", "on", "stopping", "checking"];
+const LISTEN_REASONS: readonly ListenReason[] = ["", "others_joined", "failed", "limit"];
+
 export interface BotVoiceStatus {
     botId: string;
     botName: string;
@@ -41,6 +54,9 @@ export interface BotVoiceStatus {
     repliesLeft?: number;
     /** When their window ends, in milliseconds; undefined when none is running or the bot doesn't know. */
     repliesResetAt?: number;
+    /** Whether it takes their microphone in a group, and why not (round 8). A bot that says nothing about it: "". */
+    listening: ListenState;
+    listeningReason: ListenReason;
 }
 
 const STATES: readonly VoiceBotState[] = ["connecting", "on", "paused"];
@@ -54,9 +70,8 @@ const REPLIES_LEFT_MAX = 100_000;
 /** What a bot's status event says, or undefined when any part of it is missing or not one we know. */
 export function parseBotVoiceStatus(value: unknown, fallbackName: string): BotVoiceStatus | undefined {
     if (!value || typeof value !== "object") return undefined;
-    const { botId, botName, state, followUpSeconds, repliesLeft, repliesResetAt } = value as Partial<
-        Record<string, unknown>
-    >;
+    const { botId, botName, state, followUpSeconds, repliesLeft, repliesResetAt, listening, listeningReason } =
+        value as Partial<Record<string, unknown>>;
     if (typeof botId !== "string" || botId === "" || botId.length > ID_MAX) return undefined;
     if (!STATES.includes(state as VoiceBotState)) return undefined;
     const name = (typeof botName === "string" && botName.trim() !== "" ? botName : fallbackName)
@@ -84,7 +99,44 @@ export function parseBotVoiceStatus(value: unknown, fallbackName: string): BotVo
         followUpSeconds: seconds,
         repliesLeft: left,
         repliesResetAt: left !== undefined && !Number.isNaN(resetAt) ? resetAt : undefined,
+        // Anything not known is nothing to show: the button stays as it is today
+        listening: LISTEN_STATES.includes(listening as ListenState) ? (listening as ListenState) : "",
+        listeningReason: LISTEN_REASONS.includes(listeningReason as ListenReason)
+            ? (listeningReason as ListenReason)
+            : "",
     };
+}
+
+/**
+ * What the short bar beside the Voice button says (round 8), or nothing. The bar explains a change, then folds back into the button; the
+ * same words stay in the voice options. Shown for a change only, never again on its own: `before` is what the bot said last time.
+ *   paused: it heard you hands-free and a friend joined. not_listening: you came into a group (once a visit). failed: it couldn't start.
+ *   turning_on, listening, checking: your ask to keep listening or to stop, as it goes.
+ */
+export type VoiceBar = "paused" | "not_listening" | "failed" | "turning_on" | "listening" | "checking";
+
+export function voiceBarFor(
+    before: Pick<BotVoiceStatus, "listening" | "listeningReason"> | undefined,
+    now: Pick<BotVoiceStatus, "listening" | "listeningReason">,
+    seenNotListening: boolean
+): VoiceBar | undefined {
+    const was = before?.listening ?? "";
+    if (now.listening === was && now.listeningReason === (before?.listeningReason ?? "")) return undefined;
+    if (now.listening === "pending") return "turning_on";
+    if (now.listening === "checking") return "checking";
+    if (now.listening === "on" && was === "pending" && now.listeningReason === "") return "listening";
+    if (now.listening === "off") {
+        if (now.listeningReason === "others_joined" && was !== "off") return "paused";
+        if (now.listeningReason === "failed" && was === "pending") return "failed";
+        if (was === "" && now.listeningReason === "" && !seenNotListening) return "not_listening";
+    }
+    return undefined;
+}
+
+/** How long a bar stays before it folds, in ms; undefined: until the next change (round 8 pilot values). */
+export function voiceBarMs(bar: VoiceBar): number | undefined {
+    if (bar === "turning_on" || bar === "checking") return undefined;
+    return bar === "listening" ? 3000 : 8000;
 }
 
 /**

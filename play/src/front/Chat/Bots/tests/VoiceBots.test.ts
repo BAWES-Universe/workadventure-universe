@@ -28,6 +28,8 @@ vi.mock("../../../WebRtc/BlackListManager", () => ({
 /** The person blocks or unblocks someone: the block list changes and the watchers hear it. */
 const blockChanged = () => blockListeners.forEach((listener) => listener());
 const resumeAll = vi.fn().mockResolvedValue(undefined);
+const { cues } = vi.hoisted(() => ({ cues: [] as string[] }));
+vi.mock("../VoiceCues", () => ({ playVoiceCue: (cue: string) => cues.push(cue) }));
 vi.mock("../../../WebRtc/AudioContextManager", () => ({ audioContextManager: { resumeAll: () => resumeAll() } }));
 
 import { localUserStore } from "../../../Connection/LocalUserStore";
@@ -65,6 +67,8 @@ const status = (
     botName: `Nora ${botId}`,
     state,
     followUpSeconds: 0,
+    listening: "",
+    listeningReason: "",
     ...extra,
 });
 

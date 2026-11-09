@@ -131,7 +131,15 @@ describe("eventProcessorInit", () => {
     describe("botVoiceStatus", () => {
         const status = {
             $case: "botVoiceStatus" as const,
-            botVoiceStatus: { botId: "b-1", botName: "Nora", state: "on", followUpSeconds: 0, repliesResetAt: "" },
+            botVoiceStatus: {
+                botId: "b-1",
+                botName: "Nora",
+                state: "on",
+                followUpSeconds: 0,
+                repliesResetAt: "",
+                listening: "",
+                listeningReason: "",
+            },
         };
         const person = spaceUser("room_7", []);
 
@@ -154,7 +162,7 @@ describe("eventProcessorInit", () => {
         });
     });
     describe("voiceModeChoice", () => {
-        const choice = { $case: "voiceModeChoice" as const, voiceModeChoice: { mode: "type_and_listen" } };
+        const choice = { $case: "voiceModeChoice" as const, voiceModeChoice: { mode: "type_and_listen", listen: "" } };
         const sender = spaceUser("room_7", []);
 
         it("passes on a choice sent to a bot", () => {
