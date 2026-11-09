@@ -558,6 +558,36 @@ describe("the Voice button", () => {
             expect(bar()).toBeNull();
         });
 
+        it("tells it once the bot's voice is on, when the first word came while it was connecting", async () => {
+            t.say("connecting", 30, { listening: "off", listeningReason: "" });
+            await settle();
+            expect(bar()).toBeNull();
+            t.say("on", 30, { listening: "off", listeningReason: "" });
+            await settle();
+            expect(barText()).toBe("Nora isn't listening Tap for voice options");
+        });
+
+        it("folds a bar that came after the options closed from a tap, though the focus went back to the button", async () => {
+            vi.useFakeTimers();
+            try {
+                t.say("on", 30, { listening: "off", listeningReason: "others_joined" });
+                await vi.advanceTimersByTimeAsync(10);
+                button().click();
+                await vi.advanceTimersByTimeAsync(10);
+                target.querySelector<HTMLButtonElement>("[data-testid=voice-keep-talking]")!.click();
+                await vi.advanceTimersByTimeAsync(10);
+                expect(document.activeElement).toBe(button());
+                t.say("on", 30, { listening: "pending", listeningReason: "" });
+                t.say("on", 30, { listening: "on", listeningReason: "" });
+                await vi.advanceTimersByTimeAsync(10);
+                expect(barText()).toBe("Listening to you Hears all you say");
+                await vi.advanceTimersByTimeAsync(4000);
+                expect(bar()).toBeNull();
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
         it("keeps today's options for a mode without the microphone: no bar, no listening top", async () => {
             voiceChoiceStore.choose("type_and_listen");
             t.say("on", 30, { listening: "", listeningReason: "" });

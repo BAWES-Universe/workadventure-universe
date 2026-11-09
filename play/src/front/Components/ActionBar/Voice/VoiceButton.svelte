@@ -125,6 +125,21 @@
         foldTimer = setTimeout(fold, ms);
     }
 
+    /**
+     * A bar is held while the person moved the focus onto the button themselves (with the keyboard), and the browser shows it. The focus a
+     * press leaves there, or that closing the options gives back, does not hold it: a bar that comes later folds as usual.
+     */
+    /** True while closing the options gives the focus back to the button: that focus holds nothing. */
+    let refocusing = false;
+
+    function focusShown(): boolean {
+        try {
+            return button?.matches(":focus-visible") ?? false;
+        } catch {
+            return true;
+        }
+    }
+
     function fold() {
         // A focused or pressed bar stays put: it folds a moment after it is let go
         if (held || open) {
@@ -211,7 +226,9 @@
         open = false;
         if (refocus) {
             await tick();
+            refocusing = true;
             button?.focus();
+            refocusing = false;
         }
     }
 
@@ -264,7 +281,7 @@
             on:pointercancel={() => (pressing = false)}
             on:pointerenter={() => (held = true)}
             on:pointerleave={() => (held = false)}
-            on:focus={() => (held = true)}
+            on:focus={() => (held = !pressing && !refocusing && focusShown())}
             on:blur={() => (held = false)}
             on:click={onTap}
         >

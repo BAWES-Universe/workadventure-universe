@@ -242,7 +242,12 @@ class VoiceSpaceWatcher {
     }
 
     /** The bar for what just changed, and the soft sound on this person's device only: listening paused, or listening confirmed. */
-    private updateBar(botSpaceUserId: string, before: BotVoiceStatus | undefined, status: BotVoiceStatus): void {
+    private updateBar(botSpaceUserId: string, earlier: BotVoiceStatus | undefined, latest: BotVoiceStatus): void {
+        // Listening only counts while the bot's voice is on, as the button shows it: what a connecting bot says waits for "on"
+        const heard = (s: BotVoiceStatus): Pick<BotVoiceStatus, "listening" | "listeningReason"> =>
+            s.state === "on" ? s : { listening: "", listeningReason: "" };
+        const before = earlier && heard(earlier);
+        const status = heard(latest);
         const bar = voiceBarFor(before, status, this.toldNotListening.has(botSpaceUserId));
         if (status.listening === "off" && status.listeningReason === "") this.toldNotListening.add(botSpaceUserId);
         if (bar) {
