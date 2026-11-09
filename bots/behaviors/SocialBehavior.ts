@@ -739,7 +739,7 @@ export class SocialBehavior extends BaseBehavior {
         this.botInitiatedPlayers.clear();
     }
 
-    async onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string, galleryUrls?: string[], uploads?: ChatUpload[]): Promise<void> {
+    async onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string, galleryUrls?: string[], uploads?: ChatUpload[], heardAt = Date.now()): Promise<void> {
         if (!this.bot) {
             console.warn(`[SocialBehavior] onChatMessage: bot is null`);
             return;
@@ -840,7 +840,7 @@ export class SocialBehavior extends BaseBehavior {
         // Interruption-safe generation (handles queue, abort, update, generation tracking)
         await this.safeGenerateResponse(spaceName, senderId, originalUserMessage, message, botId,
             (signal, images) => this.generateAIResponseStream(spaceName, senderId, message, botId, signal, images),
-            url, mediaType, mimeType, galleryUrls
+            url, mediaType, mimeType, galleryUrls, heardAt
         );
     }
 

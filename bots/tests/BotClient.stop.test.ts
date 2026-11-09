@@ -380,6 +380,32 @@ describe('a person who TYPES while a voice bot answers them, with others in the 
         expect(finals(t).some((text) => text.includes('the rest of the plan'))).toBe(false);
     });
 
+    it('answers a line that waited behind the answer as written when it came, so a card shown meanwhile is not answered by it (#1661)', async () => {
+        const t = setup();
+        const { answering, release } = await midAnswer(t);
+        t.ai.quickClassify.mockResolvedValueOnce({ action: 'queue', message: '' });
+        const before = Date.now();
+        await t.receive(chatFrom(KHALID, 'and the budget'));
+        const after = Date.now();
+        // The answer goes on for a while (it may show a card at its end) before the waiting line gets its turn
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        const releasedAt = Date.now();
+        let heardAt: number | undefined;
+        t.ai.generateBotResponseStream.mockImplementationOnce((async function* () {
+            heardAt = t.bot.lineHeardAt(KHALID);
+            yield { content: `The budget is fine. ${block('')}`, done: false };
+            yield { content: '', done: true };
+        }) as never);
+        release();
+        await answering;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        expect(heardAt).toBeGreaterThanOrEqual(before);
+        expect(heardAt).toBeLessThanOrEqual(after);
+        expect(heardAt).toBeLessThan(releasedAt);
+        expect(finals(t)).toContain('The budget is fine.');
+    });
+
     it('says it is busy when more typed lines come than wait in line, instead of dropping them without a word', async () => {
         const t = setup();
         const { answering, release } = await midAnswer(t);

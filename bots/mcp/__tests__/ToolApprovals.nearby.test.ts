@@ -9,6 +9,10 @@ import { OrbitActionsUnavailable, type SavedAction } from '../OrbitActions';
 import type { AskField } from '../ApprovalCard';
 import type { GateDecision } from '../ToolGate';
 import type { ToolServerEntry } from '../MCPConnector';
+import { QuestionCards } from '../QuestionCards';
+import { AIService } from '../../ai/AIService';
+
+vi.mock('../../client/BotClient', () => ({ BotClient: vi.fn() }));
 
 const SPACE = 'room#bubble';
 const KHALID: Asker = { uuid: 'uuid-khalid', name: 'Khalid', playerId: 7 };
@@ -425,5 +429,64 @@ describe('a person who comes back to the bubble', () => {
         for (const { ask } of s.cards) {
             expect(ask).toMatchObject({ v: 1, kind: 'approval', id: expect.any(String), revision: expect.any(Number), title: expect.any(String), lines: expect.any(Array), options: expect.any(Array), expiresAt: expect.any(Number), now: expect.any(Number), waitMinutes: expect.any(Number) });
         }
+    });
+});
+
+describe('a line written before the card appeared (#1661)', () => {
+    /** What AIService does at the start of the bot's turn for a line from Khalid that reached it at `heardAt`. */
+    function turnFor(approvals: ToolApprovals, heardAt: number) {
+        const service = new AIService(null!, null!, '');
+        service.useApprovals(approvals);
+        vi.spyOn(service, 'quickGenerate').mockResolvedValue('OTHER');
+        const botClient = {
+            getPersonForArtifacts: () => ({ signedIn: true, identifier: 'uuid-khalid', name: 'Khalid' }),
+            takeSpoken: () => false,
+            lineHeardAt: () => heardAt,
+        };
+        return service['whileCardWaits']('b1', 7, 'and the budget too', 'prov', SPACE, botClient as never);
+    }
+
+    it('does not close an OK card it was written before, which goes on waiting for a tap', async () => {
+        const writtenAt = s.clock.now;
+        s.clock.now += 5_000;
+        await proposeSaid(input());
+        const shown = s.cards.length;
+
+        expect(await turnFor(s.approvals, writtenAt)).toBe(false);
+        expect(s.orbit.actions.get('act_1')!.status).toBe('waiting');
+        expect(s.cards).toHaveLength(shown);
+
+        // The tap still works on it
+        await s.approvals.handleTap('b1', SPACE, KHALID, tap('act_1', 1, { action: 'decide', option: 'approve' }));
+        await settle();
+        expect(s.run).toHaveBeenCalledTimes(1);
+    });
+
+    it('still closes it with a line written after it appeared', async () => {
+        await proposeSaid(input());
+        s.clock.now += 5_000;
+        expect(await turnFor(s.approvals, s.clock.now)).toBe(false);
+        expect(s.orbit.actions.get('act_1')!.status).toBe('closed');
+        expect(s.cards.at(-1)!.ask.answer).toEqual({ typed: true });
+    });
+
+    it('does not answer a question card it was written before, and a line after it does', async () => {
+        const clock = { now: Date.parse('2026-11-04T12:00:00.000Z') };
+        const shownTo: Array<{ answer?: unknown }> = [];
+        const nearby = { card: async (_b: string, _r: string, _p: Asker, field: { answer?: unknown }) => void shownTo.push(field), reply: async () => undefined, say: async () => undefined, write: async () => null };
+        const questions = new QuestionCards({ cards: { send: async () => '$x', say: async () => undefined }, nearby: nearby as never, waitMinutes: async () => 10, picked: async () => undefined, now: () => clock.now });
+        const approvals = new ToolApprovals({ orbit: new FakeOrbit() as never, cards: { send: async () => '$x', say: async () => undefined }, nearby: nearby as never, gate: { decide: async () => ASK } as never, tools: { find: async () => ENTRY, run: vi.fn() }, questions, now: () => clock.now });
+        const writtenAt = clock.now;
+        clock.now += 5_000;
+        await approvals.askQuestion({ botId: 'b1', roomId: SPACE, person: KHALID, asked: { question: 'Which style?', choices: [{ id: 'c1', label: 'Pop' }, { id: 'c2', label: 'Lo-fi' }], multiple: false } });
+
+        await turnFor(approvals, writtenAt);
+        expect(questions.hasWaiting('b1', SPACE, KHALID)).toBe(true);
+        expect(shownTo.at(-1)!.answer).toBeUndefined();
+
+        clock.now += 5_000;
+        await turnFor(approvals, clock.now);
+        expect(questions.hasWaiting('b1', SPACE, KHALID)).toBe(false);
+        expect(shownTo.at(-1)!.answer).toEqual({ typed: true });
     });
 });
