@@ -159,13 +159,33 @@ describe('BotClient: a voice note in nearby chat', () => {
         await t.receive(noteFrom(KHALID));
 
         expect(hearing.hear).toHaveBeenCalledTimes(1);
-        expect(hearing.hear.mock.calls[0][1]).toBe(`${SPACE}|note-${KHALID}`);
+        expect(hearing.hear.mock.calls[0][1]).toBe(`${SPACE}|room_${KHALID}|note-${KHALID}`);
         expect(hearing.hear.mock.calls[0][2]).toMatchObject({ url: 'https://files.example.test/note.webm', seconds: 4 });
         expect(t.transcripts()).toEqual([
-            { messageId: `note-${KHALID}`, state: 'listening' },
-            { messageId: `note-${KHALID}`, state: 'heard', text: 'what is on today' },
+            { messageId: `note-${KHALID}`, senderUserId: `room_${KHALID}`, state: 'listening' },
+            { messageId: `note-${KHALID}`, senderUserId: `room_${KHALID}`, state: 'heard', text: 'what is on today' },
         ]);
         expect(t.onChatMessage.mock.calls[0][1]).toBe('[Voice note] what is on today');
+    });
+
+    it('knows a note by who sent it as well as its id: someone reusing another person\'s note id gets their own hearing', async () => {
+        const t = setup();
+        await t.receive(joined(KHALID));
+        await t.receive(noteFrom(KHALID, { id: 'same-id' }));
+        await t.receive(left(KHALID));
+        await t.receive(joined(SARA));
+        await t.receive(noteFrom(SARA, { id: 'same-id' }));
+
+        expect(hearing.hear.mock.calls.map((call) => call[1])).toEqual([
+            `${SPACE}|room_${KHALID}|same-id`,
+            `${SPACE}|room_${SARA}|same-id`,
+        ]);
+        expect(t.transcripts().map((n) => n.senderUserId)).toEqual([
+            `room_${KHALID}`,
+            `room_${KHALID}`,
+            `room_${SARA}`,
+            `room_${SARA}`,
+        ]);
     });
 
     it('is never fetched in a group when nothing says it is for the bot, even inside the follow-up window', async () => {
@@ -213,8 +233,8 @@ describe('BotClient: a voice note in nearby chat', () => {
         await t.receive(noteFrom(KHALID));
 
         expect(t.transcripts()).toEqual([
-            { messageId: `note-${KHALID}`, state: 'listening' },
-            { messageId: `note-${KHALID}`, state: 'failed' },
+            { messageId: `note-${KHALID}`, senderUserId: `room_${KHALID}`, state: 'listening' },
+            { messageId: `note-${KHALID}`, senderUserId: `room_${KHALID}`, state: 'failed' },
         ]);
         expect(t.onChatMessage).not.toHaveBeenCalled();
     });

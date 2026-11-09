@@ -364,10 +364,10 @@ describe("Nearby chat reactions and replies", () => {
                 voiceDurationMs: 4000,
             },
         };
-        const transcript = (sender: string, state: string, text?: string) =>
+        const transcript = (sender: string, state: string, text?: string, noteSender = "room_3", messageId = NOTE_ID) =>
             fake.emit("spaceMessageTranscript", {
                 sender,
-                spaceMessageTranscript: { messageId: NOTE_ID, state, text },
+                spaceMessageTranscript: { messageId, state, text, senderUserId: noteSender },
             });
         const withBot = () => {
             const users = new Map(get(fake.space.usersStore));
@@ -399,6 +399,60 @@ describe("Nearby chat reactions and replies", () => {
             fake.emit("spaceMessage", voiceNote);
             transcript("room_4", "heard", "forged by a person");
             expect(get(last().content).transcript).toBeUndefined();
+        });
+
+        it("puts the words only under the note from the person the bot heard, even when someone reused its id", () => {
+            withBot();
+            fake.emit("spaceMessage", voiceNote);
+            const sara = last();
+            // Omar sends his own note with Sara's id: it is shown under a local id
+            fake.emit("spaceMessage", {
+                ...voiceNote,
+                sender: "room_4",
+                spaceMessage: { ...voiceNote.spaceMessage, name: "Omar" },
+            });
+            const omar = last();
+            expect(omar.id).not.toBe(NOTE_ID);
+            // The bot heard Omar's note: nothing lands under Sara's
+            transcript("room_9", "heard", "words Sara never said", "room_4");
+            expect(get(sara.content).transcript).toBeUndefined();
+            expect(get(omar.content).transcript).toBeUndefined();
+            // Sara's own hearing still lands
+            transcript("room_9", "heard", "Remind me tomorrow", "room_3");
+            expect(get(sara.content).transcript).toEqual({ state: "heard", text: "Remind me tomorrow" });
+        });
+
+        it("keeps waiting words for the right sender only", () => {
+            withBot();
+            transcript("room_9", "heard", "words Sara never said", "room_4");
+            fake.emit("spaceMessage", voiceNote);
+            expect(get(last().content).transcript).toBeUndefined();
+            transcript("room_9", "heard", "Remind me tomorrow", "room_3");
+            expect(get(last().content).transcript).toEqual({ state: "heard", text: "Remind me tomorrow" });
+        });
+
+        it("ignores words that name no sender", () => {
+            withBot();
+            fake.emit("spaceMessage", voiceNote);
+            transcript("room_9", "heard", "no sender", "");
+            expect(get(last().content).transcript).toBeUndefined();
+        });
+
+        it("shows the words under this person's own note", () => {
+            withBot();
+            room.sendMessage(
+                "Voice message",
+                "proximity",
+                true,
+                "https://files.test/Voice message.weba",
+                "audio",
+                undefined,
+                undefined,
+                "Voice message.weba"
+            );
+            const mine = last();
+            transcript("room_9", "heard", "my own words", "room_1", mine.id);
+            expect(get(mine.content).transcript).toEqual({ state: "heard", text: "my own words" });
         });
     });
 });

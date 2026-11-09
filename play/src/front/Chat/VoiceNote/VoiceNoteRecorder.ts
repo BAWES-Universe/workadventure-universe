@@ -15,15 +15,25 @@ const AUDIO_BITS_PER_SECOND = 48000;
 
 /** A meter that never rose above this saw no sound at all. */
 const SILENT_METER = 0.02;
+/**
+ * How long finishing a note waits for its shape to be read from the file. The reading waits behind other audio in the chat
+ * being read, so it can take long: past this, the note goes on with the meter's shape and the person is never held up.
+ */
+export const FILE_SHAPE_WAIT_MS = 3000;
 
 async function shapeOf(file: File): Promise<number[] | undefined> {
     let url: string | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
         url = URL.createObjectURL(file);
-        return (await readAudioShape(url))?.levels;
+        const late = new Promise<undefined>((resolve) => {
+            timer = setTimeout(() => resolve(undefined), FILE_SHAPE_WAIT_MS);
+        });
+        return (await Promise.race([readAudioShape(url), late]))?.levels;
     } catch {
         return undefined;
     } finally {
+        clearTimeout(timer);
         if (url) URL.revokeObjectURL(url);
     }
 }

@@ -1486,18 +1486,28 @@ export class BotApiService {
     async getBotHears(botId: string): Promise<boolean | null> {
         if (!this.botServerUrl) return null;
         const stop = new AbortController();
-        const timer = setTimeout(() => stop.abort(), DM_STATUS_TIMEOUT_MS);
-        try {
-            const response = await this.fetchBotServer(`/api/bots/${encodeURIComponent(botId)}/hears`, {
-                signal: stop.signal,
-            });
-            const data = (await response.json()) as { hears?: unknown };
-            return typeof data.hears === "boolean" ? data.hears : null;
-        } catch {
-            return null;
-        } finally {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        // Raced as well as aborted: the Orbit sign-in that comes first in a request does not listen for the abort
+        const late = new Promise<null>((resolve) => {
+            timer = setTimeout(() => {
+                stop.abort();
+                resolve(null);
+            }, DM_STATUS_TIMEOUT_MS);
+        });
+        const asking = (async () => {
+            try {
+                const response = await this.fetchBotServer(`/api/bots/${encodeURIComponent(botId)}/hears`, {
+                    signal: stop.signal,
+                });
+                const data = (await response.json()) as { hears?: unknown };
+                return typeof data.hears === "boolean" ? data.hears : null;
+            } catch {
+                return null;
+            }
+        })();
+        return Promise.race([asking, late]).finally(() => {
             clearTimeout(timer);
-        }
+        });
     }
 
     async getBotAccess(botId: string, action: "summon" | "chat" | "dm", playerUuid?: string): Promise<BotAccessAnswer> {

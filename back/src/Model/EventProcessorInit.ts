@@ -68,13 +68,14 @@ eventProcessor.registerPublicEventProcessor("spaceMessageTranscript", (event, se
         throw new Error("Sender not found");
     }
 
-    // Passed on as it is: receivers accept it only from a bot, and only the words and the state are read.
+    // Passed on as it is: receivers accept it only from a bot, and only under the note with that id from that sender.
     return {
         $case: "spaceMessageTranscript",
         spaceMessageTranscript: {
             messageId: event.spaceMessageTranscript.messageId,
             state: event.spaceMessageTranscript.state,
             text: event.spaceMessageTranscript.text,
+            senderUserId: event.spaceMessageTranscript.senderUserId,
         },
     };
 });
