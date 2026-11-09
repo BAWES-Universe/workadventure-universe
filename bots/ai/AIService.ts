@@ -3776,9 +3776,14 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             if (!chat?.person.signedIn || !chat.person.identifier) return false;
             const person = { uuid: chat.person.identifier, name: chat.person.name, playerId };
             approvals.touch(botId, spaceName, person);
+            const how = botClient.takeSpoken?.(spaceName, playerId) ? 'spoken' : 'typed';
+            // A line written before their card appeared (it waited behind the answer that showed the card) is not their answer
+            // to it, nor does it close it: the card waits on, and the line is answered as any other
+            const heardAt = botClient.lineHeardAt?.(playerId);
+            if (heardAt !== undefined && approvals.shownSince(botId, spaceName, person, heardAt)) return false;
             // A question card waiting for them is answered by what they typed or said (#1661): their message is the answer, so
             // it goes on to the bot as it is
-            await approvals.answerQuestionByMessage(botId, spaceName, person, botClient.takeSpoken?.(spaceName, playerId) ? 'spoken' : 'typed');
+            await approvals.answerQuestionByMessage(botId, spaceName, person, how);
             const label = approvals.waitingLabel(botId, spaceName, person);
             if (!label) return false;
             let yes = false;

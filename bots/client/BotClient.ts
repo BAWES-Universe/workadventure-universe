@@ -2345,6 +2345,20 @@ export class BotClient {
         if (this.lastSpoken.size > 500) this.lastSpoken.delete(this.lastSpoken.keys().next().value!);
     }
 
+    /**
+     * Whether the last line from this person to reach the bot was said out loud and not typed, without using up the
+     * answer `takeSpoken` gives: a typed line forgets the spoken one before it, so this is false for anything typed.
+     */
+    saidOutLoud(spaceName: string, playerId: number): boolean {
+        const at = this.lastSpoken.get(`${spaceName}|${playerId}`);
+        return at !== undefined && Date.now() - at <= BotClient.SPOKEN_FRESH_MS;
+    }
+
+    /** When the line the bot is answering for this person right now reached it (see BaseBehavior.lineHeardAt). */
+    lineHeardAt(playerId: number): number | undefined {
+        return this.behavior?.lineHeardAt(playerId);
+    }
+
     /** Whether the line that just reached the AI from this person was said out loud and not typed. Asked once per line. */
     takeSpoken(spaceName: string, playerId: number): boolean {
         const key = `${spaceName}|${playerId}`;
@@ -3459,6 +3473,8 @@ export class BotClient {
             case 'updateSpaceUserMessage':
                 if (message.updateSpaceUserMessage.message) {
                     const chatMessage = message.updateSpaceUserMessage.message.message;
+                    // When the line reached the bot, before anything is asked about it: a card shown after is not answered by it (#1661)
+                    const heardAt = Date.now();
                     if (chatMessage && this.behavior) {
                         console.log(`[Bot ${this.config.botId}] Received chat via updateSpaceUserMessage: "${chatMessage}" from user ${message.updateSpaceUserMessage.userId}`);
                         // With others in the bubble, only what is said to the bot reaches it (#1220)
@@ -3480,7 +3496,9 @@ export class BotClient {
                             detectedUrl,
                             undefined,
                             detectedMime,
-                            textUrls.length > 1 ? textUrls.slice(1) : undefined
+                            textUrls.length > 1 ? textUrls.slice(1) : undefined,
+                            undefined,
+                            heardAt
                         ).catch(error => {
                             console.error(`[Bot ${this.config.botId}] onChatMessage error:`, error);
                             Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
@@ -3494,6 +3512,9 @@ export class BotClient {
                 if (message.publicEvent.spaceEvent?.event?.$case === 'spaceMessage') {
                     const spaceMessage = message.publicEvent.spaceEvent.event.spaceMessage;
                     const spaceName = message.publicEvent.spaceName;
+                    // When the line reached the bot, before its note is heard or anything is asked about it: a card shown
+                    // after this was not there when it was written, so the line does not answer it (#1661)
+                    const heardAt = Date.now();
                     const senderName = spaceMessage.name;
                     const senderUserId = message.publicEvent.senderUserId; // spaceUserId format: "roomID_userID"
                     
@@ -3625,7 +3646,8 @@ export class BotClient {
                             spaceMessage.mediaType,
                             detectedMime,
                             galleryUrls.length > 0 ? galleryUrls : undefined,
-                            BotClient.uploadsOf(spaceMessage, detectedMime)
+                            BotClient.uploadsOf(spaceMessage, detectedMime),
+                            heardAt
                         ).catch(error => {
                             console.error(`[Bot ${this.config.botId}] onChatMessage error:`, error);
                             Sentry.captureException(error instanceof Error ? error : new Error(String(error)));

@@ -129,6 +129,8 @@ interface Card {
     eventId?: string;
     /** Whether the action still waits for a tap. */
     waiting: boolean;
+    /** When the card was on the person's screen: only what they write or say after that answers or closes it. */
+    shownAt?: number;
     /** In a bubble (#1658): the card went to the person alone, and its ending is one line for everyone. */
     nearby: boolean;
     /** The line for how it ended has been said, so no ending is said twice. */
@@ -260,6 +262,7 @@ export class ToolApprovals {
             }
             try {
                 card.eventId = await this.sendCard(card, buildAsk(facts, this.now()), false);
+                card.shownAt = this.now();
             } catch (error) {
                 // No card, no OK: the saved action is closed so a tap can never find it
                 console.warn(`[ToolApprovals] Could not show the card for ${toolName}:`, errorText(error));
@@ -760,6 +763,17 @@ export class ToolApprovals {
      */
     async answerQuestionByMessage(botId: string, roomId: string, person: Asker, how: 'typed' | 'spoken'): Promise<boolean> {
         return ((await this.deps.questions?.onPersonMessage(botId, roomId, person, how)) ?? 0) > 0;
+    }
+
+    /**
+     * Whether a card waiting for this person here, asking for an OK or a question, was shown at or after this time (#1661).
+     * A line they wrote before it appeared, and that waited behind the bot's answer, is not their answer to it.
+     */
+    shownSince(botId: string, roomId: string, person: Asker, at: number): boolean {
+        const waiting = [...this.cards.values()].some(
+            (card) => card.waiting && card.botId === botId && card.roomId === roomId && card.person.uuid === person.uuid && (card.shownAt ?? 0) >= at
+        );
+        return waiting || !!this.deps.questions?.shownSince(botId, roomId, person, at);
     }
 
     /** A reply only this person needs, never said aloud: the answer to a yes that never sends. Never throws. */
