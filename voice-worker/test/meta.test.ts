@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { ConnectorRegistry, Secret } from '../src/connectors.ts';
-import { META_ADAPTER, MetaRecognition, metaLanguage } from '../src/meta.ts';
+import { META_ADAPTER, MetaRecognition, metaLanguage, metaStatus } from '../src/meta.ts';
 import type { RecognizerEvents } from '../src/recognizer.ts';
 import { VoiceWorker } from '../src/server.ts';
 import { waitFor } from './harness.ts';
@@ -135,6 +135,14 @@ describe('hearing with Meta', () => {
         await waitFor('the handshake', () => m.seen.handshakes.length === 1);
         expect(m.seen.handshakes[0]).not.toHaveProperty('languageBias');
         stream.close();
+    });
+
+    it('reads only a refused key as a rejection, not a limit that mentions tokens or a key', () => {
+        for (const refused of ['Invalid access token', 'Unauthorized', 'Forbidden', 'The API key is invalid', 'Token expired', 'Authentication failed', 'missing credentials'])
+            expect(metaStatus(refused), refused).toBe(401);
+        for (const other of ['Token rate exceeded', 'Too many tokens per minute', 'Quota for this API key used up', 'Rate limit reached', 'Unsupported audio'])
+            expect(metaStatus(other), other).toBeUndefined();
+        expect(metaStatus(undefined)).toBeUndefined();
     });
 
     it('fails with a refused key, and when Meta closes any way but normally after the end of the audio', async () => {

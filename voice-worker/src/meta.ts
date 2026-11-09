@@ -55,9 +55,15 @@ interface MetaAnswer {
     message?: unknown;
 }
 
-/** The status a refusal reads as: a key Meta won't take is 401, so the profile says so. */
-function metaStatus(message: unknown): number | undefined {
-    return typeof message === 'string' && /auth|token|api key|credential|unauthori[sz]ed|forbidden/i.test(message) ? 401 : undefined;
+/**
+ * The status a refusal reads as: a key Meta won't take is 401, so the profile says so. Only words that say the key itself is refused
+ * count: a message that merely mentions tokens or a key (a rate limit, a quota) is an ordinary failure and must not mark a good key as
+ * rejected.
+ */
+const REFUSED_KEY = /unauthori[sz]ed|forbidden|authenticat|(invalid|expired|revoked|missing|bad)\W+(access\W+)?(token|api\W*key|credential)|(token|api\W*key|credential)s?\W+(is\W+|are\W+|was\W+)?(invalid|expired|revoked|missing|not valid)/i;
+
+export function metaStatus(message: unknown): number | undefined {
+    return typeof message === 'string' && REFUSED_KEY.test(message) ? 401 : undefined;
 }
 
 export class MetaRecognition implements RecognitionConnector {
