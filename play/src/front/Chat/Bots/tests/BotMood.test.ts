@@ -1,6 +1,15 @@
 import { get } from "svelte/store";
 import { describe, expect, it } from "vitest";
-import { BOT_MOODS, botFeeling, forgetBotFeelings, MOOD_NAME, setBotMood, setBotWork, WAVE_MOOD } from "../BotMood";
+import {
+    BOT_MOODS,
+    botFeeling,
+    forgetBotFeelings,
+    MOOD_NAME,
+    setBotMood,
+    setBotWork,
+    setBotWriting,
+    WAVE_MOOD,
+} from "../BotMood";
 import { parseBotSteps, workKindOf } from "../BotSteps";
 
 const field = (state: string, steps: object[]) => ({ v: 1, state, line: "x", startedAt: 1, steps });
@@ -38,6 +47,28 @@ describe("how a bot feels beside its Woka (#1667)", () => {
         expect(get(botFeeling("bot-c"))?.work).toBeUndefined();
         expect(get(botFeeling("bot-d"))).toBeUndefined();
         setBotMood("bot-c", undefined);
+    });
+});
+
+describe("a bot writing a reply", () => {
+    it("shows the pen, unless a running step already names the work", () => {
+        const feeling = botFeeling("bot-g");
+        setBotWriting("bot-g", true);
+        expect(get(feeling)?.work).toBe("write");
+        setBotWork("bot-g", "search");
+        expect(get(feeling)?.work).toBe("search");
+        setBotWork("bot-g", undefined);
+        expect(get(feeling)?.work).toBe("write");
+        setBotWriting("bot-g", false);
+        expect(get(feeling)).toBeUndefined();
+    });
+
+    it("leaves no trace for a bot that never wrote, and goes with forgetBotFeelings", () => {
+        setBotWriting("bot-h", false);
+        expect(get(botFeeling("bot-h"))).toBeUndefined();
+        setBotWriting("bot-h", true);
+        forgetBotFeelings("bot-h");
+        expect(get(botFeeling("bot-h"))).toBeUndefined();
     });
 });
 
