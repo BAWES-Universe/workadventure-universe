@@ -509,6 +509,7 @@
         padding: 3px;
         background: conic-gradient(from 210deg, #8629fc, #4156f6, #a78bfa, #3ddc84, #8629fc);
         -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+        mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
         -webkit-mask-composite: xor;
         mask-composite: exclude;
     }
