@@ -82,6 +82,8 @@ interface Card {
     waitMinutes: number;
     /** Not answered, closed or run out. */
     waiting: boolean;
+    /** When the card was on the person's screen: only what they write or say after that answers it. */
+    shownAt?: number;
     eventId?: string;
     answer?: QuestionAnswer;
     timer?: ReturnType<typeof setTimeout>;
@@ -130,6 +132,7 @@ export class QuestionCards {
             const card: Card = { botId, roomId, person, nearby, asked, revision: 1, expiresAt: this.now() + waitMinutes * 60_000, waitMinutes, waiting: true };
             try {
                 card.eventId = await this.send(id, card, false);
+                card.shownAt = this.now();
             } catch (error) {
                 console.warn('[QuestionCards] Could not show the question card:', errorText(error));
                 return { kind: 'failed', result: NO_CARD_RESULT };
@@ -321,6 +324,11 @@ export class QuestionCards {
         }
         for (const [id, card] of ended) await this.redraw(id, card);
         return ended.length;
+    }
+
+    /** Whether a question card waiting for this person was shown at or after this time: a line from before it is no answer to it. */
+    shownSince(botId: string, roomId: string, person: Asker, at: number): boolean {
+        return this.waitingOf(botId, roomId, person, person.playerId !== undefined).some((card) => (card.shownAt ?? 0) >= at);
     }
 
     /** Whether this person has a question card waiting in this chat: the next thing they say or type answers it. */

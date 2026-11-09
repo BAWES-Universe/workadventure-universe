@@ -214,6 +214,19 @@ describe('the budget: a spent day', () => {
         expect(t.orbit.reportVoiceListening).toHaveBeenCalledTimes(1);
     });
 
+    it('asks again on a fresh look, so a voice note sees a day that calls used up in the last minute', async () => {
+        const t = budget([answer(false, 10)]);
+        await t.b.check(true);
+        t.set([answer(true, 61)]);
+        t.advance(5_000);
+        // The ordinary look would reuse the answer from five seconds ago
+        await t.b.check();
+        expect(t.b.isSpent()).toBe(false);
+        await t.b.check(true);
+        expect(t.orbit.reportVoiceListening).toHaveBeenCalledTimes(2);
+        expect(t.b.isSpent()).toBe(true);
+    });
+
     it('looks at most once a minute when only asking', async () => {
         const t = budget();
         await t.b.check();

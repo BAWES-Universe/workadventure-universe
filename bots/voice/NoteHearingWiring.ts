@@ -59,7 +59,7 @@ export function buildNoteHearing(admin: AdminApiService, env: NodeJS.ProcessEnv 
         const budget = new ListeningBudget(botId, admin, () => undefined, log);
         const allowance: NoteAllowance = {
             allowed: async () => {
-                await budget.check().catch(() => undefined);
+                await budget.check(true).catch(() => undefined);
                 return !budget.isSpent();
             },
             spend: (seconds) => budget.add(seconds * 1000),

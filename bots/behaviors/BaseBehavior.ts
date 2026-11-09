@@ -53,6 +53,8 @@ export interface ConversationState {
     activeResponseId?: string;
     /** The bot judged that this person is done talking with it (#1670): this turn is not an answer, so it opens no follow-up window */
     endedByPerson?: boolean;
+    /** When the line being answered now reached the bot: a card shown after that was not there when it was written (#1661) */
+    heardAt?: number;
 }
 
 /**
@@ -91,6 +93,7 @@ export interface QueuedMessage {
     mediaType?: string;
     mimeType?: string;
     galleryUrls?: string[];
+    /** When the line reached the bot (not when it was put in line) */
     timestamp: number;
     /** 'answer' | 'queue' — set when queued via interruption classification */
     classification?: string;
@@ -158,6 +161,15 @@ export abstract class BaseBehavior {
     }
     /** Called when the bot has finished answering a person (not when it was cancelled): who and where. */
     onAnswerFinished?: (userId: number, spaceName: string) => void;
+
+    /**
+     * When the line the bot is answering for this person right now reached it, even if it waited in line behind an earlier
+     * answer. A card shown after that time was not there when they wrote it, so the line is not their answer to it (#1661).
+     */
+    lineHeardAt(userId: number): number | undefined {
+        const state = this.activeConversations.get(userId);
+        return state?.isGenerating ? state.heardAt : undefined;
+    }
 
     /** Whether the bot is answering this person right now, or has a line of theirs waiting for its turn. */
     isBusyWith(userId: number): boolean {
@@ -1595,8 +1607,9 @@ export abstract class BaseBehavior {
      * @param spaceName Space name
      * @param message Chat message
      * @param senderId Sender's user ID
+     * @param heardAt When the line reached the bot, before its files were read or anything was asked about it
      */
-    onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string, galleryUrls?: string[], uploads?: ChatUpload[]): Promise<void> {
+    onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string, galleryUrls?: string[], uploads?: ChatUpload[], heardAt?: number): Promise<void> {
         // Default: do nothing
         return Promise.resolve();
     }
@@ -2008,11 +2021,13 @@ export abstract class BaseBehavior {
         url?: string,
         mediaType?: string,
         mimeType?: string,
-        galleryUrls?: string[]
+        galleryUrls?: string[],
+        /** When the line reached the bot; a line that waited in line keeps the time it came */
+        heardAt = Date.now()
     ): Promise<'generated' | 'queued' | 'cancelled'> {
         this.pruneStaleConversations();
 
-        const action = await this.handleInterruption(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls);
+        const action = await this.handleInterruption(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, heardAt);
         if (action === 'queued' || action === 'cancelled') {
             if (action === 'cancelled') {
                 this.bot?.stopTyping(spaceName);
@@ -2028,7 +2043,9 @@ export abstract class BaseBehavior {
         }
 
         this.startGeneration(senderId, spaceName, originalMessage);
-        const capturedGen = this.activeConversations.get(senderId)?.generation ?? 0;
+        const started = this.activeConversations.get(senderId);
+        if (started) started.heardAt = heardAt;
+        const capturedGen = started?.generation ?? 0;
         // The AbortController for THIS generation — passed to the stream so
         // cancel/update can actually stop the in-flight provider call.
         const abortSignal = this.activeConversations.get(senderId)?.abortController?.signal;
@@ -2105,6 +2122,8 @@ export abstract class BaseBehavior {
                     ...first,
                     originalMessage: words.map((item) => item.originalMessage).join('\n'),
                     message: words.map((item) => item.message).join('\n'),
+                    // Answered as one: the words came when the last of them did
+                    timestamp: Math.max(...words.map((item) => item.timestamp)),
                 };
             }
         }
@@ -2121,7 +2140,8 @@ export abstract class BaseBehavior {
             queued.url,
             queued.mediaType,
             queued.mimeType,
-            queued.galleryUrls
+            queued.galleryUrls,
+            queued.timestamp
         );
     }
 
@@ -2136,17 +2156,19 @@ export abstract class BaseBehavior {
         url?: string,
         mediaType?: string,
         mimeType?: string,
-        galleryUrls?: string[]
+        galleryUrls?: string[],
+        heardAt = Date.now()
     ): Promise<'queued' | 'cancelled' | 'proceed'> {
         const state = this.activeConversations.get(senderId);
         if (!state || !state.isGenerating) return 'proceed';
 
-        // Several people around a voice bot: what a person says while it answers them is kept in line, and never asked about
+        // Several people around a voice bot: what a person SAYS while it answers them is kept in line, and never asked about
         // (it costs a call each) nor allowed to cancel or rewrite the answer: the answer may be the one to "stop", and
-        // room talk would replace it with an answer to the talk
-        if (this.bot?.mayEndFollowUp?.(state.spaceName, senderId)) {
+        // room talk would replace it with an answer to the talk. A TYPED line is never room talk: it is checked as always,
+        // so a typed "stop" or "do this instead" still stops or changes the answer
+        if (this.bot?.mayEndFollowUp?.(state.spaceName, senderId) && this.bot.saidOutLoud?.(state.spaceName, senderId)) {
             // A full line is dropped without a word: "I'll answer once I've finished" would be spoken to a room that was only talking
-            await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, 'queue', true);
+            await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, 'queue', true, heardAt);
             return 'queued';
         }
 
@@ -2157,14 +2179,14 @@ export abstract class BaseBehavior {
         try {
             result = await this.classifyInterruption(currentTask, originalMessage);
         } catch {
-            await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls);
+            await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, undefined, false, heardAt);
             return 'queued';
         }
 
         // Guard against the generation advancing during the classifyInterruption await
         const currentState = this.activeConversations.get(senderId);
         if (!currentState || currentState.generation !== interruptedGen) {
-            await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls);
+            await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, undefined, false, heardAt);
             return 'queued';
         }
 
@@ -2212,7 +2234,7 @@ export abstract class BaseBehavior {
                     currentState.pendingAnswers.push(result.message);
                 } else {
                     // No quick answer produced — fall back to queueing so it isn't lost.
-                    await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, 'answer');
+                    await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, 'answer', false, heardAt);
                 }
                 return 'queued';
             }
@@ -2222,7 +2244,7 @@ export abstract class BaseBehavior {
                 if (result.message) {
                     this.sendStatusAck(currentState.spaceName, result.message);
                 }
-                await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, 'queue');
+                await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, 'queue', false, heardAt);
                 return 'queued';
             }
         }
@@ -2250,7 +2272,8 @@ export abstract class BaseBehavior {
         mimeType?: string,
         galleryUrls?: string[],
         classification?: string,
-        quiet = false
+        quiet = false,
+        heardAt = Date.now()
     ): Promise<void> {
         const state = this.activeConversations.get(senderId);
         if (!state) return;
@@ -2261,7 +2284,7 @@ export abstract class BaseBehavior {
             return;
         }
 
-        state.messageQueue.push({ originalMessage, message, url, mediaType, mimeType, galleryUrls, classification, timestamp: Date.now() });
+        state.messageQueue.push({ originalMessage, message, url, mediaType, mimeType, galleryUrls, classification, timestamp: heardAt });
     }
 
     /**
