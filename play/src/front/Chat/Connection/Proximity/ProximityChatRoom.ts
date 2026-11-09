@@ -36,6 +36,7 @@ import {
 } from "../../Stores/ChatStore";
 import { selectedRoomStore } from "../../Stores/SelectRoomStore";
 import { isBotUser, mapExtendedSpaceUserToChatUser } from "../../UserProvider/ChatUserMapper";
+import { parseNoteTranscript, type NoteTranscript } from "../../Bots/BotTranscript";
 import { fileNameOfLink } from "../../../FileViewer/fileKinds";
 import { parseBotReplyLimit, type BotReplyLimit } from "../../Bots/BotReplyLimit";
 import { botAskTapJson, readNearbyBotAsk, type BotAsk, type BotAskTap } from "../../Bots/BotAsk";
@@ -201,6 +202,8 @@ export class ProximityChatMessage implements ChatMessage {
     spoken?: boolean;
     /** Whether a voice bot's voice stopped part-way through this reply because someone spoke over it (#1665). */
     readonly stoppedBySpeech: Writable<boolean> = writable(false);
+    /** Set on a bot's streamed reply: which reply it is, so its voice can be stopped while it is being heard (round 8). */
+    voiceReply?: { responseId: string; botSpaceUserId: string };
     constructor(
         public id: string,
         public sender: AnyKindOfUser,
@@ -259,6 +262,12 @@ export class ProximityChatMessage implements ChatMessage {
         return Promise.resolve();
     }
 
+    /** What a bot heard in this voice note, shown inside its bubble. Only a voice note takes it. */
+    setTranscript(transcript: NoteTranscript | undefined): void {
+        if (this.type !== "audio" || !("update" in this.content)) return;
+        (this.content as Writable<ChatMessageContent>).update((content) => ({ ...content, transcript }));
+    }
+
     /** No more reactions, for a message carried to the next map: the people it was sent to aren't in its chat. */
     stopReactions(): void {
         this.canReact.set(false);
@@ -284,6 +293,9 @@ export class ProximityChatRoom implements ChatRoom {
     private spaceMessageSubscription: Subscription | undefined;
     private spaceIsTypingSubscription: Subscription | undefined;
     private spaceMessageReactionSubscription: Subscription | undefined;
+    private spaceTranscriptSubscription: Subscription | undefined;
+    /** What a bot heard in a note whose message is not here yet (or was sent before it arrived): applied when it comes. */
+    private readonly pendingTranscripts = new Map<string, NoteTranscript>();
     private spaceReplyLimitSubscription: Subscription | undefined;
     private spaceBotAskSubscription: Subscription | undefined;
     /** The card shown for each card id (#1658), so the bot's next event about it changes that card instead of adding one */
@@ -913,6 +925,11 @@ export class ProximityChatRoom implements ChatRoom {
 
         // Add message to the list
         this.messages.push(newMessage);
+        const heard = this.pendingTranscripts.get(newMessage.id);
+        if (heard) {
+            this.pendingTranscripts.delete(newMessage.id);
+            newMessage.setTranscript(heard);
+        }
 
         this.lastMessageTimestamp = newMessage.date.getTime();
 
@@ -1219,6 +1236,21 @@ export class ProximityChatRoom implements ChatRoom {
             if (ask && !ask.answer) this.messages.delete(shown.messageId);
             if (!ask || !ask.answer) this.askCards.delete(askId);
         }
+    }
+
+    /** Shows what a bot heard in a note, or keeps it for a note that is not here yet (the newest state wins). */
+    private applyTranscript(messageId: string, transcript: NoteTranscript): void {
+        const message = this.messages.get(messageId);
+        if (message instanceof ProximityChatMessage) {
+            message.setTranscript(transcript);
+            return;
+        }
+        // Few notes at once: what waits for a note that never comes is dropped before it can grow
+        if (this.pendingTranscripts.size >= MAX_BOT_REPLIES_KEPT) {
+            const oldest = this.pendingTranscripts.keys().next().value;
+            if (oldest !== undefined) this.pendingTranscripts.delete(oldest);
+        }
+        this.pendingTranscripts.set(messageId, transcript);
     }
 
     private applyRemoteReaction(senderUserId: string, event: SpaceMessageReaction): void {
@@ -1772,6 +1804,7 @@ export class ProximityChatRoom implements ChatRoom {
         });
 
         this.spaceMessageReactionSubscription?.unsubscribe();
+        this.spaceTranscriptSubscription?.unsubscribe();
         this.spaceMessageReactionSubscription = this._space
             .observePublicEvent("spaceMessageReaction")
             .subscribe((event) => {
@@ -1779,6 +1812,22 @@ export class ProximityChatRoom implements ChatRoom {
                     return;
                 }
                 this.applyRemoteReaction(event.sender, event.spaceMessageReaction);
+            });
+
+        // What a bot heard in a voice note, sent to everyone who got the note. Accepted only from a bot.
+        this.spaceTranscriptSubscription?.unsubscribe();
+        this.spaceTranscriptSubscription = this._space
+            .observePublicEvent("spaceMessageTranscript")
+            .subscribe((event) => {
+                const spaceUser = this.users?.get(event.sender);
+                if (!spaceUser || !isBotUser(spaceUser) || isBlackListed(event.sender)) return;
+                const heard = parseNoteTranscript({
+                    v: 1,
+                    for: event.spaceMessageTranscript.messageId,
+                    state: event.spaceMessageTranscript.state,
+                    text: event.spaceMessageTranscript.text,
+                });
+                if (heard) this.applyTranscript(heard.for, { state: heard.state, text: heard.text });
             });
 
         // A bot's reply limit card (#1159), sent to this person only. The pusher passes it on only from a bot about
@@ -1840,6 +1889,8 @@ export class ProximityChatRoom implements ChatRoom {
                     this.markStoppedBySpeech(event.sender, stream.responseId);
                     return;
                 }
+                // Whether a reply is being heard is for its Stop speaking button (see VoiceBots): the chat has nothing to add
+                if (stream.speaking !== undefined) return;
                 // A wave comes with no words: the bot's answer to "stop" is its box, not a line (#1670)
                 if (
                     stream.isFinal &&
@@ -1974,6 +2025,7 @@ export class ProximityChatRoom implements ChatRoom {
                     "proximity"
                 );
 
+                newMessage.voiceReply = { responseId: stream.responseId, botSpaceUserId: event.sender };
                 this.streamMessages.set(stream.responseId, newMessage);
                 this.botReplies.set(stream.responseId, { message: newMessage, sender: event.sender });
                 if (this.botReplies.size > MAX_BOT_REPLIES_KEPT)
@@ -2030,6 +2082,7 @@ export class ProximityChatRoom implements ChatRoom {
                 this.spaceMessageSubscription?.unsubscribe();
                 this.spaceIsTypingSubscription?.unsubscribe();
                 this.spaceMessageReactionSubscription?.unsubscribe();
+                this.spaceTranscriptSubscription?.unsubscribe();
                 this.spaceReplyLimitSubscription?.unsubscribe();
                 this.spaceBotAskSubscription?.unsubscribe();
                 this.dropWaitingAsks();
@@ -2269,6 +2322,7 @@ export class ProximityChatRoom implements ChatRoom {
         this.spaceMessageSubscription?.unsubscribe();
         this.spaceIsTypingSubscription?.unsubscribe();
         this.spaceMessageReactionSubscription?.unsubscribe();
+        this.spaceTranscriptSubscription?.unsubscribe();
         this.spaceReplyLimitSubscription?.unsubscribe();
         this.spaceBotAskSubscription?.unsubscribe();
         this.dropWaitingAsks();
@@ -2353,6 +2407,7 @@ export class ProximityChatRoom implements ChatRoom {
         this.spaceMessageSubscription?.unsubscribe();
         this.spaceIsTypingSubscription?.unsubscribe();
         this.spaceMessageReactionSubscription?.unsubscribe();
+        this.spaceTranscriptSubscription?.unsubscribe();
         this.spaceReplyLimitSubscription?.unsubscribe();
         this.spaceBotAskSubscription?.unsubscribe();
         this.dropWaitingAsks();

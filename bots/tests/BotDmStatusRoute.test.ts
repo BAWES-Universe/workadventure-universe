@@ -84,3 +84,34 @@ describe("A bot's room for its profile", () => {
         s2.close();
     });
 });
+
+describe('Whether a bot hears voice notes, for the mic in its chat', () => {
+    it('says yes only to someone who may message the bot and only for a bot that can hear', async () => {
+        const admin: any = { validateSessionToken: vi.fn(async () => ({ uuid: 'u1', email: 'a@b.c' })) };
+        const canHear = vi.fn(async (botId: string) => botId === 'ears');
+        const gate = {
+            check: vi.fn(async (botId: string) =>
+                botId === 'closed'
+                    ? { allowed: false, kind: 'refused', code: 'no_access', line: 'no' }
+                    : { allowed: true, kind: 'allowed' }
+            ),
+        };
+        const api: any = new BotAPI({ getAccessGate: () => gate } as any, admin, {} as any, [], { noteHearing: { canHear } });
+        const server = api.app.listen(0);
+        const base = `http://127.0.0.1:${server.address().port}`;
+        const headers = { Authorization: `Bearer orb_sess_v2_${'a'.repeat(64)}` };
+        expect((await fetch(`${base}/api/bots/ears/hears`)).status).toBe(401);
+        expect(await (await fetch(`${base}/api/bots/ears/hears`, { headers })).json()).toEqual({ hears: true });
+        expect(await (await fetch(`${base}/api/bots/deaf/hears`, { headers })).json()).toEqual({ hears: false });
+        // Someone who may not message the bot learns nothing about how it is set up
+        expect(await (await fetch(`${base}/api/bots/closed/hears`, { headers })).json()).toEqual({ hears: false });
+        expect(canHear).not.toHaveBeenCalledWith('closed');
+        expect((await fetch(`${base}/api/bots/a.b/hears`, { headers })).status).toBe(400);
+        // Without hearing set up, no bot is said to hear
+        const off: any = new BotAPI({ getAccessGate: () => gate } as any, admin, {} as any, []);
+        const s2 = off.app.listen(0);
+        expect(await (await fetch(`http://127.0.0.1:${s2.address().port}/api/bots/ears/hears`, { headers })).json()).toEqual({ hears: false });
+        server.close();
+        s2.close();
+    });
+});

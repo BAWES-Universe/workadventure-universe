@@ -48,6 +48,8 @@ import { BotVoiceSettings } from '../voice/VoiceSettings';
 import { BotSpeech } from '../voice/BotSpeech';
 import { OrbitTurnGate, pausedLine } from '../voice/VoiceAllowance';
 import { ListeningBudget } from '../voice/VoiceListening';
+import { sharedNoteHearing } from '../voice/NoteHearingWiring';
+import { tidyTranscript } from '../voice/NoteHearing';
 import { pausedAtCapacityEvent } from '../voice/VoiceLoad';
 import { captureServerEvent } from '../ai/PostHogClient';
 import { BotAttention, followUpSeconds } from './BotAttention';
@@ -187,6 +189,16 @@ export class BotClient {
     private rememberPerson(spaceName: string, userId: number, user: { tags?: string[]; uuid?: string }): void {
         if (userId === this.userId || user.tags?.includes('bot') || user.uuid?.startsWith('bot-')) return;
         this.attention.personJoined(spaceName, userId);
+    }
+
+    /**
+     * Who is in a meeting room. The behaviour is not told about a meeting room, but who is in it still decides whose words are
+     * the bot's: with more than one person there, only what is said to the bot (its name, or inside a conversation with it) is
+     * for it, as in a bubble. Without this every meeting would look like one person alone with the bot.
+     */
+    private rememberMeetingPerson(spaceName: string, user: { spaceUserId?: string; tags?: string[]; uuid?: string }): void {
+        const userId = BotClient.playerIdOf(user.spaceUserId);
+        if (userId) this.rememberPerson(spaceName, userId, user);
     }
 
     /** The numeric player id in a space user id ("roomID_userID"), or 0. */
@@ -2178,6 +2190,24 @@ export class BotClient {
         });
     }
 
+    /** Says a voice bot's reply began to be heard, or is over (round 8): the reply in everyone's chat shows Stop speaking meanwhile. */
+    private sendSpeaking(spaceName: string, responseId: string, speaking: boolean): void {
+        this.send({
+            message: {
+                $case: 'publicEvent',
+                publicEvent: {
+                    spaceName,
+                    spaceEvent: {
+                        event: {
+                            $case: 'spaceStreamMessage',
+                            spaceStreamMessage: { responseId, token: '', isFinal: true, isError: false, reset: false, speaking },
+                        },
+                    },
+                },
+            },
+        });
+    }
+
     /** A tool round or a retry of this person's reply is under way: what finishes meanwhile is not spoken (see BotSpeech). */
     holdSpeech(spaceName: string, playerId: number): void {
         this.speech?.hold(spaceName, playerId);
@@ -2207,6 +2237,14 @@ export class BotClient {
         this.speech?.endFor(spaceName, playerId);
         this.sendVoiceDone(spaceName, playerId);
         return true;
+    }
+
+    /**
+     * Whether a line this person said is for the bot now: after they said they are done only their name counts, and saying it brings them
+     * back. A line already waiting for its turn is asked this once the stop is settled, so a call by name that came in meanwhile is kept.
+     */
+    isForBot(spaceName: string, playerId: number, text: string): boolean {
+        return this.attention.hears(spaceName, playerId, text);
     }
 
     /** Tells one person, and only them, that the bot stopped listening to them without its name (#1670). */
@@ -2524,6 +2562,70 @@ export class BotClient {
         return { signedIn: access.signedIn, identifier: access.identifier, name };
     }
 
+    /** A recorded voice note, as the game names it: an audio file called "Voice message". */
+    static isVoiceNote(spaceMessage: { mediaType?: string; fileName?: string }): boolean {
+        return spaceMessage.mediaType === 'audio' && /^voice message\.[a-z0-9]{1,5}$/i.test((spaceMessage.fileName ?? '').trim());
+    }
+
+    /**
+     * Whether a voice note in nearby chat is for this bot and the bot can hear it: sent to it (alone with it, as a reply to its own
+     * message, or from the person it is summoned to) and its hearing is set up. When not, the note is handled as it always was.
+     */
+    private async noteIsForMe(
+        spaceName: string,
+        senderId: number,
+        spaceMessage: { id?: string; url?: string; mediaType?: string; fileName?: string; replyTo?: { senderUserId?: string } }
+    ): Promise<boolean> {
+        if (!BotClient.isVoiceNote(spaceMessage) || !spaceMessage.url || !spaceMessage.id) return false;
+        const hearing = sharedNoteHearing(adminApiService);
+        if (!hearing) return false;
+        const mine = this.spaces.get(spaceName);
+        const repliesToMe = mine !== undefined && spaceMessage.replyTo?.senderUserId === mine;
+        if (!this.attention.noteIsForBot(spaceName, senderId, repliesToMe)) return false;
+        return hearing.canHear(this.config.botId);
+    }
+
+    /**
+     * Hears a voice note and tells everyone who got it, so each shows "Listening…" and then the words under the note (or that it could
+     * not be heard). Returns the words for the bot, or 'unheard' when there are none to give: the bot then does not answer a file it
+     * cannot read.
+     */
+    private async hearNearbyNote(
+        spaceName: string,
+        spaceMessage: { id?: string; url?: string; fileName?: string; voiceDurationMs?: number }
+    ): Promise<string> {
+        const hearing = sharedNoteHearing(adminApiService);
+        const id = spaceMessage.id;
+        if (!hearing || !id || !spaceMessage.url) return 'unheard';
+        this.sendTranscript(spaceName, id, 'listening');
+        const heard = await hearing.hear(this.config.botId, `${spaceName}|${id}`, {
+            url: spaceMessage.url,
+            filename: spaceMessage.fileName ?? 'Voice message',
+            ...(spaceMessage.voiceDurationMs ? { seconds: spaceMessage.voiceDurationMs / 1000 } : {}),
+        });
+        const words = 'text' in heard ? tidyTranscript(heard.text, hearing.limits.maxChars) : '';
+        if (!words) {
+            this.sendTranscript(spaceName, id, 'failed');
+            return 'unheard';
+        }
+        this.sendTranscript(spaceName, id, 'heard', words);
+        return `[Voice note] ${words}`;
+    }
+
+    /** What the bot heard in a note, for everyone in the space: the newest state of the note wins. */
+    private sendTranscript(spaceName: string, messageId: string, state: 'listening' | 'heard' | 'failed', text?: string): void {
+        if (!this.spaces.get(spaceName)) return;
+        this.send({
+            message: {
+                $case: 'publicEvent',
+                publicEvent: {
+                    spaceName,
+                    spaceEvent: { event: { $case: 'spaceMessageTranscript', spaceMessageTranscript: { messageId, state, ...(text ? { text } : {}) } } },
+                },
+            },
+        });
+    }
+
     /**
      * The files someone uploaded with a nearby chat message (#1508), with the names they were sent with: the upload and
      * the rest of its gallery, never the links typed in the text.
@@ -2640,7 +2742,7 @@ export class BotClient {
                             reason: draft.reason ?? '',
                         },
                     }),
-                sendStatus: (spaceName, receiverUserId, status, left) =>
+                sendStatus: (spaceName, receiverUserId, status, left, listen) =>
                     this.sendPrivateEvent(spaceName, receiverUserId, {
                         $case: 'botVoiceStatus',
                         botVoiceStatus: {
@@ -2652,6 +2754,9 @@ export class BotClient {
                             // The spoken replies this person has left, when Orbit said (#1669)
                             repliesLeft: left?.count,
                             repliesResetAt: left?.resetsAt ?? '',
+                            // Whether it takes their microphone in a group, and why not (round 8)
+                            listening: listen?.state ?? '',
+                            listeningReason: listen?.reason ?? '',
                         },
                     }),
             },
@@ -2686,14 +2791,15 @@ export class BotClient {
         );
         // People call the bot by this name, so the hearing is told to expect it (#1864)
         this.voice.botName = this.config.name;
+        // In a group, the bot takes someone's microphone only after they ask it to keep listening (round 8); the confirmed ask counts as its name
+        this.voice.groupGate = true;
+        this.voice.onListenGranted = (spaceName, personId) => this.attention.listenGranted(spaceName, BotClient.playerIdOf(personId));
         // Voice paused for someone (the allowance, or a key that isn't working): the one fixed line, in the chat the reply is in
         this.voice.onPaused = (spaceName) => this.sendChatMessage(spaceName, pausedLine(this.config.name));
         this.speech = new BotSpeech(this.voice, voiceReplyLimits());
         // With others in the bubble, a spoken turn is the bot's only when it was said to the bot (#1220)
         this.voice.hears = (spaceName, personId, text) => this.attention.hears(spaceName, BotClient.playerIdOf(personId), text);
         this.voice.playerIdOf = (personId) => BotClient.playerIdOf(personId);
-        // In a meeting room the bot takes everything as said to it, so the daily listening does not count or hold it back there (#1859)
-        this.voice.isMeeting = (spaceName) => this.isMeetingSpace(spaceName);
         this.voice.onAudience = (spaceName) => this.speech?.audience(spaceName);
         this.voice.onUnplayed = (spaceName, segmentId) => this.speech?.unplayed(spaceName, segmentId);
         this.voice.onHeard = (spaceName, segmentId) => this.speech?.heard(spaceName, segmentId);
@@ -2704,6 +2810,11 @@ export class BotClient {
         // A spoken answer is over: the person can go on without the bot's name from now (#1220)
         this.speech.onOver = (spaceName, personId) => this.attention.answered(spaceName, personId);
         this.voice.onCrowded =(spaceName) => this.speech?.crowded(spaceName);
+        // A reply being heard shows Stop speaking in everyone's chat, and a tap on it stops it for the bubble as speaking over it would (round 8)
+        this.speech.onSpeaking = (spaceName, responseId, speaking) => this.sendSpeaking(spaceName, responseId, speaking);
+        this.voice.onStopSpeaking = (spaceName, responseId) => {
+            if (this.speech?.stopReply(spaceName, responseId)) this.sendSpeechStopped(spaceName, responseId);
+        };
         this.voice.onStopped = (spaceName, segmentId) => {
             const responseId = this.speech?.stopped(spaceName, segmentId);
             if (responseId) this.sendSpeechStopped(spaceName, responseId);
@@ -2761,6 +2872,7 @@ export class BotClient {
             this.emitRemoveSpaceFilter(spaceName);
             this.voice?.spaceLeft(spaceName);
             this.speech?.spaceLeft(spaceName);
+            this.attention.spaceLeft(spaceName);
             await this.emitLeaveSpace(spaceName);
         } catch (error) {
             console.warn(`[Bot ${this.config.botId}] Could not leave meeting room ${spaceName}:`, error);
@@ -3215,6 +3327,9 @@ export class BotClient {
 
             case 'initSpaceUsersMessage':
                 this.voice?.spaceUsers(message.initSpaceUsersMessage.spaceName, message.initSpaceUsersMessage.users ?? []);
+                if (this.isMeetingSpace(message.initSpaceUsersMessage.spaceName)) {
+                    for (const user of message.initSpaceUsersMessage.users ?? []) this.rememberMeetingPerson(message.initSpaceUsersMessage.spaceName, user);
+                }
                 // When bot joins a space, backend sends all existing users with their UUIDs
                 // This ensures we have UUID tracking before any chat messages arrive
                 if (this.behavior && message.initSpaceUsersMessage && !this.isMeetingSpace(message.initSpaceUsersMessage.spaceName)) {
@@ -3278,6 +3393,9 @@ export class BotClient {
                 if (message.addSpaceUserMessage.user && this.asks && !isBotSpaceUser(message.addSpaceUserMessage.user)) {
                     const joined = BotClient.playerIdOf(message.addSpaceUserMessage.user.spaceUserId);
                     if (joined) this.asks.personBack(this, message.addSpaceUserMessage.spaceName, joined);
+                }
+                if (message.addSpaceUserMessage?.user && this.isMeetingSpace(message.addSpaceUserMessage.spaceName)) {
+                    this.rememberMeetingPerson(message.addSpaceUserMessage.spaceName, message.addSpaceUserMessage.user);
                 }
                 // When a user joins a space, we get their SpaceUser info
                 // Extract numeric userId from spaceUserId to avoid name collisions
@@ -3444,12 +3562,22 @@ export class BotClient {
                         }
                         // With others in the bubble, a line not meant for the bot goes no further: it is not read, saved or
                         // answered, and the person is not even asked about (#1220). Before anything else is done with it.
-                        if (!this.attention.hears(spaceName, senderId, spaceMessage.message)) {
+                        // A voice note is for the bot only when it was sent to it (alone with it, or as a reply to its message): only then
+                        // is its clip ever sent to a hearing provider. A follow-up window alone never is (the note is then read as before).
+                        const noteForBot = await this.noteIsForMe(spaceName, senderId, spaceMessage);
+                        if (!noteForBot && !this.attention.hears(spaceName, senderId, spaceMessage.message)) {
                             break;
                         }
                         // Before anything is done with the message (links looked up, files read, the AI asked)
                         if (!(await this.mayChat(spaceName, senderId, message))) {
                             break;
+                        }
+                        // Heard once, here; the people who got the note see what was heard under it
+                        let lineText = spaceMessage.message;
+                        if (noteForBot) {
+                            const heard = await this.hearNearbyNote(spaceName, spaceMessage);
+                            if (heard === 'unheard') break;
+                            lineText = lineText ? `${lineText}\n${heard}` : heard;
                         }
                         // Said out loud, not typed, to this bot and let through: a card waiting for an answer says so (#1661)
                         if (spaceMessage.spoken) this.noteSpoken(spaceName, senderId);
@@ -3477,7 +3605,7 @@ export class BotClient {
                             : spaceMessage.mimeType;
                         this.behavior.onChatMessage(
                             spaceName,
-                            spaceMessage.message,
+                            lineText,
                             senderId,
                             detectedUrl,
                             spaceMessage.mediaType,
@@ -3500,12 +3628,18 @@ export class BotClient {
 
             case 'removeSpaceUserMessage':
                 this.voice?.spaceUserLeft(message.removeSpaceUserMessage.spaceName, message.removeSpaceUserMessage.spaceUserId);
-                if (this.behavior && !this.isMeetingSpace(message.removeSpaceUserMessage.spaceName)) {
+                if (this.isMeetingSpace(message.removeSpaceUserMessage.spaceName)) {
                     this.attention.personLeft(
                         message.removeSpaceUserMessage.spaceName,
                         BotClient.playerIdOf(message.removeSpaceUserMessage.spaceUserId) || (message.removeSpaceUserMessage.userId ?? 0)
                     );
-                    this.behavior.onSpaceUserLeft(message.removeSpaceUserMessage.spaceName, message.removeSpaceUserMessage.userId);
+                }
+                if (this.behavior && !this.isMeetingSpace(message.removeSpaceUserMessage.spaceName)) {
+                    // The message names the person by their space user id only, so the number comes from that
+                    const leftPlayerId =
+                        BotClient.playerIdOf(message.removeSpaceUserMessage.spaceUserId) || (message.removeSpaceUserMessage.userId ?? 0);
+                    this.attention.personLeft(message.removeSpaceUserMessage.spaceName, leftPlayerId);
+                    this.behavior.onSpaceUserLeft(message.removeSpaceUserMessage.spaceName, leftPlayerId);
                 }
                 break;
 

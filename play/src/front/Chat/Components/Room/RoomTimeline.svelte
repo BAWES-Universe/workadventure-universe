@@ -29,11 +29,12 @@
     import LL, { locale } from "../../../../i18n/i18n-svelte";
     import { formatPeopleNames } from "../TopRow/TopRowSummary";
     import { availabilityFromNote, botChatClosed, botHeaderState, botIdFromChatId } from "../../Bots/BotChatStatus";
-    import { botStatusCache } from "../../Bots/BotStatusStore";
+    import { botHearsCache, botStatusCache } from "../../Bots/BotStatusStore";
     import { nextReplyLimitExpiry, shownReplyLimitIds } from "../../Bots/BotReplyLimit";
     import BotStatusNoteCard from "../Bots/BotStatusNoteCard.svelte";
     import BotReplyLimitCard from "../Bots/BotReplyLimitCard.svelte";
     import VoiceDraftCard from "../Bots/VoiceDraftCard.svelte";
+    import VoiceListeningRow from "../Bots/VoiceListeningRow.svelte";
     import BotAskCard from "../Bots/BotAskCard.svelte";
     import {
         askBarFits,
@@ -290,9 +291,13 @@
         (proximityRoom && $nearbySpaceKind ? nearbyChatName($nearbySpaceKind, $nearbySpaceName ?? "", $LL) : undefined);
     $: isEnded = shownSession !== undefined && !shownSession.isLive;
     $: isRoomMessages = shownSession?.id === ROOM_MESSAGES_SESSION_ID;
-    $: timelineEntries = shownSession
-        ? (shownSession.entries as TimelineEntry<ChatMessage & { session?: ProximitySessionMarker }>[])
-        : buildTimelineEntries($messages as (ChatMessage & { session?: ProximitySessionMarker })[], $spaceJoinedAt);
+    // What a bot heard in a voice note is shown inside that note's bubble: its notice is no message of the chat, so it
+    // takes no place in a run (the bot's answer after it keeps its name and picture).
+    $: timelineEntries = (
+        shownSession
+            ? (shownSession.entries as TimelineEntry<ChatMessage & { session?: ProximitySessionMarker }>[])
+            : buildTimelineEntries($messages as (ChatMessage & { session?: ProximitySessionMarker })[], $spaceJoinedAt)
+    ).filter((entry) => !entry.message.transcriptNotice);
     function isNoticeEntry(entry: TimelineEntry<ChatMessage & { session?: ProximitySessionMarker }>): boolean {
         return (
             ((entry.role === "start" || entry.role === "resume") && entry.message.session !== undefined) ||
@@ -405,6 +410,8 @@
     $: partnerMembership = partner?.membership ?? readable(undefined);
     $: botLeft = partnerBotId !== undefined && $partnerMembership === "leave";
     $: botAvailability = partnerBotId ? botStatusCache.store(partnerBotId) : readable(undefined);
+    // The mic shows in a bot's chat only when that bot can hear the note
+    $: botHears = partnerBotId ? botHearsCache.store(partnerBotId) : readable(false);
     $: botState = partnerBotId ? $botAvailability : undefined;
     $: botClosed = botChatClosed(botState);
     $: lastBotMessage = partnerBotId ? [...$messages].reverse().find((message) => !message.isMyMessage) : undefined;
@@ -1363,6 +1370,10 @@
                         onOpen={() => chatSheetSnapStore.set("full")}
                     />
                 {/if}
+                {#if proximityRoom}
+                    <!-- Round 8: while a voice bot takes your microphone in the group, a direct Stop listening -->
+                    <VoiceListeningRow />
+                {/if}
                 {#if voiceDraftCard}
                     <!-- One card at most: with two voice bots in a bubble, the one addressed last -->
                     <VoiceDraftCard
@@ -1378,7 +1389,7 @@
                         {room}
                         partner={$directPartner}
                         inputHint={botPlaceholder}
-                        allowVoiceNotes={partnerBotId === undefined}
+                        allowVoiceNotes={partnerBotId === undefined || $botHears}
                         bind:this={messageInputBarRef}
                     />
                 {/key}

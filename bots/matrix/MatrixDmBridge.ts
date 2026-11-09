@@ -20,11 +20,15 @@ import { ARTIFACT_KEY, artifactDirectMessage } from '../ai/ArtifactTools';
 import { artifactIdOfCard } from '../ai/ArtifactReferences';
 import { audioFileNameFor } from '../utils/audioFileName';
 import { STEPS_KEY, type StepsField } from '../ai/ToolSteps';
+import { tidyTranscript } from '../voice/NoteHearing';
+import type { NoteHearingService } from '../voice/NoteHearingWiring';
 import { ANSWER_EVENT, parseTap, type ParsedTap } from '../mcp/ApprovalCard';
 import type { Asker, Outcome } from '../mcp/ToolApprovals';
 
 /** The field of a reply that names the bot's room: the game shows a card under it to go there. */
 export const ROOM_LINK_KEY = 'universe.room_link';
+/** The words of a voice note the bot heard, carried by a notice that points at the note: `{ v: 1, for, state, text }`. */
+export const TRANSCRIPT_KEY = 'universe.transcript';
 
 export interface DmAccessResult {
     allowed: boolean;
@@ -72,6 +76,8 @@ export interface MatrixDmBridgeDeps {
     approvals?: MatrixDmApprovals;
     /** Upload a file someone sent so the bot can read it like a bubble upload. Returns a URL, or null to skip it. */
     uploadAttachment?(data: Buffer, mimeType: string, filename: string): Promise<string | null>;
+    /** Hearing for voice notes (#1979 follow-up): without it a note reaches the bot as the audio file it always was. */
+    noteHearing?: Pick<NoteHearingService, 'hear' | 'canHear' | 'limits'>;
     /** One short in-character "not now" from a resting bot, or '' to leave only the plain note. */
     restingLine?(config: BotConfiguration, text: string): Promise<string>;
     /** The bot's Woka as a PNG for its chat picture, or null when it has none. Without it bots keep no picture. */
@@ -682,7 +688,15 @@ export class MatrixDmBridge implements MatrixEventHandler {
             return;
         }
 
-        const { text, attachments, failed } = await this.readMessage(botUserId, content);
+        const read = await this.readMessage(botUserId, content);
+        const { attachments, failed } = read;
+        let text = read.text;
+        if (read.note && this.deps.noteHearing) {
+            // A voice note is heard once, here: the bot answers the words, and the note shows what was heard (or that it could not be)
+            const heard = await this.hearNote(botUserId, botId, event, read.note);
+            if (heard === 'unheard') return;
+            if (heard) text = text ? `${text}\n[Voice note] ${heard}` : `[Voice note] ${heard}`;
+        }
         if (!text && attachments.length === 0) {
             // A file with no caption that couldn't be fetched is a failed answer, not an empty message.
             if (failed) await couldNotAnswer(config);
@@ -884,7 +898,12 @@ export class MatrixDmBridge implements MatrixEventHandler {
         const kept: Record<string, unknown> = { msgtype: content.msgtype, body: String(content.body ?? '').slice(0, WAITING_BODY_MAX) };
         if (typeof content.url === 'string') kept.url = content.url;
         if (typeof content.filename === 'string') kept.filename = content.filename;
-        if (typeof content.info?.mimetype === 'string') kept.info = { mimetype: content.info.mimetype };
+        const info: Record<string, unknown> = {};
+        if (typeof content.info?.mimetype === 'string') info.mimetype = content.info.mimetype;
+        // What a voice note needs when it is answered later: that it is a note, and how long it is
+        if (typeof content.info?.duration === 'number') info.duration = content.info.duration;
+        if (Object.keys(info).length > 0) kept.info = info;
+        for (const key of ['org.matrix.msc3245.voice', 'm.voice'] as const) if (content[key] !== undefined) kept[key] = {};
         const message = JSON.stringify({
             event_id: event.event_id,
             room_id: event.room_id,
@@ -1038,12 +1057,59 @@ export class MatrixDmBridge implements MatrixEventHandler {
         }
     }
 
+    /**
+     * Hears a voice note and shows it under the note: "Listening…", then the words or one line that it could not. Returns the words for
+     * the bot, '' when the bot has no hearing to use (the note reaches it as the file, as before), or 'unheard' when it was meant to
+     * be heard and could not be (the person is told under the note; the bot is not made to answer a file it cannot read).
+     */
+    private async hearNote(botUserId: string, botId: string, event: MatrixEvent, note: { data: Buffer; filename: string; seconds?: number }): Promise<string> {
+        const hearing = this.deps.noteHearing;
+        // A bot with no hearing to use is not promised anything: no row, and the note reaches it as the file, as before
+        if (!hearing || !(await hearing.canHear(botId))) return '';
+        const roomId = event.room_id;
+        let shownId: string | undefined;
+        const show = async (state: 'listening' | 'heard' | 'failed', words?: string): Promise<void> => {
+            const field = { v: 1, for: event.event_id, state, ...(words ? { text: words } : {}) };
+            const content = { msgtype: 'm.notice', body: words || (state === 'failed' ? 'Could not listen to this voice note.' : 'Listening…'), [TRANSCRIPT_KEY]: field };
+            try {
+                if (!shownId) {
+                    shownId = await this.client.sendMessage(botUserId, roomId, content);
+                    return;
+                }
+                await this.client.sendMessage(botUserId, roomId, {
+                    msgtype: 'm.notice',
+                    body: `* ${content.body}`,
+                    'm.new_content': content,
+                    'm.relates_to': { rel_type: 'm.replace', event_id: shownId },
+                });
+            } catch (error: any) {
+                // A lost transcript row must never cost the person the answer
+                console.warn(`[MatrixDmBridge] Could not show a transcript in ${roomId}:`, error?.message ?? error);
+            }
+        };
+        // "Listening…" is only worth showing when the answer takes a moment, but the person should never wonder: it goes out at once
+        const listening = show('listening');
+        const heard = await hearing.hear(botId, event.event_id, { bytes: note.data, filename: note.filename, ...(note.seconds !== undefined ? { seconds: note.seconds } : {}) });
+        await listening;
+        if (heard.ok) {
+            const words = tidyTranscript(heard.text, hearing.limits.maxChars);
+            if (!words) {
+                await show('failed');
+                return 'unheard';
+            }
+            await show('heard', words);
+            return words;
+        }
+        await show('failed');
+        return 'unheard';
+    }
+
     /** The message text, plus any file in it re-hosted where the bot can read it. */
     /** `failed` means a file was there but could not be fetched or re-hosted this time. */
     private async readMessage(
         botUserId: string,
         content: Record<string, any>
-    ): Promise<{ text: string; attachments: DmAttachment[]; failed?: boolean }> {
+    ): Promise<{ text: string; attachments: DmAttachment[]; failed?: boolean; note?: { data: Buffer; filename: string; seconds?: number } }> {
         const msgtype = content.msgtype;
         if (msgtype === 'm.text' || msgtype === 'm.emote') {
             return { text: String(content.body ?? '').trim(), attachments: [] };
@@ -1066,7 +1132,12 @@ export class MatrixDmBridge implements MatrixEventHandler {
             if (!url) return { text: caption, attachments: [], failed: true };
             const size = Number(content.info?.size);
             const duration = Number(content.info?.duration);
+            // A recorded voice message is flagged by Element (MSC3245) or, once stable, `m.voice`
+            const isNote = mediaType === 'audio' && (content['org.matrix.msc3245.voice'] !== undefined || content['m.voice'] !== undefined);
             return {
+                ...(isNote
+                    ? { note: { data: file.data, filename, ...(Number.isFinite(duration) && duration > 0 ? { seconds: duration / 1000 } : {}) } }
+                    : {}),
                 text: caption,
                 attachments: [
                     {

@@ -6,6 +6,7 @@ import type { BotStatusNote } from "../Bots/BotChatStatus";
 import type { BotRoomLink } from "../Bots/BotRoomLink";
 import type { BotReplyLimit } from "../Bots/BotReplyLimit";
 import type { BotSteps } from "../Bots/BotSteps";
+import type { NoteTranscript } from "../Bots/BotTranscript";
 import type { ArtifactCard } from "../../Artifacts/artifactCard";
 import type { BotAsk, BotAskTap } from "../Bots/BotAsk";
 import type { RoomConnection } from "../../Connection/RoomConnection";
@@ -209,6 +210,8 @@ export interface ChatMessage {
     spoken?: boolean;
     /** Set on a voice bot's reply whose voice stopped part-way because someone spoke over it (#1665): a quiet line under it. */
     stoppedBySpeech?: Readable<boolean>;
+    /** Set on a voice bot's reply in nearby chat (round 8): which reply it is, so it can show Stop speaking while it is heard. */
+    voiceReply?: { responseId: string; botSpaceUserId: string };
     /** Set when a bot's direct message carries an artifact it made: drawn as a card the person taps to open. */
     artifact?: ArtifactCard;
     /** Set when a bot's direct message is a card that waits for one answer (#1657): pinned above the message box while
@@ -216,6 +219,8 @@ export interface ChatMessage {
     ask?: Readable<BotAsk | undefined>;
     /** Set when a bot's notice is the steps line of its reply (#1545): drawn as a quiet line that updates in place. */
     steps?: Readable<BotSteps | undefined>;
+    /** Set when a bot's notice only carries what it heard in a voice note: never drawn, its words show in the note's bubble. */
+    transcriptNotice?: boolean;
     /** Whether reactions on this message reach the other people in the chat. */
     canReact: Readable<boolean>;
     /** Whether a reply to this message is sent as a reply (with its quote) to the other people in the chat. */
@@ -269,6 +274,8 @@ export type ChatMessageContent = {
     voiceWaveform?: number[];
     /** The file could not be fetched (gone, or the network failed). It is tried again the next time it is shown. */
     mediaFailed?: boolean;
+    /** What a bot heard in a voice message (shown inside the note's bubble), once it was asked to listen. */
+    transcript?: NoteTranscript;
 };
 export const historyVisibilityOptions = ["joined", "invited", "world_readable"] as const;
 export type historyVisibility = (typeof historyVisibilityOptions)[number];

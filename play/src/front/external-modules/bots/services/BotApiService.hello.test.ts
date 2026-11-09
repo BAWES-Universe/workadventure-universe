@@ -139,4 +139,21 @@ describe("BotApiService.sayBotHello (#1852)", () => {
             .catch((e: unknown) => e);
         expect(voiceNameFailureOf(silent)).toBe("unreachable");
     });
+
+    it("asks for a source's speaking voices, or its talking model's when told to (#1910)", async () => {
+        fetchMock.mockImplementation(() =>
+            Promise.resolve(
+                reply(200, [{ voiceId: "tiffany", name: "Tiffany", talk: true, model: "amazon.nova-2-sonic-v1:0" }])
+            )
+        );
+        const api = service();
+        await api.getBotVoices("b1", "key-aws");
+        await expect(api.getBotVoices("b1", "key-aws", "talk")).resolves.toMatchObject([
+            { voiceId: "tiffany", talk: true },
+        ]);
+        expect(String(fetchMock.mock.calls[0][0])).toMatch(
+            /\/api\/bots\/b1\/voice\/voices\?part=speech&source=key-aws$/
+        );
+        expect(String(fetchMock.mock.calls[1][0])).toMatch(/\/api\/bots\/b1\/voice\/voices\?part=talk&source=key-aws$/);
+    });
 });
