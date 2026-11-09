@@ -138,6 +138,7 @@ describe("who is here with a voice bot", () => {
 function fakeSpace(name = "bubble-1") {
     const users = writable(new Map<string, SpaceUserExtended>([["me", user("me")]]));
     const statusEvents = new Subject<unknown>();
+    const streamEvents = new Subject<unknown>();
     const emitted: [unknown, string][] = [];
     const space = {
         getName: () => name,
@@ -148,12 +149,18 @@ function fakeSpace(name = "bubble-1") {
             if (key !== "botVoiceStatus") throw new Error(`unexpected ${key}`);
             return statusEvents;
         },
+        observePublicEvent: (key: string) => {
+            if (key !== "spaceStreamMessage") throw new Error(`unexpected ${key}`);
+            return streamEvents;
+        },
         emitPrivateMessage: (message: unknown, to: string) => emitted.push([message, to]),
     } as unknown as SpaceInterface;
     const set = (...list: SpaceUserExtended[]) => users.set(new Map(list.map((u) => [u.spaceUserId, u])));
     const say = (sender: SpaceUserExtended, botVoiceStatus: object) =>
         statusEvents.next({ $case: "botVoiceStatus", spaceName: name, sender, botVoiceStatus });
-    return { space, set, say, emitted };
+    const stream = (sender: string, spaceStreamMessage: object) =>
+        streamEvents.next({ $case: "spaceStreamMessage", spaceName: name, sender, spaceStreamMessage });
+    return { space, set, say, stream, emitted };
 }
 
 const choiceSent = (emitted: [unknown, string][]) =>
@@ -407,5 +414,69 @@ describe("sound the browser will not start", () => {
         await settle();
         stop();
         expect(get(soundBlockedStore).has("b1")).toBe(false);
+    });
+});
+
+describe("Stop speaking (round 8)", () => {
+    let stop: (() => void) | undefined;
+    beforeEach(() => {
+        localStorage.clear();
+        voiceChoiceStore.choose("talk");
+        blocked.clear();
+    });
+    afterEach(() => {
+        stop?.();
+        stop = undefined;
+    });
+    const speaking = (responseId: string, on: boolean) => ({
+        responseId,
+        token: "",
+        isFinal: true,
+        isError: false,
+        reset: false,
+        speaking: on,
+    });
+
+    it("follows which reply each bot is being heard saying, and only from the bot itself", () => {
+        const t = fakeSpace();
+        stop = trackVoiceSpace(t.space);
+        t.set(user("me"), user("sara"), bot("b1", "1"));
+        t.stream("b1", speaking("r1", true));
+        expect(get(currentVoiceSpaceStore)?.bot?.speaking).toBe("r1");
+        // A person can't say a bot speaks, and an old reply's end does not hide the new one
+        t.stream("sara", speaking("r9", true));
+        t.stream("b1", speaking("r0", false));
+        expect(get(currentVoiceSpaceStore)?.bot?.speaking).toBe("r1");
+        // A plain chunk of the chat says nothing about it
+        t.stream("b1", { responseId: "r2", token: "Hi", isFinal: false, isError: false, reset: false });
+        expect(get(currentVoiceSpaceStore)?.bot?.speaking).toBe("r1");
+        t.stream("b1", speaking("r1", false));
+        expect(get(currentVoiceSpaceStore)?.bot?.speaking).toBeUndefined();
+    });
+
+    it("asks the bot to stop the reply it is saying, keeping the mode and listening as they are, and hides the button at once", () => {
+        const t = fakeSpace();
+        stop = trackVoiceSpace(t.space);
+        t.set(user("me"), user("sara"), bot("b1", "1"));
+        t.stream("b1", speaking("r1", true));
+        t.emitted.length = 0;
+        get(currentVoiceSpaceStore)?.stopSpeaking("b1");
+        expect(t.emitted).toEqual([
+            [{ $case: "voiceModeChoice", voiceModeChoice: { mode: "talk", listen: "", stopSpeaking: "r1" } }, "b1"],
+        ]);
+        expect(get(currentVoiceSpaceStore)?.bot?.speaking).toBeUndefined();
+        // Nothing is being said: nothing is sent
+        get(currentVoiceSpaceStore)?.stopSpeaking("b1");
+        expect(t.emitted).toHaveLength(1);
+    });
+
+    it("forgets what a bot was saying when it leaves", () => {
+        const t = fakeSpace();
+        stop = trackVoiceSpace(t.space);
+        t.set(user("me"), bot("b1", "1"));
+        t.stream("b1", speaking("r1", true));
+        t.set(user("me"));
+        t.set(user("me"), bot("b1", "1"));
+        expect(get(currentVoiceSpaceStore)?.bot?.speaking).toBeUndefined();
     });
 });

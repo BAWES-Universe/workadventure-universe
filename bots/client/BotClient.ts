@@ -2190,6 +2190,24 @@ export class BotClient {
         });
     }
 
+    /** Says a voice bot's reply began to be heard, or is over (round 8): the reply in everyone's chat shows Stop speaking meanwhile. */
+    private sendSpeaking(spaceName: string, responseId: string, speaking: boolean): void {
+        this.send({
+            message: {
+                $case: 'publicEvent',
+                publicEvent: {
+                    spaceName,
+                    spaceEvent: {
+                        event: {
+                            $case: 'spaceStreamMessage',
+                            spaceStreamMessage: { responseId, token: '', isFinal: true, isError: false, reset: false, speaking },
+                        },
+                    },
+                },
+            },
+        });
+    }
+
     /** A tool round or a retry of this person's reply is under way: what finishes meanwhile is not spoken (see BotSpeech). */
     holdSpeech(spaceName: string, playerId: number): void {
         this.speech?.hold(spaceName, playerId);
@@ -2792,6 +2810,11 @@ export class BotClient {
         // A spoken answer is over: the person can go on without the bot's name from now (#1220)
         this.speech.onOver = (spaceName, personId) => this.attention.answered(spaceName, personId);
         this.voice.onCrowded =(spaceName) => this.speech?.crowded(spaceName);
+        // A reply being heard shows Stop speaking in everyone's chat, and a tap on it stops it for the bubble as speaking over it would (round 8)
+        this.speech.onSpeaking = (spaceName, responseId, speaking) => this.sendSpeaking(spaceName, responseId, speaking);
+        this.voice.onStopSpeaking = (spaceName, responseId) => {
+            if (this.speech?.stopReply(spaceName, responseId)) this.sendSpeechStopped(spaceName, responseId);
+        };
         this.voice.onStopped = (spaceName, segmentId) => {
             const responseId = this.speech?.stopped(spaceName, segmentId);
             if (responseId) this.sendSpeechStopped(spaceName, responseId);

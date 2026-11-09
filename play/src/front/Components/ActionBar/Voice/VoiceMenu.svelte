@@ -9,7 +9,12 @@
         type VoiceBotView,
         type VoiceSpaceView,
     } from "../../../Chat/Bots/VoiceBots";
-    import { choiceSpeaksToBot, voiceAllowanceLine, type VoiceChoice } from "../../../Chat/Bots/VoiceMode";
+    import {
+        choiceHearsBot,
+        choiceSpeaksToBot,
+        voiceAllowanceLine,
+        type VoiceChoice,
+    } from "../../../Chat/Bots/VoiceMode";
     import { replyLimitTime } from "../../../Chat/Bots/BotReplyLimit";
     import {
         IconAlignLeft,
@@ -125,6 +130,14 @@
     /** Stop listening, first, whenever it listens or may still: also to take back an ask that is paused by a limit. */
     $: offerStop = listening === "on" || listening === "stopping" || listening === "checking";
     $: hasAction = offerKeep || offerStop || listening === "pending" || soundBlocked;
+    /** A reply is being said and this person hears it: Stop speaking, right under Stop listening. Blocked sound offers Play bot audio instead. */
+    $: offerStopSpeaking = !!bot.speaking && choiceHearsBot($voiceChoiceStore) && !soundBlocked;
+    $: nowLine = offerStopSpeaking && listening ? `${nowStatus} · ${$LL.say.voice.listen.speakingNow()}` : nowStatus;
+
+    function stopSpeaking() {
+        view.stopSpeaking(bot.spaceUserId);
+        dispatch("close", { refocus: true });
+    }
 
     function ask(listen: "keep" | "stop") {
         view.askToListen(bot.spaceUserId, listen);
@@ -197,7 +210,7 @@
                 <span class="who-text">
                     <span class="who-name" dir="auto">{bot.name}</span>
                     <span class="who-status" data-testid="voice-menu-listening"
-                        ><i class="dot" class:off={!listeningOn} aria-hidden="true" /><span dir="auto">{nowStatus}</span
+                        ><i class="dot" class:off={!listeningOn} aria-hidden="true" /><span dir="auto">{nowLine}</span
                         ></span
                     >
                 </span>
@@ -218,6 +231,11 @@
                     data-testid="voice-cancel-listening"
                     use:focusWhenOpened={true}
                     on:click={() => ask("stop")}>{$LL.say.voice.listen.cancel()}</button
+                >
+            {/if}
+            {#if offerStopSpeaking}
+                <button type="button" class="act" data-testid="voice-stop-speaking" on:click={stopSpeaking}
+                    >{$LL.say.voice.listen.stopSpeaking()}</button
                 >
             {/if}
             {#if soundBlocked}

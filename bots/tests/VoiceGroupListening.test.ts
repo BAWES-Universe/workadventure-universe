@@ -57,7 +57,9 @@ function setup(gate = true) {
         start('bob');
         connected('bob');
     };
-    return { calls, sent, told, granted, person, start, choose, connected, modeSets, lastRequest, ack, listenOf, aliceThenBob, onMessage: (m: FromWorker) => handlers.onMessage(m) };
+    const stopSpeaking = (who: string, responseId: string, mode = 'talk') =>
+        calls.handlePrivateEvent(fromPerson(who, { $case: 'voiceModeChoice', voiceModeChoice: { mode, listen: '', stopSpeaking: responseId } }));
+    return { calls, sent, told, granted, person, start, choose, stopSpeaking, connected, modeSets, lastRequest, ack, listenOf, aliceThenBob, onMessage: (m: FromWorker) => handlers.onMessage(m) };
 }
 
 beforeEach(() => vi.useFakeTimers());
@@ -285,5 +287,30 @@ describe('listening in a group: LiveKit', () => {
         t.onMessage({ type: 'mode.ack', sessionId: request.sessionId, participantId: 'alice', requestId: request.requestId!, mode: 'talk', path: 'room', epoch: join.epoch });
         expect(t.listenOf('alice')).toEqual({ state: 'on', reason: '' });
         expect(t.granted).toEqual([[SPACE, 'alice']]);
+    });
+});
+
+describe('Stop speaking (round 8)', () => {
+    it('passes the reply on, and changes neither the mode nor who the bot listens to', () => {
+        const t = setup();
+        const stops: [string, string][] = [];
+        t.calls.onStopSpeaking = (space, responseId) => void stops.push([space, responseId]);
+        t.aliceThenBob();
+        const modesBefore = t.modeSets().length;
+        const listenBefore = t.listenOf('alice');
+        t.stopSpeaking('bob', 'bot-b1-player-3-reply');
+        expect(stops).toEqual([[SPACE, 'bot-b1-player-3-reply']]);
+        expect(t.modeSets()).toHaveLength(modesBefore);
+        expect(t.listenOf('alice')).toEqual(listenBefore);
+    });
+
+    it('refuses an ask with a mode that is not one of the four, or a reply id that is too long', () => {
+        const t = setup();
+        const stops: string[] = [];
+        t.calls.onStopSpeaking = (_space, responseId) => void stops.push(responseId);
+        t.aliceThenBob();
+        t.stopSpeaking('bob', 'r1', 'shout');
+        t.stopSpeaking('bob', 'r'.repeat(201));
+        expect(stops).toEqual([]);
     });
 });

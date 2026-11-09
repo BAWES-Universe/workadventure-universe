@@ -74,12 +74,14 @@ const nora = user("b1", { uuid: "bot-1", tags: ["bot", "voice-bot"], name: "Nora
 function fakeSpace() {
     const users = writable(new Map<string, SpaceUserExtended>([["me", user("me")]]));
     const statuses = new Subject<unknown>();
+    const streams = new Subject<unknown>();
     const space = {
         getName: () => "bubble-1",
         mySpaceUserId: "me",
         destroyed: false,
         usersStore: users,
         observePrivateEvent: () => statuses,
+        observePublicEvent: () => streams,
         emitPrivateMessage: vi.fn(),
     } as unknown as SpaceInterface;
     return {
@@ -91,6 +93,12 @@ function fakeSpace() {
                 $case: "botVoiceStatus",
                 sender: nora,
                 botVoiceStatus: { botId: "1", botName: "Nora", state, followUpSeconds, ...extra },
+            }),
+        speak: (responseId: string, speaking: boolean) =>
+            streams.next({
+                $case: "spaceStreamMessage",
+                sender: "b1",
+                spaceStreamMessage: { responseId, token: "", isFinal: true, isError: false, reset: false, speaking },
             }),
     };
 }
@@ -492,6 +500,26 @@ describe("the Voice button", () => {
             actions[0].click();
             await settle();
             expect(sent().pop()).toBe("stop");
+        });
+
+        it("offers Stop speaking right under Stop listening while a reply is heard, which stops only the reply", async () => {
+            t.say("on", 30, { listening: "on", listeningReason: "" });
+            t.speak("r1", true);
+            await settle();
+            button().click();
+            await settle();
+            const actions = [...target.querySelectorAll<HTMLButtonElement>("[data-testid=voice-menu-now] button")];
+            expect(actions.map((a) => a.textContent?.trim())).toEqual(["Stop listening", "Stop speaking"]);
+            expect(target.querySelector("[data-testid=voice-menu-listening]")?.textContent?.trim()).toBe(
+                "Listening to you · speaking"
+            );
+            actions[1].click();
+            await settle();
+            const last = (t.space.emitPrivateMessage as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as {
+                voiceModeChoice: { listen: string; stopSpeaking: string };
+            };
+            expect(last.voiceModeChoice).toMatchObject({ listen: "", stopSpeaking: "r1" });
+            expect(target.querySelector("[data-testid=voice-menu]")).toBeNull();
         });
 
         it("offers Cancel while turning on", async () => {

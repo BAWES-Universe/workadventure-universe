@@ -245,6 +245,8 @@ export class VoiceCalls {
      * name (the tap counts as the name). Only on the confirmation of their latest ask, once.
      */
     onListenGranted?: (spaceName: string, personId: string) => void;
+    /** Someone here tapped Stop speaking on one of this bot's replies (round 8), by its response id: what is playing of it stops. */
+    onStopSpeaking?: (spaceName: string, responseId: string) => void;
     private epoch = 0;
     private bubbleSeq = 0;
 
@@ -291,7 +293,7 @@ export class VoiceCalls {
                 if (this.fromAPerson(event, sender)) this.end(event.spaceName, sender!.spaceUserId, 'left');
                 break;
             case 'voiceModeChoice':
-                if (this.fromAPerson(event, sender)) this.personChoseMode(event.spaceName, sender!, inner.voiceModeChoice.mode, inner.voiceModeChoice.listen);
+                if (this.fromAPerson(event, sender)) this.personChoseMode(event.spaceName, sender!, inner.voiceModeChoice.mode, inner.voiceModeChoice.listen, inner.voiceModeChoice.stopSpeaking);
                 break;
             case 'livekitInvitationMessage':
                 if (this.fromMyself(event)) this.joinRoom(event.spaceName, inner.livekitInvitationMessage.serverUrl, inner.livekitInvitationMessage.token);
@@ -363,9 +365,18 @@ export class VoiceCalls {
      * of the four modes: anything else is refused. It is kept for their later connections and sent to the worker for
      * the one they have now. Type and listen, and text only, mean the worker takes nothing from their microphone.
      */
-    private personChoseMode(spaceName: string, person: SpaceUser, mode: string, listen = ''): void {
+    private personChoseMode(spaceName: string, person: SpaceUser, mode: string, listen = '', stopSpeaking = ''): void {
         if (!(PERSON_MODES as readonly string[]).includes(mode) || !['', 'keep', 'stop'].includes(listen)) {
             this.stats.rejectedFromGame++;
+            return;
+        }
+        // Stop speaking changes nothing else: not the mode, not who the bot listens to (round 8)
+        if (stopSpeaking) {
+            if (stopSpeaking.length > 200) {
+                this.stats.rejectedFromGame++;
+                return;
+            }
+            this.onStopSpeaking?.(spaceName, stopSpeaking);
             return;
         }
         const key = callKey(spaceName, person.spaceUserId);

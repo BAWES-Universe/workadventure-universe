@@ -133,6 +133,11 @@ const say: DeepPartial<Translation["say"]> = {
             cancel: "إلغاء",
             soundBlocked: "حظر متصفحك صوته",
             playAudio: "شغّل صوت البوت",
+            speaking: "يتحدث",
+            speakingNow: "يتحدث",
+            stopSpeaking: "أوقف الكلام",
+            playAudioOf: "شغّل صوت {bot}",
+            rowLabel: "{bot}: {state}",
         },
         groupLabel: {
             on: "{bot}، يستمع إليك. يفتح خيارات الصوت.",

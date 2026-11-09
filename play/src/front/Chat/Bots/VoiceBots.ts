@@ -74,6 +74,8 @@ export interface VoiceBotView {
     /** The short bar that explains the latest change, and a number that changes each time one is shown (so the same bar can show again). */
     bar: VoiceBar | undefined;
     barSeq: number;
+    /** The reply people are hearing it say now, by its response id (round 8): it shows Stop speaking. */
+    speaking: string | undefined;
 }
 
 /** The latest bar for each bot, by space user id (see voiceBarFor). */
@@ -92,6 +94,8 @@ export interface VoiceSpaceView {
     othersPresent: boolean;
     /** Asks a bot here to keep listening to us in the group, or to stop (round 8). */
     askToListen: (botSpaceUserId: string, listen: "keep" | "stop") => void;
+    /** Asks a bot here to stop saying the reply it is saying, for everyone, as speaking over it would (round 8). */
+    stopSpeaking: (botSpaceUserId: string) => void;
 }
 
 type ViewUser = Pick<SpaceUserExtended, "spaceUserId" | "uuid" | "tags" | "name" | "pictureStore">;
@@ -105,7 +109,9 @@ export function computeVoiceView(
     /** A bot this person blocked shows nothing on the button, as with its messages and its status. */
     isBlocked: (user: ViewUser) => boolean = () => false,
     bars: VoiceBars = new Map(),
-    askToListen: VoiceSpaceView["askToListen"] = () => undefined
+    askToListen: VoiceSpaceView["askToListen"] = () => undefined,
+    speaking: ReadonlyMap<string, string> = new Map(),
+    stopSpeaking: VoiceSpaceView["stopSpeaking"] = () => undefined
 ): VoiceSpaceView {
     const bots: VoiceBotView[] = [];
     const botSpaceUserIds: string[] = [];
@@ -141,10 +147,11 @@ export function computeVoiceView(
             listeningReason: status?.listeningReason ?? "",
             bar: bars.get(user.spaceUserId)?.bar,
             barSeq: bars.get(user.spaceUserId)?.seq ?? 0,
+            speaking: speaking.get(user.spaceUserId),
         });
     }
     if (!meIncluded) people++;
-    return { meeting, bot: bots[0], botSpaceUserIds, people, othersPresent, askToListen };
+    return { meeting, bot: bots[0], botSpaceUserIds, people, othersPresent, askToListen, stopSpeaking };
 }
 
 const views = writable<ReadonlyMap<SpaceInterface, VoiceSpaceView>>(new Map());
@@ -173,6 +180,8 @@ export const silencedVoiceBotsStore: Readable<ReadonlySet<string>> = derived(
 class VoiceSpaceWatcher {
     private readonly statuses = new Map<string, BotVoiceStatus>();
     private readonly bars = new Map<string, { bar: VoiceBar; seq: number }>();
+    /** The reply each bot is being heard saying, by its response id. */
+    private readonly speaking = new Map<string, string>();
     /** Bots that already told us, this visit, that they don't listen in the group: that bar shows once. */
     private readonly toldNotListening = new Set<string>();
     private barSeq = 0;
@@ -188,6 +197,7 @@ class VoiceSpaceWatcher {
                 // A bot that left no longer has a status
                 for (const id of [...this.statuses.keys()]) if (!users.has(id)) this.statuses.delete(id);
                 for (const id of [...this.bars.keys()]) if (!users.has(id)) this.bars.delete(id);
+                for (const id of [...this.speaking.keys()]) if (!users.has(id)) this.speaking.delete(id);
                 this.publish();
             })
         );
@@ -198,6 +208,18 @@ class VoiceSpaceWatcher {
                 if (blackListManager.isBlackListed(event.sender.uuid)) return;
                 const status = parseBotVoiceStatus(event.botVoiceStatus, event.sender.name);
                 if (status) this.onStatus(event.sender.spaceUserId, status);
+            })
+        );
+        // A bot says, for everyone, when a reply of its starts being heard and when its audio is over (round 8)
+        this.subscriptions.push(
+            space.observePublicEvent("spaceStreamMessage").subscribe((event) => {
+                const stream = event.spaceStreamMessage;
+                const sender = this.latest.get(event.sender);
+                if (stream.speaking === undefined || !sender || !isBot(sender)) return;
+                if (stream.speaking) this.speaking.set(event.sender, stream.responseId);
+                else if (this.speaking.get(event.sender) === stream.responseId) this.speaking.delete(event.sender);
+                else return;
+                this.publish();
             })
         );
         // Blocking or unblocking a bot already here changes the button at once, not at the next change in the room
@@ -237,12 +259,24 @@ class VoiceSpaceWatcher {
         for (const id of this.statuses.keys()) this.sendChoice(id);
     }
 
-    private sendChoice(botSpaceUserId: string, listen: "" | "keep" | "stop" = ""): void {
+    private sendChoice(botSpaceUserId: string, listen: "" | "keep" | "stop" = "", stopSpeaking = ""): void {
         if (this.destroyed || this.space.destroyed) return;
         this.space.emitPrivateMessage(
-            { $case: "voiceModeChoice", voiceModeChoice: { mode: voiceModeOf(get(voiceChoiceStore)), listen } },
+            {
+                $case: "voiceModeChoice",
+                voiceModeChoice: { mode: voiceModeOf(get(voiceChoiceStore)), listen, stopSpeaking },
+            },
             botSpaceUserId
         );
+    }
+
+    /** Asks a bot to stop the reply it is saying. The button goes at once; the bot's own word that the audio is over follows. */
+    private stopSpeaking(botSpaceUserId: string): void {
+        const responseId = this.speaking.get(botSpaceUserId);
+        if (!responseId) return;
+        this.speaking.delete(botSpaceUserId);
+        this.sendChoice(botSpaceUserId, "", responseId);
+        this.publish();
     }
 
     /** Asks one bot here to keep listening to us in the group, or to stop. Only a bot that told us about listening is asked. */
@@ -260,7 +294,9 @@ class VoiceSpaceWatcher {
             isAreaSpaceName(this.space.getName()),
             (user) => !!user.uuid && blackListManager.isBlackListed(user.uuid),
             this.bars,
-            (botSpaceUserId, listen) => this.askToListen(botSpaceUserId, listen)
+            (botSpaceUserId, listen) => this.askToListen(botSpaceUserId, listen),
+            this.speaking,
+            (botSpaceUserId) => this.stopSpeaking(botSpaceUserId)
         );
         views.update((all) => new Map(all).set(this.space, view));
     }

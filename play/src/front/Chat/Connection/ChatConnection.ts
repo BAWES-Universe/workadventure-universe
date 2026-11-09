@@ -210,6 +210,8 @@ export interface ChatMessage {
     spoken?: boolean;
     /** Set on a voice bot's reply whose voice stopped part-way because someone spoke over it (#1665): a quiet line under it. */
     stoppedBySpeech?: Readable<boolean>;
+    /** Set on a voice bot's reply in nearby chat (round 8): which reply it is, so it can show Stop speaking while it is heard. */
+    voiceReply?: { responseId: string; botSpaceUserId: string };
     /** Set when a bot's direct message carries an artifact it made: drawn as a card the person taps to open. */
     artifact?: ArtifactCard;
     /** Set when a bot's direct message is a card that waits for one answer (#1657): pinned above the message box while

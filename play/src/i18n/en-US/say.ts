@@ -134,6 +134,11 @@ const say: BaseTranslation = {
             cancel: "Cancel",
             soundBlocked: "Your browser blocked its sound",
             playAudio: "Play bot audio",
+            speaking: "Speaking",
+            speakingNow: "speaking",
+            stopSpeaking: "Stop speaking",
+            playAudioOf: "Play {bot}'s audio",
+            rowLabel: "{bot}: {state}",
         },
         /** The Voice button's name for screen readers in a group: the bot, what it hears of you, then what a tap does. */
         groupLabel: {

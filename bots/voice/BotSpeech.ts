@@ -70,6 +70,8 @@ export class BotSpeech {
     private readonly segments = new Map<string, { spaceName: string; responseId: string; heard: boolean }>();
     /** Replies whose audio is not over yet, with the space each is in. */
     private readonly unfinished = new Map<string, string>();
+    /** The segments people are hearing now (round 8): the reply shows Stop speaking until its audio is over, however it ends. */
+    private readonly speakingNow = new Map<string, { spaceName: string; responseId: string }>();
     private readonly held = new Set<string>();
     private readonly waiting = new Map<string, Waiting>();
     /** Replies Orbit is being asked about. They are not said yet, and not said twice meanwhile. */
@@ -147,6 +149,8 @@ export class BotSpeech {
 
     /** Called when the audio of a reply for this person is over, however it ended (#1220: their follow-up window starts then). */
     onOver?: (spaceName: string, personId: number) => void;
+    /** A reply began to be heard (true), or its audio is over (false), however it ended (round 8). Never twice the same way for a segment. */
+    onSpeaking?: (spaceName: string, responseId: string, speaking: boolean) => void;
 
     /** Whether a reply for this person is being played now. */
     isSpeakingTo(personId: number): boolean {
@@ -160,6 +164,7 @@ export class BotSpeech {
     /** The audio of a reply is over, however it ended. */
     played(segmentId: string): void {
         this.unfinished.delete(segmentId);
+        this.quiet(segmentId);
         const segment = this.segments.get(segmentId);
         const person = segment ? playerOf(segment.responseId) : undefined;
         if (segment && person !== undefined) this.onOver?.(segment.spaceName, person);
@@ -175,6 +180,7 @@ export class BotSpeech {
         for (const [segmentId, space] of [...this.unfinished]) {
             if (space !== spaceName) continue;
             this.unfinished.delete(segmentId);
+            this.quiet(segmentId);
             this.voice.retract?.(spaceName, segmentId);
         }
     }
@@ -195,6 +201,7 @@ export class BotSpeech {
             const segment = this.segments.get(segmentId);
             if (space !== spaceName || !segment || playerOf(segment.responseId) !== personId) continue;
             this.unfinished.delete(segmentId);
+            this.quiet(segmentId);
             // Forgotten here, so the report that it ended does not count as an answer that opens their window again
             this.segments.delete(segmentId);
             this.voice.retract?.(spaceName, segmentId);
@@ -223,7 +230,38 @@ export class BotSpeech {
     /** Some of this segment has been played to someone: the reply stays counted, whatever happens to the session next. */
     heard(spaceName: string, segmentId: string): void {
         const segment = this.segments.get(segmentId);
-        if (segment && segment.spaceName === spaceName) segment.heard = true;
+        if (!segment || segment.spaceName !== spaceName) return;
+        segment.heard = true;
+        if (this.unfinished.has(segmentId) && !this.speakingNow.has(segmentId)) {
+            this.speakingNow.set(segmentId, { spaceName, responseId: segment.responseId });
+            this.onSpeaking?.(spaceName, segment.responseId, true);
+        }
+    }
+
+    /**
+     * Someone in the space tapped Stop speaking on this reply (round 8): what is playing of it stops, as if they had spoken
+     * over it. True when it was being heard (the reply is then marked as stopped). Nothing else changes: their listening,
+     * their mode and the follow-up window are as they were.
+     */
+    stopReply(spaceName: string, responseId: string): boolean {
+        let stopped = false;
+        for (const [segmentId, space] of [...this.unfinished]) {
+            const segment = this.segments.get(segmentId);
+            if (space !== spaceName || !segment || segment.responseId !== responseId) continue;
+            if (this.speakingNow.has(segmentId)) stopped = true;
+            this.unfinished.delete(segmentId);
+            this.quiet(segmentId);
+            this.voice.retract?.(spaceName, segmentId);
+        }
+        return stopped;
+    }
+
+    /** This segment's audio is over for the people in the space: its reply stops showing Stop speaking. */
+    private quiet(segmentId: string): void {
+        const speaking = this.speakingNow.get(segmentId);
+        if (!speaking) return;
+        this.speakingNow.delete(segmentId);
+        this.onSpeaking?.(speaking.spaceName, speaking.responseId, false);
     }
 
     /**
@@ -232,7 +270,11 @@ export class BotSpeech {
      */
     sessionEnded(spaceName: string): void {
         // What was already playing has no one to report its end now: it is not "being played" any more (#1220)
-        for (const [segmentId, space] of [...this.unfinished]) if (space === spaceName) this.unfinished.delete(segmentId);
+        for (const [segmentId, space] of [...this.unfinished]) {
+            if (space !== spaceName) continue;
+            this.unfinished.delete(segmentId);
+            this.quiet(segmentId);
+        }
         for (const [segmentId, segment] of [...this.segments]) {
             if (segment.spaceName !== spaceName || segment.heard) continue;
             this.segments.delete(segmentId);
@@ -243,7 +285,11 @@ export class BotSpeech {
     spaceLeft(spaceName: string): void {
         const waiting = this.unpark(spaceName);
         if (waiting) this.giveUp(spaceName, waiting.responseId);
-        for (const [segmentId, space] of [...this.unfinished]) if (space === spaceName) this.unfinished.delete(segmentId);
+        for (const [segmentId, space] of [...this.unfinished]) {
+            if (space !== spaceName) continue;
+            this.unfinished.delete(segmentId);
+            this.quiet(segmentId);
+        }
         for (const key of this.held) if (key.startsWith(`${spaceName}\n`)) this.held.delete(key);
     }
 

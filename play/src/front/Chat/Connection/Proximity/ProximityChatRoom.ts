@@ -202,6 +202,8 @@ export class ProximityChatMessage implements ChatMessage {
     spoken?: boolean;
     /** Whether a voice bot's voice stopped part-way through this reply because someone spoke over it (#1665). */
     readonly stoppedBySpeech: Writable<boolean> = writable(false);
+    /** Set on a bot's streamed reply: which reply it is, so its voice can be stopped while it is being heard (round 8). */
+    voiceReply?: { responseId: string; botSpaceUserId: string };
     constructor(
         public id: string,
         public sender: AnyKindOfUser,
@@ -1887,6 +1889,8 @@ export class ProximityChatRoom implements ChatRoom {
                     this.markStoppedBySpeech(event.sender, stream.responseId);
                     return;
                 }
+                // Whether a reply is being heard is for its Stop speaking button (see VoiceBots): the chat has nothing to add
+                if (stream.speaking !== undefined) return;
                 // A wave comes with no words: the bot's answer to "stop" is its box, not a line (#1670)
                 if (
                     stream.isFinal &&
@@ -2021,6 +2025,7 @@ export class ProximityChatRoom implements ChatRoom {
                     "proximity"
                 );
 
+                newMessage.voiceReply = { responseId: stream.responseId, botSpaceUserId: event.sender };
                 this.streamMessages.set(stream.responseId, newMessage);
                 this.botReplies.set(stream.responseId, { message: newMessage, sender: event.sender });
                 if (this.botReplies.size > MAX_BOT_REPLIES_KEPT)

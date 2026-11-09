@@ -311,5 +311,16 @@ describe("ProximityChatRoom: what a voice bot hears this person say (#1664)", ()
             emitStream(stream("nobody", { stoppedBySpeech: true }));
             expect(botLines()).toEqual([]);
         });
+
+        it("knows which reply each bot line is, and makes no message of a reply being heard (round 8)", () => {
+            emitStream(stream("r-1", { speaking: true }));
+            emitStream(stream("r-1", { speaking: false }));
+            expect(botLines()).toEqual([]);
+            reply("r-1", "A long answer.");
+            emitStream(stream("r-1", { speaking: true }));
+            expect(botLines()).toHaveLength(1);
+            expect(botLines()[0].voiceReply).toEqual({ responseId: "r-1", botSpaceUserId: nora.spaceUserId });
+            expect(get(botLines()[0].content).body).toBe("A long answer.");
+        });
     });
 });
