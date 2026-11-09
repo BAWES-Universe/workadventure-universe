@@ -239,9 +239,9 @@ export class BotSpeech {
     }
 
     /**
-     * Someone in the space tapped Stop speaking on this reply (round 8): what is playing of it stops, as if they had spoken
-     * over it. True when it was being heard (the reply is then marked as stopped). Nothing else changes: their listening,
-     * their mode and the follow-up window are as they were.
+     * Someone in the space tapped Stop speaking on this reply (round 8): what is playing of it stops. True when it was being
+     * heard (the reply is then marked as stopped). Nothing else changes: listening, modes and follow-up windows are as they
+     * were, and its end opens no window (a tap to stop it is not a reply having been said).
      */
     stopReply(spaceName: string, responseId: string): boolean {
         let stopped = false;
@@ -251,7 +251,11 @@ export class BotSpeech {
             if (this.speakingNow.has(segmentId)) stopped = true;
             this.unfinished.delete(segmentId);
             this.quiet(segmentId);
+            // Forgotten here, as when someone says they are done: the report that it ended is not an answer that opens a follow-up window
+            this.segments.delete(segmentId);
             this.voice.retract?.(spaceName, segmentId);
+            // Not a moment of it was heard: what was counted for it is given back
+            if (!segment.heard) this.giveUp(spaceName, segment.responseId);
         }
         return stopped;
     }

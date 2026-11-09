@@ -252,6 +252,25 @@ describe('listening in a group: stop listening', () => {
         expect(t.listenOf('alice')).toEqual({ state: 'off', reason: '' });
     });
 
+    it('leaves nobody "checking" or "turning on" when the worker goes away before it confirms', async () => {
+        const t = setup();
+        t.aliceThenBob();
+        t.choose('alice', 'talk', 'keep');
+        t.ack('alice');
+        t.choose('alice', 'talk', 'stop');
+        await vi.advanceTimersByTimeAsync(LISTEN_CONFIRM_MS);
+        expect(t.listenOf('alice')).toEqual({ state: 'checking', reason: '' });
+        t.choose('bob', 'talk', 'keep');
+        t.calls.linkDown();
+        // The stop needs no confirming now; the keep was never confirmed, so it is not kept
+        expect(t.listenOf('alice')).toEqual({ state: 'off', reason: '' });
+        expect(t.listenOf('bob')).toEqual({ state: 'off', reason: 'failed' });
+        const asked = t.modeSets().length;
+        await vi.advanceTimersByTimeAsync(LISTEN_CONFIRM_MS * 3);
+        expect(t.modeSets()).toHaveLength(asked);
+        expect(t.granted).toEqual([[SPACE, 'alice']]);
+    });
+
     it('cancels while turning on', () => {
         const t = setup();
         t.aliceThenBob();

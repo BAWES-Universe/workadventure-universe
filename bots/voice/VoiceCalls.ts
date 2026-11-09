@@ -504,6 +504,24 @@ export class VoiceCalls {
         this.retell(spaceName, message.participantId);
     }
 
+    /**
+     * A bubble's audio session is gone (the worker went away, refused it, or it is opened again): no confirmation can come for what it
+     * was asked. A stop needs none now (the next connection gets the person's mode as it is, without their microphone); a keep was never
+     * confirmed, so it is not kept. Either way nobody is left told "checking" or "turning on" with nothing to end it.
+     */
+    private sessionGone(spaceName: string): void {
+        for (const [key, request] of [...this.listenRequests]) {
+            if (!key.startsWith(`${spaceName}\n`)) continue;
+            clearTimeout(request.timer);
+            this.listenRequests.delete(key);
+            if (request.want === 'keep') {
+                this.granted.delete(key);
+                this.listenReasons.set(key, 'failed');
+            }
+            this.retell(spaceName, key.slice(spaceName.length + 1));
+        }
+    }
+
     /** The ask to keep listening ends for this person (they chose a mode without the microphone, or left), with any confirmation it waited for. */
     private endListening(key: string): void {
         this.granted.delete(key);
@@ -1245,6 +1263,7 @@ export class VoiceCalls {
             this.bubbles.delete(spaceName);
             this.opening.delete(sessionId);
             this.onSessionEnded?.(spaceName);
+            this.sessionGone(spaceName);
             this.log(`voice: no audio session for ${spaceName} (${reason})`);
             for (const call of [...this.calls.values()]) if (call.sessionId === sessionId) this.drop(call, false);
             const room = this.rooms.get(spaceName);
@@ -1283,13 +1302,15 @@ export class VoiceCalls {
         }
         for (const spaceName of [...this.rooms.keys()]) this.tellEveryone(spaceName, 'paused');
         this.calls.clear();
-        for (const spaceName of this.bubbles.keys()) this.onSessionEnded?.(spaceName);
+        const spaces = [...this.bubbles.keys()];
+        for (const spaceName of spaces) this.onSessionEnded?.(spaceName);
         this.bubbles.clear();
         this.opening.clear();
         this.joined.clear();
         this.talking.clear();
         // The invitations stay: they are the game's, and still say where the bubble is
         this.rooms.clear();
+        for (const spaceName of spaces) this.sessionGone(spaceName);
     }
 
     /**
@@ -1460,6 +1481,7 @@ export class VoiceCalls {
         this.endSession(bubble.sessionId);
         this.onSessionEnded?.(spaceName);
         this.rooms.delete(spaceName);
+        this.sessionGone(spaceName);
         // Whoever was mid-sentence gets their words back to decide on, as when the worker goes away
         for (const [key, live] of [...this.live]) {
             if (live.spaceName !== spaceName) continue;

@@ -638,5 +638,26 @@ describe('Stop speaking (round 8)', () => {
         expect(t.events).toHaveLength(2);
         expect(t.speech.stopReply(SPACE, reply(1))).toBe(false);
         expect(t.speech.isSpeakingTo(7)).toBe(false);
+        // A tap to stop it is not a reply having been said: no follow-up window opens from its end
+        expect(t.over).not.toHaveBeenCalled();
+    });
+
+    it('gives back a reply stopped before any of it was heard', () => {
+        const unspoken = vi.fn();
+        const voice: SpeechVoice = {
+            say: () => true,
+            hasAudience: () => true,
+            someoneSpeaking: () => false,
+            lastSpokenToAt: () => 0,
+            retract: () => undefined,
+            unspoken,
+        };
+        const speech = new BotSpeech(voice, DEFAULT_REPLY_LIMITS, () => 1000);
+        speech.final(SPACE, reply(1), 'Queued.');
+        expect(speech.stopReply(SPACE, reply(1))).toBe(false);
+        expect(unspoken).toHaveBeenCalledWith(SPACE, { turnId: reply(1), playerId: 7 });
+        // The worker's report that nothing played gives back nothing twice
+        speech.unplayed(SPACE, 's1');
+        expect(unspoken).toHaveBeenCalledTimes(1);
     });
 });
