@@ -2345,6 +2345,15 @@ export class BotClient {
         if (this.lastSpoken.size > 500) this.lastSpoken.delete(this.lastSpoken.keys().next().value!);
     }
 
+    /**
+     * Whether the last line from this person to reach the bot was said out loud and not typed, without using up the
+     * answer `takeSpoken` gives: a typed line forgets the spoken one before it, so this is false for anything typed.
+     */
+    saidOutLoud(spaceName: string, playerId: number): boolean {
+        const at = this.lastSpoken.get(`${spaceName}|${playerId}`);
+        return at !== undefined && Date.now() - at <= BotClient.SPOKEN_FRESH_MS;
+    }
+
     /** Whether the line that just reached the AI from this person was said out loud and not typed. Asked once per line. */
     takeSpoken(spaceName: string, playerId: number): boolean {
         const key = `${spaceName}|${playerId}`;

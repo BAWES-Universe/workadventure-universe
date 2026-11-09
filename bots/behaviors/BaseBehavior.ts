@@ -2141,10 +2141,11 @@ export abstract class BaseBehavior {
         const state = this.activeConversations.get(senderId);
         if (!state || !state.isGenerating) return 'proceed';
 
-        // Several people around a voice bot: what a person says while it answers them is kept in line, and never asked about
+        // Several people around a voice bot: what a person SAYS while it answers them is kept in line, and never asked about
         // (it costs a call each) nor allowed to cancel or rewrite the answer: the answer may be the one to "stop", and
-        // room talk would replace it with an answer to the talk
-        if (this.bot?.mayEndFollowUp?.(state.spaceName, senderId)) {
+        // room talk would replace it with an answer to the talk. A TYPED line is never room talk: it is checked as always,
+        // so a typed "stop" or "do this instead" still stops or changes the answer
+        if (this.bot?.mayEndFollowUp?.(state.spaceName, senderId) && this.bot.saidOutLoud?.(state.spaceName, senderId)) {
             // A full line is dropped without a word: "I'll answer once I've finished" would be spoken to a room that was only talking
             await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, 'queue', true);
             return 'queued';
