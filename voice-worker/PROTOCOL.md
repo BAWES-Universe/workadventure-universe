@@ -28,7 +28,8 @@ game made for the bot's identity), `room.people` (whose microphone the bot may s
 earlier list) and `room.leave`. `recognition.terms` replaces the names the hearing is asked to expect (see Providers).
 
 Worker to bot server: `session.start` (session accepted), `participant.join` (audio is connected both ways),
-`participant.leave`, `lane.signal` (the answer), `playback.progress`, `engine.status` (with `room` while in a room),
+`participant.leave`, `lane.signal` (the answer), `playback.progress`, `engine.status` (with `room` while in a room), `mode.ack`
+(a `mode.set` that carried a `requestId` is applied: the path that carries the person's audio, `lane`, `room` or `none` yet, and its epoch),
 `room.state` (`connected`, or `closed` / `failed` when the connection ended without being asked to), `user.speech_started`,
 `user.partial`, `user.turn` (what the worker heard a person say, see Recognition), `provider.ok` and `provider.failed` (how a
 call to a speech provider went, see Providers), `error`.

@@ -53,7 +53,11 @@ export interface SessionOpen extends Base { type: 'session.open'; bubbleId: stri
 export interface LaneOpen extends Base { type: 'lane.open'; participantId: string; epoch: number; mode?: Mode }
 export interface LaneSignalIn extends Base { type: 'lane.signal'; participantId: string; epoch: number; signal: Signal }
 export interface LaneClose extends Base { type: 'lane.close'; participantId: string; epoch: number; reason?: LeaveReason }
-export interface ModeSet extends Base { type: 'mode.set'; mode: Mode; participantId?: string }
+/**
+ * `requestId`: the bot server wants to know when this person's mode has been applied (a person asked the bot to listen, or to stop).
+ * The worker answers with `mode.ack` once the path that carries their audio follows the new mode. Only with `participantId`.
+ */
+export interface ModeSet extends Base { type: 'mode.set'; mode: Mode; participantId?: string; requestId?: string }
 /** `maxMs`: the longest this reply may play; at it the audio stops (the text is in the chat in full). */
 export interface BotSay extends Base { type: 'bot.say'; segmentId: string; text: string; committed: true; lang?: string; maxMs?: number }
 export interface BotRetract extends Base { type: 'bot.retract'; segmentId: string }
@@ -82,6 +86,12 @@ export interface EngineStatus extends Base {
     room?: { epoch: number; connected: boolean };
     counters?: Record<string, number>;
 }
+/**
+ * A `mode.set` with a `requestId` has been applied. `path`: what carries the person's audio now and follows the mode, with its `epoch`:
+ * their own connection (`lane`), the bubble's LiveKit room when they are named in it (`room`), or nothing yet (`none`, the mode applies
+ * when a path opens: `lane.open` and `room.people` carry it).
+ */
+export interface ModeAck extends Base { type: 'mode.ack'; participantId: string; requestId: string; mode: Mode; path: 'lane' | 'room' | 'none'; epoch?: number }
 export interface RoomState extends Base { type: 'room.state'; epoch: number; state: 'connected' | 'closed' | 'failed' }
 /** A person started speaking to the bot. */
 export interface UserSpeechStarted extends Base { type: 'user.speech_started'; participantId: string; epoch: number; turnId: string }
@@ -106,5 +116,5 @@ export interface ErrorMsg extends Base { type: 'error'; code: string; message: s
 
 export type BotToWorker = SessionOpen | LaneOpen | LaneSignalIn | LaneClose | ModeSet | BotSay | BotRetract | VoiceStop | SessionEnd | RoomJoin | RoomLeave | RoomPeople | RecognitionTerms;
 export type WorkerToBot =
-    | SessionStart | ParticipantJoin | ParticipantLeave | LaneSignalOut | PlaybackProgress | EngineStatus | RoomState | UserSpeechStarted | UserPartial | UserTurn | ProviderOk | ProviderFailed | ErrorMsg;
+    | SessionStart | ParticipantJoin | ParticipantLeave | LaneSignalOut | PlaybackProgress | EngineStatus | ModeAck | RoomState | UserSpeechStarted | UserPartial | UserTurn | ProviderOk | ProviderFailed | ErrorMsg;
 

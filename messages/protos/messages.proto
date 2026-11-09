@@ -1503,6 +1503,10 @@ message BotVoiceStatusMessage {
   int32 followUpSeconds = 4;   // how long the bot keeps listening after it answers without its name; 0: the bot sends none
   optional int32 repliesLeft = 5;  // spoken replies this person has left in their window (#1669); absent: the bot has no count
   string repliesResetAt = 6;   // when their window ends, as an ISO time; empty: none is running or the bot doesn't know
+  // Whether the bot takes this person's microphone in a group (round 8): "" (nothing to choose: alone, or a mode without the
+  // microphone) | "off" | "pending" (asked to keep listening, not confirmed yet) | "on" | "stopping" | "checking" (a stop not confirmed in time)
+  string listening = 7;
+  string listeningReason = 8;  // "" | "others_joined" | "failed" (could not start in time) | "limit" (daily listening or spoken replies used)
 }
 
 /**
@@ -1520,6 +1524,8 @@ message BotVoiceDoneMessage {
  */
 message VoiceModeChoiceMessage {
   string mode = 1;             // "talk" | "speak_and_read" | "type_and_listen" | "off" (text only)
+  // In a group (round 8): "keep" asks this bot to keep listening to the sender for this visit, "stop" asks it to stop. "" changes neither.
+  string listen = 2;
 }
 
 message SwitchMessage {

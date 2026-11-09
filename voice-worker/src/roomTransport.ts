@@ -91,6 +91,11 @@ export class RoomTransport implements OutputTarget {
         this.reconcile();
     }
 
+    /** Whether this person is named in the room, so their microphone follows their mode here. */
+    names(participantId: string): boolean {
+        return this.people.has(participantId);
+    }
+
     setMode(mode: Mode, participantId?: string): void {
         for (const id of participantId ? [participantId] : [...this.people.keys()]) if (this.people.has(id)) this.people.set(id, mode);
         this.reconcile();

@@ -206,6 +206,32 @@ describe.skipIf(!serverUp)('a voice bot in a LiveKit bubble', () => {
         expect(r.worker.counters.get('room_unsubscribed')).toBeGreaterThanOrEqual(1);
     });
 
+    it('in a group, subscribes to a person\'s microphone only after they ask the bot to keep listening, and confirms it for the room (round 8)', async () => {
+        const r = await startRig();
+        rigs.push(r);
+        r.calls.groupGate = true;
+        const roomName = r.game.spaceName;
+        const alice = await person('room_alice').join(roomName);
+        await alice.publishAudio(TrackSource.SOURCE_MICROPHONE);
+        const bob = await person('room_bob').join(roomName);
+        await bob.publishAudio(TrackSource.SOURCE_MICROPHONE, 330);
+        r.calls.spaceUsers(r.game.spaceName, [roster('room_alice'), roster('room_bob')]);
+        await invite(r, roomName);
+        await waitFor('the bot to be in the room', () => roomUp(r));
+        await sleep(500);
+        expect(r.worker.roomSubscriptions()).toEqual([]);
+
+        r.calls.handlePrivateEvent(privateEvent(r.game, 'room_alice', { $case: 'voiceModeChoice', voiceModeChoice: { mode: 'talk', listen: 'keep' } }));
+        await waitFor('alice to be heard', () => r.worker.roomSubscriptions().map((s) => s.identity).join() === 'room_alice');
+        await waitFor('the confirmation', () => r.game.listens.some(([to, l]) => to === 'room_alice' && l.state === 'on'));
+        expect(r.fromWorker.find((m) => m.type === 'mode.ack')).toMatchObject({ participantId: 'room_alice', path: 'room', mode: 'talk' });
+
+        r.calls.handlePrivateEvent(privateEvent(r.game, 'room_alice', { $case: 'voiceModeChoice', voiceModeChoice: { mode: 'talk', listen: 'stop' } }));
+        await waitFor('alice to be dropped', () => r.worker.roomSubscriptions().length === 0);
+        await waitFor('the stop to be confirmed', () => r.game.listens.filter(([to]) => to === 'room_alice').pop()?.[1].state === 'off');
+        expect(r.violations).toEqual([]);
+    });
+
     it('does not hear anyone when the mode does not listen, and plays nothing to a mode that does not play', async () => {
         const r = await startRig();
         rigs.push(r);

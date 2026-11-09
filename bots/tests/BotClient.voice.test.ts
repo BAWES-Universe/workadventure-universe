@@ -113,7 +113,7 @@ describe('BotClient voice', () => {
                 privateEvent: {
                     spaceName: 'space-1',
                     receiverUserId: 'room_3',
-                    spaceEvent: { event: { $case: 'botVoiceStatus', botVoiceStatus: { botId: 'abc', botName: 'Echo', state: 'connecting', followUpSeconds: 30, repliesResetAt: '' } } },
+                    spaceEvent: { event: { $case: 'botVoiceStatus', botVoiceStatus: { botId: 'abc', botName: 'Echo', state: 'connecting', followUpSeconds: 30, repliesResetAt: '', listening: '', listeningReason: '' } } },
                 },
             },
         });

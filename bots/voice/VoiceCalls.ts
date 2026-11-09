@@ -23,7 +23,7 @@
  * again). Nothing else changes: the chat, the bubble and everyone else's voice carry on.
  */
 import type { PrivateEventPusherToFront, SpaceUser } from '@workadventure/messages';
-import type { FromWorker, ProviderPart, ToWorker, VoiceDraft, VoiceMode, VoiceSignal, VoiceStatus } from './protocol';
+import type { FromWorker, ListenInfo, ListenReason, ProviderPart, ToWorker, VoiceDraft, VoiceMode, VoiceSignal, VoiceStatus } from './protocol';
 import type { SpeechTurn, TurnDecision } from './BotSpeech';
 import type { RepliesLeft, TurnGate } from './VoiceAllowance';
 import type { VoiceLink } from './VoiceLink';
@@ -44,9 +44,10 @@ export interface GameSide {
     sendDraft(spaceName: string, receiverUserId: string, draft: VoiceDraft): void;
     /**
      * Tells one person where their audio with the bot stands (see VoiceStatus): the game draws its Voice button from it. With
-     * `left`, the spoken replies they have left, which the Voice menu says at the bottom (#1669).
+     * `left`, the spoken replies they have left, which the Voice menu says at the bottom (#1669). With `listen`, whether the bot takes
+     * their microphone in a group (see ListenState): the game draws the bar and the voice options from it.
      */
-    sendStatus(spaceName: string, receiverUserId: string, status: VoiceStatus, left?: RepliesLeft): void;
+    sendStatus(spaceName: string, receiverUserId: string, status: VoiceStatus, left?: RepliesLeft, listen?: ListenInfo): void;
 }
 
 interface Call {
@@ -98,6 +99,26 @@ const MAX_SESSIONS = 50;
 /** The modes a person may choose for themselves (#1666): talk and listen, speak and read, type and listen, text only. */
 const PERSON_MODES: readonly VoiceMode[] = ['talk', 'speak_and_read', 'type_and_listen', 'off'];
 const DEFAULT_PERSON_MODE: VoiceMode = 'talk';
+/** How long the worker has to confirm that a person's microphone is taken, or no longer taken, before the person is told it is not. */
+export const LISTEN_CONFIRM_MS = 5000;
+/** How many times a stop that is not confirmed is sent again (one wait apart) before the relay only waits. */
+const STOP_RESENDS = 6;
+const NO_LISTEN: ListenInfo = { state: '', reason: '' };
+
+/** A person's latest ask to keep listening or to stop, until the worker confirms it. */
+interface ListenRequest {
+    id: string;
+    want: 'keep' | 'stop';
+    /** The stop was not confirmed in time: the person is told it may still hear them. */
+    late: boolean;
+    resends: number;
+    timer: ReturnType<typeof setTimeout>;
+}
+
+/** Whether the worker takes the microphone of a person in this mode. */
+const modeTakesMic = (mode: VoiceMode): boolean => mode === 'talk' || mode === 'speak_and_read';
+/** The same mode without the microphone: talking becomes typing (the bot still speaks its answers), speaking and reading becomes text only. */
+const withoutMic = (mode: VoiceMode): VoiceMode => (mode === 'talk' ? 'type_and_listen' : mode === 'speak_and_read' ? 'off' : mode);
 
 export interface LinkHandlers {
     onMessage(message: FromWorker): void;
@@ -204,6 +225,26 @@ export class VoiceCalls {
      */
     private readonly heldBack = new Map<string, number>();
     private readonly heldTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    /**
+     * In a group (two or more people in the bubble or meeting room) the bot takes a person's microphone only after they asked it to keep
+     * listening, for this visit (round 8): what they say to friends never reaches it otherwise. Alone with the bot nothing changes. Set by
+     * whoever makes the relay; without it, everyone's microphone is taken as they chose.
+     */
+    groupGate = false;
+    /** Who asked this bot to keep listening in a group, by space and person: until they stop, choose a mode that takes no microphone, or leave. */
+    private readonly granted = new Set<string>();
+    /** Each person's latest ask to keep listening or to stop, until the worker confirms it. */
+    private readonly listenRequests = new Map<string, ListenRequest>();
+    /** Why the bot does not take a person's microphone, when there is something to tell them (see ListenReason). */
+    private readonly listenReasons = new Map<string, ListenReason>();
+    /** Whether each space was a group when the people in it last changed: a group forming is when people lose the bot's ear. */
+    private readonly grouped = new Map<string, boolean>();
+    private listenSeq = 0;
+    /**
+     * The worker confirmed a person's ask to keep listening: one fresh follow-up window opens for them, as if they had said the bot's
+     * name (the tap counts as the name). Only on the confirmation of their latest ask, once.
+     */
+    onListenGranted?: (spaceName: string, personId: string) => void;
     private epoch = 0;
     private bubbleSeq = 0;
 
@@ -250,7 +291,7 @@ export class VoiceCalls {
                 if (this.fromAPerson(event, sender)) this.end(event.spaceName, sender!.spaceUserId, 'left');
                 break;
             case 'voiceModeChoice':
-                if (this.fromAPerson(event, sender)) this.personChoseMode(event.spaceName, sender!, inner.voiceModeChoice.mode);
+                if (this.fromAPerson(event, sender)) this.personChoseMode(event.spaceName, sender!, inner.voiceModeChoice.mode, inner.voiceModeChoice.listen);
                 break;
             case 'livekitInvitationMessage':
                 if (this.fromMyself(event)) this.joinRoom(event.spaceName, inner.livekitInvitationMessage.serverUrl, inner.livekitInvitationMessage.token);
@@ -322,19 +363,167 @@ export class VoiceCalls {
      * of the four modes: anything else is refused. It is kept for their later connections and sent to the worker for
      * the one they have now. Type and listen, and text only, mean the worker takes nothing from their microphone.
      */
-    private personChoseMode(spaceName: string, person: SpaceUser, mode: string): void {
-        if (!(PERSON_MODES as readonly string[]).includes(mode)) {
+    private personChoseMode(spaceName: string, person: SpaceUser, mode: string, listen = ''): void {
+        if (!(PERSON_MODES as readonly string[]).includes(mode) || !['', 'keep', 'stop'].includes(listen)) {
             this.stats.rejectedFromGame++;
             return;
         }
         const key = callKey(spaceName, person.spaceUserId);
         this.modes.set(key, mode as VoiceMode);
+        // A mode that takes no microphone closes live input for every bot: the ask to keep listening ends with it. Moving between the two
+        // modes that take it keeps the ask, and never makes a new one
+        if (!modeTakesMic(mode as VoiceMode)) this.endListening(key);
+        if (listen === 'keep' || listen === 'stop') {
+            this.askedToListen(spaceName, person.spaceUserId, listen === 'keep');
+            return;
+        }
         const effective = this.modeOf(spaceName, person.spaceUserId);
         this.sentModes.set(key, effective);
         this.setMode(spaceName, effective, person.spaceUserId);
         // In a LiveKit room the worker is told by the list of people, which carries each person's mode
         const room = this.rooms.get(spaceName);
         if (room) this.sendPeople(room);
+        this.retell(spaceName, person.spaceUserId);
+    }
+
+    // ---- listening in a group (round 8) ----
+
+    /**
+     * A person asked this bot to keep listening to them in their group, or to stop. Keep: their microphone is taken for this visit, once the
+     * worker confirms it (then one fresh follow-up window opens for them). Stop: it is not taken any more; until the worker confirms that,
+     * they are told it may still hear them. Alone with the bot there is nothing to ask: it hears them hands-free as before.
+     */
+    private askedToListen(spaceName: string, personId: string, keep: boolean): void {
+        const key = callKey(spaceName, personId);
+        if (!this.groupGate) return;
+        if (keep) {
+            if (!modeTakesMic(this.chosenModeOf(spaceName, personId)) || !this.inGroup(spaceName)) {
+                this.retell(spaceName, personId);
+                return;
+            }
+            this.granted.add(key);
+            this.listenReasons.delete(key);
+        } else {
+            this.granted.delete(key);
+        }
+        this.requestListen(spaceName, personId, keep ? 'keep' : 'stop');
+    }
+
+    /** Sends the person's mode with a request id, and waits for the worker to confirm it (see `listenConfirmed`). */
+    private requestListen(spaceName: string, personId: string, want: 'keep' | 'stop'): void {
+        const key = callKey(spaceName, personId);
+        const old = this.listenRequests.get(key);
+        if (old) clearTimeout(old.timer);
+        this.listenRequests.delete(key);
+        const mode = this.modeOf(spaceName, personId);
+        const room = this.rooms.get(spaceName);
+        const bubble = this.bubbles.get(spaceName);
+        const hasPath = this.calls.has(key) || (!!room && !!this.roster.get(spaceName)?.has(personId));
+        if (this.calls.has(key)) this.sentModes.set(key, mode);
+        if (room) this.sendPeople(room);
+        const id = `l${++this.listenSeq}`;
+        if (!bubble || !hasPath || !this.post({ type: 'mode.set', sessionId: bubble.sessionId, mode, participantId: personId, requestId: id })) {
+            // Nothing carries their audio now: a stop needs no confirming, and a keep cannot be confirmed (it is not kept)
+            if (want === 'keep') {
+                this.granted.delete(key);
+                this.listenReasons.set(key, 'failed');
+            }
+            this.retell(spaceName, personId);
+            return;
+        }
+        const request: ListenRequest = { id, want, late: false, resends: 0, timer: setTimeout(() => this.listenTimedOut(spaceName, personId, id), LISTEN_CONFIRM_MS) };
+        request.timer.unref?.();
+        this.listenRequests.set(key, request);
+        this.retell(spaceName, personId);
+    }
+
+    /**
+     * The worker did not confirm in time. A keep is not kept: the microphone stays untaken and the person is told it could not start. A
+     * stop is sent again, and the person is told it may still hear them until the worker confirms.
+     */
+    private listenTimedOut(spaceName: string, personId: string, id: string): void {
+        const key = callKey(spaceName, personId);
+        const request = this.listenRequests.get(key);
+        if (!request || request.id !== id) return;
+        if (request.want === 'keep') {
+            this.listenRequests.delete(key);
+            this.granted.delete(key);
+            this.listenReasons.set(key, 'failed');
+            // Their microphone was never confirmed taken: it is put back to untaken, in case the worker took it late
+            this.syncListening(spaceName, true);
+            this.retell(spaceName, personId);
+            return;
+        }
+        request.late = true;
+        const bubble = this.bubbles.get(spaceName);
+        if (bubble && request.resends < STOP_RESENDS) {
+            request.resends++;
+            this.post({ type: 'mode.set', sessionId: bubble.sessionId, mode: this.modeOf(spaceName, personId), participantId: personId, requestId: id });
+            request.timer = setTimeout(() => this.listenTimedOut(spaceName, personId, id), LISTEN_CONFIRM_MS);
+            request.timer.unref?.();
+        }
+        this.retell(spaceName, personId);
+    }
+
+    /** The worker applied a mode it was asked to confirm. Only the person's latest ask counts, and only on the path that carries their audio now. */
+    private listenConfirmed(message: Extract<FromWorker, { type: 'mode.ack' }>): void {
+        const spaceName = this.spaceOfSession(message.sessionId);
+        const key = spaceName === undefined ? undefined : callKey(spaceName, message.participantId);
+        const request = key === undefined ? undefined : this.listenRequests.get(key);
+        if (spaceName === undefined || key === undefined || !request || request.id !== message.requestId) {
+            this.stats.staleFromWorker++;
+            return;
+        }
+        const call = this.calls.get(key);
+        const room = this.rooms.get(spaceName);
+        const current =
+            message.path === 'lane'
+                ? call?.epoch === message.epoch
+                : message.path === 'room'
+                ? room?.epoch === message.epoch && !call
+                : // Nothing carries their audio: a stop is done, a keep is not
+                  request.want === 'stop';
+        if (!current) {
+            this.stats.staleFromWorker++;
+            return;
+        }
+        clearTimeout(request.timer);
+        this.listenRequests.delete(key);
+        if (request.want === 'keep' && this.granted.has(key)) this.onListenGranted?.(spaceName, message.participantId);
+        this.retell(spaceName, message.participantId);
+    }
+
+    /** The ask to keep listening ends for this person (they chose a mode without the microphone, or left), with any confirmation it waited for. */
+    private endListening(key: string): void {
+        this.granted.delete(key);
+        this.listenReasons.delete(key);
+        const request = this.listenRequests.get(key);
+        if (request) clearTimeout(request.timer);
+        this.listenRequests.delete(key);
+    }
+
+    /** Whether the group rule keeps this person's microphone untaken: in a group, a mode that takes it, and no ask to keep listening. */
+    private gated(spaceName: string, personId: string): boolean {
+        return this.groupGate && this.inGroup(spaceName) && !this.granted.has(callKey(spaceName, personId));
+    }
+
+    /** What the person is told about the bot taking their microphone in a group (see ListenState). */
+    private listenOf(spaceName: string, personId: string): ListenInfo {
+        if (!this.groupGate || !modeTakesMic(this.chosenModeOf(spaceName, personId))) return NO_LISTEN;
+        const key = callKey(spaceName, personId);
+        const request = this.listenRequests.get(key);
+        if (request) return { state: request.want === 'keep' ? 'pending' : request.late ? 'checking' : 'stopping', reason: '' };
+        if (!this.inGroup(spaceName)) return NO_LISTEN;
+        const held = this.listening?.isSpent() || this.isHeldBack(spaceName, personId);
+        // Asked to keep listening, but it cannot for now: still theirs to stop
+        if (this.granted.has(key)) return { state: 'on', reason: held ? 'limit' : '' };
+        return { state: 'off', reason: held ? 'limit' : this.listenReasons.get(key) ?? '' };
+    }
+
+    /** Tells the person again, when they have been told anything: what the bot takes of their microphone may have changed. */
+    private retell(spaceName: string, personId: string): void {
+        const status = this.actual.get(callKey(spaceName, personId));
+        if (status) this.tell(spaceName, personId, status);
     }
 
     /** The mode a person chose, or the default. */
@@ -349,9 +538,8 @@ export class VoiceCalls {
      */
     private modeOf(spaceName: string, personId: string): VoiceMode {
         const chosen = this.chosenModeOf(spaceName, personId);
-        const held = (this.listening?.isSpent() && this.inGroup(spaceName)) || this.isHeldBack(spaceName, personId);
-        if (!held) return chosen;
-        return chosen === 'talk' ? 'type_and_listen' : chosen === 'speak_and_read' ? 'off' : chosen;
+        const held = (this.listening?.isSpent() && this.inGroup(spaceName)) || this.isHeldBack(spaceName, personId) || this.gated(spaceName, personId);
+        return held ? withoutMic(chosen) : chosen;
     }
 
     /** Whether this person's spoken replies are used up, so their microphone is not taken until their window ends or voice speaks for them again. */
@@ -414,12 +602,12 @@ export class VoiceCalls {
      * Tells the worker the mode each person in a space should have now, for those it differs for (a group forming or breaking up, the
      * day's listening used up or starting again). Connections the worker already has the right mode for are left alone.
      */
-    private syncListening(spaceName: string): void {
+    private syncListening(spaceName: string, always = false): void {
         for (const personId of this.roster.get(spaceName)?.keys() ?? []) {
             const key = callKey(spaceName, personId);
             if (!this.calls.has(key)) continue;
             const mode = this.modeOf(spaceName, personId);
-            if (this.sentModes.get(key) === mode) continue;
+            if (this.sentModes.get(key) === mode && !always) continue;
             this.sentModes.set(key, mode);
             this.setMode(spaceName, mode, personId);
         }
@@ -442,12 +630,15 @@ export class VoiceCalls {
         // With two voice bots in the bubble neither speaks: the button shows paused, and what is true comes back with one bot
         const shown = this.crowded(spaceName) ? 'paused' : status;
         const left = this.left.get(key);
-        const leftSignature = left ? `${left.count}|${left.resetsAt ?? ''}` : '';
+        // Two voice bots here: neither speaks, so there is nothing to keep listening for
+        const listen = this.crowded(spaceName) ? NO_LISTEN : this.listenOf(spaceName, personId);
+        const leftSignature = `${left ? `${left.count}|${left.resetsAt ?? ''}` : ''}|${listen.state}|${listen.reason}`;
         if (this.told.get(key) === shown && (this.toldLeft.get(key) ?? '') === leftSignature) return;
         const arrived = shown === 'on' && this.told.get(key) !== 'on';
         this.told.set(key, shown);
         this.toldLeft.set(key, leftSignature);
-        this.game.sendStatus(spaceName, personId, shown, left);
+        if (listen.state) this.game.sendStatus(spaceName, personId, shown, left, listen);
+        else this.game.sendStatus(spaceName, personId, shown, left);
         // Someone whose voice just came on is told what they have left before their first spoken reply
         if (arrived) this.refreshLeft(spaceName, personId);
     }
@@ -575,6 +766,8 @@ export class VoiceCalls {
         for (const key of this.toldLeft.keys()) if (key.startsWith(`${spaceName}\n`)) this.toldLeft.delete(key);
         for (const key of this.actual.keys()) if (key.startsWith(`${spaceName}\n`)) this.actual.delete(key);
         for (const key of this.sentModes.keys()) if (key.startsWith(`${spaceName}\n`)) this.sentModes.delete(key);
+        for (const key of [...this.granted, ...this.listenRequests.keys(), ...this.listenReasons.keys()]) if (key.startsWith(`${spaceName}\n`)) this.endListening(key);
+        this.grouped.delete(spaceName);
         this.talking.delete(spaceName);
         this.lastSpeechAt.delete(spaceName);
     }
@@ -626,8 +819,23 @@ export class VoiceCalls {
     }
 
     private rosterChanged(spaceName: string): void {
-        // A group forming or breaking up changes who is listened to once the day's listening is used
+        const group = this.inGroup(spaceName);
+        const wasGroup = this.grouped.get(spaceName) ?? false;
+        this.grouped.set(spaceName, group);
+        if (this.groupGate && group && !wasGroup) {
+            // A group just formed: whoever the bot heard hands-free loses its ear, unless they ask it to keep listening. They are told why, once
+            for (const personId of this.roster.get(spaceName)?.keys() ?? []) {
+                const key = callKey(spaceName, personId);
+                const hadEar = modeTakesMic(this.chosenModeOf(spaceName, personId)) && !this.granted.has(key) && (this.calls.has(key) || this.rooms.has(spaceName)) && this.actual.get(key) === 'on';
+                if (hadEar) this.listenReasons.set(key, 'others_joined');
+            }
+        } else if (!group) {
+            // Alone again: hands-free, nothing to explain
+            for (const key of [...this.listenReasons.keys()]) if (key.startsWith(`${spaceName}\n`)) this.listenReasons.delete(key);
+        }
+        // A group forming or breaking up changes who is listened to (the group rule, and once the day's listening is used)
         this.syncListening(spaceName);
+        if (this.groupGate) for (const personId of this.roster.get(spaceName)?.keys() ?? []) this.retell(spaceName, personId);
         // And a group is where the daily listening is asked about, so a day already used (or a limit changed) is known before anyone talks
         if (this.inGroup(spaceName)) void this.listening?.check();
     }
@@ -690,6 +898,8 @@ export class VoiceCalls {
         this.toldLeft.delete(callKey(spaceName, spaceUserId));
         this.pausedFor.delete(callKey(spaceName, spaceUserId));
         this.forgetHold(callKey(spaceName, spaceUserId));
+        // Leaving ends the visit: an ask to keep listening does not carry over to the next one
+        this.endListening(callKey(spaceName, spaceUserId));
         this.actual.delete(callKey(spaceName, spaceUserId));
         if (this.roster.get(spaceName)?.delete(spaceUserId)) this.rosterChanged(spaceName);
     }
@@ -843,6 +1053,8 @@ export class VoiceCalls {
             this.handleSpeech(message);
         } else if (message.type === 'playback.progress') {
             this.handlePlayback(message);
+        } else if (message.type === 'mode.ack') {
+            this.listenConfirmed(message);
         } else if (message.type === 'provider.ok' || message.type === 'provider.failed') {
             this.handleProvider(message);
         } else if (message.type === 'error') {
@@ -1299,6 +1511,11 @@ export class VoiceCalls {
         this.heldTimers.clear();
         this.heldBack.clear();
         this.actual.clear();
+        for (const request of this.listenRequests.values()) clearTimeout(request.timer);
+        this.listenRequests.clear();
+        this.granted.clear();
+        this.listenReasons.clear();
+        this.grouped.clear();
         this.otherVoiceBots.clear();
         this.voiceBotNames.clear();
         this.link.close();

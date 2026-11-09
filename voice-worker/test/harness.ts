@@ -4,7 +4,7 @@ import { MediaStreamTrack, RTCPeerConnection, RtpHeader, RtpPacket, useOPUS, use
 import { Decoder, Encoder } from '@evan/opus';
 import { VoiceCalls, type GameSide } from '../../bots/voice/VoiceCalls.ts';
 import { WorkerLink } from '../../bots/voice/VoiceLink.ts';
-import type { FromWorker, ToWorker, VoiceDraft, VoiceStatus } from '../../bots/voice/protocol.ts';
+import type { FromWorker, ListenInfo, ToWorker, VoiceDraft, VoiceStatus } from '../../bots/voice/protocol.ts';
 import { checkMessage } from '../src/validate.ts';
 import { VoiceWorker } from '../src/server.ts';
 import type { RecognizerFactory } from '../src/recognizer.ts';
@@ -188,8 +188,12 @@ export class FakeGame implements GameSide {
     /** Where the bot said its voice stood to each person, in order. */
     statuses: [string, VoiceStatus][] = [];
 
-    sendStatus(_space: string, receiverUserId: string, status: VoiceStatus): void {
+    /** Whether the bot said it takes each person's microphone in a group (round 8), in order, when it said anything about it. */
+    listens: [string, ListenInfo][] = [];
+
+    sendStatus(_space: string, receiverUserId: string, status: VoiceStatus, _left?: unknown, listen?: ListenInfo): void {
         this.statuses.push([receiverUserId, status]);
+        if (listen) this.listens.push([receiverUserId, listen]);
     }
 }
 

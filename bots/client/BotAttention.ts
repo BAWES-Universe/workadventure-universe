@@ -187,6 +187,17 @@ export class BotAttention {
         return this.isGroup(spaceName, speakerId) && !this.isSummonedBy(speakerId);
     }
 
+    /**
+     * The person asked the bot to keep listening to them in their group, and it now does (round 8): the tap counts as saying its name, so one
+     * fresh follow-up window opens and they just answer. It also brings back someone who had said they were done, as the name does.
+     */
+    listenGranted(spaceName: string, speakerId: number): void {
+        this.closed.get(spaceName)?.delete(speakerId);
+        let answers = this.answeredAt.get(spaceName);
+        if (!answers) this.answeredAt.set(spaceName, (answers = new Map()));
+        answers.set(speakerId, this.now());
+    }
+
     /** The bot has answered this person: they can go on without its name for the follow-up window (not after they said they are done: see `ended`). */
     answered(spaceName: string, speakerId: number): void {
         if (this.closed.get(spaceName)?.has(speakerId)) return;

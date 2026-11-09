@@ -2724,7 +2724,7 @@ export class BotClient {
                             reason: draft.reason ?? '',
                         },
                     }),
-                sendStatus: (spaceName, receiverUserId, status, left) =>
+                sendStatus: (spaceName, receiverUserId, status, left, listen) =>
                     this.sendPrivateEvent(spaceName, receiverUserId, {
                         $case: 'botVoiceStatus',
                         botVoiceStatus: {
@@ -2736,6 +2736,9 @@ export class BotClient {
                             // The spoken replies this person has left, when Orbit said (#1669)
                             repliesLeft: left?.count,
                             repliesResetAt: left?.resetsAt ?? '',
+                            // Whether it takes their microphone in a group, and why not (round 8)
+                            listening: listen?.state ?? '',
+                            listeningReason: listen?.reason ?? '',
                         },
                     }),
             },
@@ -2770,6 +2773,9 @@ export class BotClient {
         );
         // People call the bot by this name, so the hearing is told to expect it (#1864)
         this.voice.botName = this.config.name;
+        // In a group, the bot takes someone's microphone only after they ask it to keep listening (round 8); the confirmed ask counts as its name
+        this.voice.groupGate = true;
+        this.voice.onListenGranted = (spaceName, personId) => this.attention.listenGranted(spaceName, BotClient.playerIdOf(personId));
         // Voice paused for someone (the allowance, or a key that isn't working): the one fixed line, in the chat the reply is in
         this.voice.onPaused = (spaceName) => this.sendChatMessage(spaceName, pausedLine(this.config.name));
         this.speech = new BotSpeech(this.voice, voiceReplyLimits());

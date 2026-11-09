@@ -319,3 +319,26 @@ describe('a voice note in the bubble: who it is for', () => {
         expect(attention.noteIsForBot(SPACE, SARA, false)).toBe(false);
     });
 });
+
+describe('a person who asks the bot to keep listening in a group (round 8)', () => {
+    it('gets one fresh follow-up window, as if they had said its name, which ends like any other', () => {
+        const { attention, advance } = setup();
+        attention.personJoined(SPACE, KHALID);
+        attention.personJoined(SPACE, SARA);
+        expect(attention.attention(SPACE, KHALID, 'disco, in Arabic')).toBe('ignored');
+        attention.listenGranted(SPACE, KHALID);
+        expect(attention.attention(SPACE, KHALID, 'disco, in Arabic')).toBe('follow-up');
+        expect(attention.attention(SPACE, SARA, 'disco, in Arabic')).toBe('ignored');
+        advance(31_000);
+        expect(attention.attention(SPACE, KHALID, 'disco, in Arabic')).toBe('ignored');
+    });
+
+    it('brings back someone who had said they were done', () => {
+        const { attention } = setup();
+        attention.personJoined(SPACE, KHALID);
+        attention.personJoined(SPACE, SARA);
+        attention.ended(SPACE, KHALID);
+        attention.listenGranted(SPACE, KHALID);
+        expect(attention.attention(SPACE, KHALID, 'go on')).toBe('follow-up');
+    });
+});
