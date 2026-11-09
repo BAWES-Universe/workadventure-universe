@@ -384,8 +384,9 @@ export class VoiceCalls {
         // A mode that takes no microphone closes live input for every bot: the ask to keep listening ends with it. Moving between the two
         // modes that take it keeps the ask, and never makes a new one
         if (!modeTakesMic(mode as VoiceMode)) this.endListening(key);
-        if (listen === 'keep' || listen === 'stop') {
-            this.askedToListen(spaceName, person.spaceUserId, listen === 'keep');
+        // A listen request the bot did not take (the group broke up, or the mode takes no microphone) still carries the mode
+        // just chosen: it goes to the worker the ordinary way, so the worker never keeps an older one
+        if ((listen === 'keep' || listen === 'stop') && this.askedToListen(spaceName, person.spaceUserId, listen === 'keep')) {
             return;
         }
         const effective = this.modeOf(spaceName, person.spaceUserId);
@@ -403,21 +404,20 @@ export class VoiceCalls {
      * A person asked this bot to keep listening to them in their group, or to stop. Keep: their microphone is taken for this visit, once the
      * worker confirms it (then one fresh follow-up window opens for them). Stop: it is not taken any more; until the worker confirms that,
      * they are told it may still hear them. Alone with the bot there is nothing to ask: it hears them hands-free as before.
+     * Returns false when there was nothing to ask, so the mode the person chose goes out the ordinary way.
      */
-    private askedToListen(spaceName: string, personId: string, keep: boolean): void {
+    private askedToListen(spaceName: string, personId: string, keep: boolean): boolean {
         const key = callKey(spaceName, personId);
-        if (!this.groupGate) return;
+        if (!this.groupGate) return false;
         if (keep) {
-            if (!modeTakesMic(this.chosenModeOf(spaceName, personId)) || !this.inGroup(spaceName)) {
-                this.retell(spaceName, personId);
-                return;
-            }
+            if (!modeTakesMic(this.chosenModeOf(spaceName, personId)) || !this.inGroup(spaceName)) return false;
             this.granted.add(key);
             this.listenReasons.delete(key);
         } else {
             this.granted.delete(key);
         }
         this.requestListen(spaceName, personId, keep ? 'keep' : 'stop');
+        return true;
     }
 
     /** Sends the person's mode with a request id, and waits for the worker to confirm it (see `listenConfirmed`). */

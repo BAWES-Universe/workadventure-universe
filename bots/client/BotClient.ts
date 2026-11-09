@@ -2592,35 +2592,49 @@ export class BotClient {
      */
     private async hearNearbyNote(
         spaceName: string,
+        senderUserId: string,
         spaceMessage: { id?: string; url?: string; fileName?: string; voiceDurationMs?: number }
     ): Promise<string> {
         const hearing = sharedNoteHearing(adminApiService);
         const id = spaceMessage.id;
-        if (!hearing || !id || !spaceMessage.url) return 'unheard';
-        this.sendTranscript(spaceName, id, 'listening');
-        const heard = await hearing.hear(this.config.botId, `${spaceName}|${id}`, {
+        // The sender chooses the id, so a note is known by who sent it as well: the words go under that person's note only,
+        // and are saved for them only
+        if (!hearing || !id || !senderUserId || !spaceMessage.url) return 'unheard';
+        const note = { messageId: id, senderUserId };
+        this.sendTranscript(spaceName, note, 'listening');
+        const heard = await hearing.hear(this.config.botId, `${spaceName}|${senderUserId}|${id}`, {
             url: spaceMessage.url,
             filename: spaceMessage.fileName ?? 'Voice message',
             ...(spaceMessage.voiceDurationMs ? { seconds: spaceMessage.voiceDurationMs / 1000 } : {}),
         });
         const words = 'text' in heard ? tidyTranscript(heard.text, hearing.limits.maxChars) : '';
         if (!words) {
-            this.sendTranscript(spaceName, id, 'failed');
+            this.sendTranscript(spaceName, note, 'failed');
             return 'unheard';
         }
-        this.sendTranscript(spaceName, id, 'heard', words);
+        this.sendTranscript(spaceName, note, 'heard', words);
         return `[Voice note] ${words}`;
     }
 
     /** What the bot heard in a note, for everyone in the space: the newest state of the note wins. */
-    private sendTranscript(spaceName: string, messageId: string, state: 'listening' | 'heard' | 'failed', text?: string): void {
+    private sendTranscript(
+        spaceName: string,
+        note: { messageId: string; senderUserId: string },
+        state: 'listening' | 'heard' | 'failed',
+        text?: string
+    ): void {
         if (!this.spaces.get(spaceName)) return;
         this.send({
             message: {
                 $case: 'publicEvent',
                 publicEvent: {
                     spaceName,
-                    spaceEvent: { event: { $case: 'spaceMessageTranscript', spaceMessageTranscript: { messageId, state, ...(text ? { text } : {}) } } },
+                    spaceEvent: {
+                        event: {
+                            $case: 'spaceMessageTranscript',
+                            spaceMessageTranscript: { ...note, state, ...(text ? { text } : {}) },
+                        },
+                    },
                 },
             },
         });
@@ -3575,7 +3589,7 @@ export class BotClient {
                         // Heard once, here; the people who got the note see what was heard under it
                         let lineText = spaceMessage.message;
                         if (noteForBot) {
-                            const heard = await this.hearNearbyNote(spaceName, spaceMessage);
+                            const heard = await this.hearNearbyNote(spaceName, senderUserId, spaceMessage);
                             if (heard === 'unheard') break;
                             lineText = lineText ? `${lineText}\n${heard}` : heard;
                         }

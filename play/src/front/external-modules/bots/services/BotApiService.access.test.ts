@@ -155,6 +155,55 @@ describe("a bot state lookup that does not answer", () => {
     });
 });
 
+describe("asking whether a bot hears voice notes, when nothing answers", () => {
+    beforeEach(() => {
+        sessionStorage.clear();
+        vi.restoreAllMocks();
+        vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    it("does not know after ten seconds when the Orbit sign-in stalls, so the chat never waits on it", async () => {
+        const api = service();
+        vi.spyOn(
+            api as unknown as { getAdminApiSessionToken: () => Promise<string> },
+            "getAdminApiSessionToken"
+        ).mockImplementation(
+            () =>
+                new Promise<string>(() => {
+                    // never answers, and does not listen for an abort
+                })
+        );
+        const asked = api.getBotHears("b1");
+        await vi.advanceTimersByTimeAsync(10000);
+        await expect(asked).resolves.toBeNull();
+    });
+
+    it("gives up and cancels the request when the bot server stalls", async () => {
+        let signal: AbortSignal | undefined;
+        vi.spyOn(globalThis, "fetch").mockImplementation((_url, init) => {
+            signal = init?.signal ?? undefined;
+            return new Promise<Response>(() => {
+                // never answers
+            });
+        });
+        const asked = service().getBotHears("b1");
+        await vi.advanceTimersByTimeAsync(10000);
+        await expect(asked).resolves.toBeNull();
+        expect(signal?.aborted).toBe(true);
+    });
+
+    it("answers yes or no when the bot server answers in time", async () => {
+        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(json({ hears: true }));
+        await expect(service().getBotHears("b1")).resolves.toBe(true);
+        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(json({ hears: false }));
+        await expect(service().getBotHears("b1")).resolves.toBe(false);
+    });
+});
+
 describe("an Orbit that does not answer about who may use a bot", () => {
     beforeEach(() => {
         sessionStorage.clear();

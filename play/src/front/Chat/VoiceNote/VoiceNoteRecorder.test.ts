@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { startVoiceNoteRecording } from "./VoiceNoteRecorder";
+import { FILE_SHAPE_WAIT_MS, startVoiceNoteRecording } from "./VoiceNoteRecorder";
 import { readAudioShape } from "./AudioShape";
 import type { RecordingFormat } from "./VoiceNote";
 
@@ -177,6 +177,45 @@ describe("recording a voice note", () => {
 
         expect(details.waveform).toEqual([0.2, 0.9, 0.5]);
         expect(revoke).toHaveBeenCalledWith("blob:note");
+    });
+
+    it("does not hold the note back when reading its shape from the file takes too long", async () => {
+        vi.stubGlobal(
+            "AudioContext",
+            class {
+                state = "suspended";
+                createAnalyser() {
+                    return { fftSize: 0, getFloatTimeDomainData: () => undefined };
+                }
+                createMediaStreamSource() {
+                    return { connect: () => undefined };
+                }
+                close = contextClose;
+                resume = contextResume;
+            }
+        );
+        URL.createObjectURL = vi.fn(() => "blob:slow") as unknown as typeof URL.createObjectURL;
+        const revoke = vi.fn();
+        URL.revokeObjectURL = revoke;
+        // Stuck behind other audio being read in the chat
+        vi.mocked(readAudioShape).mockReturnValue(
+            new Promise(() => {
+                // never finishes
+            })
+        );
+        const recording = await startVoiceNoteRecording(format);
+        await vi.advanceTimersByTimeAsync(1000);
+
+        let finished: Awaited<ReturnType<typeof recording.stop>> | undefined;
+        void recording.stop().then((done) => (finished = done));
+        await vi.advanceTimersByTimeAsync(FILE_SHAPE_WAIT_MS - 1);
+        expect(finished).toBeUndefined();
+        await vi.advanceTimersByTimeAsync(1);
+
+        // The note goes on with the meter's own (quiet) shape, and the file's link is let go
+        expect(finished?.file).toBeInstanceOf(File);
+        expect(finished?.details.waveform.length).toBeGreaterThan(0);
+        expect(revoke).toHaveBeenCalledWith("blob:slow");
     });
 
     it("keeps the meter's own shape when sound was running", async () => {

@@ -1605,12 +1605,14 @@ message SpaceMessageReaction {
 
 /**
  * What a bot heard in a voice note sent to the nearby chat. Sent by the bot, to everyone who got the note, and edited by
- * sending it again: the newest state of a note wins. Receivers accept it only from a bot.
+ * sending it again: the newest state of a note wins. Receivers accept it only from a bot, and show it only under the note
+ * with that id from that sender: the sender chooses the id, so the id alone could point at someone else's note.
  */
 message SpaceMessageTranscript {
   string messageId = 1;       // the voice note it is about: the id its sender chose
   string state = 2;           // "listening", "heard" or "failed"
   optional string text = 3;   // the words, once heard
+  string senderUserId = 4;    // the spaceUserId of the person who sent the note
 }
 
 message SpaceIsTyping {
