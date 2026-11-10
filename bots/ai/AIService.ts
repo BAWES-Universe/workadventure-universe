@@ -138,7 +138,7 @@ interface TurnFacts {
 
 /** A bot's provider, resolved by bot id (#374): the settings to call, where they came from, or "resting". */
 /** Where a reply was given and who it was for, sent with its usage (Orbit #491). */
-type UsageTalker = { channel: 'dm' | 'nearby'; userId?: string; isGuest?: boolean };
+type UsageTalker = { channel: 'dm' | 'nearby'; userId?: string; isGuest?: boolean; greeting?: boolean };
 
 type ResolvedProvider =
     | { resting: false; config: AIProviderConfig; source: 'provider' | 'universe-ai' | 'own-key' }
@@ -689,14 +689,16 @@ export class AIService {
         peopleInRoom?: string[] | null,
         isRetry = false,
         // True only when this is what a person said to the bot: a greeting, an arrival or a goodbye is the bot's own prompt
-        personSaid = false
+        personSaid = false,
+        // A greeting the bot makes on its own (see generateGreetingStream): free for the person
+        greeting = false
     ): AsyncGenerator<AIStreamChunk> {
         const turn: TurnFacts = { artifactTools: false, artifactSaved: false, guard: false };
         const hearing = spaceName !== undefined && botClient !== undefined ? { spaceName, botClient } : undefined;
         // A new turn starts with nothing held, whatever an earlier one that was cut short left behind
         if (!isRetry) hearing?.botClient.releaseSpeech(hearing.spaceName, playerId);
         const attempt = (text: string, retry: boolean, facts: TurnFacts) =>
-            this.generateTurn(botId, playerId, text, chatInstructions, providerId, spaceName, conversationContext, botClient, adminApiService, abortSignal, images, channel, toolTimeoutSeconds, homeRoomUrl, peopleInRoom, retry, facts);
+            this.generateTurn(botId, playerId, text, chatInstructions, providerId, spaceName, conversationContext, botClient, adminApiService, abortSignal, images, channel, toolTimeoutSeconds, homeRoomUrl, peopleInRoom, retry, facts, greeting);
         // A card waits for this person in the bubble (#1658): a yes never sends, and anything else closes it
         if (personSaid && !isRetry && channel === 'world' && botClient && spaceName && playerId !== undefined && (await this.whileCardWaits(botId, playerId, message, providerId, spaceName, botClient))) {
             yield { content: '', done: true } as AIStreamChunk;
@@ -737,6 +739,29 @@ export class AIService {
         }
     }
 
+    /**
+     * A greeting the bot makes on its own when someone walks up (greetings cooldown, approved 10 Nov 2026). The same reply as any
+     * other, except that it costs the person nothing: their replies left are not asked about, and its usage is sent marked as a
+     * greeting so Orbit never counts it against them. Whoever's key the bot runs on pays, and sees it in the usage. A greeting is made
+     * only once a cooldown allows it (BotClient.mayGreet), and it is never spoken (BotClient).
+     */
+    generateGreetingStream(
+        botId: string,
+        playerId: number,
+        message: string,
+        chatInstructions: string,
+        providerId: string,
+        spaceName: string | undefined,
+        conversationContext: string,
+        botClient?: BotClient,
+        adminApiService?: AdminApiService
+    ): AsyncGenerator<AIStreamChunk> {
+        return this.generateBotResponseStream(
+            botId, playerId, message, chatInstructions, providerId, spaceName, conversationContext, botClient, adminApiService,
+            undefined, undefined, 'world', undefined, undefined, undefined, false, false, true
+        );
+    }
+
     private async *generateTurn(
         botId: string,
         playerId: number,
@@ -760,7 +785,12 @@ export class AIService {
         /** True when a repeated reply is being asked for again: the same turn, so what it made already still counts. */
         isRetry = false,
         /** Filled in as the turn goes, for the "nothing was saved" check. */
-        turn?: TurnFacts
+        turn?: TurnFacts,
+        /**
+         * A greeting the bot makes on its own when someone walks up (greetings cooldown): the person is not asked about their replies
+         * left and the usage is sent marked as a greeting, so it is never counted against them. Whoever's key the bot runs on pays.
+         */
+        greeting = false
     ): AsyncGenerator<AIStreamChunk> {
         const startTime = Date.now();
         // What each call to the provider cost, priced as it finishes; the reply's cost is their sum (#1173)
@@ -804,7 +834,7 @@ export class AIService {
             // would run on. At a limit nothing is called and nothing is tracked; the caller shows the fixed card. A retry
             // makes the same reply again, already allowed, so it is never asked twice.
             const talker = this.whoTalked(botId, playerId, channel);
-            if (talker.userId && !isRetry) {
+            if (talker.userId && !isRetry && !greeting) {
                 const allowance = await (adminApiService || this.adminApiService).checkReplyAllowance?.(botId, {
                     userId: talker.userId,
                     ...(talker.isGuest !== undefined ? { isGuest: talker.isGuest } : {}),
@@ -2444,7 +2474,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     ...(cacheLedger.read || cacheLedger.write ? { cacheReadTokens: cacheLedger.read, cacheWriteTokens: cacheLedger.write } : {}),
                     latency,
                     error,
-                }, ledger.summary(), this.whoTalked(botId, playerId, channel)).catch(err => {
+                }, ledger.summary(), this.usageTalker(botId, playerId, channel, greeting)).catch(err => {
                     // Always log errors, even without debug mode
                     console.error('[AIService] Failed to track usage:', err);
                     if (err instanceof Error) {
@@ -2485,7 +2515,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 tokensUsed: 0,
                 latency,
                 error: true,
-            }, usageRecorded ? null : ledger.summary(), this.whoTalked(botId, playerId, channel)).catch(() => {});
+            }, usageRecorded ? null : ledger.summary(), this.usageTalker(botId, playerId, channel, greeting)).catch(() => {});
 
             // Yield error chunk — content was already streamed word-by-word
             // so don't replay preToolBuffer (would duplicate on frontend).
@@ -2517,6 +2547,12 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
      * Where a reply was given and who it was for, as usage rows keep them (Orbit #491, #1159 step 6). The person is their
      * WorkAdventure uuid once the bot knows it; a temporary one means it doesn't yet, and is never sent.
      */
+    /** Who the usage of a reply is recorded for, marked when it is a greeting the bot made on its own. */
+    private usageTalker(botId: string, playerId: number, channel: 'world' | 'dm', greeting: boolean): UsageTalker {
+        const talker = this.whoTalked(botId, playerId, channel);
+        return greeting ? { ...talker, greeting: true } : talker;
+    }
+
     private whoTalked(botId: string, playerId: number, channel: 'world' | 'dm'): UsageTalker {
         const memory = playerId !== undefined ? this.conversationMemory?.getMemory(botId, playerId) : null;
         const uuid = memory?.userUuid && !memory.userUuid.startsWith('temp-') ? memory.userUuid : undefined;

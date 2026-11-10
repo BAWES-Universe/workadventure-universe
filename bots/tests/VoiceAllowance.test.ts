@@ -320,6 +320,77 @@ describe('a reply that Universe AI pays for', () => {
     });
 });
 
+describe('a person who chose text only', () => {
+    const choose = (b: ReturnType<typeof bot>, mode: string, who = 'room_7') =>
+        b.calls.handlePrivateEvent({
+            spaceName: SPACE,
+            receiverUserId: BOT_SPACE_ID,
+            sender: { spaceUserId: who, uuid: `uuid-${who}`, tags: [], name: who },
+            spaceEvent: { event: { $case: 'voiceModeChoice', voiceModeChoice: { mode } } },
+        } as never);
+
+    it('is never charged a spoken reply, and nothing is said, for a reply (a greeting) that is only for them', async () => {
+        const b = bot();
+        await b.connect();
+        choose(b, 'off');
+        await b.say(reply(1), 'Welcome back.');
+        expect(b.orbit.checkVoiceAllowance).not.toHaveBeenCalled();
+        expect(b.orbit.releaseVoiceReply).not.toHaveBeenCalled();
+        expect(b.says()).toEqual([]);
+        // Not a paused voice either: they asked for no voice, so no line and no paused button
+        expect(b.lines).toEqual([]);
+        expect(b.statuses).not.toContain('room_7:paused');
+    });
+
+    it('is not charged again when they walk away and come back (the greeting is a new reply each visit)', async () => {
+        const b = bot();
+        await b.connect();
+        choose(b, 'off');
+        await b.say(reply(1), 'Hello.');
+        await b.say(reply(2), 'Hello again.');
+        expect(b.orbit.checkVoiceAllowance).not.toHaveBeenCalled();
+    });
+
+    it('does not reconnect anyone, and asks nothing of Orbit, for a reply it keeps in text', async () => {
+        const b = bot();
+        await b.connect();
+        choose(b, 'off');
+        b.state.active = { ...speakingNow({ recognition: false, speech: false }), signature: 'two' };
+        await b.say(reply(1));
+        expect(b.sent.filter((m) => m.type === 'session.end')).toEqual([]);
+    });
+
+    it('speaks again, and is counted, once they choose a mode with voice', async () => {
+        const b = bot();
+        await b.connect();
+        choose(b, 'off');
+        await b.say(reply(1), 'Silent.');
+        choose(b, 'type_and_listen');
+        await b.say(reply(2), 'Spoken.');
+        expect(b.says()).toEqual(['Spoken.']);
+        expect(b.orbit.checkVoiceAllowance.mock.calls.map(([, input]) => input.turnId)).toEqual([reply(2)]);
+    });
+
+    it('does not change what another person in the bubble is charged for their own replies', async () => {
+        const b = bot({ people: { 7: { userId: 'uuid-room_7', isGuest: false }, 8: { userId: 'uuid-room_8', isGuest: false } } });
+        await b.connect();
+        await b.connect('room_8');
+        choose(b, 'off', 'room_7');
+        await b.say(reply(1, 7), 'For the text-only one.');
+        await b.say(reply(2, 8), 'For the other.');
+        expect(b.says()).toEqual(['For the other.']);
+        expect(b.orbit.checkVoiceAllowance.mock.calls.map(([, input]) => [input.userId, input.turnId])).toEqual([['uuid-room_8', reply(2, 8)]]);
+    });
+
+    it('is not the same as speak and read, which still asks the allowance (its microphone hold depends on it)', async () => {
+        const b = bot();
+        await b.connect();
+        choose(b, 'speak_and_read');
+        await b.say(reply(1));
+        expect(b.orbit.checkVoiceAllowance).toHaveBeenCalledTimes(1);
+    });
+});
+
 describe('a reply that was counted and then never spoken', () => {
     const released = (b: ReturnType<typeof bot>) => b.orbit.releaseVoiceReply.mock.calls.map(([botId, input]) => [botId, input.turnId]);
 

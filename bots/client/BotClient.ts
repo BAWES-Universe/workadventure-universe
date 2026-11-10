@@ -56,6 +56,7 @@ import { BotAttention, followUpSeconds } from './BotAttention';
 import { isBotSpaceUser, type BotAsksPort } from '../mcp/NearbyAsks';
 import type { PrivateEventPusherToFront } from '@workadventure/messages';
 import { audioFileNameFor } from '../utils/audioFileName';
+import { isGreetingReply } from './GreetingReply';
 
 // Get the secret key from environment - must match pusher's SECRET_KEY
 const SECRET_KEY = process.env.SECRET_KEY || 'default-secret-key';
@@ -441,13 +442,15 @@ export class BotClient {
      * Whether the bot may greet this person with its AI: the same answer as for chatting with it nearby, asked before
      * anything is generated. A person who is refused hears the owner's line once per visit (shared with mayChat, so a
      * greeting and a message do not both say it) and gets no greeting. When Orbit cannot answer and nothing is
-     * remembered there is no greeting; their first words get the "can't check" line. Never throws.
+     * remembered there is no greeting; their first words get the "can't check" line. A greeting is free for the person and text
+     * only (see GreetingReply), so a person who may chat is greeted each time they come, whatever replies they have left. Never throws.
      */
     async mayGreet(spaceName: string, personId: number): Promise<boolean> {
         const gate = this.accessGate;
         if (!gate || !this.behavior) return true;
         const verdict = await this.chatVerdict(gate, this.behavior.getPersonForAccess(personId));
-        if (verdict.kind === 'allowed') return this.greetingWithinAllowance(personId);
+        // A greeting is free for the person (it is never counted against their replies), so it is not held back by them
+        if (verdict.kind === 'allowed') return true;
         if (verdict.kind === 'refused') {
             const toldAt = this.toldNoChat.get(personId);
             if (toldAt === undefined || Date.now() - toldAt >= BotClient.TOLD_NO_CHAT_FOR_MS) {
@@ -456,20 +459,6 @@ export class BotClient {
             }
         }
         return false;
-    }
-
-    /**
-     * A voice bot greets only while replies beyond the ones kept for text are left (#1669): a greeting is a Universe AI reply nobody
-     * asked for. A greeting that isn't made says nothing. Every other bot is as it was. Never throws.
-     */
-    private async greetingWithinAllowance(personId: number): Promise<boolean> {
-        if (!this.isVoiceBot() || !this.behavior) return true;
-        try {
-            return await this.behavior.mayGreetWithinAllowance(personId);
-        } catch (error) {
-            console.warn(`[Bot ${this.config.botId}] Could not check the allowance for a greeting, greeting anyway: ${error instanceof Error ? error.message : 'unknown'}`);
-            return true;
-        }
     }
 
     /**
@@ -2162,6 +2151,9 @@ export class BotClient {
                 },
             },
         });
+        // A greeting the bot made on its own is never a voice reply: it stays in the chat, so it is not spoken and never counts as a
+        // spoken reply
+        if (isGreetingReply(responseId)) return;
         // A voice bot says what it has written once it is final: after the chat has it, and never the steps line or an error
         if (this.speech && steps === undefined && !isError) {
             if (isFinal) {

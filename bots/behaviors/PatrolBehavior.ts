@@ -7,6 +7,7 @@
 
 import type { ChatUpload } from '../services/ChatFiles';
 import { BaseBehavior, type BehaviorConfig } from './BaseBehavior';
+import { greetingReplyId } from '../client/GreetingReply';
 import type { PositionInterface } from '../../play/src/front/Connection/ConnexionModels';
 import { PositionMessage_Direction, type SpaceUser } from '@workadventure/messages';
 import { movementLogger } from '../utils/MovementLogger';
@@ -1341,7 +1342,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
 
         let fullMessage = '';
-        let greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+        let greetingResponseId = greetingReplyId(botId, playerId);
 
         try {
             // Special prompt for leading completion
@@ -1357,7 +1358,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingPrefix = '';
-            for await (const chunk of this.withToolSteps(this.aiService.generateBotResponseStream(
+            for await (const chunk of this.withToolSteps(this.aiService.generateGreetingStream(
                 botId,
                 playerId,
                 playerMessage,
@@ -1498,7 +1499,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
 
         // Generate natural response using AI - not a greeting, just respond naturally
         let fullMessage = '';
-        let greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+        let greetingResponseId = greetingReplyId(botId, playerId);
 
         try {
             // Natural prompt: person approached, respond naturally based on context
@@ -1527,7 +1528,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingPrefix = '';
-            for await (const chunk of this.withToolSteps(this.aiService.generateBotResponseStream(
+            for await (const chunk of this.withToolSteps(this.aiService.generateGreetingStream(
                 botId,
                 playerId,
                 playerMessage,
@@ -1544,7 +1545,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                         const finalContent = pendingPrefix ? fullMessage.slice(0, -pendingPrefix.length) : fullMessage;
                         this.bot?.sendStreamMessage(spaceName, greetingResponseId, "", true, finalContent);
                     }
-                    greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                    greetingResponseId = greetingReplyId(botId, playerId);
                     fullMessage = "";
                     emotionBlockStarted = false;
                     pendingPrefix = '';

@@ -1570,6 +1570,8 @@ export class AdminApiService {
         /** Who it was for, as the bot knows them (WorkAdventure uuid or email); Orbit matches it to their account. */
         userId?: string;
         isGuest?: boolean;
+        /** A greeting the bot made on its own (greetings cooldown): free for the person, still the payer's usage. */
+        greeting?: boolean;
     }): Promise<void> {
         if (!this.isConfigured()) {
             if (process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -1602,6 +1604,8 @@ export class AdminApiService {
                 ...(usage.channel ? { channel: usage.channel } : {}),
                 ...(usage.userId ? { userId: usage.userId } : {}),
                 ...(typeof usage.isGuest === "boolean" ? { isGuest: usage.isGuest } : {}),
+                // A greeting the bot made on its own: the payer's usage, never counted against the person it greeted
+                ...(usage.greeting ? { greeting: true } : {}),
             };
 
             if (process.env.ENABLE_BOT_DEBUG === 'true') {

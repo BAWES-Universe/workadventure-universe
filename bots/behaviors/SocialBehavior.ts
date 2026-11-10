@@ -4,6 +4,7 @@
 
 import type { ChatUpload } from '../services/ChatFiles';
 import { BaseBehavior, createConversationState, type BehaviorConfig } from './BaseBehavior';
+import { greetingReplyId } from '../client/GreetingReply';
 import type { PositionInterface } from '../../play/src/front/Connection/ConnexionModels';
 import { PositionMessage_Direction } from '@workadventure/messages';
 import type { SpaceUser } from '@workadventure/messages';
@@ -1634,7 +1635,7 @@ export class SocialBehavior extends BaseBehavior {
         const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
 
         let fullMessage = '';
-        let greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+        let greetingResponseId = greetingReplyId(botId, playerId);
         try {
             // Special prompt for leading completion
             const leadingContext = followerUuid === 'group'
@@ -1649,7 +1650,7 @@ export class SocialBehavior extends BaseBehavior {
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingPrefix = '';
-            for await (const chunk of this.withToolSteps(this.aiService.generateBotResponseStream(
+            for await (const chunk of this.withToolSteps(this.aiService.generateGreetingStream(
                 botId,
                 playerId,
                 playerMessage,
@@ -1796,7 +1797,7 @@ export class SocialBehavior extends BaseBehavior {
         // Generate natural response using AI - not a greeting, just respond naturally
         // The context will inform the AI about previous interactions, emotions, and relationship state
         let fullMessage = '';
-        let greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+        let greetingResponseId = greetingReplyId(botId, playerId);
 
         try {
             // Natural prompt: person approached, respond naturally based on context
@@ -1827,7 +1828,7 @@ export class SocialBehavior extends BaseBehavior {
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingPrefix = '';
-            for await (const chunk of this.withToolSteps(this.aiService.generateBotResponseStream(
+            for await (const chunk of this.withToolSteps(this.aiService.generateGreetingStream(
                 botId,
                 playerId,
                 playerMessage,
@@ -1844,7 +1845,7 @@ export class SocialBehavior extends BaseBehavior {
                         const finalContent = pendingPrefix ? fullMessage.slice(0, -pendingPrefix.length) : fullMessage;
                         this.bot?.sendStreamMessage(spaceName, greetingResponseId, "", true, finalContent);
                     }
-                    greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                    greetingResponseId = greetingReplyId(botId, playerId);
                     fullMessage = "";
                     emotionBlockStarted = false;
                     pendingPrefix = '';
