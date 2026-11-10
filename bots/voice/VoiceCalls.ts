@@ -1398,6 +1398,9 @@ export class VoiceCalls {
     private async prepareTurn(spaceName: string, turn: SpeechTurn): Promise<TurnDecision> {
         const bubble = this.bubbles.get(spaceName);
         if (!this.settings || !bubble || this.opening.has(bubble.sessionId)) return { action: 'text' };
+        // A person who chose text only gets no bot voice at all: a reply (a greeting included) for them stays in the chat, and nothing is
+        // counted for a spoken reply they would never hear. Decided before Orbit is asked anything, so it also reconnects no one
+        if (this.chosenTextOnly(spaceName, turn)) return { action: 'text' };
         let active: ActiveVoice;
         try {
             active = await this.settings.active();
@@ -1441,6 +1444,12 @@ export class VoiceCalls {
         }
         this.resume(spaceName, turn);
         return { action: 'speak', limits: active.replyLimits };
+    }
+
+    /** Whether the person this turn is for chose "Text only" (no bot voice for them). A turn for nobody the bot can name is not one. */
+    private chosenTextOnly(spaceName: string, turn: SpeechTurn): boolean {
+        const { personId } = this.spaceUserFor(spaceName, turn);
+        return personId !== undefined && this.chosenModeOf(spaceName, personId) === 'off';
     }
 
     /** A reply that was allowed will not be spoken after all (see BotSpeech): what was counted for it is given back, in the background. */
