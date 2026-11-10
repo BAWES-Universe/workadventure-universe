@@ -4,7 +4,7 @@
 
 import type { ChatUpload } from '../services/ChatFiles';
 import { BaseBehavior, type BehaviorConfig } from './BaseBehavior';
-import { greetingReplyId } from '../client/GreetingCooldown';
+import { greetingReplyId } from '../client/GreetingReply';
 import { PositionMessage_Direction, type SpaceUser } from '@workadventure/messages';
 import { ConversationMemory } from '../memory/ConversationMemory';
 import { BotClient } from '../client/BotClient';
@@ -1646,8 +1646,6 @@ export class IdleBehavior extends BaseBehavior {
         } finally {
             // Stop typing indicator regardless of how the stream ended
             this.bot?.stopTyping(spaceName);
-            // A greeting that never reached the chat is handed back, so the person is greeted next time (greetings cooldown)
-            this.bot?.greetingEnded(playerId);
         }
     }
 }

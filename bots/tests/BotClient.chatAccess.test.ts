@@ -33,8 +33,6 @@ function setup(verdict: BotAccessVerdict | undefined) {
     const behavior = {
         onChatMessage: vi.fn().mockResolvedValue(undefined),
         getPersonForAccess: vi.fn().mockReturnValue({ signedIn: true, identifier: 'mishari@example.test' }),
-        // Nobody to remember a greeting for: the greetings cooldown greets as before (see GreetingCooldown.test.ts)
-        getTalker: vi.fn().mockReturnValue(null),
         isPersonKnown: vi.fn().mockReturnValue(true),
         onPlayerLeft: vi.fn(),
     };

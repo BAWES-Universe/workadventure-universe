@@ -48,7 +48,6 @@ function createBot(players: FakePlayer[], options: { aiProviderRef?: string; may
         getUserId: vi.fn(() => BOT_USER_ID),
         getFullConfig: vi.fn(() => ({ aiProviderRef: options.aiProviderRef, chatInstructions: 'Be nice.' })),
         mayGreet: vi.fn(async () => options.mayGreet !== false),
-        greetingEnded: vi.fn(),
         getState: vi.fn(() => ({
             getPosition: () => ({ x: 0, y: 0 }),
             getDirection: () => 0,
@@ -315,8 +314,6 @@ describe('SocialBehavior greetings', () => {
         await vi.waitFor(() => expect(ai.generateGreetingStream).toHaveBeenCalled());
 
         expect(ai.generateGreetingStream.mock.calls[0][2]).toContain('just approached you');
-        // The greeting is free and text only, and once it is over the cooldown is told, so one that never reached the chat is handed back
-        await vi.waitFor(() => expect(bot.greetingEnded).toHaveBeenCalledWith(1));
     });
 
     it('does not greet a player the owner refused, and does not ask the AI', async () => {
