@@ -79,6 +79,8 @@ export class PcmReader {
         const rest = this.head ?? new Uint8Array(0);
         this.head = undefined;
         if (rest.length < 2) return undefined;
+        // A stream that began a WAV header and ended before its samples held no sound: its header bytes are not audio
+        if (rest.length >= 4 && rest[0] === 0x52 && rest[1] === 0x49 && rest[2] === 0x46 && rest[3] === 0x46) return undefined;
         return this.take(rest);
     }
 }

@@ -932,6 +932,8 @@ export abstract class BaseBehavior {
         if (!this.bot || !this.summonedPlayerUuid) return false;
 
         // Called when the bot's bubble is gone. If the person had stood in it with the bot, they stepped out of it.
+        // This is the rule on purpose: it goes by who is in the bubble, never by how close the person stands. A person
+        // right beside the bot who is no longer in its bubble has still left it, so no distance check may soften this.
         if (this.summonerJoinedBubble) return false;
 
         // The bubble it passed through on the way to a person far off is not a person leaving

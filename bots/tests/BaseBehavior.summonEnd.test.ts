@@ -185,6 +185,17 @@ describe('a summon ends when its person has gone', () => {
             expect(behavior.summoned()).toBe(false);
         });
 
+        it('goes by the bubble and never by how close they stand: right beside the bot or far off, it is the same', () => {
+            for (const spot of [{ x: 1001, y: 1000 }, { x: 1060, y: 1000 }, { x: 1150, y: 1000 }]) {
+                summonAndSettle({ me: spot });
+                behavior.know(7, 'me');
+                behavior.engage(7);
+                behavior.stoodInBubble();
+                behavior.onSpaceLeft('s');
+                expect(behavior.summoned(), `at ${spot.x}`).toBe(false);
+            }
+        });
+
         it('only counts once they have joined the bot in a bubble', async () => {
             summonAndSettle(near);
             const bot = room(near) as any;
