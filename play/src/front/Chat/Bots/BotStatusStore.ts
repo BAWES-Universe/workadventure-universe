@@ -10,3 +10,6 @@ export const botStatusCache = new BotStatusCache((ids) => botApiService.getDmSta
 export const botDmAccessCache = new BotDmAccessCache(
     async (botId) => (await botApiService.getBotAccess(botId, "dm", localUserStore.getLocalUser()?.uuid)).allowed
 );
+
+/** Whether a bot hears voice notes: the mic shows in its chat only on a yes (asked and kept the same way as the Message button). */
+export const botHearsCache = new BotDmAccessCache((botId) => botApiService.getBotHears(botId));

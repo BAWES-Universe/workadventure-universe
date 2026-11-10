@@ -65,9 +65,13 @@ export class ListeningBudget {
         }
     }
 
-    /** Asks Orbit where the day stands, counting nothing: when a group forms, so a day already used (or a limit changed) is known before anyone talks. */
-    async check(): Promise<void> {
-        if (this.closed || (this.now() - this.askedAt < RECHECK_MS && this.pendingMs < 1000) || this.now() < this.retryAt) return;
+    /**
+     * Asks Orbit where the day stands, counting nothing: when a group forms, so a day already used (or a limit changed) is known before
+     * anyone talks. With `fresh` the last answer is not reused: a voice note is heard only after Orbit says the day is not used up, as
+     * calls (counted by another budget for this bot) may have used the rest since.
+     */
+    async check(fresh = false): Promise<void> {
+        if (this.closed || (!fresh && this.now() - this.askedAt < RECHECK_MS && this.pendingMs < 1000) || this.now() < this.retryAt) return;
         await this.flush();
     }
 

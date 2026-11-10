@@ -42,6 +42,7 @@ import type {
 import { ChatPermissionLevel, InvitationNoLongerAvailableError } from "../ChatConnection";
 import { isAChatRoomIsVisible, navChat, selectedChatMessageToReply, botsChatIds } from "../../Stores/ChatStore";
 import { readBotSteps } from "../../Bots/BotSteps";
+import { readNoteTranscript, type NoteTranscriptNotice } from "../../Bots/BotTranscript";
 import { BOT_ASK_ANSWER_EVENT, botAskAnswerContent, type BotAsk, type BotAskTap } from "../../Bots/BotAsk";
 import { selectedRoomStore } from "../../Stores/SelectRoomStore";
 import { gameManager } from "../../../Phaser/Game/GameManager";
@@ -289,7 +290,9 @@ export class MatrixChatRoom
         }
         if (event.getType() === "m.room.message" && !this.isEventReplacingExistingOne(event)) {
             this.addEventContentInMemory(event);
-            return new MatrixChatMessage(event, this.matrixRoom, false, this.type === "direct");
+            const message = new MatrixChatMessage(event, this.matrixRoom, false, this.type === "direct");
+            this.trackTranscript(message);
+            return message;
         }
         if (event.getType() === "m.reaction") {
             this.handleNewMessageReaction(event, messages);
@@ -485,6 +488,7 @@ export class MatrixChatRoom
             (eventId ? this.messages.get(eventId) : undefined) ??
             new MatrixChatMessage(event, this.matrixRoom, false, this.type === "direct");
         if (!eventId || !this.messages.has(eventId)) this.messages.push(message);
+        this.trackTranscript(message);
         const senderID = event.getSender();
         // The message has arrived, so its sender is no longer typing it.
         if (senderID)
@@ -499,7 +503,7 @@ export class MatrixChatRoom
         if (isFresh && senderID !== this.matrixRoom.client.getSafeUserId() && !get(this.areNotificationsMuted)) {
             // A bot's steps line ("Using Generate music…") is not a message to be told about, nor one to open the chat
             // on: its answer follows (#1646)
-            if (!readBotSteps(senderID, event.getContent())) {
+            if (!readBotSteps(senderID, event.getContent()) && !readNoteTranscript(senderID, event.getContent())) {
                 this.notifyNewMessage(message);
                 if (!isAChatRoomIsVisible() && get(selectedRoomStore)?.id !== "proximity") {
                     selectedRoomStore.set(this);
@@ -540,6 +544,26 @@ export class MatrixChatRoom
         }
     }
 
+    /** A voice note and what a bot heard in it reach us as two messages, in either order: each is kept until the other is here. */
+    private readonly noteBubbles = new Map<string, MatrixChatMessage>();
+    private readonly noteTranscripts = new Map<string, Pick<NoteTranscriptNotice, "state" | "text">>();
+
+    private trackTranscript(message: MatrixChatMessage) {
+        if (message.transcriptOf) {
+            this.applyTranscript(message.transcriptOf);
+        } else if (message.type === "audio") {
+            this.noteBubbles.set(message.id, message);
+            const known = this.noteTranscripts.get(message.id);
+            if (known) message.setTranscript(known);
+        }
+    }
+
+    private applyTranscript(notice: NoteTranscriptNotice) {
+        const { for: noteId, ...transcript } = notice;
+        this.noteTranscripts.set(noteId, transcript);
+        this.noteBubbles.get(noteId)?.setTranscript(transcript);
+    }
+
     private handleMessageModification(event: MatrixEvent) {
         const eventRelation = event.getRelation();
         if (eventRelation) {
@@ -551,6 +575,10 @@ export class MatrixChatRoom
                 // A bot's steps line (#1545) is one notice the bot server keeps updating
                 this.messages.get(event_id)?.modifySteps(event.getSender(), newContent);
                 this.messages.get(event_id)?.modifyAsk(event.getSender(), newContent, event.localTimestamp);
+                // What a bot heard in a voice note: the notice that points at it is edited as the hearing goes
+                const notice = this.messages.get(event_id);
+                const heard = notice ? readNoteTranscript(event.getSender(), newContent) : undefined;
+                if (heard && event.getSender() === notice?.sender?.chatId) this.applyTranscript(heard);
                 // A pinned message loaded on its own, outside the loaded conversation, gets the edit too.
                 this.detachedMessages.get(event_id)?.modifyContent(newBody);
             }

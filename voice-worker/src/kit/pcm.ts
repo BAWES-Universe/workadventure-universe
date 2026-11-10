@@ -11,13 +11,34 @@ export function concatBytes(first: Uint8Array, second: Uint8Array): Uint8Array {
     return out;
 }
 
-/** A WAV header is 44 bytes when it has no extra chunks, which is what speech services send. */
+/** A WAV header is 44 bytes when it has no extra chunks, which is what most speech services send. */
 export const WAV_HEADER_BYTES = 44;
+
+/** A header with extra chunks (Resemble's timestamps) is read up to this size; past it, the plain 44 bytes are dropped. */
+const MAX_WAV_HEADER_BYTES = 1024 * 1024;
+
+/**
+ * Where a WAV's samples start: after the header's chunks (fmt, and any cue, LIST or other chunk a company puts first), at the
+ * "data" chunk. undefined while the header hasn't all come yet. A header whose chunks can't be read is taken as the plain 44 bytes.
+ */
+export function wavDataStart(head: Uint8Array): number | undefined {
+    const view = new DataView(head.buffer, head.byteOffset, head.byteLength);
+    let offset = 12;
+    while (offset + 8 <= head.length) {
+        const name = head.subarray(offset, offset + 4);
+        if (!name.every((byte) => byte >= 0x20 && byte <= 0x7e)) return head.length >= WAV_HEADER_BYTES ? WAV_HEADER_BYTES : undefined;
+        const id = String.fromCharCode(...name);
+        if (id === 'data') return offset + 8;
+        const size = view.getUint32(offset + 4, true);
+        offset += 8 + size + (size % 2);
+    }
+    return undefined;
+}
 
 /**
  * Turns pieces of a little-endian s16 byte stream into whole samples. A piece can end half-way through a sample, so that
- * byte waits for the next piece. With `skipWavHeader`, a stream that starts with "RIFF" has its 44-byte header dropped,
- * even when the header arrives in pieces; a stream without one plays from its first byte.
+ * byte waits for the next piece. With `skipWavHeader`, a stream that starts with "RIFF" has its header dropped up to its
+ * "data" chunk, even when the header arrives in pieces; a stream without one plays from its first byte.
  */
 export class PcmReader {
     private carry?: Uint8Array;
@@ -33,8 +54,11 @@ export class PcmReader {
             this.head = concatBytes(this.head, piece);
             if (this.head.length < 4) return undefined;
             const riff = this.head[0] === 0x52 && this.head[1] === 0x49 && this.head[2] === 0x46 && this.head[3] === 0x46;
-            if (riff && this.head.length < WAV_HEADER_BYTES) return undefined;
-            bytes = riff ? this.head.subarray(WAV_HEADER_BYTES) : this.head;
+            if (riff) {
+                const start = wavDataStart(this.head) ?? (this.head.length >= MAX_WAV_HEADER_BYTES ? WAV_HEADER_BYTES : undefined);
+                if (start === undefined) return undefined;
+                bytes = this.head.subarray(start);
+            } else bytes = this.head;
             this.head = undefined;
         }
         if (this.carry) {
@@ -55,6 +79,8 @@ export class PcmReader {
         const rest = this.head ?? new Uint8Array(0);
         this.head = undefined;
         if (rest.length < 2) return undefined;
+        // A stream that began a WAV header and ended before its samples held no sound: its header bytes are not audio
+        if (rest.length >= 4 && rest[0] === 0x52 && rest[1] === 0x49 && rest[2] === 0x46 && rest[3] === 0x46) return undefined;
         return this.take(rest);
     }
 }

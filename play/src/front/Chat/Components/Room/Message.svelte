@@ -15,6 +15,7 @@
     import BotRoomCard from "../../Bots/BotRoomCard.svelte";
     import BotStepsLine from "../../Bots/BotStepsLine.svelte";
     import ArtifactCardView from "../../../Artifacts/ArtifactCardView.svelte";
+    import SpokenReplyControl from "../Bots/SpokenReplyControl.svelte";
     import { readArtifactLine } from "../../../Artifacts/artifactCard";
     import { bodyShownWithCard } from "../../LinkPreview/ChatLinkKind";
     import MessageOptions from "./MessageOptions.svelte";
@@ -317,6 +318,9 @@
                     {/if}
                     {#if message.roomLink && !$isDeleted}
                         <BotRoomCard link={message.roomLink} botName={sender?.username} />
+                    {/if}
+                    {#if message.voiceReply && !$isDeleted}
+                        <SpokenReplyControl reply={message.voiceReply} />
                     {/if}
                 {:else if $content.body.trim() !== ""}
                     <div class="opacity-70">

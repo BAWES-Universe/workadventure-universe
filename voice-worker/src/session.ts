@@ -395,7 +395,7 @@ export class Session {
         if (!this.closing) this.sendStatus();
     }
 
-    setMode(mode: Mode, participantId?: string): void {
+    setMode(mode: Mode, participantId?: string, requestId?: string): void {
         if (!participantId) {
             this.defaultMode = mode;
             for (const lane of this.lanes.values()) lane.mode = mode;
@@ -406,6 +406,14 @@ export class Session {
         this.room?.setMode(mode, participantId);
         // Not listening any more: what they had said so far goes nowhere
         if (!modeListens(mode)) this.recognition?.forget((id) => (participantId ? id !== participantId : false));
+        // Asked to confirm: the path that carries this person's audio follows the mode from now (the lane reads it per frame, the room has
+        // just subscribed or unsubscribed their microphone)
+        if (participantId && requestId) {
+            const lane = this.lanes.get(participantId);
+            const room = this.room && !this.room.gone && this.room.names(participantId) ? this.room : undefined;
+            const path = lane && !lane.gone ? { path: 'lane' as const, epoch: lane.epoch } : room ? { path: 'room' as const, epoch: room.epoch } : { path: 'none' as const };
+            this.host.send({ type: 'mode.ack', participantId, requestId, mode, ...path });
+        }
         this.sendStatus();
     }
 

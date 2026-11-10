@@ -77,7 +77,8 @@
     "mode.set": {
       "title": "bot server -> worker: change what the bot hears from and says to one person, or to everyone",
       "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "mode"],
-        "properties": { "type": { "const": "mode.set" }, "mode": { "$ref": "#/$defs/mode" }, "participantId": { "$ref": "#/$defs/id" } } }]
+        "properties": { "type": { "const": "mode.set" }, "mode": { "$ref": "#/$defs/mode" }, "participantId": { "$ref": "#/$defs/id" },
+          "requestId": { "$ref": "#/$defs/id", "description": "Asks the worker to answer with mode.ack once this person's audio path follows the mode. Only with participantId." } } }]
     },
     "bot.say": {
       "title": "bot server -> worker: speak this. Only committed text may be spoken.",
@@ -186,6 +187,12 @@
       "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "part", "adapter"],
         "properties": { "type": { "const": "provider.failed" }, "part": { "$ref": "#/$defs/providerPart" }, "adapter": { "$ref": "#/$defs/adapter" },
           "status": { "type": "integer", "minimum": 100, "maximum": 599 }, "rejected": { "const": true } } }]
+    },
+    "mode.ack": {
+      "title": "worker -> bot server: a mode.set with a requestId has been applied. path is what carries the person's audio now and follows the mode (their own connection, the bubble's LiveKit room when they are named in it, or none yet), with its epoch.",
+      "allOf": [{ "$ref": "#/$defs/base" }, { "type": "object", "required": ["type", "participantId", "requestId", "mode", "path"],
+        "properties": { "type": { "const": "mode.ack" }, "participantId": { "$ref": "#/$defs/id" }, "requestId": { "$ref": "#/$defs/id" }, "mode": { "$ref": "#/$defs/mode" },
+          "path": { "enum": ["lane", "room", "none"] }, "epoch": { "$ref": "#/$defs/epoch" } } }]
     },
     "error": {
       "title": "worker -> bot server: something the bot server should log or act on",

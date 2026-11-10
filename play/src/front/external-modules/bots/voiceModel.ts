@@ -611,6 +611,17 @@ export function modelsOf(voice: BotVoice, part: VoicePart, source: PartSource): 
     return uai ? uai.models.map((model) => ({ id: model.id, label: model.label ?? undefined })) : [];
 }
 
+/**
+ * The models the Speaking model row offers on a key: its speaking models, then its talking models (#1910). On a key that does both
+ * (Amazon Polly and Nova Sonic) picking a talking model is how the bot starts talking live, and picking a speaking one how it stops.
+ */
+export function speakingRowModels(voice: BotVoice, source: PartSource): Array<{ id: string; label?: string }> {
+    if (source.kind !== "key") return modelsOf(voice, "speech", source);
+    const of = (kind: VoiceModelKind) =>
+        source.key.models.filter((model) => model.kind === kind).map((model) => ({ id: model.id, label: model.label }));
+    return [...of("speech"), ...of("talk")];
+}
+
 /** The label a model is shown with: its name and id ("Eleven v4 Turbo · eleven_v4_turbo"), or the id alone. */
 export function modelLabel(model: { id: string; label?: string | null }): string {
     return model.label && model.label !== model.id ? `${model.label} · ${model.id}` : model.id;
@@ -672,19 +683,40 @@ export function limitsOf(
 export function companyName(adapter: string): string {
     const known: Record<string, string> = {
         assemblyai: "AssemblyAI",
+        async: "Async",
         aws: "AWS",
         azure: "Azure OpenAI",
-        elevenlabs: "ElevenLabs",
+        "azure-speech": "Azure AI Speech",
+        bland: "Bland",
+        camb: "CAMB.AI",
         cartesia: "Cartesia",
+        deepgram: "Deepgram",
+        elevenlabs: "ElevenLabs",
+        fal: "fal",
         fish: "Fish Audio",
+        gladia: "Gladia",
         google: "Google",
+        gradium: "Gradium",
+        groq: "Groq",
+        hume: "Hume",
         inworld: "Inworld",
+        meta: "Meta",
+        minimax: "MiniMax",
+        mistral: "Mistral",
+        neuphonic: "Neuphonic",
+        nvidia: "NVIDIA",
         openai: "OpenAI",
+        resemble: "Resemble AI",
+        rime: "Rime",
+        sarvam: "Sarvam AI",
+        smallest: "Smallest AI",
+        soniox: "Soniox",
+        speechify: "Speechify",
+        speechmatics: "Speechmatics",
+        together: "Together AI",
         ultravox: "Ultravox",
         xai: "xAI",
         zoom: "Zoom",
-        deepgram: "Deepgram",
-        soniox: "Soniox",
     };
     return known[adapter] ?? adapter.charAt(0).toUpperCase() + adapter.slice(1);
 }
@@ -788,6 +820,25 @@ export function startingPayer(voice: BotVoice, previous: VoiceProfile | null): P
 /** The source a voice list is read from: "universe-ai" or a key's id. */
 export const sourceKey = (choice: PayerChoice): string =>
     choice.kind === "universe-ai" ? "universe-ai" : choice.key.id;
+
+/** Which voices a list is: a speaking model's, or a talking model's (#1910). */
+export type VoiceListPart = "speech" | "talk";
+
+/**
+ * Which voices to list for a place speaking with `model`. Orbit lists a key's speaking voices by default, and a talking model's
+ * only when asked (`part=talk`) if the key also speaks on its own (Amazon Polly and Nova Sonic): their voices differ. A key that
+ * speaks only through a talking model already lists that model's voices.
+ */
+export function voiceListPart(choice: PayerChoice, model: string | undefined): VoiceListPart {
+    if (choice.kind !== "key" || !model) return "speech";
+    const speaksOnItsOwn = choice.key.models.some((candidate) => candidate.kind === "speech");
+    const talks = choice.key.models.some((candidate) => candidate.kind === "talk" && candidate.id === model);
+    return speaksOnItsOwn && talks ? "talk" : "speech";
+}
+
+/** Where a voice list is kept on the page: one per source, and a second for a key's talking voices. */
+export const listKey = (choice: PayerChoice, part: VoiceListPart = "speech"): string =>
+    part === "talk" ? `${sourceKey(choice)}#talk` : sourceKey(choice);
 
 export function choiceOfSource(source: PartSource): PayerChoice | null {
     if (source.kind === "key") return { kind: "key", key: source.key };

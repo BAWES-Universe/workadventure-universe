@@ -31,6 +31,7 @@ import {
     type FullVoiceProfile,
     type TypedVoice,
     type VoiceChoice,
+    type VoiceListPart,
 } from "../voiceModel";
 import { classifySummonFailure, type SummonResult } from "./summonFailure";
 
@@ -619,10 +620,13 @@ export class BotApiService {
         });
     }
 
-    /** The speaking voices of one source, "universe-ai" or a lent key's id, from the voice company's free list. */
-    async getBotVoices(botId: string, source: string): Promise<VoiceChoice[]> {
+    /**
+     * The speaking voices of one source, "universe-ai" or a lent key's id, from the voice company's free list. `talk` asks for a
+     * talking model's voices instead, for a key that also speaks on its own (#1910).
+     */
+    async getBotVoices(botId: string, source: string, part: VoiceListPart = "speech"): Promise<VoiceChoice[]> {
         return this.withPermissionsTimeout(async (signal) => {
-            const query = `part=speech&source=${encodeURIComponent(source)}`;
+            const query = `part=${part}&source=${encodeURIComponent(source)}`;
             const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/voice/voices?${query}`, {
                 signal,
             });
@@ -1478,6 +1482,34 @@ export class BotApiService {
      * `playerUuid` is who is asking. A signed-in player whose Orbit session did not come along is then told so
      * (`signIn`) instead of being asked about as a guest.
      */
+    /** Whether a bot hears voice notes (its chat shows the mic only on a yes); null when that could not be found out. */
+    async getBotHears(botId: string): Promise<boolean | null> {
+        if (!this.botServerUrl) return null;
+        const stop = new AbortController();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        // Raced as well as aborted: the Orbit sign-in that comes first in a request does not listen for the abort
+        const late = new Promise<null>((resolve) => {
+            timer = setTimeout(() => {
+                stop.abort();
+                resolve(null);
+            }, DM_STATUS_TIMEOUT_MS);
+        });
+        const asking = (async () => {
+            try {
+                const response = await this.fetchBotServer(`/api/bots/${encodeURIComponent(botId)}/hears`, {
+                    signal: stop.signal,
+                });
+                const data = (await response.json()) as { hears?: unknown };
+                return typeof data.hears === "boolean" ? data.hears : null;
+            } catch {
+                return null;
+            }
+        })();
+        return Promise.race([asking, late]).finally(() => {
+            clearTimeout(timer);
+        });
+    }
+
     async getBotAccess(botId: string, action: "summon" | "chat" | "dm", playerUuid?: string): Promise<BotAccessAnswer> {
         // A bot server or sign-in that stalls must not hold the Summon button back: after a few seconds it is "unknown"
         const stop = new AbortController();

@@ -53,6 +53,8 @@ export interface ConversationState {
     activeResponseId?: string;
     /** The bot judged that this person is done talking with it (#1670): this turn is not an answer, so it opens no follow-up window */
     endedByPerson?: boolean;
+    /** When the line being answered now reached the bot: a card shown after that was not there when it was written (#1661) */
+    heardAt?: number;
 }
 
 /**
@@ -91,6 +93,7 @@ export interface QueuedMessage {
     mediaType?: string;
     mimeType?: string;
     galleryUrls?: string[];
+    /** When the line reached the bot (not when it was put in line) */
     timestamp: number;
     /** 'answer' | 'queue' — set when queued via interruption classification */
     classification?: string;
@@ -159,6 +162,15 @@ export abstract class BaseBehavior {
     /** Called when the bot has finished answering a person (not when it was cancelled): who and where. */
     onAnswerFinished?: (userId: number, spaceName: string) => void;
 
+    /**
+     * When the line the bot is answering for this person right now reached it, even if it waited in line behind an earlier
+     * answer. A card shown after that time was not there when they wrote it, so the line is not their answer to it (#1661).
+     */
+    lineHeardAt(userId: number): number | undefined {
+        const state = this.activeConversations.get(userId);
+        return state?.isGenerating ? state.heardAt : undefined;
+    }
+
     /** Whether the bot is answering this person right now, or has a line of theirs waiting for its turn. */
     isBusyWith(userId: number): boolean {
         const state = this.activeConversations.get(userId);
@@ -217,6 +229,8 @@ export abstract class BaseBehavior {
     // This helps match addSpaceUserMessage when it arrives after a chat message
     protected pendingSpaceUserIdToUserId: Map<string, number> = new Map();
     protected readonly PROXIMITY_RADIUS = 64; // Pixels - react when player is inside bubble
+    protected readonly SUMMON_RELEASE_RADIUS = 200; // A summoned bot goes back once its person is further away than this
+    protected readonly SUMMON_SETTING_OFF_GRACE_MS = 5000;
     protected readonly DISENGAGE_RADIUS = 80; // Slightly larger to prevent flickering at edge
     /** A bot standing still turns to look at someone walking by within 4 tiles. Looking never stops it or starts a chat. */
     protected readonly LOOK_RADIUS = 128;
@@ -236,6 +250,8 @@ export abstract class BaseBehavior {
     // Summon state - track when bot is summoned to a player
     protected isSummoned = false;
     protected summonedPlayerUuid: string | null = null;
+    protected summonerJoinedBubble = false; // Whether the person has stood in a bubble with the bot since it came, so stepping out of it sends the bot back
+    protected summonStartedAt = 0; // When the current summon began, so a bot still setting off is not read as left behind
     protected originalPosition: PositionInterface | null = null; // Position to return to after summon (set on first summon only)
     protected spawnPosition: PositionInterface | null = null; // Bot's spawn/assigned position (set when bot is initialized)
     protected isReturning = false; // Track if bot is returning to original position (for speed matching)
@@ -370,27 +386,9 @@ export abstract class BaseBehavior {
             return;
         }
         
-        // If summoned, check if the summoned player moved far away (> 200px)
-        if (this.isSummoned) {
-            const playerPos = this.getSummonedPlayerPosition();
-            if (!playerPos) {
-                // Player not found - they likely left, end summon
-                console.log(`[Behavior] Summoned player not found, ending summon and returning`);
-                this.endSummon();
-                return;
-            }
-            
-            const botPos = this.bot.getState().getPosition();
-            const dx = playerPos.x - botPos.x;
-            const dy = playerPos.y - botPos.y;
-            const distance = Math.sqrt(dx * dx + dy * dy);
-            
-            // If player moved far away (> 200px) and we're not in a conversation, return
-            if (distance > 200 && this.engagedWithUsers.size === 0) {
-                console.log(`[Behavior] Summoned player moved far away (${Math.round(distance)}px), ending summon and returning`);
-                this.endSummon();
-                return;
-            }
+        // If summoned, let the bot go back once the person it came for has left or walked far away
+        if (this.isSummoned && this.endSummonIfPersonAway()) {
+            return;
         }
         
         const behaviorType = (this.config as any).type;
@@ -452,6 +450,10 @@ export abstract class BaseBehavior {
         }
         if (this.nearbyPlayers.delete(playerId)) {
             this.updateProximityEngagement();
+        }
+        // They send no last move, so a summon to the person who just left would otherwise never end
+        if (this.isSummoned) {
+            this.endSummonIfPersonAway();
         }
     }
 
@@ -843,6 +845,8 @@ export abstract class BaseBehavior {
         
         this.isSummoned = true;
         this.summonedPlayerUuid = playerUuid;
+        this.summonStartedAt = Date.now();
+        this.summonerJoinedBubble = false;
         
         // Only store original position on FIRST summon (don't overwrite on subsequent summons)
         // This ensures bot always returns to its spawn/assigned position, not the last summon position
@@ -862,30 +866,62 @@ export abstract class BaseBehavior {
     }
 
     /**
-     * Get the position of the summoned player (if available)
+     * Where the person this bot was summoned to stands now, found by who they are. Null once they are not in the
+     * room. It must never be "whoever is close": another person, or another bot, standing near this one would then
+     * stand in for the summoner and the bot would never be released.
      */
     protected getSummonedPlayerPosition(): PositionInterface | null {
         if (!this.bot || !this.summonedPlayerUuid) return null;
-        
-        // Try to find the player by checking all players
-        // Since we don't have UUID in PlayerInfo, we'll use the first nearby player
-        // or check engaged users
-        const allPlayers = this.bot.getAllPlayers();
-        for (const player of allPlayers) {
-            // Check if this player is nearby (within reasonable range)
-            const botPos = this.bot.getState().getPosition();
-            const dx = player.position.x - botPos.x;
-            const dy = player.position.y - botPos.y;
-            const distance = Math.sqrt(dx * dx + dy * dy);
-            
-            // If player is within 200px, assume it might be the summoned player
-            if (distance < 200) {
-                return player.position;
-            }
+        return this.bot.getPlayerPositionByUuid(this.summonedPlayerUuid) ?? null;
+    }
+
+    /** Still setting off, or walking, towards the person it was called to. */
+    protected isSummonOnItsWay(): boolean {
+        return !!this.bot && (this.bot.getIsFollowingPath() || Date.now() - this.summonStartedAt < this.SUMMON_SETTING_OFF_GRACE_MS);
+    }
+
+    /**
+     * Whether a person other than the summoner is in a conversation with the bot. Neither the summoner themselves
+     * nor another bot sharing the bubble keeps a summon going.
+     */
+    protected isTalkingWithSomeoneElse(): boolean {
+        const summonerId = this.summonedPlayerUuid ? this.getUserIdForUuid(this.summonedPlayerUuid) : undefined;
+        return [...this.engagedWithUsers.keys()].some((userId) => userId !== summonerId && !this.bot?.isOtherBot(userId));
+    }
+
+    /**
+     * Let the bot go back to where it was when the person it came for has left the room or walked far away, unless
+     * it is still on its way to them or is in a conversation with someone else. Checked on every move, when somebody
+     * leaves and on every tick, so it does not hang on one more step from the person.
+     * @returns true when the summon was ended
+     */
+    protected endSummonIfPersonAway(): boolean {
+        if (!this.bot || !this.isSummoned) return false;
+
+        const playerPos = this.getSummonedPlayerPosition();
+        if (!playerPos) {
+            console.log(`[Behavior] Summoned player not found, ending summon and returning`);
+            this.endSummon();
+            return true;
         }
-        
-        // If no nearby player found, return null (player might have left)
-        return null;
+
+        if (this.isSummonOnItsWay()) {
+            return false;
+        }
+
+        const botPos = this.bot.getState().getPosition();
+        const distance = Math.hypot(playerPos.x - botPos.x, playerPos.y - botPos.y);
+        if (distance <= this.SUMMON_RELEASE_RADIUS) {
+            return false;
+        }
+
+        if (this.isTalkingWithSomeoneElse()) {
+            return false;
+        }
+
+        console.log(`[Behavior] Summoned player moved far away (${Math.round(distance)}px), ending summon and returning`);
+        this.endSummon();
+        return true;
     }
 
     /**
@@ -894,6 +930,14 @@ export abstract class BaseBehavior {
      */
     protected checkSummonedPlayerStillNearby(): boolean {
         if (!this.bot || !this.summonedPlayerUuid) return false;
+
+        // Called when the bot's bubble is gone. If the person had stood in it with the bot, they stepped out of it.
+        // This is the rule on purpose: it goes by who is in the bubble, never by how close the person stands. A person
+        // right beside the bot who is no longer in its bubble has still left it, so no distance check may soften this.
+        if (this.summonerJoinedBubble) return false;
+
+        // The bubble it passed through on the way to a person far off is not a person leaving
+        if (this.isSummonOnItsWay()) return true;
 
         // Check if we can find the player position
         const playerPos = this.getSummonedPlayerPosition();
@@ -907,7 +951,7 @@ export abstract class BaseBehavior {
         const dy = playerPos.y - botPos.y;
         const distance = Math.sqrt(dx * dx + dy * dy);
         
-        return distance < 200; // Player is still nearby
+        return distance < this.SUMMON_RELEASE_RADIUS; // Player is still nearby
     }
 
     /**
@@ -1112,6 +1156,7 @@ export abstract class BaseBehavior {
         const originalPos = this.originalPosition;
         this.isSummoned = false;
         this.summonedPlayerUuid = null;
+        this.summonerJoinedBubble = false;
         // Don't clear originalPosition yet - we need it to check when we've reached it
         // Set returning flag so bot moves at 3x speed (matching summon speed)
         this.isReturning = true;
@@ -1374,6 +1419,9 @@ export abstract class BaseBehavior {
         // after the await would re-add the user after they'd already left.
         this.engagedWithUsers.set(user.id, { spaceName, position: undefined });
         this.isEngaged = this.engagedWithUsers.size > 0;
+        if (this.isSummoned && user.uuid && user.uuid === this.summonedPlayerUuid) {
+            this.summonerJoinedBubble = true;
+        }
         
         // Also track UUID in PersistentMemory for memory/emotion persistence
         if (user.uuid) {
@@ -1443,6 +1491,9 @@ export abstract class BaseBehavior {
      * @param userId User ID that left
      */
     onSpaceUserLeft(spaceName: string, userId: number): void {
+        // Whether the person this bot came for just stepped out of the bubble they stood in with it
+        const summonerLeftBubble = this.summonerJoinedBubble && this.isSummonedBy(userId);
+
         // Remove from engaged users
         this.engagedWithUsers.delete(userId);
         this.isEngaged = this.engagedWithUsers.size > 0;
@@ -1468,8 +1519,16 @@ export abstract class BaseBehavior {
         this.userIdToUuid.delete(userId);
         this.userIdToIsLogged.delete(userId);
 
+        // The person it came for stepped out of the bubble: go back, unless it is still talking with someone else
+        if (summonerLeftBubble && !this.isTalkingWithSomeoneElse()) {
+            console.log(`[Behavior] Summoned player stepped out of the bubble, ending summon and returning`);
+            this.endSummon();
+            return;
+        }
+
         // If summoned and no players left, end summon and return
-        if (this.isSummoned && this.engagedWithUsers.size === 0 && this.nearbyPlayers.size === 0) {
+        // (not while it is still on its way: a stranger leaving a bubble it passed through is not its person leaving)
+        if (this.isSummoned && !this.isSummonOnItsWay() && this.engagedWithUsers.size === 0 && this.nearbyPlayers.size === 0) {
             console.log(`[Behavior] Summoned player left space, ending summon and returning`);
             this.endSummon();
             return;
@@ -1550,8 +1609,9 @@ export abstract class BaseBehavior {
      * @param spaceName Space name
      * @param message Chat message
      * @param senderId Sender's user ID
+     * @param heardAt When the line reached the bot, before its files were read or anything was asked about it
      */
-    onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string, galleryUrls?: string[], uploads?: ChatUpload[]): Promise<void> {
+    onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string, galleryUrls?: string[], uploads?: ChatUpload[], heardAt?: number): Promise<void> {
         // Default: do nothing
         return Promise.resolve();
     }
@@ -1963,11 +2023,13 @@ export abstract class BaseBehavior {
         url?: string,
         mediaType?: string,
         mimeType?: string,
-        galleryUrls?: string[]
+        galleryUrls?: string[],
+        /** When the line reached the bot; a line that waited in line keeps the time it came */
+        heardAt = Date.now()
     ): Promise<'generated' | 'queued' | 'cancelled'> {
         this.pruneStaleConversations();
 
-        const action = await this.handleInterruption(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls);
+        const action = await this.handleInterruption(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, heardAt);
         if (action === 'queued' || action === 'cancelled') {
             if (action === 'cancelled') {
                 this.bot?.stopTyping(spaceName);
@@ -1983,7 +2045,9 @@ export abstract class BaseBehavior {
         }
 
         this.startGeneration(senderId, spaceName, originalMessage);
-        const capturedGen = this.activeConversations.get(senderId)?.generation ?? 0;
+        const started = this.activeConversations.get(senderId);
+        if (started) started.heardAt = heardAt;
+        const capturedGen = started?.generation ?? 0;
         // The AbortController for THIS generation — passed to the stream so
         // cancel/update can actually stop the in-flight provider call.
         const abortSignal = this.activeConversations.get(senderId)?.abortController?.signal;
@@ -2060,6 +2124,8 @@ export abstract class BaseBehavior {
                     ...first,
                     originalMessage: words.map((item) => item.originalMessage).join('\n'),
                     message: words.map((item) => item.message).join('\n'),
+                    // Answered as one: the words came when the last of them did
+                    timestamp: Math.max(...words.map((item) => item.timestamp)),
                 };
             }
         }
@@ -2076,7 +2142,8 @@ export abstract class BaseBehavior {
             queued.url,
             queued.mediaType,
             queued.mimeType,
-            queued.galleryUrls
+            queued.galleryUrls,
+            queued.timestamp
         );
     }
 
@@ -2091,10 +2158,21 @@ export abstract class BaseBehavior {
         url?: string,
         mediaType?: string,
         mimeType?: string,
-        galleryUrls?: string[]
+        galleryUrls?: string[],
+        heardAt = Date.now()
     ): Promise<'queued' | 'cancelled' | 'proceed'> {
         const state = this.activeConversations.get(senderId);
         if (!state || !state.isGenerating) return 'proceed';
+
+        // Several people around a voice bot: what a person SAYS while it answers them is kept in line, and never asked about
+        // (it costs a call each) nor allowed to cancel or rewrite the answer: the answer may be the one to "stop", and
+        // room talk would replace it with an answer to the talk. A TYPED line is never room talk: it is checked as always,
+        // so a typed "stop" or "do this instead" still stops or changes the answer
+        if (this.bot?.mayEndFollowUp?.(state.spaceName, senderId) && this.bot.saidOutLoud?.(state.spaceName, senderId)) {
+            // A full line is dropped without a word: "I'll answer once I've finished" would be spoken to a room that was only talking
+            await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, 'queue', true, heardAt);
+            return 'queued';
+        }
 
         const interruptedGen = state.generation;
         const currentTask = state.currentTask || originalMessage;
@@ -2103,14 +2181,14 @@ export abstract class BaseBehavior {
         try {
             result = await this.classifyInterruption(currentTask, originalMessage);
         } catch {
-            await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls);
+            await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, undefined, false, heardAt);
             return 'queued';
         }
 
         // Guard against the generation advancing during the classifyInterruption await
         const currentState = this.activeConversations.get(senderId);
         if (!currentState || currentState.generation !== interruptedGen) {
-            await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls);
+            await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, undefined, false, heardAt);
             return 'queued';
         }
 
@@ -2158,7 +2236,7 @@ export abstract class BaseBehavior {
                     currentState.pendingAnswers.push(result.message);
                 } else {
                     // No quick answer produced — fall back to queueing so it isn't lost.
-                    await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, 'answer');
+                    await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, 'answer', false, heardAt);
                 }
                 return 'queued';
             }
@@ -2168,7 +2246,7 @@ export abstract class BaseBehavior {
                 if (result.message) {
                     this.sendStatusAck(currentState.spaceName, result.message);
                 }
-                await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, 'queue');
+                await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, 'queue', false, heardAt);
                 return 'queued';
             }
         }
@@ -2195,18 +2273,20 @@ export abstract class BaseBehavior {
         mediaType?: string,
         mimeType?: string,
         galleryUrls?: string[],
-        classification?: string
+        classification?: string,
+        quiet = false,
+        heardAt = Date.now()
     ): Promise<void> {
         const state = this.activeConversations.get(senderId);
         if (!state) return;
 
         if (state.messageQueue.length >= this.MAX_QUEUED_MESSAGES) {
             // The busy line is fixed text, never an AI call (#1159): a burst of messages must not cost replies
-            this.sendStatusAck(state.spaceName, BUSY_LINE);
+            if (!quiet) this.sendStatusAck(state.spaceName, BUSY_LINE);
             return;
         }
 
-        state.messageQueue.push({ originalMessage, message, url, mediaType, mimeType, galleryUrls, classification, timestamp: Date.now() });
+        state.messageQueue.push({ originalMessage, message, url, mediaType, mimeType, galleryUrls, classification, timestamp: heardAt });
     }
 
     /**
@@ -2232,7 +2312,12 @@ export abstract class BaseBehavior {
     protected personIsDone(spaceName: string, playerId: number, emotions: AIEmotionData | null | undefined): boolean {
         if (emotions?.doneTalking !== true || !this.bot?.endFollowUp(spaceName, playerId)) return false;
         const state = this.activeConversations.get(playerId);
-        if (state) state.endedByPerson = true;
+        if (state) {
+            state.endedByPerson = true;
+            // What they said after "stop" while the bot was thinking about it is not for the bot, unless it calls the bot by name
+            state.messageQueue = state.messageQueue.filter((queued) => this.bot?.isForBot(spaceName, playerId, queued.originalMessage) === true);
+            state.pendingAnswers = [];
+        }
         return true;
     }
 

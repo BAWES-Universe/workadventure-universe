@@ -6,6 +6,21 @@
 export type VoiceMode = 'off' | 'listen_only' | 'talk' | 'type_and_listen' | 'speak_and_read';
 /** Where one person's audio with the bot stands, as the bot tells them (the game draws its Voice button from it). */
 export type VoiceStatus = 'connecting' | 'on' | 'paused';
+/**
+ * Whether the bot takes a person's microphone in a group, as the bot tells them (the game draws the bar and the panel from it). In a group
+ * (two or more people in the bubble or meeting) a person's talk reaches the bot only once they asked it to keep listening, for this visit.
+ *   '': nothing to choose: they are alone with the bot (it hears them hands-free), or their mode does not take the microphone.
+ *   off: it does not take their microphone. pending: they asked it to keep listening and the worker has not confirmed it yet.
+ *   on: it does, confirmed. stopping: they asked it to stop, not confirmed yet. checking: the stop is not confirmed after the wait,
+ *   so it may still hear them.
+ */
+export type ListenState = '' | 'off' | 'pending' | 'on' | 'stopping' | 'checking';
+/**
+ * Why it is off, when there is something to say. others_joined: they had it hands-free until someone joined. failed: asking to keep
+ * listening was not confirmed in time. limit: the bot's daily listening, or the person's spoken replies, are used for now.
+ */
+export type ListenReason = '' | 'others_joined' | 'failed' | 'limit';
+export interface ListenInfo { state: ListenState; reason: ListenReason }
 export type LeaveReason = 'closed' | 'failed' | 'left' | 'superseded' | 'timeout';
 
 /** What a person's browser sends while setting up a call (simple-peer signals). */
@@ -33,7 +48,8 @@ export type ToWorker =
     | { type: 'lane.open'; sessionId: string; participantId: string; epoch: number; mode?: VoiceMode }
     | { type: 'lane.signal'; sessionId: string; participantId: string; epoch: number; signal: VoiceSignal }
     | { type: 'lane.close'; sessionId: string; participantId: string; epoch: number; reason?: LeaveReason }
-    | { type: 'mode.set'; sessionId: string; mode: VoiceMode; participantId?: string }
+    /** `requestId`: the worker answers with `mode.ack` once the person's audio path follows the mode (only with `participantId`). */
+    | { type: 'mode.set'; sessionId: string; mode: VoiceMode; participantId?: string; requestId?: string }
     | { type: 'bot.say'; sessionId: string; segmentId: string; text: string; committed: true; lang?: string; maxMs?: number }
     | { type: 'bot.retract'; sessionId: string; segmentId: string }
     | { type: 'voice.stop'; sessionId: string; reason: 'allowance_ended' | 'other' }
@@ -63,6 +79,8 @@ export type FromWorker =
     | { type: 'lane.signal'; sessionId: string; participantId: string; epoch: number; signal: VoiceSignal }
     | { type: 'playback.progress'; sessionId: string; segmentId: string; playedMs: number; totalMs?: number; finished: boolean; interrupted: boolean; reason?: string }
     | { type: 'engine.status'; sessionId: string; engineId: string; voice: 'active' | 'stopped'; mode: VoiceMode; lanes: unknown[]; room?: { epoch: number; connected: boolean }; counters?: Record<string, number> }
+    /** A `mode.set` with a `requestId` is applied: the path that carries the person's audio now (their connection, the room, or none yet) and its epoch. */
+    | { type: 'mode.ack'; sessionId: string; participantId: string; requestId: string; mode: VoiceMode; path: 'lane' | 'room' | 'none'; epoch?: number }
     | { type: 'room.state'; sessionId: string; epoch: number; state: 'connected' | 'closed' | 'failed' }
     | { type: 'user.speech_started'; sessionId: string; participantId: string; epoch: number; turnId: string }
     | { type: 'user.partial'; sessionId: string; participantId: string; epoch: number; turnId: string; text: string }
