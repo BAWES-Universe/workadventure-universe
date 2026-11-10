@@ -60,7 +60,7 @@ interface MetaAnswer {
  * count: a message that merely mentions tokens or a key (a rate limit, a quota) is an ordinary failure and must not mark a good key as
  * rejected.
  */
-const REFUSED_KEY = /unauthori[sz]ed|forbidden|authenticat|(invalid|expired|revoked|missing|bad)\W+(access\W+)?(token|api\W*key|credential)|(token|api\W*key|credential)s?\W+(is\W+|are\W+|was\W+)?(invalid|expired|revoked|missing|not valid)/i;
+const REFUSED_KEY = /unauthori[sz]ed|forbidden|authenticat\w*\W+(failed|failure|error|required)|not\W+authenticated|(invalid|expired|revoked|missing|bad)\W+(access\W+)?(token|api\W*key|credential)|(token|api\W*key|credential)s?\W+(is\W+|are\W+|was\W+)?(invalid|expired|revoked|missing|not valid)/i;
 
 export function metaStatus(message: unknown): number | undefined {
     return typeof message === 'string' && REFUSED_KEY.test(message) ? 401 : undefined;
