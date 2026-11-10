@@ -23,7 +23,7 @@
  * again). Nothing else changes: the chat, the bubble and everyone else's voice carry on.
  */
 import type { PrivateEventPusherToFront, SpaceUser } from '@workadventure/messages';
-import type { FromWorker, ListenInfo, ListenReason, ProviderPart, ToWorker, VoiceDraft, VoiceMode, VoiceSignal, VoiceStatus } from './protocol';
+import type { FromWorker, LeaveReason, ListenInfo, ListenReason, ProviderPart, ToWorker, VoiceDraft, VoiceMode, VoiceSignal, VoiceStatus } from './protocol';
 import type { SpeechTurn, TurnDecision } from './BotSpeech';
 import type { RepliesLeft, TurnGate } from './VoiceAllowance';
 import type { VoiceLink } from './VoiceLink';
@@ -104,6 +104,14 @@ export const LISTEN_CONFIRM_MS = 5000;
 /** How many times a stop that is not confirmed is sent again (one wait apart) before the relay only waits. */
 const STOP_RESENDS = 6;
 const NO_LISTEN: ListenInfo = { state: '', reason: '' };
+/**
+ * A person's audio connection that the worker lost on its own (it never connected in time, or the network dropped it) is tried
+ * again while they stay, after these waits, instead of leaving their voice paused until they walk out and back in. Once
+ * these are used up in one visit, it stays paused as before.
+ */
+export const RECONNECT_DELAYS_MS: readonly number[] = [1500, 4000, 10000];
+/** Why a connection ended that is worth trying again: the network, not the person. */
+const RECONNECT_REASONS: ReadonlySet<LeaveReason> = new Set<LeaveReason>(['timeout', 'failed']);
 
 /** A person's latest ask to keep listening or to stop, until the worker confirms it. */
 interface ListenRequest {
@@ -247,6 +255,9 @@ export class VoiceCalls {
     onListenGranted?: (spaceName: string, personId: string) => void;
     /** Someone here tapped Stop speaking on one of this bot's replies (round 8), by its response id: what is playing of it stops. */
     onStopSpeaking?: (spaceName: string, responseId: string) => void;
+    /** How many times each person's lost connection was tried again this visit, and the try that is waiting. */
+    private readonly reconnects = new Map<string, number>();
+    private readonly reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
     private epoch = 0;
     private bubbleSeq = 0;
 
@@ -799,6 +810,7 @@ export class VoiceCalls {
         this.otherVoiceBots.delete(spaceName);
         for (const key of this.voiceBotNames.keys()) if (key.startsWith(`${spaceName}\n`)) this.voiceBotNames.delete(key);
         for (const [key, lost] of this.lost) if (lost.spaceName === spaceName) this.lost.delete(key);
+        for (const key of [...this.reconnects.keys(), ...this.reconnectTimers.keys()]) if (key.startsWith(`${spaceName}\n`)) this.forgetReconnects(key);
         for (const key of this.spoken.keys()) if (key.startsWith(`${spaceName}\n`)) this.spoken.delete(key);
         for (const key of this.pausedFor) if (key.startsWith(`${spaceName}\n`)) this.pausedFor.delete(key);
         for (const key of [...this.heldBack.keys()]) if (key.startsWith(`${spaceName}\n`)) this.forgetHold(key);
@@ -934,6 +946,8 @@ export class VoiceCalls {
         this.talking.get(spaceName)?.delete(spaceUserId);
         this.joined.delete(callKey(spaceName, spaceUserId));
         this.lost.delete(callKey(spaceName, spaceUserId));
+        // A new visit gets its own tries
+        this.forgetReconnects(callKey(spaceName, spaceUserId));
         this.live.delete(callKey(spaceName, spaceUserId));
         this.modes.delete(callKey(spaceName, spaceUserId));
         this.sentModes.delete(callKey(spaceName, spaceUserId));
@@ -1002,7 +1016,8 @@ export class VoiceCalls {
         const held = this.opening.get(bubble.sessionId) ?? [];
         this.opening.delete(bubble.sessionId);
         if (!setup || !providers) {
-            this.evictBubble(bubble.sessionId, `the bot does not speak: ${why}`);
+            // Orbit only could not be asked (busy, or a moment of network): the people waiting try again shortly, as a lost connection does
+            this.evictBubble(bubble.sessionId, `the bot does not speak: ${why}`, why === 'orbit');
             return;
         }
         this.rememberSession(bubble.sessionId, providers);
@@ -1058,6 +1073,53 @@ export class VoiceCalls {
         this.tell(call.spaceName, call.participantId, 'paused');
     }
 
+    /**
+     * The worker lost a person's connection on its own (`RECONNECT_REASONS`) while they are still here: it is opened again after a short
+     * wait, the way connections come back after the worker does (`restore`), and they are told it is connecting, not paused. The game
+     * itself never starts a connection twice in one visit, so without this they would stay paused until they walk out and back in.
+     * False when it is not tried again (they are not here, or this visit's tries are used): the caller ends it as before.
+     */
+    private reconnectLater(call: Call, reason: string): boolean {
+        const { spaceName, participantId } = call;
+        const key = callKey(spaceName, participantId);
+        const tries = this.reconnects.get(key) ?? 0;
+        if (tries >= RECONNECT_DELAYS_MS.length || !this.roster.get(spaceName)?.has(participantId)) {
+            this.log(`voice: the audio connection with ${participantId} in ${spaceName} ended (${reason}); voice paused for them`);
+            return false;
+        }
+        this.reconnects.set(key, tries + 1);
+        this.log(`voice: the audio connection with ${participantId} in ${spaceName} ended (${reason}); trying again (${tries + 1} of ${RECONNECT_DELAYS_MS.length})`);
+        this.calls.delete(key);
+        this.sentModes.delete(key);
+        this.joined.delete(key);
+        // Their browser closes its side now, so the next start is a fresh connection
+        this.game.sendDisconnect(spaceName, participantId);
+        this.tell(spaceName, participantId, 'connecting');
+        this.lost.set(key, { spaceName, personId: participantId });
+        this.clearReconnect(key);
+        const timer = setTimeout(() => {
+            this.reconnectTimers.delete(key);
+            // Gone, started again by the game meanwhile, or waiting for the worker to come back (which restores it then)
+            if (!this.lost.has(key) || this.calls.has(key) || !this.link.isUp()) return;
+            this.lost.delete(key);
+            this.restoreOne(spaceName, participantId);
+        }, RECONNECT_DELAYS_MS[tries]);
+        timer.unref?.();
+        this.reconnectTimers.set(key, timer);
+        return true;
+    }
+
+    private clearReconnect(key: string): void {
+        const timer = this.reconnectTimers.get(key);
+        if (timer) clearTimeout(timer);
+        this.reconnectTimers.delete(key);
+    }
+
+    private forgetReconnects(key: string): void {
+        this.clearReconnect(key);
+        this.reconnects.delete(key);
+    }
+
     // ---- from the worker ----
 
     handleWorkerMessage(message: FromWorker): void {
@@ -1075,6 +1137,11 @@ export class VoiceCalls {
                 this.tell(call.spaceName, call.participantId, 'on');
                 this.onAudience?.(call.spaceName);
             } else if (message.type === 'participant.leave') {
+                if (RECONNECT_REASONS.has(message.reason)) {
+                    if (this.reconnectLater(call, message.reason)) return;
+                } else {
+                    this.log(`voice: the audio connection with ${call.participantId} in ${call.spaceName} ended (${message.reason}); voice paused for them`);
+                }
                 this.drop(call, false);
             }
         } else if (message.type === 'room.state') {
@@ -1270,9 +1337,9 @@ export class VoiceCalls {
 
     /**
      * Forgets a bubble the worker does not hold, so the next start opens a new one instead of reusing a dead one.
-     * Whoever was waiting on it is told to disconnect and stays text-only.
+     * Whoever was waiting on it is told to disconnect and stays text-only, unless `tryAgain` (see `reconnectLater`).
      */
-    private evictBubble(sessionId: string, reason = 'worker refused it'): void {
+    private evictBubble(sessionId: string, reason = 'worker refused it', tryAgain = false): void {
         for (const [spaceName, bubble] of this.bubbles) {
             if (bubble.sessionId !== sessionId) continue;
             this.bubbles.delete(spaceName);
@@ -1280,7 +1347,7 @@ export class VoiceCalls {
             this.onSessionEnded?.(spaceName);
             this.sessionGone(spaceName);
             this.log(`voice: no audio session for ${spaceName} (${reason})`);
-            for (const call of [...this.calls.values()]) if (call.sessionId === sessionId) this.drop(call, false);
+            for (const call of [...this.calls.values()]) if (call.sessionId === sessionId && !(tryAgain && this.reconnectLater(call, reason))) this.drop(call, false);
             const room = this.rooms.get(spaceName);
             if (room?.sessionId === sessionId) {
                 this.rooms.delete(spaceName);
@@ -1342,15 +1409,21 @@ export class VoiceCalls {
         const lost = [...this.lost.values()].filter((l) => onlySpace === undefined || l.spaceName === onlySpace);
         for (const { spaceName, personId } of lost) {
             this.lost.delete(callKey(spaceName, personId));
-            const person = this.roster.get(spaceName)?.get(personId);
-            if (!person || this.invitations.has(spaceName) || this.game.botSpaceUserId(spaceName) === undefined) continue;
-            this.start(spaceName, person);
-            if (this.calls.has(callKey(spaceName, personId))) this.game.sendStart(spaceName, personId);
+            this.clearReconnect(callKey(spaceName, personId));
+            this.restoreOne(spaceName, personId);
         }
         for (const [spaceName, invitation] of [...this.invitations]) {
             if (onlySpace !== undefined && spaceName !== onlySpace) continue;
             if (!this.rooms.has(spaceName) && this.game.botSpaceUserId(spaceName) !== undefined) this.joinRoom(spaceName, invitation.serverUrl, invitation.token);
         }
+    }
+
+    /** Opens a lost connection with one person again, and asks their browser for a new offer, when they and the bot are still here. */
+    private restoreOne(spaceName: string, personId: string): void {
+        const person = this.roster.get(spaceName)?.get(personId);
+        if (!person || this.invitations.has(spaceName) || this.game.botSpaceUserId(spaceName) === undefined) return;
+        this.start(spaceName, person);
+        if (this.calls.has(callKey(spaceName, personId))) this.game.sendStart(spaceName, personId);
     }
 
     // ---- for what comes next (recognition, speaking): the controls of a bubble's audio ----
@@ -1552,6 +1625,9 @@ export class VoiceCalls {
         this.invitations.clear();
         this.roster.clear();
         this.lost.clear();
+        for (const timer of this.reconnectTimers.values()) clearTimeout(timer);
+        this.reconnectTimers.clear();
+        this.reconnects.clear();
         this.spoken.clear();
         this.live.clear();
         this.joined.clear();
