@@ -112,6 +112,16 @@ describe('the kit audio pieces', () => {
         expect(wavDataStart(wav.subarray(0, 60))).toBeUndefined();
     });
 
+    it('plays no noise from a WAV that ended before its samples, and still plays a short stream without a header', () => {
+        const wav = wavFile(new Int16Array([4, 5]), 16000);
+        const cutShort = new PcmReader({ skipWavHeader: true });
+        expect(cutShort.take(wav.subarray(0, 30))).toBeUndefined();
+        expect(cutShort.flush()).toBeUndefined();
+        const plain = new PcmReader({ skipWavHeader: true });
+        expect(plain.take(new Uint8Array(pcm(3)).subarray(0, 3))).toBeUndefined();
+        expect(plain.flush()).toEqual(new Int16Array([3]));
+    });
+
     it('reads audio sent as base64 or hex', () => {
         expect(decodeAudioText(pcm(7).toString('base64'), 'base64')).toEqual(new Uint8Array(pcm(7)));
         expect(decodeAudioText(pcm(7).toString('hex'), 'hex')).toEqual(new Uint8Array(pcm(7)));
