@@ -56,6 +56,7 @@ import { BotAttention, followUpSeconds } from './BotAttention';
 import { isBotSpaceUser, type BotAsksPort } from '../mcp/NearbyAsks';
 import type { PrivateEventPusherToFront } from '@workadventure/messages';
 import { audioFileNameFor } from '../utils/audioFileName';
+import { GreetingCooldown, greetingPersonOf, isGreetingReply, type GreetingOrbit } from './GreetingCooldown';
 
 // Get the secret key from environment - must match pusher's SECRET_KEY
 const SECRET_KEY = process.env.SECRET_KEY || 'default-secret-key';
@@ -98,6 +99,12 @@ export class BotClient {
     private accessGate: BotAccessGate | null = null;
     /** When each person was told that the bot's owner limits who can chat with it: once per visit (see mayChat). */
     private readonly toldNoChat = new Map<number, number>();
+    /**
+     * Whether the bot may greet a person on its own again (greetings cooldown): Orbit remembers each bot's last greeting per person.
+     * Made when first needed, from Orbit when it is set up (a test can set its own with setGreetingOrbit).
+     */
+    private greetingCooldown: GreetingCooldown | null = null;
+    private greetingOrbit: GreetingOrbit | null | undefined = undefined;
     /** How long a first message waits for the game to say who sent it, and how often it looks again (see mayChat) */
     private static readonly PERSON_WAIT_MS = 3000;
     private static readonly PERSON_RETRY_MS = 100;
@@ -441,13 +448,15 @@ export class BotClient {
      * Whether the bot may greet this person with its AI: the same answer as for chatting with it nearby, asked before
      * anything is generated. A person who is refused hears the owner's line once per visit (shared with mayChat, so a
      * greeting and a message do not both say it) and gets no greeting. When Orbit cannot answer and nothing is
-     * remembered there is no greeting; their first words get the "can't check" line. Never throws.
+     * remembered there is no greeting; their first words get the "can't check" line. A person who may chat is greeted only once
+     * per cooldown by this bot (see GreetingCooldown); when that can't be checked there is no greeting either. Never throws.
      */
     async mayGreet(spaceName: string, personId: number): Promise<boolean> {
+        if (!this.behavior) return true;
         const gate = this.accessGate;
-        if (!gate || !this.behavior) return true;
+        if (!gate) return this.greetingOutOfCooldown(personId);
         const verdict = await this.chatVerdict(gate, this.behavior.getPersonForAccess(personId));
-        if (verdict.kind === 'allowed') return this.greetingWithinAllowance(personId);
+        if (verdict.kind === 'allowed') return this.greetingOutOfCooldown(personId);
         if (verdict.kind === 'refused') {
             const toldAt = this.toldNoChat.get(personId);
             if (toldAt === undefined || Date.now() - toldAt >= BotClient.TOLD_NO_CHAT_FOR_MS) {
@@ -459,17 +468,39 @@ export class BotClient {
     }
 
     /**
-     * A voice bot greets only while replies beyond the ones kept for text are left (#1669): a greeting is a Universe AI reply nobody
-     * asked for. A greeting that isn't made says nothing. Every other bot is as it was. Never throws.
+     * A bot greets the same person on its own at most once per cooldown (Orbit's "Greet the same person again after"). A greeting is
+     * free for the person, whatever bot it is, so it is no longer held back by their replies left. Never throws.
      */
-    private async greetingWithinAllowance(personId: number): Promise<boolean> {
-        if (!this.isVoiceBot() || !this.behavior) return true;
+    private async greetingOutOfCooldown(personId: number): Promise<boolean> {
+        if (!this.behavior) return true;
         try {
-            return await this.behavior.mayGreetWithinAllowance(personId);
+            return await this.greetings().claim(personId, this.behavior.getTalker(personId));
         } catch (error) {
-            console.warn(`[Bot ${this.config.botId}] Could not check the allowance for a greeting, greeting anyway: ${error instanceof Error ? error.message : 'unknown'}`);
-            return true;
+            console.warn(`[Bot ${this.config.botId}] Could not check the greetings cooldown, no greeting this time: ${error instanceof Error ? error.message : 'unknown'}`);
+            return false;
         }
+    }
+
+    private greetings(): GreetingCooldown {
+        if (!this.greetingCooldown) {
+            const orbit = this.greetingOrbit !== undefined ? this.greetingOrbit : adminApiService.isConfigured() ? adminApiService : null;
+            this.greetingCooldown = new GreetingCooldown(this.config.botId, orbit);
+        }
+        return this.greetingCooldown;
+    }
+
+    /** Where greetings are remembered: Orbit, or null to greet as before. For tests. */
+    setGreetingOrbit(orbit: GreetingOrbit | null): void {
+        this.greetingOrbit = orbit;
+        this.greetingCooldown = null;
+    }
+
+    /**
+     * A greeting for this person is over, made or not (called by the behaviours once the AI is done). One that never reached the chat
+     * is handed back, so the person is greeted next time.
+     */
+    greetingEnded(personId: number): void {
+        this.greetingCooldown?.ended(personId);
     }
 
     /**
@@ -2162,6 +2193,13 @@ export class BotClient {
                 },
             },
         });
+        // A greeting the bot made on its own is never a voice reply (greetings cooldown): it stays in the chat, so it is not spoken
+        // and never counts as a spoken reply. Its words reaching the chat are what makes it a greeting that was made.
+        if (isGreetingReply(responseId)) {
+            const person = greetingPersonOf(responseId);
+            if (person !== undefined && (token.trim() || (isFinal && finalContent?.trim()))) this.greetingCooldown?.made(person);
+            return;
+        }
         // A voice bot says what it has written once it is final: after the chat has it, and never the steps line or an error
         if (this.speech && steps === undefined && !isError) {
             if (isFinal) {

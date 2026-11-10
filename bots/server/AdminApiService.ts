@@ -9,6 +9,7 @@ import * as Sentry from '@sentry/node';
 import { parseForgetNotice, type MemoryForgetHandler } from '../memory/ForgetNotice';
 import type { WokaList } from '../matrix/wokaPicture';
 import type { VoiceActiveAnswer, VoiceCredentialsAnswer, VoiceHealthReport, VoiceLimits } from '../voice/VoiceSettings';
+import type { GreetingClaim } from '../client/GreetingCooldown';
 
 // Optional Sentry integration (uncomment if @sentry/node is installed)
 // import * as Sentry from '@sentry/node';
@@ -931,6 +932,49 @@ export class AdminApiService {
     }
 
     /**
+     * May this bot greet this person on its own now (greetings cooldown, Orbit /greeting)? Orbit remembers a yes at once, so the next
+     * one for the same bot and person comes only after the cooldown. No Orbit to ask, or an Orbit from before (404), greets as before.
+     * Throws when Orbit can't answer otherwise, so the caller makes no greeting it can't remember.
+     */
+    async claimGreeting(botId: string, talker: { userId: string; isGuest: boolean }): Promise<GreetingClaim> {
+        if (!this.isConfigured()) return { greet: true };
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!botServiceToken) return { greet: true };
+        try {
+            const response = await axios.post(
+                `${this.adminApiUrl}/api/bots/${encodeURIComponent(botId)}/greeting`,
+                talker,
+                { headers: { Authorization: `Bearer ${botServiceToken}` }, timeout: 5000 }
+            );
+            const body = response.data as Partial<{ greet: boolean; greetedAt: string }>;
+            if (body?.greet === false) return { greet: false };
+            if (body?.greet !== true) throw new Error('Orbit gave no answer about the greeting');
+            return typeof body.greetedAt === 'string' && !Number.isNaN(Date.parse(body.greetedAt)) ? { greet: true, greetedAt: body.greetedAt } : { greet: true };
+        } catch (error) {
+            if (axios.isAxiosError(error) && error.response?.status === 404) return { greet: true };
+            const msg = (axios.isAxiosError(error) && error.response?.status) || (error as Error)?.message || 'Unknown error';
+            console.warn(`[AdminApiService] Greeting check failed, no greeting this time: ${msg}`);
+            throw error instanceof Error ? error : new Error(String(msg));
+        }
+    }
+
+    /** A greeting that was claimed and not made after all: Orbit forgets it, so the person is greeted next time. Never throws. */
+    async releaseGreeting(botId: string, input: { userId: string; isGuest: boolean; greetedAt: string }): Promise<void> {
+        if (!this.isConfigured()) return;
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!botServiceToken) return;
+        try {
+            await axios.post(`${this.adminApiUrl}/api/bots/${encodeURIComponent(botId)}/greeting/release`, input, {
+                headers: { Authorization: `Bearer ${botServiceToken}` },
+                timeout: 5000,
+            });
+        } catch (error) {
+            const msg = (axios.isAxiosError(error) && error.response?.status) || (error as Error)?.message || 'Unknown error';
+            console.warn(`[AdminApiService] Could not hand back a greeting that was not made: ${msg}`);
+        }
+    }
+
+    /**
      * May this reply be spoken (game #1669, Orbit voice-allowance)? Counts it against the person's Universe AI window when it
      * is, under the reply's turn, so asking again never counts it twice. Null when Orbit can't be asked or doesn't know the
      * question: the caller keeps the reply in text, so nothing is spoken on Universe AI's account without an answer.
@@ -1570,6 +1614,8 @@ export class AdminApiService {
         /** Who it was for, as the bot knows them (WorkAdventure uuid or email); Orbit matches it to their account. */
         userId?: string;
         isGuest?: boolean;
+        /** A greeting the bot made on its own (greetings cooldown): free for the person, still the payer's usage. */
+        greeting?: boolean;
     }): Promise<void> {
         if (!this.isConfigured()) {
             if (process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -1602,6 +1648,8 @@ export class AdminApiService {
                 ...(usage.channel ? { channel: usage.channel } : {}),
                 ...(usage.userId ? { userId: usage.userId } : {}),
                 ...(typeof usage.isGuest === "boolean" ? { isGuest: usage.isGuest } : {}),
+                // A greeting the bot made on its own: the payer's usage, never counted against the person it greeted
+                ...(usage.greeting ? { greeting: true } : {}),
             };
 
             if (process.env.ENABLE_BOT_DEBUG === 'true') {
