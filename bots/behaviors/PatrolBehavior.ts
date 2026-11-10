@@ -64,6 +64,11 @@ export class PatrolBehavior extends BaseBehavior {
 
         const config = this.config as PatrolBehaviorConfig;
         
+        // A summon ends when its person has left or walked off, even if they send no more moves
+        if (this.isSummoned) {
+            this.endSummonIfPersonAway();
+        }
+
         // If bot is summoned or leading, allow movement (don't stop for normal behavior logic)
         // The bot will stop when it reaches the target position
         if (this.isSummoned || this.isLeading) {
@@ -1643,7 +1648,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
     /**
      * Handle chat messages from players
      */
-    async onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string, galleryUrls?: string[], uploads?: ChatUpload[]): Promise<void> {
+    async onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string, galleryUrls?: string[], uploads?: ChatUpload[], heardAt = Date.now()): Promise<void> {
         if (!this.bot) return;
 
         const botId = this.bot.getBotId();
@@ -1721,7 +1726,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         // Interruption-safe generation (handles queue, abort, update, generation tracking)
         await this.safeGenerateResponse(spaceName, senderId, originalUserMessage, message, botId,
             (signal, images) => this.generateAIResponseStream(spaceName, senderId, message, botId, signal, images),
-            url, mediaType, mimeType, galleryUrls
+            url, mediaType, mimeType, galleryUrls, heardAt
         );
     }
 

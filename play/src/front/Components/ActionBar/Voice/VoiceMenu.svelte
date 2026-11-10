@@ -3,8 +3,18 @@
     import LL, { locale } from "../../../../i18n/i18n-svelte";
     import Woka from "../../Woka/Woka.svelte";
     import { requestedMicrophoneState } from "../../../Stores/MediaStore";
-    import { voiceChoiceStore, type VoiceBotView, type VoiceSpaceView } from "../../../Chat/Bots/VoiceBots";
-    import { choiceSpeaksToBot, voiceAllowanceLine, type VoiceChoice } from "../../../Chat/Bots/VoiceMode";
+    import {
+        resumeBotSound,
+        voiceChoiceStore,
+        type VoiceBotView,
+        type VoiceSpaceView,
+    } from "../../../Chat/Bots/VoiceBots";
+    import {
+        choiceHearsBot,
+        choiceSpeaksToBot,
+        voiceAllowanceLine,
+        type VoiceChoice,
+    } from "../../../Chat/Bots/VoiceMode";
     import { replyLimitTime } from "../../../Chat/Bots/BotReplyLimit";
     import {
         IconAlignLeft,
@@ -18,6 +28,10 @@
     /**
      * How you talk with bots (#1666), opened from the Voice button: the bot, where it stands with you, how to get its
      * attention when others are here, and four rows. The choice is yours alone and applies to every voice bot.
+     *
+     * Round 8: when there is something to do about this bot right now, the top fits the moment instead: what it can
+     * hear of you in a group, with Keep talking, Cancel or Stop listening (Stop listening first while it listens), and
+     * Play bot audio when the browser blocked its sound (its own tap). The four rows stay the same below it.
      */
     export let bot: VoiceBotView;
     export let view: VoiceSpaceView;
@@ -44,6 +58,8 @@
     // What is left of this person's spoken replies (#1669), as the bot told it. Read when the menu opens: a count is only true until its window ends.
     const openedAt = Date.now();
     $: allowance = voiceAllowanceLine(bot, openedAt);
+    /** A name kept whole inside a sentence of another direction (an English bot name in Arabic). */
+    const isolate = (name: string): string => `\u2068${name}\u2069`;
     const timeOf = (at: number | undefined, language: string): string | undefined =>
         at === undefined ? undefined : replyLimitTime(new Date(at).toISOString(), language);
     $: allowanceTime = timeOf(allowance.kind === "none" ? undefined : allowance.resetsAt, $locale);
@@ -81,11 +97,69 @@
         $LL.say.voice.attention({ bot: bot.name }) +
         (bot.followUpSeconds > 0 ? " " + $LL.say.voice.attentionFollowUp({ seconds: bot.followUpSeconds }) : "");
 
-    let rowElements: HTMLButtonElement[] = [];
+    // ---- the top that fits the moment (round 8) ----
 
-    // Opens on the row you have, so the arrows start where you are
-    function focusWhenOpened(node: HTMLElement, picked: boolean) {
-        if (picked) node.focus();
+    /** What the bot hears of you in the group, when its voice is on: "" alone, or in a mode without the microphone. */
+    $: listening = bot.state === "on" ? bot.listening : "";
+    $: limited = bot.listeningReason === "limit";
+    $: listeningOn = listening === "on" && !limited;
+    $: showNow = !!listening || soundBlocked;
+    $: nowStatus = micOff
+        ? $LL.say.voice.statusMicOff()
+        : listening === "on"
+        ? limited
+            ? $LL.say.voice.listen.onLimit()
+            : $LL.say.voice.listen.on()
+        : listening === "pending"
+        ? $LL.say.voice.listen.turningOn()
+        : listening === "stopping"
+        ? $LL.say.voice.listen.stopping()
+        : listening === "checking"
+        ? $LL.say.voice.listen.checking()
+        : listening === "off"
+        ? bot.listeningReason === "others_joined"
+            ? $LL.say.voice.listen.pausedOthers()
+            : bot.listeningReason === "failed"
+            ? $LL.say.voice.listen.failed()
+            : limited
+            ? $LL.say.voice.listen.limit()
+            : $LL.say.voice.listen.notListening()
+        : $LL.say.voice.listen.soundBlocked();
+    /** Keep talking is offered while it doesn't listen, except when it can't for now (a limit). */
+    $: offerKeep = listening === "off" && !limited;
+    /** Stop listening, first, whenever it listens or may still: also to take back an ask that is paused by a limit. */
+    $: offerStop = listening === "on" || listening === "stopping" || listening === "checking";
+    $: hasAction = offerKeep || offerStop || listening === "pending" || soundBlocked;
+    /** A reply is being said and this person hears it: Stop speaking, right under Stop listening. Blocked sound offers Play bot audio instead. */
+    $: offerStopSpeaking = !!bot.speaking && choiceHearsBot($voiceChoiceStore) && !soundBlocked;
+    $: nowLine = offerStopSpeaking && listening ? `${nowStatus} · ${$LL.say.voice.listen.speakingNow()}` : nowStatus;
+
+    function stopSpeaking() {
+        view.stopSpeaking(bot.spaceUserId);
+        dispatch("close", { refocus: true });
+    }
+
+    function ask(listen: "keep" | "stop") {
+        view.askToListen(bot.spaceUserId, listen);
+        dispatch("close", { refocus: true });
+    }
+
+    // Called straight from the tap: the browser lets sound start only from a person's own gesture. Nothing else changes:
+    // listening stays as it is, and the button goes when the sound really plays
+    function playAudio() {
+        resumeBotSound(bot.spaceUserId);
+    }
+
+    let rowElements: HTMLButtonElement[] = [];
+    let focusedOnOpen = false;
+
+    // Opens on the top action when there is one, so it is reached first; otherwise on the row you have, so the arrows
+    // start where you are. Only once, when the menu opens
+    function focusWhenOpened(node: HTMLElement, wanted: boolean) {
+        if (wanted && !focusedOnOpen) {
+            focusedOnOpen = true;
+            node.focus();
+        }
     }
 
     function move(event: KeyboardEvent, from: number) {
@@ -125,26 +199,94 @@
     on:keydown={onKeydown}
     on:focusout={onFocusout}
 >
-    <div class="head">
-        <span class="head-woka" class:dim={bot.state === "paused"} aria-hidden="true">
-            {#if $pictureStore}
-                <Woka src={$pictureStore} customWidth="32px" />
+    {#if showNow}
+        <div class="now" data-testid="voice-menu-now">
+            <div class="who">
+                <span class="who-woka" class:on={listeningOn} class:dim={listening === "off"} aria-hidden="true">
+                    {#if $pictureStore}
+                        <Woka src={$pictureStore} customWidth="30px" />
+                    {/if}
+                </span>
+                <span class="who-text">
+                    <span class="who-name" dir="auto">{bot.name}</span>
+                    <span class="who-status" data-testid="voice-menu-listening"
+                        ><i class="dot" class:off={!listeningOn} aria-hidden="true" /><span dir="auto">{nowLine}</span
+                        ></span
+                    >
+                </span>
+            </div>
+            {#if offerStop}
+                <button
+                    type="button"
+                    class="act"
+                    data-testid="voice-stop-listening"
+                    use:focusWhenOpened={true}
+                    on:click={() => ask("stop")}>{$LL.say.voice.listen.stop()}</button
+                >
             {/if}
-        </span>
-        <div class="head-text">
-            <span class="head-name" dir="auto">{bot.name}</span>
-            <span class="head-status" data-testid="voice-menu-status"
-                ><span class="dot" aria-hidden="true" />{status}</span
-            >
+            {#if listening === "pending"}
+                <button
+                    type="button"
+                    class="act"
+                    data-testid="voice-cancel-listening"
+                    use:focusWhenOpened={true}
+                    on:click={() => ask("stop")}>{$LL.say.voice.listen.cancel()}</button
+                >
+            {/if}
+            {#if offerStopSpeaking}
+                <button type="button" class="act" data-testid="voice-stop-speaking" on:click={stopSpeaking}
+                    >{$LL.say.voice.listen.stopSpeaking()}</button
+                >
+            {/if}
+            {#if soundBlocked}
+                {#if listening}
+                    <p class="note" dir="auto">{$LL.say.voice.listen.soundBlocked()}</p>
+                {/if}
+                <button
+                    type="button"
+                    class="act"
+                    class:cta={!offerKeep}
+                    data-testid="voice-play-audio"
+                    use:focusWhenOpened={true}
+                    on:click={playAudio}>{$LL.say.voice.listen.playAudio()}</button
+                >
+            {/if}
+            {#if offerKeep}
+                <p class="note" dir="auto">{$LL.say.voice.listen.warning({ bot: isolate(bot.name) })}</p>
+                <button
+                    type="button"
+                    class="act cta"
+                    data-testid="voice-keep-talking"
+                    use:focusWhenOpened={true}
+                    on:click={() => ask("keep")}>{$LL.say.voice.listen.keep({ bot: isolate(bot.name) })}</button
+                >
+            {/if}
+            {#if listeningOn}
+                <p class="note" dir="auto">{$LL.say.voice.listen.onNote()}</p>
+            {/if}
         </div>
-    </div>
+    {:else}
+        <div class="head">
+            <span class="head-woka" class:dim={bot.state === "paused"} aria-hidden="true">
+                {#if $pictureStore}
+                    <Woka src={$pictureStore} customWidth="32px" />
+                {/if}
+            </span>
+            <div class="head-text">
+                <span class="head-name" dir="auto">{bot.name}</span>
+                <span class="head-status" data-testid="voice-menu-status"
+                    ><span class="dot" aria-hidden="true" />{status}</span
+                >
+            </div>
+        </div>
 
-    {#if view.othersPresent}
-        <!-- With others here a bot answers the one who uses its name; it says so only then. -->
-        <p class="attention" data-testid="voice-menu-attention">
-            <span class="attention-icon" aria-hidden="true"><IconMessageCircle2 /></span>
-            <span>{attention}</span>
-        </p>
+        {#if view.othersPresent}
+            <!-- With others here a bot answers the one who uses its name; it says so only then. -->
+            <p class="attention" data-testid="voice-menu-attention">
+                <span class="attention-icon" aria-hidden="true"><IconMessageCircle2 /></span>
+                <span>{attention}</span>
+            </p>
+        {/if}
     {/if}
 
     <p class="eyebrow" id="voice-menu-eyebrow">{$LL.say.voice.howYouTalk()}</p>
@@ -160,7 +302,7 @@
                 tabindex={picked ? 0 : -1}
                 data-testid={`voice-choice-${row.choice}`}
                 bind:this={rowElements[index]}
-                use:focusWhenOpened={picked}
+                use:focusWhenOpened={picked && !hasAction}
                 on:click={() => voiceChoiceStore.choose(row.choice)}
                 on:keydown={(event) => move(event, index)}
             >
@@ -186,7 +328,8 @@
     .voice-menu {
         width: 300px;
         max-width: calc(100vw - 96px);
-        max-height: calc(100dvh - 160px);
+        /* Never past the screen: no taller than the room the button leaves it (large text scrolls, the top first) */
+        max-height: min(calc(100dvh - 160px), var(--voice-menu-max, 100dvh));
         overflow-y: auto;
         padding: 12px 8px 8px;
         border-radius: 16px;
@@ -196,6 +339,95 @@
         -webkit-backdrop-filter: blur(18px) saturate(140%);
         color: #fff;
         animation: menu-in 200ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+    }
+    /* The top that fits the moment (round 8): the bot and what it hears of you, then the one thing to do. */
+    .now {
+        display: grid;
+        gap: 10px;
+        padding: 0 8px 10px;
+    }
+    .who {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-height: 44px;
+    }
+    .who-woka {
+        display: grid;
+        place-items: center;
+        flex: none;
+        width: 40px;
+        height: 40px;
+        border-radius: 9999px;
+        background: #1f1c2f;
+        box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.3);
+    }
+    .who-woka.on {
+        box-shadow: 0 0 0 2.5px #8629fc, 0 0 12px -2px rgba(134, 41, 252, 0.8);
+    }
+    .who-woka.dim {
+        opacity: 0.6;
+    }
+    .who-text {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        min-width: 0;
+        gap: 2px;
+    }
+    .who-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 0.9375rem;
+        font-weight: 700;
+        line-height: 1.2;
+    }
+    .who-status {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 0.8125rem;
+        line-height: 1.3;
+        color: rgba(255, 255, 255, 0.72);
+    }
+    .dot.off {
+        background: #8b88a0;
+    }
+    .note {
+        margin: 0;
+        font-size: 0.8125rem;
+        line-height: 1.4;
+        color: rgba(255, 255, 255, 0.72);
+    }
+    /* UI standard secondary button: glass, thin edge, fully round, 44px. The one main action uses the gradient. */
+    .act {
+        width: 100%;
+        min-height: 44px;
+        padding: 0 18px;
+        border-radius: 9999px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(255, 255, 255, 0.06);
+        color: #fff;
+        font-weight: 700;
+        font-size: 0.875rem;
+        line-height: 1.2;
+        cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+    }
+    .act.cta {
+        border: 0;
+        background: linear-gradient(90deg, #8629fc, #4156f6);
+        box-shadow: 0 8px 24px -10px rgba(134, 41, 252, 0.7);
+    }
+    @media (hover: hover) {
+        .act:not(.cta):hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+    }
+    .act:focus-visible {
+        outline: 2px solid #a78bfa;
+        outline-offset: 2px;
     }
     .head {
         display: flex;

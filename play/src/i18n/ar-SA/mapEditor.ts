@@ -420,6 +420,9 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
                 voice: {
                     title: "الصوت",
                     offDoor: "متوقف · امنح {bot} صوتًا",
+                    offRemembered: "متوقف · صوت {voice} محفوظ",
+                    offHint: "الصوت متوقف لدى {bot}.",
+                    pickNone: "اختر صوتًا",
                     notAllowedBrief: "متوقف في هذا الكون",
                     noServiceBrief: "غير متاح هنا بعد",
                     loading: "جارٍ التحميل…",
@@ -484,8 +487,6 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
                     askUniverseAiLine: "كل شخص يستخدم ردوده الصوتية الخاصة: حتى {replies} كل {hours} ساعات.",
                     askKeyLine: "أنت تدفع؛ ومن يتحدث مع {bot} لا يدفع شيئًا.",
                     askKeyLineTheirs: "{owner} يدفع؛ ومن يتحدث مع {bot} لا يدفع شيئًا.",
-                    firstOnUniverseAi: "{bot} يتحدث في الفقاعات الآن بصوت {voice}.",
-                    firstOnKey: "{bot} يتحدث في الفقاعات الآن بصوت {voice} عبر {key}.",
                     cardCaption: "الصوت",
                     hear: "استمع إلى {voice}",
                     noSample: "لا توجد عيّنة لصوت {voice}",

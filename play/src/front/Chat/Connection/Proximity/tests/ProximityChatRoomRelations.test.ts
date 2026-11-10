@@ -349,6 +349,112 @@ describe("Nearby chat reactions and replies", () => {
         expect(get(quote.canReact)).toBe(false);
         expect(get(quote.canReply)).toBe(false);
     });
+
+    describe("what a bot heard in a voice note", () => {
+        const NOTE_ID = "6c0f3d2e-1a45-4b6e-9a77-0d9b5e2f8a10";
+        const voiceNote = {
+            sender: "room_3",
+            spaceMessage: {
+                message: "Voice message",
+                name: "Sara",
+                id: NOTE_ID,
+                url: "https://files.test/Voice message.weba",
+                mediaType: "audio",
+                fileName: "Voice message.weba",
+                voiceDurationMs: 4000,
+            },
+        };
+        const transcript = (sender: string, state: string, text?: string, noteSender = "room_3", messageId = NOTE_ID) =>
+            fake.emit("spaceMessageTranscript", {
+                sender,
+                spaceMessageTranscript: { messageId, state, text, senderUserId: noteSender },
+            });
+        const withBot = () => {
+            const users = new Map(get(fake.space.usersStore));
+            users.set("room_9", spaceUser("room_9", "Linear", "bot-abc"));
+            fake.space.usersStore.set(users);
+        };
+
+        it("shows Listening, then the words, inside the note itself", () => {
+            withBot();
+            fake.emit("spaceMessage", voiceNote);
+            transcript("room_9", "listening");
+            expect(get(last().content).transcript).toEqual({ state: "listening", text: undefined });
+            transcript("room_9", "heard", " Remind me tomorrow ");
+            expect(get(last().content).transcript).toEqual({ state: "heard", text: "Remind me tomorrow" });
+            // It is no message of its own
+            expect(conversation()).toHaveLength(1);
+        });
+
+        it("keeps what was heard for a note that arrives after it, and takes it only from a bot", () => {
+            withBot();
+            transcript("room_4", "heard", "forged by a person");
+            transcript("room_9", "failed");
+            fake.emit("spaceMessage", voiceNote);
+            expect(get(last().content).transcript).toEqual({ state: "failed", text: undefined });
+        });
+
+        it("ignores a person's claim about a note", () => {
+            withBot();
+            fake.emit("spaceMessage", voiceNote);
+            transcript("room_4", "heard", "forged by a person");
+            expect(get(last().content).transcript).toBeUndefined();
+        });
+
+        it("puts the words only under the note from the person the bot heard, even when someone reused its id", () => {
+            withBot();
+            fake.emit("spaceMessage", voiceNote);
+            const sara = last();
+            // Omar sends his own note with Sara's id: it is shown under a local id
+            fake.emit("spaceMessage", {
+                ...voiceNote,
+                sender: "room_4",
+                spaceMessage: { ...voiceNote.spaceMessage, name: "Omar" },
+            });
+            const omar = last();
+            expect(omar.id).not.toBe(NOTE_ID);
+            // The bot heard Omar's note: nothing lands under Sara's
+            transcript("room_9", "heard", "words Sara never said", "room_4");
+            expect(get(sara.content).transcript).toBeUndefined();
+            expect(get(omar.content).transcript).toBeUndefined();
+            // Sara's own hearing still lands
+            transcript("room_9", "heard", "Remind me tomorrow", "room_3");
+            expect(get(sara.content).transcript).toEqual({ state: "heard", text: "Remind me tomorrow" });
+        });
+
+        it("keeps waiting words for the right sender only", () => {
+            withBot();
+            transcript("room_9", "heard", "words Sara never said", "room_4");
+            fake.emit("spaceMessage", voiceNote);
+            expect(get(last().content).transcript).toBeUndefined();
+            transcript("room_9", "heard", "Remind me tomorrow", "room_3");
+            expect(get(last().content).transcript).toEqual({ state: "heard", text: "Remind me tomorrow" });
+        });
+
+        it("ignores words that name no sender", () => {
+            withBot();
+            fake.emit("spaceMessage", voiceNote);
+            transcript("room_9", "heard", "no sender", "");
+            expect(get(last().content).transcript).toBeUndefined();
+        });
+
+        it("shows the words under this person's own note", () => {
+            withBot();
+            room.sendMessage(
+                "Voice message",
+                "proximity",
+                true,
+                "https://files.test/Voice message.weba",
+                "audio",
+                undefined,
+                undefined,
+                "Voice message.weba"
+            );
+            const mine = last();
+            transcript("room_9", "heard", "my own words", "room_1", mine.id);
+            expect(get(mine.content).transcript).toEqual({ state: "heard", text: "my own words" });
+        });
+    });
 });
 
 describe("nearby chat relation checks", () => {

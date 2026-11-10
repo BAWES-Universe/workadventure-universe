@@ -505,6 +505,20 @@ describe('VoiceCalls: what a person says to the bot', () => {
         expect(t.calls.acceptSpoken(SPACE, 'room_7', '1-2', 'Nora, what do you think?')).toBe('new');
     });
 
+    it('with several people in the bubble, shows no live words until they are for the bot', () => {
+        const t = talking();
+        t.calls.hears = (_space, _person, text) => /^nora\b/i.test(text);
+        t.say({ type: 'user.speech_started' });
+        t.say({ type: 'user.partial', text: 'Sara, lunch' });
+        t.say({ type: 'user.partial', text: 'Sara, lunch at one' });
+        expect(t.game.drafts).toEqual([]);
+        t.say({ type: 'user.turn', outcome: 'final', text: 'Sara, lunch at one?', audioMs: 900 });
+        expect(t.game.drafts).toEqual([['room_7', { turnId: '1-1', state: 'cleared', text: '' }]]);
+        // Said to the bot: shown as they come, as before
+        t.say({ type: 'user.partial', turnId: '1-2', text: 'Nora, what' });
+        expect(t.game.drafts[1]).toEqual(['room_7', { turnId: '1-2', state: 'live', text: 'Nora, what' }]);
+    });
+
     it('with several people in the bubble, never offers back words that did not all come through when they were not said to the bot (#1858)', () => {
         const t = talking();
         t.calls.hears = (_space, _person, text) => /^nora\b/i.test(text);

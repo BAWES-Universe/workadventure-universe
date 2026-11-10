@@ -1401,6 +1401,7 @@ message SpaceEvent {
     SpaceStreamMessage spaceStreamMessage = 5;
     LowerAllHandsPublicMessage lowerAllHands = 6;
     SpaceMessageReaction spaceMessageReaction = 7;
+    SpaceMessageTranscript spaceMessageTranscript = 8;
   }
 }
 
@@ -1502,6 +1503,10 @@ message BotVoiceStatusMessage {
   int32 followUpSeconds = 4;   // how long the bot keeps listening after it answers without its name; 0: the bot sends none
   optional int32 repliesLeft = 5;  // spoken replies this person has left in their window (#1669); absent: the bot has no count
   string repliesResetAt = 6;   // when their window ends, as an ISO time; empty: none is running or the bot doesn't know
+  // Whether the bot takes this person's microphone in a group (round 8): "" (nothing to choose: alone, or a mode without the
+  // microphone) | "off" | "pending" (asked to keep listening, not confirmed yet) | "on" | "stopping" | "checking" (a stop not confirmed in time)
+  string listening = 7;
+  string listeningReason = 8;  // "" | "others_joined" | "failed" (could not start in time) | "limit" (daily listening or spoken replies used)
 }
 
 /**
@@ -1519,6 +1524,10 @@ message BotVoiceDoneMessage {
  */
 message VoiceModeChoiceMessage {
   string mode = 1;             // "talk" | "speak_and_read" | "type_and_listen" | "off" (text only)
+  // In a group (round 8): "keep" asks this bot to keep listening to the sender for this visit, "stop" asks it to stop. "" changes neither.
+  string listen = 2;
+  // Round 8: the reply (its responseId) this person asks the bot to stop saying out loud, as if they had spoken over it. "": none. The mode is not changed by it.
+  string stopSpeaking = 3;
 }
 
 message SwitchMessage {
@@ -1594,6 +1603,18 @@ message SpaceMessageReaction {
   optional string name = 4;         // Filled in by the server from the sender
 }
 
+/**
+ * What a bot heard in a voice note sent to the nearby chat. Sent by the bot, to everyone who got the note, and edited by
+ * sending it again: the newest state of a note wins. Receivers accept it only from a bot, and show it only under the note
+ * with that id from that sender: the sender chooses the id, so the id alone could point at someone else's note.
+ */
+message SpaceMessageTranscript {
+  string messageId = 1;       // the voice note it is about: the id its sender chose
+  string state = 2;           // "listening", "heard" or "failed"
+  optional string text = 3;   // the words, once heard
+  string senderUserId = 4;    // the spaceUserId of the person who sent the note
+}
+
 message SpaceIsTyping {
   bool isTyping = 1;
   repeated CharacterTextureMessage characterTextures = 2;
@@ -1616,6 +1637,7 @@ message SpaceStreamMessage {
   optional string steps = 8;   // A bot's steps line (#1545): its universe.steps field as JSON; the message is drawn as that line
   optional bool stoppedBySpeech = 9; // A voice bot's voice stopped part-way through responseId because someone spoke over it (#1665): the message is marked, nothing else changes
   optional string mood = 10;   // On a bot's final reply: the emoji for how the bot feels as it says it (#1667), drawn beside its Woka while it talks
+  optional bool speaking = 11; // A voice bot started (true) or stopped (false) saying responseId out loud (round 8): the reply shows Stop speaking meanwhile; nothing else changes
 }
 
 message PrivateEvent {

@@ -187,6 +187,82 @@ describe('a reply that Universe AI pays for', () => {
         expect(b.orbit.checkVoiceAllowance.mock.calls.map(([, input]) => [input.userId, input.isGuest])).toEqual([['uuid-room_8', true], ['uuid-room_7', false]]);
     });
 
+    describe('what they say out loud once their spoken replies are used up', () => {
+        const modeSets = (b: ReturnType<typeof bot>) => b.sent.filter((m) => m.type === 'mode.set') as Extract<ToWorker, { type: 'mode.set' }>[];
+        const lastMode = (b: ReturnType<typeof bot>, who: string) => modeSets(b).filter((m) => m.participantId === who).at(-1)?.mode;
+
+        it('is no longer taken from their microphone, so it cannot turn into text replies that spend the ones kept for typing', async () => {
+            const b = bot();
+            await b.connect();
+            b.state.answers = [{ allowed: false, resetsAt: '2999-01-01T00:00:00.000Z' }];
+            await b.say(reply(1));
+            expect(lastMode(b, 'room_7')).toBe('type_and_listen');
+        });
+
+        it('holds speak-and-read back to text only, and keeps the hold when their audio connects again', async () => {
+            const b = bot();
+            b.calls.handlePrivateEvent({
+                spaceName: SPACE,
+                receiverUserId: BOT_SPACE_ID,
+                sender: { spaceUserId: 'room_7', uuid: 'uuid-room_7', tags: [], name: 'room_7' },
+                spaceEvent: { event: { $case: 'voiceModeChoice', voiceModeChoice: { mode: 'speak_and_read' } } },
+            } as never);
+            await b.connect();
+            b.state.fallback = { allowed: false, resetsAt: '2999-01-01T00:00:00.000Z' };
+            await b.say(reply(1));
+            expect(lastMode(b, 'room_7')).toBe('off');
+            await b.connect();
+            const lane = [...b.sent].reverse().find((m) => m.type === 'lane.open') as Extract<ToWorker, { type: 'lane.open' }>;
+            expect(lane.mode).toBe('off');
+        });
+
+        it('is taken again once voice speaks for them (a typed message after a new window began)', async () => {
+            const b = bot();
+            await b.connect();
+            b.state.answers = [{ allowed: false, resetsAt: '2999-01-01T00:00:00.000Z' }];
+            await b.say(reply(1));
+            expect(lastMode(b, 'room_7')).toBe('type_and_listen');
+            b.state.fallback = { allowed: true };
+            await b.say(reply(2), 'Back again.');
+            expect(lastMode(b, 'room_7')).toBe('talk');
+        });
+
+        it('is taken again by itself when their window ends, without waiting for them to type', async () => {
+            vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+            try {
+                const b = bot();
+                await b.connect();
+                b.state.answers = [{ allowed: false, resetsAt: new Date(Date.now() + 60_000).toISOString() }];
+                await b.say(reply(1));
+                expect(lastMode(b, 'room_7')).toBe('type_and_listen');
+                vi.advanceTimersByTime(30_000);
+                expect(lastMode(b, 'room_7')).toBe('type_and_listen');
+                vi.advanceTimersByTime(40_000);
+                expect(lastMode(b, 'room_7')).toBe('talk');
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it('is only held back for the person whose allowance is used up', async () => {
+            const b = bot({ people: { 7: { userId: 'uuid-room_7', isGuest: false }, 8: { userId: 'uuid-room_8', isGuest: false } } });
+            await b.connect('room_7');
+            await b.connect('room_8');
+            b.state.answers = [{ allowed: false, resetsAt: '2999-01-01T00:00:00.000Z' }];
+            await b.say(reply(1, 7));
+            expect(lastMode(b, 'room_7')).toBe('type_and_listen');
+            expect(lastMode(b, 'room_8')).toBeUndefined();
+        });
+
+        it('is not touched when the reply stays in text only because the allowance could not be settled', async () => {
+            const b = bot();
+            await b.connect();
+            b.state.fallback = null;
+            await b.say(reply(1));
+            expect(modeSets(b)).toEqual([]);
+        });
+    });
+
     it('stays in text, with no line, when the allowance cannot be settled (Orbit cannot be asked or does not know the question)', async () => {
         const b = bot();
         await b.connect();

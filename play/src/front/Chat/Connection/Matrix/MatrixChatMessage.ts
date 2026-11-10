@@ -10,6 +10,7 @@ import { readBotReplyLimit, type BotReplyLimit } from "../../Bots/BotReplyLimit"
 import { readBotAsk, type BotAsk } from "../../Bots/BotAsk";
 import { readArtifactField, type ArtifactCard } from "../../../Artifacts/artifactCard";
 import { readBotSteps, type BotSteps } from "../../Bots/BotSteps";
+import { readNoteTranscript, type NoteTranscript, type NoteTranscriptNotice } from "../../Bots/BotTranscript";
 import type { ChatMessage, ChatMessageContent, ChatMessageType, ChatUser, SharedFileInfo } from "../ChatConnection";
 import { canRenderAttachmentInline } from "../../../Utils/InlineMimeType";
 import { fromMatrixWaveform, secondsFromMatrixDuration } from "../../VoiceNote/VoiceNote";
@@ -67,6 +68,9 @@ export class MatrixChatMessage implements ChatMessage {
     readonly ask: Writable<BotAsk | undefined>;
     /** A bot's steps line (#1545): the bot server updates this one message while the bot works. */
     readonly steps: Writable<BotSteps | undefined>;
+    /** What a bot heard in a voice note, when this message is the notice that carries it (never drawn). */
+    readonly transcriptOf: NoteTranscriptNotice | undefined;
+    readonly transcriptNotice: boolean;
     readonly canReact = writable(true);
     readonly canReply = writable(true);
     private isShown = false;
@@ -88,6 +92,8 @@ export class MatrixChatMessage implements ChatMessage {
         );
         this.artifact = readArtifactField(event.getSender(), event.getOriginalContent());
         this.steps = writable(readBotSteps(event.getSender(), this.stepsContent()));
+        this.transcriptOf = readNoteTranscript(event.getSender(), this.stepsContent());
+        this.transcriptNotice = this.transcriptOf !== undefined;
         this.ask = writable(readBotAsk(event.getSender(), this.stepsContent(), this.latestContentReceivedAt()));
         this.date = event.getDate();
         this.sender = this.getSender();
@@ -453,6 +459,12 @@ export class MatrixChatMessage implements ChatMessage {
         if (typeof editedAt !== "number") return sent;
         // The gap between the two clocks is the same for both events: this event's time here against its time there
         return editedAt + (sent - this.event.getTs());
+    }
+
+    /** What a bot heard in this voice note (from the notice that points at it), shown inside its bubble. */
+    public setTranscript(transcript: NoteTranscript | undefined) {
+        if (this.type !== "audio") return;
+        this.content.update((content) => ({ ...content, transcript }));
     }
 
     /** An update of a bot's steps line: only its own sender can change it. */

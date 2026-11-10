@@ -757,9 +757,9 @@ export class FileParser {
      * Uses redirect: 'manual' and validates each hop to prevent redirect
      * chains from pivoting to internal or private addresses.
      */
-    private static async fetchBuffer(url: string): Promise<ArrayBuffer> {
+    private static async fetchBuffer(url: string, maxBytes = 25 * 1024 * 1024): Promise<ArrayBuffer> {
         const MAX_REDIRECTS = 5;
-        const MAX_BYTES = 25 * 1024 * 1024; // 25MB cap (same as BotClient)
+        const MAX_BYTES = maxBytes; // 25MB cap by default (same as BotClient)
         let currentUrl = url;
         for (let hop = 0; hop < MAX_REDIRECTS; hop++) {
             await FileParser.validateUrl(currentUrl);
@@ -812,6 +812,11 @@ export class FileParser {
             }
         }
         throw new Error(`Too many redirects (${MAX_REDIRECTS}) fetching ${url}`);
+    }
+
+    /** A file's bytes by the same SSRF-safe fetch the parser uses, with its own size cap (a voice note's clip is read this way). */
+    static fetchBytes(url: string, maxBytes: number): Promise<ArrayBuffer> {
+        return FileParser.fetchBuffer(url, maxBytes);
     }
 
     /**

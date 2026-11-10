@@ -89,8 +89,15 @@ const says = (): { segmentId: string; text: string; maxMs?: number }[] =>
 const streamed = (send: ReturnType<typeof vi.fn>) =>
     send.mock.calls
         .map(([m]) => m.message?.publicEvent?.spaceEvent?.event?.spaceStreamMessage)
-        .filter(Boolean)
+        .filter((s) => s && s.speaking === undefined)
         .map((s) => [s.responseId, s.isFinal, s.finalContent ?? s.token, s.stoppedBySpeech === true]);
+
+/** What the bot told everyone about a reply being heard (round 8), as [responseId, speaking]. */
+const speakingEvents = (send: ReturnType<typeof vi.fn>) =>
+    send.mock.calls
+        .map(([m]) => m.message?.publicEvent?.spaceEvent?.event?.spaceStreamMessage)
+        .filter((s) => s && s.speaking !== undefined)
+        .map((s) => [s.responseId, s.speaking]);
 
 describe('a voice bot says the words it writes', () => {
     it('says a reply once it is final, the same words, after it is in the chat', async () => {
@@ -228,5 +235,62 @@ describe('a greeting', () => {
         } finally {
             vi.useRealTimers();
         }
+    });
+});
+
+describe('Stop speaking (round 8)', () => {
+    const tapStop = (t: Awaited<ReturnType<typeof voiceBot>>, responseId: string) =>
+        t.receive({
+            $case: 'privateEvent',
+            privateEvent: {
+                spaceName: SPACE,
+                receiverUserId: 'room_9',
+                sender: { spaceUserId: 'room_3', uuid: 'u3', tags: [], name: 'Khalid' },
+                spaceEvent: { event: { $case: 'voiceModeChoice', voiceModeChoice: { mode: 'talk', listen: '', stopSpeaking: responseId } } },
+            },
+        });
+
+    it('tells everyone when a reply starts being heard and when its audio is over', async () => {
+        const t = await voiceBot();
+        t.worker({ type: 'participant.join' });
+        t.bot.sendStreamMessage(SPACE, 'bot-voice-1-player-3-aaa', '', true, 'A long answer.');
+        t.send.mockClear();
+        t.worker({ type: 'playback.progress', segmentId: 's1', playedMs: 300, totalMs: 3000, finished: false, interrupted: false });
+        t.worker({ type: 'playback.progress', segmentId: 's1', playedMs: 900, totalMs: 3000, finished: false, interrupted: false });
+        expect(speakingEvents(t.send)).toEqual([['bot-voice-1-player-3-aaa', true]]);
+        t.worker({ type: 'playback.progress', segmentId: 's1', playedMs: 3000, totalMs: 3000, finished: true, interrupted: false, reason: 'completed' });
+        expect(speakingEvents(t.send)).toEqual([
+            ['bot-voice-1-player-3-aaa', true],
+            ['bot-voice-1-player-3-aaa', false],
+        ]);
+        expect(streamed(t.send)).toEqual([]);
+    });
+
+    it('stops the reply on a tap: the worker takes it back and the message is marked, as if someone spoke over it', async () => {
+        const t = await voiceBot();
+        t.worker({ type: 'participant.join' });
+        t.bot.sendStreamMessage(SPACE, 'bot-voice-1-player-3-aaa', '', true, 'A long answer.');
+        t.worker({ type: 'playback.progress', segmentId: 's1', playedMs: 300, totalMs: 3000, finished: false, interrupted: false });
+        t.send.mockClear();
+        await tapStop(t, 'bot-voice-1-player-3-aaa');
+        expect(links[0].send.mock.calls.map(([m]) => m).filter((m) => m.type === 'bot.retract')).toEqual([
+            { type: 'bot.retract', sessionId: expect.any(String), segmentId: 's1' },
+        ]);
+        expect(speakingEvents(t.send)).toEqual([['bot-voice-1-player-3-aaa', false]]);
+        expect(streamed(t.send)).toEqual([['bot-voice-1-player-3-aaa', true, '', true]]);
+        // The worker's report of the end marks nothing twice
+        t.worker({ type: 'playback.progress', segmentId: 's1', playedMs: 400, totalMs: 3000, finished: true, interrupted: true, reason: 'retract' });
+        expect(streamed(t.send)).toHaveLength(1);
+        expect(speakingEvents(t.send)).toHaveLength(1);
+    });
+
+    it('does nothing for a reply that is not being heard', async () => {
+        const t = await voiceBot();
+        t.worker({ type: 'participant.join' });
+        t.bot.sendStreamMessage(SPACE, 'bot-voice-1-player-3-aaa', '', true, 'Queued, not heard yet.');
+        t.send.mockClear();
+        await tapStop(t, 'bot-voice-1-player-3-aaa');
+        await tapStop(t, 'bot-voice-1-player-3-zzz');
+        expect(streamed(t.send)).toEqual([]);
     });
 });

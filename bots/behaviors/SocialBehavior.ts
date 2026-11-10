@@ -100,6 +100,11 @@ export class SocialBehavior extends BaseBehavior {
         const config = this.config as SocialBehaviorConfig;
         const currentTime = Date.now();
 
+        // A summon ends when its person has left or walked off, even if they send no more moves
+        if (this.isSummoned) {
+            this.endSummonIfPersonAway();
+        }
+
         // If bot is summoned or leading, allow movement (don't stop for normal behavior logic)
         // The bot will stop when it reaches the target position
         if (this.isSummoned || this.isLeading) {
@@ -734,7 +739,7 @@ export class SocialBehavior extends BaseBehavior {
         this.botInitiatedPlayers.clear();
     }
 
-    async onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string, galleryUrls?: string[], uploads?: ChatUpload[]): Promise<void> {
+    async onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string, galleryUrls?: string[], uploads?: ChatUpload[], heardAt = Date.now()): Promise<void> {
         if (!this.bot) {
             console.warn(`[SocialBehavior] onChatMessage: bot is null`);
             return;
@@ -835,7 +840,7 @@ export class SocialBehavior extends BaseBehavior {
         // Interruption-safe generation (handles queue, abort, update, generation tracking)
         await this.safeGenerateResponse(spaceName, senderId, originalUserMessage, message, botId,
             (signal, images) => this.generateAIResponseStream(spaceName, senderId, message, botId, signal, images),
-            url, mediaType, mimeType, galleryUrls
+            url, mediaType, mimeType, galleryUrls, heardAt
         );
     }
 

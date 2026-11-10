@@ -45,6 +45,11 @@ export class IdleBehavior extends BaseBehavior {
         const config = this.config as IdleBehaviorConfig;
         const currentTime = Date.now();
 
+        // A summon ends when its person has left or walked off, even if they send no more moves
+        if (this.isSummoned) {
+            this.endSummonIfPersonAway();
+        }
+
         // If bot is summoned or leading, allow movement (idle bots can move when summoned or leading)
         if (this.isSummoned || this.isLeading) {
             // When leading, get the target from leadingTarget instead of summonedPlayerUuid
@@ -354,7 +359,7 @@ export class IdleBehavior extends BaseBehavior {
         super.onSpaceLeft(spaceName);
     }
 
-    async onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string, galleryUrls?: string[], uploads?: ChatUpload[]): Promise<void> {
+    async onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string, galleryUrls?: string[], uploads?: ChatUpload[], heardAt = Date.now()): Promise<void> {
         if (!this.bot) {
             return;
         }
@@ -434,7 +439,7 @@ export class IdleBehavior extends BaseBehavior {
         // Interruption-safe generation (handles queue, abort, update, generation tracking)
         await this.safeGenerateResponse(spaceName, senderId, originalUserMessage, message, botId,
             (signal, images) => this.generateAIResponseStream(spaceName, senderId, message, botId, signal, images),
-            url, mediaType, mimeType, galleryUrls
+            url, mediaType, mimeType, galleryUrls, heardAt
         );
     }
 

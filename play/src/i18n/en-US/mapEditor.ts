@@ -942,6 +942,9 @@ const mapEditor: BaseTranslation = {
                 voice: {
                     title: "Voice",
                     offDoor: "Off · Give {bot:string} a voice",
+                    offRemembered: "Off · {voice:string} is remembered",
+                    offHint: "Voice is off for {bot:string}.",
+                    pickNone: "Pick a voice",
                     notAllowedBrief: "Off in this universe",
                     noServiceBrief: "Not available here yet",
                     loading: "Loading…",
@@ -1010,8 +1013,6 @@ const mapEditor: BaseTranslation = {
                         "Each person uses their own voice replies: up to {replies:number} every {hours:number} hours.",
                     askKeyLine: "You pay; people talking with {bot:string} pay nothing.",
                     askKeyLineTheirs: "{owner:string} pays; people talking with {bot:string} pay nothing.",
-                    firstOnUniverseAi: "{bot:string} talks in bubbles now, with {voice:string}’s voice.",
-                    firstOnKey: "{bot:string} talks in bubbles now, with {voice:string}’s voice on {key:string}.",
                     cardCaption: "Voice",
                     hear: "Hear {voice:string}",
                     noSample: "{voice:string} has no sample",
