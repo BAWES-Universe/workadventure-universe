@@ -30,6 +30,43 @@ describe("WorldUserProvider.peopleCount", () => {
     });
 });
 
+describe("WorldUserProvider search", () => {
+    const world = () => {
+        const users = new Map([
+            ["1", spaceUser("1", "Sara")],
+            ["2", spaceUser("2", "Bottle Bob")],
+            ["3", spaceUser("bot-3", "Helper", ["bot"])],
+            ["4", spaceUser("4", "Melody", ["bot"])],
+        ]);
+        return new WorldUserProvider({ usersStore: writable(users) } as unknown as SpaceInterface);
+    };
+    const names = (provider: WorldUserProvider) => get(provider.users).map((user) => user.username);
+
+    it('finds every bot, whatever it is named, when "Bot" or "Brick" is typed whole (#1995)', async () => {
+        const provider = world();
+        for (const word of ["brick", "Bricks", "BOTS"]) {
+            // eslint-disable-next-line no-await-in-loop
+            await provider.setFilter(word);
+            expect(names(provider)).toEqual(["Helper", "Melody"]);
+        }
+        // "bot" is also part of a person's name here: they are found as before, with the bots
+        await provider.setFilter("bot");
+        expect(names(provider)).toEqual(["Bottle Bob", "Helper", "Melody"]);
+    });
+
+    it("lists nobody extra while a name is being typed", async () => {
+        const provider = world();
+        await provider.setFilter("bri");
+        expect(names(provider)).toEqual([]);
+        await provider.setFilter("bo");
+        expect(names(provider)).toEqual(["Bottle Bob"]);
+        await provider.setFilter("mel");
+        expect(names(provider)).toEqual(["Melody"]);
+        await provider.setFilter("");
+        expect(names(provider)).toHaveLength(4);
+    });
+});
+
 describe("countPeople", () => {
     it("counts each tab of one account (clones) as a person", () => {
         expect(

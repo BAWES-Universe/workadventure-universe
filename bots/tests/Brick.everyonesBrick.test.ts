@@ -386,35 +386,43 @@ describe('One chat for a person and their Brick, however many devices open it', 
         expect(await bridge.directChatFor(BRICK, ALICE)).toEqual({ roomId: ROOM });
     });
 
+    it('tells the device that makes the chat which account to invite: the Brick\'s own chat address', async () => {
+        const { bridge } = makeBridge();
+
+        expect(await bridge.directChatFor(BRICK, ALICE)).toEqual({ create: true, botChatId: BRICK_USER });
+        // A bot id that cannot be a chat address has no chat to make
+        expect(await bridge.directChatFor('not a bot id', ALICE)).toEqual({ wait: true });
+    });
+
     it('lets another device make it when the first never did, after a few seconds and not before', async () => {
         vi.useFakeTimers();
         const { bridge } = makeBridge();
 
-        expect(await bridge.directChatFor(BRICK, ALICE)).toEqual({ create: true });
+        expect(await bridge.directChatFor(BRICK, ALICE)).toMatchObject({ create: true });
         vi.advanceTimersByTime(19_000);
         expect(await bridge.directChatFor(BRICK, ALICE)).toEqual({ wait: true });
         vi.advanceTimersByTime(2_000);
-        expect(await bridge.directChatFor(BRICK, ALICE)).toEqual({ create: true });
+        expect(await bridge.directChatFor(BRICK, ALICE)).toMatchObject({ create: true });
     });
 
     it("holds nobody else back: one person's claim is theirs alone, and one Brick's is that Brick's", async () => {
         const { bridge } = makeBridge();
-        expect(await bridge.directChatFor(BRICK, ALICE)).toEqual({ create: true });
-        expect(await bridge.directChatFor(BRICK, BOB)).toEqual({ create: true });
-        expect(await bridge.directChatFor('another-brick', ALICE)).toEqual({ create: true });
+        expect(await bridge.directChatFor(BRICK, ALICE)).toMatchObject({ create: true });
+        expect(await bridge.directChatFor(BRICK, BOB)).toMatchObject({ create: true });
+        expect(await bridge.directChatFor('another-brick', ALICE)).toMatchObject({ create: true });
     });
 
     it('goes by the shared store when there is one, so two bot servers still hand out one turn', async () => {
         const { bridge, deps } = makeBridge();
         deps.rooms.claimDirectChat = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false);
 
-        expect(await bridge.directChatFor(BRICK, ALICE)).toEqual({ create: true });
+        expect(await bridge.directChatFor(BRICK, ALICE)).toMatchObject({ create: true });
         expect(await bridge.directChatFor(BRICK, ALICE)).toEqual({ wait: true });
         expect(deps.rooms.claimDirectChat).toHaveBeenCalledWith(BRICK, ALICE, 20_000);
 
         // The store is down: the bridge keeps its own turn
         deps.rooms.claimDirectChat = vi.fn().mockResolvedValue(null);
-        expect(await bridge.directChatFor(BRICK, ALICE)).toEqual({ create: true });
+        expect(await bridge.directChatFor(BRICK, ALICE)).toMatchObject({ create: true });
         expect(await bridge.directChatFor(BRICK, ALICE)).toEqual({ wait: true });
     });
 
@@ -432,7 +440,7 @@ describe('One chat for a person and their Brick, however many devices open it', 
         await bridge.onEvent(invite());
         client.getJoinedMembers.mockResolvedValue([ALICE, BRICK_USER, BOB]);
 
-        expect(await bridge.directChatFor(BRICK, ALICE)).toEqual({ create: true });
+        expect(await bridge.directChatFor(BRICK, ALICE)).toMatchObject({ create: true });
         expect(roomsOf.size).toBe(0);
     });
 
@@ -563,14 +571,14 @@ describe('POST /api/bots/:botId/direct-chat', () => {
         vi.spyOn(console, 'error').mockImplementation(() => undefined);
         adminApiService.validateSessionToken.mockResolvedValue({ userId: 'u1', uuid: 'uuid-alice', email: 'a@b.c' });
         adminApiService.checkDmAccess.mockResolvedValue({ allowed: true, reason: null, user: { uuid: 'uuid-alice', name: 'Alice', isGuest: false } });
-        directChat.mockResolvedValue({ create: true });
+        directChat.mockResolvedValue({ create: true, botChatId: BRICK_USER });
     });
 
     const ask = (body: unknown, headers: Record<string, string> = { Authorization: `Bearer ${SESSION}` }, at = base, botId = BRICK) =>
         fetch(`${at}/api/bots/${botId}/direct-chat`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
 
     it('answers the person the session names, about the chat address Orbit says is theirs', async () => {
-        for (const answer of [{ create: true }, { wait: true }, { roomId: ROOM }]) {
+        for (const answer of [{ create: true, botChatId: BRICK_USER }, { wait: true }, { roomId: ROOM }]) {
             directChat.mockResolvedValueOnce(answer);
             const response = await ask({ chatId: ALICE });
             expect(response.status).toBe(200);

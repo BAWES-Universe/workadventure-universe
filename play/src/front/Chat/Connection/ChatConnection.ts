@@ -227,6 +227,8 @@ export interface ChatMessage {
     artifact?: ArtifactCard;
     /** Set on a bot's direct message that is the one copy of an answer it gave this person alone in nearby chat (#1993): a quiet line under it says so. */
     answeredNearby?: boolean;
+    /** Set on a Brick's fixed "what I can do" answer (#1995): while it is the newest message, its ideas show above the message box. */
+    brickIdeas?: boolean;
     /** Set when a bot's direct message is a card that waits for one answer (#1657): pinned above the message box while
      * it waits, then drawn in the chat as it ended. The bot server edits the same notice. */
     ask?: Readable<BotAsk | undefined>;

@@ -2,6 +2,8 @@ import { derived, get, readable, writable } from "svelte/store";
 import type { Readable, Unsubscriber } from "svelte/store";
 import type { ChatMessage, ChatRoom, RoomFolder } from "../../Connection/ChatConnection";
 import type { ProximitySession } from "../../Connection/Proximity/ProximitySessions";
+import { botIdFromChatId } from "../../Bots/BotChatStatus";
+import { brickMadeAt, searchesForBots, type BrickCard } from "../../Bricks/Brick";
 import type { FolderSnapshot, OneListCandidate, OneListKind } from "./OneListOrder";
 import {
     InvitationClock,
@@ -12,7 +14,7 @@ import {
     summarizeFolder,
 } from "./OneListOrder";
 
-export type OneListEntry = OneListCandidate<ChatRoom | RoomFolder | ProximitySession<ChatMessage>>;
+export type OneListEntry = OneListCandidate<ChatRoom | RoomFolder | ProximitySession<ChatMessage> | BrickCard>;
 
 export interface OneListSources {
     directRooms: Readable<ChatRoom[]>;
@@ -22,8 +24,31 @@ export interface OneListSources {
     /** Area chat rooms: they have their own row and never show in this list. */
     hiddenRoomIds: Readable<ReadonlySet<string>>;
     search: Readable<string>;
-    /** Ready-made rows from elsewhere (the proximity chats you had), sorted in with the rest. */
+    /** Ready-made rows from elsewhere (the proximity chats you had, your Brick before its first chat), sorted in with the rest. */
     extraEntries?: Readable<OneListEntry[]>;
+}
+
+/** Whether a direct chat is with a bot: the other member's chat address is a bot's. */
+function isBotChat(room: ChatRoom): boolean {
+    const members = (room as Partial<{ members: Readable<{ id: string }[]> }>).members;
+    return members !== undefined && get(members).some((member) => botIdFromChatId(member.id) !== undefined);
+}
+
+/**
+ * The row of a person's own Brick before its chat exists (#1995): sorted in by when the Brick was made, never unread.
+ * Searching for "Bot" or "Brick" finds it whatever it is named.
+ */
+export function brickEntry(brick: BrickCard, search: string): OneListEntry {
+    return {
+        id: `brick:${brick.id}`,
+        kind: "brick",
+        name: brick.name,
+        timestamp: brickMadeAt(brick),
+        unreadCount: 0,
+        hasUnread: false,
+        item: brick,
+        ...(searchesForBots(search) ? { searchNames: [search] } : {}),
+    };
 }
 
 /** Per tab and in memory: when this tab first saw an invitation whose invite event has no time. */
@@ -100,6 +125,8 @@ export function createOneListStore(
 
         const compute = (): OneListEntry[] => {
             const candidates: OneListEntry[] = [];
+            // "Bot" and "Brick" are the same word (#1995): searching for either finds every chat with a bot
+            const findsBots = searchesForBots(search);
             const push = (kind: OneListKind, room: ChatRoom) => {
                 candidates.push({
                     id: room.id,
@@ -109,6 +136,7 @@ export function createOneListStore(
                     unreadCount: unreadCountOf(room),
                     hasUnread: get(room.hasUnreadMessages),
                     item: room,
+                    ...(findsBots && kind === "direct" && isBotChat(room) ? { searchNames: [search] } : {}),
                 });
             };
             directRooms.forEach((room) => push("direct", room));

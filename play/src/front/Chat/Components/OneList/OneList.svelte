@@ -32,6 +32,9 @@
     import RoomInvitation from "../Room/RoomInvitation.svelte";
     import RoomFolder from "../RoomFolder.svelte";
     import ProximitySessionRow from "../TopRow/ProximitySessionRow.svelte";
+    import type { BrickCard } from "../../Bricks/Brick";
+    import BrickRow from "../../Bricks/BrickRow.svelte";
+    import { withMyBricks } from "../../Bricks/MyBricksStore";
     import type { OneListEntry } from "./OneListStore";
     import { ONE_LIST_FREEZE_CONTEXT, OrderFreeze, createOneListStore, freezeWhileHeld } from "./OneListStore";
 
@@ -68,15 +71,16 @@
     setContext(ONE_LIST_FREEZE_CONTEXT, orderFreeze);
     // One lookup for every row: direct chats show the other person's woka when the room has no picture.
     // People outside the world (a direct chat with someone away) are asked of Orbit and fill in what the world lacks.
-    const chatPeople = currentChatPeople();
+    // The person's own Bricks stand in no room: their name and picture come with them (#1995).
+    const chatPeople = withMyBricks(currentChatPeople()?.store);
     setContext(
         WOKA_BY_CHAT_ID_CONTEXT,
-        createWokaByChatIdStore(gameManager.getCurrentGameScene().userProviderMerger, chatPeople?.store)
+        createWokaByChatIdStore(gameManager.getCurrentGameScene().userProviderMerger, chatPeople)
     );
     // The name each person goes by in Universe, so a rename in the game shows in the chat.
     setContext(
         NAME_BY_CHAT_ID_CONTEXT,
-        createNameByChatIdStore(gameManager.getCurrentGameScene().userProviderMerger, chatPeople?.store)
+        createNameByChatIdStore(gameManager.getCurrentGameScene().userProviderMerger, chatPeople)
     );
     // A direct chat's row shows the other person's woka on their colour from People, as inside the chat.
     setContext<Readable<PersonColourOf>>(
@@ -138,6 +142,10 @@
         return entry.item as ProximitySession<ChatMessage>;
     }
 
+    function asBrick(entry: OneListEntry): BrickCard {
+        return entry.item as BrickCard;
+    }
+
     $: duration = reducedMotion ? 0 : 220;
     $: visibleEntries = showAll ? $displayed : $displayed.slice(0, PAGE_SIZE);
     $: hiddenCount = Math.max(0, $displayed.length - PAGE_SIZE);
@@ -167,6 +175,8 @@
                     unreadCount={entry.unreadCount}
                     onOpen={() => onOpenSession(asSession(entry))}
                 />
+            {:else if entry.kind === "brick"}
+                <BrickRow brick={asBrick(entry)} />
             {:else if entry.kind === "invitation"}
                 <RoomInvitation room={asInvitation(entry)} />
             {:else if entry.kind === "folder"}

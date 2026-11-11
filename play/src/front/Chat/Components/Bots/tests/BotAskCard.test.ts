@@ -6,6 +6,7 @@ vi.mock("../../../../../i18n/i18n-svelte", async () => {
     const { readable } = await import("svelte/store");
     const en = (await import("../../../../../i18n/en-US/chat")).default as unknown as {
         botAsk: Record<string, string>;
+        brick: { closeCard: string };
     };
     const botAsk = Object.fromEntries(
         Object.entries(en.botAsk).map(([key, text]) => [
@@ -14,10 +15,14 @@ vi.mock("../../../../../i18n/i18n-svelte", async () => {
                 text.replace(/\{(\w+)\}/g, (_, name: string) => String(values[name])),
         ])
     );
-    return { default: readable({ chat: { botAsk } }), locale: readable("en-US") };
+    const brick = { closeCard: () => en.brick.closeCard };
+    return { default: readable({ chat: { botAsk, brick } }), locale: readable("en-US") };
 });
 
 import type { BotAsk } from "../../../Bots/BotAsk";
+import { i18nObject } from "../../../../../i18n/i18n-util";
+import { loadLocale } from "../../../../../i18n/i18n-util.sync";
+import { brickIdeasCard, brickStartersCard } from "../../../Bricks/BrickHello";
 import BotAskCard from "../BotAskCard.svelte";
 
 const NOW = 1_000_000;
@@ -466,5 +471,96 @@ describe("the question card a bot shows before a big job (#1661)", () => {
     it("tells the person in nearby chat that only they see it, as every nearby card does", async () => {
         await show(question({ private: true }), { docked: true });
         expect(byId("botAskPrivate")?.textContent).toContain("Only you see this card");
+    });
+});
+
+describe("a Brick's own suggestions on the question card (#1995)", () => {
+    let target: HTMLElement;
+    let shown: { $destroy: () => void } | undefined;
+    const onTap = vi.fn();
+    loadLocale("en-US");
+    const LL = i18nObject("en-US");
+
+    beforeEach(() => {
+        target = document.createElement("div");
+        document.body.appendChild(target);
+        vi.clearAllMocks();
+        onTap.mockResolvedValue(true);
+    });
+    afterEach(() => {
+        shown?.$destroy();
+        shown = undefined;
+        target.remove();
+    });
+
+    async function show(value: BotAsk, props: Record<string, unknown> = {}) {
+        shown = new BotAskCard({
+            target,
+            props: {
+                ask: value,
+                botName: "Brick",
+                headLine: LL.chat.brick.suggests({ name: "Brick" }),
+                docked: true,
+                // A day later: the game's own card never runs out
+                now: Date.now() + 24 * 3600 * 1000,
+                onTap,
+                ...props,
+            },
+        });
+        await tick();
+    }
+    const text = () => target.textContent?.replace(/\s+/g, " ") ?? "";
+    const byId = (id: string) => target.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+    const choices = () => [...target.querySelectorAll<HTMLButtonElement>('[data-testid="botAskChoice"]')];
+    const click = async (element: HTMLElement | null) => {
+        element?.click();
+        await tick();
+    };
+
+    it("offers the one way to start under the hello, as the Brick's suggestion and not as something it needs", async () => {
+        await show(brickStartersCard(LL));
+        expect(text()).toContain("Brick suggests");
+        expect(text()).not.toContain("needs your answer");
+        expect(text()).toContain("Where shall we start?");
+        expect(choices().map((choice) => choice.textContent?.replace(/\s+/g, " ").trim())).toEqual([
+            "See what I can do A few ideas to start with",
+        ]);
+        // Nothing to approve, and no clock on it
+        expect(byId("botAskOption")).toBeNull();
+        expect(byId("botAskMoreTime")).toBeNull();
+        expect(text()).not.toContain("closes in");
+    });
+
+    it("sends only the starter's id on a tap: the chat sends the person's words", async () => {
+        const card = brickStartersCard(LL);
+        await show(card);
+        await click(choices()[0]);
+        expect(onTap).toHaveBeenCalledTimes(1);
+        expect(onTap.mock.calls[0][0]).toBe(card);
+        expect(onTap.mock.calls[0][1]).toEqual({ action: "pick", choices: ["ideas"] });
+    });
+
+    it("lists the four ideas under the Brick's answer, and a tap picks one", async () => {
+        await show(brickIdeasCard(LL));
+        expect(text()).toContain("Brick suggests");
+        expect(text()).toContain("What shall I take on?");
+        expect(choices().map((choice) => choice.dataset.choice)).toEqual(["write", "web", "file", "think"]);
+        await click(choices()[2]);
+        expect(onTap.mock.calls[0][1]).toEqual({ action: "pick", choices: ["file"] });
+    });
+
+    it("closes with X, which is named plainly", async () => {
+        await show(brickStartersCard(LL));
+        expect(byId("botAskClose")?.getAttribute("aria-label")).toBe("Close");
+        await click(byId("botAskClose"));
+        expect(onTap.mock.calls[0][1]).toEqual({ action: "close" });
+    });
+
+    it("is a slim bar on a short chat, in the Brick's name, with the question on it", async () => {
+        await show(brickStartersCard(LL), { compact: true });
+        expect(byId("botAskBar")?.textContent).toContain("Where shall we start?");
+        expect(text()).toContain("Brick suggests");
+        expect(text()).not.toContain("needs your answer");
+        expect(choices()).toHaveLength(0);
     });
 });

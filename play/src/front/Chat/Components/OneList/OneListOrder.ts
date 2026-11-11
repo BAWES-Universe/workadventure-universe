@@ -3,8 +3,12 @@
  * No stores, no Matrix and no translations in here, so every rule can be unit tested.
  */
 
-/** "proximity" is a proximity chat you had (an ended stay), shown as its own row among the saved conversations. */
-export type OneListKind = "direct" | "room" | "invitation" | "folder" | "proximity";
+/**
+ * "proximity" is a proximity chat you had (an ended stay), shown as its own row among the saved conversations.
+ * "brick" is your own Brick before you ever opened its chat (#1995): it is just there, and its chat is made on the
+ * first tap.
+ */
+export type OneListKind = "direct" | "room" | "invitation" | "folder" | "proximity" | "brick";
 
 /** A room as the list needs to see it at one moment. */
 export interface RoomSnapshot {

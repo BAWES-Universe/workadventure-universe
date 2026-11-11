@@ -965,6 +965,46 @@ const chat: BaseTranslation = {
         answeredNearby: "Answered in nearby chat, only for you",
         saidSomethingElse: "You said something else, so nothing was done",
     },
+    // A person's own Brick (#1995): a bot that lives in their chats. Its hello and ideas are fixed words, shown by the
+    // game, so they cost nothing and nothing is sent to anyone.
+    brick: {
+        hello: "Hi {name}, I'm {brick}, your own helper in Universe. Ask me anything, or hand me a job.",
+        helloNoName: "Hi, I'm {brick}, your own helper in Universe. Ask me anything, or hand me a job.",
+        suggests: "{name} suggests",
+        startTitle: "Where shall we start?",
+        seeWhatICanDo: "See what I can do",
+        seeWhatICanDoLine: "A few ideas to start with",
+        // What a tap on "See what I can do" sends, in the person's words
+        whatCanYouDo: "What can you do for me?",
+        // The Brick's fixed answer to it, and the ideas under it. Only things it can do today.
+        ideasLine: "A few things I could take off your plate. Pick one, or just ask in your own words.",
+        ideasTitle: "What shall I take on?",
+        ideas: {
+            write: "Write something with you",
+            writeLine: "A message, a post or a tricky reply",
+            writeAsk: "Help me write something.",
+            web: "Read a web page for you",
+            webLine: "Send me the link and I'll pull out what matters",
+            webAsk: "Read a web page for me.",
+            file: "Go through a file with you",
+            fileLine: "Send me a PDF or a document",
+            fileAsk: "Go through a file with me.",
+            think: "Think something through with you",
+            thinkLine: "A decision or a plan, step by step",
+            thinkAsk: "Help me think something through.",
+        },
+        closeCard: "Close",
+        // The Bricks button in the Chats footer, and the page it opens
+        bricks: "Bricks",
+        backToChats: "Back to Chats",
+        switchOn: "Turn {name} on or off",
+        loading: "Loading your Bricks…",
+        loadFailed: "Couldn't load your Bricks.",
+        tryAgain: "Try again",
+        none: "You have no Brick.",
+        switchFailed: "Couldn't change that. Try again.",
+        openChat: "Open the chat with {name}",
+    },
     voiceDraft: {
         onlyYou: "Only you see this",
         lost: "Some of your words didn't come through. Nothing was sent.",
@@ -1197,6 +1237,8 @@ const chat: BaseTranslation = {
     },
     inviteFooter: {
         button: "Invite someone to join",
+        // Beside the Bricks button (#1995) the row is shared, so the button says it in one word
+        buttonShort: "Invite",
         title: "Invite someone to join",
         hint: "Anyone with the link can walk straight into this room. No download, no account needed.",
         hintRoom: "Anyone with the link can walk straight into {room}. No download, no account needed.",

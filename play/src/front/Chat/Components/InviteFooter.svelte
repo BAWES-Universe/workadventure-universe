@@ -6,6 +6,7 @@
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { inviteUserActivated, userIsConnected } from "../../Stores/MenuStore";
     import {
+        bricksPageOpenStore,
         chatInviteSheetHeightStore,
         chatSearchBarValue,
         chatSearchOpenStore,
@@ -21,7 +22,8 @@
 
     /**
      * The footer of the Chats and People lists, pinned to the bottom of the chat panel: "Invite someone to join", a
-     * round search button and, on Chats, a round "+". Tapping search turns the whole row into the search field with
+     * round search button and, on Chats, a round "+". Someone signed in also has the Bricks button on Chats, left of
+     * Invite, which then reads "Invite" (game #1995). Tapping search turns the whole row into the search field with
      * its Cancel (ChatHeader.svelte). Invite takes the row's place the same way, with a panel that slides up over the
      * dimmed list (the list doesn't move): the link to this room, two options (arrive next to me, pick an entry
      * point) and Share and Copy link at the bottom, where the button was. On a phone's chat sheet the sheet borrows the
@@ -69,6 +71,9 @@
 
     // Search covers the open tab's own list; People reaches the world's members too. Chats has none while offline.
     $: showSearch = $navChat.key === "users" || ($navChat.key === "chat" && $chatStatusStore !== "OFFLINE");
+
+    // The Bricks button: on Chats, for someone signed in (a guest's Brick is its own thing, #1997).
+    $: showBricks = $navChat.key === "chat" && $userIsConnected;
 
     // One "+" for New message, New group, Find a group and New folder. Hidden for guests: saved chat needs an account.
     $: newChatOptions =
@@ -217,7 +222,7 @@
 
 <svelte:window on:click={onWindowClick} />
 
-{#if $inviteUserActivated || showSearch || newChatOptions.length > 0}
+{#if $inviteUserActivated || showSearch || showBricks || newChatOptions.length > 0}
     <div class="invite-footer sticky bottom-0 z-30 shrink-0 px-4 pb-4 pt-3" data-testid="chatInviteFooter">
         {#if searchOpen}
             <ChatHeader />
@@ -225,6 +230,20 @@
             <!-- While the panel is open the row steps aside but keeps its place, so nothing in the list moves. -->
             <!-- The "+" menu opens upward from this row. -->
             <div class="relative flex items-center gap-2" class:invisible={open} aria-hidden={open} inert={open}>
+                {#if showBricks}
+                    <!-- Drawn as a Brick: a lid, a foot and two eyes. Beside Invite the two share the row. -->
+                    <button
+                        type="button"
+                        class="bricks-brick m-0 flex h-11 min-w-0 items-center justify-center gap-2 text-sm font-bold {$inviteUserActivated
+                            ? 'flex-1 px-3'
+                            : 'px-5'}"
+                        data-testid="chatBricksButton"
+                        on:click={() => bricksPageOpenStore.set(true)}
+                    >
+                        <span class="bricks-eyes" aria-hidden="true"><i /><i /></span>
+                        <span class="min-w-0 truncate">{$LL.chat.brick.bricks()}</span>
+                    </button>
+                {/if}
                 {#if $inviteUserActivated}
                     <button
                         bind:this={trigger}
@@ -236,7 +255,9 @@
                         on:click={() => toggle().catch((e) => console.error(e))}
                     >
                         <IconUserPlus font-size="18" class="shrink-0" />
-                        <span class="min-w-0 truncate">{$LL.chat.inviteFooter.button()}</span>
+                        <span class="min-w-0 truncate"
+                            >{showBricks ? $LL.chat.inviteFooter.buttonShort() : $LL.chat.inviteFooter.button()}</span
+                        >
                     </button>
                 {:else}
                     <div class="grow" />
@@ -443,6 +464,52 @@
     .invite-button:focus-visible {
         outline: 2px solid #fff;
         outline-offset: 2px;
+    }
+
+    /* The Bricks button is a Brick: orange, with a lighter lid, a darker foot, a dark outline and two eyes. */
+    .bricks-brick {
+        position: relative;
+        border: 0;
+        border-radius: 14px;
+        color: #3d1c03;
+        background: linear-gradient(180deg, #f5b17e 0, #f5b17e 7px, #f29c5b 7px, #f0893c 100%);
+        box-shadow: inset 0 0 0 1.5px #753708, inset 0 -5px 0 0 #ed7214, 0 6px 16px -6px rgb(237 114 20 / 0.55);
+        cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+    }
+    @media (hover: hover) {
+        .bricks-brick:hover {
+            filter: brightness(1.06);
+        }
+    }
+    .bricks-brick:active {
+        filter: brightness(0.96);
+    }
+    .bricks-brick:focus-visible {
+        outline: 2px solid #fff;
+        outline-offset: 2px;
+    }
+    .bricks-eyes {
+        display: inline-flex;
+        flex: none;
+        gap: 9px;
+        padding-top: 1px;
+    }
+    .bricks-eyes i {
+        position: relative;
+        display: block;
+        width: 5px;
+        height: 10px;
+        background: #753708;
+    }
+    .bricks-eyes i::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 2.5px;
+        height: 2.5px;
+        background: #fff;
     }
 
     /* The dimmed list behind the panel: ink at 62%, the way the mock draws it. */

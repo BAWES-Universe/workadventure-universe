@@ -1,7 +1,7 @@
 import axios from 'axios';
 import type { MatrixAppServiceClient } from './MatrixAppServiceClient';
 import type { MatrixEvent, MatrixEventHandler } from './MatrixAppServiceRouter';
-import { BOT_LOCALPART_PREFIX, botIdFromMatrixId, type MatrixAppServiceConfig } from './MatrixConfig';
+import { BOT_LOCALPART_PREFIX, botIdFromMatrixId, botMatrixId, type MatrixAppServiceConfig } from './MatrixConfig';
 import type { BotConfiguration } from '../server/AdminApiService';
 import { STARTER_IDEAS, type DmAttachment, type DmPerson, type DmReply, type DmReplyHooks } from '../server/DmReplyService';
 import { MAX_OUTGOING_MEDIA_BYTES, type PendingMedia } from '../memory/ConversationMemory';
@@ -41,9 +41,9 @@ const DIRECT_CHAT_CLAIM_MS = 20_000;
 /**
  * What a device with no chat of its own is told when it asks for the one chat of a bot and a person (game #1995): the
  * chat they already have, to make it, or to ask again in a moment (another device is making it, or the chat could not be
- * looked at just now).
+ * looked at just now). "Make it" names the bot's chat address, so the device invites the right account.
  */
-export type DirectChatAnswer = { roomId: string } | { create: true } | { wait: true };
+export type DirectChatAnswer = { roomId: string } | { create: true; botChatId: string } | { wait: true };
 
 export interface DmAccessResult {
     allowed: boolean;
@@ -476,7 +476,10 @@ export class MatrixDmBridge implements MatrixEventHandler {
         if (known.roomId) return { roomId: known.roomId };
         // A chat that is there but could not be looked at is never made a second time
         if (known.unsure) return { wait: true };
-        return (await this.claimDirectChat(botId, matrixUserId)) ? { create: true } : { wait: true };
+        const botChatId = botMatrixId(this.config.domain, botId);
+        // A bot whose id cannot be a chat address has no chat to make
+        if (!botChatId) return { wait: true };
+        return (await this.claimDirectChat(botId, matrixUserId)) ? { create: true, botChatId } : { wait: true };
     }
 
     private async claimDirectChat(botId: string, matrixUserId: string): Promise<boolean> {

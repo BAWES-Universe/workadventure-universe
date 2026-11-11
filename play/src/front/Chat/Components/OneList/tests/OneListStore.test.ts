@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { ChatRoom, RoomFolder } from "../../../Connection/ChatConnection";
 import { InvitationClock } from "../OneListOrder";
 import type { OneListEntry } from "../OneListStore";
-import { OrderFreeze, createOneListStore, freezeWhileHeld } from "../OneListStore";
+import { OrderFreeze, brickEntry, createOneListStore, freezeWhileHeld } from "../OneListStore";
 
 type FakeRoom = ChatRoom & {
     messagesStore: Writable<readonly unknown[]>;
@@ -237,6 +237,32 @@ describe("createOneListStore", () => {
         expect(list.ids()).toEqual(["Design"]);
     });
 
+    it('finds every chat with a bot when "Bot" or "Brick" is searched, whatever the bot is named (#1995)', () => {
+        const list = setup();
+        const withBot = fakeRoom("Melody", 3, {
+            type: "direct",
+            members: writable([{ id: "@me:chat.test" }, { id: "@bot_0b7c1d2e-1111-4222-8333-944455556666:chat.test" }]),
+        } as unknown as Partial<ChatRoom>);
+        const withSara = fakeRoom("Sara", 2, {
+            type: "direct",
+            members: writable([{ id: "@me:chat.test" }, { id: "@sara:chat.test" }]),
+        } as unknown as Partial<ChatRoom>);
+        const group = fakeRoom("Design", 1);
+        list.directRooms.set([withBot, withSara]);
+        list.rooms.set([group]);
+        for (const word of ["bot", "Bots", "brick", " Bricks "]) {
+            list.search.set(word);
+            expect(list.ids()).toEqual(["Melody"]);
+        }
+        // Part of the word is a name being typed: nobody extra is listed
+        list.search.set("bo");
+        expect(list.ids()).toEqual([]);
+        list.search.set("sar");
+        expect(list.ids()).toEqual(["Sara"]);
+        list.search.set("");
+        expect(list.ids()).toEqual(["Melody", "Sara", "Design"]);
+    });
+
     it("drops every room subscription when unsubscribed", () => {
         const list = setup();
         const room = fakeRoom("a", 1);
@@ -377,5 +403,63 @@ describe("freezeWhileHeld", () => {
         freeze.release(menu);
         expect(get(freeze.held)).toBe(false);
         unsubscribe();
+    });
+});
+
+describe("the row of a person's own Brick before its chat exists (#1995)", () => {
+    const brick = {
+        id: "0b7c1d2e-1111-4222-8333-944455556666",
+        name: "Recipe Brick",
+        description: null,
+        characterTextureId: "brick-orange",
+        enabled: true,
+        isDefault: false,
+        createdAt: "2026-11-11T10:00:00.000Z",
+    };
+
+    it("is sorted in by when the Brick was made, and is never unread", () => {
+        expect(brickEntry(brick, "")).toEqual({
+            id: "brick:0b7c1d2e-1111-4222-8333-944455556666",
+            kind: "brick",
+            name: "Recipe Brick",
+            timestamp: Date.parse("2026-11-11T10:00:00.000Z"),
+            unreadCount: 0,
+            hasUnread: false,
+            item: brick,
+        });
+    });
+
+    it('is listed with the chats, and found by its name, by "Brick" and by "Bot"', () => {
+        const extraEntries = writable<OneListEntry[]>([]);
+        const search = writable("");
+        const store = createOneListStore(
+            {
+                directRooms: writable<ChatRoom[]>([
+                    fakeRoom("Sara", Date.parse("2026-11-11T11:00:00.000Z"), { type: "direct" }),
+                ]),
+                rooms: writable<ChatRoom[]>([]),
+                invitations: writable<ChatRoom[]>([]),
+                folders: writable<RoomFolder[]>([]),
+                hiddenRoomIds: writable<ReadonlySet<string>>(new Set()),
+                search,
+                extraEntries,
+            },
+            new InvitationClock(() => 50),
+            (callback) => callback()
+        );
+        let current: OneListEntry[] = [];
+        const stop = store.subscribe((value) => (current = value));
+        const show = (text: string) => {
+            search.set(text);
+            extraEntries.set([brickEntry({ ...brick, name: "Melody" }, text)]);
+            return current.map((entry) => entry.id);
+        };
+        expect(show("")).toEqual(["Sara", "brick:0b7c1d2e-1111-4222-8333-944455556666"]);
+        expect(show("mel")).toEqual(["brick:0b7c1d2e-1111-4222-8333-944455556666"]);
+        expect(show("Brick")).toEqual(["brick:0b7c1d2e-1111-4222-8333-944455556666"]);
+        expect(show("bot")).toEqual(["brick:0b7c1d2e-1111-4222-8333-944455556666"]);
+        expect(show("bri")).toEqual([]);
+        expect(show("sara")).toEqual(["Sara"]);
+        stop();
     });
 });

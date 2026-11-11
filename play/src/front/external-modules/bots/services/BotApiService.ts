@@ -52,6 +52,8 @@ const PERMISSIONS_TIMEOUT_MS = 20000;
 const HELLO_TIMEOUT_MS = 60000;
 /** How long a lookup of bot states waits before it counts as failed (and is asked again on the next look) */
 const DM_STATUS_TIMEOUT_MS = 10000;
+/** How long a device waits to be told who makes a chat (#1995) before it opens the chat the way it always did */
+const DIRECT_CHAT_TIMEOUT_MS = 5000;
 
 export function isOrbitSessionResponse(value: unknown): value is { version: 2; sessionId: string; expiresAt: number } {
     if (!value || typeof value !== "object") return false;
@@ -1120,6 +1122,65 @@ export class BotApiService {
                 return data.room ?? null;
             } catch {
                 // The bot server answers "no room" (or "not for you") with `room: null`: any error is no answer.
+                return undefined;
+            }
+        })();
+        return Promise.race([asking, late]).finally(() => {
+            clearTimeout(timer);
+        });
+    }
+
+    /**
+     * The signed-in person's own Brick (game #1995): Orbit makes it the first time anyone asks for this account and
+     * answers with the same one ever after, from every device. `deleted` when its owner deleted it on purpose: it is
+     * not made again. Throws for a guest and when Orbit can't be reached.
+     */
+    async ensureMyBrick(): Promise<unknown> {
+        const response = await this.fetch("/api/bricks/default", { method: "POST" });
+        return response.json();
+    }
+
+    /** The signed-in person's Bricks, for their Bricks page: the one everyone gets first, then the ones they made. */
+    async listMyBricks(): Promise<unknown> {
+        const response = await this.fetch("/api/bricks");
+        return response.json();
+    }
+
+    /** Turns one of the person's own Bricks on or off. Answers with the Brick as it is now. */
+    async setBrickEnabled(brickId: string, enabled: boolean): Promise<unknown> {
+        const response = await this.fetch(`/api/bricks/${encodeURIComponent(brickId)}`, {
+            method: "PATCH",
+            body: JSON.stringify({ enabled }),
+        });
+        return response.json();
+    }
+
+    /**
+     * The one chat of this person and a bot (game #1995), asked by a device that has no chat with it yet, before it
+     * makes one: the bot server answers with the chat they already have, "make it" (one device at a time is told so),
+     * or "ask again in a moment". Undefined when it can't say (direct messages off, an older bot server, no answer in
+     * time, any error): the caller then opens the chat the way it always did.
+     */
+    async askDirectChat(botId: string, chatId: string): Promise<unknown> {
+        if (!this.botServerUrl) return undefined;
+        const stop = new AbortController();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        // Raced as well as aborted: the Orbit sign-in that comes first in a request does not listen for the abort
+        const late = new Promise<undefined>((resolve) => {
+            timer = setTimeout(() => {
+                stop.abort();
+                resolve(undefined);
+            }, DIRECT_CHAT_TIMEOUT_MS);
+        });
+        const asking = (async () => {
+            try {
+                const response = await this.fetchBotServer(`/api/bots/${encodeURIComponent(botId)}/direct-chat`, {
+                    method: "POST",
+                    body: JSON.stringify({ chatId }),
+                    signal: stop.signal,
+                });
+                return (await response.json()) as unknown;
+            } catch {
                 return undefined;
             }
         })();

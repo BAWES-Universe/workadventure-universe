@@ -73,6 +73,17 @@
     import { isTouchScreen, SETTLE_CHECKS_MS } from "../../../Utils/ViewportGuard";
     import { ARTIFACT_CHAT_CONTEXT, type ArtifactChatOf } from "../../../Artifacts/artifactChatContext";
     import PrivateReplyNote from "../../Bots/PrivateReplyNote.svelte";
+    import { STARTER_IDEAS } from "../../Bricks/Brick";
+    import {
+        BRICK_STARTERS_CARD,
+        brickHello,
+        brickIdeaWords,
+        brickIdeasCard,
+        brickStartersCard,
+    } from "../../Bricks/BrickHello";
+    import { brickHelloMessage } from "../../Bricks/BrickHelloMessage";
+    import { closeBrickCard, closedBrickCards, ideasCardKey, startersCardKey } from "../../Bricks/ClosedBrickCards";
+    import { myBricksByChatId, withMyBricks } from "../../Bricks/MyBricksStore";
     import { openDirectChatRoom } from "../../Utils";
     import Message from "./Message.svelte";
     import StoppedBySpeechNote from "./StoppedBySpeechNote.svelte";
@@ -111,14 +122,20 @@
     if (!hasContext(WOKA_BY_CHAT_ID_CONTEXT)) {
         setContext(
             WOKA_BY_CHAT_ID_CONTEXT,
-            createWokaByChatIdStore(gameManager.getCurrentGameScene().userProviderMerger, currentChatPeople()?.store)
+            createWokaByChatIdStore(
+                gameManager.getCurrentGameScene().userProviderMerger,
+                withMyBricks(currentChatPeople()?.store)
+            )
         );
     }
     // A direct chat names the other person as they go by in Universe (header and profile).
     if (!hasContext(NAME_BY_CHAT_ID_CONTEXT)) {
         setContext(
             NAME_BY_CHAT_ID_CONTEXT,
-            createNameByChatIdStore(gameManager.getCurrentGameScene().userProviderMerger, currentChatPeople()?.store)
+            createNameByChatIdStore(
+                gameManager.getCurrentGameScene().userProviderMerger,
+                withMyBricks(currentChatPeople()?.store)
+            )
         );
     }
 
@@ -484,6 +501,68 @@
             return false;
         }
     }
+    // The person's own Brick (#1995). While its chat is empty the game shows its hello as its first words, with the
+    // ways to start on the question card above the message box. Its fixed "what I can do" answer has its ideas there
+    // while it is the newest message. All of it is the game's own words: nothing is sent until the person taps or writes.
+    $: ownBrick = partner ? $myBricksByChatId.get(partner.id) : undefined;
+    $: brickAnswers = botState !== "resting" && botState !== "unready" && !botClosed;
+    $: brickChatEmpty = ownBrick !== undefined && matrixRoom !== undefined && !showLoading && $messages.length === 0;
+    let shownHello: { key: string; message: ChatMessage } | undefined;
+    $: showBrickHello(
+        brickChatEmpty && ownBrick && partner
+            ? {
+                  key: `${room.id}|${ownBrick.id}|${ownBrick.name}|${$locale}`,
+                  make: () =>
+                      brickHelloMessage(
+                          room.id,
+                          ownBrick,
+                          partner.id,
+                          brickHello(ownBrick.name, $LL, gameManager.getPlayerName()),
+                          new Date()
+                      ),
+              }
+            : undefined
+    );
+    // The hello keeps the time the chat was opened at: it is made once for a chat, a Brick and a language
+    function showBrickHello(hello: { key: string; make: () => ChatMessage } | undefined) {
+        if (!hello) shownHello = undefined;
+        else if (shownHello?.key !== hello.key) shownHello = { key: hello.key, message: hello.make() };
+    }
+    $: newestMessage = $messages.length > 0 ? $messages[$messages.length - 1] : undefined;
+    $: brickCardKey = !ownBrick
+        ? undefined
+        : shownHello
+        ? startersCardKey(room.id)
+        : newestMessage?.brickIdeas
+        ? ideasCardKey(newestMessage.id)
+        : undefined;
+    $: brickCard =
+        brickCardKey === undefined || !brickAnswers || shownAsk || $closedBrickCards.has(brickCardKey)
+            ? undefined
+            : shownHello
+            ? brickStartersCard($LL)
+            : brickIdeasCard($LL);
+    async function tapBrickCard(card: BotAsk, tap: BotAskTap): Promise<boolean> {
+        if (tap.action === "close") {
+            if (brickCardKey) closeBrickCard(brickCardKey);
+            return true;
+        }
+        if (tap.action !== "pick" || !matrixRoom) return false;
+        try {
+            if (card.id === BRICK_STARTERS_CARD) {
+                // The person's own words, marked as this starter: the Brick answers it with its fixed ideas
+                await matrixRoom.sendStarter($LL.chat.brick.whatCanYouDo(), STARTER_IDEAS);
+                return true;
+            }
+            const words = brickIdeaWords(tap.choices[0] ?? "", $LL);
+            if (!words) return false;
+            matrixRoom.sendMessage(words);
+            return true;
+        } catch (error) {
+            console.error("Could not send a Brick's starter", error);
+            return false;
+        }
+    }
     // "Continue privately" on a reply only this person saw (#1993): the bot's direct messages open, and the bot is
     // told which chat that is, so the same answer is there to carry on from
     async function continuePrivately(reply: ChatMessage) {
@@ -498,6 +577,8 @@
           shownAsk.ask.question
             ? $LL.chat.botAsk.typeYourOwnAnswer()
             : $LL.chat.botAsk.typeSomethingElse()
+        : brickCard
+        ? $LL.chat.botAsk.typeYourOwnAnswer()
         : botState === "resting"
         ? $LL.chat.botStatus.restingPlaceholder()
         : botState === "unready"
@@ -1206,7 +1287,7 @@
             {/if}
             <ul
                 bind:this={messageListContentRef}
-                class="list-none p-0 flex-1 flex flex-col max-h-full pt-10 {$messages.length === 0
+                class="list-none p-0 flex-1 flex flex-col max-h-full pt-10 {$messages.length === 0 && !shownHello
                     ? 'items-center justify-center pb-4'
                     : 'max-w-6xl'}"
                 class:invisible={firstFillPending}
@@ -1238,6 +1319,22 @@
                                 {$LL.chat.getCloserDesc()}
                             </div>
                         </li>
+                    {:else if shownHello}
+                        <!-- A person's own Brick says hello in a chat with nothing in it yet (#1995): fixed words, as
+                             its first message. They give way to the conversation once anything is written. -->
+                        {#key shownHello.key}
+                            <li class="run-start last:pb-3" data-testid="brickHello">
+                                {#if shownHello.message.date}
+                                    <div class="flex justify-center mb-3" data-testid="chatDayLabel">
+                                        <span
+                                            class="px-3 py-1.5 m-0 text-xs text-center border border-solid border-white/10 rounded-2xl text-white/80"
+                                            >{dayLabel(shownHello.message.date, $locale)}</span
+                                        >
+                                    </div>
+                                {/if}
+                                <Message message={shownHello.message} plain />
+                            </li>
+                        {/key}
                     {:else if !showLoading}
                         <li class="text-center px-3 max-w-md relative">
                             <IconMailBox font-size="40" />
@@ -1392,6 +1489,21 @@
                         onShowQueued={() => (pagedToAskId = waitingAsks[queuedSoonIndex]?.message.id)}
                         onOpen={() => chatSheetSnapStore.set("full")}
                     />
+                {/if}
+                {#if brickCard && ownBrick}
+                    <!-- The Brick's own suggestions (#1995), on the question card: ways to start, then ideas. A tap
+                         sends the person's words; X closes the card and it stays closed. -->
+                    {#key brickCardKey}
+                        <BotAskCard
+                            docked
+                            ask={brickCard}
+                            botName={ownBrick.name}
+                            headLine={$LL.chat.brick.suggests({ name: ownBrick.name })}
+                            compact={askCompact}
+                            onTap={tapBrickCard}
+                            onOpen={() => chatSheetSnapStore.set("full")}
+                        />
+                    {/key}
                 {/if}
                 {#if proximityRoom}
                     <!-- Round 8: while a voice bot takes your microphone in the group, a direct Stop listening -->
