@@ -84,6 +84,17 @@ export function namedOthers(heard: Heard | undefined): string[] {
     return [...new Set(heard.with.filter((id) => typeof id === 'string' && id !== SOMEONE_UNKNOWN && id.trim().length > 1))];
 }
 
+/**
+ * Something that may come from either of two lines: only the people who heard both heard it, and nobody when either
+ * was private or was never stamped. A note that repeats nothing anyone said takes the other line's stamp.
+ */
+export function heardByBoth(one: Heard | undefined, other: Heard | undefined): Heard | undefined {
+    if (one?.place === 'open') return copyHeard(other);
+    if (other?.place === 'open') return copyHeard(one);
+    if (!one || !other || one.place !== 'nearby' || other.place !== 'nearby' || !Array.isArray(one.with) || !Array.isArray(other.with)) return undefined;
+    return { place: 'nearby', with: one.with.filter((id) => other.with.includes(id)) };
+}
+
 /** A copy that shares nothing with the original. */
 export function copyHeard(heard: Heard | undefined): Heard | undefined {
     return heard ? { place: heard.place, with: [...(Array.isArray(heard.with) ? heard.with : [])] } : undefined;

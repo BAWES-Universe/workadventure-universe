@@ -765,6 +765,8 @@ export class AIService {
         // The same answer decides who is sent the reply: written for someone alone with the bot, it reaches nobody who
         // walks up while it is being written
         if (hearing && channel === 'world' && playerId !== undefined) hearing.botClient.replyStarts?.(hearing.spaceName, playerId, !others);
+        // Where the line this reply answers was heard, kept for what its analysis finds (a wound), whatever is said meanwhile
+        if (hearing && channel === 'world' && playerId !== undefined && !isRetry) this.conversationMemory?.turnStarts?.(botId, playerId);
         const name = others ? hearing?.botClient.getPersonForArtifacts?.(playerId)?.name ?? null : null;
         // Only when the bot knows something of this person's that the others were not there for can their message need
         // an answer of its own: then, and only for what a person said, the reply is watched for the marker
@@ -3434,7 +3436,15 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             send: async (file, url) =>
                 this.someoneCameSince(botClient, spaceName, playerId, present)
                     ? SOMEONE_CAME
-                    : this.sendFileAgain(file, url, { botClient, spaceName, botId, playerId, only: present === undefined ? playerId : undefined }),
+                    : this.sendFileAgain(file, url, {
+                          botClient,
+                          spaceName,
+                          botId,
+                          playerId,
+                          only: present === undefined ? playerId : undefined,
+                          // Looked at once more when a link has been uploaded, at the moment it goes into the space
+                          ...(present ? { mayGo: () => !this.someoneCameSince(botClient, spaceName, playerId, present) } : {}),
+                      }),
             ...(artifactsEnabled() ? { sendArtifact: (id: string) => this.sendArtifactCardAgain(id, { botClient, admin, spaceName, botId, playerId, present }) } : {}),
         });
     }
@@ -3497,7 +3507,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     private async sendFileAgain(
         file: { ref?: string; kind: string; name: string; mimeType: string | null; line: string | null; sizeBytes?: number | null; store?: FileStore },
         url: string,
-        where: { botClient?: BotClient; spaceName?: string; botId: string; playerId: number; only?: number }
+        where: { botClient?: BotClient; spaceName?: string; botId: string; playerId: number; only?: number; mayGo?: () => boolean }
     ): Promise<string | null> {
         // Sent once a turn: the model calling it twice, at once or one after the other, or the turn asked again, gets
         // what the first send did. A send that was refused can be tried again
@@ -3516,10 +3526,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         file: { kind: string; name: string; mimeType: string | null; line: string | null; sizeBytes?: number | null; store?: FileStore },
         url: string,
         /** `only`: the one person it goes to, for a reply written for them alone (#1993). */
-        where: { botClient?: BotClient; spaceName?: string; only?: number },
+        where: { botClient?: BotClient; spaceName?: string; only?: number; mayGo?: () => boolean },
         memory: BotPlayerMemory | undefined
     ): Promise<string | null> {
-        const { botClient, spaceName, only } = where;
+        const { botClient, spaceName, only, mayGo } = where;
         const mediaType: PendingMedia['mediaType'] = file.kind === 'image' || file.kind === 'audio' || file.kind === 'video' ? file.kind : 'file';
         // What Orbit says it is, for a link whose name has no extension to tell
         const mimeType = file.mimeType || undefined;
@@ -3528,13 +3538,16 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             // Already in storage (a file Orbit keeps by bucket and id): sent as it is, never downloaded and uploaded again.
             // A link kept as typed goes the usual way, with its checks
             if (file.store && 'bucket' in file.store) botClient.markStored?.(url);
+            // Only a file for everyone here is asked about again as it goes out
+            const ask: [] | [() => boolean] = mayGo ? [mayGo] : [];
             try {
-                if (mediaType === 'image') await botClient.sendImage(spaceName, url, file.line ?? undefined, undefined, mimeType, only);
-                else if (mediaType === 'audio') await botClient.sendAudio(spaceName, url, undefined, mimeType, only);
-                else if (mediaType === 'video') await botClient.sendVideo(spaceName, url, undefined, mimeType, only);
-                else await botClient.sendFile(spaceName, url, file.name, undefined, mimeType, only);
+                if (mediaType === 'image') await botClient.sendImage(spaceName, url, file.line ?? undefined, undefined, mimeType, only, ...ask);
+                else if (mediaType === 'audio') await botClient.sendAudio(spaceName, url, undefined, mimeType, only, ...ask);
+                else if (mediaType === 'video') await botClient.sendVideo(spaceName, url, undefined, mimeType, only, ...ask);
+                else await botClient.sendFile(spaceName, url, file.name, undefined, mimeType, only, ...ask);
                 return null;
-            } catch {
+            } catch (error) {
+                if ((error as { _heldBack?: boolean } | null)?._heldBack) return SOMEONE_CAME;
                 return "It couldn't be sent right now. Say so simply and offer to try again.";
             }
         }

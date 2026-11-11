@@ -1733,6 +1733,17 @@ export class BotClient {
      * to the uploader's /upload-file endpoint with the BOT_SERVICE_TOKEN header.
      * Returns the CDN location and inferred media type.
      */
+    /**
+     * Asked once the file is uploaded and before it goes into the space (#1993): a file for everyone here is not sent
+     * when someone has walked up while it was uploaded. The error says so (`_heldBack`), and nothing was sent.
+     */
+    private static heldBack(mayGo: (() => boolean) | undefined): void {
+        if (!mayGo || mayGo()) return;
+        const err = new Error('Someone joined before the file could be sent');
+        (err as any)._heldBack = true;
+        throw err;
+    }
+
     private async uploadMedia(url: string, mimeType?: string): Promise<{ location: string; mediaType: string; mimeType: string }> {
         const uploaderUrl = this.config.uploaderUrl || process.env.UPLOADER_URL;
         if (!uploaderUrl) {
@@ -1822,10 +1833,11 @@ export class BotClient {
      * Send an image to a space.
      * Uploads the image from the provided URL to the CDN (if needed) and sends it to the chat.
      */
-    async sendImage(spaceName: string, url: string, alt?: string, asker?: number, mimeType?: string, only?: number): Promise<string> {
+    async sendImage(spaceName: string, url: string, alt?: string, asker?: number, mimeType?: string, only?: number, mayGo?: () => boolean): Promise<string> {
         const mimeHint = mimeType || this.inferMimeFromExt(url);
         try {
             const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
+            BotClient.heldBack(mayGo);
             if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, alt || '', undefined, asker, only)) {
                 const err = new Error(`Bot is not in space ${spaceName} — cannot send image`);
                 (err as any)._cdnUrl = location;
@@ -1848,10 +1860,11 @@ export class BotClient {
     /**
      * Send a file to a space.
      */
-    async sendFile(spaceName: string, url: string, filename?: string, asker?: number, mimeType?: string, only?: number): Promise<string> {
+    async sendFile(spaceName: string, url: string, filename?: string, asker?: number, mimeType?: string, only?: number, mayGo?: () => boolean): Promise<string> {
         const mimeHint = mimeType || this.inferMimeFromExt(url);
         try {
             const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
+            BotClient.heldBack(mayGo);
             if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, '', filename, asker, only)) {
                 const err = new Error(`Bot is not in space ${spaceName} — cannot send file`);
                 (err as any)._cdnUrl = location;
@@ -1874,10 +1887,11 @@ export class BotClient {
     /**
      * Send audio to a space.
      */
-    async sendAudio(spaceName: string, url: string, asker?: number, mimeType?: string, only?: number): Promise<string> {
+    async sendAudio(spaceName: string, url: string, asker?: number, mimeType?: string, only?: number, mayGo?: () => boolean): Promise<string> {
         const mimeHint = mimeType || this.inferMimeFromExt(url);
         try {
             const { location, mimeType: uploadedType } = await this.uploadMedia(url, mimeHint);
+            BotClient.heldBack(mayGo);
             // A song with no usable name would show as a plain player: give it one that ends as audio.
             // When nothing says which audio type it is (a stored link is a bare id, with no type), mp3 is the common one,
             // and the message still goes out as audio, not as a file the card would not play.
@@ -1906,10 +1920,11 @@ export class BotClient {
     /**
      * Send video to a space.
      */
-    async sendVideo(spaceName: string, url: string, asker?: number, mimeType?: string, only?: number): Promise<string> {
+    async sendVideo(spaceName: string, url: string, asker?: number, mimeType?: string, only?: number, mayGo?: () => boolean): Promise<string> {
         const mimeHint = mimeType || this.inferMimeFromExt(url);
         try {
             const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
+            BotClient.heldBack(mayGo);
             if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, undefined, undefined, asker, only)) {
                 const err = new Error(`Bot is not in space ${spaceName} — cannot send video`);
                 (err as any)._cdnUrl = location;

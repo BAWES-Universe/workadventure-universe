@@ -637,8 +637,36 @@ describe('the file tools in AIService', () => {
 
             expect(askedOf(admin.findBotFiles)[0]).toEqual(everyone);
             for (const asked of askedOf(admin.getBotFile)) expect(asked).toEqual(everyone);
-            // Everyone there was there for it, so it goes into the space for all of them
-            expect(bot.sendAudio).toHaveBeenCalledWith('bubble-1', 'https://cdn.example.com/song.mp3', undefined, 'audio/mpeg', undefined);
+            // Everyone there was there for it, so it goes into the space for all of them, asked about once more as it goes out
+            expect(bot.sendAudio).toHaveBeenCalledWith('bubble-1', 'https://cdn.example.com/song.mp3', undefined, 'audio/mpeg', undefined, expect.any(Function));
+        });
+
+        it('does not send it when someone walks up while it is uploaded: who is here is asked again as it goes out', async () => {
+            const ai = withFiles({});
+            const here: { others: string[] } = { others: ['uuid-sara'] };
+            const asked: boolean[] = [];
+            const bot = {
+                ...client(),
+                othersWith: vi.fn(() => here.others),
+                // As BotClient does: the upload waits, then the file goes out unless it is held back
+                sendAudio: vi.fn(async (_space: string, _url: string, _asker: unknown, _mime: unknown, _only: unknown, mayGo?: () => boolean) => {
+                    here.others = ['uuid-sara', 'uuid-omar'];
+                    const may = mayGo ? mayGo() : true;
+                    asked.push(may);
+                    if (!may) throw Object.assign(new Error('held back'), { _heldBack: true });
+                    return 'https://cdn.example.com/new.mp3';
+                }),
+            };
+            const refused = await ai['sendFileAgain'](view(SONG), 'https://cdn.example.com/signed/song.mp3', {
+                botClient: bot as never,
+                spaceName: 'bubble-1',
+                botId: 'bot1',
+                playerId: 7,
+                mayGo: () => !ai['someoneCameSince'](bot as never, 'bubble-1', 7, ['uuid-sara']),
+            });
+
+            expect(asked).toEqual([false]);
+            expect(refused).toMatch(/Someone else just joined, so it wasn't sent/);
         });
 
         it('does not send it when someone walked up while it was looked up: they were not asked about', async () => {

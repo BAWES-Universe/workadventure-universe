@@ -387,6 +387,22 @@ describe('BotClient: what a reply for one person sends with it', () => {
         expect(sent().map((message) => message.onlyFor)).toEqual(['room-1_7', 'room-1_7', 'room-1_7', 'room-1_7', 'room-1_7', undefined]);
     });
 
+    it('asks once more after the upload, and sends nothing when it is held back (someone walked up meanwhile)', async () => {
+        const { bot, init, sent } = setup();
+        await init([KHALID, SARA]);
+        vi.spyOn(bot as never, 'uploadMedia').mockImplementation((async (url: string, mimeType: string) => ({ location: url, mediaType: mimeType.split('/')[0] === 'application' ? 'file' : mimeType.split('/')[0], mimeType })) as never);
+        const no = () => false;
+
+        await expect(bot.sendImage(SPACE, 'https://cdn.example.test/a.png', 'A chart', undefined, 'image/png', undefined, no)).rejects.toMatchObject({ _heldBack: true });
+        await expect(bot.sendFile(SPACE, PAYSLIP, 'payslip.pdf', undefined, 'application/pdf', undefined, no)).rejects.toMatchObject({ _heldBack: true });
+        await expect(bot.sendAudio(SPACE, 'https://cdn.example.test/song.mp3', undefined, 'audio/mpeg', undefined, no)).rejects.toMatchObject({ _heldBack: true });
+        await expect(bot.sendVideo(SPACE, 'https://cdn.example.test/clip.mp4', undefined, 'video/mp4', undefined, no)).rejects.toMatchObject({ _heldBack: true });
+        expect(sent()).toEqual([]);
+
+        await bot.sendFile(SPACE, PAYSLIP, 'payslip.pdf', undefined, 'application/pdf', undefined, () => true);
+        expect(sent()).toHaveLength(1);
+    });
+
     it('remembers what it said in a reply for one person as said with nobody else there, whoever walked up', async () => {
         const { bot, init, join } = setup();
         await init([KHALID]);

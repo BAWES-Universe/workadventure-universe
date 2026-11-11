@@ -9,7 +9,7 @@
  */
 
 import { withoutFileNotes } from '../services/ChatFiles';
-import { copyHeard, heardAlso, mayUse, nothingSaid, type Heard, type MemoryView } from './Heard';
+import { copyHeard, heardAlso, heardByBoth, mayUse, nothingSaid, type Heard, type MemoryView } from './Heard';
 
 /** Recent messages a reply reads until Orbit serves the bot's own number: the recommended "Messages it remembers". */
 const DEFAULT_HISTORY_WINDOW = 20;
@@ -191,6 +191,8 @@ export class ConversationMemory {
      * Tells where a line is being said and who else is there (#1993). Until it is set nothing is stamped, so all of it is
      * private. `sender` says whose line it is: the bot's own reply may have gone to its person alone.
      */
+    /** By memory: where the line the reply being made answers was heard (see `turnStarts`). */
+    private readonly turns = new WeakMap<BotPlayerMemory, { heard: Heard | undefined }>();
     private whoHeard?: (botId: string, playerId: number, spaceName: string, sender?: 'bot' | 'person') => Heard | undefined;
 
     /** Set once by the bot server: the one place that knows a direct message from a bubble, and who is in the bubble. */
@@ -850,15 +852,13 @@ export class ConversationMemory {
                 continue;
             }
             const stamp = copyHeard(line.heard);
-            if (lines++ === 0) {
-                heard = stamp;
-            } else if (!stamp || !heard || stamp.place !== 'nearby' || heard.place !== 'nearby') {
-                heard = stamp?.place === 'open' ? heard : heard?.place === 'open' ? stamp : undefined;
-            } else {
-                heard = { place: 'nearby', with: heard.with.filter((id) => stamp.with.includes(id)) };
-            }
+            heard = lines++ === 0 ? stamp : heardByBoth(heard, stamp);
             if (!heard) break;
         }
+        // The line the reply now ending was started for counts too, wherever it is in the history by now: an answer
+        // to an earlier message may have been kept after it, and a later line may have come in front of other people
+        const turn = this.turns.get(memory);
+        if (turn) heard = lines === 0 ? copyHeard(turn.heard) : heardByBoth(heard, turn.heard);
 
         const wound: EmotionalWound = {
             type: woundType,
@@ -877,6 +877,16 @@ export class ConversationMemory {
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[ConversationMemory] ⚠️ AI emotional wound created: ${woundType} (severity: ${severity})`);
         }
+    }
+
+    /**
+     * A reply to this person starts now: the newest thing they said is what it answers, and where that was heard is
+     * kept until the next reply starts, for a wound the reply's analysis finds (#1993).
+     */
+    turnStarts(botId: string, playerId: number): void {
+        const memory = this.getMemory(botId, playerId);
+        if (!memory) return;
+        this.turns.set(memory, { heard: copyHeard(this.lastPersonLine(botId, playerId)?.heard) });
     }
 
     /**

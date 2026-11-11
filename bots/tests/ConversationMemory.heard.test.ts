@@ -285,6 +285,31 @@ describe('ConversationMemory: what a bot says in front of others', () => {
         expect(memory.getConversationContext(BOT, KHALID, { present: [OMAR] })).not.toContain('EMOTIONAL WOUNDS');
     });
 
+    it('a wound from a private line that waited its turn stays private, though the earlier answer and a group line came after it', () => {
+        say('hello', 'person', BUBBLE);
+        // Said alone while the bot was still answering "hello": that answer is kept after it
+        say('You are useless', 'person', BUBBLE);
+        say('Hello!', 'bot', BUBBLE);
+        memory.turnStarts(BOT, KHALID);
+        // Sara walks up and they write again while the private line is being answered
+        others.now = [SARA];
+        say('anyway, what is for lunch?', 'person', BUBBLE);
+        memory.updateEmotionsFromAI(BOT, KHALID, { personSentiment: -90, isInsult: true, insultSeverity: 8, context: 'angry' });
+
+        expect(memory.getConversationContext(BOT, KHALID)).toContain('EMOTIONAL WOUNDS');
+        expect(memory.getConversationContext(BOT, KHALID, { present: [SARA] })).not.toContain('EMOTIONAL WOUNDS');
+    });
+
+    it('a wound from a line said in front of Sara, answered as its own turn, is still known in front of Sara', () => {
+        others.now = [SARA];
+        say('You are useless', 'person', BUBBLE);
+        memory.turnStarts(BOT, KHALID);
+        say('I am sorry you feel that way.', 'bot', BUBBLE);
+        memory.updateEmotionsFromAI(BOT, KHALID, { personSentiment: -90, isInsult: true, insultSeverity: 8, context: 'angry' });
+
+        expect(memory.getConversationContext(BOT, KHALID, { present: [SARA] })).toContain('EMOTIONAL WOUNDS');
+    });
+
     it('keeps a line with who heard it when it came, when it is kept a while after (its files were read first)', () => {
         // Sent alone; Sara walked up while the file was read
         const arrived = { heard: { place: 'nearby', with: [] } as Heard };
