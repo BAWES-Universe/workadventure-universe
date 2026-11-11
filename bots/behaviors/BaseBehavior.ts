@@ -13,7 +13,7 @@ import { withNearbySteps } from './NearbySteps';
 import type { AdminApiService } from '../server/AdminApiService';
 import type { ConversationStorage } from '../memory/ConversationStorage';
 import type { ConversationMemory } from '../memory/ConversationMemory';
-import { namedOthers, viewFor, type Heard } from '../memory/Heard';
+import { copyHeard, namedOthers, viewFor, type Heard } from '../memory/Heard';
 import type { ResponseProcessor, ProcessedResponse } from '../ai/ResponseProcessor';
 import { parseEmotionsFromResponse, appendStreamedChunk, detectEmotionPrefixAtEnd } from '../ai/EmotionParser';
 import type { BotMetricsCollector } from '../metrics/BotMetricsCollector';
@@ -98,6 +98,8 @@ export interface QueuedMessage {
     timestamp: number;
     /** 'answer' | 'queue' — set when queued via interruption classification */
     classification?: string;
+    /** Who heard the line when it came (#1993): what its answer's analysis finds is heard by them, however long it waited */
+    heard?: ReadonlyArray<Heard | undefined>;
 }
 
 export interface BehaviorConfig {
@@ -2013,11 +2015,15 @@ export abstract class BaseBehavior {
         mimeType?: string,
         galleryUrls?: string[],
         /** When the line reached the bot; a line that waited in line keeps the time it came */
-        heardAt = Date.now()
+        heardAt = Date.now(),
+        /** Who heard the line(s) this answers, for one that waited in line. Left out, it is the line the person just said */
+        answers?: ReadonlyArray<Heard | undefined>
     ): Promise<'generated' | 'queued' | 'cancelled'> {
         this.pruneStaleConversations();
+        // Taken before anything is awaited: the line was kept just now, and a later one may be kept while this one waits
+        const heard = answers ?? [copyHeard(this.conversationMemory?.lastPersonLine?.(botId, senderId)?.heard)];
 
-        const action = await this.handleInterruption(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, heardAt);
+        const action = await this.handleInterruption(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, heardAt, heard);
         if (action === 'queued' || action === 'cancelled') {
             if (action === 'cancelled') {
                 this.bot?.stopTyping(spaceName);
@@ -2046,6 +2052,8 @@ export abstract class BaseBehavior {
             // Inside the try so any throw still reaches the finally that calls
             // finishGeneration (a stuck isGenerating would wedge this player's queue).
             const imageUrls = await this.collectImageUrls(url, mediaType, mimeType, galleryUrls);
+            // What this answer's analysis finds (a wound) is heard where the answered line was, not where a later one is (#1993)
+            this.conversationMemory?.turnAnswers?.(botId, senderId, heard);
             await generator(abortSignal, imageUrls);
         } catch (error) {
             // A stale generation means cancel/update already aborted this stream
@@ -2114,6 +2122,7 @@ export abstract class BaseBehavior {
                     message: words.map((item) => item.message).join('\n'),
                     // Answered as one: the words came when the last of them did
                     timestamp: Math.max(...words.map((item) => item.timestamp)),
+                    heard: words.flatMap((item) => item.heard ?? [undefined]),
                 };
             }
         }
@@ -2131,7 +2140,8 @@ export abstract class BaseBehavior {
             queued.mediaType,
             queued.mimeType,
             queued.galleryUrls,
-            queued.timestamp
+            queued.timestamp,
+            queued.heard ?? [undefined]
         );
     }
 
@@ -2147,7 +2157,8 @@ export abstract class BaseBehavior {
         mediaType?: string,
         mimeType?: string,
         galleryUrls?: string[],
-        heardAt = Date.now()
+        heardAt = Date.now(),
+        heard?: ReadonlyArray<Heard | undefined>
     ): Promise<'queued' | 'cancelled' | 'proceed'> {
         const state = this.activeConversations.get(senderId);
         if (!state || !state.isGenerating) return 'proceed';
@@ -2158,7 +2169,7 @@ export abstract class BaseBehavior {
         // so a typed "stop" or "do this instead" still stops or changes the answer
         if (this.bot?.mayEndFollowUp?.(state.spaceName, senderId) && this.bot.saidOutLoud?.(state.spaceName, senderId)) {
             // A full line is dropped without a word: "I'll answer once I've finished" would be spoken to a room that was only talking
-            await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, 'queue', true, heardAt);
+            await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, 'queue', true, heardAt, heard);
             return 'queued';
         }
 
@@ -2169,14 +2180,14 @@ export abstract class BaseBehavior {
         try {
             result = await this.classifyInterruption(currentTask, originalMessage);
         } catch {
-            await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, undefined, false, heardAt);
+            await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, undefined, false, heardAt, heard);
             return 'queued';
         }
 
         // Guard against the generation advancing during the classifyInterruption await
         const currentState = this.activeConversations.get(senderId);
         if (!currentState || currentState.generation !== interruptedGen) {
-            await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, undefined, false, heardAt);
+            await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, undefined, false, heardAt, heard);
             return 'queued';
         }
 
@@ -2224,7 +2235,7 @@ export abstract class BaseBehavior {
                     currentState.pendingAnswers.push(result.message);
                 } else {
                     // No quick answer produced — fall back to queueing so it isn't lost.
-                    await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, 'answer', false, heardAt);
+                    await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, 'answer', false, heardAt, heard);
                 }
                 return 'queued';
             }
@@ -2234,7 +2245,7 @@ export abstract class BaseBehavior {
                 if (result.message) {
                     this.sendStatusAck(currentState.spaceName, result.message);
                 }
-                await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, 'queue', false, heardAt);
+                await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, 'queue', false, heardAt, heard);
                 return 'queued';
             }
         }
@@ -2263,7 +2274,8 @@ export abstract class BaseBehavior {
         galleryUrls?: string[],
         classification?: string,
         quiet = false,
-        heardAt = Date.now()
+        heardAt = Date.now(),
+        heard?: ReadonlyArray<Heard | undefined>
     ): Promise<void> {
         const state = this.activeConversations.get(senderId);
         if (!state) return;
@@ -2274,7 +2286,7 @@ export abstract class BaseBehavior {
             return;
         }
 
-        state.messageQueue.push({ originalMessage, message, url, mediaType, mimeType, galleryUrls, classification, timestamp: heardAt });
+        state.messageQueue.push({ originalMessage, message, url, mediaType, mimeType, galleryUrls, classification, timestamp: heardAt, heard });
     }
 
     /**

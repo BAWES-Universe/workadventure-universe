@@ -300,6 +300,35 @@ describe('ConversationMemory: what a bot says in front of others', () => {
         expect(memory.getConversationContext(BOT, KHALID, { present: [SARA] })).not.toContain('EMOTIONAL WOUNDS');
     });
 
+    it('a wound from a private line that waited behind another keeps to who heard it, though group lines came before and during its answer', () => {
+        say('hello', 'person', BUBBLE);
+        // Said alone, with a file, while "hello" was being answered: it waits in line
+        say('You are useless, read this', 'person', BUBBLE);
+        // Sara walks up and they write again, still before the first answer is out: this waits too
+        others.now = [SARA];
+        say('what is for lunch?', 'person', BUBBLE);
+        say('Hello!', 'bot', BUBBLE);
+        // The line with the file is answered on its own; the one who kept it in line says who heard it
+        memory.turnAnswers(BOT, KHALID, [{ place: 'nearby', with: [] }]);
+        memory.turnStarts(BOT, KHALID);
+        say('and dinner?', 'person', BUBBLE);
+        memory.updateEmotionsFromAI(BOT, KHALID, { personSentiment: -90, isInsult: true, insultSeverity: 8, context: 'angry' });
+
+        expect(memory.getConversationContext(BOT, KHALID)).toContain('EMOTIONAL WOUNDS');
+        expect(memory.getConversationContext(BOT, KHALID, { present: [SARA] })).not.toContain('EMOTIONAL WOUNDS');
+    });
+
+    it('lines answered as one: a wound is heard only by who heard every one of them', () => {
+        others.now = [SARA];
+        say('hello', 'person', BUBBLE);
+        say('Hello!', 'bot', BUBBLE);
+        memory.turnAnswers(BOT, KHALID, [{ place: 'nearby', with: [SARA] }, undefined]);
+        say('ok', 'person', BUBBLE);
+        memory.updateEmotionsFromAI(BOT, KHALID, { personSentiment: -90, isInsult: true, insultSeverity: 8, context: 'angry' });
+
+        expect(memory.getConversationContext(BOT, KHALID, { present: [SARA] })).not.toContain('EMOTIONAL WOUNDS');
+    });
+
     it('a wound from a line said in front of Sara, answered as its own turn, is still known in front of Sara', () => {
         others.now = [SARA];
         say('You are useless', 'person', BUBBLE);

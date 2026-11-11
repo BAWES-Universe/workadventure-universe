@@ -878,7 +878,15 @@ export class AIService {
     private someoneCameSince(botClient: BotClient | undefined, spaceName: string | undefined, playerId: number, present: readonly string[] | undefined): boolean {
         if (!present || !botClient || !spaceName) return false;
         const now = this.othersReading(playerId, spaceName, botClient);
-        return now !== undefined && now.present.some((id) => !present.includes(id));
+        if (now === undefined) return false;
+        // People the bot cannot name all read as the same mark, so one more of them is counted, not looked up
+        const before = [...present];
+        return now.present.some((id) => {
+            const at = before.indexOf(id);
+            if (at < 0) return true;
+            before.splice(at, 1);
+            return false;
+        });
     }
 
     /**

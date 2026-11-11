@@ -393,6 +393,13 @@ describe('the file tools in AIService', () => {
         // Who is here cannot be told: as if a stranger were
         here.others = undefined;
         expect(came(['uuid-sara'])).toBe(true);
+        // People the bot cannot name read as the same mark: a second one is still someone new
+        here.others = ['?', '?'];
+        expect(came(['?'])).toBe(true);
+        expect(came(['?', '?'])).toBe(false);
+        here.others = ['uuid-sara', '?'];
+        expect(came(['uuid-sara', '?'])).toBe(false);
+        expect(came(['?'])).toBe(true);
     });
 
     it('offers find_files, open_file and send_again in place of list_artifacts with an Orbit that keeps files, and nothing new without one', async () => {

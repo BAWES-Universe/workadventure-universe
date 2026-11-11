@@ -192,7 +192,7 @@ export class ConversationMemory {
      * private. `sender` says whose line it is: the bot's own reply may have gone to its person alone.
      */
     /** By memory: where the line the reply being made answers was heard (see `turnStarts`). */
-    private readonly turns = new WeakMap<BotPlayerMemory, { heard: Heard | undefined }>();
+    private readonly turns = new WeakMap<BotPlayerMemory, { heard: Heard | undefined; told?: true }>();
     private whoHeard?: (botId: string, playerId: number, spaceName: string, sender?: 'bot' | 'person') => Heard | undefined;
 
     /** Set once by the bot server: the one place that knows a direct message from a bubble, and who is in the bubble. */
@@ -886,7 +886,24 @@ export class ConversationMemory {
     turnStarts(botId: string, playerId: number): void {
         const memory = this.getMemory(botId, playerId);
         if (!memory) return;
+        // The behaviour said which line this reply answers (see `turnAnswers`): that holds, whatever was said since
+        if (this.turns.get(memory)?.told) return;
         this.turns.set(memory, { heard: copyHeard(this.lastPersonLine(botId, playerId)?.heard) });
+    }
+
+    /**
+     * The reply now starting answers these lines, heard by these people when each came (#1993). A line that waited in
+     * line is no longer the newest by the time it is answered, so the one who kept it in line says where it was heard.
+     * Several lines answered as one: only the people who heard every one of them, and nobody if any was private.
+     */
+    turnAnswers(botId: string, playerId: number, lines: ReadonlyArray<Heard | undefined>): void {
+        const memory = this.getMemory(botId, playerId);
+        if (!memory) return;
+        let heard: Heard | undefined;
+        lines.forEach((line, index) => {
+            heard = index === 0 ? copyHeard(line) : heardByBoth(heard, line);
+        });
+        this.turns.set(memory, { heard, told: true });
     }
 
     /**
