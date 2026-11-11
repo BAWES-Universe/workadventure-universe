@@ -10,7 +10,6 @@
  * This file holds the words and the small parts of that: the marker and the watch that keeps it off every screen, the
  * rules added to the prompt, the fixed line, and the replies kept so they come back with their person after a reload.
  */
-import type { BotClient } from '../client/BotClient';
 
 /** What the model answers, alone, when the answer needs something the others were not there for. Never shown. */
 export const PRIVATE_MARKER = '[PRIVATE_REPLY]';
@@ -21,8 +20,16 @@ const KEPT = 10;
 /** How many people's replies are kept at once, across bots. */
 const MAX_KEPT_FOR = 500;
 
-/** What these answers need of a bot's client. */
-type AnswersBot = Pick<BotClient, 'getBotId' | 'sendAskEvent' | 'getPersonForArtifacts'> & Partial<Pick<BotClient, 'chatIdOf'>>;
+/**
+ * What these answers need of a bot's client. Written out, not taken from the client's own type: the tools and the voice
+ * read this file for its words, and must not bring the whole client along with it.
+ */
+interface AnswersBot {
+    getBotId(): string;
+    sendAskEvent(spaceName: string, playerId: number, event: { kind: 'card' | 'reply'; id: string; revision: number; body: string }): boolean;
+    getPersonForArtifacts(playerId: number): { signedIn: boolean; identifier: string | null; name: string | null };
+    chatIdOf?(playerId: number): string | undefined;
+}
 
 const called = (name: string | null | undefined): string => (name && name.trim() ? name.trim() : 'this person');
 
@@ -92,6 +99,12 @@ export function privateBodyOf(reply: string): string {
 }
 
 /**
+ * The text with its plain letters in capitals and everything else as written, so a place found in it is the same place
+ * in the text itself. (Upper-casing the whole text can make it longer: "ß" becomes "SS".)
+ */
+const upperAscii = (text: string): string => text.replace(/[a-z]+/g, (letters) => letters.toUpperCase());
+
+/**
  * Reads a reply as it is written and holds back anything that could be the start of the marker, so no part of the
  * marker is ever shown, wherever in the reply the model put it. Once the marker is found, nothing more goes on.
  */
@@ -117,7 +130,7 @@ export class MarkerWatch {
             return '';
         }
         const all = this.held + text;
-        const at = all.toUpperCase().indexOf(PRIVATE_MARKER);
+        const at = upperAscii(all).indexOf(PRIVATE_MARKER);
         if (at >= 0) {
             this.seen = true;
             this.held = '';
@@ -126,7 +139,7 @@ export class MarkerWatch {
         }
         // Keep the longest ending that could still turn into the marker
         let keep = Math.min(all.length, PRIVATE_MARKER.length - 1);
-        while (keep > 0 && !PRIVATE_MARKER.startsWith(all.slice(all.length - keep).toUpperCase())) keep--;
+        while (keep > 0 && !PRIVATE_MARKER.startsWith(upperAscii(all.slice(all.length - keep)))) keep--;
         this.held = all.slice(all.length - keep);
         return all.slice(0, all.length - keep);
     }

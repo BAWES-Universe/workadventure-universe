@@ -177,6 +177,25 @@ describe('MarkerWatch: no part of the marker is ever shown', () => {
         expect(watch.after).toBe(' it is at 10 on Thursday');
         expect(watch.rest()).toBe('');
     });
+
+    it('finds it in the same place after letters that grow when written in capitals', () => {
+        // "ß" becomes "SS" in capitals, "ŉ" becomes two letters, "ﬁ" becomes "FI": the marker is no further on for that
+        for (const before of ['Die Straße ist groß. ', 'ŉ ﬁn ǰ ', 'İstanbul ']) {
+            const watch = new MarkerWatch();
+            expect(watch.push(`${before}${PRIVATE_MARKER}\n[EMOTION_UPDATE]{}[/EMOTION_UPDATE]`)).toBe(before);
+            expect(watch.found).toBe(true);
+            expect(watch.after).toBe('\n[EMOTION_UPDATE]{}[/EMOTION_UPDATE]');
+        }
+        const pieces = new MarkerWatch();
+        expect(pieces.push('groß [priv') + pieces.push('ate_reply] ok')).toBe('groß ');
+        expect(pieces.after).toBe(' ok');
+    });
+
+    it('lets go of an ending that only looks like its start in capitals', () => {
+        const watch = new MarkerWatch();
+        expect(watch.push('Maß [') + watch.push('x]') + watch.rest()).toBe('Maß [x]');
+        expect(watch.found).toBe(false);
+    });
 });
 
 describe('a reply as its person reads it', () => {
