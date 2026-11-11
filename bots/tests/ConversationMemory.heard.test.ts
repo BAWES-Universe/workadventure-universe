@@ -354,12 +354,85 @@ describe('ConversationMemory: what a bot says in front of others', () => {
         expect(kept.conversationHistory.at(-1)!.heard).toBeUndefined();
     });
 
+    const KEEP_SENTENCE = 'Other people are here: keep the reason for how you feel to yourself, and do not bring up anything from your private talks.';
+
+    /** The person seemed down in a direct message. */
+    function personSeemsDown(): void {
+        memory.getMemory(BOT, KHALID)!.emotions.personEmotion.happiness = 10;
+    }
+
     it('keeps how well it knows the person and how it feels: neither says what was said', () => {
         say('hello', 'person', DM);
 
         const shared = memory.getConversationContext(BOT, KHALID, { present: [SARA] });
         expect(shared).toContain('You just met this person for the first time.');
-        expect(shared).toContain('still getting to know them');
+        // The bot's own feeling toward them stays, so it does not turn flat when someone walks up
+        expect(shared).toContain('Emotional context: You feel still getting to know them');
+    });
+
+    it('with others there, does not read how the person seemed, even though it is known alone', () => {
+        say('I feel terrible today', 'person', DM);
+        personSeemsDown();
+
+        const shared = memory.getConversationContext(BOT, KHALID, { present: [SARA] });
+        expect(shared).not.toContain('They seem');
+        expect(shared).not.toContain('a bit down');
+        expect(memory.getConversationContext(BOT, KHALID, 'all')).toContain('They seem a bit down');
+        expect(memory.getConversationContext(BOT, KHALID)).toContain('They seem a bit down');
+    });
+
+    it('with others there, keeps its own feeling and is told to keep the reason to itself; alone has no such sentence', () => {
+        say('hello', 'person', DM);
+        personSeemsDown();
+
+        const shared = memory.getConversationContext(BOT, KHALID, { present: [SARA] });
+        expect(shared).toContain('You feel still getting to know them.');
+        expect(shared).toContain(KEEP_SENTENCE);
+        expect(memory.getConversationContext(BOT, KHALID, 'all')).not.toContain(KEEP_SENTENCE);
+        expect(memory.getConversationContext(BOT, KHALID)).not.toContain('Other people are here');
+    });
+
+    it('with others there and only the person\'s mood known, adds no emotional line and no sentence', () => {
+        say('hello', 'person', DM);
+        const emotions = memory.getMemory(BOT, KHALID)!.emotions;
+        emotions.botEmotion.familiarity = 50;
+        personSeemsDown();
+
+        const shared = memory.getConversationContext(BOT, KHALID, { present: [SARA] });
+        expect(shared).not.toContain('Emotional context');
+        expect(shared).not.toContain('Other people are here');
+        expect(memory.getConversationContext(BOT, KHALID, 'all')).toContain('Emotional context: They seem a bit down.');
+    });
+
+    it('does not count the person\'s mood as something left out; a left-out line or fact still does', () => {
+        others.now = [SARA];
+        say('The demo is on Thursday', 'person', BUBBLE);
+        personSeemsDown();
+
+        expect(memory.leavesOut(BOT, KHALID, { present: [SARA] })).toBe(false);
+        expect(memory.leavesOut(BOT, KHALID, 'all')).toBe(false);
+
+        say('I have an interview at Agility tomorrow at 10', 'person', DM);
+        expect(memory.leavesOut(BOT, KHALID, { present: [SARA] })).toBe(true);
+    });
+
+    it('a fact learned in a direct message still counts as left out when the person\'s mood exists too', () => {
+        memory.getMemory(BOT, KHALID)!.personalInfo.facts.set('favorite_color', 'green'); // no stamp: kept private
+        personSeemsDown();
+
+        expect(memory.leavesOut(BOT, KHALID, { present: [SARA] })).toBe(true);
+    });
+
+    it('alone, the context is exactly what it was before: the feeling and how they seem, in one line, no sentence', () => {
+        say('hello', 'person', DM);
+        const emotions = memory.getMemory(BOT, KHALID)!.emotions;
+        emotions.botEmotion.familiarity = 70;
+        personSeemsDown();
+
+        const alone = memory.getConversationContext(BOT, KHALID, 'all');
+        expect(alone).toContain('\nEmotional context: You feel comfortable with them, They seem a bit down.');
+        expect(alone).not.toContain('Other people are here');
+        expect(memory.getConversationContext(BOT, KHALID)).toBe(alone);
     });
 
     it('treats everything remembered from before places were kept as private', () => {

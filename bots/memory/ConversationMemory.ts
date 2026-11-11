@@ -958,7 +958,12 @@ export class ConversationMemory {
      * can a question need more than everyone here may read.
      */
     leavesOut(botId: string, playerId: number, view: MemoryView): boolean {
-        return view !== 'all' && this.getConversationContext(botId, playerId, 'all') !== this.getConversationContext(botId, playerId, view);
+        // The mood line is rendered the same for both views here: what it says of the person's mood is kept out of a
+        // group on purpose (see getConversationContext), and that must not count as "something was left out".
+        return (
+            view !== 'all' &&
+            this.buildConversationContext(botId, playerId, 'all', true) !== this.buildConversationContext(botId, playerId, view, true)
+        );
     }
 
     /**
@@ -971,6 +976,14 @@ export class ConversationMemory {
      * learned there and anything kept before places were kept is left out entirely, so the reply holds no secret to keep.
      */
     getConversationContext(botId: string, playerId: number, view: MemoryView = 'all'): string {
+        return this.buildConversationContext(botId, playerId, view, false);
+    }
+
+    /**
+     * `comparing` is for leavesOut only: it renders the mood line the same for every view (the bot's own feeling, nothing
+     * about the person's mood, no extra sentence), so two views differ only by what was heard.
+     */
+    private buildConversationContext(botId: string, playerId: number, view: MemoryView, comparing: boolean): string {
         const memory = this.getMemory(botId, playerId);
         if (!memory) {
             return '';
@@ -1053,19 +1066,29 @@ export class ConversationMemory {
         }
 
         // Natural emotion expression
+        // With other people here, how the person seemed is left out: the bot reads it from private talks too, so saying
+        // it in front of others could give a private moment away. The bot keeps its own feeling, and keeps the reason to
+        // itself, so it does not turn flat the moment a third person walks up.
+        const inGroup = view !== 'all';
         const botFeelingsDesc = this.describeEmotionNatural(emotions.botEmotion);
-        const personFeelingsDesc = this.describeEmotionNatural(emotions.personEmotion);
-        
-        if (botFeelingsDesc || personFeelingsDesc) {
+        const personFeelingsDesc = inGroup ? '' : this.describeEmotionNatural(emotions.personEmotion);
+        const groupFeelingNote = inGroup && !comparing && botFeelingsDesc;
+
+        if (botFeelingsDesc || (personFeelingsDesc && !comparing)) {
             const emotionParts: string[] = [];
             if (botFeelingsDesc) {
                 emotionParts.push(`You feel ${botFeelingsDesc}`);
             }
-            if (personFeelingsDesc) {
+            if (personFeelingsDesc && !comparing) {
                 emotionParts.push(`They seem ${personFeelingsDesc}`);
             }
             if (emotionParts.length > 0) {
                 context.push(`\nEmotional context: ${emotionParts.join(', ')}.`);
+            }
+            if (groupFeelingNote) {
+                context.push(
+                    `Other people are here: keep the reason for how you feel to yourself, and do not bring up anything from your private talks.`
+                );
             }
         }
 
