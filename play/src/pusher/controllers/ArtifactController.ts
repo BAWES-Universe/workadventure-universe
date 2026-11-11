@@ -79,11 +79,13 @@ export class ArtifactController extends BaseHttpController {
          *   post:
          *     description: Opens a live artifact for the signed token's person. Answers with the artifact, the version to
          *       show (the latest unless one is asked for), the address its file is served from, and what the person may do.
+         *       The address of a "Just you" artifact is for this one opening, and `urlLifeMs` says how long it goes on working.
          *     responses:
          *       200:
          *         description: The artifact and what the person may do with it
          *       404:
-         *         description: No such artifact, or the person may not open it
+         *         description: No such artifact, or the person may not open it ("kept_private" when its owner keeps it
+         *           to themselves and the person is in the chat it was made in)
          *       429:
          *         description: Too many requests; try again in a minute
          */
@@ -230,7 +232,7 @@ export class ArtifactController extends BaseHttpController {
          * @openapi
          * /artifacts/{id}/share:
          *   post:
-         *     description: The owner says who can open it ("chat" or "link") and who can ask for changes ("owner" or
+         *     description: The owner says who can open it ("me", "chat" or "link") and who can ask for changes ("owner" or
          *       "openers"), one or both. Answers with the artifact as it now is.
          *     responses:
          *       200:
@@ -241,6 +243,9 @@ export class ArtifactController extends BaseHttpController {
          *         description: The person may open it but is not its owner
          *       404:
          *         description: No such artifact, or the person may not open it
+         *       503:
+         *         description: '"me" was asked for and Orbit cannot keep files private as it is set up
+         *           ("private_files_not_configured"); nothing changed'
          */
         this.app.post(
             "/artifacts/:id/share",

@@ -537,6 +537,331 @@ describe("the artifact window", () => {
         expect(byTestId("artifactShareLink")).toBeNull();
     });
 
+    describe("Just you (game #1994)", () => {
+        const DM = { kind: "dm" as const, chatKind: "dm" };
+        /** The artifact as its owner opens it, shared as `openScope`; made in a direct message unless said. */
+        function shared(openScope: string, chatKind: string | null = DM.chatKind, inChat = false) {
+            const answer = opened(3, 3, "app", true, chatKind, inChat);
+            return { ...answer, artifact: { ...answer.artifact, openScope } };
+        }
+        /** The same, at an address made for that one opening, which stops after `urlLifeMs`. */
+        function openedPrivately(pass: string, urlLifeMs: number, urlHasMedia?: boolean) {
+            const answer = shared("me");
+            const url = `https://orbit.test/af/${pass}/3/index.html`;
+            return {
+                ...answer,
+                version: { ...answer.version, url, urlLifeMs, ...(urlHasMedia ? { urlHasMedia } : {}) },
+            };
+        }
+        const srcOfFrame = () => byTestId("artifactFrame")?.getAttribute("src");
+
+        afterEach(() => {
+            vi.useRealTimers();
+        });
+
+        it("is the first choice in the chat it was made in, saved at once, and the page opens again where its files went", async () => {
+            api.fetchArtifact.mockResolvedValue(opened(3));
+            api.shareArtifact.mockResolvedValue({ ...opened(3).artifact, openScope: "me" });
+            mountWindow(3);
+            await openShareMenu();
+            const rows = [...(byTestId("artifactShareMenu")?.querySelectorAll('[role="radio"]') ?? [])];
+            expect(rows.map((row) => row.getAttribute("data-testid"))).toEqual([
+                "artifactOpenMe",
+                "artifactOpenChat",
+                "artifactOpenLink",
+            ]);
+            expect(byTestId("artifactOpenMe")?.getAttribute("aria-checked")).toBe("false");
+            expect(byTestId("artifactOpenChat")?.getAttribute("aria-checked")).toBe("true");
+            expect(byTestId("artifactJustYouNote")).toBeNull();
+
+            api.fetchArtifact.mockResolvedValue(openedPrivately("PASS1", 600_000));
+            byTestId("artifactOpenMe")?.click();
+            await tick();
+            expect(api.shareArtifact).toHaveBeenCalledWith(ID, { openScope: "me" }, { kind: "nearby", ref: "bubble" });
+            await vi.waitFor(() => expect(byTestId("artifactJustYouNote")).not.toBeNull());
+            expect(byTestId("artifactOpenMe")?.getAttribute("aria-checked")).toBe("true");
+            expect(byTestId("artifactOpenChat")?.getAttribute("aria-checked")).toBe("false");
+            // The address it had stops with the switch: the version on show is asked for again, and drawn from the new one
+            await vi.waitFor(() => expect(srcOfFrame()).toBe("https://orbit.test/af/PASS1/3/index.html"));
+            expect(api.fetchArtifact).toHaveBeenCalledTimes(2);
+            expect(api.fetchArtifact).toHaveBeenLastCalledWith(ID, { kind: "nearby", ref: "bubble" }, 3);
+            // The list stayed open through it
+            expect(byTestId("artifactShareMenu")).not.toBeNull();
+        });
+
+        it("opens the page again at the bucket's address when its owner widens it", async () => {
+            api.fetchArtifact.mockResolvedValue({
+                ...openedPrivately("PASS1", 600_000),
+                artifact: { ...shared("me", "nearby", true).artifact },
+                you: shared("me", "nearby", true).you,
+            });
+            api.shareArtifact.mockResolvedValue({ ...opened(3).artifact, openScope: "chat" });
+            mountWindow(3);
+            await openShareMenu();
+            expect(byTestId("artifactOpenMe")?.getAttribute("aria-checked")).toBe("true");
+
+            api.fetchArtifact.mockResolvedValue(opened(3));
+            byTestId("artifactOpenChat")?.click();
+            await vi.waitFor(() => expect(srcOfFrame()).toBe("https://artifacts.test/v3.html"));
+            expect(api.shareArtifact).toHaveBeenCalledWith(
+                ID,
+                { openScope: "chat" },
+                { kind: "nearby", ref: "bubble" }
+            );
+            expect(byTestId("artifactJustYouNote")).toBeNull();
+        });
+
+        it.each(["chat", "me"])(
+            "stays one choice away from its chat: picked for both ways of keeping it, and a tap on it sends nothing (%s)",
+            async (openScope) => {
+                api.fetchArtifact.mockResolvedValue(shared(openScope));
+                mountWindow(3);
+                await openShareMenu();
+                expect(byTestId("artifactOpenMe")).toBeNull();
+                expect(byTestId("artifactOpenJustYou")).not.toBeNull();
+                expect(byTestId("artifactOpenChat")?.getAttribute("aria-checked")).toBe("true");
+                expect(byTestId("artifactOpenLink")?.getAttribute("aria-checked")).toBe("false");
+                // Its line says the file itself is kept only where it is: with its chat it reads as it always did
+                expect(byTestId("artifactOpenJustYouOnly") !== null).toBe(openScope === "me");
+                // The note is about the chat's other people, and nobody else is in this one
+                expect(byTestId("artifactJustYouNote")).toBeNull();
+                byTestId("artifactOpenChat")?.click();
+                await tick();
+                expect(api.shareArtifact).not.toHaveBeenCalled();
+            }
+        );
+
+        it("keeps the file itself to its owner when picked after a link, so what the link gave out stops", async () => {
+            api.fetchArtifact.mockResolvedValue(shared("link"));
+            api.shareArtifact.mockResolvedValue({ ...shared("me").artifact });
+            mountWindow(3);
+            await openShareMenu();
+            expect(byTestId("artifactOpenChat")?.getAttribute("aria-checked")).toBe("false");
+            // What picking it will do is said before the tap
+            expect(byTestId("artifactOpenJustYouOnly")).not.toBeNull();
+
+            api.fetchArtifact.mockResolvedValue(openedPrivately("PASS1", 600_000));
+            byTestId("artifactOpenChat")?.click();
+            await vi.waitFor(() => expect(srcOfFrame()).toBe("https://orbit.test/af/PASS1/3/index.html"));
+            expect(api.shareArtifact).toHaveBeenCalledTimes(1);
+            expect(api.shareArtifact).toHaveBeenCalledWith(ID, { openScope: "me" }, { kind: "nearby", ref: "bubble" });
+            expect(byTestId("artifactOpenChat")?.getAttribute("aria-checked")).toBe("true");
+            expect(byTestId("artifactCopyLink")).toBeNull();
+        });
+
+        it.each([
+            [503, "private_files_not_configured"],
+            [422, "invalid_open_scope"],
+        ])(
+            "goes back to its chat, as before, where the server cannot keep files private (%i %s)",
+            async (status, code) => {
+                api.fetchArtifact.mockResolvedValue(shared("link"));
+                api.shareArtifact.mockRejectedValueOnce(new api.ArtifactRequestError(status, code));
+                api.shareArtifact.mockResolvedValueOnce({ ...shared("chat").artifact });
+                mountWindow(3);
+                await openShareMenu();
+                byTestId("artifactOpenChat")?.click();
+                await vi.waitFor(() => expect(api.shareArtifact).toHaveBeenCalledTimes(2));
+                expect(api.shareArtifact).toHaveBeenNthCalledWith(
+                    1,
+                    ID,
+                    { openScope: "me" },
+                    { kind: "nearby", ref: "bubble" }
+                );
+                expect(api.shareArtifact).toHaveBeenLastCalledWith(
+                    ID,
+                    { openScope: "chat" },
+                    { kind: "nearby", ref: "bubble" }
+                );
+                await vi.waitFor(() => expect(byTestId("artifactCopyLink")).toBeNull());
+                expect(byTestId("artifactOpenChat")?.getAttribute("aria-checked")).toBe("true");
+                expect(byTestId("artifactShareFailed")).toBeNull();
+                // It does not say the file itself is kept, and is still drawn from the address it had
+                expect(byTestId("artifactOpenJustYouOnly")).toBeNull();
+                expect(api.fetchArtifact).toHaveBeenCalledTimes(1);
+            }
+        );
+
+        it("says so, and saves nothing else, when it cannot be had in the chat it was made in", async () => {
+            api.fetchArtifact.mockResolvedValue(opened(3));
+            api.shareArtifact.mockRejectedValue(new api.ArtifactRequestError(503, "private_files_not_configured"));
+            mountWindow(3);
+            await openShareMenu();
+            byTestId("artifactOpenMe")?.click();
+            await vi.waitFor(() => expect(byTestId("artifactShareFailed")).not.toBeNull());
+            expect(api.shareArtifact).toHaveBeenCalledTimes(1);
+            expect(byTestId("artifactOpenMe")?.getAttribute("aria-checked")).toBe("false");
+            expect(byTestId("artifactOpenChat")?.getAttribute("aria-checked")).toBe("true");
+        });
+
+        it("tells someone in its chat that its owner keeps it private, with nothing to try again", async () => {
+            api.fetchArtifact.mockRejectedValue(new api.ArtifactRequestError(404, "kept_private"));
+            mountWindow(3);
+            await vi.waitFor(() => expect(byTestId("artifactFailed")).not.toBeNull());
+            expect(byTestId("artifactFailed")?.getAttribute("data-failure")).toBe("private");
+            expect(byTestId("artifactFailed")?.querySelector("button")).toBeNull();
+            expect(byTestId("artifactFrame")).toBeNull();
+            expect(byTestId("artifactVersions")).toBeNull();
+        });
+
+        it("puts away what was showing once it hears its owner made it private", async () => {
+            api.fetchArtifact.mockResolvedValue(opened(3, 3, "app", false));
+            const website = mountWindow(3);
+            await vi.waitFor(() => expect(byTestId("artifactFrame")).not.toBeNull());
+
+            api.fetchArtifact.mockRejectedValue(new api.ArtifactRequestError(404, "kept_private"));
+            website.version.set(1);
+            await vi.waitFor(() => expect(byTestId("artifactFailed")).not.toBeNull());
+            expect(byTestId("artifactFailed")?.getAttribute("data-failure")).toBe("private");
+            expect(byTestId("artifactFrame")).toBeNull();
+            expect(byTestId("artifactSwitchFailed")).toBeNull();
+        });
+
+        it("draws nothing where there is no address, and never from anywhere else", async () => {
+            const answer = shared("me");
+            api.fetchArtifact.mockResolvedValue({ ...answer, version: { ...answer.version, url: null } });
+            mountWindow(3);
+            await vi.waitFor(() => expect(byTestId("artifactVersions")).not.toBeNull());
+            expect(byTestId("artifactFrame")).toBeNull();
+            expect(target.querySelector("img")).toBeNull();
+        });
+
+        it("opens a page with songs or pictures beside it again just before its address stops", async () => {
+            vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+            api.fetchArtifact.mockResolvedValue(openedPrivately("PASS1", 600_000, true));
+            mountWindow(3);
+            await vi.waitFor(() => expect(srcOfFrame()).toBe("https://orbit.test/af/PASS1/3/index.html"));
+            expect(api.fetchArtifact).toHaveBeenCalledTimes(1);
+
+            api.fetchArtifact.mockResolvedValue(openedPrivately("PASS2", 600_000, true));
+            // A minute before a life of ten: not yet at eight
+            await vi.advanceTimersByTimeAsync(480_000);
+            expect(api.fetchArtifact).toHaveBeenCalledTimes(1);
+            await vi.advanceTimersByTimeAsync(61_000);
+            expect(api.fetchArtifact).toHaveBeenCalledTimes(2);
+            expect(api.fetchArtifact).toHaveBeenLastCalledWith(ID, { kind: "nearby", ref: "bubble" }, 3);
+            await vi.waitFor(() => expect(srcOfFrame()).toBe("https://orbit.test/af/PASS2/3/index.html"));
+            // The buttons never left: it is the same version, at a new address
+            expect(byTestId("artifactVersions")).not.toBeNull();
+
+            // And again before the new one stops
+            api.fetchArtifact.mockResolvedValue(openedPrivately("PASS3", 600_000, true));
+            await vi.advanceTimersByTimeAsync(541_000);
+            await vi.waitFor(() => expect(srcOfFrame()).toBe("https://orbit.test/af/PASS3/3/index.html"));
+            expect(api.fetchArtifact).toHaveBeenCalledTimes(3);
+        });
+
+        it("tries again when the new address cannot be fetched, and puts the page away when it is gone by then", async () => {
+            vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+            api.fetchArtifact.mockResolvedValue(openedPrivately("PASS1", 600_000, true));
+            mountWindow(3);
+            await vi.waitFor(() => expect(srcOfFrame()).toBe("https://orbit.test/af/PASS1/3/index.html"));
+
+            api.fetchArtifact.mockRejectedValue(new api.ArtifactRequestError(0, "offline"));
+            await vi.advanceTimersByTimeAsync(541_000);
+            expect(api.fetchArtifact).toHaveBeenCalledTimes(2);
+            // What is showing stays while it is tried again
+            expect(srcOfFrame()).toBe("https://orbit.test/af/PASS1/3/index.html");
+            expect(byTestId("artifactFailed")).toBeNull();
+
+            api.fetchArtifact.mockRejectedValue(new api.ArtifactRequestError(404, "not_found"));
+            await vi.advanceTimersByTimeAsync(31_000);
+            expect(api.fetchArtifact).toHaveBeenCalledTimes(3);
+            await vi.waitFor(() => expect(byTestId("artifactFailed")).not.toBeNull());
+            expect(byTestId("artifactFailed")?.getAttribute("data-failure")).toBe("gone");
+            expect(byTestId("artifactFrame")).toBeNull();
+            // Nothing more is asked for
+            await vi.advanceTimersByTimeAsync(3_600_000);
+            expect(api.fetchArtifact).toHaveBeenCalledTimes(3);
+        });
+
+        it("leaves a page with nothing beside it alone, and opens it again only when its frame is drawn again later", async () => {
+            vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+            api.fetchArtifact.mockResolvedValue(openedPrivately("PASS1", 600_000));
+            api.fetchArtifactCode.mockResolvedValue({
+                version: openedPrivately("PASS1", 600_000).version,
+                content: "x",
+            });
+            mountWindow(3);
+            await vi.waitFor(() => expect(srcOfFrame()).toBe("https://orbit.test/af/PASS1/3/index.html"));
+
+            // Drawn again while its address works: nothing is asked for
+            byTestId("artifactFrame")?.dispatchEvent(new Event("load"));
+            await vi.advanceTimersByTimeAsync(3_600_000);
+            expect(api.fetchArtifact).toHaveBeenCalledTimes(1);
+            expect(srcOfFrame()).toBe("https://orbit.test/af/PASS1/3/index.html");
+
+            // Back from the Code view the game draws it again itself: from a new address, and from nowhere meanwhile
+            let fetched: (answer: unknown) => void = () => {};
+            api.fetchArtifact.mockReturnValue(
+                new Promise((resolve) => {
+                    fetched = resolve;
+                })
+            );
+            byTestId("artifactCode")?.click();
+            await vi.waitFor(() => expect(byTestId("artifactCodeView")).not.toBeNull());
+            byTestId("artifactCode")?.click();
+            await vi.waitFor(() => expect(byTestId("artifactCodeView")).toBeNull());
+            expect(api.fetchArtifact).toHaveBeenCalledTimes(2);
+            expect(byTestId("artifactFrame")).toBeNull();
+            fetched(openedPrivately("PASS2", 600_000));
+            await vi.waitFor(() => expect(srcOfFrame()).toBe("https://orbit.test/af/PASS2/3/index.html"));
+
+            // The browser draws the frame again after that one stopped too
+            api.fetchArtifact.mockResolvedValue(openedPrivately("PASS3", 600_000));
+            await vi.advanceTimersByTimeAsync(601_000);
+            expect(api.fetchArtifact).toHaveBeenCalledTimes(2);
+            byTestId("artifactFrame")?.dispatchEvent(new Event("load"));
+            await vi.waitFor(() => expect(srcOfFrame()).toBe("https://orbit.test/af/PASS3/3/index.html"));
+            expect(api.fetchArtifact).toHaveBeenCalledTimes(3);
+        });
+
+        it("draws a private page from a new address when it comes back from the Code view, even while the old one works", async () => {
+            api.fetchArtifact.mockResolvedValue(openedPrivately("PASS1", 600_000, true));
+            api.fetchArtifactCode.mockResolvedValue({
+                version: { ...openedPrivately("PASS1", 600_000).version, url: null },
+                content: "x",
+            });
+            mountWindow(3);
+            await vi.waitFor(() => expect(srcOfFrame()).toBe("https://orbit.test/af/PASS1/3/index.html"));
+
+            api.fetchArtifact.mockResolvedValue(openedPrivately("PASS2", 600_000, true));
+            byTestId("artifactCode")?.click();
+            await vi.waitFor(() => expect(byTestId("artifactCodeView")).not.toBeNull());
+            // Going to the Code view asks for no address
+            expect(api.fetchArtifact).toHaveBeenCalledTimes(1);
+            byTestId("artifactCode")?.click();
+            await vi.waitFor(() => expect(srcOfFrame()).toBe("https://orbit.test/af/PASS2/3/index.html"));
+            expect(api.fetchArtifact).toHaveBeenCalledTimes(2);
+            expect(api.fetchArtifact).toHaveBeenLastCalledWith(ID, { kind: "nearby", ref: "bubble" }, 3);
+        });
+
+        it("draws one that is not private from the address it has, back from the Code view", async () => {
+            api.fetchArtifact.mockResolvedValue(shared("chat"));
+            api.fetchArtifactCode.mockResolvedValue({ version: shared("chat").version, content: "x" });
+            mountWindow(3);
+            await vi.waitFor(() => expect(byTestId("artifactFrame")).not.toBeNull());
+            const address = srcOfFrame();
+
+            byTestId("artifactCode")?.click();
+            await vi.waitFor(() => expect(byTestId("artifactCodeView")).not.toBeNull());
+            byTestId("artifactCode")?.click();
+            await vi.waitFor(() => expect(srcOfFrame()).toBe(address));
+            expect(api.fetchArtifact).toHaveBeenCalledTimes(1);
+        });
+
+        it("asks for nothing more once the window is closed", async () => {
+            vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+            api.fetchArtifact.mockResolvedValue(openedPrivately("PASS1", 600_000, true));
+            mountWindow(3);
+            await vi.waitFor(() => expect(srcOfFrame()).toBe("https://orbit.test/af/PASS1/3/index.html"));
+            component?.$destroy();
+            component = undefined;
+            await vi.advanceTimersByTimeAsync(3_600_000);
+            expect(api.fetchArtifact).toHaveBeenCalledTimes(1);
+        });
+    });
+
     it("shows no Share button to someone who is not the owner", async () => {
         api.fetchArtifact.mockResolvedValue(opened(3, 3, "app", false));
         mountWindow(3);

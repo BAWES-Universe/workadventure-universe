@@ -14,8 +14,18 @@ export interface ArtifactVersionInfo {
     askedByName: string | null;
     sizeBytes: number;
     createdAt: string;
-    /** Where the file is served from: an address outside the game's own, so a page that runs from it is cut off. */
-    url: string;
+    /**
+     * Where the file is served from: an address outside the game's own, so a page that runs from it is cut off. None for
+     * a "Just you" artifact (game #1994) anywhere but in the answer to its owner opening it.
+     */
+    url: string | null;
+    /**
+     * How long that address goes on working: the one a "Just you" artifact opens at is for that opening only. None for an
+     * address that never stops.
+     */
+    urlLifeMs?: number;
+    /** The page has songs, pictures or videos beside it, which it may fetch from that address at any moment. */
+    urlHasMedia?: boolean;
 }
 
 export interface OpenedArtifact {
@@ -120,7 +130,8 @@ export function restoreArtifactVersion(
     return post<OpenedArtifact>(`${encodeURIComponent(id)}/restore`, { chat, number });
 }
 
-export type ArtifactOpenScope = "chat" | "link";
+/** Who can open it: just its owner, people in the chat it was made in, or anyone with the link. */
+export type ArtifactOpenScope = "me" | "chat" | "link";
 export type ArtifactChangeScope = "owner" | "openers";
 
 /** The owner says who can open it and who can ask for changes; the answer is the artifact as it now is. */

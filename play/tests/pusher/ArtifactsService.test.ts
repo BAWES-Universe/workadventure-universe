@@ -61,6 +61,112 @@ describe("ArtifactsService", () => {
         expect(answer.version.url).toBe(version.url);
         expect(answer.you).toEqual({ owner: true, change: true, manage: true, copy: true, inChat: true });
         expect(answer.artifact).not.toHaveProperty("makerBotId");
+        // An address of the bucket's never stops: nothing to tell about its life
+        expect(answer.version).not.toHaveProperty("urlLifeMs");
+        expect(answer.version).not.toHaveProperty("urlHasMedia");
+    });
+
+    describe('a "Just you" artifact (game #1994)', () => {
+        const NOW = Date.parse("2026-11-11T09:00:00.000Z");
+        const privateUrl = "https://orbit.test/af/PASS/2/index.html";
+        const song = { name: "song.mp3", contentType: "audio/mpeg", sizeBytes: 900 };
+        const openedPrivately = (extra: Record<string, unknown>) => ({
+            ...opened,
+            artifact: { ...opened.artifact, openScope: "me" },
+            version: { ...version, url: privateUrl, urlExpiresAt: "2026-11-11T21:00:00.000Z", ...extra },
+        });
+        const serviceAnswering = (data: unknown) =>
+            new ArtifactsService(
+                "https://orbit.test",
+                "secret",
+                { put: vi.fn(), post: vi.fn(() => Promise.resolve({ data })) },
+                () => NOW
+            );
+
+        it("tells its owner how long the address of this one opening goes on working, as a length of time", async () => {
+            const answer = await serviceAnswering(openedPrivately({ media: [] })).open(ID, viewer);
+            expect(answer.artifact.openScope).toBe("me");
+            expect(answer.version.url).toBe(privateUrl);
+            expect(answer.version.urlLifeMs).toBe(12 * 60 * 60 * 1000);
+            // The moment it stops is Orbit's clock; the browser's may be wrong, so it is not passed on
+            expect(answer.version).not.toHaveProperty("urlExpiresAt");
+            expect(answer.version).not.toHaveProperty("media");
+            expect(answer.version).not.toHaveProperty("urlHasMedia");
+        });
+
+        it("says when songs, pictures or videos sit beside the page, which it may fetch at any moment", async () => {
+            const answer = await serviceAnswering(openedPrivately({ media: [song] })).open(ID, viewer);
+            expect(answer.version.urlLifeMs).toBe(12 * 60 * 60 * 1000);
+            expect(answer.version.urlHasMedia).toBe(true);
+            expect(answer.version).not.toHaveProperty("media");
+        });
+
+        it.each(["soon", "2026-11-11T09:00:00.000Z", "2026-11-10T09:00:00.000Z"])(
+            "tells no life it cannot read, or one that is over already (%s)",
+            async (urlExpiresAt) => {
+                const answer = await serviceAnswering(openedPrivately({ urlExpiresAt, media: [song] })).open(
+                    ID,
+                    viewer
+                );
+                expect(answer.version.url).toBe(privateUrl);
+                expect(answer.version).not.toHaveProperty("urlLifeMs");
+                expect(answer.version).not.toHaveProperty("urlHasMedia");
+            }
+        );
+
+        it("has no address anywhere but in that opening: a document, the list of versions, the code, a restore", async () => {
+            const hidden = { ...version, url: null };
+            const document = await serviceAnswering({ ...opened, version: hidden }).open(ID, viewer);
+            expect(document.version.url).toBeNull();
+            expect(document.version).not.toHaveProperty("urlLifeMs");
+
+            expect(await serviceAnswering({ versions: [hidden] }).listVersions(ID, viewer)).toEqual([hidden]);
+            expect(await serviceAnswering({ version: hidden, content: "<h1>x</h1>" }).readCode(ID, 2, viewer)).toEqual({
+                version: hidden,
+                content: "<h1>x</h1>",
+            });
+            const restored = await serviceAnswering({ ...opened, version: hidden }).restore(ID, 1, viewer);
+            expect(restored.version.url).toBeNull();
+        });
+
+        it("asks Orbit for it as one more choice of who can open it", async () => {
+            const http = {
+                post: vi.fn(),
+                put: vi.fn(() => Promise.resolve({ data: { artifact: { ...opened.artifact, openScope: "me" } } })),
+            };
+            const service = new ArtifactsService("https://orbit.test", "secret", http);
+            const answer = await service.share(ID, { openScope: "me" }, viewer);
+            expect(http.put).toHaveBeenCalledWith(
+                `https://orbit.test/api/artifacts/${ID}/share`,
+                { viewer, openScope: "me" },
+                { headers: { Authorization: "secret" } }
+            );
+            expect(answer.artifact.openScope).toBe("me");
+        });
+
+        it("passes on that its owner keeps it private, for someone in the chat it was made in", async () => {
+            const kept = orbitError(404, { error: "kept_private", message: "Its owner keeps this one private." });
+            const service = new ArtifactsService("https://orbit.test", "secret", {
+                put: vi.fn(),
+                post: vi.fn(() => Promise.reject(kept)),
+            });
+            await expect(service.open(ID, viewer)).rejects.toEqual(new ArtifactsError("kept_private", 404));
+        });
+
+        it("passes on that Orbit cannot keep files private as it is set up, and no other breakdown", async () => {
+            const off = new ArtifactsService("https://orbit.test", "secret", {
+                post: vi.fn(),
+                put: vi.fn(() => Promise.reject(orbitError(503, { error: "private_files_not_configured" }))),
+            });
+            await expect(off.share(ID, { openScope: "me" }, viewer)).rejects.toEqual(
+                new ArtifactsError("private_files_not_configured", 503)
+            );
+            const down = new ArtifactsService("https://orbit.test", "secret", {
+                post: vi.fn(),
+                put: vi.fn(() => Promise.reject(orbitError(503, { error: "database_down" }))),
+            });
+            await expect(down.share(ID, { openScope: "me" }, viewer)).rejects.not.toBeInstanceOf(ArtifactsError);
+        });
     });
 
     it("lists the versions and reads the code of one", async () => {
