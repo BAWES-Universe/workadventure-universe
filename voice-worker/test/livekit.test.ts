@@ -334,7 +334,7 @@ describe.skipIf(!serverUp)('a voice bot in a LiveKit bubble', () => {
         expect(r.violations).toEqual([]);
     });
 
-    it('says a reply for one person alone into the room only while they are the one person connected to it (#1993)', async () => {
+    it('says a reply for one person alone into the room only while nobody else is in the bubble (#1993)', async () => {
         const r = await startRig();
         rigs.push(r);
         const roomName = r.game.spaceName;
@@ -352,7 +352,9 @@ describe.skipIf(!serverUp)('a voice bot in a LiveKit bubble', () => {
         await waitFor('the reply to end', () => !!finished('one-1'));
         expect(finished('one-1')).toMatchObject({ interrupted: false, reason: 'completed' });
 
-        // Someone the bot was told nothing about connects: the bot has one track here, so they would hear it
+        // Bob walks into the bubble. The game says so first, then he connects to the room: the bot has one track here,
+        // so he would hear what is said into it
+        r.calls.spaceUserJoined(roomName, roster('room_bob'));
         const bob = await person('room_bob').join(roomName);
         await waitFor('bob to see the bot', () => bob.room.remoteParticipants.has(bot));
         await sleep(500);
@@ -373,7 +375,7 @@ describe.skipIf(!serverUp)('a voice bot in a LiveKit bubble', () => {
         expect(r.violations).toEqual([]);
     }, 30000);
 
-    it('stops a reply for one person alone when someone else connects to the room while it plays, and they hear none of it (#1993)', async () => {
+    it('stops a reply for one person alone when someone else walks into the bubble while it plays, and they hear none of it (#1993)', async () => {
         const r = await startRig();
         rigs.push(r);
         const roomName = r.game.spaceName;
@@ -390,14 +392,17 @@ describe.skipIf(!serverUp)('a voice bot in a LiveKit bubble', () => {
         await waitFor('the reply to be heard', () => alice.loudFrom(bot) >= 20);
         expect(finished('one-1')).toBeUndefined();
 
-        const bob = await person('room_bob').join(roomName);
-        await waitFor('the reply to stop', () => !!finished('one-1'), 3000);
+        // Bob walks into the bubble while it plays: the game tells the bot at once, before he can connect to the room
+        r.calls.spaceUserJoined(roomName, roster('room_bob'));
+        await waitFor('the reply to stop', () => !!finished('one-1'), 1000);
         expect(finished('one-1')).toMatchObject({ interrupted: true, reason: 'private' });
         expect(finished('one-1')!.playedMs).toBeGreaterThan(0);
         expect(finished('one-1')!.playedMs).toBeLessThan(8000);
+
+        const bob = await person('room_bob').join(roomName);
         await waitFor('bob to see the bot', () => bob.room.remoteParticipants.has(bot));
         await sleep(800);
-        // Not a frame of it reached him: what the bot's track still held was dropped as he came in
+        // Not a frame of it reached him: it had stopped, and what the bot's track still held was dropped, before he connected
         expect(bob.loudFrom(bot)).toBe(0);
         const heard = alice.loudFrom(bot);
         await sleep(400);
@@ -406,6 +411,35 @@ describe.skipIf(!serverUp)('a voice bot in a LiveKit bubble', () => {
         // What is said to everyone next reaches him
         r.calls.say(roomName, 'all-1', 'and this one is for everyone in the room');
         await waitFor('bob to hear the bot', () => bob.loudFrom(bot) >= 20);
+        expect(r.violations).toEqual([]);
+    }, 30000);
+
+    it('does not say a reply for one person alone once the media server has told it of someone the game never named (#1993)', async () => {
+        const r = await startRig();
+        rigs.push(r);
+        const roomName = r.game.spaceName;
+        const bot = r.game.botId;
+        const finished = (segmentId: string) =>
+            r.fromWorker.find((m) => m.type === 'playback.progress' && m.segmentId === segmentId && m.finished) as Extract<(typeof r.fromWorker)[number], { type: 'playback.progress' }> | undefined;
+        const alice = await person('room_alice').join(roomName);
+        r.calls.spaceUsers(roomName, [roster('room_alice')]);
+        await invite(r, roomName);
+        await waitFor('the bot to be in the room', () => roomUp(r));
+        await waitFor('the bot to see alice', () => r.worker.roomParticipants().includes('room_alice'), 8000);
+
+        // Someone connects to the room whom the game told the bot nothing about. The media server tells the bot about a
+        // participant who sends nothing a few seconds late, which is why the game's word is the first guard and this
+        // the second: from the moment the bot knows of them, nothing for one person alone goes into the room
+        const stranger = await person('room_stranger').join(roomName);
+        await waitFor('the bot to be told of the stranger', () => r.worker.roomParticipants().includes('room_stranger'), 8000);
+        const sent = r.worker.counters.get('room_frames_out') ?? 0;
+        r.calls.say(roomName, 'one-1', 'an answer for alice that is not said with a stranger in the room', undefined, 'room_alice');
+        await waitFor('the reply to be turned down', () => !!finished('one-1'));
+        expect(finished('one-1')).toMatchObject({ playedMs: 0, interrupted: true, reason: 'private' });
+        await sleep(600);
+        expect(r.worker.counters.get('room_frames_out') ?? 0).toBe(sent);
+        expect(stranger.loudFrom(bot)).toBe(0);
+        expect(alice.loudFrom(bot)).toBe(0);
         expect(r.violations).toEqual([]);
     }, 30000);
 

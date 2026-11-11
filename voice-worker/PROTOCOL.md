@@ -112,10 +112,15 @@ that person and nobody else, checked for every frame, by the speaker and again b
   the reply plays is sent none of it, and the reply goes on for its person. If their connection is replaced, the rest goes
   to the new one.
 * **A room.** The bot has one track there, and everyone connected to the room can take it. So the reply is said into the
-  room only while that person is the one other participant connected to it. With anyone else connected (a person, another
-  bot, someone the bot server never named) it is not said: it ends with reason `private` and `playedMs: 0`, and the
-  provider is not asked for it. When someone else connects while it plays, it stops within a frame with reason `private`,
-  and what the bot's track still held is dropped at once, on the media server's word that they connected.
+  room only while nobody else is in the bubble: `room.people` names that person alone, and they are the one other
+  participant connected. With anyone else named or connected it is not said: it ends with reason `private` and
+  `playedMs: 0`, and the provider is not asked for it. When someone else walks in while it plays, it stops within a frame
+  with reason `private`, and what the bot's track still held is dropped at once.
+
+  `room.people` is the first guard, and the bot server sends it the moment the game says someone joined the bubble, which
+  is before that person can connect to the room. The room's own list is the second guard (another bot, anyone the bot
+  server never named), and it cannot be the only one: the media server tells a participant about a newcomer who sends
+  nothing a few seconds late (LiveKit batches those updates), and the newcomer takes the bot's track meanwhile.
 
 The worker names `say.onlyFor` in `session.start` `features`. Unknown fields are ignored, so a worker from before would say
 such a reply to the whole bubble: the bot server sends `onlyFor` only to a worker that named the feature, sends nothing for

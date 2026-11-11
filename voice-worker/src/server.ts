@@ -325,6 +325,11 @@ export class VoiceWorker {
         return [...this.connections].flatMap((c) => c.roomSubscriptions());
     }
 
+    /** Who the media server has told the worker is connected to its rooms, besides the bot. */
+    roomParticipants(): string[] {
+        return [...this.connections].flatMap((c) => c.roomParticipants());
+    }
+
     sessionCount(): number {
         let n = 0;
         for (const c of this.connections) n += c.sessionCount();
@@ -539,6 +544,10 @@ class BridgeConnection {
 
     roomSubscriptions(): ReturnType<RoomTransport['subscriptions']> {
         return [...this.sessions.values()].flatMap((s) => s.room?.subscriptions() ?? []);
+    }
+
+    roomParticipants(): string[] {
+        return [...this.sessions.values()].flatMap((s) => s.room?.participants() ?? []);
     }
 
     ping(): void {

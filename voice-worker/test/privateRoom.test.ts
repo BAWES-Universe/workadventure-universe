@@ -1,8 +1,10 @@
 // A reply for one person alone (game #1993), in the bot's LiveKit participant. The bot has one track in the room and
-// everyone connected can take it, so the room checks who is connected each time a frame is handed over: such a frame
-// goes into the track only while that person is the one other participant, and what the track still holds is dropped
-// the moment anyone else connects. The LiveKit SDK is replaced with a room the test fills by hand, and every frame
-// that reaches the track is recorded. (test/livekit.test.ts proves the same against a real media server.)
+// everyone connected can take it, so the room checks who is there each time a frame is handed over: such a frame goes
+// into the track only while the game names nobody else in the bubble and nobody else is connected, and what the track
+// still holds is dropped the moment anyone else is named or connects. The game's word comes first: it names a newcomer
+// before they can connect, while the media server tells the bot about someone who sends nothing a few seconds late.
+// The LiveKit SDK is replaced with a room the test fills by hand, and every frame that reaches the track is recorded.
+// (test/livekit.test.ts proves the same against a real media server.)
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TTS_FRAME_SAMPLES } from '../src/audioFormat.ts';
 
@@ -100,6 +102,20 @@ describe('who the room reaches', () => {
         fake.leaves('room_alice');
         expect(room.reach('room_alice')).toBe('elsewhere');
     });
+
+    it('does not reach a person alone once the game names someone else in the bubble, before that person has connected', async () => {
+        const { room } = await inRoom(['room_alice']);
+        expect(room.reach('room_alice')).toBe('alone');
+        // Bob walked into the bubble: the game says so at once, his connection to the room comes later
+        room.setPeople([
+            { participantId: 'room_alice', mode: 'talk' },
+            { participantId: 'room_bob', mode: 'talk' },
+        ]);
+        expect(room.reach('room_alice')).toBe('shared');
+        // He left again
+        room.setPeople([{ participantId: 'room_alice', mode: 'talk' }]);
+        expect(room.reach('room_alice')).toBe('alone');
+    });
 });
 
 describe('a frame of a reply for one person alone, handed to the room', () => {
@@ -148,6 +164,35 @@ describe('a frame of a reply for one person alone, handed to the room', () => {
         // And nothing more of it goes in
         room.sendFrame(frame(), 'room_alice');
         expect(source.captured).toBe(1);
+    });
+
+    it('is refused, and what the track still holds is dropped at once, when the game names someone else, before they connect', async () => {
+        const { room, source, count } = await inRoom(['room_alice']);
+        room.sendFrame(frame(), 'room_alice');
+        expect(source.captured).toBe(1);
+
+        room.setPeople([
+            { participantId: 'room_alice', mode: 'talk' },
+            { participantId: 'room_bob', mode: 'talk' },
+        ]);
+        expect(source.cleared).toBe(1);
+        expect(count('room_private_cleared')).toBe(1);
+        room.sendFrame(frame(), 'room_alice');
+        expect(source.captured).toBe(1);
+        expect(count('private_frames_refused')).toBe(1);
+
+        // What is said to everyone goes out as before
+        room.sendFrame(frame());
+        expect(source.captured).toBe(2);
+    });
+
+    it('is left alone when its person is named again, as when they change how they listen', async () => {
+        const { room, source } = await inRoom(['room_alice']);
+        room.sendFrame(frame(), 'room_alice');
+        room.setPeople([{ participantId: 'room_alice', mode: 'talk' }]);
+        expect(source.cleared).toBe(0);
+        room.sendFrame(frame(), 'room_alice');
+        expect(source.captured).toBe(2);
     });
 
     it('is left alone when it is that person who connects again', async () => {
