@@ -6,10 +6,13 @@ Test-only work for "voice bots and background noise" (plan v2, agreed 11 Nov 202
 2. load and lifecycle measurements of the worker with its **speech observer**: an internal second listener in
    `voice-worker/src/speechObserver.ts` that is off unless the worker is started with it, and only counts.
 
-Nothing in this folder is part of any image: the worker's Dockerfile copies `package.json`, the lock file, `schema.json` and
-`src` only, and this folder sits outside `voice-worker/`.
+Nothing in this folder is part of any image: this folder sits outside `voice-worker/`, which is all the worker's
+Dockerfile reads. What the image does carry for the observer (the pinned model and runtime, off by default) is in
+`voice-worker/speech-observer/`.
 
-Results: [RESULTS.md](RESULTS.md). Second opinion on doubtful recordings: [ADJUDICATION.md](ADJUDICATION.md).
+Results, newest first: [FOLLOWUP2.md](FOLLOWUP2.md) (the observer's corrections, packaging, the long run of the built
+image), [RESULTS.md](RESULTS.md) (the offline comparison and the first worker runs), and the second opinion on doubtful
+recordings, [ADJUDICATION.md](ADJUDICATION.md).
 
 ## What it runs
 
@@ -26,6 +29,9 @@ Results: [RESULTS.md](RESULTS.md). Second opinion on doubtful recordings: [ADJUD
 | `scripts/telemetry-check.sh`, `src/telemetry-probe.ts` | Does the runtime reach out by itself, with and without `ORT_DISABLE_TELEMETRY=1`? Under strace, no proxy. |
 | `scripts/worker-telemetry-check.sh` | The same question for the whole worker hearing one person, observer off and on, traced the same way. |
 | `scripts/worker-load.sh`, `src/worker-under-load.ts`, `src/load.ts`, `scripts/worker-load-table.py` | The whole worker in its base image under its memory cap, observer off and on: real bridge, real peer connections (proximity) or real LiveKit rooms, audio from the test recordings, loss, people leaving and returning, the bot speaking. Then the table. |
+| `scripts/worker-soak.sh`, `scripts/worker-soak-table.py` | A long run of the **built worker image** under its caps, observer off and on: one worker hearing bubbles of several people on both paths at once, people talking over each other, leaving and returning, one at a time not heard for a moment; then closing with everyone connected. Then the tables. |
+| `scripts/image-check.sh` | The built image started by its own command, traced from outside from before `node` starts: where it reaches on the network with the observer off, on, off again, and on without the telemetry switch; and what the switch does. |
+| `src/room-rehear.ts` | A side finding about today's worker (observer off): is a person in a LiveKit room heard again after the bot stopped taking their microphone and takes it again? |
 | `src/batch-parity.ts` | The worker's detector, real recordings: the same answers whether people's windows go to it one by one or several in one call? Fails if not. |
 | `src/bench.ts` | The detector alone in a bare process. Not the worker. |
 
@@ -40,14 +46,20 @@ npm run batch-parity
 npm run telemetry-check      # needs strace
 npm run worker-telemetry-check   # needs strace and the installs the worker's tests need
 npm run worker-load          # needs Docker, a livekit-server on 127.0.0.1:7880 (dev keys) and the same installs
+docker build -t voice-worker:observer-packaged ../voice-worker
+npm run worker-soak          # the built image, 30 minutes on and 30 off; needs the same as worker-load
+npm run image-check          # the built image; needs strace and root as well
+npm run room-rehear          # needs the livekit-server
 ```
 
-The worker's own tests, a second time with the observer switched on for every test that carries audio:
+The worker's own tests, a second time with the observer switched on for every test that carries audio, using the model
+and runtime as the image holds them:
 
 ```
 cd ../voice-worker
-ORT_DISABLE_TELEMETRY=1 VOICE_TEST_SPEECH_OBSERVER_MODEL=$PWD/../voice-vad-eval/data/silero_vad_v6.2.3.onnx \
-  VOICE_TEST_SPEECH_OBSERVER_RUNTIME=$PWD/../voice-vad-eval/node_modules/onnxruntime-node npm test
+(cd speech-observer && npm ci --ignore-scripts)
+ORT_DISABLE_TELEMETRY=1 VOICE_TEST_SPEECH_OBSERVER_MODEL=$PWD/speech-observer/silero_vad_v6.2.3.onnx \
+  VOICE_TEST_SPEECH_OBSERVER_RUNTIME=$PWD/speech-observer/node_modules/onnxruntime-node npm test
 ```
 
 ## Evidence kept in `results/`
@@ -61,6 +73,9 @@ ORT_DISABLE_TELEMETRY=1 VOICE_TEST_SPEECH_OBSERVER_MODEL=$PWD/../voice-vad-eval/
 | `adjudication.tsv`, `adjudication-sources.tsv`, `adjudication-clips.tsv` | the labels, and what the two tools said about every speech recording and every exported clip |
 | `telemetry/` | strace of the runtime with and without the switch, and of the whole worker with the observer off and on (for the worker: only the calls that leave the machine) |
 | `worker-load/` | per run: the container's own memory and CPU figures, event-loop delay, the observer's counters, and what the load generator did |
+| `worker-soak/` | the long run of the built image, observer on and off: the worker's summary, its 5-second trace (memory, sessions, event-loop delay), what each load generator did, how closing went, how the container ended |
+| `image-check/` | the built image traced with the observer off, on, off again, and on without the telemetry switch: only the calls that leave the machine, the worker's own statistics, and one summary line each |
+| `room-rehear.jsonl` | the side finding about hearing a person again in a LiveKit room |
 | `worker-load-first-build/` | the same for the first build of the observer (one window per call), which fell behind at 20 people; kept as it was measured |
 | `batch-parity.json` | one by one against several in one call, on real recordings |
 | `worker-tests.md` | the worker's test suite with the observer off and on |

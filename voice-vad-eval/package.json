@@ -16,7 +16,10 @@
     "telemetry-check": "bash scripts/telemetry-check.sh data/silero_vad_v6.2.3.onnx",
     "batch-parity": "ORT_DISABLE_TELEMETRY=1 tsx src/batch-parity.ts data",
     "worker-telemetry-check": "bash scripts/worker-telemetry-check.sh \"$PWD/data\"",
-    "worker-load": "sh scripts/worker-load.sh \"$PWD/data\" \"$PWD/out/worker-load\""
+    "worker-load": "sh scripts/worker-load.sh \"$PWD/data\" \"$PWD/out/worker-load\"",
+    "worker-soak": "sh scripts/worker-soak.sh \"$PWD/data\" \"$PWD/out/worker-soak\" && python3 -I scripts/worker-soak-table.py \"$PWD/out/worker-soak\"",
+    "image-check": "bash scripts/image-check.sh \"$PWD/data\" \"$PWD/out/image-check\"",
+    "room-rehear": "tsx src/room-rehear.ts"
   },
   "dependencies": {
     "@evan/opus": "1.0.3",

@@ -1,0 +1,21 @@
+{
+  "path": "lane",
+  "streams": 2,
+  "bubbles": 1,
+  "peoplePerBubble": 2,
+  "muteEverySeconds": 0,
+  "muteForMs": 2000,
+  "seconds": 20,
+  "joins": 3,
+  "joinFailures": 0,
+  "leaves": 1,
+  "sent": 1908,
+  "sentMuted": 0,
+  "withheld": 34,
+  "mutes": 0,
+  "said": 1,
+  "linkDowns": 0,
+  "botAudioPackets": 474,
+  "errors": [],
+  "stillConnected": 2
+}

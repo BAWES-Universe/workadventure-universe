@@ -42,13 +42,14 @@ run() { # name, extra docker args...
     docker logs image-check > "$OUT/$name.log" 2>&1
     docker stop -t 10 image-check >/dev/null 2>&1; wait "$tracer" 2>/dev/null; docker rm -f image-check >/dev/null 2>&1
     # What is kept: every network call that is not to this machine itself (loopback, or an address of its own
-    # interfaces), and what was written to a connected socket (that is where a name lookup shows the name it asks for)
+    # interfaces), and what was written to a connected socket (that is where a name lookup shows the name it asks for).
+    # Media packets on connected sockets are in there too, so only strings shaped like a host name count as names
     local own; own=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep . | sed 's/\./\\./g' | paste -sd'|')
     grep -aE 'AF_INET6?|sendto\([0-9]+, .*, NULL, 0\)' "$OUT/$name.full.strace" | grep -avE "inet_addr\(\"(127\.[0-9.]+|0\.0\.0\.0${own:+|$own})\"\)|inet_pton\(AF_INET6, \"(::1|::ffff:127\.[0-9.]+)\"" > "$OUT/$name.strace" || true
     local total outside asked names summary
     total=$(grep -acE 'AF_INET6?' "$OUT/$name.full.strace" || true)
     outside=$(grep -acE 'AF_INET6?' "$OUT/$name.strace" || true)
-    asked=$(grep -aoE '\\[0-9]{1,3}[a-z0-9-]+(\\[0-9]{1,3}[a-z0-9-]+)+\\0' "$OUT/$name.strace" | sed -E 's/\\[0-9]{1,3}/./g; s/^\.//; s/\.$//' | sort | uniq -c | sed -E 's/^ +//' | paste -sd',' || true)
+    asked=$(grep -aoE '\\[0-9]{1,3}[a-z0-9-]+(\\[0-9]{1,3}[a-z0-9-]+)+\\0' "$OUT/$name.strace" | sed -E 's/\\[0-9]{1,3}/./g; s/^\.//; s/\.$//' | grep -E '^([a-z0-9-]+\.)+[a-z]{2,}$' | sort | uniq -c | sed -E 's/^ +//' | paste -sd',' || true)
     names=$(grep -aoiE '(microsoft|visualstudio|applicationinsights|events\\[0-9]+data)[a-z0-9.\\-]*' "$OUT/$name.full.strace" | sort -u | tr '\n' ' ' || true)
     summary=$(node -e 'const s=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const c=s.counters??{};const o=Object.keys(c).filter((k)=>k.startsWith("observer_"));console.log(`observer in /stats: ${s.speechObserver?JSON.stringify(s.speechObserver):"none"}; observer counters: ${o.length}${o.length?` (loaded ${c.observer_loaded??0}, could not load ${c.observer_unavailable??0}, windows kept ${c.observer_windows_accepted??0}, errors ${c.observer_errors??0})`:""}; frames heard: ${c.frames_heard??0}`)' "$OUT/$name.stats.json" 2>/dev/null || echo "stats missing")
     echo "$name: traced threads and processes=$(cut -d' ' -f1 "$OUT/$name.full.strace" | sort -u | wc -l); network calls=$total, of them to anywhere but this machine=$outside; names looked up: ${asked:-none}; microsoft names seen in traffic: ${names:-none}; runtime library lines in the process's memory map: ${loaded:-0}; $summary" | tee "$OUT/$name.summary.txt"

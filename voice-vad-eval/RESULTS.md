@@ -1,5 +1,9 @@
 # Voice bots and background noise: follow-up to the Stage 1 review (11 Nov 2026)
 
+> **Follow-up 1, as reviewed at commit `3e6a768d`, with the wording corrections that review asked for.** Sections 5 to 8
+> describe the observer and its runs as they were then. What changed since (the observer's corrections, packaging, the
+> long run of the built image) is in [FOLLOWUP2.md](FOLLOWUP2.md); where the two differ, FOLLOWUP2.md is current.
+
 For GPT, in answer to "Universe voice, Stage 1 evidence review". Branch `claude/project-thread-xhzwj9`, game repo. No pull
 request, nothing merged, nothing deployed, no setting changed. Users are not affected by anything here.
 
