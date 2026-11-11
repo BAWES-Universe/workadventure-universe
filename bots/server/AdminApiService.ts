@@ -296,7 +296,8 @@ export interface BotConfiguration {
     universeUrl?: string;
     // Set only for a Brick: whose it is, and whether it is the one every account gets. A config with it is answered in
     // direct messages only and is never put on a map.
-    brick?: { ownerId: string; isDefault: boolean };
+    // `deleted` (#1996): its owner deleted it and Undo can still give it back. It answers nobody and keeps its chat.
+    brick?: { ownerId: string; isDefault: boolean; deleted?: boolean };
     userId?: string; // User who created the bot
     behaviorType: 'idle' | 'patrol' | 'social';
     behaviorConfig: Record<string, any>;
@@ -337,11 +338,48 @@ export interface BotConfiguration {
 }
 
 /** Whose Brick a configuration from Orbit is (#1995), or null for a room bot and for anything that isn't shaped like one. */
-function brickOf(data: unknown): { ownerId: string; isDefault: boolean } | null {
+function brickOf(data: unknown): { ownerId: string; isDefault: boolean; deleted?: boolean } | null {
     const brick = (data as { brick?: unknown } | null)?.brick;
     if (!brick || typeof brick !== 'object') return null;
-    const { ownerId, isDefault } = brick as { ownerId?: unknown; isDefault?: unknown };
-    return typeof ownerId === 'string' && ownerId ? { ownerId, isDefault: isDefault === true } : null;
+    const { ownerId, isDefault, deleted } = brick as { ownerId?: unknown; isDefault?: unknown; deleted?: unknown };
+    return typeof ownerId === 'string' && ownerId ? { ownerId, isDefault: isDefault === true, ...(deleted === true ? { deleted: true } : {}) } : null;
+}
+
+/** A person's Brick as Orbit lists it (#1996): what the game needs to show it, nothing that steers it. */
+export interface BrickCard {
+    id: string;
+    name: string;
+    description: string | null;
+    characterTextureId: string | null;
+    enabled: boolean;
+    isDefault: boolean;
+    hello: string | null;
+}
+
+/** What a person's Brick says about a new Brick it makes for them (#1996). */
+export interface NewBrickAsk {
+    name: string;
+    description?: string;
+    chatInstructions?: string;
+    hello?: string;
+    /** They asked for a second one of a name they already have. */
+    evenIfThere?: boolean;
+}
+
+const BRICK_CALL_TIMEOUT_MS = 8_000;
+
+function brickCardOf(data: unknown): BrickCard | null {
+    const card = data as Partial<BrickCard> | null;
+    if (!card || typeof card.id !== 'string' || typeof card.name !== 'string') return null;
+    return {
+        id: card.id,
+        name: card.name,
+        description: typeof card.description === 'string' ? card.description : null,
+        characterTextureId: typeof card.characterTextureId === 'string' ? card.characterTextureId : null,
+        enabled: card.enabled !== false,
+        isDefault: card.isDefault === true,
+        hello: typeof card.hello === 'string' ? card.hello : null,
+    };
 }
 
 export interface BotUsageMetrics {
@@ -852,6 +890,65 @@ export class AdminApiService {
             reason: null,
             user: { uuid: person.uuid, name: typeof person.name === 'string' ? person.name : null, isGuest: false },
         };
+    }
+
+    private brickCall<T>(method: 'get' | 'post' | 'put', path: string, body?: unknown, params?: Record<string, string>): Promise<AxiosResponse<T>> {
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!this.isConfigured() || !botServiceToken) throw new Error('Orbit is not set up for Bricks');
+        return axios.request<T>({
+            method,
+            url: resolveAdminApiEndpoint(this.adminApiUrl, path),
+            ...(body === undefined ? {} : { data: body }),
+            ...(params ? { params } : {}),
+            headers: { Authorization: `Bearer ${botServiceToken}`, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+            timeout: BRICK_CALL_TIMEOUT_MS,
+        });
+    }
+
+    /**
+     * A person asks their Brick for another Brick (#1996). Orbit makes it only for the owner of the Brick that asks
+     * (`userId` is their game uuid), and answers the one they already have when its name is taken. Throws when Orbit
+     * says no or cannot be reached: the caller tells the person it did not work.
+     */
+    async makeBrickFor(viaBotId: string, userId: string, ask: NewBrickAsk): Promise<{ made: boolean; brick: BrickCard }> {
+        const response = await this.brickCall<{ made?: unknown; brick?: unknown }>('post', `api/bots/${encodeURIComponent(viaBotId)}/bricks`, { userId, ...ask });
+        const brick = brickCardOf(response.data?.brick);
+        if (!brick) throw new Error('Orbit answered without a Brick');
+        return { made: response.data?.made === true, brick };
+    }
+
+    /** How often a job has to come back before a Brick is suggested for it, and every topic already suggested to this person (#1996). */
+    async brickOffersFor(viaBotId: string, userId: string): Promise<{ after: number; topics: string[] }> {
+        const response = await this.brickCall<{ after?: unknown; topics?: unknown }>('get', `api/bots/${encodeURIComponent(viaBotId)}/brick-offers`, undefined, { userId });
+        const topics = Array.isArray(response.data?.topics) ? response.data.topics : [];
+        return {
+            after: typeof response.data?.after === 'number' && response.data.after >= 2 ? response.data.after : 3,
+            topics: topics.map((one: unknown) => (one as { topic?: unknown } | null)?.topic).filter((topic: unknown): topic is string => typeof topic === 'string'),
+        };
+    }
+
+    /** May the suggestion for this topic be shown now? Orbit says yes once per person and topic, on every device (#1996). */
+    async claimBrickOffer(viaBotId: string, userId: string, topic: string): Promise<{ show: boolean; topic: string }> {
+        const response = await this.brickCall<{ show?: unknown; topic?: unknown }>('post', `api/bots/${encodeURIComponent(viaBotId)}/brick-offers`, { userId, topic });
+        return { show: response.data?.show === true, topic: typeof response.data?.topic === 'string' ? response.data.topic : topic };
+    }
+
+    /** What the person tapped on the suggestion (#1996). Kept for the record; never throws, the topic is closed either way. */
+    async answerBrickOffer(viaBotId: string, userId: string, topic: string, answer: 'made' | 'not_now'): Promise<void> {
+        await this.brickCall('put', `api/bots/${encodeURIComponent(viaBotId)}/brick-offers`, { userId, topic, answer }).catch((error) => {
+            console.warn('[AdminApiService] Could not keep the answer to a Brick suggestion:', error instanceof Error ? error.message : error);
+        });
+    }
+
+    /** Has Orbit remove every deleted Brick whose days are over (#1996), and names them. Empty when Orbit cannot be asked. */
+    async sweepBricks(): Promise<string[]> {
+        try {
+            const response = await this.brickCall<{ removed?: unknown }>('post', 'api/bricks/sweep', {});
+            return Array.isArray(response.data?.removed) ? response.data.removed.filter((id: unknown): id is string => typeof id === 'string') : [];
+        } catch (error) {
+            console.warn('[AdminApiService] Could not sweep deleted Bricks:', error instanceof Error ? error.message : error);
+            return [];
+        }
     }
 
     /**

@@ -127,6 +127,10 @@ aiService.useApprovals(approvals);
 aiService.useNearbyAsks(nearbyAsks);
 let dmRoom: ((botId: string) => Promise<DmRoomLink | undefined>) | undefined;
 let directChat: ((botId: string, chatId: string) => Promise<DirectChatAnswer>) | undefined;
+let brickChanged: ((botId: string) => void) | undefined;
+/** How often Orbit is asked to remove deleted Bricks whose days are over (#1996). Nothing depends on when it runs. */
+const BRICK_SWEEP_EVERY_MS = 60 * 60 * 1000;
+let brickSweepInterval: NodeJS.Timeout | undefined;
 
 /** Turns direct messages on once Synapse accepts this bot server's registration; leaves them off otherwise. */
 async function setupMatrix(): Promise<void> {
@@ -179,6 +183,10 @@ async function setupMatrix(): Promise<void> {
     dmRoom = (botId) => dmReplyService.roomOf(botId);
     // One chat for a person and a bot across their devices (#1995)
     directChat = (botId, chatId) => bridge.directChatFor(botId, chatId);
+    // A Brick that was just deleted, or taken back with Undo, is read again before its next message (#1996)
+    brickChanged = (botId) => dmReplyService.forgetConfig(botId);
+    brickSweepInterval = setInterval(() => void adminApiService.sweepBricks(), BRICK_SWEEP_EVERY_MS);
+    brickSweepInterval.unref?.();
     console.log(`[BotServer] Matrix direct messages on for ${matrixConfig.domain}`);
 }
 // Made in start(), once direct messages are settled: their routes are part of the API.
@@ -259,7 +267,7 @@ async function start() {
 
         // Before any bot connects: a bot shows Message only when Synapse accepted the registration
         await setupMatrix();
-        botAPI = new BotAPI(botManager, adminApiService, botRegistry, preRouters, { dmStatus, dmRoom, directChat, noteHearing: noteHearing ?? undefined });
+        botAPI = new BotAPI(botManager, adminApiService, botRegistry, preRouters, { dmStatus, dmRoom, directChat, brickChanged, noteHearing: noteHearing ?? undefined });
 
         // Initialize bot manager
         await botManager.initialize();
@@ -392,6 +400,7 @@ function stopMovementAnalysis(): void {
 function stopGameLoop(): void {
     if (gameLoopInterval) {
         clearInterval(gameLoopInterval);
+        if (brickSweepInterval) clearInterval(brickSweepInterval);
         gameLoopInterval = null;
         console.log('[BotServer] Game loop stopped');
     }

@@ -125,6 +125,7 @@ import {
 } from './ArtifactTools';
 import { MAX_OUTGOING_MEDIA_BYTES, type BotPlayerMemory, type PendingMedia } from '../memory/ConversationMemory';
 import { FIND_FILES_TOOL, OPEN_FILE_TOOL, SEND_AGAIN_TOOL, fileToolDefinitions, formatFileResult, isFileTool, runFileTool } from './FileTools';
+import { MAKE_BRICK_TOOL, SUGGEST_BRICK_TOOL, brickToolDefinitions, brickToolsNote, isBrickTool, runBrickTool, type BrickNote } from './BrickTools';
 import { linkOfStore } from '../services/ChatFiles';
 import { addTurnMedia, startTurnMedia, turnMediaNotice, type TurnMedia } from './ArtifactMedia';
 import { charsToFree, StepRoom, stepOf, stepsAsText, withStepsAsText, type ReplySteps } from './replySteps';
@@ -1304,6 +1305,8 @@ export class AIService {
                     // What waits from an earlier visit stays waiting while other people are here (#1993)
                     options?.shared || options?.onlyForThem ? '' : this.conversationMemory.getPendingMediaNotice(botId, playerId),
                     artifactsEnabled() ? turnMediaNotice(turnMedia) : '',
+                    // A person's own first Brick, in their direct messages: it can make Bricks, and what it already suggested (#1996)
+                    channel === 'dm' && botId && playerId !== undefined ? await this.brickNoteFor(botId, playerId, adminApiService) : '',
                 ].filter(Boolean).join('\n\n') || undefined,
                 channel,
                 // A direct message with a bot that lives in no room, a Brick (#1995)
@@ -3325,6 +3328,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         }
         if (files) tools.push(...fileToolDefinitions({ artifacts: artifactsEnabled() }));
 
+        // Tools: make another Brick, and suggest one (game #1996). Only a person's own first Brick has them, in its owner's direct messages.
+        if (channel === 'dm' && this.brickToolsOn(botId, botClient, adminApiService)) tools.push(...brickToolDefinitions());
+
         // Add MCP tools
         if (botId && adminApiService) {
             try {
@@ -3401,6 +3407,40 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     }
 
     /** Orbit keeps files in this bot's chats (it served their limits), so the file tools can be offered and run. */
+    /**
+     * The Bricks that are the one every account gets (game #1996): in its owner's direct messages such a Brick can make
+     * another Brick and suggest one. Told by whoever reads the bot's settings before a reply (DmReplyService).
+     */
+    private helperBricks = new Set<string>();
+
+    noteBrick(botId: string, brick: { isDefault: boolean; deleted?: boolean } | undefined): void {
+        if (brick?.isDefault && !brick.deleted) this.helperBricks.add(botId);
+        else this.helperBricks.delete(botId);
+    }
+
+    /** Whether this reply has the two Brick tools: a person's own first Brick, in a direct message, with Orbit to ask. */
+    private brickToolsOn(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService): boolean {
+        const admin = adminApiService ?? this.adminApiService;
+        return !botClient && !!botId && this.helperBricks.has(botId) && !!admin?.isConfigured?.();
+    }
+
+    /** What such a Brick is told with its instructions: that it can make Bricks, and what it already suggested. */
+    private async brickNoteFor(botId: string, playerId: number, adminApiService?: AdminApiService): Promise<string> {
+        if (!this.brickToolsOn(botId, undefined, adminApiService)) return '';
+        const admin = adminApiService ?? this.adminApiService;
+        const userId = this.conversationMemory?.getMemory(botId, playerId)?.userUuid;
+        const offers = admin && userId ? await admin.brickOffersFor(botId, userId).catch(() => null) : null;
+        return brickToolsNote(offers);
+    }
+
+    /** Runs make_brick or suggest_brick for the person in this direct message. What the game shows for it waits with the reply. */
+    private async runBrickToolCall(name: string, args: Record<string, unknown>, where: { adminApiService?: AdminApiService; botId?: string; playerId?: number }): Promise<Record<string, unknown>> {
+        const admin = where.adminApiService ?? this.adminApiService;
+        const memory = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId) : undefined;
+        if (!admin || !where.botId || !memory?.userUuid) return { error: "That can't be done in this chat right now." };
+        return runBrickTool(name, args, { admin, botId: where.botId, userId: memory.userUuid, notes: (memory.pendingBricks ??= []) });
+    }
+
     private filesOn(botId?: string, adminApiService?: AdminApiService): boolean {
         const admin = adminApiService ?? this.adminApiService;
         return !!botId && !!admin?.isConfigured?.() && this.keepsFiles(botId);
@@ -3759,7 +3799,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
                 // With artifacts off, a tool of the same name belongs to an MCP server: send it down the default branch
                 // So does a file tool's name when Orbit doesn't keep files here (#1508)
-                switch ((isArtifactTool(toolCall.name) && !artifactsEnabled()) || (isFileTool(toolCall.name) && !this.filesOn(botId, adminApiService)) ? '' : toolCall.name) {
+                // And a Brick tool's name anywhere but in a first Brick's direct messages (#1996)
+                switch ((isArtifactTool(toolCall.name) && !artifactsEnabled()) || (isFileTool(toolCall.name) && !this.filesOn(botId, adminApiService)) || (isBrickTool(toolCall.name) && !this.brickToolsOn(botId, botClient, adminApiService)) ? '' : toolCall.name) {
                     case 'get_people_on_map':
                         if (botClient) {
                             const people = botClient.getAllPeople();
@@ -4064,6 +4105,15 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             toolCall.name,
                             typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
                             { botClient, adminApiService, spaceName, botId, playerId, abortSignal, source, present }
+                        );
+                        break;
+
+                    case MAKE_BRICK_TOOL:
+                    case SUGGEST_BRICK_TOOL:
+                        result = await this.runBrickToolCall(
+                            toolCall.name,
+                            typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
+                            { adminApiService, botId, playerId }
                         );
                         break;
 

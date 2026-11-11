@@ -21,6 +21,7 @@ import type { ParsedFile } from '../services/FileParser';
 import { withoutNoteIds, type ChatUpload } from '../services/ChatFiles';
 import { chatFileKeeper, sentMediaJob } from '../services/ChatFileKeeper';
 import type { BotConfiguration } from './AdminApiService';
+import type { BrickNote } from '../ai/BrickTools';
 import type { BotManager } from './BotManager';
 
 /** Label stored with direct messages in memory and analytics, where bubble messages store their space name. */
@@ -59,6 +60,18 @@ export const STARTER_IDEAS = 'ideas';
  * shows them in the person's language with the ideas to tap; these are for the bot's memory and for other chat apps.
  */
 export const BRICK_IDEAS_TEXT = 'A few things I could take off your plate. Pick one, or just ask in your own words.';
+
+/** The Brick a suggestion card described (#1996), as the game sends it back when the person taps "Make it". */
+export interface OfferedBrick {
+    topic: string;
+    name: string;
+    line: string;
+    instructions: string;
+}
+
+/** A Brick's words once it made the Brick it suggested (#1996): fixed, so no model is asked. For memory and other chat apps; the game shows its own. */
+export const brickMadeText = (name: string): string => `Done. ${name} is ready and knows its job. Open its chat, or find it in Chats any time.`;
+export const BRICK_NOT_MADE_TEXT = "I couldn't make it just now. Ask me again in a moment.";
 /** A direct message after this long counts as a new conversation, like walking up to the bot again. */
 const NEW_CONVERSATION_AFTER_MS = 30 * 60 * 1000;
 const CONFIG_CACHE_MS = 60 * 1000;
@@ -110,6 +123,8 @@ export interface DmReplyHooks {
     note?: boolean;
     /** The person tapped this starter under a Brick's hello (#1995): the message is the starter's own words. */
     starter?: string;
+    /** The person tapped "Make it" on a Brick's suggestion (#1996): the Brick the card described. Their message is the button's own words. */
+    makeOffered?: OfferedBrick;
 }
 
 export interface DmReply {
@@ -130,6 +145,8 @@ export interface DmReply {
     replyLimit?: ReplyLimitReached;
     /** The text is a Brick's fixed "what I can do" (#1995): the game shows its ideas to tap with it. */
     ideas?: boolean;
+    /** What this turn did about Bricks (#1996): Bricks it made go with the text, a suggestion goes out as a card after it. */
+    bricks?: BrickNote[];
     /**
      * This message waited behind an answer in progress and was answered together with the others that waited (#1159):
      * nothing is sent for it. True once that one answer was given, false when it failed or was a reply limit card.
@@ -158,6 +175,12 @@ export class DmReplyService extends BaseBehavior {
     private queues = new Map<string, Promise<unknown>>();
     /** Per chat, the words that wait behind the answer in progress, to be answered together once it is done. */
     private waiting = new Map<string, { texts: string[]; pointed: string[]; note: boolean; starter: boolean; answer: Promise<DmReply | null> }>();
+    /** Bricks whose settings must be read again before their next answer (#1996): one that was just deleted stops at once. */
+    forgetConfig(botId: string): void {
+        this.configCache.delete(botId);
+        this.missingCache.delete(botId);
+    }
+
     private playerIds = new Map<string, number>();
     private nextPlayerId = -1;
     private loadedBots = new Set<string>();
@@ -196,7 +219,7 @@ export class DmReplyService extends BaseBehavior {
         const waiting = this.waiting.get(key);
         // A note the system wrote is never answered together with what a person typed: the two are kept and learned from differently.
         // Nor is a starter they tapped (#1995): its answer is fixed words, which would leave what they typed unanswered
-        if (waiting && attachments.length === 0 && waiting.note === !!hooks.note && !waiting.starter && !hooks.starter) {
+        if (waiting && attachments.length === 0 && waiting.note === !!hooks.note && !waiting.starter && !hooks.starter && !hooks.makeOffered) {
             waiting.texts.push(text);
             // A card replied to in a message that waits is pointed at by the one answer that covers it (game #1781)
             waiting.pointed.push(...(hooks.pointedArtifactIds ?? []));
@@ -207,7 +230,7 @@ export class DmReplyService extends BaseBehavior {
             }));
         }
         const previous = this.queues.get(key);
-        const batch = { texts: [text], pointed: [...(hooks.pointedArtifactIds ?? [])], note: !!hooks.note, starter: !!hooks.starter } as {
+        const batch = { texts: [text], pointed: [...(hooks.pointedArtifactIds ?? [])], note: !!hooks.note, starter: !!hooks.starter || !!hooks.makeOffered } as {
             texts: string[];
             pointed: string[];
             note: boolean;
@@ -326,6 +349,10 @@ export class DmReplyService extends BaseBehavior {
     private async replyNow(botId: string, person: DmPerson, text: string, attachments: DmAttachment[], hooks: DmReplyHooks): Promise<DmReply | null> {
         const config = await this.getBotConfig(botId);
         if (!config?.aiProviderRef || !this.aiService || !this.conversationMemory) return null;
+        // A Brick its owner deleted answers nobody while it waits for Undo (#1996)
+        if (config.brick?.deleted) return null;
+        // A person's own first Brick can make Bricks and suggest one (#1996)
+        this.aiService.noteBrick?.(botId, config.brick);
         const chatInstructions = instructionsFor(config);
         const playerId = this.playerIdFor(person.matrixUserId);
         const memory = this.conversationMemory;
@@ -350,6 +377,33 @@ export class DmReplyService extends BaseBehavior {
                 memory.addMessage(botId, playerId, BRICK_IDEAS_TEXT, 'bot', DM_SPACE_NAME);
             };
             return { text: BRICK_IDEAS_TEXT, media: [], ideas: true, keep };
+        }
+        // "Make it" on the Brick's own suggestion (#1996): made right away by Orbit, with fixed words, so no model is asked
+        // and nothing is counted. Only a person's first Brick suggests, and only to its owner (Orbit checks whose it is).
+        if (config.brick?.isDefault && hooks.makeOffered && attachments.length === 0) {
+            const offered = hooks.makeOffered;
+            const admin = this.adminApiService;
+            memory.addMessage(botId, playerId, text, 'person', DM_SPACE_NAME, false);
+            let said = false;
+            const keepAs = (words: string) => () => {
+                if (said) return;
+                said = true;
+                memory.addMessage(botId, playerId, words, 'bot', DM_SPACE_NAME);
+            };
+            if (!admin) return { text: BRICK_NOT_MADE_TEXT, media: [], keep: keepAs(BRICK_NOT_MADE_TEXT) };
+            try {
+                const { made, brick } = await admin.makeBrickFor(botId, person.uuid, {
+                    name: offered.name,
+                    ...(offered.line ? { description: offered.line } : {}),
+                    ...(offered.instructions ? { chatInstructions: offered.instructions } : {}),
+                });
+                void admin.answerBrickOffer(botId, person.uuid, offered.topic, 'made');
+                const words = brickMadeText(brick.name);
+                return { text: words, media: [], keep: keepAs(words), bricks: [{ kind: 'made', id: brick.id, name: brick.name, line: brick.description, look: brick.characterTextureId, made }] };
+            } catch (error) {
+                console.warn(`[DmReplyService] Bot ${botId} could not make the Brick it suggested:`, error instanceof Error ? error.message : error);
+                return { text: BRICK_NOT_MADE_TEXT, media: [], keep: keepAs(BRICK_NOT_MADE_TEXT) };
+            }
         }
         // A direct message takes the media its tools made with its answer, so anything still here is from a turn that
         // failed, or was queued in a bubble: it is dropped, never sent with an answer it doesn't belong to. After the
@@ -431,6 +485,7 @@ export class DmReplyService extends BaseBehavior {
             // Only this turn's reply: a card pointed at earlier is not pointed at again by the next message
             turnMemory.pointedArtifacts = hooks.pointedArtifactIds ?? [];
             turnMemory.pendingArtifacts = [];
+            turnMemory.pendingBricks = [];
         }
 
         const context = memory.getConversationContext(botId, playerId);
@@ -591,6 +646,7 @@ export class DmReplyService extends BaseBehavior {
         const playerMemory = memory.getMemory(botId, playerId);
         const media = playerMemory?.pendingMedia?.splice(0) ?? [];
         const artifacts = playerMemory?.pendingArtifacts?.splice(0) ?? [];
+        const bricks = playerMemory?.pendingBricks?.splice(0) ?? [];
         // Someone already standing in the bot's room gets no card asking them to come visit it
         const roomLink = this.isInBotRoom(botId, person.uuid)
             ? undefined
@@ -608,7 +664,7 @@ export class DmReplyService extends BaseBehavior {
             const made = this.aiService?.madeFor(item.originalUrl, item.url) ?? null;
             void chatFileKeeper.keepAll(admin, [sentMediaJob({ ...item, mimeType: item.mimeType || null, caption: item.caption || null }, where, made)]);
         };
-        return { text: replyText, media, keep, mediaSent, ...(roomLink ? { roomLink } : {}), ...(artifacts.length ? { artifacts } : {}) };
+        return { text: replyText, media, keep, mediaSent, ...(roomLink ? { roomLink } : {}), ...(artifacts.length ? { artifacts } : {}), ...(bricks.length ? { bricks } : {}) };
     }
 
     /**

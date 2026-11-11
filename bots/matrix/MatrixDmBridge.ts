@@ -3,7 +3,7 @@ import type { MatrixAppServiceClient } from './MatrixAppServiceClient';
 import type { MatrixEvent, MatrixEventHandler } from './MatrixAppServiceRouter';
 import { BOT_LOCALPART_PREFIX, botIdFromMatrixId, botMatrixId, type MatrixAppServiceConfig } from './MatrixConfig';
 import type { BotConfiguration } from '../server/AdminApiService';
-import { STARTER_IDEAS, type DmAttachment, type DmPerson, type DmReply, type DmReplyHooks } from '../server/DmReplyService';
+import { STARTER_IDEAS, type DmAttachment, type DmPerson, type DmReply, type DmReplyHooks, type OfferedBrick } from '../server/DmReplyService';
 import { MAX_OUTGOING_MEDIA_BYTES, type PendingMedia } from '../memory/ConversationMemory';
 import {
     availabilityOf,
@@ -35,6 +35,32 @@ export const ANSWERED_NEARBY_KEY = 'universe.answered_nearby';
 export const STARTER_KEY = 'universe.starter';
 /** On a Brick's reply: these are its fixed "what I can do" words, and the game shows its ideas to tap with them (game #1995). */
 export const BRICK_IDEAS_KEY = 'universe.brick_ideas';
+/**
+ * On a Brick's reply: the Bricks it made in that reply (game #1996), `[{ id, name, line, look, made }]`. The game shows a
+ * line for each, one tap from its chat.
+ */
+export const BRICK_MADE_KEY = 'universe.brick_made';
+/**
+ * A Brick's suggestion to make a Brick for a kind of job (game #1996), on its own message after the answer:
+ * `{ topic, ask, name, line, instructions }`. The game shows it as a card with "Make it" and "Not now".
+ */
+export const BRICK_OFFER_KEY = 'universe.brick_offer';
+/** On a person's message: they tapped "Make it" on that card, and this is the Brick it described (game #1996). */
+export const BRICK_MAKE_KEY = 'universe.brick_make';
+
+/** The Brick a tapped suggestion described, when the message carries one that is whole. */
+function offeredBrickOf(value: unknown): OfferedBrick | null {
+    if (!value || typeof value !== 'object') return null;
+    const { topic, name, line, instructions } = value as Record<string, unknown>;
+    if (typeof topic !== 'string' || typeof name !== 'string' || !topic.trim() || !name.trim()) return null;
+    return {
+        topic: topic.trim().slice(0, 60),
+        name: name.replace(/\s+/g, ' ').trim().slice(0, 40),
+        line: typeof line === 'string' ? line.replace(/\s+/g, ' ').trim().slice(0, 120) : '',
+        instructions: typeof instructions === 'string' ? instructions.trim().slice(0, 4000) : '',
+    };
+}
+
 /** The device told to make a chat has this long to make it before another device may (game #1995). */
 const DIRECT_CHAT_CLAIM_MS = 20_000;
 
@@ -882,6 +908,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
             return;
         }
         this.botNotFound.delete(botId);
+        // A Brick its owner deleted, while Undo can still give it back (#1996): it answers nothing and says nothing, nothing
+        // written to it is kept, and it stays in its chat, so Undo finds the chat as it was.
+        if (config.brick?.deleted) return;
 
         // A message that waited is checked afresh: the person may have lost access while the bot rested.
         const access = await this.access(botId, event.sender, catchUp);
@@ -977,6 +1006,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 pointedArtifactIds,
                 // A starter tapped under a Brick's hello (#1995); a message that waited for a resting Brick is answered as typed
                 ...(content[STARTER_KEY] === STARTER_IDEAS && !catchUp ? { starter: STARTER_IDEAS } : {}),
+                // "Make it" tapped on the Brick's suggestion (#1996)
+                ...(!catchUp && offeredBrickOf(content[BRICK_MAKE_KEY]) ? { makeOffered: offeredBrickOf(content[BRICK_MAKE_KEY])! } : {}),
                 onInterimMessage: async (interim) => {
                     // A lost "let me look" line must not cost the person the real answer, so it never throws.
                     try {
@@ -1040,10 +1071,22 @@ export class MatrixDmBridge implements MatrixEventHandler {
             } else if (reply.text && reply.ideas) {
                 // A Brick's fixed "what I can do": the game shows its ideas to tap with it (#1995)
                 await this.client.sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body: reply.text, [BRICK_IDEAS_KEY]: true });
+            } else if (reply.text && reply.bricks?.some((note) => note.kind === 'made')) {
+                // The Bricks this reply made: the game shows a line for each, one tap from its chat (#1996)
+                const made = reply.bricks.filter((note) => note.kind === 'made').map(({ id, name, line, look, made: isNew }) => ({ id, name, line, look, made: isNew }));
+                await this.client.sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body: reply.text, [BRICK_MADE_KEY]: made });
             } else if (reply.text) {
                 await this.client.sendText(botUserId, event.room_id, reply.text);
             }
             reply.keep?.();
+            // The gentle offer, after the answer and never in the middle of it (#1996). Orbit already said it may be shown.
+            const offer = reply.text ? reply.bricks?.find((note) => note.kind === 'offer') : undefined;
+            if (offer && offer.kind === 'offer') {
+                const { topic, ask, name, line, instructions } = offer;
+                await this.client
+                    .sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body: ask, [BRICK_OFFER_KEY]: { topic, ask, name, line, instructions } })
+                    .catch((error) => console.warn(`[MatrixDmBridge] Could not send a Brick suggestion from bot ${botId}:`, error?.message ?? error));
+            }
             for (const card of reply.artifacts ?? []) {
                 // A live artifact the bot made or changed: the game shows a card to open it
                 const { body, field } = artifactDirectMessage(card);
