@@ -7,7 +7,7 @@ import { VoiceCalls, type GameSide } from '../../bots/voice/VoiceCalls.ts';
 import { WorkerLink } from '../../bots/voice/VoiceLink.ts';
 import type { FromWorker, ListenInfo, ToWorker, VoiceDraft, VoiceStatus } from '../../bots/voice/protocol.ts';
 import { checkMessage } from '../src/validate.ts';
-import { VoiceWorker } from '../src/server.ts';
+import { VoiceWorker, type WorkerOptions } from '../src/server.ts';
 import type { RecognizerFactory } from '../src/recognizer.ts';
 import type { SpeechObserverSettings } from '../src/speechObserver.ts';
 import { sileroLoader } from '../src/speechObserverRuntime.ts';
@@ -221,7 +221,7 @@ function observerFromEnv(): SpeechObserverSettings | undefined {
 }
 
 export async function startRig(
-    options: { secret?: string; maxLanes?: number; input?: InputSink; recognizer?: RecognizerFactory; maxUtteranceSeconds?: number; maxReplySeconds?: number; speechObserver?: SpeechObserverSettings | false } = {}
+    options: { secret?: string; maxLanes?: number; input?: InputSink; recognizer?: RecognizerFactory; maxUtteranceSeconds?: number; maxReplySeconds?: number; speechObserver?: SpeechObserverSettings | false; yieldBots?: WorkerOptions['yieldBots'] } = {}
 ): Promise<Rig> {
     // false: without it even in a run of the whole suite with it on (the test that compares with and without)
     const speechObserver = options.speechObserver === false ? undefined : (options.speechObserver ?? observerFromEnv());
@@ -237,6 +237,7 @@ export async function startRig(
         recognizer: options.recognizer,
         maxUtteranceSeconds: options.maxUtteranceSeconds,
         maxReplySeconds: options.maxReplySeconds,
+        yieldBots: options.yieldBots,
     });
     const workerPort = await worker.listen();
     const report = process.env.VOICE_TEST_SPEECH_OBSERVER_REPORT;

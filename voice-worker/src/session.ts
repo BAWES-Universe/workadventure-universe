@@ -14,6 +14,7 @@ import { Recognition } from './recognition.ts';
 import type { Recognizer, RecognizerEvents, RecognizerFactory } from './recognizer.ts';
 import { RoomTransport } from './roomTransport.ts';
 import { Speaker } from './speaker.ts';
+import { YieldControl, type YieldPolicy } from './yieldControl.ts';
 import type { SessionObserver } from './speechObserver.ts';
 import { cleanTerms } from './terms.ts';
 import type { InputSink } from './transport.ts';
@@ -51,6 +52,8 @@ export interface SessionHost {
     maxLanes: number;
     /** Internal, absent unless the worker was started with it: gives this session a listener that only counts, to copy permitted audio to (speechObserver.ts). */
     observerFor?(about: { botSpeaking: () => boolean }): SessionObserver;
+    /** Internal, the limited owner rollout: how this bot's voice yields to a loud sound (yieldControl.ts), or undefined for today's rule. */
+    yieldPolicyFor?(botId: string): YieldPolicy | undefined;
     send(message: OutgoingMessage): void;
 }
 
@@ -107,6 +110,8 @@ export class Session {
     private readonly recognition?: Recognition;
     /** Only when the worker was started with the speech observer. */
     private readonly observer?: SessionObserver;
+    /** Only for a bot in the owner rollout, with the speech observer on. */
+    private readonly yielding?: YieldControl;
     private readonly statusTimer: NodeJS.Timeout;
     private closing = false;
     /** The names the hearing is asked to expect (#1864): the bot's own and the other voice bots'. The next stretch of speech reads them. */
@@ -127,6 +132,27 @@ export class Session {
         this.terms = cleanTerms(settings.recognition?.terms);
         const observer = host.observerFor?.({ botSpeaking: () => this.speaker.speaking });
         this.observer = observer;
+        const policy = observer ? host.yieldPolicyFor?.(botId) : undefined;
+        if (observer && policy) {
+            const speaker = (): Speaker => this.speaker;
+            this.yielding = new YieldControl({
+                policy,
+                counters: host.counters,
+                observer,
+                speaker: {
+                    get playingId() {
+                        return speaker().playingId;
+                    },
+                    hold: () => speaker().hold(),
+                    resume: (segmentId) => speaker().resume(segmentId),
+                    setGain: (gain) => speaker().setGain(gain),
+                },
+            });
+            // A pause that ends with nothing proven (the person is no longer heard) stops the reply as today
+            this.yielding.onStopHeld = () => {
+                if (this.voice === 'active') this.speaker.bargeIn();
+            };
+        }
         const hearing = this.hearingFor(settings.recognition);
         this.recognition = hearing
             ? new Recognition({
@@ -139,12 +165,11 @@ export class Session {
                   bargeInMs: host.bargeInMs,
                   onFinal: ({ participantId, hearMs }) => this.heardTurn(settings.recognition?.adapter, participantId, hearMs),
                   // A person speaking over the bot stops its voice at once, here, with no round trip; and a reply is
-                  // likely soon, so the speaking provider gets ready for it
-                  // With the speech detector deciding, loud enough is speaking only once it also hears speech (so a
-                  // fan, typing or a knock neither stops the bot nor holds back its reply); whenever it cannot tell, at once
-                  ...(observer ? { confirmSpeech: (participantId: string, epoch: number, go: () => void) => observer.confirm(participantId, epoch, go) } : {}),
-                  onSpeaking: (participantId) => {
-                      const stopped = this.speaker.bargeIn();
+                  // likely soon, so the speaking provider gets ready for it. For a bot in the owner rollout the voice
+                  // pauses first and stops only once it is speech (yieldControl.ts); everyone else, as today
+                  ...(this.yielding ? { interruptions: this.yielding } : {}),
+                  onSpeaking: (participantId, stopVoice) => {
+                      const stopped = stopVoice ? this.speaker.bargeIn() : false;
                       this.speaker.prepare();
                       // Told only afterwards, and only so it can count its own firings beside this decision
                       observer?.baseline(participantId, stopped);
@@ -524,6 +549,7 @@ export class Session {
         if (this.closing) return;
         this.closing = true;
         clearInterval(this.statusTimer);
+        this.yielding?.close();
         this.recognition?.dispose();
         this.observer?.close();
         await this.speaker.shutdown();

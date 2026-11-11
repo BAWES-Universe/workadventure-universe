@@ -74,9 +74,9 @@ export class Speaker {
         return this.current !== undefined;
     }
 
-    /** The reply playing now, if any (held or not). */
+    /** The reply playing now, if any (held or not). A reply already being stopped is not playing. */
     get playingId(): string | undefined {
-        return this.current?.id;
+        return this.cancel ? undefined : this.current?.id;
     }
 
     get held(): boolean {

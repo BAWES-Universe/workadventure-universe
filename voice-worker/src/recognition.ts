@@ -31,6 +31,31 @@ export const MAX_TEXT_CHARS = 8000;
 
 export type LostReason = 'cap' | 'gap' | 'path' | 'stopped' | 'provider';
 
+/**
+ * How a stretch ended, for the interruption control only (never sent anywhere):
+ *   text    words came through (final, or kept from earlier partials)
+ *   empty   the recognizer finished successfully with no words, none were heard before, and no audio went missing
+ *   failed  the recognizer failed
+ *   lost    the stretch was cut off (the limit, a hole in the audio)
+ *   gone    the person is no longer heard on this path (left, muted, a newer path, the voice stopped)
+ * Only `empty` is evidence that a loud sound was not speech; a failure is never read as one.
+ */
+export type TurnEnd = 'text' | 'empty' | 'failed' | 'lost' | 'gone';
+
+/** The interruption control of a session (yieldControl.ts): told about each stretch that is loud enough to count. */
+export interface Interruptions {
+    /**
+     * Loud enough for long enough (the barge-in time). False: it counts as speaking at once (today's rule). True: the
+     * control calls `speech` once it is speech (with whether to stop the bot's voice), or never; until then nothing is
+     * announced for this stretch, not even when words come through.
+     */
+    loud(turn: { participantId: string; epoch: number; turnId: string }, speech: (stopVoice: boolean) => void): boolean;
+    /** The words so far of a stretch that is waiting. */
+    words(turnId: string, text: string): void;
+    /** A stretch the control was asked about ended (before its user.turn goes out). */
+    ended(turnId: string, how: TurnEnd): void;
+}
+
 export interface RecognitionOptions {
     factory: RecognizerFactory;
     /** The longest stretch of speech taken, in audio milliseconds, pre-roll included. Past it the words are only offered back. */
@@ -38,14 +63,13 @@ export interface RecognitionOptions {
     pauseMs?: number;
     /** Voiced audio, in all, before a stretch of speech counts as speaking over the bot. Default: DEFAULT_BARGE_IN_MS. */
     bargeInMs?: number;
-    /** A person is speaking (not just a sound): called once per stretch, as soon as it is clear. Local, no recognizer involved. */
-    onSpeaking?(participantId: string): void;
     /**
-     * Asked once per stretch when it is loud enough for long enough (the barge-in time): calls `go` when it is speech,
-     * which may be at once, later, or never (only a noise). The stretch counts as speaking, and `onSpeaking` is called,
-     * only then. Returns how to say the stretch is over. Absent: loud enough is speaking, at once.
+     * A person is speaking (not just a sound): called once per stretch, as soon as it is clear. Local, no recognizer
+     * involved. `stopVoice` is false only when the interruption control says the bot's voice is not to be stopped for it.
      */
-    confirmSpeech?(participantId: string, epoch: number, go: () => void): () => void;
+    onSpeaking?(participantId: string, stopVoice: boolean): void;
+    /** The interruption control, only for a bot in the owner rollout. Absent: loud enough is speaking, at once (today). */
+    interruptions?: Interruptions;
     /** No audio at all this long while someone is speaking counts as a pause too (a sender that sends nothing while silent). Default: the pause. */
     idleMs?: number;
     counters: Counters;
@@ -67,9 +91,9 @@ interface Turn {
     /** Voiced audio so far, and whether the stretch has been called speech yet. */
     voicedMs: number;
     speaking: boolean;
-    /** Loud enough for long enough, and asked whether it is speech; and how to say the stretch is over to whoever was asked. */
+    /** Loud enough for long enough; and the interruption control is deciding whether it is speech. */
     asked: boolean;
-    settleAsk?: () => void;
+    waiting: boolean;
     /** user.speech_started has gone out: only once it is speech (or words came through), never for a click or a cough. */
     announced: boolean;
     /** The last words heard. */
@@ -168,18 +192,18 @@ export class Recognition {
             turn.asked = true;
             const participantId = frame.participantId;
             const epoch = frame.epoch;
-            const go = (): void => {
+            const go = (stopVoice: boolean): void => {
                 if (turn.speaking || turn.over || this.disposed) return;
                 turn.speaking = true;
-                turn.settleAsk = undefined;
+                turn.waiting = false;
                 this.announce(turn, participantId, epoch);
-                this.options.onSpeaking?.(participantId);
+                this.options.onSpeaking?.(participantId, stopVoice);
             };
-            if (this.options.confirmSpeech) {
-                const settle = this.options.confirmSpeech(participantId, epoch, go);
-                if (!turn.speaking) turn.settleAsk = settle;
+            const control = this.options.interruptions;
+            if (control?.loud({ participantId, epoch, turnId: turn.id }, go)) {
+                if (!turn.speaking) turn.waiting = true;
             } else {
-                go();
+                go(true);
             }
         }
         turn.recognizer.push(frame.pcm16k);
@@ -187,7 +211,7 @@ export class Recognition {
         if (turn.audioMs >= this.options.maxUtteranceMs) {
             // The limit: the words so far are offered back, never sent, and nothing more is taken until a pause
             c.inc('speech_cap_hit');
-            this.finishAs(person, turn, frame.participantId, 'lost', 'cap', turn.text);
+            this.finishAs(person, turn, frame.participantId, 'lost', 'cap', turn.text, 'lost');
             person.waitForPause = true;
             person.quietMs = 0;
         } else if (turn.quietMs >= (turn.recognizer.pauseMs ?? this.pauseMs)) {
@@ -198,7 +222,6 @@ export class Recognition {
     /** The person paused: no more audio is coming for this stretch, so its recognizer says the final words. */
     private pause(person: Person, turn: Turn): void {
         clearTimeout(turn.timer);
-        this.settle(turn);
         if (person.speaking === turn) person.speaking = undefined;
         turn.recognizer.finish();
     }
@@ -235,6 +258,7 @@ export class Recognition {
             voicedMs: 0,
             speaking: false,
             asked: false,
+            waiting: false,
             announced: false,
             text: '',
             over: false,
@@ -248,7 +272,9 @@ export class Recognition {
                 const words = clip(text);
                 if (words === turn.text) return;
                 turn.text = words;
-                this.announce(turn, participantId, frame.epoch);
+                // Waiting on the interruption control: words alone do not say it is speech to the bot (it decides)
+                if (turn.waiting) this.options.interruptions?.words(id, words);
+                else this.announce(turn, participantId, frame.epoch);
                 this.options.send({ type: 'user.partial', participantId, epoch: frame.epoch, turnId: id, text: words });
             },
             final: (text) => {
@@ -256,8 +282,8 @@ export class Recognition {
                 this.options.provider?.ok();
                 const words = clip(text) || turn.text;
                 // A hole in the audio: the words are not trusted to be all there, so they are only offered back
-                if (turn.gapMs >= GAP_LOSS_MS && words) this.finishAs(person, turn, participantId, 'lost', 'gap', words);
-                else this.finishAs(person, turn, participantId, words ? 'final' : 'cleared', undefined, words);
+                if (turn.gapMs >= GAP_LOSS_MS && words) this.finishAs(person, turn, participantId, 'lost', 'gap', words, 'lost');
+                else this.finishAs(person, turn, participantId, words ? 'final' : 'cleared', undefined, words, words ? 'text' : turn.gapMs >= GAP_LOSS_MS ? 'lost' : 'empty');
             },
             endpoint: () => {
                 // The provider heard them finish: their words are made final now, without waiting out the quiet
@@ -269,7 +295,7 @@ export class Recognition {
                 if (turn.over || this.disposed) return;
                 this.options.provider?.failed(failure?.status);
                 const stillTalking = person.speaking === turn;
-                this.finishAs(person, turn, participantId, 'lost', 'provider', clip(text) || turn.text);
+                this.finishAs(person, turn, participantId, 'lost', 'provider', clip(text) || turn.text, 'failed');
                 // Still talking: the rest is not taken as a new stretch until they pause
                 if (stillTalking) {
                     person.waitForPause = true;
@@ -291,13 +317,6 @@ export class Recognition {
         return turn;
     }
 
-    /** The stretch is over (paused or ended) before it was ever called speech: nothing more is waited for. */
-    private settle(turn: Turn): void {
-        const settle = turn.settleAsk;
-        turn.settleAsk = undefined;
-        settle?.();
-    }
-
     /** Tells the bot server someone is speaking, once per stretch. A short noise never gets this far, so it holds back no reply. */
     private announce(turn: Turn, participantId: string, epoch: number): void {
         if (turn.announced) return;
@@ -306,11 +325,15 @@ export class Recognition {
     }
 
     /** Says how a stretch ended, once, and closes its recognizer. */
-    private finishAs(person: Person, turn: Turn, participantId: string, outcome: 'final' | 'lost' | 'cleared', reason: LostReason | undefined, text: string): void {
+    private finishAs(person: Person, turn: Turn, participantId: string, outcome: 'final' | 'lost' | 'cleared', reason: LostReason | undefined, text: string, how: TurnEnd): void {
         if (turn.over) return;
+        // The interruption control hears first, so a stretch it now calls speech is announced before its end goes out
+        if (turn.waiting) {
+            turn.waiting = false;
+            this.options.interruptions?.ended(turn.id, how);
+        }
         turn.over = true;
         clearTimeout(turn.timer);
-        this.settle(turn);
         person.open.delete(turn);
         if (person.speaking === turn) person.speaking = undefined;
         turn.recognizer.close();
@@ -332,7 +355,7 @@ export class Recognition {
 
     /** Ends every stretch of one person that is not over: lost keeps their words to offer back, cleared drops them. */
     private end(person: Person, outcome: 'lost' | 'cleared', reason: LostReason, participantId: string): void {
-        for (const turn of [...person.open]) this.finishAs(person, turn, participantId, outcome, reason, turn.text);
+        for (const turn of [...person.open]) this.finishAs(person, turn, participantId, outcome, reason, turn.text, 'gone');
         person.waitForPause = false;
         person.preroll = [];
         person.prerollMs = 0;
@@ -370,7 +393,6 @@ export class Recognition {
         for (const person of this.people.values()) {
             for (const turn of person.open) {
                 clearTimeout(turn.timer);
-                this.settle(turn);
                 turn.recognizer.close();
             }
         }
