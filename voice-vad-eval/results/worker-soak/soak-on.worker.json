@@ -1,0 +1,104 @@
+{
+  "observer": "on",
+  "node": "v22.23.4",
+  "arch": "x64",
+  "cpuModel": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+  "seconds": 1800,
+  "memory": {
+    "limitMb": 512,
+    "peakMb": 235,
+    "peakShareOfLimit": 0.46,
+    "peakAnonMbSampled": 139,
+    "peakProcessRssMbSampled": 206,
+    "endAnonMb": 126,
+    "oomKills": 0
+  },
+  "cpu": {
+    "coresUsed": 0.467,
+    "throttledSeconds": 7.65,
+    "throttledPeriods": 188
+  },
+  "eventLoopDelayMs": {
+    "p50": 5.2,
+    "p99": 9.3,
+    "max": 109.1
+  },
+  "heard": {
+    "frames": 1840208,
+    "ms": 26241680,
+    "speechTurns": 1151,
+    "bargeIns": 418,
+    "lanesConnected": 120,
+    "lanesClosed": 120,
+    "roomsConnected": 0,
+    "roomsClosed": 0
+  },
+  "observerWork": {
+    "status": "on",
+    "offeredMs": {
+      "lane": 15679200,
+      "room": 10562480
+    },
+    "acceptedMs": {
+      "lane": 15672832,
+      "room": 10559648
+    },
+    "coverage": {
+      "lane": 0.9996,
+      "room": 0.9997
+    },
+    "windows": {
+      "completed": 819767,
+      "accepted": 819765,
+      "revoked": 2,
+      "stale": 0,
+      "expired": 0,
+      "failed": 0
+    },
+    "audioSecondsJudged": 26232,
+    "calls": 453352,
+    "meanPeoplePerCall": 1.8,
+    "mostPeopleInACall": 15,
+    "meanCallMs": 1.03,
+    "maxCallMs": 104,
+    "meanAgeMs": 1.9,
+    "maxAgeMs": 142,
+    "maxOldestSampleAgeMs": 189,
+    "peakQueuedMs": 1832,
+    "peakStreams": 15,
+    "peakLine": 15,
+    "lostMs": {
+      "overflow": 0,
+      "expired": 0,
+      "idle": 1712,
+      "revoked": 4170,
+      "failed": 0,
+      "reset": 3376
+    },
+    "overloads": 0,
+    "timedOut": 0,
+    "gaveUp": 0,
+    "errors": 0,
+    "refusedAfterClose": 0,
+    "streamsStarted": 658,
+    "streamsEnded": 658,
+    "streamsRefused": 0,
+    "speechWindows": 194875,
+    "besideTodaysGate": {
+      "lane": {
+        "todaysGateSaidSpeaking": 591,
+        "observerFirings": 836,
+        "within600msOfEachOther": 140
+      },
+      "room": {
+        "todaysGateSaidSpeaking": 233,
+        "observerFirings": 560,
+        "within600msOfEachOther": 35
+      },
+      "todaysGateStoppedTheVoice": 418,
+      "observerFiringsWhileBotSpoke": 287,
+      "acceptedSecondsWhileBotSpoke": 8603
+    }
+  },
+  "maxQueuedMsSeen": 1316
+}

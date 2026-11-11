@@ -29,6 +29,16 @@ const INPUT_RATE = 16000;
  * track holds (`OUTPUT_QUEUE_MS`) and a moment more for the media stack.
  */
 const PRIVATE_TAIL_MS = OUTPUT_QUEUE_MS + 300;
+/**
+ * Asking again for a microphone the bot was subscribed to before. The media server this repository runs (livekit-server
+ * 1.8.4) may never deliver a subscription asked for again more than about a second after it was dropped; dropping the
+ * ask and making it again a moment later brings it (#2011; newer servers deliver it the first time). So when a microphone the
+ * bot heard before has not come back by RESUBSCRIBE_CHECK_MS, the bot asks again, at most RESUBSCRIBE_TRIES times, each
+ * time waiting twice as long, and only while the person may still be heard.
+ */
+const RESUBSCRIBE_CHECK_MS = 1000;
+const RESUBSCRIBE_GAP_MS = 100;
+const RESUBSCRIBE_TRIES = 3;
 
 export interface RoomDeps {
     counters: Counters;
@@ -51,6 +61,10 @@ export class RoomTransport implements OutputTarget {
     /** The person the last frames of a reply for one person alone were for, and until when some may still be on the way out. */
     private privateFor?: string;
     private privateUntil = 0;
+    /** Publications the bot has been subscribed to at some point, by track sid: asking for them again is watched. */
+    private readonly heardBefore = new Set<string>();
+    /** A watched ask again, by track sid: its timer and how many times it has been made again. */
+    private readonly asking = new Map<string, { timer: NodeJS.Timeout; tries: number }>();
 
     constructor(readonly epoch: number, private readonly serverUrl: string, private readonly token: string, private readonly deps: RoomDeps) {}
 
@@ -140,9 +154,51 @@ export class RoomTransport implements OutputTarget {
         if (this.gone) return;
         const wanted =
             publication.kind === TrackKind.KIND_AUDIO && publication.source === TrackSource.SOURCE_MICROPHONE && this.mayHear(participant.identity);
+        const sid = publication.sid ?? '';
+        if (!wanted) this.stopAsking(sid);
         if (wanted === publication.subscribed) return;
+        // Already asked again and being watched: the watch makes the next ask
+        if (wanted && this.asking.has(sid)) return;
         publication.setSubscribed(wanted);
         this.deps.counters.inc(wanted ? 'room_subscribed' : 'room_unsubscribed');
+        if (wanted && this.heardBefore.has(sid)) this.watchAsk(participant, publication, 0);
+    }
+
+    /** Checks that a microphone asked for again arrives, and asks once more when it has not (see RESUBSCRIBE_CHECK_MS). */
+    private watchAsk(participant: RemoteParticipant, publication: RemoteTrackPublication, tries: number): void {
+        const sid = publication.sid ?? '';
+        const timer = setTimeout(() => {
+            this.asking.delete(sid);
+            // Arrived, no longer wanted, or the bot has left: nothing to do
+            if (this.gone || publication.subscribed || !this.stillPublished(participant, sid) || !this.mayHear(participant.identity)) return;
+            if (tries >= RESUBSCRIBE_TRIES) {
+                this.deps.counters.inc('room_resubscribe_gave_up');
+                return;
+            }
+            this.deps.counters.inc('room_resubscribe_retries');
+            publication.setSubscribed(false);
+            const again = setTimeout(() => {
+                this.asking.delete(sid);
+                if (this.gone || publication.subscribed || !this.stillPublished(participant, sid) || !this.mayHear(participant.identity)) return;
+                publication.setSubscribed(true);
+                this.watchAsk(participant, publication, tries + 1);
+            }, RESUBSCRIBE_GAP_MS);
+            again.unref?.();
+            this.asking.set(sid, { timer: again, tries });
+        }, RESUBSCRIBE_CHECK_MS * 2 ** tries);
+        timer.unref?.();
+        this.asking.set(sid, { timer, tries });
+    }
+
+    private stillPublished(participant: RemoteParticipant, sid: string): boolean {
+        return this.room.remoteParticipants.get(participant.identity)?.trackPublications.has(sid) === true;
+    }
+
+    private stopAsking(sid: string): void {
+        const ask = this.asking.get(sid);
+        if (!ask) return;
+        clearTimeout(ask.timer);
+        this.asking.delete(sid);
     }
 
     private onSubscribed(track: RemoteTrack, publication: RemoteTrackPublication, participant: RemoteParticipant): void {
@@ -154,6 +210,8 @@ export class RoomTransport implements OutputTarget {
             publication.setSubscribed(false);
             return;
         }
+        this.stopAsking(publication.sid ?? '');
+        this.heardBefore.add(publication.sid ?? '');
         const stream = new AudioStream(track, { sampleRate: INPUT_RATE, numChannels: 1 });
         this.readers.set(sid, stream);
         void this.read(stream, participant.identity, sid);
@@ -260,6 +318,7 @@ export class RoomTransport implements OutputTarget {
     async stop(): Promise<void> {
         this.gone = true;
         this.connected = false;
+        for (const sid of [...this.asking.keys()]) this.stopAsking(sid);
         for (const sid of [...this.readers.keys()]) this.stopReading(sid);
         await this.disconnectQuietly();
         try {

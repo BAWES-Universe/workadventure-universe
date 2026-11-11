@@ -14,6 +14,7 @@ import { Recognition } from './recognition.ts';
 import type { Recognizer, RecognizerEvents, RecognizerFactory } from './recognizer.ts';
 import { RoomTransport } from './roomTransport.ts';
 import { Speaker } from './speaker.ts';
+import type { SessionObserver } from './speechObserver.ts';
 import { cleanTerms } from './terms.ts';
 import type { InputSink } from './transport.ts';
 
@@ -48,6 +49,8 @@ export interface SessionHost {
     /** Lanes alive in the whole worker, to enforce the limit. */
     laneCount(): number;
     maxLanes: number;
+    /** Internal, absent unless the worker was started with it: gives this session a listener that only counts, to copy permitted audio to (speechObserver.ts). */
+    observerFor?(about: { botSpeaking: () => boolean }): SessionObserver;
     send(message: OutgoingMessage): void;
 }
 
@@ -102,6 +105,8 @@ export class Session {
     /** Where a person's permitted audio goes: through recognition when there is a recognizer, else straight to the tap. */
     private readonly input: InputSink;
     private readonly recognition?: Recognition;
+    /** Only when the worker was started with the speech observer. */
+    private readonly observer?: SessionObserver;
     private readonly statusTimer: NodeJS.Timeout;
     private closing = false;
     /** The names the hearing is asked to expect (#1864): the bot's own and the other voice bots'. The next stretch of speech reads them. */
@@ -120,6 +125,8 @@ export class Session {
         settings: SessionSettings = {}
     ) {
         this.terms = cleanTerms(settings.recognition?.terms);
+        const observer = host.observerFor?.({ botSpeaking: () => this.speaker.speaking });
+        this.observer = observer;
         const hearing = this.hearingFor(settings.recognition);
         this.recognition = hearing
             ? new Recognition({
@@ -133,13 +140,22 @@ export class Session {
                   onFinal: ({ participantId, hearMs }) => this.heardTurn(settings.recognition?.adapter, participantId, hearMs),
                   // A person speaking over the bot stops its voice at once, here, with no round trip; and a reply is
                   // likely soon, so the speaking provider gets ready for it
-                  onSpeaking: () => {
-                      this.speaker.bargeIn();
+                  onSpeaking: (participantId) => {
+                      const stopped = this.speaker.bargeIn();
                       this.speaker.prepare();
+                      // Told only afterwards, and only so it can count its own firings beside this decision
+                      observer?.baseline(participantId, stopped);
                   },
               })
             : undefined;
-        this.input = this.recognition ? this.recognition.sink : host.input;
+        const heard = this.recognition ? this.recognition.sink : host.input;
+        // The observer is handed each frame only after the session has dealt with it, and can change nothing about it
+        this.input = observer
+            ? (frame) => {
+                  heard(frame);
+                  observer.frame(frame, this.room !== undefined && frame.epoch === this.room.epoch ? 'room' : 'lane');
+              }
+            : heard;
         this.speaker = new Speaker({
             counters: host.counters,
             ...this.speakingFor(settings.speech, settings.expression),
@@ -319,6 +335,7 @@ export class Session {
         if (current) this.lanes.delete(lane.participantId);
         // What they were saying is offered back to them (they left on purpose: dropped)
         this.recognition?.interrupt(lane.participantId, lane.epoch, reason === 'left' ? 'cleared' : 'lost');
+        this.observer?.drop((participantId, epoch) => participantId === lane.participantId && epoch === lane.epoch);
         this.host.counters.inc('lanes_closed');
         if (announce && current && !this.closing) {
             this.host.send({ type: 'participant.leave', participantId: lane.participantId, epoch: lane.epoch, reason });
@@ -381,6 +398,7 @@ export class Session {
         // Someone no longer named, or not in a mode that listens, is no longer heard: their unfinished words go nowhere
         const heard = new Set(people.filter((person) => modeListens(person.mode)).map((person) => person.participantId));
         this.recognition?.forget((participantId) => heard.has(participantId) || this.lanes.has(participantId));
+        this.observer?.drop((participantId) => !heard.has(participantId) && !this.lanes.has(participantId));
     }
 
     private async dropRoom(room: RoomTransport, state: 'closed' | 'failed', announce: boolean): Promise<void> {
@@ -389,6 +407,7 @@ export class Session {
         room.gone = true;
         if (current) this.room = undefined;
         this.recognition?.interruptEpoch(room.epoch, 'lost');
+        this.observer?.drop((_, epoch) => epoch === room.epoch);
         this.host.counters.inc('rooms_closed');
         if (announce && current && !this.closing) this.host.send({ type: 'room.state', epoch: room.epoch, state });
         await room.stop();
@@ -405,7 +424,10 @@ export class Session {
         }
         this.room?.setMode(mode, participantId);
         // Not listening any more: what they had said so far goes nowhere
-        if (!modeListens(mode)) this.recognition?.forget((id) => (participantId ? id !== participantId : false));
+        if (!modeListens(mode)) {
+            this.recognition?.forget((id) => (participantId ? id !== participantId : false));
+            this.observer?.drop((id) => (participantId ? id === participantId : true));
+        }
         // Asked to confirm: the path that carries this person's audio follows the mode from now (the lane reads it per frame, the room has
         // just subscribed or unsubscribed their microphone)
         if (participantId && requestId) {
@@ -478,6 +500,7 @@ export class Session {
         this.speaker.stopAll('voice_stop');
         // Mid-sentence when the voice ran out: the words so far are offered back, so nothing said is lost
         this.recognition?.interruptAll('lost', 'stopped');
+        this.observer?.drop(() => true);
         this.room?.refresh();
         this.sendStatus();
     }
@@ -500,6 +523,7 @@ export class Session {
         this.closing = true;
         clearInterval(this.statusTimer);
         this.recognition?.dispose();
+        this.observer?.close();
         await this.speaker.shutdown();
         const room = this.room;
         this.room = undefined;

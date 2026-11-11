@@ -1,0 +1,4 @@
+12683 connect(29, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+12683 sendto(29, "f\365\1\0\0\1\0\0\0\0\0\0\4stun\1l\6google\3com\0\0\1\0\1", 35, MSG_NOSIGNAL, NULL, 0) = 35
+12684 connect(29, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+12684 sendto(29, "n\233\1\0\0\1\0\0\0\0\0\0\4stun\1l\6google\3com\0\0\1\0\1", 35, MSG_NOSIGNAL, NULL, 0) = 35

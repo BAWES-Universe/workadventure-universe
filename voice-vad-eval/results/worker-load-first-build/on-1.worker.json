@@ -1,0 +1,52 @@
+{
+  "observer": "on",
+  "node": "v22.23.4",
+  "arch": "x64",
+  "cpuModel": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+  "seconds": 174,
+  "memory": {
+    "limitMb": 512,
+    "peakMb": 106,
+    "peakShareOfLimit": 0.206,
+    "peakAnonMbSampled": 98,
+    "peakProcessRssMbSampled": 169,
+    "endAnonMb": 98,
+    "oomKills": 0
+  },
+  "cpu": {
+    "coresUsed": 0.07,
+    "throttledSeconds": 0,
+    "throttledPeriods": 0
+  },
+  "eventLoopDelayMs": {
+    "p50": 5.1,
+    "p99": 6.2,
+    "max": 19
+  },
+  "heard": {
+    "frames": 7609,
+    "speechTurns": 11,
+    "lanesConnected": 11,
+    "lanesClosed": 11
+  },
+  "observerWork": {
+    "status": "on",
+    "windows": 4737,
+    "audioSecondsJudged": 152,
+    "meanRunMs": 0.66,
+    "maxRunMs": 6,
+    "meanAgeMs": 1,
+    "maxAgeMs": 6,
+    "peakQueuedMs": 48,
+    "peakStreams": 1,
+    "droppedMs": 0,
+    "overloads": 0,
+    "lateDiscarded": 0,
+    "errors": 0,
+    "streamsStarted": 33,
+    "streamsEnded": 34,
+    "speechWindows": 1000,
+    "firings": 12
+  },
+  "maxQueuedMsSeen": 28
+}

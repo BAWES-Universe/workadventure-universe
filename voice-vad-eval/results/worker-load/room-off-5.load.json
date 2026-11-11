@@ -1,0 +1,21 @@
+{
+  "path": "room",
+  "streams": 5,
+  "seconds": 180,
+  "joins": 16,
+  "joinFailures": 0,
+  "leaves": 11,
+  "sent": 88243,
+  "withheld": 493,
+  "said": 85,
+  "linkDowns": 0,
+  "botAudioPackets": 0,
+  "errors": [],
+  "measured": {
+    "seconds": 160,
+    "sent": 78385,
+    "withheld": 453,
+    "audioSecondsSent": 784
+  },
+  "stillConnected": 5
+}

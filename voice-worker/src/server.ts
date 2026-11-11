@@ -15,6 +15,7 @@ import { FEATURES, type BotToWorker } from './protocol.ts';
 import type { RecognizerFactory } from './recognizer.ts';
 import type { RoomTransport } from './roomTransport.ts';
 import { type OutgoingMessage, Session } from './session.ts';
+import { SpeechObserver, type SpeechObserverSettings } from './speechObserver.ts';
 import type { InputSink } from './transport.ts';
 import { ASSEMBLYAI_ADAPTER, AssemblyAiRecognition } from './assemblyai.ts';
 import { ASYNC_ADAPTER, AsyncSpeech } from './async.ts';
@@ -96,6 +97,8 @@ export interface WorkerOptions {
     maxPreviewSeconds?: number;
     /** How many of those lines are made at once; more are told to come back. Default 8. */
     maxPreviews?: number;
+    /** Internal, off when absent: a second listener that only counts what a speech detector says (speechObserver.ts). It changes nothing anyone hears. */
+    speechObserver?: SpeechObserverSettings;
     engineId?: string;
 }
 
@@ -143,9 +146,12 @@ export class VoiceWorker {
     readonly engineId: string;
     private pingTimer?: NodeJS.Timeout;
     private readonly previewer: Previewer;
+    /** Only when the worker was started with it. */
+    private readonly observer?: SpeechObserver;
 
     constructor(readonly options: WorkerOptions) {
         this.engineId = options.engineId ?? `voice-worker-${process.pid}`;
+        if (options.speechObserver) this.observer = new SpeechObserver({ ...options.speechObserver, counters: this.counters });
         // Each real provider is one file registered by name; a registry passed in (tests) keeps what it already has
         this.connectors = options.connectors ?? new ConnectorRegistry();
         if (!this.connectors.speech(FAKE_ADAPTER)) this.connectors.registerSpeech(FAKE_ADAPTER, this.speech);
@@ -311,6 +317,7 @@ export class VoiceWorker {
         this.wss.close();
         this.server.closeAllConnections();
         await Promise.allSettled([...this.connections].map((c) => c.shutdown()));
+        await this.observer?.dispose();
         await new Promise((resolve) => this.server.close(resolve));
     }
 
@@ -355,6 +362,7 @@ export class VoiceWorker {
             uptimeSeconds: Math.round(process.uptime()),
             counters: this.counters.snapshot(),
             latency: this.latency.snapshot(),
+            ...(this.observer ? { speechObserver: this.observer.stats() } : {}),
         };
     }
 
@@ -378,8 +386,9 @@ export class VoiceWorker {
         return Math.round(value * 10) / 10;
     }
 
-    sessionHost(send: (message: OutgoingMessage) => void) {
+    sessionHost(send: (message: OutgoingMessage) => void, sessionId?: string) {
         return {
+            ...(this.observer && sessionId !== undefined ? { observerFor: this.observer.session.bind(this.observer, sessionId) } : {}),
             engineId: this.engineId,
             counters: this.counters,
             latency: this.latency,
@@ -619,7 +628,7 @@ class BridgeConnection {
                     return;
                 }
                 // The providers are read once, when the session starts; a repeated session.open does not change them
-                session = new Session(msg.sessionId, msg.bubbleId, msg.botId, this.worker.sessionHost((m) => this.send(msg.sessionId, m)), undefined, {
+                session = new Session(msg.sessionId, msg.bubbleId, msg.botId, this.worker.sessionHost((m) => this.send(msg.sessionId, m), msg.sessionId), undefined, {
                     recognition: msg.recognition,
                     speech: msg.speech,
                     expression: msg.expression,

@@ -1,0 +1,28 @@
+{
+  "path": "room",
+  "streams": 6,
+  "bubbles": 2,
+  "peoplePerBubble": 3,
+  "muteEverySeconds": 20,
+  "muteForMs": 400,
+  "seconds": 2700,
+  "joins": 127,
+  "joinFailures": 0,
+  "leaves": 121,
+  "sent": 1069210,
+  "sentMuted": 3389,
+  "withheld": 4974,
+  "mutes": 90,
+  "said": 362,
+  "linkDowns": 0,
+  "botAudioPackets": 0,
+  "errors": [],
+  "measured": {
+    "seconds": 1800,
+    "sent": 1057708,
+    "sentMuted": 3389,
+    "withheld": 4936,
+    "audioSecondsSent": 10577
+  },
+  "stillConnected": 6
+}

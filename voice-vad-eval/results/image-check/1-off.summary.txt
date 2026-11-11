@@ -1,0 +1,1 @@
+1-off: traced threads and processes=39; network calls=1076, of them to anywhere but this machine=38; names looked up: 8 global.stun.twilio.com,8 stun.l.google.com,6 stun1.l.google.com; microsoft names seen in traffic: none; runtime library lines in the process's memory map: 0; observer in /stats: none; observer counters: 0; frames heard: 5760

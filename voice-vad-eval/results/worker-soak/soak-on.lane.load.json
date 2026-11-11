@@ -1,0 +1,28 @@
+{
+  "path": "lane",
+  "streams": 9,
+  "bubbles": 3,
+  "peoplePerBubble": 3,
+  "muteEverySeconds": 20,
+  "muteForMs": 2000,
+  "seconds": 2700,
+  "joins": 129,
+  "joinFailures": 0,
+  "leaves": 120,
+  "sent": 788459,
+  "sentMuted": 8689,
+  "withheld": 10577,
+  "mutes": 90,
+  "said": 540,
+  "linkDowns": 0,
+  "botAudioPackets": 254918,
+  "errors": [],
+  "measured": {
+    "seconds": 1800,
+    "sent": 783847,
+    "sentMuted": 8689,
+    "withheld": 10527,
+    "audioSecondsSent": 15677
+  },
+  "stillConnected": 9
+}
