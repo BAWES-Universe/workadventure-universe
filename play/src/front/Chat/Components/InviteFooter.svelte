@@ -229,14 +229,22 @@
         {:else}
             <!-- While the panel is open the row steps aside but keeps its place, so nothing in the list moves. -->
             <!-- The "+" menu opens upward from this row. -->
-            <div class="relative flex items-center gap-2" class:invisible={open} aria-hidden={open} inert={open}>
+            <!-- The row measures itself: in a narrow one (a small phone, the list beside a conversation) Bricks and
+                 Invite take the room their words need instead of half each, and in the narrowest Invite drops its icon,
+                 so neither word is cut. -->
+            <div
+                class="relative flex items-center gap-2 @container/chatfooter"
+                class:invisible={open}
+                aria-hidden={open}
+                inert={open}
+            >
                 {#if showBricks}
                     <!-- Drawn as a Brick: a lid, a foot and two eyes. Beside Invite the two share the row. -->
                     <button
                         type="button"
-                        class="bricks-brick m-0 flex h-11 min-w-0 items-center justify-center gap-2 text-sm font-bold {$inviteUserActivated
-                            ? 'flex-1 px-3'
-                            : 'px-5'}"
+                        class="bricks-brick m-0 flex h-11 min-w-0 items-center justify-center text-sm font-bold {$inviteUserActivated
+                            ? 'flex-auto gap-1.5 px-3 @[330px]/chatfooter:flex-1 @[330px]/chatfooter:gap-2'
+                            : 'gap-2 px-5'}"
                         data-testid="chatBricksButton"
                         on:click={() => bricksPageOpenStore.set(true)}
                     >
@@ -248,13 +256,18 @@
                     <button
                         bind:this={trigger}
                         type="button"
-                        class="invite-button m-0 flex h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-full px-3 text-sm font-bold text-white lg:gap-1.5 lg:px-2"
+                        class="invite-button m-0 flex h-11 min-w-0 items-center justify-center gap-2 rounded-full px-3 text-sm font-bold text-white lg:gap-1.5 lg:px-2 {showBricks
+                            ? 'flex-auto @[330px]/chatfooter:flex-1'
+                            : 'flex-1'}"
                         aria-expanded={open}
                         aria-controls="chatInvitePanel"
                         data-testid="chatInviteButton"
                         on:click={() => toggle().catch((e) => console.error(e))}
                     >
-                        <IconUserPlus font-size="18" class="shrink-0" />
+                        <IconUserPlus
+                            font-size="18"
+                            class="shrink-0 {showBricks ? 'hidden @[300px]/chatfooter:block' : ''}"
+                        />
                         <span class="min-w-0 truncate"
                             >{showBricks ? $LL.chat.inviteFooter.buttonShort() : $LL.chat.inviteFooter.button()}</span
                         >
