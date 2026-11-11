@@ -1,0 +1,63 @@
+22427 connect(39, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22438 connect(46, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22439 connect(46, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22443 connect(47, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22440 connect(46, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22444 connect(49, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22447 connect(46, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22441 connect(47, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22442 connect(46, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22445 connect(47, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22448 connect(46, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22446 connect(47, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22452 connect(48, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22449 connect(46, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22450 connect(47, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22451 connect(46, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22453 connect(48, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22455 connect(53, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22457 connect(53, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22456 connect(55, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22454 connect(49, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16 <unfinished ...>
+22458 connect(53, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22459 connect(41, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22460 connect(42, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16 <unfinished ...>
+22461 connect(43, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16 <unfinished ...>
+22184 connect(44, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22185 connect(45, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22427 connect(45, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22427 connect(45, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22427 connect(45, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22427 connect(45, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22427 connect(45, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22427 connect(42, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22427 connect(42, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22427 connect(42, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22186 connect(44, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22427 connect(44, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22427 connect(44, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+22438 sendto(46, "\313l\1\0\0\1\0\0\0\0\0\0\6global\4stun\6twilio\3com\0\0\1\0\1", 40, MSG_NOSIGNAL, NULL, 0) = 40
+22439 sendto(46, "\220M\1\0\0\1\0\0\0\0\0\0\4stun\1l\6google\3com\0\0\1\0\1", 35, MSG_NOSIGNAL, NULL, 0) = 35
+22443 sendto(47, "~\344\1\0\0\1\0\0\0\0\0\0\5stun1\1l\6google\3com\0\0\1\0\1", 36, MSG_NOSIGNAL, NULL, 0) = 36
+22440 sendto(46, "%\326\1\0\0\1\0\0\0\0\0\0\5stun1\1l\6google\3com\0\0\1\0\1", 36, MSG_NOSIGNAL, NULL, 0) = 36
+22444 sendto(49, "\273Z\1\0\0\1\0\0\0\0\0\0\6global\4stun\6twilio\3com\0\0\1\0\1", 40, MSG_NOSIGNAL, NULL, 0) = 40
+22447 sendto(46, "\372=\1\0\0\1\0\0\0\0\0\0\6global\4stun\6twilio\3com\0\0\1\0\1", 40, MSG_NOSIGNAL, NULL, 0) = 40
+22441 sendto(47, "\241\305\1\0\0\1\0\0\0\0\0\0\6global\4stun\6twilio\3com\0\0\1\0\1", 40, MSG_NOSIGNAL, NULL, 0) = 40
+22442 sendto(46, "\336\263\1\0\0\1\0\0\0\0\0\0\4stun\1l\6google\3com\0\0\1\0\1", 35, MSG_NOSIGNAL, NULL, 0) = 35
+22448 sendto(46, "\"L\1\0\0\1\0\0\0\0\0\0\4stun\1l\6google\3com\0\0\1\0\1", 35, MSG_NOSIGNAL, NULL, 0) = 35
+22446 sendto(47, "\224\333\1\0\0\1\0\0\0\0\0\0\5stun1\1l\6google\3com\0\0\1\0\1", 36, MSG_NOSIGNAL, NULL, 0) = 36
+22449 sendto(46, "%\246\1\0\0\1\0\0\0\0\0\0\5stun1\1l\6google\3com\0\0\1\0\1", 36, MSG_NOSIGNAL, NULL, 0) = 36
+22451 sendto(46, "\325\"\1\0\0\1\0\0\0\0\0\0\4stun\1l\6google\3com\0\0\1\0\1", 35, MSG_NOSIGNAL, NULL, 0) = 35
+22450 sendto(47, "L9\1\0\0\1\0\0\0\0\0\0\6global\4stun\6twilio\3com\0\0\1\0\1", 40, MSG_NOSIGNAL, NULL, 0) = 40
+22453 sendto(48, "\273\273\1\0\0\1\0\0\0\0\0\0\6global\4stun\6twilio\3com\0\0\1\0\1", 40, MSG_NOSIGNAL, NULL, 0) = 40
+22455 sendto(53, "\2529\1\0\0\1\0\0\0\0\0\0\5stun1\1l\6google\3com\0\0\1\0\1", 36, MSG_NOSIGNAL, NULL, 0) = 36
+22457 sendto(53, "\265\332\1\0\0\1\0\0\0\0\0\0\4stun\1l\6google\3com\0\0\1\0\1", 35, MSG_NOSIGNAL, NULL, 0) = 35
+22456 sendto(55, "/I\1\0\0\1\0\0\0\0\0\0\6global\4stun\6twilio\3com\0\0\1\0\1", 40, MSG_NOSIGNAL, NULL, 0) = 40
+22454 sendto(49, "Tt\1\0\0\1\0\0\0\0\0\0\4stun\1l\6google\3com\0\0\1\0\1", 35, MSG_NOSIGNAL, NULL, 0) = 35
+22458 sendto(53, "\261\277\1\0\0\1\0\0\0\0\0\0\5stun1\1l\6google\3com\0\0\1\0\1", 36, MSG_NOSIGNAL, NULL, 0) = 36
+22459 sendto(41, "\345\231\1\0\0\1\0\0\0\0\0\0\6global\4stun\6twilio\3com\0\0\1\0\1", 40, MSG_NOSIGNAL, NULL, 0) = 40
+22460 sendto(42, "\366\324\1\0\0\1\0\0\0\0\0\0\4stun\1l\6google\3com\0\0\1\0\1", 35, MSG_NOSIGNAL, NULL, 0) = 35
+22461 sendto(43, "\364\334\1\0\0\1\0\0\0\0\0\0\5stun1\1l\6google\3com\0\0\1\0\1", 36, MSG_NOSIGNAL, NULL, 0) = 36
+22184 sendto(44, "\235\227\1\0\0\1\0\0\0\0\0\0\4stun\1l\6google\3com\0\0\1\0\1", 35, MSG_NOSIGNAL, NULL, 0) = 35
+22185 sendto(45, "\270S\1\0\0\1\0\0\0\0\0\0\4stun\1l\6google\3com\0\0\1\0\1", 35, MSG_NOSIGNAL, NULL, 0) = 35
+22186 sendto(44, "be\1\0\0\1\0\0\0\0\0\0\4stun\1l\6google\3com\0\0\1\0\1", 35, MSG_NOSIGNAL, NULL, 0) = 35

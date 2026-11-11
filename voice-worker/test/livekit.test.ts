@@ -206,6 +206,56 @@ describe.skipIf(!serverUp)('a voice bot in a LiveKit bubble', () => {
         expect(r.worker.counters.get('room_unsubscribed')).toBeGreaterThanOrEqual(1);
     });
 
+    it.each([1500, 3000])('hears a person again when listening comes back %i ms after it stopped, and the other person throughout', async (pauseMs) => {
+        const frames: InputFrame[] = [];
+        const r = await startRig({ input: (f) => frames.push(f) });
+        rigs.push(r);
+        const roomName = r.game.spaceName;
+        const alice = await person('room_alice').join(roomName, [GrantSource.MICROPHONE]);
+        await alice.publishAudio(TrackSource.SOURCE_MICROPHONE);
+        const bob = await person('room_bob').join(roomName, [GrantSource.MICROPHONE]);
+        await bob.publishAudio(TrackSource.SOURCE_MICROPHONE, 330);
+        r.calls.spaceUsers(r.game.spaceName, [roster('room_alice'), roster('room_bob'), roster(r.game.botId, { tags: ['bot'] })]);
+        await invite(r, roomName);
+        const from = (id: string) => frames.filter((f) => f.participantId === id).length;
+        await waitFor('both to be heard', () => from('room_alice') > 50 && from('room_bob') > 50);
+
+        r.calls.setMode(r.game.spaceName, 'off', 'room_bob');
+        await waitFor('bob to be dropped', () => r.worker.roomSubscriptions().map((s) => s.identity).join() === 'room_alice');
+        await sleep(pauseMs);
+        const before = { alice: from('room_alice'), bob: from('room_bob') };
+        r.calls.setMode(r.game.spaceName, 'talk', 'room_bob');
+        // Back within about the first check and the short gap after it (1.1 s), with room to spare
+        await waitFor('bob to be heard again', () => from('room_bob') - before.bob > 50, 4000);
+        expect(r.worker.roomSubscriptions().map((s) => s.identity).sort()).toEqual(['room_alice', 'room_bob']);
+        expect(from('room_alice') - before.alice).toBeGreaterThan(50);
+        expect(r.worker.counters.get('room_resubscribe_gave_up')).toBe(0);
+    }, 30_000);
+
+    it('asking again for a microphone never outlasts the permission: off again while it is being asked for, it stays off', async () => {
+        const frames: InputFrame[] = [];
+        const r = await startRig({ input: (f) => frames.push(f) });
+        rigs.push(r);
+        const roomName = r.game.spaceName;
+        const bob = await person('room_bob').join(roomName, [GrantSource.MICROPHONE]);
+        await bob.publishAudio(TrackSource.SOURCE_MICROPHONE, 330);
+        r.calls.spaceUsers(r.game.spaceName, [roster('room_bob'), roster(r.game.botId, { tags: ['bot'] })]);
+        await invite(r, roomName);
+        await waitFor('bob to be heard', () => frames.length > 50);
+        r.calls.setMode(r.game.spaceName, 'off', 'room_bob');
+        await waitFor('bob to be dropped', () => r.worker.roomSubscriptions().length === 0);
+        await sleep(2000);
+        r.calls.setMode(r.game.spaceName, 'talk', 'room_bob');
+        // Off again before the bot's first check would ask once more
+        await sleep(500);
+        r.calls.setMode(r.game.spaceName, 'off', 'room_bob');
+        const after = frames.length;
+        await sleep(5000);
+        expect(r.worker.roomSubscriptions()).toEqual([]);
+        expect(frames.length).toBe(after);
+        expect(r.worker.counters.get('room_resubscribe_retries')).toBe(0);
+    }, 30_000);
+
     it('in a group, subscribes to a person\'s microphone only after they ask the bot to keep listening, and confirms it for the room (round 8)', async () => {
         const r = await startRig();
         rigs.push(r);

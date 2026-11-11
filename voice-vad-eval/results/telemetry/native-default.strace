@@ -1,0 +1,68 @@
+553   connect(21, {sa_family=AF_UNIX, sun_path="/tmp/tsx-0/550.pipe"}, 110) = -1 ENOENT (No such file or directory)
+553   connect(22, {sa_family=AF_UNIX, sun_path="/tmp/tsx-0/550.pipe"}, 110) = -1 ENOENT (No such file or directory)
+583   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+583   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+583   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+583   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+587   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+583   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+583   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+583   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+583   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+587   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+593   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+587   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+603   connect(30, {sa_family=AF_UNIX, sun_path="/var/run/nscd/socket"}, 110) = -1 ENOENT (No such file or directory)
+603   connect(30, {sa_family=AF_UNIX, sun_path="/var/run/nscd/socket"}, 110) = -1 ENOENT (No such file or directory)
+603   connect(30, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+603   sendto(30, " \302\1\0\0\1\0\0\0\0\0\0\6mobile\6events\4data\tmicrosoft\3com\0\0\1\0\1", 50, MSG_NOSIGNAL, NULL, 0) = 50
+587   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+583   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+587   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+587   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+587   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+605   connect(30, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+605   sendto(30, "\16f\1\0\0\1\0\0\0\0\0\0\6mobile\6events\4data\tmicrosoft\3com\0\0\1\0\1", 50, MSG_NOSIGNAL, NULL, 0) = 50
+593   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+593   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+593   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+593   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+608   connect(30, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+608   sendto(30, "CQ\1\0\0\1\0\0\0\0\0\0\6mobile\6events\4data\tmicrosoft\3com\0\0\1\0\1", 50, MSG_NOSIGNAL, NULL, 0) = 50
+593   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+587   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+587   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+593   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+583   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+593   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+583   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+593   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+588   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+593   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+593   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+593   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+587   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+593   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+593   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+593   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+593   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+614   connect(30, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+614   sendto(30, "\305\371\1\0\0\1\0\0\0\0\0\0\6mobile\6events\4data\tmicrosoft\3com\0\0\1\0\1", 50, MSG_NOSIGNAL, NULL, 0) = 50
+593   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+588   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+588   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+593   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+587   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+587   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+587   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+587   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+583   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+587   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+587   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+593   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+587   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+587   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+587   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+593   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+593   --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=583, si_uid=0} ---
+553   --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=583, si_uid=0, si_status=0, si_utime=2 /* 0.02 s */, si_stime=9 /* 0.09 s */} ---

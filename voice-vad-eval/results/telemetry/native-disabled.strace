@@ -1,0 +1,2 @@
+665   connect(21, {sa_family=AF_UNIX, sun_path="/tmp/tsx-0/662.pipe"}, 110) = -1 ENOENT (No such file or directory)
+665   connect(22, {sa_family=AF_UNIX, sun_path="/tmp/tsx-0/662.pipe"}, 110) = -1 ENOENT (No such file or directory)
