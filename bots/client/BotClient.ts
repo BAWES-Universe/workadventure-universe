@@ -59,7 +59,7 @@ import { isBotSpaceUser, type BotAsksPort } from '../mcp/NearbyAsks';
 import type { PrivateEventPusherToFront } from '@workadventure/messages';
 import { audioFileNameFor } from '../utils/audioFileName';
 import { isGreetingReply } from './GreetingReply';
-import { ReplyReaders, playerOfReply } from './ReplyReaders';
+import { ReplyReaders } from './ReplyReaders';
 
 // Get the secret key from environment - must match pusher's SECRET_KEY
 const SECRET_KEY = process.env.SECRET_KEY || 'default-secret-key';
@@ -2191,13 +2191,15 @@ export class BotClient {
         // A greeting the bot made on its own is never a voice reply: it stays in the chat, so it is not spoken and never counts as a
         // spoken reply
         if (isGreetingReply(responseId)) return;
-        // Written for one person, and someone else is here now: it stays in that person's chat and is not said out loud,
-        // where the others would hear it (#1993)
-        if (onlyFor && !this.aloneWith(spaceName, playerOfReply(responseId))) return;
-        // A voice bot says what it has written once it is final: after the chat has it, and never the steps line or an error
+        // A voice bot says what it has written once it is final: after the chat has it, and never the steps line or an error.
+        // A reply written for one person is said to that person and nobody else, also when someone else is here by now:
+        // the voice is handed their name with it, and does not say it at all when it cannot keep it to them (#1993)
         if (this.speech && steps === undefined && !isError) {
             if (isFinal) {
-                if (finalContent) this.speech.final(spaceName, responseId, finalContent);
+                if (finalContent) {
+                    if (onlyFor === undefined) this.speech.final(spaceName, responseId, finalContent);
+                    else this.speech.final(spaceName, responseId, finalContent, onlyFor);
+                }
             } else if (token) {
                 this.speech.begin(responseId);
             }
@@ -2250,15 +2252,43 @@ export class BotClient {
     }
 
     /**
-     * Someone came into the space (#1993): whatever the bot is saying out loud, or waits to say, of a reply written for
-     * one person alone stops, because the newcomer would hear it. The reply stays whole in that person's chat.
+     * Someone came into the space (#1993). A reply written for one person alone goes on being said to that person: the
+     * voice sends it to them and nobody else, so the newcomer is sent none of it. Only a voice that speaks to the whole
+     * bubble (a worker from before) stops what it is saying of such a reply, because the newcomer would hear it. The
+     * reply stays whole in that person's chat, with a line that says why the voice stopped.
      */
     private hushRepliesForOne(spaceName: string, newcomer: string | undefined): void {
         if (!this.speech || !newcomer || newcomer === this.spaces.get(spaceName)) return;
+        if (this.voice?.keepsToOne(spaceName) !== false) return;
         for (const responseId of this.readers.forOneReaderIn(spaceName)) {
             if (this.readerOf(spaceName, responseId) === newcomer) continue;
-            if (this.speech.hush(spaceName, responseId)) this.sendSpeechStopped(spaceName, responseId);
+            const how = this.speech.hush(spaceName, responseId);
+            if (how) this.sendKeptQuiet(spaceName, responseId, how);
         }
+    }
+
+    /**
+     * Tells the one person a reply was written for that it was not said out loud (`unsaid`), or that its voice stopped
+     * part-way (`stopped`), so that nobody else hears it (#1993). The reply is in their chat in full; this is the one
+     * line under it. Sent to that person and nobody else, like the reply.
+     */
+    private sendKeptQuiet(spaceName: string, responseId: string, keptQuiet: 'unsaid' | 'stopped'): void {
+        const to = this.onlyForOf(spaceName, responseId);
+        if (!to.onlyFor) return;
+        this.send({
+            message: {
+                $case: 'publicEvent',
+                publicEvent: {
+                    spaceName,
+                    spaceEvent: {
+                        event: {
+                            $case: 'spaceStreamMessage',
+                            spaceStreamMessage: { responseId, token: '', isFinal: true, isError: false, reset: false, keptQuiet, ...to },
+                        },
+                    },
+                },
+            },
+        });
     }
 
     /** Says a voice bot's reply was cut off by someone speaking: the message in everyone's chat is marked (#1665). */
@@ -2969,6 +2999,13 @@ export class BotClient {
         this.voice.hears = (spaceName, personId, text) => this.attention.hears(spaceName, BotClient.playerIdOf(personId), text);
         this.voice.playerIdOf = (personId) => BotClient.playerIdOf(personId);
         this.voice.onAudience = (spaceName) => this.speech?.audience(spaceName);
+        // A reply for one person alone that others would have heard is not said, and that person is told why (#1993)
+        this.voice.aloneWith = (spaceName, personId) => this.aloneWith(spaceName, BotClient.playerIdOf(personId));
+        this.voice.onKeptQuiet = (spaceName, segmentId, heard) => {
+            const responseId = this.speech?.stopped(spaceName, segmentId);
+            if (responseId) this.sendKeptQuiet(spaceName, responseId, heard ? 'stopped' : 'unsaid');
+        };
+        this.speech.onKeptQuiet = (spaceName, responseId) => this.sendKeptQuiet(spaceName, responseId, 'unsaid');
         this.voice.onUnplayed = (spaceName, segmentId) => this.speech?.unplayed(spaceName, segmentId);
         this.voice.onHeard = (spaceName, segmentId) => this.speech?.heard(spaceName, segmentId);
         // Orbit's follow-up window (its voice limits) is the one the bot uses, in voice and in nearby chat alike

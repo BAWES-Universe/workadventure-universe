@@ -1640,6 +1640,7 @@ message SpaceStreamMessage {
   optional string mood = 10;   // On a bot's final reply: the emoji for how the bot feels as it says it (#1667), drawn beside its Woka while it talks
   optional bool speaking = 11; // A voice bot started (true) or stopped (false) saying responseId out loud (round 8): the reply shows Stop speaking meanwhile; nothing else changes
   optional string onlyFor = 12; // A bot's reply to someone who was alone with it (#1993): the space user id of that person. The pusher delivers it to nobody else, so someone who walks up while it is written never receives any of it. Not set: everyone in the space, as before
+  optional string keptQuiet = 13; // A voice bot did not say responseId out loud ("unsaid"), or stopped saying it part-way ("stopped"), because it was written for one person and others would have heard it (#1993): the message is marked for that person, nothing else changes
 }
 
 message PrivateEvent {

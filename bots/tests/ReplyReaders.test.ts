@@ -180,33 +180,99 @@ describe('BotClient: who a reply is sent to', () => {
         expect(sent().every((piece) => piece.onlyFor === undefined)).toBe(true);
     });
 
-    it('does not say out loud a reply for one person once someone else is there, and stops what it was saying', async () => {
-        const { bot, internals, init, join, sent } = setup();
-        const speech = { begin: vi.fn(), final: vi.fn(), hush: vi.fn(() => true) };
-        internals.speech = speech;
+    /** The bot's voice, as far as these tests go: whether it sends a reply for one person to that person only. */
+    const voice = (keepsToOne: boolean | undefined) => ({ keepsToOne: () => keepsToOne, spaceUsers: () => undefined, spaceUserJoined: () => undefined, spaceUserLeft: () => undefined });
+
+    /** The lines the bot sent about a reply's voice, with who each is for. */
+    const voiceNotes = (bot: BotClient) =>
+        ((bot as unknown as { send: ReturnType<typeof vi.fn> }).send.mock.calls as unknown[][])
+            .map((call) => (call[0] as { message?: { publicEvent?: { spaceEvent?: { event?: { spaceStreamMessage?: Record<string, unknown> } } } } })?.message?.publicEvent?.spaceEvent?.event?.spaceStreamMessage)
+            .filter((piece): piece is Record<string, unknown> => !!piece && (piece.keptQuiet !== undefined || piece.stoppedBySpeech !== undefined))
+            .map((piece) => ({ reply: piece.responseId, keptQuiet: piece.keptQuiet, stopped: piece.stoppedBySpeech, onlyFor: piece.onlyFor }));
+
+    it('hands a reply for one person to the voice with that person on it, also once someone else is there', async () => {
+        const { bot, internals, init, join } = setup();
+        const speech = { begin: vi.fn(), final: vi.fn(), hush: vi.fn() };
+        Object.assign(internals, { speech, voice: voice(true) });
         await init([KHALID]);
         bot.replyStarts(SPACE, 7, true);
         bot.sendStreamMessage(SPACE, REPLY, 'Your interview ', false);
         expect(speech.begin).toHaveBeenCalledWith(REPLY);
 
+        // The voice sends it to that person and nobody else, so nothing stops when someone walks up
         await join(SARA);
-        // What was being said stops, and the reply in that person's chat is marked, for them alone
-        expect(speech.hush).toHaveBeenCalledWith(SPACE, REPLY);
-        expect(sent().at(-1)).toMatchObject({ stopped: true, onlyFor: 'room-1_7' });
+        expect(speech.hush).not.toHaveBeenCalled();
+        expect(voiceNotes(bot)).toEqual([]);
 
         bot.sendStreamMessage(SPACE, REPLY, '', true, 'Your interview is at 10.');
-        expect(speech.final).not.toHaveBeenCalled();
+        expect(speech.final).toHaveBeenCalledWith(SPACE, REPLY, 'Your interview is at 10.', 'room-1_7');
     });
 
-    it('says a reply for one person out loud while they are still alone', async () => {
+    it('hands a reply for everyone to the voice as before, with nobody on it', async () => {
         const { bot, internals, init } = setup();
-        const speech = { begin: vi.fn(), final: vi.fn(), hush: vi.fn(() => false) };
-        internals.speech = speech;
+        const speech = { begin: vi.fn(), final: vi.fn(), hush: vi.fn() };
+        Object.assign(internals, { speech, voice: voice(true) });
+        await init([KHALID, SARA]);
+        bot.replyStarts(SPACE, 7, false);
+        bot.sendStreamMessage(SPACE, REPLY, '', true, 'The demo is on Sunday.');
+
+        expect(speech.final).toHaveBeenCalledWith(SPACE, REPLY, 'The demo is on Sunday.');
+    });
+
+    it('with a voice that speaks to the whole bubble, stops what it was saying when someone walks up, and tells that person why', async () => {
+        const { bot, internals, init, join } = setup();
+        const speech = { begin: vi.fn(), final: vi.fn(), hush: vi.fn(() => 'stopped') };
+        Object.assign(internals, { speech, voice: voice(false) });
         await init([KHALID]);
         bot.replyStarts(SPACE, 7, true);
         bot.sendStreamMessage(SPACE, REPLY, '', true, 'Your interview is at 10.');
 
-        expect(speech.final).toHaveBeenCalledWith(SPACE, REPLY, 'Your interview is at 10.');
+        await join(SARA);
+        expect(speech.hush).toHaveBeenCalledWith(SPACE, REPLY);
+        // One line under the reply, for that person alone: it is not "someone spoke over it"
+        expect(voiceNotes(bot)).toEqual([{ reply: REPLY, keptQuiet: 'stopped', stopped: undefined, onlyFor: 'room-1_7' }]);
+    });
+
+    it('says so too when it had not begun to be heard, and says nothing when none of it was on its way', async () => {
+        const queued = setup();
+        Object.assign(queued.internals, { speech: { begin: vi.fn(), final: vi.fn(), hush: vi.fn(() => 'unsaid') }, voice: voice(false) });
+        await queued.init([KHALID]);
+        queued.bot.replyStarts(SPACE, 7, true);
+        queued.bot.sendStreamMessage(SPACE, REPLY, '', true, 'Your interview is at 10.');
+        await queued.join(SARA);
+        expect(voiceNotes(queued.bot)).toEqual([{ reply: REPLY, keptQuiet: 'unsaid', stopped: undefined, onlyFor: 'room-1_7' }]);
+
+        const over = setup();
+        Object.assign(over.internals, { speech: { begin: vi.fn(), final: vi.fn(), hush: vi.fn(() => undefined) }, voice: voice(false) });
+        await over.init([KHALID]);
+        over.bot.replyStarts(SPACE, 7, true);
+        over.bot.sendStreamMessage(SPACE, REPLY, '', true, 'Your interview is at 10.');
+        await over.join(SARA);
+        expect(voiceNotes(over.bot)).toEqual([]);
+    });
+
+    it('stops nothing while the voice has no session, or has not said what it can do: nothing of such a reply is being said then', async () => {
+        const { bot, internals, init, join } = setup();
+        const speech = { begin: vi.fn(), final: vi.fn(), hush: vi.fn() };
+        Object.assign(internals, { speech, voice: voice(undefined) });
+        await init([KHALID]);
+        bot.replyStarts(SPACE, 7, true);
+        bot.sendStreamMessage(SPACE, REPLY, '', true, 'Your interview is at 10.');
+        await join(SARA);
+
+        expect(speech.hush).not.toHaveBeenCalled();
+    });
+
+    it('does not stop a reply for the person who walks back in themselves', async () => {
+        const { bot, internals, init, join } = setup();
+        const speech = { begin: vi.fn(), final: vi.fn(), hush: vi.fn(() => 'stopped') };
+        Object.assign(internals, { speech, voice: voice(false) });
+        await init([KHALID]);
+        bot.replyStarts(SPACE, 7, true);
+        bot.sendStreamMessage(SPACE, REPLY, '', true, 'Your interview is at 10.');
+        await join(KHALID);
+
+        expect(speech.hush).not.toHaveBeenCalled();
     });
 });
 
