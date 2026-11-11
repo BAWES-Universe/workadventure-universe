@@ -53,6 +53,8 @@ import { tidyTranscript } from '../voice/NoteHearing';
 import { pausedAtCapacityEvent } from '../voice/VoiceLoad';
 import { captureServerEvent } from '../ai/PostHogClient';
 import { BotAttention, followUpSeconds } from './BotAttention';
+import { SpaceAudience } from './SpaceAudience';
+import type { Heard } from '../memory/Heard';
 import { isBotSpaceUser, type BotAsksPort } from '../mcp/NearbyAsks';
 import type { PrivateEventPusherToFront } from '@workadventure/messages';
 import { audioFileNameFor } from '../utils/audioFileName';
@@ -118,6 +120,8 @@ export class BotClient {
     private pendingMessages: ClientToServerMessage[] = [];
     private static readonly MAX_PENDING_MESSAGES = 100;
     private spaces: Map<string, SpaceUser['spaceUserId']> = new Map();
+    /** Everyone else in each space the bot is in, people, guests and bots alike (#1993): who would read a reply there. */
+    private readonly audience = new SpaceAudience();
     /** Audio connections with people, for a voice bot only (see isVoiceBot). Null for every other bot. */
     private voice: VoiceCalls | null = null;
     /** What a voice bot says out loud of the replies it writes (see voice/BotSpeech.ts). Null for every other bot. */
@@ -339,6 +343,8 @@ export class BotClient {
      */
     disconnect(): void {
         this.stopVoice();
+        // Gone from every space: who is in them is no longer known
+        this.audience.reset();
         // Unregister this bot's userId
         if (this.userId !== null) {
             BotClient.botUserIds.delete(this.userId);
@@ -1471,6 +1477,7 @@ export class BotClient {
             this.voice?.spaceLeft(spaceName);
             this.speech?.spaceLeft(spaceName);
             this.attention.spaceLeft(spaceName);
+            this.audience.spaceLeft(spaceName);
             const wasMeeting = this.isMeetingSpace(spaceName);
             await this.emitLeaveSpace(spaceName);
             this.spaces.delete(spaceName);
@@ -2383,6 +2390,24 @@ export class BotClient {
     }
 
     /**
+     * Everyone else who is in this space with the bot and this person right now, by who they are (#1993): people, guests
+     * and other bots alike, and nobody when the person is alone with the bot. Room membership only, never distance.
+     * Undefined when the bot is not in the space or was told nothing about it: it cannot say who would read a reply
+     * there, and the caller takes that as other people being there.
+     */
+    othersWith(spaceName: string, playerId: number): string[] | undefined {
+        const mine = this.spaces.get(spaceName);
+        if (!mine) return undefined;
+        return this.audience.others(spaceName, (spaceUserId) => spaceUserId === mine || BotClient.playerIdOf(spaceUserId) === playerId);
+    }
+
+    /** Where a line said in this space right now is heard, and by whom, for what the bot remembers (#1993). */
+    heardIn(spaceName: string, playerId: number): Heard | undefined {
+        const others = this.othersWith(spaceName, playerId);
+        return others ? { place: 'nearby', with: others } : undefined;
+    }
+
+    /**
      * A tap on a card, from one person in the bubble (#1658): the event must come to this bot from a person (never a bot)
      * in a space it is in. Who they are is the game's word, never the event's.
      */
@@ -2893,6 +2918,7 @@ export class BotClient {
             this.voice?.spaceLeft(spaceName);
             this.speech?.spaceLeft(spaceName);
             this.attention.spaceLeft(spaceName);
+            this.audience.spaceLeft(spaceName);
             await this.emitLeaveSpace(spaceName);
         } catch (error) {
             console.warn(`[Bot ${this.config.botId}] Could not leave meeting room ${spaceName}:`, error);
@@ -3346,6 +3372,7 @@ export class BotClient {
                 break;
 
             case 'initSpaceUsersMessage':
+                this.audience.seen(message.initSpaceUsersMessage.spaceName, message.initSpaceUsersMessage.users ?? []);
                 this.voice?.spaceUsers(message.initSpaceUsersMessage.spaceName, message.initSpaceUsersMessage.users ?? []);
                 if (this.isMeetingSpace(message.initSpaceUsersMessage.spaceName)) {
                     for (const user of message.initSpaceUsersMessage.users ?? []) this.rememberMeetingPerson(message.initSpaceUsersMessage.spaceName, user);
@@ -3408,6 +3435,8 @@ export class BotClient {
                 break;
 
             case 'addSpaceUserMessage':
+                // First of all: from here on a reply in this space is read by them too (#1993)
+                if (message.addSpaceUserMessage.user) this.audience.joined(message.addSpaceUserMessage.spaceName, message.addSpaceUserMessage.user);
                 if (message.addSpaceUserMessage.user) this.voice?.spaceUserJoined(message.addSpaceUserMessage.spaceName, message.addSpaceUserMessage.user);
                 // A person who came back (a reload, or walking back to the bubble) gets their cards and replies again (#1658)
                 if (message.addSpaceUserMessage.user && this.asks && !isBotSpaceUser(message.addSpaceUserMessage.user)) {
@@ -3655,6 +3684,7 @@ export class BotClient {
                 break;
 
             case 'removeSpaceUserMessage':
+                this.audience.left(message.removeSpaceUserMessage.spaceName, message.removeSpaceUserMessage.spaceUserId);
                 this.voice?.spaceUserLeft(message.removeSpaceUserMessage.spaceName, message.removeSpaceUserMessage.spaceUserId);
                 if (this.isMeetingSpace(message.removeSpaceUserMessage.spaceName)) {
                     this.attention.personLeft(
@@ -3873,6 +3903,7 @@ export class BotClient {
             this.voice?.spaceLeft(request.spaceName);
             this.speech?.spaceLeft(request.spaceName);
             this.attention.spaceLeft(request.spaceName);
+            this.audience.spaceLeft(request.spaceName);
             const wasMeeting = this.isMeetingSpace(request.spaceName);
             await this.emitLeaveSpace(request.spaceName);
             this.spaces.delete(request.spaceName);

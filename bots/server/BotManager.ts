@@ -33,6 +33,8 @@ import {
     type LegacyBehaviorType,
 } from '../behaviors/behaviorModel';
 import { chatFileKeeper } from '../services/ChatFileKeeper';
+import { heardInDm, type Heard } from '../memory/Heard';
+import { DM_SPACE_NAME } from './DmReplyService';
 
 export interface BotInstance {
     botId: string;
@@ -192,6 +194,10 @@ export class BotManager {
             }
         }
         
+        // Each thing a bot remembers carries where it was said and who else was there (#1993): a direct message, or the
+        // bubble or meeting room with whoever is in it at that moment
+        this.conversationMemory.useHeard((botId, playerId, spaceName) => this.whoHeard(botId, playerId, spaceName));
+
         // Initialize metrics collector
         this.metricsCollector = new BotMetricsCollector(this.adminApiService);
         
@@ -499,6 +505,16 @@ export class BotManager {
             console.error(`[BotManager] Error despawning bot ${botId}:`, error);
             throw error;
         }
+    }
+
+    /**
+     * Where a line said to this bot is heard, and by whom (#1993). A direct message has nobody else in it; on the map it is
+     * whoever the bot's own client sees in that space. Undefined when the bot is not there to see: the line is then kept
+     * as private.
+     */
+    whoHeard(botId: string, playerId: number, spaceName: string): Heard | undefined {
+        if (spaceName === DM_SPACE_NAME) return heardInDm();
+        return this.getBot(botId)?.heardIn(spaceName, playerId);
     }
 
     /**

@@ -352,7 +352,7 @@ export class DmReplyService extends BaseBehavior {
             sameFiles;
         if (!alreadyKept) {
             memory.addMessage(botId, playerId, original, 'person', DM_SPACE_NAME, !hooks.note);
-            if (!hooks.note) memory.extractPersonalInfo(botId, playerId, text);
+            if (!hooks.note) memory.extractPersonalInfo(botId, playerId, text, DM_SPACE_NAME);
             noted?.keep();
         }
         // A first message creates the memory after the uuid was set, so it starts as "temp-<id>": name it now, before

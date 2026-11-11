@@ -1719,7 +1719,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         }
         
         // Extract personal information from original user message
-        this.conversationMemory?.extractPersonalInfo(botId, senderId, originalUserMessage);
+        this.conversationMemory?.extractPersonalInfo(botId, senderId, originalUserMessage, spaceName);
 
         // Start typing indicator
         this.bot?.startTyping(spaceName);

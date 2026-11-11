@@ -832,7 +832,7 @@ export class SocialBehavior extends BaseBehavior {
         }
 
         // Extract personal information from original user message
-        this.conversationMemory?.extractPersonalInfo(botId, senderId, originalUserMessage);
+        this.conversationMemory?.extractPersonalInfo(botId, senderId, originalUserMessage, spaceName);
         
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[SocialBehavior] Generating AI response for player ${senderId}...`);

@@ -410,7 +410,7 @@ export class IdleBehavior extends BaseBehavior {
             this.conversationMemory.startConversation(botId, senderId);
             this.conversationMemory.addMessage(botId, senderId, historyMessage, 'person', spaceName);
             keepFiles();
-            this.conversationMemory.extractPersonalInfo(botId, senderId, originalUserMessage);
+            this.conversationMemory.extractPersonalInfo(botId, senderId, originalUserMessage, spaceName);
         }
         
         // Start conversation in storage (if available and UUID is known)
