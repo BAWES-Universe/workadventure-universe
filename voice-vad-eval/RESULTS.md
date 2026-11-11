@@ -22,9 +22,9 @@ Not changed and not proposed here: interruption behaviour, speech-to-text admiss
 | agreed line | evidence now | status |
 | --- | --- | --- |
 | At least 80% fewer false destructive interruptions | 315 against 15 detector firings on source-labelled non-speech (95% fewer); 309 against 9 without the one recording that holds a voice | Strong on this set. Destructive playback itself still not exercised. |
-| At most 1 false stop per bot-speaking hour | 8.5 per hour; 5.2 without the recording that holds a voice; 2.9 also without the uncertain one | **Not met.** |
-| Zero valid interruptions newly missed | 17 clips from 11 recordings under the corrected scoring; 14 from 9 after the second opinion, at least 7 of them real | **Not met.** Most are speech at about -40 dBFS, the gate's own threshold. |
-| Confirmed stop p95 at most 400 ms at the listener | Detector alone: p95 536 ms as first scored; 230 ms where the onset estimate is believable (today's gate: 280 ms). No network, no playout. | **Unmeasured end to end.** The 536 ms warning is explained (section 3), not erased. |
+| At most 1 false stop per bot-speaking hour | 8.5 detector firings per hour of source-labelled non-speech (the primary score). Sensitivity only, from the machine second opinion: 5.2 without the recording that holds a voice, 2.9 also without the uncertain one. These are firings on a test set, not false stops per bot-speaking hour, which nothing here measures. | **Not met.** |
+| Zero valid interruptions newly missed | 17 clips from 11 recordings under the corrected scoring; provisionally 14 from 9 after the machine second opinion, of which 7 clips are machine-supported speech misses | **Not met.** Most are speech at about -40 dBFS, the gate's own threshold. |
+| Confirmed stop p95 at most 400 ms at the listener | Detector alone, both figures together: p95 536 ms on every clip (today's gate: 400 ms); 230 ms on the subset that keeps every sentence and drops one-word commands whose estimated speech span is over 700 ms (today's gate: 280 ms). The subset is a diagnostic chosen after the fact, not a corrected overall p95. No network, no playout. | **Unmeasured end to end.** The 536 ms warning is explained (section 3), not erased. |
 | Whole worker within 80% of the 512 MB cap | Worker in its base image under the cap, one core, observer off and on: proximity up to 20 people, LiveKit up to 10 rooms, 3-minute runs. Highest with the observer on: 232 MB RSS (45%). Highest of all: 300 MB (59%), observer off. | Met in these runs. At 20 separate LiveKit rooms today's worker itself, observer off, is killed for memory (section 6): a finding about the baseline. |
 | Both real transports covered | Frame-size sameness exact; codec reconstruction (partial); real peer connections and real LiveKit rooms under load with the observer on; the worker's own tests for both transports pass with it on | Covered for the observer's operation. Detection quality on real transports is still only simulated. |
 | Shadow cannot change behaviour or keep revoked audio | Built and tested (section 5) | Shown locally. |
@@ -140,16 +140,21 @@ with fixed rules; **a machine opinion, not a person listening**. All 1,350 speec
 spans were run. Original scores are kept; the adjudicated ones sit beside them.
 
 - **Speech set:** 1,344 valid speech, 4 uncertain, 2 no speech.
-- **Misses:** of the 17 clips (11 recordings), 7 clips from 5 recordings are real speech the rule did not fire on: four only
+- **Misses:** of the 17 clips (11 recordings), 7 clips from 5 recordings are machine-supported speech misses (both machines find speech and the rule did not fire; no person has listened): four only
   at the very soft level, one Arabic "cancel" in noise, and one English "Stop!" at every level (probability never above
   0.26). 2 are "yes" where the rule fired early. 5 are uncertain. 3 hold no word. After taking out only the "no speech"
-  recordings, for both detectors: **14 newly missed from 9 recordings**.
+  recordings, for both detectors: **14 newly missed from 9 recordings**, a provisional count that stands beside the
+  original 17 from 11 and does not replace it.
 - **Non-speech firings:** 15, from 6 recordings. One recording is a person saying "Hmm, I love potatoes" (6 firings). One
-  is uncertain (4). Four hold no words (5). Rates: 8.5 per hour as labelled, 5.2 without the voice, 2.9 also without the
-  uncertain one. The gate: 178.9, 177.9, 178.1.
+  is uncertain (4). Four hold no words (5). Rates: 8.5 per hour as labelled (the primary score). As sensitivity results only: 5.2 without the
+  voice, 2.9 also without the uncertain one. The gate: 178.9, 177.9, 178.1.
 - **Slow tail:** 255 of the 262 VALID firings later than 400 ms are English one-word recordings whose energy estimate
-  covers the whole one-second file, so the "onset" is the file's start. Where the estimate is believable (2,690 clips):
-  rule p50 78 / p95 230 / max 482 ms, 99.8% within 400 ms; gate 110 / 280 / 810 ms, 99.7%.
+  covers the whole one-second file, so the "onset" is the file's start. The filter, exactly: one-word command clips whose
+  estimated speech span is over 700 ms are dropped (510 clips), every sentence is kept (2,690 clips remain). On that
+  subset: rule p50 78 / p95 230 / max 482 ms, 99.8% within 400 ms; gate 110 / 280 / 810 ms, 99.7%. On every clip: rule
+  p95 536 ms, gate 400 ms. Both are reported together. The subset is a diagnostic written after the fact: a span over
+  700 ms does not prove an onset wrong, and one under it does not prove it right. A quality verdict still needs onsets
+  marked by a person or timed independently.
 
 ## 4. Telemetry
 
@@ -285,8 +290,9 @@ What the pairs show (on against off, same load):
 **off**, did not last the run: killed for memory at the 512 MB cap, twice (170 s and 196 s after start;
 `results/worker-load/room-off-20.*`). Its memory climbed about 2 MB a second once everyone was in (200 MB to 390 MB in 100
 seconds) while the JavaScript heap stayed near 65 MB, and its own 5-second sampler came 26 to 43 seconds apart: the event
-loop was starved and audio piled up outside JavaScript. 5 rooms cost 0.32 of a core and 10 cost 0.56, so 20 want more
-than the one core it was given. The observer was not run at 20 rooms: there is no living baseline to set it against.
+loop was not getting its turns and memory grew outside JavaScript. 5 rooms cost 0.32 of a core and 10 cost 0.56, so 20
+may want more than the one core it was given: CPU starvation is a plausible explanation, **not an established cause**
+(nothing here separates it from a leak that only shows at that scale). The observer was not run at 20 rooms: there is no living baseline to set it against.
 Whether production gives the worker one core is not known to this test, and whether twenty separate rooms on one worker
 happens in practice is a product question. It is listed in section 7 and nothing here depends on it.
 

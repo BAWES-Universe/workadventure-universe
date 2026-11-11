@@ -22,7 +22,7 @@ for f in sorted(glob.glob(os.path.join(out, "*.worker.json"))):
     streams = int(parts[-1])
     rows.append((path, streams, w["observer"], w, l))
 rows.sort(key=lambda r: (r[0] != "proximity WebRTC", r[1], r[2] != "off"))
-print("| path | people | observer | measured, s | memory: container peak, MB (share of 512) | process RSS peak, MB (share of 512) | CPU, cores | throttled, s | event-loop delay p50 / p99 / max, ms | audio heard by the worker, of what was sent | came and went | observer: audio judged, s | people per call mean / most | call mean / max, ms | wait mean / max, ms | most audio waiting, ms | dropped, s | late answers thrown away | errors |")
+print("| path | people | observer | measured, s | memory: container peak, MB (share of 512) | process RSS peak, MB (share of 512) | CPU, cores | throttled, s | event-loop delay p50 / p99 / max, ms | audio heard by the worker, of what was sent | came and went | observer: audio judged, s | people per call mean / most | call mean / max, ms | wait mean / max, ms | most audio waiting, ms | dropped or too old, s | answers thrown away | errors |")
 print("| " + " | ".join(["---"] * 19) + " |")
 for path, streams, observer, w, l in rows:
     m, c, e, h, o = w["memory"], w["cpu"], w["eventLoopDelayMs"], w["heard"], w.get("observerWork") or {}
@@ -35,7 +35,10 @@ for path, streams, observer, w, l in rows:
         # The first build made one call per window and named its figures so
         per_call = f'{o["meanPeoplePerCall"]} / {o["mostPeopleInACall"]}' if "calls" in o else "1 / 1"
         call_ms = f'{o["meanCallMs"]} / {o["maxCallMs"]}' if "calls" in o else f'{o["meanRunMs"]} / {o["maxRunMs"]}'
-        cells += [o["audioSecondsJudged"], per_call, call_ms, f'{o["meanAgeMs"]} / {o["maxAgeMs"]}', o["peakQueuedMs"], round(o["droppedMs"] / 1000, 1), o["lateDiscarded"], o["errors"]]
+        # Runs made before the counters were split (commit 3e6a768d and earlier) have one "dropped" and one "late" figure
+        dropped = o["droppedMs"] if "droppedMs" in o else o["lostMs"]["overflow"] + o["lostMs"]["expired"]
+        late = o["lateDiscarded"] if "lateDiscarded" in o else o["windows"]["revoked"] + o["windows"]["stale"] + o["windows"]["expired"]
+        cells += [o["audioSecondsJudged"], per_call, call_ms, f'{o["meanAgeMs"]} / {o["maxAgeMs"]}', o["peakQueuedMs"], round(dropped / 1000, 1), late, o["errors"]]
     else:
         cells += ["", "", "", "", "", "", "", ""]
     print("| " + " | ".join(str(x) for x in cells) + " |")

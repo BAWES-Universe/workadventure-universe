@@ -214,27 +214,31 @@ VALID / EARLY / NONE as defined in scoring.ts and RESULTS.md. "Fired on backgrou
 | gate 300 ms | 3200 | 989 | 1506 | 14 | 1680 | 683 | 480 | 683 | 153 | 300 | 660 | 1690 |
 | silero p>=0.50 for 64 ms | 3200 | 22 | 3150 | 5 | 45 | 17 | 11 | 15 | 1131 | 80 | 536 | 920 |
 
-### Delay where the estimated onset can be believed
+### Delay on the filtered subset, beside the aggregate
 
-A single spoken word does not last 0.7 s. Where the energy estimate says a one-word recording is "speech" for longer than that, the estimate is the whole noisy file, its "onset" is the start of the file and not the word, and a delay measured from it says nothing about either detector. This rule looks only at the recording, not at any detector. Sentences are all kept.
+The filter, exactly: a one-word command clip is dropped when its estimated speech span (the energy estimate's offset minus its onset) is longer than 700 ms. Every sentence clip is kept. Nothing else is filtered. It looks only at the recording, never at what either detector did, and is applied to both detectors alike.
 
-| set | onset | detector | clips | VALID | delay p50 ms | p95 | max | VALID within 400 ms |
+Why 700 ms: a single spoken word does not last that long, so a longer "speech" span on a one-word recording means the estimate took in the whole noisy file and its "onset" is the start of the file, not the word. The rule was written after the first results showed the aggregate p95 was made by such clips, so it is a correction made after the fact, not a pre-registered one. Both figures are therefore reported together, and neither replaces the other: the aggregate (all clips) is in the tables above and in the first row below.
+
+| set | filter | detector | clips | VALID | delay p50 ms | p95 | max | VALID within 400 ms |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| en-command | estimate believable | gate 100 ms | 1015 | 627 | 110 | 290 | 420 | 99.4% |
-| en-command | estimate believable | silero p>=0.50 for 64 ms | 1015 | 993 | 82 | 268 | 440 | 99.7% |
-| en-command | estimate is the whole file | gate 100 ms | 455 | 294 | 150 | 770 | 960 | 68.4% |
-| en-command | estimate is the whole file | silero p>=0.50 for 64 ms | 455 | 440 | 440 | 792 | 920 | 41.1% |
-| ar-command | estimate believable | gate 100 ms | 1350 | 865 | 110 | 260 | 400 | 100.0% |
-| ar-command | estimate believable | silero p>=0.50 for 64 ms | 1350 | 1339 | 76 | 122 | 482 | 99.9% |
-| ar-command | estimate is the whole file | gate 100 ms | 55 | 35 | 110 | 350 | 380 | 100.0% |
-| ar-command | estimate is the whole file | silero p>=0.50 for 64 ms | 55 | 55 | 84 | 344 | 408 | 98.2% |
-| en-sentence | estimate believable | gate 100 ms | 325 | 215 | 110 | 280 | 810 | 99.5% |
-| en-sentence | estimate believable | silero p>=0.50 for 64 ms | 325 | 323 | 78 | 172 | 446 | 99.7% |
+| en-command | kept: a sentence, or a command with span <= 700 ms | gate 100 ms | 1015 | 627 | 110 | 290 | 420 | 99.4% |
+| en-command | kept: a sentence, or a command with span <= 700 ms | silero p>=0.50 for 64 ms | 1015 | 993 | 82 | 268 | 440 | 99.7% |
+| en-command | dropped: a command with span > 700 ms | gate 100 ms | 455 | 294 | 150 | 770 | 960 | 68.4% |
+| en-command | dropped: a command with span > 700 ms | silero p>=0.50 for 64 ms | 455 | 440 | 440 | 792 | 920 | 41.1% |
+| ar-command | kept: a sentence, or a command with span <= 700 ms | gate 100 ms | 1350 | 865 | 110 | 260 | 400 | 100.0% |
+| ar-command | kept: a sentence, or a command with span <= 700 ms | silero p>=0.50 for 64 ms | 1350 | 1339 | 76 | 122 | 482 | 99.9% |
+| ar-command | dropped: a command with span > 700 ms | gate 100 ms | 55 | 35 | 110 | 350 | 380 | 100.0% |
+| ar-command | dropped: a command with span > 700 ms | silero p>=0.50 for 64 ms | 55 | 55 | 84 | 344 | 408 | 98.2% |
+| en-sentence | kept: a sentence, or a command with span <= 700 ms | gate 100 ms | 325 | 215 | 110 | 280 | 810 | 99.5% |
+| en-sentence | kept: a sentence, or a command with span <= 700 ms | silero p>=0.50 for 64 ms | 325 | 323 | 78 | 172 | 446 | 99.7% |
 
-| all sets, estimate believable | clips | VALID | delay p50 ms | p95 | max | VALID within 400 ms |
-| --- | --- | --- | --- | --- | --- | --- |
-| gate 100 ms | 2690 | 1707 | 110 | 280 | 810 | 99.7% |
-| silero p>=0.50 for 64 ms | 2690 | 2655 | 78 | 230 | 482 | 99.8% |
+| all sets | detector | clips | VALID | delay p50 ms | p95 | max | VALID within 400 ms |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| aggregate: every clip | gate 100 ms | 3200 | 2036 | 110 | 400 | 960 | 95.2% |
+| aggregate: every clip | silero p>=0.50 for 64 ms | 3200 | 3150 | 80 | 536 | 920 | 91.6% |
+| filtered subset: sentences, and commands with span <= 700 ms | gate 100 ms | 2690 | 1707 | 110 | 280 | 810 | 99.7% |
+| filtered subset: sentences, and commands with span <= 700 ms | silero p>=0.50 for 64 ms | 2690 | 2655 | 78 | 230 | 482 | 99.8% |
 
 ### Short commands by word (all conditions)
 
@@ -296,7 +300,7 @@ Same lifecycle for both, silent fake provider. A stream opens on the first frame
 
 ## The same scores after the second opinion
 
-ADJUDICATION.md says which recordings were looked at, by what, and the fixed rules for each label. It is a machine opinion (Whisper and a second voice detector), not a person listening. The scores above are the originals and stay as they are. Below, the same rule is applied to both detectors.
+ADJUDICATION.md says which recordings were looked at, by what, and the fixed rules for each label. It is a machine opinion (Whisper and a second voice detector), not a person listening, so every figure below is provisional. The scores above are the originals, stay as they are, and remain the primary scores. Below, the same rule is applied to both detectors.
 
 ### Speech: recordings labelled "no speech" taken out (2 on the report half; 2 "uncertain" ones stay in as speech)
 
@@ -313,9 +317,9 @@ Only recordings where the frozen rule fired were looked at (6 of the non-speech 
 
 | non-speech set | detector | distinct recordings | hours incl. variants | firings | per hour | recordings with a firing |
 | --- | --- | --- | --- | --- | --- | --- |
-| as labelled by the source (original) | gate 100 ms | 59 | 1.76 | 315 | 178.9 | 59 |
-| as labelled by the source (original) | silero p>=0.50 for 64 ms | 59 | 1.76 | 15 | 8.5 | 6 |
-| without "background voice" recordings | gate 100 ms | 58 | 1.74 | 309 | 177.9 | 58 |
-| without "background voice" recordings | silero p>=0.50 for 64 ms | 58 | 1.74 | 9 | 5.2 | 5 |
-| also without "uncertain" recordings | gate 100 ms | 57 | 1.70 | 303 | 178.1 | 57 |
-| also without "uncertain" recordings | silero p>=0.50 for 64 ms | 57 | 1.70 | 5 | 2.9 | 4 |
+| as labelled by the source (original, the primary score) | gate 100 ms | 59 | 1.76 | 315 | 178.9 | 59 |
+| as labelled by the source (original, the primary score) | silero p>=0.50 for 64 ms | 59 | 1.76 | 15 | 8.5 | 6 |
+| sensitivity: without "background voice" recordings | gate 100 ms | 58 | 1.74 | 309 | 177.9 | 58 |
+| sensitivity: without "background voice" recordings | silero p>=0.50 for 64 ms | 58 | 1.74 | 9 | 5.2 | 5 |
+| sensitivity: also without "uncertain" recordings | gate 100 ms | 57 | 1.70 | 303 | 178.1 | 57 |
+| sensitivity: also without "uncertain" recordings | silero p>=0.50 for 64 ms | 57 | 1.70 | 5 | 2.9 | 4 |

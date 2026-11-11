@@ -383,7 +383,7 @@ export class VoiceWorker {
 
     sessionHost(send: (message: OutgoingMessage) => void, sessionId?: string) {
         return {
-            ...(this.observer && sessionId !== undefined ? { observer: this.observer.session(sessionId) } : {}),
+            ...(this.observer && sessionId !== undefined ? { observerFor: this.observer.session.bind(this.observer, sessionId) } : {}),
             engineId: this.engineId,
             counters: this.counters,
             latency: this.latency,

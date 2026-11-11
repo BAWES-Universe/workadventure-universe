@@ -29,7 +29,7 @@ run() { # name, extra env...
     outside=$(grep -acE 'AF_INET6?' "$OUT/$name.strace" || true)
     asked=$(grep -aoE '\\[0-9]{1,3}[a-z0-9-]+(\\[0-9]{1,3}[a-z0-9-]+)+\\0' "$OUT/$name.strace" | sed -E 's/\\[0-9]{1,3}/./g; s/^\.//; s/\.$//' | sort | uniq -c | sed -E 's/^ +//' | paste -sd',' || true)
     names=$(grep -aoiE '(microsoft|visualstudio|applicationinsights|events\\[0-9]+data)[a-z0-9.\\-]*' "$OUT/$name.full.strace" | sort -u | tr '\n' ' ' || true)
-    summary=$(node -e 'const s=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const o=s.observerWork;console.log(`observer: ${o?`${o.status}, ${o.windows} windows, ${o.errors} errors`:"none"}; frames heard: ${s.heard.frames}`)' "$OUT/$name.summary.json" 2>/dev/null || echo "summary missing")
+    summary=$(node -e 'const s=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const o=s.observerWork;console.log(`observer: ${o?`${o.status}, ${o.windows.accepted} windows kept, ${o.errors} errors`:"none"}; frames heard: ${s.heard.frames}`)' "$OUT/$name.summary.json" 2>/dev/null || echo "summary missing")
     echo "$name: network calls=$total, of them to anywhere but this machine=$outside; names looked up: ${asked:-none}; microsoft names seen in traffic: ${names:-none}; $summary"
     rm -f "$OUT/$name.full.strace"
 }

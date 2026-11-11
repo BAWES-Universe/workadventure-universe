@@ -51,13 +51,14 @@ On the report half, 17 clips from 11 recordings are VALID for today's gate and n
 
 | second opinion on the recording | clips | recordings | what they are |
 | --- | --- | --- | --- |
-| valid speech, rule gave NONE | 7 | 5 | **Real misses.** Four are at the very soft level only (S40, speech at about -40 dBFS, which is the gate's own threshold): "go", "stop", "yes", and one Arabic "cancel" in noise. One English "Stop!" is missed at every level: the detector's probability never passes 0.26 on it. |
+| valid speech, rule gave NONE | 7 | 5 | **Machine-supported speech misses** (both machines find speech; no person has listened). Four are at the very soft level only (S40, speech at about -40 dBFS, which is the gate's own threshold): "go", "stop", "yes", and one Arabic "cancel" in noise. One English "Stop!" is missed at every level: the detector's probability never passes 0.26 on it. |
 | valid speech, rule fired EARLY | 2 | 2 | "Yes" twice at the loudest level. The rule fired inside the recording more than 200 ms before the estimated onset, so it is not counted as a catch. Most likely it fired on the word and the estimate is late, but that is not shown. |
 | uncertain | 5 | 2 | Whisper hears no words ("(music)"); the voice detector reacts. Kept as speech, so they stay misses. |
-| no speech | 3 | 2 | Two files from one contributor with no audible word. Taken out of the adjudicated score for both detectors. |
+| no speech | 3 | 2 | Two files from one contributor in which neither machine finds a word (which is not the same as a person hearing none). Taken out of the adjudicated score for both detectors. |
 
-So "zero newly missed" is **not met** after the second opinion either: 14 clips from 9 recordings remain, at least 7 of them
-real.
+So "zero newly missed" is **not met** after the second opinion either. The original count stands: 17 clips from 11
+recordings. The provisional count after the machine opinion is 14 clips from 9 recordings, 7 of them machine-supported
+speech misses. Neither count is verified ground truth.
 
 ## What it says about firings on "non-speech" noise
 
@@ -67,19 +68,21 @@ time, so nothing is concluded). Four hold no words (a cough, crunching, a chair,
 
 | | recordings | firings | per hour incl. variants |
 | --- | --- | --- | --- |
-| as the source labels them | 6 of 59 | 15 | 8.5 |
-| without the recording that holds a voice | 5 of 58 | 9 | 5.2 |
-| also without the uncertain one | 4 of 57 | 5 | 2.9 |
+| as the source labels them (the primary score) | 6 of 59 | 15 | 8.5 |
+| sensitivity: without the recording that holds a voice | 5 of 58 | 9 | 5.2 |
+| sensitivity: also without the uncertain one | 4 of 57 | 5 | 2.9 |
 
-Still above the agreed 1 per hour.
+Every row is above the agreed 1 per hour. The last two are sensitivity results from a machine opinion, not corrected scores.
 
 ## The slow tail
 
 Under the first report's scoring the rule's p95 delay was 536 ms. Almost all of that tail (255 of 262 clips over 400 ms) is
 English one-word recordings where the energy estimate covers the whole one-second file, so the "onset" is the start of the
-file, not the word. A single word does not last 0.7 s. Where the estimate is believable the rule's p95 is 230 ms and today's
-gate's is 280 ms (table "Delay where the estimated onset can be believed" in `results/results.md`). This rule looks only at
-the recording, never at a detector. It does not show what a listener would experience: network and playout are not in it.
+file, not the word. A single word does not last 0.7 s. The filter, exactly: one-word command clips whose estimated speech
+span is over 700 ms are dropped; every sentence is kept. On that subset the rule's p95 is 230 ms and today's gate's is
+280 ms; on every clip they are 536 ms and 400 ms (table "Delay on the filtered subset, beside the aggregate" in
+`results/results.md`). Both are reported together. The filter looks only at the recording, never at a detector, but it was
+written after the fact and is a diagnostic: span alone cannot prove an onset wrong or right. It does not show what a listener would experience: network and playout are not in it.
 
 ## Tables
 

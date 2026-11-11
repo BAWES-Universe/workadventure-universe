@@ -4,12 +4,12 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { optionsFromEnv } from '../src/config.ts';
 import { Counters } from '../src/counters.ts';
 import { FakeEars } from '../src/recognizer.ts';
 import { VoiceWorker } from '../src/server.ts';
-import { CONTEXT, type DetectorModel, SpeechObserver, STATE, WINDOW } from '../src/speechObserver.ts';
+import { CONTEXT, type DetectorModel, SpeechObserver, type SpeechObserverSettings, STATE, WINDOW } from '../src/speechObserver.ts';
 import { sileroLoader } from '../src/speechObserverRuntime.ts';
 import type { InputFrame } from '../src/transport.ts';
 import { FakeHuman, type Rig, privateEvent, sleep, startRig, waitFor } from './harness.ts';
@@ -40,7 +40,7 @@ function detector(mode: 'at once' | 'held' = 'at once') {
     return { model, calls, released: () => released };
 }
 
-function observing(mode: 'at once' | 'held' = 'at once', limits: { maxQueuedMsPerStream?: number; maxQueuedMsTotal?: number; maxStreams?: number; maxFailures?: number } = {}) {
+function observing(mode: 'at once' | 'held' = 'at once', limits: Partial<Omit<SpeechObserverSettings, 'load' | 'onVerdict'>> = {}) {
     const d = detector(mode);
     const counters = new Counters();
     const verdicts: { participantId: string; epoch: number; probability: number }[] = [];
@@ -85,7 +85,7 @@ describe('what the detector is given', () => {
                 expect(state[0]).toBe(w);
             }
         }
-        expect(o.counters.get('observer_windows')).toBe(windows);
+        expect(o.counters.get('observer_windows_completed')).toBe(windows);
         expect(o.verdicts.length).toBe(windows);
     });
 
@@ -140,7 +140,7 @@ describe('someone who is no longer heard', () => {
         o.calls[0].answer(0.99);
         await settle();
         expect(o.verdicts).toEqual([]);
-        expect(o.counters.get('observer_late_discarded')).toBe(1);
+        expect(o.counters.get('observer_windows_revoked')).toBe(1);
         expect(o.counters.get('observer_speech_windows')).toBe(0);
         expect(o.counters.get('observer_firings')).toBe(0);
         // Nothing of theirs was left for the detector to go on with
@@ -163,7 +163,7 @@ describe('someone who is no longer heard', () => {
         o.calls[1].answer(0.2);
         await settle();
         expect(o.verdicts).toEqual([{ participantId: 'p1', epoch: 1, probability: 0.2 }]);
-        expect(o.counters.get('observer_late_discarded')).toBe(1);
+        expect(o.counters.get('observer_windows_revoked')).toBe(1);
     });
 
     it('a newer path replaces the old one before the old answer is back, and older audio is ignored from then on', async () => {
@@ -226,7 +226,7 @@ describe('limits', () => {
         await settle();
         expect(o.observer.stats().queuedMs).toBeLessThanOrEqual(400);
         expect(o.counters.get('observer_peak_queued_ms')).toBeLessThanOrEqual(400);
-        expect(o.counters.get('observer_dropped_ms')).toBeGreaterThan(9000);
+        expect(o.counters.get('observer_overflow_ms')).toBeGreaterThan(9000);
         expect(o.counters.get('observer_overloads')).toBeGreaterThan(0);
         // The answer for the window that was out when they started afresh is not kept
         o.calls[0].answer();
@@ -242,7 +242,7 @@ describe('limits', () => {
         expect(o.observer.stats().streams).toBe(5);
         expect(o.observer.stats().queuedMs).toBeLessThanOrEqual(1000);
         expect(o.counters.get('observer_streams_refused')).toBeGreaterThan(0);
-        expect(o.counters.get('observer_dropped_ms')).toBeGreaterThan(0);
+        expect(o.counters.get('observer_overflow_ms')).toBeGreaterThan(0);
     });
 
     it('gives a detector that takes one person at a time one window at a time, people taking turns', async () => {
@@ -340,7 +340,7 @@ describe('several people in one call', () => {
         expect(o.calls[2].windows.map((w) => Math.round(w.input[CONTEXT - 1] * 32768))).toEqual([1000 + ((2 * WINDOW - 1) % 1000), 2000 + WINDOW - 1, 3000 + WINDOW - 1]);
         expect(o.verdicts).toEqual(['p1', 'p1', 'p2', 'p3']);
         expect(o.counters.get('observer_calls')).toBe(2);
-        expect(o.counters.get('observer_windows')).toBe(4);
+        expect(o.counters.get('observer_windows_completed')).toBe(4);
         expect(o.counters.get('observer_peak_batch')).toBe(3);
     });
 
@@ -357,7 +357,7 @@ describe('several people in one call', () => {
         o.calls[1].answer();
         await settle();
         expect(o.verdicts).toEqual(['p1', 'p1', 'p2']);
-        expect(o.counters.get('observer_late_discarded')).toBe(1);
+        expect(o.counters.get('observer_windows_revoked')).toBe(1);
         const third = o.calls[2].windows.find((w) => o.whose(w.input).person === 3)!;
         expect(allZero(third.state)).toBe(true);
         expect(allZero(third.input.subarray(0, CONTEXT))).toBe(true);
@@ -405,6 +405,360 @@ describe('several people in one call', () => {
         expect(o.counters.get('observer_errors')).toBe(2);
         expect(o.verdicts).toEqual(['p1', 'p1']);
         expect(o.observer.stats()).toMatchObject({ status: 'on', streams: 0, queuedMs: 0, inFlight: 0 });
+    });
+});
+
+// Faults a detector can have that are not errors: answering late, or never. Time here is a clock the test moves, so
+// nothing depends on how fast the machine is.
+describe('by the clock', () => {
+    beforeEach(() => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+    });
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+    /** What the observer holds inside for each person, to see that it is really let go and not just uncounted. */
+    const inside = (observer: SpeechObserver) => [...(observer as unknown as { streams: Map<string, { waiting: unknown[]; samples: number; state: Float32Array; context: Float32Array }> }).streams.values()];
+
+    it('an answer that comes back for audio older than the limit is not kept, not counted as an answer, and never becomes the person\'s state', async () => {
+        const o = observing('held');
+        await o.observer.ready();
+        // Exactly one window, nothing left waiting behind it
+        o.feed(32, 'p1', 1, 512);
+        await settle();
+        expect(o.calls.length).toBe(1);
+        vi.advanceTimersByTime(1500);
+        o.calls[0].answer();
+        await settle();
+        expect(o.verdicts).toEqual([]);
+        expect(o.counters.get('observer_windows_completed')).toBe(1);
+        expect(o.counters.get('observer_windows_expired')).toBe(1);
+        expect(o.counters.get('observer_windows_accepted')).toBe(0);
+        expect(o.counters.get('observer_max_age_ms')).toBe(0);
+        expect(o.observer.stats()).toMatchObject({ status: 'on', streams: 0, queuedMs: 0, lined: 0 });
+        // They start from nothing with their next audio
+        o.feed(32, 'p1', 1, 512);
+        await settle();
+        expect(allZero(o.calls[1].state)).toBe(true);
+        expect(allZero(o.calls[1].input.subarray(0, CONTEXT))).toBe(true);
+        // An answer in time is kept as before
+        vi.advanceTimersByTime(399);
+        o.calls[1].answer();
+        await settle();
+        expect(o.verdicts.length).toBe(1);
+        expect(o.counters.get('observer_windows_accepted')).toBe(1);
+        expect(o.counters.get('observer_max_age_ms')).toBe(399);
+    });
+
+    it('audio left waiting goes by the clock even if no more ever arrives: a held-up line, and a last bit shorter than a window', async () => {
+        const o = observing('held');
+        await o.observer.ready();
+        // One window is out; 20 ms more is waiting behind it and nothing else comes
+        o.feed(52, 'p1', 1, 416);
+        // Someone else sent 20 ms and stopped: never a whole window
+        o.feed(20, 'p2');
+        await settle();
+        expect(o.observer.stats()).toMatchObject({ streams: 2, queuedMs: 40 });
+        vi.advanceTimersByTime(400);
+        expect(o.observer.stats()).toMatchObject({ streams: 2, queuedMs: 40 });
+        vi.advanceTimersByTime(2);
+        expect(o.observer.stats()).toMatchObject({ status: 'on', streams: 0, queuedMs: 0, lined: 0 });
+        expect(o.counters.get('observer_idle_ms')).toBe(40);
+        // The answer for the window that was out belongs to a stream that is gone
+        o.calls[0].answer();
+        await settle();
+        expect(o.verdicts).toEqual([]);
+        expect(o.counters.get('observer_windows_stale')).toBe(1);
+
+        // Whole windows held up behind a slow call go the same way, counted as expired
+        o.feed(200, 'p3');
+        await settle();
+        expect(o.observer.stats()).toMatchObject({ streams: 1, queuedMs: 168, lined: 1 });
+        vi.advanceTimersByTime(402);
+        expect(o.observer.stats()).toMatchObject({ streams: 0, queuedMs: 0, lined: 0 });
+        expect(o.counters.get('observer_expired_ms')).toBe(168);
+    });
+
+    it('a detector that never answers: the observer switches itself off at the deadline, holds nothing, and never starts a second call beside the first', async () => {
+        const o = observing('held');
+        await o.observer.ready();
+        o.feed(200);
+        await settle();
+        const held = inside(o.observer);
+        vi.advanceTimersByTime(1999);
+        await settle();
+        expect(o.observer.stats().status).toBe('on');
+        vi.advanceTimersByTime(1);
+        await settle();
+        expect(o.observer.stats()).toEqual({ status: 'off', streams: 0, queuedMs: 0, inFlight: 0, lined: 0, callOut: true });
+        expect(o.counters.get('observer_timed_out')).toBe(1);
+        expect(o.counters.get('observer_gave_up')).toBe(1);
+        expect(o.counters.get('observer_windows_failed')).toBe(1);
+        // What it held for the person is let go, not just uncounted; what the detector was handed is left alone
+        expect(held.map((x) => [x.waiting.length, x.samples, x.state.length, x.context.length])).toEqual([[0, 0, 0, 0]]);
+        expect(o.calls[0].input.length).toBe(CONTEXT + WINDOW);
+        expect(o.calls[0].input[CONTEXT]).toBeGreaterThan(0);
+        // Audio after that goes nowhere, and no second call is made while the first is still out
+        expect(() => o.feed(2000)).not.toThrow();
+        await settle();
+        expect(o.calls.length).toBe(1);
+        expect(o.observer.stats().queuedMs).toBe(0);
+        // The detector is not let go while its call is out; it is, the moment the call ends
+        expect(o.released()).toBe(0);
+        o.calls[0].answer();
+        await settle();
+        expect(o.released()).toBe(1);
+        expect(o.verdicts).toEqual([]);
+        expect(o.observer.stats().callOut).toBe(false);
+    });
+
+    it('closing the worker waits for the detector no longer than its limit, and never lets it go while a call is out', async () => {
+        const o = observing('held', { inferenceTimeoutMs: 60_000 });
+        await o.observer.ready();
+        o.feed(200);
+        await settle();
+        const held = inside(o.observer);
+        let closed = false;
+        const closing = o.observer.dispose().then(() => (closed = true));
+        // Everything waiting went the moment closing began
+        expect(o.observer.stats()).toMatchObject({ status: 'closed', streams: 0, queuedMs: 0, lined: 0 });
+        expect(held.map((x) => [x.waiting.length, x.samples, x.state.length, x.context.length])).toEqual([[0, 0, 0, 0]]);
+        vi.advanceTimersByTime(1999);
+        await settle();
+        expect(closed).toBe(false);
+        vi.advanceTimersByTime(1);
+        await closing;
+        expect(closed).toBe(true);
+        expect(o.released()).toBe(0);
+        o.calls[0].answer();
+        await settle();
+        expect(o.released()).toBe(1);
+        expect(o.verdicts).toEqual([]);
+        expect(o.counters.get('observer_windows_revoked')).toBe(1);
+    });
+
+    it('a detector that never finishes loading leaves the observer off at the deadline, and is let go at once if it turns up later', async () => {
+        const d = detector();
+        let arrive!: (model: DetectorModel) => void;
+        const counters = new Counters();
+        const observer = new SpeechObserver({ counters, load: () => new Promise((resolve) => (arrive = resolve)) });
+        const session = observer.session('s1');
+        session.frame({ participantId: 'p1', epoch: 1, pcm16k: new Int16Array(320).fill(5), droppedMs: 0 });
+        expect(observer.stats()).toMatchObject({ status: 'loading', queuedMs: 20 });
+        // While it loads, what waits still goes by the clock
+        vi.advanceTimersByTime(402);
+        expect(observer.stats()).toMatchObject({ status: 'loading', streams: 0, queuedMs: 0 });
+        vi.advanceTimersByTime(15000);
+        await observer.ready();
+        expect(observer.stats()).toMatchObject({ status: 'off', streams: 0, queuedMs: 0 });
+        expect(counters.get('observer_load_timed_out')).toBe(1);
+        expect(counters.get('observer_unavailable')).toBe(1);
+        arrive(d.model);
+        await settle();
+        expect(d.released()).toBe(1);
+        expect(d.calls.length).toBe(0);
+        await observer.dispose();
+        expect(d.released()).toBe(1);
+    });
+
+    it('counts its firings beside today\'s gate: together when within 600 ms for the same person, and what was observed while the bot was talking', async () => {
+        const d = detector();
+        const counters = new Counters();
+        const observer = new SpeechObserver({ counters, load: async () => d.model });
+        await observer.ready();
+        let talking = false;
+        const session = observer.session('s1', { botSpeaking: () => talking });
+        const speak = (who: string, path: 'lane' | 'room') => {
+            for (let i = 0; i < 2; i++) session.frame({ participantId: who, epoch: 1, pcm16k: new Int16Array(512).fill(9), droppedMs: 0 }, path);
+        };
+        // The gate first, the detector 300 ms later: together
+        speak('p1', 'lane');
+        await settle();
+        expect(counters.get('observer_firings_lane')).toBe(1);
+        expect(counters.get('observer_agree')).toBe(0);
+        vi.advanceTimersByTime(300);
+        session.baseline('p1', false);
+        expect(counters.get('observer_agree_lane')).toBe(1);
+        // The detector alone, in a room, while the bot is talking; the gate says so only two seconds later, stopping the voice
+        talking = true;
+        speak('p2', 'room');
+        await settle();
+        expect(counters.get('observer_firings_room')).toBe(1);
+        expect(counters.get('observer_firings_bot_speaking')).toBe(1);
+        expect(counters.get('observer_accepted_ms_bot_speaking')).toBe(64);
+        vi.advanceTimersByTime(2000);
+        session.baseline('p2', true);
+        expect(counters.get('observer_baseline_room')).toBe(1);
+        expect(counters.get('observer_baseline_stops')).toBe(1);
+        expect(counters.get('observer_agree_room')).toBe(0);
+        // Someone the observer was never given audio of is not counted at all
+        session.baseline('p9', true);
+        expect(counters.get('observer_baseline')).toBe(2);
+        expect(counters.get('observer_accepted_ms_lane')).toBe(64);
+        expect(counters.get('observer_accepted_ms_room')).toBe(64);
+        expect(counters.get('observer_offered_ms_lane')).toBe(64);
+        // A gate decision never throws back, even after the session is over
+        session.close();
+        expect(() => session.baseline('p1', true)).not.toThrow();
+        expect(counters.get('observer_baseline')).toBe(2);
+    });
+});
+
+describe('what it holds is bounded whatever happens', () => {
+    it('the line for the detector never holds more than the people being watched, however long one call is held', async () => {
+        const o = observing('held');
+        await o.observer.ready();
+        for (let i = 0; i < 6; i++) {
+            o.feed(20_000);
+            expect(o.observer.stats()).toMatchObject({ streams: 1, lined: 1 });
+            expect(o.observer.stats().queuedMs).toBeLessThanOrEqual(400);
+        }
+        expect(o.counters.get('observer_peak_line')).toBe(1);
+        expect(o.counters.get('observer_streams')).toBeGreaterThan(200);
+        expect(o.calls.length).toBe(1);
+        // Twenty people held up the same way: twenty in the line at most
+        for (let i = 0; i < 3; i++) for (let p = 2; p <= 21; p++) o.feed(1000, `p${p}`);
+        expect(o.observer.stats().streams).toBe(21);
+        expect(o.observer.stats().lined).toBeLessThanOrEqual(21);
+        expect(o.counters.get('observer_peak_line')).toBeLessThanOrEqual(21);
+        o.session.drop(() => true);
+        expect(o.observer.stats()).toMatchObject({ streams: 0, queuedMs: 0, lined: 0 });
+    });
+
+    it('one piece of audio longer than a person may have waiting is not taken at all', async () => {
+        const o = observing('held');
+        await o.observer.ready();
+        o.feed(60, 'p1');
+        o.session.frame({ participantId: 'p1', epoch: 1, pcm16k: new Int16Array(64_000).fill(7), droppedMs: 0 });
+        expect(o.observer.stats()).toMatchObject({ streams: 0, queuedMs: 0, lined: 0 });
+        expect(o.counters.get('observer_peak_queued_ms')).toBeLessThanOrEqual(400);
+        expect(o.counters.get('observer_overflow_ms')).toBeGreaterThanOrEqual(4000);
+        // And a first piece that long starts nobody
+        o.session.frame({ participantId: 'p2', epoch: 1, pcm16k: new Int16Array(64_000).fill(7), droppedMs: 0 });
+        expect(o.observer.stats().streams).toBe(0);
+        expect(o.counters.get('observer_peak_queued_ms')).toBeLessThanOrEqual(400);
+    });
+
+    it('a session that is over stays over: audio handed to it afterwards is not taken, while another session carries on', async () => {
+        const o = observing();
+        await o.observer.ready();
+        const other = o.observer.session('s1');
+        o.feed(100);
+        await settle();
+        const before = o.calls.length;
+        o.session.close();
+        expect(o.observer.stats()).toMatchObject({ streams: 0, queuedMs: 0, lined: 0 });
+        o.feed(500);
+        o.session.drop(() => true);
+        await settle();
+        expect(o.calls.length).toBe(before);
+        expect(o.observer.stats()).toMatchObject({ streams: 0, queuedMs: 0 });
+        expect(o.counters.get('observer_refused_closed')).toBe(25);
+        expect(o.verdicts.length).toBe(before);
+        // The same bubble opened again is a new session with its own handle
+        other.frame({ participantId: 'p1', epoch: 1, pcm16k: new Int16Array(640).fill(3), droppedMs: 0 });
+        await settle();
+        expect(o.calls.length).toBe(before + 1);
+        expect(allZero(o.calls[before].state)).toBe(true);
+    });
+
+    it.each(['they are no longer heard', 'their session closes', 'the worker closes'] as const)('a person whose window is with the detector when %s: the audio still waiting behind it is let go at that moment, not only uncounted', async (how) => {
+        const o = observing('held', { inferenceTimeoutMs: 60_000, disposeTimeoutMs: 50 });
+        await o.observer.ready();
+        // One window goes to the detector, which holds it; 20 ms more arrives and waits behind it
+        o.feed(52, 'p1', 1, 832);
+        await settle();
+        expect(o.calls.length).toBe(1);
+        expect(o.observer.stats()).toMatchObject({ streams: 1, queuedMs: 20, inFlight: 1 });
+        // The very object the call in the air still refers to
+        const held = (o.observer as unknown as { streams: Map<string, { waiting: unknown[]; samples: number; offset: number; state: Float32Array; context: Float32Array; ended?: string }> }).streams.values().next().value!;
+        expect([held.waiting.length, held.samples]).toEqual([1, 320]);
+        const closing = how === 'the worker closes' ? o.observer.dispose() : undefined;
+        if (how === 'they are no longer heard') o.session.drop(() => true);
+        if (how === 'their session closes') o.session.close();
+        expect([held.waiting.length, held.samples, held.offset, held.state.length, held.context.length, held.ended]).toEqual([0, 0, 0, 0, 0, 'revoked']);
+        expect(o.observer.stats()).toMatchObject({ streams: 0, queuedMs: 0, lined: 0, callOut: true });
+        expect(o.counters.get('observer_revoked_ms')).toBe(20);
+        // What the detector itself was handed is its own copy and is left alone while it reads it
+        expect(o.calls[0].input[CONTEXT]).toBeGreaterThan(0);
+        await closing;
+        // The late answer changes nothing
+        o.calls[0].answer();
+        await settle();
+        expect(o.verdicts).toEqual([]);
+        expect(o.counters.get('observer_windows_accepted')).toBe(0);
+        expect([held.waiting.length, held.samples, held.state.length]).toEqual([0, 0, 0]);
+    });
+
+    it('when the observer itself has to skip a person\'s audio, that is missing audio: past 100 ms they start afresh, and the answer still out for them is not kept', async () => {
+        const o = observing('held', { maxQueuedMsTotal: 100 });
+        await o.observer.ready();
+        const give = (who: string, windows: number) => o.feed(32 * windows, who, 1, 512);
+        // p1: one window out at the detector, one waiting. p2: two waiting. That is 96 ms waiting of the 100 allowed.
+        give('p1', 2);
+        give('p2', 2);
+        await settle();
+        expect(o.observer.stats()).toMatchObject({ streams: 2, queuedMs: 96 });
+        // Four more windows of p1 do not fit: skipped, 128 ms in all
+        give('p1', 4);
+        expect(o.counters.get('observer_overloads')).toBe(4);
+        expect(o.observer.stats()).toMatchObject({ streams: 1, queuedMs: 64 });
+        // 128 ms skipped and the 32 ms that was waiting behind the gap
+        expect(o.counters.get('observer_overflow_ms')).toBe(160);
+        // The line drains: p1's answer is for a stream that was started afresh, p2 carries on untouched
+        o.calls[0].answer();
+        await settle();
+        o.calls[1].answer();
+        await settle();
+        o.calls[2].answer();
+        await settle();
+        expect(o.verdicts.map((v) => v.participantId)).toEqual(['p2', 'p2']);
+        expect(o.counters.get('observer_windows_stale')).toBe(1);
+        expect(o.calls[2].state.every((v) => v === 2)).toBe(true);
+        // p1 again: from nothing, not from what was heard before the gap
+        give('p1', 1);
+        await settle();
+        expect(allZero(o.calls[3].state)).toBe(true);
+        expect(allZero(o.calls[3].input.subarray(0, CONTEXT))).toBe(true);
+    });
+
+    it('a short skip, under 100 ms, is treated as the network\'s short losses are: the person carries on', async () => {
+        const o = observing('held', { maxQueuedMsTotal: 100 });
+        await o.observer.ready();
+        const give = (who: string, windows: number) => o.feed(32 * windows, who, 1, 512);
+        give('p1', 2);
+        give('p2', 2);
+        await settle();
+        give('p1', 2);
+        expect(o.counters.get('observer_overflow_ms')).toBe(64);
+        expect(o.observer.stats().streams).toBe(2);
+        o.calls[0].answer();
+        await settle();
+        expect(o.verdicts.map((v) => v.participantId)).toEqual(['p1']);
+        // p1's next window builds on the answer just given
+        const next = o.calls.find((call, i) => i > 0 && call.state.every((v) => v === 1));
+        expect(next).toBeDefined();
+    });
+
+    it('every answer is counted once, under what became of it', async () => {
+        const o = observing('held');
+        await o.observer.ready();
+        o.feed(32, 'kept', 1, 512);
+        await settle();
+        o.calls[0].answer();
+        await settle();
+        o.feed(32, 'left', 1, 512);
+        await settle();
+        o.session.drop((participantId) => participantId === 'left');
+        o.calls[1].answer();
+        await settle();
+        o.feed(32, 'broke', 1, 512);
+        await settle();
+        o.calls[2].fail();
+        await settle();
+        const c = o.counters;
+        expect([c.get('observer_windows_completed'), c.get('observer_windows_accepted'), c.get('observer_windows_revoked'), c.get('observer_windows_stale'), c.get('observer_windows_expired'), c.get('observer_windows_failed')]).toEqual([2, 1, 1, 0, 0, 1]);
+        expect(o.verdicts.map((v) => v.participantId)).toEqual(['kept']);
     });
 });
 
@@ -474,7 +828,7 @@ describe('off unless the worker is started with it', () => {
     it('a worker started without it never asks for a detector and says nothing about one', async () => {
         const worker = new VoiceWorker({ port: 0, host: '127.0.0.1', maxLanes: 1, maxSessionsPerConnection: 1, ice: { iceServers: [] } });
         expect(worker.stats().speechObserver).toBeUndefined();
-        expect(worker.sessionHost(() => undefined, 's1')).not.toHaveProperty('observer');
+        expect(worker.sessionHost(() => undefined, 's1')).not.toHaveProperty('observerFor');
         expect(Object.keys(worker.counters.snapshot()).some((name) => name.startsWith('observer_'))).toBe(false);
         await worker.close();
     });
@@ -538,17 +892,27 @@ describe('beside a real conversation', () => {
 
         // The observer was given the audio the session was given, and nothing else
         const c = observed.r.worker.counters;
-        expect(c.get('observer_windows')).toBeGreaterThan(20);
-        expect(c.get('observer_windows')).toBeLessThanOrEqual(Math.floor(observed.heard.reduce((a, b) => a + b, 0) / WINDOW));
+        expect(c.get('observer_windows_completed')).toBeGreaterThan(20);
+        expect(c.get('observer_windows_completed')).toBeLessThanOrEqual(Math.floor(observed.heard.reduce((a, b) => a + b, 0) / WINDOW));
         expect(c.get('observer_errors')).toBe(0);
-        expect(observed.r.worker.stats().speechObserver).toMatchObject({ status: 'on', streams: 1 });
+        // Every answer was kept, all of it came over her own connection, and the observer was told once that today's gate heard her
+        expect(c.get('observer_windows_accepted')).toBe(c.get('observer_windows_completed'));
+        expect(c.get('observer_offered_ms_lane')).toBe(observed.heard.reduce((a, b) => a + b, 0) / 16);
+        expect(c.get('observer_accepted_ms_lane')).toBe(c.get('observer_windows_accepted') * 32);
+        expect(c.get('observer_offered_ms_room')).toBe(0);
+        expect(c.get('observer_baseline')).toBe(1);
+        expect(c.get('observer_baseline_stops')).toBe(0);
+        // Her audio stopped a while ago: the bit left over, less than one window, was let go by the clock and nothing of hers is held
+        expect(observed.r.worker.stats().speechObserver).toMatchObject({ status: 'on', streams: 0, queuedMs: 0, lined: 0, callOut: false });
+        expect(c.get('observer_idle_ms')).toBeLessThan(32);
+        expect(c.get('observer_expired_ms')).toBe(0);
+        expect(c.get('observer_streams_ended')).toBe(1);
 
         // The bot server closes her connection (she left): nothing of hers stays
         const open = observed.r.toWorker.find((m) => m.type === 'lane.open') as { sessionId: string; participantId: string; epoch: number };
         observed.r.link().send({ type: 'lane.close', sessionId: open.sessionId, participantId: open.participantId, epoch: open.epoch });
         await waitFor('her connection to close', () => observed.r.worker.laneCount() === 0);
         expect(observed.r.worker.stats().speechObserver).toMatchObject({ streams: 0, queuedMs: 0 });
-        expect(c.get('observer_streams_ended')).toBe(1);
         // And the worker without it never had any of this
         expect(Object.keys(plain.r.worker.counters.snapshot()).some((name) => name.startsWith('observer_'))).toBe(false);
     }, 30_000);

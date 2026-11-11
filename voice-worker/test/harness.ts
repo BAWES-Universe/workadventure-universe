@@ -244,7 +244,29 @@ export async function startRig(
         const close = worker.close.bind(worker);
         worker.close = async () => {
             const c = worker.counters;
-            appendFileSync(report, `${JSON.stringify({ loaded: c.get('observer_loaded'), unavailable: c.get('observer_unavailable'), windows: c.get('observer_windows'), streams: c.get('observer_streams'), ended: c.get('observer_streams_ended'), late: c.get('observer_late_discarded'), errors: c.get('observer_errors'), droppedMs: c.get('observer_dropped_ms') })}\n`);
+            appendFileSync(
+                report,
+                `${JSON.stringify({
+                    loaded: c.get('observer_loaded'),
+                    unavailable: c.get('observer_unavailable'),
+                    completed: c.get('observer_windows_completed'),
+                    accepted: c.get('observer_windows_accepted'),
+                    revoked: c.get('observer_windows_revoked'),
+                    stale: c.get('observer_windows_stale'),
+                    expired: c.get('observer_windows_expired'),
+                    failed: c.get('observer_windows_failed'),
+                    streams: c.get('observer_streams'),
+                    ended: c.get('observer_streams_ended'),
+                    errors: c.get('observer_errors'),
+                    timedOut: c.get('observer_timed_out'),
+                    overflowMs: Math.round(c.get('observer_overflow_ms')),
+                    expiredMs: Math.round(c.get('observer_expired_ms')),
+                    refusedAfterClose: c.get('observer_refused_closed'),
+                    baseline: c.get('observer_baseline'),
+                    firings: c.get('observer_firings'),
+                    agree: c.get('observer_agree'),
+                })}\n`
+            );
             await close();
         };
     }

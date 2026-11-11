@@ -278,27 +278,29 @@ md.push('### All speech together (report half)', '');
     table(['detector', 'clips', 'fired on background', 'VALID', 'EARLY only', 'NONE', 'newly missed (baseline VALID, this not VALID)', 'from distinct recordings', 'newly missed, lenient (baseline VALID or EARLY, this NONE)', 'newly caught', 'delay p50 ms', 'p95', 'max'], rows);
 }
 md.push(
-    '### Delay where the estimated onset can be believed',
+    '### Delay on the filtered subset, beside the aggregate',
     '',
-    'A single spoken word does not last 0.7 s. Where the energy estimate says a one-word recording is "speech" for longer than that, the estimate is the whole noisy file, its "onset" is the start of the file and not the word, and a delay measured from it says nothing about either detector. This rule looks only at the recording, not at any detector. Sentences are all kept.',
+    'The filter, exactly: a one-word command clip is dropped when its estimated speech span (the energy estimate\'s offset minus its onset) is longer than 700 ms. Every sentence clip is kept. Nothing else is filtered. It looks only at the recording, never at what either detector did, and is applied to both detectors alike.',
+    '',
+    'Why 700 ms: a single spoken word does not last that long, so a longer "speech" span on a one-word recording means the estimate took in the whole noisy file and its "onset" is the start of the file, not the word. The rule was written after the first results showed the aggregate p95 was made by such clips, so it is a correction made after the fact, not a pre-registered one. Both figures are therefore reported together, and neither replaces the other: the aggregate (all clips) is in the tables above and in the first row below.',
     ''
 );
 {
     const rows: (string | number)[][] = [];
     for (const set of ['en-command', 'ar-command', 'en-sentence']) {
-        for (const [name, keep] of [['estimate believable', (r: Raw) => set === 'en-sentence' || r.offset! - r.onset! <= 0.7], ['estimate is the whole file', (r: Raw) => set !== 'en-sentence' && r.offset! - r.onset! > 0.7]] as const) {
+        for (const [name, keep] of [['kept: a sentence, or a command with span <= 700 ms', (r: Raw) => set === 'en-sentence' || r.offset! - r.onset! <= 0.7], ['dropped: a command with span > 700 ms', (r: Raw) => set !== 'en-sentence' && r.offset! - r.onset! > 0.7]] as const) {
             for (const det of [BASE, FROZEN_RULE]) {
                 const s = speechStats('report', det, (r) => r.set === set && keep(r));
                 if (s.n) rows.push([set, name, det, s.n, s.valid, s.p50, s.p95, s.max, share(s.within400, s.valid)]);
             }
         }
     }
-    table(['set', 'onset', 'detector', 'clips', 'VALID', 'delay p50 ms', 'p95', 'max', 'VALID within 400 ms'], rows);
-    const believable = (r: Raw): boolean => r.set === 'en-sentence' || r.offset! - r.onset! <= 0.7;
-    table(['all sets, estimate believable', 'clips', 'VALID', 'delay p50 ms', 'p95', 'max', 'VALID within 400 ms'], [BASE, FROZEN_RULE].map((det) => {
-        const s = speechStats('report', det, believable);
-        return [det, s.n, s.valid, s.p50, s.p95, s.max, share(s.within400, s.valid)];
-    }));
+    table(['set', 'filter', 'detector', 'clips', 'VALID', 'delay p50 ms', 'p95', 'max', 'VALID within 400 ms'], rows);
+    const kept = (r: Raw): boolean => r.set === 'en-sentence' || r.offset! - r.onset! <= 0.7;
+    table(['all sets', 'detector', 'clips', 'VALID', 'delay p50 ms', 'p95', 'max', 'VALID within 400 ms'], [['aggregate: every clip', () => true] as const, ['filtered subset: sentences, and commands with span <= 700 ms', kept] as const].flatMap(([name, keep]) => [BASE, FROZEN_RULE].map((det) => {
+        const s = speechStats('report', det, keep);
+        return [name, det, s.n, s.valid, s.p50, s.p95, s.max, share(s.within400, s.valid)];
+    })));
 }
 md.push('### Short commands by word (all conditions)', '');
 {
@@ -349,7 +351,7 @@ if (adjudged.size) {
     md.push(
         '## The same scores after the second opinion',
         '',
-        'ADJUDICATION.md says which recordings were looked at, by what, and the fixed rules for each label. It is a machine opinion (Whisper and a second voice detector), not a person listening. The scores above are the originals and stay as they are. Below, the same rule is applied to both detectors.',
+        'ADJUDICATION.md says which recordings were looked at, by what, and the fixed rules for each label. It is a machine opinion (Whisper and a second voice detector), not a person listening, so every figure below is provisional. The scores above are the originals, stay as they are, and remain the primary scores. Below, the same rule is applied to both detectors.',
         '',
         `### Speech: recordings labelled "no speech" taken out (${reportSources('speech', undefined, 'no speech')} on the report half; ${reportSources('speech', undefined, 'uncertain')} "uncertain" ones stay in as speech)`,
         ''
@@ -366,9 +368,9 @@ if (adjudged.size) {
     );
     const rows: (string | number)[][] = [];
     for (const [name, keep] of [
-        ['as labelled by the source (original)', () => true],
-        ['without "background voice" recordings', (r: Raw) => label(r) !== 'background voice'],
-        ['also without "uncertain" recordings', (r: Raw) => label(r) !== 'background voice' && label(r) !== 'uncertain'],
+        ['as labelled by the source (original, the primary score)', () => true],
+        ['sensitivity: without "background voice" recordings', (r: Raw) => label(r) !== 'background voice'],
+        ['sensitivity: also without "uncertain" recordings', (r: Raw) => label(r) !== 'background voice' && label(r) !== 'uncertain'],
     ] as const) {
         for (const det of [BASE, FROZEN_RULE]) {
             const s = noiseStats('report', det, (r) => r.label === 'nonspeech' && keep(r));
