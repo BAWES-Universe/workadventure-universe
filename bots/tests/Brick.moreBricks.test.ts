@@ -508,3 +508,16 @@ describe('POST /api/bots/:botId/brick-changed and /brick-offer', () => {
         expect(adminApiService.answerBrickOffer).not.toHaveBeenCalled();
     });
 });
+
+describe('Making a Brick as a step of the answer', () => {
+    it('reads "Made Recipe Brick" with what it is for under it, and a suggestion is never a step', async () => {
+        const { describeStep, showsAsStep, summaryOf } = await import('../ai/ToolSteps');
+        const step = describeStep({ id: 'c1', name: 'make_brick', arguments: JSON.stringify({ name: 'Recipe Brick', line: "Keeps your mum's recipes", instructions: 'You keep recipes.' }) });
+        expect(step).toMatchObject({ doing: 'Making Recipe Brick', done: 'Made Recipe Brick', detail: "keeps your mum's recipes", kind: 'write' });
+        expect(showsAsStep('make_brick', false)).toBe(true);
+        expect(showsAsStep('suggest_brick', false)).toBe(false);
+        const other = describeStep({ id: 'c2', name: 'make_brick', arguments: JSON.stringify({ name: 'Trip Brick', line: 'Plans trips' }) });
+        expect(summaryOf([{ ...step, state: 'done' }])).toBe('Made Recipe Brick');
+        expect(summaryOf([{ ...step, state: 'done' }, { ...other, state: 'done' }])).toContain('Made Trip Brick');
+    });
+});
