@@ -657,17 +657,22 @@ export class SpeechObserver {
     }
 
     /**
-     * The worker is closing: everything waiting is thrown away at once. It waits for the detector no longer than
-     * `disposeTimeoutMs`. A call still in the air by then is left to finish by itself and the detector is let go when it
-     * does (never while it is being used); the process is on its way out either way.
+     * The worker is closing: everything waiting is thrown away at once. Closing then waits no longer than
+     * `disposeTimeoutMs` in all: for loading, for a call still in the air, and for the detector to be let go, together
+     * under one limit, not one after the other. What is not done by then carries on by itself, in the same order: the
+     * detector is let go only once no call to it is in the air, and only once. Nothing new is sent to it after closing
+     * began. The process is on its way out either way.
      */
     async dispose(): Promise<void> {
         if (this.status === 'closed') return;
         this.status = 'closed';
         this.clear('revoked');
         this.owners.clear();
-        await this.within(Promise.all([this.loading, this.pumped, this.outstanding]), this.disposeTimeout);
-        if (this.outstanding) void this.outstanding.then(() => this.release());
-        else await this.release();
+        const cleanup = (async () => {
+            await Promise.allSettled([this.loading, this.pumped]);
+            while (this.outstanding) await this.outstanding;
+            await this.release();
+        })();
+        await this.within(cleanup, this.disposeTimeout);
     }
 }

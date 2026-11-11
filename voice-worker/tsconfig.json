@@ -11,5 +11,5 @@
     "resolveJsonModule": true,
     "types": ["node"]
   },
-  "include": ["src", "test", "speech-observer/check.mts"]
+  "include": ["src", "test", "speech-observer/check.mts", "speech-observer/checkDetector.mts"]
 }

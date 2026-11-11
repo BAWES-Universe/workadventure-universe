@@ -537,6 +537,75 @@ describe('by the clock', () => {
         expect(o.counters.get('observer_windows_revoked')).toBe(1);
     });
 
+    it('closing the worker is not held up by a detector that never finishes letting go', async () => {
+        const o = observing('held');
+        let releases = 0;
+        o.model.release = () => {
+            releases++;
+            return new Promise<void>(() => undefined);
+        };
+        await o.observer.ready();
+        let closed = false;
+        const closing = o.observer.dispose().then(() => (closed = true));
+        await settle();
+        // Nothing was in the air, so letting go began at once: once
+        expect(releases).toBe(1);
+        vi.advanceTimersByTime(1999);
+        await settle();
+        expect(closed).toBe(false);
+        vi.advanceTimersByTime(1);
+        await closing;
+        expect(closed).toBe(true);
+        // Closing again, or a minute later, starts nothing more
+        await o.observer.dispose();
+        vi.advanceTimersByTime(60_000);
+        await settle();
+        expect(releases).toBe(1);
+        expect(o.calls.length).toBe(0);
+    });
+
+    it('closing has one limit in all: a slow last call uses up part of it, and letting go only gets what is left', async () => {
+        const o = observing('held', { inferenceTimeoutMs: 60_000 });
+        let releases = 0;
+        let releaseStartedAt = -1;
+        let letGo!: () => void;
+        o.model.release = () => {
+            releases++;
+            releaseStartedAt = performance.now();
+            return new Promise<void>((resolve) => (letGo = resolve));
+        };
+        await o.observer.ready();
+        o.feed(64);
+        await settle();
+        expect(o.calls.length).toBe(1);
+        const begun = performance.now();
+        let closed = false;
+        const closing = o.observer.dispose().then(() => (closed = true));
+        // The call in the air answers after 1,500 ms: only then is the detector let go
+        vi.advanceTimersByTime(1500);
+        await settle();
+        expect(releases).toBe(0);
+        o.calls[0].answer();
+        await settle();
+        expect(releases).toBe(1);
+        expect(releaseStartedAt - begun).toBe(1500);
+        // Letting go hangs. Closing ends at 2,000 ms from when it began, not 2,000 ms after letting go began
+        vi.advanceTimersByTime(499);
+        await settle();
+        expect(closed).toBe(false);
+        vi.advanceTimersByTime(1);
+        await closing;
+        expect(closed).toBe(true);
+        // When letting go does end, late, nothing else happens: no second release, no new call, no verdict
+        letGo();
+        await settle();
+        vi.advanceTimersByTime(10_000);
+        await settle();
+        expect(releases).toBe(1);
+        expect(o.calls.length).toBe(1);
+        expect(o.verdicts).toEqual([]);
+    });
+
     it('a detector that never finishes loading leaves the observer off at the deadline, and is let go at once if it turns up later', async () => {
         const d = detector();
         let arrive!: (model: DetectorModel) => void;

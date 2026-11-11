@@ -8,7 +8,7 @@ worker's own dependencies so that nothing in the worker's `package.json` or lock
 | `silero_vad_v6.2.3.onnx` | Silero VAD v6.2.3, `src/silero_vad/data/silero_vad.onnx` (MIT). sha256 `1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3`. The loader refuses any other file, and the image build checks it too. |
 | `package.json`, `package-lock.json` | `onnxruntime-node` pinned to exactly 1.31.1 (MIT), with the registry's integrity hashes. Installed with `--ignore-scripts`: its install script (which fetches GPU libraries) never runs. |
 | `licenses/` | The licences of both, and ONNX Runtime's third-party notices. |
-| `check.mts` | Checks the detector as a built image holds it. |
+| `check.mts`, `checkDetector.mts` | Checks the detector as a built image holds it. Prints one line of JSON and exits with 1 when the check fails, so it can be a build or deployment step. |
 
 ## Off unless switched on
 
