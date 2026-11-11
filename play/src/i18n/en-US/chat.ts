@@ -994,6 +994,7 @@ const chat: BaseTranslation = {
         cantOpen: "Can't open this",
         cantOpenHelp:
             "It may have been removed, or you may not be allowed to open it from here. Open it from the chat it was made in.",
+        keptPrivate: "Its owner keeps this one private.",
         cantReach: "Couldn't reach it",
         cantReachHelp: "Check your connection and try again.",
         tryAgain: "Try again",
@@ -1013,6 +1014,8 @@ const chat: BaseTranslation = {
         whoCanOpen: "Who can open it",
         openChat: "People in this chat",
         justYou: "Just you",
+        justYouOnly: "Nobody else can open it, here or by link",
+        justYouNote: "Its card stays in the chat. For everyone else it says it can't be opened.",
         justYouDm: "It stays in your chat with {maker}",
         justYouNearby: "You're not in the nearby chat it was made in",
         openLink: "Anyone with the link",

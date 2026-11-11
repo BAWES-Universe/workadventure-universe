@@ -34,9 +34,20 @@ const VersionView = z.object({
     askedByName: z.string().nullable(),
     sizeBytes: z.number(),
     createdAt: z.string(),
-    url: z.string(),
+    // Null for a "Just you" artifact (game #1994) everywhere but in the answer to its owner opening it
+    url: z.string().nullable(),
 });
 export type ArtifactVersionView = z.infer<typeof VersionView>;
+
+/**
+ * The version an opening shows. The address of a "Just you" artifact is for that one opening and stops: Orbit says when
+ * (`urlExpiresAt`), and names the songs, pictures and videos beside the page (`media`), which a page left open goes on
+ * fetching from that address.
+ */
+const OpenedVersionAnswer = VersionView.extend({
+    urlExpiresAt: z.string().optional(),
+    media: z.array(z.unknown()).optional(),
+});
 
 const ArtifactView = z.object({
     id: z.string(),
@@ -61,13 +72,27 @@ const Rights = z.object({
 });
 
 const Opened = z.object({ artifact: ArtifactView, version: VersionView, you: Rights });
-export type OpenedArtifact = z.infer<typeof Opened>;
+const OpenedAnswer = Opened.extend({ version: OpenedVersionAnswer });
+
+/** What the browser is told about the address of the version on show, when that address stops (a "Just you" one). */
+export interface ArtifactAddressLife {
+    /**
+     * How long the address goes on working, from now. A length of time and not a moment, so that a browser whose clock
+     * is wrong still asks for a new one in time.
+     */
+    urlLifeMs?: number;
+    /** The page has songs, pictures or videos beside it, which it may fetch from that address at any moment. */
+    urlHasMedia?: boolean;
+}
+export type OpenedArtifact = Omit<z.infer<typeof Opened>, "version"> & {
+    version: ArtifactVersionView & ArtifactAddressLife;
+};
 
 const Shared = z.object({ artifact: ArtifactView });
 export type SharedArtifact = z.infer<typeof Shared>;
 
-/** Who can open it: people in the chat it was made in, or anyone with the link. */
-export const OPEN_SCOPES = ["chat", "link"] as const;
+/** Who can open it: just its owner (game #1994), people in the chat it was made in, or anyone with the link. */
+export const OPEN_SCOPES = ["me", "chat", "link"] as const;
 /** Who can ask for changes: only its owner, or everyone who can open it, in its chat. */
 export const CHANGE_SCOPES = ["owner", "openers"] as const;
 
@@ -100,6 +125,12 @@ export type ArtifactVersionCode = z.infer<typeof VersionCode>;
 
 const OrbitErrorBody = z.object({ error: z.string() });
 
+/**
+ * Orbit cannot keep files private as it is set up (it does not know its own address). Not a breakdown: the browser is
+ * told which, so "Just you" is never shown as saved when it was not.
+ */
+const PRIVATE_FILES_OFF = "private_files_not_configured";
+
 interface HttpClient {
     post(url: string, body: unknown, config: AxiosRequestConfig): Promise<{ data: unknown }>;
     put(url: string, body: unknown, config: AxiosRequestConfig): Promise<{ data: unknown }>;
@@ -114,7 +145,8 @@ export class ArtifactsService {
     constructor(
         private readonly baseUrl: string | undefined,
         private readonly token: string | undefined,
-        private readonly http: HttpClient = axios
+        private readonly http: HttpClient = axios,
+        private readonly now: () => number = Date.now
     ) {}
 
     isEnabled(): boolean {
@@ -122,8 +154,24 @@ export class ArtifactsService {
     }
 
     /** What the box opens on (the latest version unless one is asked for) and what this person may do with it. */
-    open(id: string, viewer: ArtifactViewer, version?: number): Promise<OpenedArtifact> {
-        return this.call(`/api/artifacts/${encodeURIComponent(id)}/open`, { viewer, version }, Opened);
+    async open(id: string, viewer: ArtifactViewer, version?: number): Promise<OpenedArtifact> {
+        const answer = await this.call(
+            `/api/artifacts/${encodeURIComponent(id)}/open`,
+            { viewer, version },
+            OpenedAnswer
+        );
+        const { urlExpiresAt, media, ...shown } = answer.version;
+        // An address that never stops (every artifact but a "Just you" one) has no life to tell
+        const life = shown.url !== null && urlExpiresAt ? Date.parse(urlExpiresAt) - this.now() : NaN;
+        return {
+            ...answer,
+            version: {
+                ...shown,
+                ...(Number.isFinite(life) && life > 0
+                    ? { urlLifeMs: life, ...(media?.length ? { urlHasMedia: true } : {}) }
+                    : {}),
+            },
+        };
     }
 
     async listVersions(id: string, viewer: ArtifactViewer): Promise<ArtifactVersionView[]> {
@@ -177,9 +225,14 @@ export class ArtifactsService {
             });
             return answer.parse(response.data);
         } catch (e) {
-            if (isAxiosError(e) && e.response && e.response.status >= 400 && e.response.status < 500) {
+            if (isAxiosError(e) && e.response) {
                 const error = OrbitErrorBody.safeParse(e.response.data);
-                throw new ArtifactsError(error.success ? error.data.error : "refused", e.response.status);
+                if (e.response.status >= 400 && e.response.status < 500) {
+                    throw new ArtifactsError(error.success ? error.data.error : "refused", e.response.status);
+                }
+                if (error.success && error.data.error === PRIVATE_FILES_OFF) {
+                    throw new ArtifactsError(PRIVATE_FILES_OFF, e.response.status);
+                }
             }
             throw e;
         }

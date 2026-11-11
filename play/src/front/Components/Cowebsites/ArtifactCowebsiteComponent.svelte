@@ -48,6 +48,21 @@
     const MAX_CODE_LINES = 4000;
     /** How long Copy link reads "Link copied", as on the invite bar. */
     const COPIED_FOR_MS = 3000;
+    /** A "Just you" address is asked for again this long before it stops, or a tenth of its life if that is less. */
+    const RENEW_LEAD_MS = 60_000;
+    /** Never asked for again sooner than this, however short its life. */
+    const RENEW_MIN_WAIT_MS = 10_000;
+    /** A new address that could not be fetched is asked for again after this long. */
+    const RENEW_RETRY_MS = 30_000;
+    /** The longest wait a browser's timer takes. */
+    const MAX_TIMER_MS = 2 ** 31 - 1;
+    /** How the artifacts' server says its owner keeps one to themselves, to someone in the chat it was made in. */
+    const KEPT_PRIVATE = "kept_private";
+    /**
+     * How it says "Just you" cannot be had from it as it is: it is set up without what private files need, or it does not
+     * know the choice yet. Nothing changed then.
+     */
+    const NO_PRIVATE_FILES = ["private_files_not_configured", "invalid_open_scope"];
 
     const id = actualCowebsite.artifactId;
     const versionStore = actualCowebsite.version;
@@ -57,7 +72,8 @@
     let panelWidth = 0;
     let panelHeight = 0;
     let phase: "opening" | "ready" | "failed" = "opening";
-    let failure: "gone" | "offline" = "offline";
+    /** `private`: its owner keeps it to themselves ("Just you"), said to someone in the chat it was made in. */
+    let failure: "gone" | "private" | "offline" = "offline";
     let opened: OpenedArtifact | undefined;
     let versions: ArtifactVersionInfo[] | undefined;
     let versionsFailed = false;
@@ -92,10 +108,21 @@
     let attempt = 0;
     let textAttempt = 0;
     let destroyed = false;
+    /**
+     * When the address on show stops working. A "Just you" artifact opens at an address made for that one opening
+     * (game #1994); every other address goes on working, and has none.
+     */
+    let addressEndsAt: number | undefined;
+    let renewTimer: ReturnType<typeof setTimeout> | undefined;
+    /** Counts the times the version on show was opened again: only the answer to the last one is used. */
+    let renewal = 0;
+    /** The address on show has stopped and a new one is on its way: nothing is drawn from the old one meanwhile. */
+    let addressOver = false;
 
     onDestroy(() => {
         destroyed = true;
         if (copiedTimer) clearTimeout(copiedTimer);
+        renewIn(undefined);
     });
 
     $: compact = panelWidth > 0 && panelWidth < COMPACT_WIDTH;
@@ -174,10 +201,16 @@
             });
             // What the window shows is now a concrete version, so a card for it can show as open.
             if ($versionStore !== answer.version.number) versionStore.set(answer.version.number);
+            watchAddress(answer.version);
             phase = "ready";
         } catch (error) {
             if (destroyed || mine !== request) return;
-            failure = error instanceof ArtifactRequestError && error.status === 404 ? "gone" : "offline";
+            failure = failureOf(error);
+            if (failure === "private") {
+                // Its owner made it "Just you" while it was open here: what was showing goes too
+                putAway("private");
+                return;
+            }
             if (opened) {
                 // Another version could not be opened: keep the one showing, and say so.
                 switchFailed = true;
@@ -200,12 +233,98 @@
         }
     }
 
+    function failureOf(error: unknown): "gone" | "private" | "offline" {
+        if (!(error instanceof ArtifactRequestError) || error.status !== 404) return "offline";
+        return error.code === KEPT_PRIVATE ? "private" : "gone";
+    }
+
+    /** This person can no longer open it: what was showing is put away, and the window says why. */
+    function putAway(why: "gone" | "private") {
+        request++;
+        forgetAddress();
+        opened = undefined;
+        shownNumber = undefined;
+        text = undefined;
+        menuOpen = false;
+        shareOpen = false;
+        failure = why;
+        phase = "failed";
+    }
+
     function retry() {
+        forgetAddress();
         opened = undefined;
         shownNumber = undefined;
         textFailed = false;
         phase = "opening";
         attempt++;
+    }
+
+    function forgetAddress() {
+        renewIn(undefined);
+        addressEndsAt = undefined;
+        addressOver = false;
+    }
+
+    /** Opens the version on show again after `wait`, in place of any wait already set; with none, never. */
+    function renewIn(wait: number | undefined) {
+        if (renewTimer) clearTimeout(renewTimer);
+        renewTimer = wait === undefined ? undefined : setTimeout(() => void renewAddress(), wait);
+    }
+
+    // A "Just you" artifact opens at an address made for that one opening, which stops after a while. A page with songs,
+    // pictures or videos beside it goes on fetching them from there, so it is opened again at a new address just before
+    // that. Any other page has all it needs already and is left alone: it is opened again only when its frame is drawn
+    // again, by the game (toggleCode) or, after the address stopped, by the browser (redrawIfStopped).
+    function watchAddress(version: ArtifactVersionInfo) {
+        forgetAddress();
+        const life = version.urlLifeMs;
+        if (version.url === null || life === undefined) return;
+        addressEndsAt = Date.now() + life;
+        if (!version.urlHasMedia) return;
+        const wait = Math.max(RENEW_MIN_WAIT_MS, life - Math.min(RENEW_LEAD_MS, life / 10));
+        if (wait <= MAX_TIMER_MS) renewIn(wait);
+    }
+
+    function addressStopped(): boolean {
+        return addressEndsAt !== undefined && Date.now() >= addressEndsAt;
+    }
+
+    /** The version on show is opened again where it is, quietly: its address stopped, or its files moved. */
+    async function renewAddress() {
+        renewIn(undefined);
+        if (destroyed || shownNumber === undefined) return;
+        const turn = ++renewal;
+        const number = shownNumber;
+        // Dropped when another version came on show meanwhile, it was put away, or it was asked for again
+        const stale = () => destroyed || turn !== renewal || shownNumber !== number;
+        try {
+            const answer = await fetchArtifact(id, actualCowebsite.chat, number);
+            if (stale()) return;
+            opened = answer;
+            watchAddress(answer.version);
+        } catch (error) {
+            if (stale()) return;
+            const why = failureOf(error);
+            if (why === "offline") {
+                console.warn("Could not open an artifact again at a new address", error);
+                renewIn(RENEW_RETRY_MS);
+            } else {
+                putAway(why);
+            }
+        }
+    }
+
+    /** Nothing is drawn from the address in hand any more: the version on show waits for a new one. */
+    function drawFromNewAddress() {
+        addressOver = true;
+        void renewAddress();
+    }
+
+    // The browser draws the frame (or the drawing) again by itself. From an address that has stopped it shows nothing,
+    // so nothing is drawn until it is opened again at a new one.
+    function redrawIfStopped() {
+        if (addressStopped()) drawFromNewAddress();
     }
 
     // The list drops down from the button. On a phone the window sits behind the chat, so the list ends above the chat,
@@ -271,8 +390,10 @@
     }
 
     // Saved at once, one choice at a time: the list shows the choice while it is on its way, and goes back if it fails.
-    function setSharing(change: ArtifactOpenScope) {
+    // `otherwise` is the choice to save instead when "Just you" cannot be had from the artifacts' server as it is.
+    function setSharing(change: ArtifactOpenScope, otherwise?: ArtifactOpenScope) {
         if (!opened || pendingShare || change === opened.artifact.openScope) return;
+        const before = opened.artifact.openScope;
         pendingShare = change;
         shareFailed = false;
         copied = "no";
@@ -280,23 +401,37 @@
             (artifact) => {
                 if (destroyed) return;
                 pendingShare = undefined;
-                if (opened) {
-                    opened = {
-                        ...opened,
-                        artifact: {
-                            ...opened.artifact,
-                            openScope: artifact.openScope,
-                        },
-                    };
-                }
+                if (!opened) return;
+                opened = {
+                    ...opened,
+                    artifact: {
+                        ...opened.artifact,
+                        openScope: artifact.openScope,
+                    },
+                };
+                // To or from "Just you" its files move, and the address they had stops: the version on show is opened
+                // again where they are now. A document is drawn from its text, and has no address.
+                if ((before === "me" || artifact.openScope === "me") && kind !== "markdown") void renewAddress();
             },
             (error) => {
-                console.warn("Could not change who can open an artifact", error);
                 if (destroyed) return;
                 pendingShare = undefined;
+                if (otherwise && error instanceof ArtifactRequestError && NO_PRIVATE_FILES.includes(error.code)) {
+                    setSharing(otherwise);
+                    return;
+                }
+                console.warn("Could not change who can open an artifact", error);
                 shareFailed = true;
             }
         );
+    }
+
+    // Away from the chat it was made in, the first choice reads "Just you" for both ways of keeping it: with its chat,
+    // where nobody else is, and to its owner alone. Picked after "Anyone with the link" it keeps the file itself to its
+    // owner, so what the link gave out stops for good, and its line says so. Where that cannot be had, it goes back to
+    // its chat, as before.
+    function pickJustYou() {
+        if (openScope === "link") setSharing("me", "chat");
     }
 
     function copyLink() {
@@ -375,6 +510,9 @@
     function toggleCode() {
         codeOn = !codeOn;
         retryText();
+        // Back from the Code view the game draws the frame again itself. A private address is made for one drawing, and
+        // not every browser keeps what ties a locked frame to it, so the frame is drawn from a new one.
+        if (!codeOn && addressEndsAt !== undefined) drawFromNewAddress();
     }
 
     $: codeLines = text ? codeLinesOf(text.content) : [];
@@ -462,7 +600,7 @@
 
     {#if switchFailed}
         <div class="old-note" role="alert" data-testid="artifactSwitchFailed">
-            <span>{failure === "gone" ? $LL.chat.artifacts.cantOpen() : $LL.chat.artifacts.cantReach()}</span>
+            <span>{failure === "offline" ? $LL.chat.artifacts.cantReach() : $LL.chat.artifacts.cantOpen()}</span>
         </div>
     {/if}
 
@@ -473,11 +611,15 @@
                 <span>{$LL.chat.artifacts.opening()}</span>
             </div>
         {:else if phase === "failed"}
-            <div class="state" role="alert">
+            <div class="state" role="alert" data-testid="artifactFailed" data-failure={failure}>
                 <IconAlertTriangle font-size="28" />
-                <b>{failure === "gone" ? $LL.chat.artifacts.cantOpen() : $LL.chat.artifacts.cantReach()}</b>
+                <b>{failure === "offline" ? $LL.chat.artifacts.cantReach() : $LL.chat.artifacts.cantOpen()}</b>
                 <span
-                    >{failure === "gone" ? $LL.chat.artifacts.cantOpenHelp() : $LL.chat.artifacts.cantReachHelp()}</span
+                    >{failure === "private"
+                        ? $LL.chat.artifacts.keptPrivate()
+                        : failure === "gone"
+                        ? $LL.chat.artifacts.cantOpenHelp()
+                        : $LL.chat.artifacts.cantReachHelp()}</span
                 >
                 {#if failure === "offline"}
                     <button type="button" class="quiet" on:click={retry}
@@ -523,9 +665,18 @@
                         <div class="state" role="status"><IconLoader font-size="28" class="spin" /></div>
                     {/if}
                 </div>
+            {:else if opened.version.url === null || addressOver}
+                <!-- No address to draw it from yet: a new one is on its way. Never from anywhere else. -->
+                <div class="state" role="status"><IconLoader font-size="28" class="spin" /></div>
             {:else if kind === "svg"}
                 <!-- A picture cannot run anything, whatever the drawing holds. -->
-                <img class="drawing" src={opened.version.url} alt={title} referrerpolicy="no-referrer" />
+                <img
+                    class="drawing"
+                    src={opened.version.url}
+                    alt={title}
+                    referrerpolicy="no-referrer"
+                    on:error={redrawIfStopped}
+                />
             {:else}
                 <!-- The locked box: its scripts run, but the page has no origin of its own, no network except common
                      libraries, and no way into the game. The address is outside the game's own. -->
@@ -536,6 +687,7 @@
                     referrerpolicy="no-referrer"
                     allow=""
                     data-testid="artifactFrame"
+                    on:load={redrawIfStopped}
                 />
             {/if}
         {/if}
@@ -551,30 +703,59 @@
             {#if shareOpen}
                 <b class="menu-title" id="artifact-open-scope-{id}">{$LL.chat.artifacts.whoCanOpen()}</b>
                 <div class="choices" role="radiogroup" aria-labelledby="artifact-open-scope-{id}">
-                    <button
-                        type="button"
-                        role="radio"
-                        class="choice"
-                        class:picked={openScope === "chat"}
-                        aria-checked={openScope === "chat"}
-                        disabled={!!pendingShare}
-                        data-testid="artifactOpenChat"
-                        on:click={() => setSharing("chat")}
-                    >
-                        {#if inItsChat}
+                    {#if inItsChat}
+                        <button
+                            type="button"
+                            role="radio"
+                            class="choice"
+                            class:picked={openScope === "me"}
+                            aria-checked={openScope === "me"}
+                            disabled={!!pendingShare}
+                            data-testid="artifactOpenMe"
+                            on:click={() => setSharing("me")}
+                        >
+                            <span class="menu-text"
+                                ><b>{$LL.chat.artifacts.justYou()}</b><small>{$LL.chat.artifacts.justYouOnly()}</small
+                                ></span
+                            >
+                            <span class="radio" />
+                        </button>
+                        <button
+                            type="button"
+                            role="radio"
+                            class="choice"
+                            class:picked={openScope === "chat"}
+                            aria-checked={openScope === "chat"}
+                            disabled={!!pendingShare}
+                            data-testid="artifactOpenChat"
+                            on:click={() => setSharing("chat")}
+                        >
                             <span class="menu-text"
                                 ><b>{$LL.chat.artifacts.openChat()}</b>{#if $peopleHere?.length}<small
                                         data-testid="artifactOpenChatPeople">{$peopleHere.join(", ")}</small
                                     >{/if}</span
                             >
-                        {:else}
+                            <span class="radio" />
+                        </button>
+                    {:else}
+                        <button
+                            type="button"
+                            role="radio"
+                            class="choice"
+                            class:picked={openScope !== "link"}
+                            aria-checked={openScope !== "link"}
+                            disabled={!!pendingShare}
+                            data-testid="artifactOpenChat"
+                            on:click={pickJustYou}
+                        >
                             <span class="menu-text" data-testid="artifactOpenJustYou"
-                                ><b>{$LL.chat.artifacts.justYou()}</b>{#if justYouHelp}<small>{justYouHelp}</small
-                                    >{/if}</span
+                                ><b>{$LL.chat.artifacts.justYou()}</b>{#if openScope !== "chat"}<small
+                                        data-testid="artifactOpenJustYouOnly">{$LL.chat.artifacts.justYouOnly()}</small
+                                    >{:else if justYouHelp}<small>{justYouHelp}</small>{/if}</span
                             >
-                        {/if}
-                        <span class="radio" />
-                    </button>
+                            <span class="radio" />
+                        </button>
+                    {/if}
                     <button
                         type="button"
                         role="radio"
@@ -631,6 +812,8 @@
                     {/if}
                 {:else if openScope === "chat" && inItsChat}
                     <p class="menu-note">{$LL.chat.artifacts.openChatNote()}</p>
+                {:else if openScope === "me" && inItsChat}
+                    <p class="menu-note" data-testid="artifactJustYouNote">{$LL.chat.artifacts.justYouNote()}</p>
                 {/if}
             {:else}
                 <b class="menu-title">{$LL.chat.artifacts.versions()}</b>
