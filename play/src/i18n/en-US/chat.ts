@@ -973,6 +973,9 @@ const chat: BaseTranslation = {
         discard: "Discard",
         said: "Said out loud",
         stopped: "Stopped when you spoke",
+        // A reply a voice bot wrote for this person alone (#1993), when its voice would have reached someone else too
+        unsaidForOthers: "Not said out loud, so nobody else hears it",
+        stoppedForOthers: "Stopped, so nobody else hears it",
     },
     artifacts: {
         kindApp: "Mini app",

@@ -76,6 +76,7 @@
     import { openDirectChatRoom } from "../../Utils";
     import Message from "./Message.svelte";
     import StoppedBySpeechNote from "./StoppedBySpeechNote.svelte";
+    import KeptQuietNote from "./KeptQuietNote.svelte";
     import {
         firstShowingIndex,
         keyboardClosed,
@@ -1315,6 +1316,9 @@
                             />
                             {#if entry.message.stoppedBySpeech}
                                 <StoppedBySpeechNote stopped={entry.message.stoppedBySpeech} />
+                            {/if}
+                            {#if entry.message.keptQuiet}
+                                <KeptQuietNote keptQuiet={entry.message.keptQuiet} />
                             {/if}
                             {#if "privateReply" in entry.message && entry.message.privateReply}
                                 <!-- A reply a bot wrote for this person alone, never said aloud (#1658), and the
