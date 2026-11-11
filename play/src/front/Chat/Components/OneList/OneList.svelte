@@ -34,9 +34,15 @@
     import ProximitySessionRow from "../TopRow/ProximitySessionRow.svelte";
     import type { BrickCard } from "../../Bricks/Brick";
     import BrickRow from "../../Bricks/BrickRow.svelte";
-    import { withMyBricks } from "../../Bricks/MyBricksStore";
+    import { myDeletedBrickChatIds, withMyBricks } from "../../Bricks/MyBricksStore";
     import type { OneListEntry } from "./OneListStore";
-    import { ONE_LIST_FREEZE_CONTEXT, OrderFreeze, createOneListStore, freezeWhileHeld } from "./OneListStore";
+    import {
+        ONE_LIST_FREEZE_CONTEXT,
+        OrderFreeze,
+        createOneListStore,
+        directRoomsWith,
+        freezeWhileHeld,
+    } from "./OneListStore";
 
     type ManagedRoom = ChatRoom & ChatRoomMembershipManagement & ChatRoomModeration & ChatRoomNotificationControl;
 
@@ -53,6 +59,12 @@
     export let onOpenSession: (session: ProximitySession<ChatMessage>) => void = () => undefined;
 
     const chat = gameManager.chatConnection;
+    // Area chat rooms have their own row, and the chat of a Brick its owner deleted waits out of sight for Undo (#1996)
+    const hiddenRoomIds: Readable<ReadonlySet<string>> = derived(
+        [areaChatRooms.hiddenRoomIds, chat.directRooms, myDeletedBrickChatIds],
+        ([$area, $direct, $deleted]) =>
+            $deleted.size === 0 ? $area : new Set([...$area, ...directRoomsWith($direct, $deleted)])
+    );
 
     const entries = createOneListStore({
         directRooms: chat.directRooms,
@@ -60,7 +72,7 @@
         invitations: chat.invitations,
         folders: chat.folders,
         // Area chat rooms have their own row under the top row and never show here, even while joining or leaving.
-        hiddenRoomIds: areaChatRooms.hiddenRoomIds,
+        hiddenRoomIds,
         search: chatSearchBarValue,
         extraEntries,
     });

@@ -3,7 +3,7 @@ import type { Readable } from "svelte/store";
 
 /**
  * The cards of a Brick the person closed with X (game #1995): the ways to start under its hello, once per chat, and the
- * ideas under one "what I can do" answer. Kept on this device, so a closed card stays closed after a reload. Only the
+ * ideas under one "what I can do" answer, and (#1996) one suggestion of a Brick. Kept on this device, so a closed card stays closed after a reload. Only the
  * newest few are kept: an old card is long out of sight.
  */
 const STORAGE_KEY = "universe.brick.closedCards";
@@ -38,3 +38,5 @@ export function closeBrickCard(key: string): void {
 
 export const startersCardKey = (roomId: string): string => `starters:${roomId}`;
 export const ideasCardKey = (messageId: string): string => `ideas:${messageId}`;
+/** A Brick's suggestion (#1996): closed with X, "Not now" or "Make it", it never comes back for that message. */
+export const offerCardKey = (messageId: string): string => `offer:${messageId}`;

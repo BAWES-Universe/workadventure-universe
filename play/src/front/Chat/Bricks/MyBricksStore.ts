@@ -2,10 +2,20 @@ import { derived, get, readable, writable } from "svelte/store";
 import type { Readable } from "svelte/store";
 import { localUserStore } from "../../Connection/LocalUserStore";
 import { botApiService } from "../../external-modules/bots/services/BotApiService";
-import type { PictureStore } from "../../Stores/PictureStore";
 import { userIsConnected } from "../../Stores/MenuStore";
 import type { ChatPerson } from "../Stores/ChatPeopleStore";
-import { brickChatId, brickPictureUrl, parseBrickCard, parseBrickCards, type BrickCard } from "./Brick";
+import {
+    brickChatId,
+    parseBrickCard,
+    parseBrickCards,
+    parseDeletedBricks,
+    parseUndoDays,
+    type BrickCard,
+    type DeletedBrickCard,
+} from "./Brick";
+import { brickPicture } from "./BrickLookPicture";
+
+export { brickPicture };
 
 /**
  * The signed-in person's own Bricks (game #1995), as Orbit lists them: the one everyone gets, then the ones they made.
@@ -19,6 +29,14 @@ export const myBricksStore: Readable<BrickCard[] | undefined> = { subscribe: bri
 const settled = writable(false);
 export const myBricksSettled: Readable<boolean> = { subscribe: settled.subscribe };
 
+/** The Bricks the person deleted that can still be brought back (#1996), the one gone soonest first. */
+const deleted = writable<DeletedBrickCard[]>([]);
+export const myDeletedBricksStore: Readable<DeletedBrickCard[]> = { subscribe: deleted.subscribe };
+
+/** How many days a deleted Brick waits, as Orbit last said. Undefined until it did: the page then names no day. */
+const undoDays = writable<number | undefined>(undefined);
+export const brickUndoDays: Readable<number | undefined> = { subscribe: undoDays.subscribe };
+
 let loading: Promise<void> | undefined;
 
 async function load(): Promise<void> {
@@ -27,11 +45,12 @@ async function load(): Promise<void> {
     const own = (await botApiService.ensureMyBrick()) as { brick?: unknown } | null;
     const first = parseBrickCard(own?.brick);
     // The Bricks they made come with the list; when it can't be read, the one everyone gets still shows.
-    const listed = await botApiService
-        .listMyBricks()
-        .then(parseBrickCards)
-        .catch(() => undefined);
-    bricks.set(listed ?? (first ? [first] : []));
+    const list = await botApiService.listMyBricks().catch(() => undefined);
+    bricks.set(list === undefined ? (first ? [first] : []) : parseBrickCards(list));
+    if (list !== undefined) {
+        deleted.set(parseDeletedBricks(list));
+        undoDays.set(parseUndoDays(list));
+    }
 }
 
 /**
@@ -74,23 +93,78 @@ export async function setMyBrickEnabled(brickId: string, enabled: boolean): Prom
     }
 }
 
+/**
+ * Makes another Brick (#1996): New Brick on the Bricks page. It is in the list, and so in Chats, as soon as Orbit made
+ * it. Undefined when Orbit refused or could not be reached: nothing was made.
+ */
+export async function makeMyBrick(name: string, look: string): Promise<BrickCard | undefined> {
+    try {
+        const made = parseBrickCard(
+            ((await botApiService.makeMyBrick({ name, characterTextureId: look })) as { brick?: unknown })?.brick
+        );
+        if (!made) return undefined;
+        bricks.update((list) => [...(list ?? []).filter((brick) => brick.id !== made.id), made]);
+        return made;
+    } catch (error) {
+        console.warn("Could not make a Brick", error);
+        return undefined;
+    }
+}
+
+/**
+ * Deletes one of the person's Bricks (#1996). It leaves the list and Chats at once and waits under Deleted, where Undo
+ * brings it back. False when Orbit refused: the Brick is still there.
+ */
+export async function deleteMyBrick(brickId: string): Promise<boolean> {
+    try {
+        const answer = (await botApiService.deleteMyBrick(brickId)) as { brick?: unknown };
+        const gone = parseDeletedBricks({ deleted: [answer?.brick] })[0];
+        bricks.update((list) => list?.filter((brick) => brick.id !== brickId));
+        if (gone) deleted.update((list) => [...list.filter((brick) => brick.id !== brickId), gone]);
+        // The bot server stops the Brick now, not within the minute
+        await botApiService.tellBrickChanged(brickId);
+        // The answer says the Brick but not always the day: the list does
+        if (!gone) loadMyBricks().catch((error: unknown) => console.warn(error));
+        return true;
+    } catch (error) {
+        console.warn("Could not delete a Brick", error);
+        return false;
+    }
+}
+
+/** Brings a deleted Brick back (#1996), with its chat and what it remembers. False when it could not be. */
+export async function undoMyBrick(brickId: string): Promise<boolean> {
+    try {
+        const back = parseBrickCard(((await botApiService.undoMyBrick(brickId)) as { brick?: unknown })?.brick);
+        deleted.update((list) => list.filter((brick) => brick.id !== brickId));
+        if (back) bricks.update((list) => [...(list ?? []).filter((brick) => brick.id !== back.id), back]);
+        await botApiService.tellBrickChanged(brickId);
+        if (!back) loadMyBricks().catch((error: unknown) => console.warn(error));
+        return true;
+    } catch (error) {
+        console.warn("Could not bring a Brick back", error);
+        return false;
+    }
+}
+
 /** For tests and for a person who signs out without a reload. */
 export function forgetMyBricks(): void {
     bricks.set(undefined);
+    deleted.set([]);
+    undoDays.set(undefined);
     settled.set(false);
 }
 
-/** One picture store per picture, so a list that reads it again does not redraw. */
-const pictures = new Map<string, PictureStore>();
-export function brickPicture(look: string | null | undefined): PictureStore {
-    const url = brickPictureUrl(look);
-    let picture = pictures.get(url);
-    if (!picture) {
-        picture = readable<string | undefined>(url);
-        pictures.set(url, picture);
+/** The chat addresses of the Bricks that wait under Deleted: their chats are out of Chats until Undo. */
+export const myDeletedBrickChatIds: Readable<ReadonlySet<string>> = derived(deleted, ($deleted) => {
+    const myChatId = localUserStore.getChatId();
+    const chatIds = new Set<string>();
+    for (const brick of $deleted) {
+        const chatId = brickChatId(brick.id, myChatId);
+        if (chatId) chatIds.add(chatId);
     }
-    return picture;
-}
+    return chatIds;
+});
 
 /** The person's Bricks by chat address, so the chat knows which of its direct chats are with one of them. */
 export const myBricksByChatId: Readable<Map<string, BrickCard>> = derived(bricks, ($bricks) => {

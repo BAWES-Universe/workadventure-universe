@@ -75,15 +75,26 @@
     import PrivateReplyNote from "../../Bots/PrivateReplyNote.svelte";
     import { STARTER_IDEAS } from "../../Bricks/Brick";
     import {
+        BRICK_OFFER_CARD,
         BRICK_STARTERS_CARD,
+        OFFER_MAKE,
         brickHello,
         brickIdeaWords,
         brickIdeasCard,
+        brickOfferCard,
         brickStartersCard,
     } from "../../Bricks/BrickHello";
+    import BrickMadeLinks from "../../Bricks/BrickMadeLinks.svelte";
+    import { botApiService } from "../../../external-modules/bots/services/BotApiService";
     import { brickHelloMessage } from "../../Bricks/BrickHelloMessage";
-    import { closeBrickCard, closedBrickCards, ideasCardKey, startersCardKey } from "../../Bricks/ClosedBrickCards";
-    import { myBricksByChatId, withMyBricks } from "../../Bricks/MyBricksStore";
+    import {
+        closeBrickCard,
+        closedBrickCards,
+        ideasCardKey,
+        offerCardKey,
+        startersCardKey,
+    } from "../../Bricks/ClosedBrickCards";
+    import { loadMyBricks, myBricksByChatId, myBricksStore, withMyBricks } from "../../Bricks/MyBricksStore";
     import { openDirectChatRoom } from "../../Utils";
     import Message from "./Message.svelte";
     import StoppedBySpeechNote from "./StoppedBySpeechNote.svelte";
@@ -511,13 +522,13 @@
     $: showBrickHello(
         brickChatEmpty && ownBrick && partner
             ? {
-                  key: `${room.id}|${ownBrick.id}|${ownBrick.name}|${$locale}`,
+                  key: `${room.id}|${ownBrick.id}|${ownBrick.name}|${ownBrick.hello ?? ""}|${$locale}`,
                   make: () =>
                       brickHelloMessage(
                           room.id,
                           ownBrick,
                           partner.id,
-                          brickHello(ownBrick.name, $LL, gameManager.getPlayerName()),
+                          brickHello(ownBrick.name, $LL, gameManager.getPlayerName(), ownBrick.hello),
                           new Date()
                       ),
               }
@@ -535,13 +546,33 @@
         ? startersCardKey(room.id)
         : newestMessage?.brickIdeas
         ? ideasCardKey(newestMessage.id)
+        : newestMessage?.brickOffer
+        ? offerCardKey(newestMessage.id)
         : undefined;
+    // A Brick's suggestion (#1996) is a card only while it is the newest message: once the person wrote on, tapped
+    // or closed it, its question stays in the chat as the Brick's words.
+    $: shownOffer =
+        newestMessage?.brickOffer && brickCardKey === offerCardKey(newestMessage.id) ? newestMessage : undefined;
     $: brickCard =
         brickCardKey === undefined || !brickAnswers || shownAsk || $closedBrickCards.has(brickCardKey)
             ? undefined
             : shownHello
             ? brickStartersCard($LL)
+            : shownOffer?.brickOffer
+            ? brickOfferCard(shownOffer.brickOffer, $LL)
             : brickIdeasCard($LL);
+    // A Brick the Brick just made (#1996) is in Chats at once: the list is read again when an answer names one this
+    // device does not know yet.
+    $: newestMade = newestMessage?.brickMade ?? [];
+    $: if (newestMade.some((made) => !($myBricksStore ?? []).some((brick) => brick.id === made.id))) {
+        readBricksOnceFor(newestMessage?.id);
+    }
+    let bricksReadFor: string | undefined;
+    function readBricksOnceFor(messageId: string | undefined) {
+        if (!messageId || bricksReadFor === messageId) return;
+        bricksReadFor = messageId;
+        loadMyBricks().catch((error) => console.error(error));
+    }
     async function tapBrickCard(card: BotAsk, tap: BotAskTap): Promise<boolean> {
         if (tap.action === "close") {
             if (brickCardKey) closeBrickCard(brickCardKey);
@@ -549,6 +580,19 @@
         }
         if (tap.action !== "pick" || !matrixRoom) return false;
         try {
+            if (card.id === BRICK_OFFER_CARD) {
+                const offer = shownOffer?.brickOffer;
+                if (!offer || !ownBrick || !brickCardKey) return false;
+                if (tap.choices[0] === OFFER_MAKE) {
+                    // The person's own words, carrying the Brick the card described: it is made without the AI
+                    await matrixRoom.sendBrickMake($LL.chat.brick.offerMake({ name: offer.name }), offer);
+                } else {
+                    // Kept with their account, so the topic is not suggested again anywhere
+                    await botApiService.declineBrickOffer(ownBrick.id, offer.topic);
+                }
+                closeBrickCard(brickCardKey);
+                return true;
+            }
             if (card.id === BRICK_STARTERS_CARD) {
                 // The person's own words, marked as this starter: the Brick answers it with its fixed ideas
                 await matrixRoom.sendStarter($LL.chat.brick.whatCanYouDo(), STARTER_IDEAS);
@@ -1403,6 +1447,9 @@
                                     onTap={tapAsk}
                                 />
                             {/if}
+                        {:else if shownOffer?.id === entry.message.id && brickCard}
+                            <!-- A Brick's suggestion (#1996) is the card above the message box while it waits there,
+                                 so the chat does not say it twice. -->
                         {:else if entry.message.botStatus}
                             <BotStatusNoteCard note={entry.message.botStatus} />
                         {:else}
@@ -1411,6 +1458,9 @@
                                 message={entry.message}
                                 runStart={place?.runStart ?? true}
                             />
+                            {#if entry.message.brickMade?.length}
+                                <BrickMadeLinks made={entry.message.brickMade} />
+                            {/if}
                             {#if entry.message.stoppedBySpeech}
                                 <StoppedBySpeechNote stopped={entry.message.stoppedBySpeech} />
                             {/if}

@@ -7,9 +7,40 @@ const game = vi.hoisted(() => ({
     getDmStatus: vi.fn<(ids: string[]) => Promise<Record<string, string> | null>>(),
     playerName: "Khalid" as string | null,
 }));
+const looks = vi.hoisted(() => {
+    // A tiny store, made before the modules load: the WOKAs the game offers a bot
+    let value: unknown = null;
+    const subscribers = new Set<(value: unknown) => void>();
+    return {
+        catalog: {
+            subscribe(run: (value: unknown) => void) {
+                subscribers.add(run);
+                run(value);
+                return () => subscribers.delete(run);
+            },
+            set(next: unknown) {
+                value = next;
+                subscribers.forEach((run) => run(value));
+            },
+        },
+        ensure: vi.fn<() => Promise<void>>(() => Promise.resolve()),
+    };
+});
 vi.mock("../../../external-modules/bots/services/BotApiService", () => ({
     botApiService: { getDmStatus: game.getDmStatus },
 }));
+vi.mock("../../../Enum/ComputedConst", () => ({ ABSOLUTE_PUSHER_URL: "http://pusher.test/" }));
+vi.mock("../../../external-modules/bots/stores/BotWokaCatalogStore", () => ({
+    botWokaCatalogStore: looks.catalog,
+    ensureBotWokaCatalog: looks.ensure,
+}));
+vi.mock("../../Stores/StoredWokaStore", async () => {
+    const store = await import("svelte/store");
+    return {
+        storedWokaStore: (textures: { url: string }[]) =>
+            store.readable<string | undefined>(`drawn:${textures[0].url}`),
+    };
+});
 vi.mock("../../../Connection/LocalUserStore", () => ({
     localUserStore: { getChatId: () => "@khalid:chat.test", getLocalUser: () => undefined },
 }));
@@ -43,6 +74,7 @@ const brick = (over: Partial<BrickCard> = {}): BrickCard => ({
     enabled: true,
     isDefault: true,
     createdAt: new Date().toISOString(),
+    hello: null,
     ...over,
 });
 

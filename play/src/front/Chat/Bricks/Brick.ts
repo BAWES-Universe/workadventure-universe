@@ -17,6 +17,14 @@ export interface BrickCard {
     /** The Brick this account got by itself, as opposed to one its owner made. */
     isDefault: boolean;
     createdAt: string;
+    /** Its own first words in an empty chat (#1996); none: the game's hello. */
+    hello: string | null;
+}
+
+/** A Brick its owner deleted (#1996): it waits on the Bricks page with Undo until the day it is gone for good. */
+export interface DeletedBrickCard extends BrickCard {
+    deletedAt: string;
+    goneAt: string;
 }
 
 /** A tap on a starter says which one, beside the words it sends; the bot server answers "ideas" with fixed text. */
@@ -30,7 +38,7 @@ const LINE_MAX = 300;
 
 export function parseBrickCard(value: unknown): BrickCard | undefined {
     if (!value || typeof value !== "object") return undefined;
-    const { id, name, description, characterTextureId, enabled, isDefault, createdAt } = value as Record<
+    const { id, name, description, characterTextureId, enabled, isDefault, createdAt, hello } = value as Record<
         string,
         unknown
     >;
@@ -44,7 +52,36 @@ export function parseBrickCard(value: unknown): BrickCard | undefined {
         enabled: enabled !== false,
         isDefault: isDefault === true,
         createdAt: typeof createdAt === "string" ? createdAt : "",
+        hello: typeof hello === "string" && hello.trim() ? hello.trim().slice(0, LINE_MAX) : null,
     };
+}
+
+/** The deleted Bricks of a list as Orbit sends it (`{ deleted: [...] }`), the one gone soonest first. */
+export function parseDeletedBricks(value: unknown): DeletedBrickCard[] {
+    const list = (value as { deleted?: unknown } | null)?.deleted;
+    if (!Array.isArray(list)) return [];
+    const cards: DeletedBrickCard[] = [];
+    for (const one of list) {
+        const card = parseBrickCard(one);
+        const { deletedAt, goneAt } = (one ?? {}) as Record<string, unknown>;
+        if (!card || typeof goneAt !== "string" || !Number.isFinite(Date.parse(goneAt))) continue;
+        if (cards.some((other) => other.id === card.id)) continue;
+        cards.push({ ...card, deletedAt: typeof deletedAt === "string" ? deletedAt : "", goneAt });
+    }
+    return cards.sort((a, b) => Date.parse(a.goneAt) - Date.parse(b.goneAt));
+}
+
+/** How many days a deleted Brick waits, as Orbit's list says (`undoDays`); undefined when it does not. */
+export function parseUndoDays(value: unknown): number | undefined {
+    const days = (value as { undoDays?: unknown } | null)?.undoDays;
+    return typeof days === "number" && Number.isFinite(days) && days > 0 ? days : undefined;
+}
+
+/** A day as the Bricks page says it ("17 Nov"). Empty for a date that cannot be read. */
+export function shortDay(date: string | number | Date, locale?: string): string {
+    const day = new Date(date);
+    if (Number.isNaN(day.getTime())) return "";
+    return day.toLocaleDateString(locale, { day: "numeric", month: "short" });
 }
 
 /** A list of Bricks as Orbit sends it (`{ bricks: [...] }`); anything else is no Bricks. */
@@ -76,20 +113,118 @@ export function brickChatId(brickId: string, myChatId: string | null | undefined
     return botIdFromChatId(chatId) === brickId ? chatId : undefined;
 }
 
-/** The pictures the game has for a Brick's look. Every Brick is the orange one until more looks arrive (#1996). */
-const PICTURES: Record<string, string> = {
-    "brick-orange": "/static/images/bricks/brick-orange.png",
-};
-const DEFAULT_PICTURE = PICTURES["brick-orange"];
+/** The Brick looks (#1996), in the order New Brick offers them. Orbit keeps the id; the game draws it. */
+export const BRICK_LOOKS = [
+    "brick-orange",
+    "brick-red",
+    "brick-amber",
+    "brick-lime",
+    "brick-green",
+    "brick-teal",
+    "brick-sky",
+    "brick-blue",
+    "brick-violet",
+    "brick-pink",
+    "brick-white",
+    "brick-charcoal",
+] as const;
+export type BrickLook = (typeof BRICK_LOOKS)[number];
+export const DEFAULT_BRICK_LOOK: BrickLook = "brick-orange";
 
-/** The picture of a Brick's look. A look the game has no picture for is drawn as the Brick everyone gets. */
+export function isBrickLook(look: string | null | undefined): look is BrickLook {
+    return typeof look === "string" && (BRICK_LOOKS as readonly string[]).includes(look);
+}
+
+/**
+ * The picture of a Brick look. Anything that is not one (no look, or a WOKA, which has its own pictures) is drawn as
+ * the Brick everyone gets.
+ */
 export function brickPictureUrl(look: string | null | undefined): string {
-    return (look ? PICTURES[look] : undefined) ?? DEFAULT_PICTURE;
+    return `/static/images/bricks/${isBrickLook(look) ? look : DEFAULT_BRICK_LOOK}.png`;
 }
 
 /** Whether a bot's message is the fixed "what I can do" answer (only a bot's own plain message can be). */
 export function readBrickIdeas(sender: string | null | undefined, content: Record<string, unknown>): boolean {
     return botIdFromChatId(sender) !== undefined && content.msgtype === "m.text" && content[BRICK_IDEAS_KEY] === true;
+}
+
+/** On a Brick's answer: the Bricks it made while answering (#1996). The chat shows a line for each, one tap from its chat. */
+export const BRICK_MADE_KEY = "universe.brick_made";
+/** A Brick's suggestion of a Brick for a job that keeps coming back (#1996): its own message, right after an answer. */
+export const BRICK_OFFER_KEY = "universe.brick_offer";
+/** On the person's message that a tap on "Make it" sends: the Brick the card described. */
+export const BRICK_MAKE_KEY = "universe.brick_make";
+
+/** A Brick another Brick made (or found, when one of that name was there) while answering. */
+export interface MadeBrick {
+    id: string;
+    name: string;
+    /** What it is for, in a few words ("keeps your mum's recipes"). */
+    line: string;
+    look: string | null;
+    /** False when it was already there and the answer only points to it. */
+    made: boolean;
+}
+
+const MADE_MAX = 5;
+const text = (value: unknown, max: number): string =>
+    typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, max) : "";
+
+/** The Bricks a bot's message says it made; none for anyone else's message or anything malformed. */
+export function readBrickMade(sender: string | null | undefined, content: Record<string, unknown>): MadeBrick[] {
+    const list = content[BRICK_MADE_KEY];
+    if (botIdFromChatId(sender) === undefined || content.msgtype !== "m.text" || !Array.isArray(list)) return [];
+    const made: MadeBrick[] = [];
+    for (const one of list.slice(0, MADE_MAX)) {
+        if (!one || typeof one !== "object") continue;
+        const { id, name, line, look, made: isNew } = one as Record<string, unknown>;
+        if (typeof id !== "string" || !id || !text(name, NAME_MAX)) continue;
+        if (made.some((other) => other.id === id)) continue;
+        made.push({
+            id,
+            name: text(name, NAME_MAX),
+            line: text(line, LINE_MAX),
+            look: typeof look === "string" && look ? look : null,
+            made: isNew !== false,
+        });
+    }
+    return made;
+}
+
+/** A Brick's suggestion as the card shows it and as "Make it" sends it back. */
+export interface BrickOffer {
+    topic: string;
+    /** The question ("You cook a lot. Want a Brick just for recipes?"). */
+    ask: string;
+    /** The Brick it would make ("Recipe Brick"). */
+    name: string;
+    /** What that Brick does, in a few words ("It keeps your recipes in one place"). */
+    line: string;
+    instructions: string;
+}
+
+const TOPIC_MAX = 60;
+const ASK_MAX = 200;
+const OFFER_LINE_MAX = 120;
+const INSTRUCTIONS_MAX = 2000;
+
+/** The suggestion a bot's message carries; undefined for anyone else's message or one that lacks a part. */
+export function readBrickOffer(
+    sender: string | null | undefined,
+    content: Record<string, unknown>
+): BrickOffer | undefined {
+    const offer = content[BRICK_OFFER_KEY];
+    if (botIdFromChatId(sender) === undefined || content.msgtype !== "m.text") return undefined;
+    if (!offer || typeof offer !== "object") return undefined;
+    const { topic, ask, name, line, instructions } = offer as Record<string, unknown>;
+    const read: BrickOffer = {
+        topic: text(topic, TOPIC_MAX),
+        ask: text(ask, ASK_MAX),
+        name: text(name, NAME_MAX),
+        line: text(line, OFFER_LINE_MAX),
+        instructions: typeof instructions === "string" ? instructions.trim().slice(0, INSTRUCTIONS_MAX) : "",
+    };
+    return read.topic && read.ask && read.name ? read : undefined;
 }
 
 const BOT_WORDS = new Set(["bot", "bots", "brick", "bricks"]);

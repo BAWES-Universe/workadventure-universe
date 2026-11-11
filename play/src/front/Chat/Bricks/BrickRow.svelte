@@ -89,7 +89,7 @@
         </div>
         <div class="flex min-w-0 items-center gap-2 text-xs text-white/60">
             <span class="min-w-0 grow truncate" data-testid="roomRowPreview"
-                >{brickHello(brick.name, $LL, gameManager.getPlayerName())}</span
+                >{brickHello(brick.name, $LL, gameManager.getPlayerName(), brick.hello)}</span
             >
         </div>
     </div>

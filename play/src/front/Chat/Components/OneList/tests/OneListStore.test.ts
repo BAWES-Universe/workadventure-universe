@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { ChatRoom, RoomFolder } from "../../../Connection/ChatConnection";
 import { InvitationClock } from "../OneListOrder";
 import type { OneListEntry } from "../OneListStore";
-import { OrderFreeze, brickEntry, createOneListStore, freezeWhileHeld } from "../OneListStore";
+import { OrderFreeze, brickEntry, createOneListStore, directRoomsWith, freezeWhileHeld } from "../OneListStore";
 
 type FakeRoom = ChatRoom & {
     messagesStore: Writable<readonly unknown[]>;
@@ -415,6 +415,7 @@ describe("the row of a person's own Brick before its chat exists (#1995)", () =>
         enabled: true,
         isDefault: false,
         createdAt: "2026-11-11T10:00:00.000Z",
+        hello: null,
     };
 
     it("is sorted in by when the Brick was made, and is never unread", () => {
@@ -461,5 +462,24 @@ describe("the row of a person's own Brick before its chat exists (#1995)", () =>
         expect(show("bri")).toEqual([]);
         expect(show("sara")).toEqual(["Sara"]);
         stop();
+    });
+});
+
+describe("the chat of a Brick its owner deleted (#1996)", () => {
+    const withMembers = (id: string, ...members: string[]) =>
+        ({ id, members: writable(members.map((member) => ({ id: member }))) } as unknown as ChatRoom);
+    const studio = "@bot_2d9e3f40-3333-4444-8555-b66677778888:chat.test";
+    const rooms = [
+        withMembers("!studio", "@me:chat.test", studio),
+        withMembers("!sara", "@me:chat.test", "@sara:chat.test"),
+        { id: "!bare" } as unknown as ChatRoom,
+    ];
+
+    it("is out of Chats while the Brick waits under Deleted, and nobody else's chat is", () => {
+        expect(directRoomsWith(rooms, new Set([studio]))).toEqual(["!studio"]);
+    });
+
+    it("is back as soon as nothing is deleted", () => {
+        expect(directRoomsWith(rooms, new Set())).toEqual([]);
     });
 });

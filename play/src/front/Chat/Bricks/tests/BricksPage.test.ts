@@ -8,7 +8,30 @@ const game = vi.hoisted(() => ({
     setBrickEnabled: vi.fn<(brickId: string, enabled: boolean) => Promise<unknown>>(),
     openBrickChat: vi.fn<(brickId: string) => Promise<unknown>>(),
     warn: vi.fn<(message: string) => void>(),
+    deleteMyBrick: vi.fn<(brickId: string) => Promise<unknown>>(),
+    undoMyBrick: vi.fn<(brickId: string) => Promise<unknown>>(),
+    tellBrickChanged: vi.fn<(brickId: string) => Promise<void>>(),
+    openModal: vi.fn<(component: unknown) => void>(),
 }));
+const looks = vi.hoisted(() => {
+    // A tiny store, made before the modules load: the WOKAs the game offers a bot
+    let value: unknown = null;
+    const subscribers = new Set<(value: unknown) => void>();
+    return {
+        catalog: {
+            subscribe(run: (value: unknown) => void) {
+                subscribers.add(run);
+                run(value);
+                return () => subscribers.delete(run);
+            },
+            set(next: unknown) {
+                value = next;
+                subscribers.forEach((run) => run(value));
+            },
+        },
+        ensure: vi.fn<() => Promise<void>>(() => Promise.resolve()),
+    };
+});
 // The tests run Svelte's server build, where onMount does nothing; the page reads the Bricks on mount.
 // eslint-disable-next-line svelte/no-svelte-internal
 vi.mock("svelte", async () => await import("svelte/internal"));
@@ -17,8 +40,29 @@ vi.mock("../../../external-modules/bots/services/BotApiService", () => ({
         ensureMyBrick: game.ensureMyBrick,
         listMyBricks: game.listMyBricks,
         setBrickEnabled: game.setBrickEnabled,
+        deleteMyBrick: game.deleteMyBrick,
+        undoMyBrick: game.undoMyBrick,
+        tellBrickChanged: game.tellBrickChanged,
     },
 }));
+vi.mock("../../../Enum/ComputedConst", () => ({ ABSOLUTE_PUSHER_URL: "http://pusher.test/" }));
+vi.mock("../../../external-modules/bots/stores/BotWokaCatalogStore", () => ({
+    botWokaCatalogStore: looks.catalog,
+    ensureBotWokaCatalog: looks.ensure,
+}));
+vi.mock("../../Stores/StoredWokaStore", async () => {
+    const store = await import("svelte/store");
+    return {
+        storedWokaStore: (textures: { url: string }[]) =>
+            store.readable<string | undefined>(`drawn:${textures[0].url}`),
+    };
+});
+vi.mock("svelte-modals", () => ({ openModal: game.openModal, closeModal: vi.fn() }));
+// The dialog has its own tests; here only that New Brick opens it
+vi.mock(
+    "../NewBrickDialog.svelte",
+    async () => await import("../../../external-modules/bots/components/testStub.svelte")
+);
 vi.mock("../../../Connection/LocalUserStore", () => ({ localUserStore: { getChatId: () => "@omar:chat.test" } }));
 vi.mock("../../../Stores/MenuStore", async () => {
     const store = await import("svelte/store");
@@ -59,6 +103,7 @@ const card = (over: Record<string, unknown> = {}) => ({
     enabled: true,
     isDefault: true,
     createdAt: "2026-11-11T10:00:00.000Z",
+    hello: null,
     ...over,
 });
 const made = (over: Record<string, unknown> = {}) =>
@@ -232,5 +277,154 @@ describe("the Bricks page (#1995)", () => {
         await open();
         expect(text()).toContain("You have no Brick.");
         expect(rows()).toHaveLength(0);
+    });
+
+    describe("more Bricks, and deleting one with Undo (#1996)", () => {
+        const STUDIO = "2d9e3f40-3333-4444-8555-b66677778888";
+        const gone = (over: Record<string, unknown> = {}) =>
+            card({
+                id: STUDIO,
+                name: "Studio Brick",
+                description: null,
+                characterTextureId: "brick-violet",
+                isDefault: false,
+                enabled: false,
+                deletedAt: "2026-11-10T09:00:00.000Z",
+                goneAt: "2026-11-17T09:00:00.000Z",
+                ...over,
+            });
+        const click = async (id: string, index = 0) => {
+            target.querySelectorAll<HTMLElement>(`[data-testid="${id}"]`)[index].click();
+            await settle();
+        };
+
+        beforeEach(() => {
+            game.tellBrickChanged.mockResolvedValue(undefined);
+        });
+
+        it("has New Brick on top, which opens the dialog", async () => {
+            await open();
+            expect(byId("bricksNew")?.textContent?.trim()).toBe("New Brick");
+            await click("bricksNew");
+            expect(game.openModal).toHaveBeenCalledTimes(1);
+        });
+
+        it("keeps New Brick for someone whose every Brick is gone", async () => {
+            game.ensureMyBrick.mockResolvedValue({ brick: null, made: false, deleted: true });
+            game.listMyBricks.mockResolvedValue({ bricks: [] });
+            await open();
+            expect(byId("bricksNone")?.textContent).toBe("You have no Brick.");
+            expect(byId("bricksNew")).not.toBeNull();
+        });
+
+        it("lists a deleted Brick under Deleted with the day it is gone for good, and Undo", async () => {
+            game.listMyBricks.mockResolvedValue({ bricks: [card(), made()], deleted: [gone()], undoDays: 7 });
+            await open();
+            expect(sections()).toEqual(["Active · 2", "Deleted · 1"]);
+            const row = byId("bricksDeletedRow");
+            expect(row?.textContent?.replace(/\s+/g, " ").trim()).toMatch(
+                /^Studio Brick Gone for good on (17 Nov|Nov 17) Undo$/
+            );
+            expect(row?.querySelector("img")?.getAttribute("src")).toBe("/static/images/bricks/brick-violet.png");
+            // Nothing to open and nothing to switch on a Brick that waits
+            expect(row?.querySelector('[data-testid="bricksRowSwitch"]')).toBeNull();
+            expect(rows()).toHaveLength(2);
+        });
+
+        it("brings the Brick back with Undo, into the list and out of Deleted", async () => {
+            game.listMyBricks.mockResolvedValue({ bricks: [card()], deleted: [gone()], undoDays: 7 });
+            game.undoMyBrick.mockResolvedValue({ brick: card({ id: STUDIO, name: "Studio Brick", isDefault: false }) });
+            await open();
+            await click("bricksUndo");
+            expect(game.undoMyBrick).toHaveBeenCalledWith(STUDIO);
+            expect(byId("bricksDeletedRow")).toBeNull();
+            expect(byId("bricksDeletedTitle")).toBeNull();
+            expect(rows().some((row) => row.textContent?.includes("Studio Brick"))).toBe(true);
+            expect(game.warn).not.toHaveBeenCalled();
+        });
+
+        it("says so when Undo did not work, and keeps the Brick under Deleted", async () => {
+            game.listMyBricks.mockResolvedValue({ bricks: [card()], deleted: [gone()], undoDays: 7 });
+            game.undoMyBrick.mockRejectedValue(new Error("404"));
+            await open();
+            await click("bricksUndo");
+            expect(game.warn).toHaveBeenCalledWith("Couldn't bring the Brick back. Try again.");
+            expect(byId("bricksDeletedRow")).not.toBeNull();
+        });
+
+        it("opens a Brick's own page from the dots on its row, without opening its chat", async () => {
+            game.listMyBricks.mockResolvedValue({ bricks: [card(), made()], deleted: [], undoDays: 7 });
+            await open();
+            const more = target.querySelectorAll<HTMLElement>('[data-testid="bricksRowMore"]');
+            expect(more[1].getAttribute("aria-label")).toBe("More about Recipe Brick");
+            await click("bricksRowMore", 1);
+            expect(game.openBrickChat).not.toHaveBeenCalled();
+            expect(byId("bricksPage")).toBeNull();
+            expect(byId("brickPage")).not.toBeNull();
+            expect(target.querySelector(".em-title")?.textContent).toBe("Recipe Brick");
+            expect(target.querySelector('[data-testid="edit-panel-back"]')?.getAttribute("aria-label")).toBe(
+                "Back to Bricks"
+            );
+            await click("brickPageChat");
+            expect(game.openBrickChat).toHaveBeenCalledWith(MADE);
+            await click("edit-panel-back");
+            expect(byId("bricksPage")).not.toBeNull();
+        });
+
+        it("asks once before deleting: what goes, what stays, and until when Undo works", async () => {
+            game.listMyBricks.mockResolvedValue({ bricks: [card(), made()], deleted: [], undoDays: 7 });
+            await open();
+            await click("bricksRowMore", 1);
+            expect(byId("brickDeleteAsk")).toBeNull();
+            await click("brickDelete");
+            const ask = byId("brickDeleteAsk")?.textContent?.replace(/\s+/g, " ").trim() ?? "";
+            expect(ask).toContain("Delete Recipe Brick?");
+            expect(ask).toContain("Its chat and what it remembers go. Everything it made stays in Your artifacts.");
+            expect(byId("brickDeleteUndoLine")?.textContent?.trim()).toMatch(
+                /^You can undo this until .+, on the Bricks page\.$/
+            );
+            expect(game.deleteMyBrick).not.toHaveBeenCalled();
+            // Keep puts the question away and deletes nothing
+            await click("brickDeleteKeep");
+            expect(byId("brickDeleteAsk")).toBeNull();
+            expect(game.deleteMyBrick).not.toHaveBeenCalled();
+        });
+
+        it("names no day when Orbit did not say how long a deleted Brick waits", async () => {
+            await open();
+            await click("bricksRowMore", 1);
+            await click("brickDelete");
+            expect(byId("brickDeleteUndoLine")?.textContent?.trim()).toBe("You can undo this on the Bricks page.");
+        });
+
+        it("deletes on Delete Brick and goes back to the list, where the Brick waits under Deleted", async () => {
+            game.listMyBricks.mockResolvedValue({ bricks: [card(), made()], deleted: [], undoDays: 7 });
+            game.deleteMyBrick.mockResolvedValue({
+                brick: made({
+                    enabled: false,
+                    deletedAt: "2026-11-11T18:00:00.000Z",
+                    goneAt: "2026-11-18T18:00:00.000Z",
+                }),
+            });
+            await open();
+            await click("bricksRowMore", 1);
+            await click("brickDelete");
+            await click("brickDeleteConfirm");
+            expect(game.deleteMyBrick).toHaveBeenCalledWith(MADE);
+            expect(game.tellBrickChanged).toHaveBeenCalledWith(MADE);
+            expect(byId("bricksPage")).not.toBeNull();
+            expect(sections()).toEqual(["Active · 1", "Deleted · 1"]);
+            expect(byId("bricksDeletedRow")?.textContent).toContain("Recipe Brick");
+        });
+
+        it("says so and stays on the page when the Brick could not be deleted", async () => {
+            game.deleteMyBrick.mockRejectedValue(new Error("offline"));
+            await open();
+            await click("bricksRowMore", 1);
+            await click("brickDelete");
+            await click("brickDeleteConfirm");
+            expect(game.warn).toHaveBeenCalledWith("Couldn't delete the Brick. Try again.");
+            expect(byId("brickPage")).not.toBeNull();
+        });
     });
 });

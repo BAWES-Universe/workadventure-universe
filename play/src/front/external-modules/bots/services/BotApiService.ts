@@ -1156,6 +1156,51 @@ export class BotApiService {
     }
 
     /**
+     * Makes another Brick for the signed-in person (game #1996): New Brick on their Bricks page. Answers with
+     * `{ brick }`. Throws when Orbit refuses or can't be reached.
+     */
+    async makeMyBrick(brick: { name: string; characterTextureId?: string }): Promise<unknown> {
+        const response = await this.fetch("/api/bricks", { method: "POST", body: JSON.stringify(brick) });
+        return response.json();
+    }
+
+    /** Deletes one of the person's own Bricks: it stops at once and waits under Deleted, with Undo. */
+    async deleteMyBrick(brickId: string): Promise<unknown> {
+        const response = await this.fetch(`/api/bricks/${encodeURIComponent(brickId)}`, { method: "DELETE" });
+        return response.json();
+    }
+
+    /** Brings a deleted Brick back while it still waits. Answers with the Brick as it is now. */
+    async undoMyBrick(brickId: string): Promise<unknown> {
+        const response = await this.fetch(`/api/bricks/${encodeURIComponent(brickId)}/undo`, { method: "POST" });
+        return response.json();
+    }
+
+    /**
+     * Tells the bot server that a Brick was deleted or brought back, so it reads the Brick again now instead of within
+     * the minute. Never throws: without it the change still arrives, a little later.
+     */
+    async tellBrickChanged(brickId: string): Promise<void> {
+        if (!this.botServerUrl) return;
+        try {
+            await this.fetchBotServer(`/api/bots/${encodeURIComponent(brickId)}/brick-changed`, { method: "POST" });
+        } catch (error) {
+            console.warn("Could not tell the bot server about a Brick", error);
+        }
+    }
+
+    /**
+     * "Not now" on a Brick's suggestion (game #1996): kept with the person's account, so the same topic is not
+     * suggested again in any chat or on any device. Throws when it could not be kept.
+     */
+    async declineBrickOffer(brickId: string, topic: string): Promise<void> {
+        await this.fetchBotServer(`/api/bots/${encodeURIComponent(brickId)}/brick-offer`, {
+            method: "POST",
+            body: JSON.stringify({ topic }),
+        });
+    }
+
+    /**
      * The one chat of this person and a bot (game #1995), asked by a device that has no chat with it yet, before it
      * makes one: the bot server answers with the chat they already have, "make it" (one device at a time is told so),
      * or "ask again in a moment". Undefined when it can't say (direct messages off, an older bot server, no answer in

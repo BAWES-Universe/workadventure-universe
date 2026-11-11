@@ -29,6 +29,7 @@ const card = (over: Record<string, unknown> = {}) => ({
     enabled: true,
     isDefault: true,
     createdAt: "2026-11-11T10:00:00.000Z",
+    hello: null,
     ...over,
 });
 

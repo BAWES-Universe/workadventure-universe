@@ -35,6 +35,20 @@ function isBotChat(room: ChatRoom): boolean {
 }
 
 /**
+ * The direct chats with any of these chat addresses (#1996): the chat of a Brick its owner deleted is out of Chats
+ * while the Brick waits under Deleted, and back with Undo. Nothing is removed: the chat is only not listed.
+ */
+export function directRoomsWith(rooms: readonly ChatRoom[], chatIds: ReadonlySet<string>): string[] {
+    if (chatIds.size === 0) return [];
+    return rooms
+        .filter((room) => {
+            const members = (room as Partial<{ members: Readable<{ id: string }[]> }>).members;
+            return members !== undefined && get(members).some((member) => chatIds.has(member.id));
+        })
+        .map((room) => room.id);
+}
+
+/**
  * The row of a person's own Brick before its chat exists (#1995): sorted in by when the Brick was made, never unread.
  * Searching for "Bot" or "Brick" finds it whatever it is named.
  */

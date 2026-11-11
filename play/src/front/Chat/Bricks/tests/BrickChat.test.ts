@@ -62,6 +62,7 @@ const brick = (id: string, name: string): BrickCard => ({
     enabled: true,
     isDefault: id === BRICK,
     createdAt: "2026-11-11T10:00:00.000Z",
+    hello: null,
 });
 
 /** Lets the coalesced look run. */

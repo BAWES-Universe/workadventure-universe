@@ -119,7 +119,7 @@
             ? `${latestMessageSender}: ${latestMessageText}`
             : latestMessageText
         : ownBrick && $messages.length === 0
-        ? brickHello(ownBrick.name, $LL, gameManager.getPlayerName())
+        ? brickHello(ownBrick.name, $LL, gameManager.getPlayerName(), ownBrick.hello)
         : "";
 
     // `lastMessageTimestamp` is a plain getter: read it again whenever the messages change.

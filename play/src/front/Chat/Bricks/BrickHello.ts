@@ -1,6 +1,6 @@
 import type { TranslationFunctions } from "../../../i18n/i18n-types";
 import type { BotAsk } from "../Bots/BotAsk";
-import { STARTER_IDEAS } from "./Brick";
+import { STARTER_IDEAS, type BrickOffer } from "./Brick";
 
 /**
  * The fixed words of a person's own Brick (game #1995): its hello, the ways to start under it, and the ideas under its
@@ -8,8 +8,17 @@ import { STARTER_IDEAS } from "./Brick";
  * or writes. They list only what a Brick can do today; more arrive with the issues that build them.
  */
 
-/** The hello, shown as the Brick's first words while its chat is empty, and as the line under its name in Chats. */
-export function brickHello(brickName: string, ll: TranslationFunctions, personName?: string | null): string {
+/**
+ * The hello, shown as the Brick's first words while its chat is empty, and as the line under its name in Chats. A Brick
+ * that was made with its own first words (#1996) says those.
+ */
+export function brickHello(
+    brickName: string,
+    ll: TranslationFunctions,
+    personName?: string | null,
+    ownHello?: string | null
+): string {
+    if (ownHello?.trim()) return ownHello.trim();
     const name = personName?.trim();
     return name ? ll.chat.brick.hello({ name, brick: brickName }) : ll.chat.brick.helloNoName({ brick: brickName });
 }
@@ -35,6 +44,18 @@ export const BRICK_IDEAS_CARD = "brick.ideas";
 export function brickStartersCard(ll: TranslationFunctions): BotAsk {
     return ownCard(BRICK_STARTERS_CARD, ll.chat.brick.startTitle(), [
         { id: STARTER_IDEAS, label: ll.chat.brick.seeWhatICanDo(), line: ll.chat.brick.seeWhatICanDoLine() },
+    ]);
+}
+
+export const BRICK_OFFER_CARD = "brick.offer";
+export const OFFER_MAKE = "make";
+export const OFFER_NOT_NOW = "not_now";
+
+/** A Brick's suggestion on the question card (#1996): make the Brick it describes, or not now. */
+export function brickOfferCard(offer: BrickOffer, ll: TranslationFunctions): BotAsk {
+    return ownCard(BRICK_OFFER_CARD, offer.ask, [
+        { id: OFFER_MAKE, label: ll.chat.brick.offerMake({ name: offer.name }), line: offer.line },
+        { id: OFFER_NOT_NOW, label: ll.chat.brick.offerNotNow(), line: ll.chat.brick.offerNotNowLine() },
     ]);
 }
 
