@@ -29,6 +29,8 @@ import type { Asker, Outcome } from '../mcp/ToolApprovals';
 export const ROOM_LINK_KEY = 'universe.room_link';
 /** The words of a voice note the bot heard, carried by a notice that points at the note: `{ v: 1, for, state, text }`. */
 export const TRANSCRIPT_KEY = 'universe.transcript';
+/** Marks the one copy, in a direct chat, of an answer its person got in nearby chat with others around (game #1993). */
+export const ANSWERED_NEARBY_KEY = 'universe.answered_nearby';
 
 export interface DmAccessResult {
     allowed: boolean;
@@ -71,6 +73,10 @@ export interface MatrixDmBridgeDeps {
         rememberDmRoom(roomId: string, botId: string): Promise<void>;
         getDmRoomBot(roomId: string): Promise<string | null>;
         forgetDmRoom(roomId: string): Promise<void>;
+        /** The same store, read the other way: the direct chat of a bot and a person (#1993). */
+        rememberDmRoomOf?(botId: string, matrixUserId: string, roomId: string): Promise<void>;
+        getDmRoomOf?(botId: string, matrixUserId: string): Promise<string | null>;
+        forgetDmRoomOf?(botId: string, matrixUserId: string): Promise<void>;
     };
     /** The cards of tools that ask first (#1657). Without it taps are ignored and nothing waits. */
     approvals?: MatrixDmApprovals;
@@ -129,6 +135,12 @@ const TYPING_DELAY_MS = 800;
 /** Matrix drops "typing" after its timeout (30 s), so a long answer renews it. */
 const TYPING_REFRESH_MS = 20 * 1000;
 const ONLY_DIRECT = 'I only take direct messages.';
+/** An answer made in nearby chat waits this long for its person's direct chat to be known, and no more than these at once (#1993). */
+const NEARBY_ANSWER_WAIT_MS = 2 * 60 * 60 * 1000;
+const NEARBY_ANSWERS_PER_CHAT = 10;
+const NEARBY_ANSWERS_MAX = 2000;
+/** How many direct chats are kept by who they are with. */
+const DIRECT_ROOMS_MAX = 5000;
 
 /**
  * Turns Matrix events for bot accounts into replies. A bot joins a direct chat when someone allowed to reach its room
@@ -166,6 +178,14 @@ export class MatrixDmBridge implements MatrixEventHandler {
     private handledEvents = new Set<string>();
     /** Joined members per room, kept current from membership events so a reply needs no extra homeserver call. */
     private roomMembers = new Map<string, Set<string>>();
+    /** By bot and person: the room of their direct chat, so a line for it needs no message from them first (#1993). */
+    private directRooms = new Map<string, string>();
+    /** By bot and person: answers they got in nearby chat that are not in their direct chat yet (#1993). */
+    private nearbyAnswers = new Map<string, { text: string; at: number }[]>();
+    /** Waits before looking again at a chat a person just made from an answer, which the bot may still be joining. */
+    private openedRetryDelaysMs = [3000, 10_000];
+    /** By bot and person: such a chat is being looked at again. */
+    private lookingAgain = new Set<string>();
     /** Bots Orbit last said don't exist: how many times in a row, and when that was last counted. */
     private botNotFound = new Map<string, { inARow: number; at: number }>();
     /** When each chat last got a live answer: a message left there while the bot rested, older than that, is passed. */
@@ -316,6 +336,154 @@ export class MatrixDmBridge implements MatrixEventHandler {
         }
     }
 
+    private static pair(botId: string, matrixUserId: string): string {
+        return `${botId}|${matrixUserId}`;
+    }
+
+    /**
+     * An answer its person got in nearby chat, for them alone (game #1993), is kept once in their direct chat with the
+     * bot, so they find it there and carry on. It is the same words, sent on: no model is asked, nothing is spoken, and
+     * as a notice it rings nobody's phone a second time. While that chat is not known (they never wrote to the bot, or
+     * this server restarted) it waits, and goes when the bot joins the chat, when they write there, or when they open it
+     * from the answer. Never throws.
+     */
+    async keepNearbyAnswer(botId: string, matrixUserId: string, text: string): Promise<void> {
+        try {
+            if (!text.trim() || botIdFromMatrixId(this.config.domain, matrixUserId)) return;
+            const key = MatrixDmBridge.pair(botId, matrixUserId);
+            const now = Date.now();
+            const waiting = (this.nearbyAnswers.get(key) ?? []).filter((answer) => now - answer.at <= NEARBY_ANSWER_WAIT_MS);
+            this.nearbyAnswers.delete(key);
+            this.nearbyAnswers.set(key, [...waiting, { text, at: now }].slice(-NEARBY_ANSWERS_PER_CHAT));
+            if (this.nearbyAnswers.size > NEARBY_ANSWERS_MAX) this.nearbyAnswers.delete(this.nearbyAnswers.keys().next().value!);
+            const roomId = await this.directRoomOf(botId, matrixUserId);
+            if (roomId) await this.sendNearbyAnswers(botId, matrixUserId, roomId);
+        } catch (error: any) {
+            console.warn(`[MatrixDmBridge] Could not keep an answer of bot ${botId} in a direct chat:`, error?.message ?? error);
+        }
+    }
+
+    /**
+     * The person opened their direct chat with the bot from such an answer, and their device says which room it is.
+     * A device's word is not taken for it: the room counts only when it is this bot's and the two of them are alone in
+     * it. A chat they made a moment ago, which the bot is still joining, is looked at again shortly. Never throws.
+     */
+    async openedFromNearby(botId: string, matrixUserId: string, roomId: string, attempt = 0): Promise<void> {
+        const key = MatrixDmBridge.pair(botId, matrixUserId);
+        let again = false;
+        try {
+            if (botIdFromMatrixId(this.config.domain, matrixUserId)) return;
+            // Known already and nothing waits: a second tap asks the homeserver nothing
+            if (!this.nearbyAnswers.has(key) && this.directRooms.get(key) === roomId) return;
+            if (await this.isTheirDirectChat(botId, matrixUserId, roomId)) {
+                await this.noteDirectRoom(botId, matrixUserId, roomId);
+                await this.sendNearbyAnswers(botId, matrixUserId, roomId);
+                return;
+            }
+            // One look at a time for each person, however often they tap, and only while something waits for the chat
+            const delay = this.openedRetryDelaysMs[attempt];
+            if (delay === undefined || this.stopping || !this.nearbyAnswers.has(key) || (attempt === 0 && this.lookingAgain.has(key))) return;
+            again = true;
+            this.lookingAgain.add(key);
+            const timer = setTimeout(() => void this.openedFromNearby(botId, matrixUserId, roomId, attempt + 1), delay);
+            timer.unref?.();
+        } catch (error: any) {
+            console.warn(`[MatrixDmBridge] Could not open a direct chat of bot ${botId} from an answer:`, error?.message ?? error);
+        } finally {
+            if (attempt > 0 && !again) this.lookingAgain.delete(key);
+        }
+    }
+
+    /** Whether this room is the bot's and only the bot and this person are in it. Null when that could not be read. */
+    private async isTheirDirectChat(botId: string, matrixUserId: string, roomId: string): Promise<boolean | null> {
+        let bot: string | null;
+        try {
+            bot = await this.botForRoom(roomId, true);
+        } catch {
+            return null;
+        }
+        if (bot !== botId) return false;
+        const botUserId = this.botUserId(botId);
+        // Asked afresh: who is in the room decides that nobody else reads what goes there
+        const joined = await this.client.getJoinedMembers(botUserId, roomId).catch(() => null);
+        if (!joined) return null;
+        this.roomMembers.set(roomId, new Set(joined));
+        return joined.length === 2 && joined.includes(botUserId) && joined.includes(matrixUserId);
+    }
+
+    private async noteDirectRoom(botId: string, matrixUserId: string, roomId: string): Promise<void> {
+        const key = MatrixDmBridge.pair(botId, matrixUserId);
+        if (this.directRooms.get(key) === roomId) return;
+        this.directRooms.delete(key);
+        this.directRooms.set(key, roomId);
+        if (this.directRooms.size > DIRECT_ROOMS_MAX) this.directRooms.delete(this.directRooms.keys().next().value!);
+        await this.deps.rooms?.rememberDmRoomOf?.(botId, matrixUserId, roomId).catch(() => undefined);
+    }
+
+    /** The direct chat of this bot and this person, when one is known and still theirs alone. */
+    private async directRoomOf(botId: string, matrixUserId: string): Promise<string | null> {
+        const key = MatrixDmBridge.pair(botId, matrixUserId);
+        const roomId = this.directRooms.get(key) ?? (await this.deps.rooms?.getDmRoomOf?.(botId, matrixUserId).catch(() => null)) ?? null;
+        if (!roomId) return null;
+        const theirs = await this.isTheirDirectChat(botId, matrixUserId, roomId);
+        if (theirs) {
+            await this.noteDirectRoom(botId, matrixUserId, roomId);
+            return roomId;
+        }
+        // Not theirs any more (the bot left, or someone joined): forgotten. Unreadable just now: asked again next time
+        if (theirs === false) {
+            if (this.directRooms.get(key) === roomId) this.directRooms.delete(key);
+            await this.deps.rooms?.forgetDmRoomOf?.(botId, matrixUserId).catch(() => undefined);
+        }
+        return null;
+    }
+
+    /**
+     * Sends what waits for this person into this room, which the caller knows to be their direct chat with the bot. Only
+     * someone Orbit says may message the bot gets anything there; when Orbit cannot say, it keeps waiting.
+     */
+    private async sendNearbyAnswers(botId: string, matrixUserId: string, roomId: string): Promise<void> {
+        const key = MatrixDmBridge.pair(botId, matrixUserId);
+        if (!this.nearbyAnswers.has(key)) return;
+        const access = await this.access(botId, matrixUserId);
+        if (accessCheckFailed(access)) return;
+        const botUserId = this.botUserId(botId);
+        // Asked while this waited: someone else may have joined the room meanwhile, and then nothing goes there
+        if (!this.stillTheirs(roomId, botUserId, matrixUserId)) return;
+        const now = Date.now();
+        const due = (this.nearbyAnswers.get(key) ?? []).filter((answer) => now - answer.at <= NEARBY_ANSWER_WAIT_MS);
+        // Taken before anything is sent, so two that come at once never send the same answer twice
+        this.nearbyAnswers.delete(key);
+        if (!mayChat(access)) return;
+        const keepWaiting = (from: number): void => {
+            // The ones that did not go wait on, ahead of any that came meanwhile
+            const later = this.nearbyAnswers.get(key) ?? [];
+            this.nearbyAnswers.delete(key);
+            this.nearbyAnswers.set(key, [...due.slice(from), ...later].slice(-NEARBY_ANSWERS_PER_CHAT));
+        };
+        for (let index = 0; index < due.length; index++) {
+            // Each send waits, so who is in the room is looked at again before every one of them
+            if (!this.stillTheirs(roomId, botUserId, matrixUserId)) return keepWaiting(index);
+            try {
+                await this.client.sendMessage(botUserId, roomId, { msgtype: 'm.notice', body: due[index].text, [ANSWERED_NEARBY_KEY]: true });
+            } catch (error: any) {
+                keepWaiting(index);
+                console.warn(`[MatrixDmBridge] Could not keep an answer of bot ${botId} in ${roomId}:`, error?.message ?? error);
+                return;
+            }
+        }
+    }
+
+    /**
+     * Whether, by what the bot was last told, only the bot and this person are in the room. A room it was told nothing
+     * about counts as theirs: the caller has just read its members, and a membership event is what would say otherwise.
+     */
+    private stillTheirs(roomId: string, botUserId: string, matrixUserId: string): boolean {
+        const members = this.roomMembers.get(roomId);
+        if (!members) return true;
+        return members.size === 2 && members.has(botUserId) && members.has(matrixUserId);
+    }
+
     private botUserId(botId: string): string {
         return `@${BOT_LOCALPART_PREFIX}${botId}:${this.config.domain}`;
     }
@@ -380,6 +548,12 @@ export class MatrixDmBridge implements MatrixEventHandler {
     private async forgetRoom(roomId: string): Promise<void> {
         this.roomBots.delete(roomId);
         this.roomMembers.delete(roomId);
+        for (const [key, room] of [...this.directRooms]) {
+            if (room !== roomId) continue;
+            this.directRooms.delete(key);
+            const cut = key.indexOf('|');
+            await this.deps.rooms?.forgetDmRoomOf?.(key.slice(0, cut), key.slice(cut + 1)).catch(() => undefined);
+        }
         this.lastRestingLine.delete(roomId);
         for (const state of ['resting', 'unready', 'no_access', 'limited']) this.lastNote.delete(`${roomId}|${state}`);
         await this.deps.rooms?.forgetDmRoom(roomId).catch(() => undefined);
@@ -520,6 +694,10 @@ export class MatrixDmBridge implements MatrixEventHandler {
             inviteTs === undefined ? fromThem.slice(-1) : fromThem.filter((message) => (message.origin_server_ts ?? 0) >= inviteTs);
 
         await this.rememberRoom(event.room_id, botId);
+        // Known from now on by who it is with (checked again whenever it is used), and an answer this person got in
+        // nearby chat that was waiting for this chat comes before anything new (#1993)
+        await this.noteDirectRoom(botId, event.sender, event.room_id);
+        if (this.nearbyAnswers.has(MatrixDmBridge.pair(botId, event.sender))) await this.openedFromNearby(botId, event.sender, event.room_id);
         // Messages typed before the join arrive together, so a failure among them gets one "couldn't answer" note.
         const batch = { troubleSent: false };
         for (const message of earlier) {
@@ -660,6 +838,13 @@ export class MatrixDmBridge implements MatrixEventHandler {
             return;
         }
         const user = access.user!;
+        // The two of them alone, and Orbit says they may: this is their direct chat, and what waited for it goes first (#1993)
+        try {
+            await this.noteDirectRoom(botId, event.sender, event.room_id);
+            await this.sendNearbyAnswers(botId, event.sender, event.room_id);
+        } catch {
+            // Never in the way of the reply
+        }
         // Something typed instead of tapping closes the person's waiting cards (a typed "yes" never approves) and keeps
         // their remembered approvals alive (#1657)
         const asker = { uuid: user.uuid, name: user.name, matrixUserId: event.sender, isGuest: user.isGuest };

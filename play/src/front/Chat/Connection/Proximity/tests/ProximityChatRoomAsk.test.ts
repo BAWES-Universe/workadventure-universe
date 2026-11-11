@@ -267,6 +267,63 @@ describe("ProximityChatRoom card and private replies from a bot (#1658)", () => 
         next.destroy();
     });
 
+    describe('"Continue privately" on a reply only this person sees (#1993)', () => {
+        const noraHere = () =>
+            fake.space.usersStore.set(
+                new Map([
+                    [
+                        "room_9",
+                        {
+                            ...nora,
+                            chatID: `@bot_${BOT_ID}:matrix.test`,
+                            reactiveUser: { availabilityStatus: writable(0) },
+                            pictureStore: writable(undefined),
+                        } as unknown as SpaceUserExtended,
+                    ],
+                ])
+            );
+
+        it("tells the bot that wrote it, and nobody else, which direct chat was opened", () => {
+            noraHere();
+            emit(botAsk(nora, { kind: "reply", id: "p1", revision: 0, body: "It is at 10 on Thursday." }));
+            const reply = replies()[0];
+            expect(reply.sender?.chatId).toBe(`@bot_${BOT_ID}:matrix.test`);
+
+            room.continuedPrivately(reply, "!dm:matrix.test");
+
+            expect(fake.space.emitPrivateMessage).toHaveBeenCalledTimes(1);
+            expect(fake.space.emitPrivateMessage).toHaveBeenCalledWith(
+                {
+                    $case: "botAskAnswer",
+                    botAskAnswer: {
+                        askId: `${BOT_ID}-reply-p1`,
+                        revision: 0,
+                        tap: '{"action":"continue","room":"!dm:matrix.test"}',
+                    },
+                },
+                "room_9"
+            );
+            expect(fake.space.emitPublicMessage).not.toHaveBeenCalled();
+        });
+
+        it("says nothing once the bot has left: the answer reaches that chat with their next message there", () => {
+            noraHere();
+            emit(botAsk(nora, { kind: "reply", id: "p1", revision: 0, body: "It is at 10 on Thursday." }));
+            const reply = replies()[0];
+            fake.space.usersStore.set(new Map());
+
+            room.continuedPrivately(reply, "!dm:matrix.test");
+
+            expect(fake.space.emitPrivateMessage).not.toHaveBeenCalled();
+        });
+
+        it("says nothing for a reply whose bot this chat never knew", () => {
+            emit(botAsk(nora, { kind: "reply", id: "p1", revision: 0, body: "It is at 10 on Thursday." }));
+            room.continuedPrivately(replies()[0], "!dm:matrix.test");
+            expect(fake.space.emitPrivateMessage).not.toHaveBeenCalled();
+        });
+    });
+
     it("counts the card as unread, as any message that arrives", () => {
         expect(get(room.unreadNotificationCount)).toBe(0);
         emit(botAsk(nora));

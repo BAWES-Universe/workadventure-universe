@@ -15,6 +15,7 @@ import { ConversationMemory } from '../memory/ConversationMemory';
 import { BotClient } from '../client/BotClient';
 import { parseEmotionsFromResponse, appendStreamedChunk, detectEmotionPrefixAtEnd, moodOf, WAVE_MOOD } from '../ai/EmotionParser';
 import { createBatchState, batchAppend, batchFlush } from '../ai/StreamBatcher';
+import type { Heard } from '../memory/Heard';
 
 export interface PatrolBehaviorConfig extends BehaviorConfig {
     type: 'patrol';
@@ -1495,7 +1496,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
 
         // Get conversation context (includes memory, emotions, relationship history)
         const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
-        const playerName = this.resolvePlayerName(botId, playerId, this.conversationMemory);
+        const playerName = this.resolvePlayerName(botId, playerId, this.conversationMemory, spaceName);
 
         // Generate natural response using AI - not a greeting, just respond naturally
         let fullMessage = '';
@@ -1662,6 +1663,8 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         // With a note for each file it came with (#1508), for the bot's memory only: the saved chat keeps what they wrote
         let historyMessage = message;
         let keepFiles: () => void = () => undefined;
+        // With files, who heard the message when it came: someone who walks up while they are read never got it (#1993)
+        let arrived: { heard: Heard | undefined } | undefined;
 
         // Only respond if respondToPlayers is enabled (default true)
         if (config.respondToPlayers === false) {
@@ -1676,6 +1679,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             message = files.augmented;
             historyMessage = files.line;
             keepFiles = files.keep;
+            arrived = files.arrived;
         }
 
         // Start conversation in memory if needed
@@ -1706,7 +1710,8 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         }
         
         // Store player's message in memory (original, without augmented file content)
-        this.conversationMemory?.addMessage(botId, senderId, historyMessage, 'person', spaceName);
+        if (arrived) this.conversationMemory?.addMessage(botId, senderId, historyMessage, 'person', spaceName, true, arrived);
+        else this.conversationMemory?.addMessage(botId, senderId, historyMessage, 'person', spaceName);
         keepFiles();
         
         // Store player's message in conversation storage (original, without augmented file content)
@@ -1719,7 +1724,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         }
         
         // Extract personal information from original user message
-        this.conversationMemory?.extractPersonalInfo(botId, senderId, originalUserMessage);
+        this.conversationMemory?.extractPersonalInfo(botId, senderId, originalUserMessage, arrived ? arrived.heard : spaceName);
 
         // Start typing indicator
         this.bot?.startTyping(spaceName);

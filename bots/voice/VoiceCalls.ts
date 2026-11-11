@@ -23,6 +23,7 @@
  * again). Nothing else changes: the chat, the bubble and everyone else's voice carry on.
  */
 import type { PrivateEventPusherToFront, SpaceUser } from '@workadventure/messages';
+import { SAY_ONLY_FOR } from './protocol';
 import type { FromWorker, LeaveReason, ListenInfo, ListenReason, ProviderPart, ToWorker, VoiceDraft, VoiceMode, VoiceSignal, VoiceStatus } from './protocol';
 import type { SpeechTurn, TurnDecision } from './BotSpeech';
 import type { RepliesLeft, TurnGate } from './VoiceAllowance';
@@ -66,6 +67,11 @@ interface Bubble {
     stale?: boolean;
     /** The names the hearing was last told to expect, once the session is open (see `hearingNames`). */
     terms?: string;
+    /**
+     * Whether this session's worker sends a reply for one person alone to that person only (#1993), as it said when the
+     * session started. Not known until then, and nothing for one person alone is said meanwhile.
+     */
+    keepsToOne?: boolean;
 }
 
 /** The bot's LiveKit participant in a bubble, as the worker holds it. */
@@ -148,10 +154,12 @@ export interface VoiceCallStats {
     /** Finished turns dropped because they were not said to the bot (several people in the bubble). */
     unaddressed: number;
     stoppedBySpeech: number;
+    /** Replies for one person alone not said, or stopped, because others would have heard them (#1993). */
+    keptQuiet: number;
 }
 
 export class VoiceCalls {
-    readonly stats: VoiceCallStats = { started: 0, refusedStart: 0, rejectedFromGame: 0, staleFromWorker: 0, connected: 0, roomsJoined: 0, roomsConnected: 0, drafts: 0, spoken: 0, unaddressed: 0, stoppedBySpeech: 0 };
+    readonly stats: VoiceCallStats = { started: 0, refusedStart: 0, rejectedFromGame: 0, staleFromWorker: 0, connected: 0, roomsJoined: 0, roomsConnected: 0, drafts: 0, spoken: 0, unaddressed: 0, stoppedBySpeech: 0, keptQuiet: 0 };
     private readonly bubbles = new Map<string, Bubble>();
     private readonly calls = new Map<string, Call>();
     private readonly rooms = new Map<string, Room>();
@@ -199,6 +207,16 @@ export class VoiceCalls {
     botName = '';
     /** Called when a reply's voice stopped part-way because someone spoke over it. */
     onStopped?: (spaceName: string, segmentId: string) => void;
+    /**
+     * Called when a reply for one person alone was not said, or stopped part-way (`heard`), because the path it would go
+     * out on reaches other people too (#1993). It comes before `onUnplayed` for the same segment.
+     */
+    onKeptQuiet?: (spaceName: string, segmentId: string, heard: boolean) => void;
+    /**
+     * Whether this person is alone with the bot in this space right now (#1993). Asked only for a worker that cannot send
+     * a reply to one person: it then speaks such a reply only while nobody else is there. Not set: never alone.
+     */
+    aloneWith?: (spaceName: string, personId: string) => boolean;
     /** Called when a reply's segment ended without any of it being heard (see `handlePlayback`). */
     onUnplayed?: (spaceName: string, segmentId: string) => void;
     /** Called when some of a reply's segment has been heard (the worker reports what it played). */
@@ -1160,6 +1178,10 @@ export class VoiceCalls {
                 this.log(`voice: LiveKit audio in ${room.spaceName} ended (${message.state})`);
                 this.tellEveryone(room.spaceName, 'paused');
             }
+        } else if (message.type === 'session.start') {
+            // What this session's worker can do: from here on a reply for one person alone can be said, to them only
+            const bubble = [...this.bubbles.values()].find((b) => b.sessionId === message.sessionId);
+            if (bubble) bubble.keepsToOne = message.features?.includes(SAY_ONLY_FOR) === true;
         } else if (message.type === 'user.speech_started' || message.type === 'user.partial' || message.type === 'user.turn') {
             this.handleSpeech(message);
         } else if (message.type === 'playback.progress') {
@@ -1207,6 +1229,11 @@ export class VoiceCalls {
         if (message.playedMs > 0) this.onHeard?.(bubble.spaceName, message.segmentId);
         if (!message.finished) return;
         this.onPlayed?.(bubble.spaceName, message.segmentId);
+        // It was for one person alone and the worker could not keep it to them: that person is told why they did not hear it
+        if (message.reason === 'private') {
+            this.stats.keptQuiet++;
+            this.onKeptQuiet?.(bubble.spaceName, message.segmentId, message.playedMs > 0);
+        }
         // Not a moment of it was heard, however it ended: a reply that was counted is given back
         if (message.playedMs <= 0) {
             this.onUnplayed?.(bubble.spaceName, message.segmentId);
@@ -1428,22 +1455,55 @@ export class VoiceCalls {
 
     // ---- for what comes next (recognition, speaking): the controls of a bubble's audio ----
 
-    /** Says committed text in the bot's voice, for at most `maxMs`. False when there is no audio session to say it in. */
-    say(spaceName: string, segmentId: string, text: string, maxMs?: number): boolean {
+    /**
+     * Says committed text in the bot's voice, for at most `maxMs`. False when there is no audio session to say it in.
+     *
+     * `onlyFor`: the reply is for this person alone (#1993). The worker then sends its audio to them and nobody else, also
+     * when someone walks up while it plays. A worker that cannot do that speaks to the whole bubble, so it is given the
+     * reply only while that person is alone with the bot; otherwise the reply is not said (false), and stays in their chat.
+     */
+    say(spaceName: string, segmentId: string, text: string, maxMs?: number, onlyFor?: string): boolean {
         // Never out loud while another voice bot is here
         if (this.crowded(spaceName)) return false;
         const bubble = this.bubbles.get(spaceName);
-        const sent = !!bubble && this.post({ type: 'bot.say', sessionId: bubble.sessionId, segmentId, text, committed: true, ...(maxMs ? { maxMs } : {}) });
+        if (!bubble) return false;
+        if (onlyFor !== undefined && !this.keepsToOne(spaceName) && !this.mayShare(spaceName, onlyFor)) return false;
+        const to = onlyFor !== undefined && bubble.keepsToOne ? { onlyFor } : {};
+        const sent = this.post({ type: 'bot.say', sessionId: bubble.sessionId, segmentId, text, committed: true, ...(maxMs ? { maxMs } : {}), ...to });
         if (sent) this.stats.spoken++;
         return sent;
     }
 
-    /** Whether anyone's audio is connected in this bubble, so that what the bot says is heard. */
-    hasAudience(spaceName: string): boolean {
+    /** Whether this bubble's worker sends a reply for one person alone to that person only. Undefined: no session, or it has not said yet. */
+    keepsToOne(spaceName: string): boolean | undefined {
+        return this.bubbles.get(spaceName)?.keepsToOne;
+    }
+
+    /** With a worker that speaks to the whole bubble: whether a reply for this person alone may be said now, because nobody else is there. */
+    private mayShare(spaceName: string, onlyFor: string): boolean {
+        return this.bubbles.get(spaceName)?.keepsToOne === false && this.aloneWith?.(spaceName, onlyFor) === true;
+    }
+
+    /**
+     * Whether a reply for this person alone would be heard by others if it were said now (#1993): the bubble's worker
+     * speaks to everyone in it, and someone else is there. Such a reply is not said.
+     */
+    sharedWith(spaceName: string, onlyFor: string): boolean {
+        return this.bubbles.get(spaceName)?.keepsToOne === false && this.aloneWith?.(spaceName, onlyFor) !== true;
+    }
+
+    /**
+     * Whether anyone's audio is connected in this bubble, so that what the bot says is heard. With `onlyFor`: whether that
+     * person's is (a room carries the audio of everyone who is in the bubble, and of nobody who has left it).
+     */
+    hasAudience(spaceName: string, onlyFor?: string): boolean {
         for (const call of this.calls.values()) {
+            if (onlyFor !== undefined && call.participantId !== onlyFor) continue;
             if (call.spaceName === spaceName && this.joined.get(callKey(spaceName, call.participantId)) === call.epoch) return true;
         }
-        return this.rooms.get(spaceName)?.connected === true;
+        if (this.rooms.get(spaceName)?.connected !== true) return false;
+        // A room carries the audio of everyone in the bubble, so that person's is there only while they are
+        return onlyFor === undefined || this.roster.get(spaceName)?.has(onlyFor) === true;
     }
 
     /** Whether someone is in the middle of speaking to the bot in this bubble. */

@@ -8,7 +8,8 @@
  * - AI-driven emotion updates (unified in AI response, not separate EmotionAnalyzer)
  */
 
-import { ConversationMemory, type BotPlayerMemory, type ConversationMessage, type EmotionalState } from './ConversationMemory';
+import { ConversationMemory, type BotPlayerMemory, type ConversationMessage, type EmotionalState, type PersonalInfo } from './ConversationMemory';
+import { copyHeard, type Heard } from './Heard';
 import { MemoryStorage } from './MemoryStorage';
 import type { MemoryForgetNotice } from './ForgetNotice';
 
@@ -244,17 +245,30 @@ export class PersistentMemory extends ConversationMemory {
                         recentSentiment: existingOrNew.emotions.recentSentiment || loadedMemory.emotions.recentSentiment,
                         lastEmotionUpdate: existingOrNew.emotions.lastEmotionUpdate,
                     };
-                    // Personal info: only fill blanks, never overwrite current session data
+                    // Personal info: only fill blanks, never overwrite current session data. Each thing keeps the
+                    // place it was said in (#1993), from whichever side it is taken
+                    const live = existingOrNew.personalInfo;
+                    const saved = loadedMemory.personalInfo;
+                    const prefsFrom = live.preferences && live.preferences.length > 0 ? live : saved;
+                    const factsFrom = live.facts.size > 0 ? live : saved;
+                    const heard: Record<string, Heard> = {};
+                    const keep = (from: PersonalInfo, mine: (key: string) => boolean) => {
+                        for (const [key, stamp] of Object.entries(from.heard ?? {})) {
+                            const copy = mine(key) ? copyHeard(stamp) : undefined;
+                            if (copy) heard[key] = copy;
+                        }
+                    };
+                    keep(live.name ? live : saved, (key) => key === 'name');
+                    keep(live.birthday ? live : saved, (key) => key === 'birthday');
+                    keep(prefsFrom, (key) => key.startsWith('pref:'));
+                    keep(factsFrom, (key) => key.startsWith('fact:'));
                     existingOrNew.personalInfo = {
-                        name: existingOrNew.personalInfo.name || loadedMemory.personalInfo.name,
-                        birthday: existingOrNew.personalInfo.birthday || loadedMemory.personalInfo.birthday,
-                        preferences: existingOrNew.personalInfo.preferences && existingOrNew.personalInfo.preferences.length > 0
-                            ? existingOrNew.personalInfo.preferences
-                            : loadedMemory.personalInfo.preferences,
-                        facts: existingOrNew.personalInfo.facts.size > 0
-                            ? existingOrNew.personalInfo.facts
-                            : new Map(loadedMemory.personalInfo.facts),
-                        lastInfoUpdate: existingOrNew.personalInfo.lastInfoUpdate,
+                        name: live.name || saved.name,
+                        birthday: live.birthday || saved.birthday,
+                        preferences: prefsFrom.preferences,
+                        facts: factsFrom === live ? live.facts : new Map(saved.facts),
+                        lastInfoUpdate: live.lastInfoUpdate,
+                        ...(Object.keys(heard).length > 0 ? { heard } : {}),
                     };
                     // Relationship: take the best of both (max conversations, earliest firstMet, latest lastMet)
                     existingOrNew.relationship = {
@@ -351,7 +365,8 @@ export class PersistentMemory extends ConversationMemory {
         sender: 'bot' | 'person',
         spaceName?: string,
         /** False for a line the system wrote in the person's turn: nothing is learned about them from it. */
-        learn = true
+        learn = true,
+        arrived?: { heard: Heard | undefined }
     ): void {
         // Get state before update
         const memory = this.getOrCreateMemory(botId, playerId);
@@ -370,7 +385,7 @@ export class PersistentMemory extends ConversationMemory {
         const oldImportantEventsCount = memory.relationship.importantEvents.length;
 
         // Call parent implementation (updates emotions, extracts personal info)
-        super.addMessage(botId, playerId, message, sender, spaceName, learn);
+        super.addMessage(botId, playerId, message, sender, spaceName, learn, arrived);
 
         // Get updated state
         const updatedMemory = this.getOrCreateMemory(botId, playerId);
@@ -807,6 +822,10 @@ export class PersistentMemory extends ConversationMemory {
                 ...memory.personalInfo,
                 facts: new Map(memory.personalInfo.facts),
                 preferences: memory.personalInfo.preferences ? [...memory.personalInfo.preferences] : undefined,
+                // Where each thing was said (#1993): its own copy, so a place learned in one chat never changes a snapshot
+                ...(memory.personalInfo.heard
+                    ? { heard: Object.fromEntries(Object.entries(memory.personalInfo.heard).map(([key, stamp]) => [key, copyHeard(stamp)!])) }
+                    : {}),
             },
             relationship: {
                 ...memory.relationship,

@@ -72,8 +72,11 @@
     import { mapEditorToolbarInUseStore } from "../../../Stores/MapEditorStore";
     import { isTouchScreen, SETTLE_CHECKS_MS } from "../../../Utils/ViewportGuard";
     import { ARTIFACT_CHAT_CONTEXT, type ArtifactChatOf } from "../../../Artifacts/artifactChatContext";
+    import PrivateReplyNote from "../../Bots/PrivateReplyNote.svelte";
+    import { openDirectChatRoom } from "../../Utils";
     import Message from "./Message.svelte";
     import StoppedBySpeechNote from "./StoppedBySpeechNote.svelte";
+    import KeptQuietNote from "./KeptQuietNote.svelte";
     import {
         firstShowingIndex,
         keyboardClosed,
@@ -480,6 +483,15 @@
             console.error("Could not send the answer to a bot's card", error);
             return false;
         }
+    }
+    // "Continue privately" on a reply only this person saw (#1993): the bot's direct messages open, and the bot is
+    // told which chat that is, so the same answer is there to carry on from
+    async function continuePrivately(reply: ChatMessage) {
+        const nearby = proximityRoom;
+        const botChatId = reply.sender?.chatId;
+        if (!botChatId) return;
+        const direct = await openDirectChatRoom(botChatId);
+        if (direct) nearby?.continuedPrivately(reply, direct.id);
     }
     $: botPlaceholder = shownAsk
         ? // A question only picks a direction, so what the person types is their answer (#1661); an approval card's is something else
@@ -1305,13 +1317,24 @@
                             {#if entry.message.stoppedBySpeech}
                                 <StoppedBySpeechNote stopped={entry.message.stoppedBySpeech} />
                             {/if}
+                            {#if entry.message.keptQuiet}
+                                <KeptQuietNote keptQuiet={entry.message.keptQuiet} />
+                            {/if}
                             {#if "privateReply" in entry.message && entry.message.privateReply}
-                                <!-- A reply a bot wrote for this person alone, never said aloud (#1658) -->
+                                <!-- A reply a bot wrote for this person alone, never said aloud (#1658), and the
+                                     way on to their direct messages with it (#1993) -->
+                                <PrivateReplyNote
+                                    botChatId={entry.message.sender?.chatId}
+                                    onContinue={() => continuePrivately(entry.message)}
+                                />
+                            {/if}
+                            {#if entry.message.answeredNearby}
+                                <!-- The same answer, once, in the bot's direct messages (#1993) -->
                                 <div
                                     class="flex items-center gap-1.5 px-4 pb-2 text-xs text-white/60"
-                                    data-testid="botPrivateReplyNote"
+                                    data-testid="botAnsweredNearbyNote"
                                 >
-                                    <IconLock font-size="14" />{$LL.chat.botAsk.onlyYouSeeReply()}
+                                    <IconLock font-size="14" />{$LL.chat.botAsk.answeredNearby()}
                                 </div>
                             {/if}
                             {#if "stoppedOnLeave" in entry.message && entry.message.stoppedOnLeave}

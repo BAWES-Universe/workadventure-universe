@@ -25,6 +25,11 @@ interface Segment {
     maxMs: number;
     /** False once any frame had nobody to hear it. */
     deliveredAll: boolean;
+    /**
+     * The one person this reply is for (game #1993). Its audio goes out only on a path that reaches them and nobody else,
+     * frame by frame: someone who connects while it plays is sent none of it.
+     */
+    onlyFor?: string;
 }
 
 export interface SpeakerHost {
@@ -69,13 +74,13 @@ export class Speaker {
         return this.current !== undefined;
     }
 
-    enqueue(id: string, text: string, maxMs?: number, lang?: string): void {
+    enqueue(id: string, text: string, maxMs?: number, lang?: string, onlyFor?: string): void {
         if (!this.host.active() || this.queue.length >= MAX_QUEUED_SEGMENTS) {
             this.host.counters.inc('say_rejected');
             this.host.progress({ segmentId: id, playedMs: 0, totalMs: 0, finished: true, interrupted: false, reason: 'rejected' });
             return;
         }
-        this.queue.push({ id, text, lang, totalMs: 0, playedMs: 0, maxMs: Math.min(maxMs ?? this.host.maxReplyMs, this.host.maxReplyMs), deliveredAll: true });
+        this.queue.push({ id, text, lang, totalMs: 0, playedMs: 0, maxMs: Math.min(maxMs ?? this.host.maxReplyMs, this.host.maxReplyMs), deliveredAll: true, ...(onlyFor !== undefined ? { onlyFor } : {}) });
         this.wake?.();
     }
 
@@ -144,8 +149,23 @@ export class Speaker {
         }
     }
 
+    /**
+     * A reply for one person alone cannot go out: a path it would be sent on reaches other people too. It is then not
+     * said at all, rather than said to everyone.
+     */
+    private shared(onlyFor: string): boolean {
+        return this.host.targets().some((target) => target.reach(onlyFor) === 'shared');
+    }
+
     private async play(segment: Segment): Promise<void> {
         const { counters, provider } = this.host;
+        const { onlyFor } = segment;
+        // Not asked of the provider either: nothing of it is made
+        if (onlyFor !== undefined && this.shared(onlyFor)) {
+            counters.inc('private_unsaid');
+            this.host.progress({ segmentId: segment.id, playedMs: 0, totalMs: 0, finished: true, interrupted: true, reason: 'private' });
+            return;
+        }
         const abort = (this.abort = new AbortController());
         const requestedAt = performance.now();
         // The provider is read ahead of playback, but never further than this reply may play
@@ -185,11 +205,16 @@ export class Speaker {
                 startedAt = lastProgress = firstAudioAt = performance.now();
                 counters.inc('segments_started');
             }
-            const listeners = this.host.targets().filter((t) => t.plays());
+            // Someone else can hear the path now (they joined its room): the reply stops here, and the rest is only in the chat
+            if (onlyFor !== undefined && this.shared(onlyFor)) {
+                reason = 'private';
+                break;
+            }
+            const listeners = this.host.targets().filter((t) => t.plays(onlyFor) && (onlyFor === undefined || t.reach(onlyFor) === 'alone'));
             if (listeners.length) {
                 let opus: Buffer | undefined;
                 const out: OutputFrame = { pcm24k, opus: () => (opus ??= Buffer.from(this.encoder.encode(up.process(pcm24k)))) };
-                for (const listener of listeners) listener.sendFrame(out);
+                for (const listener of listeners) listener.sendFrame(out, onlyFor);
                 segment.playedMs += FRAME_MS;
                 if (!timed) {
                     timed = true;
@@ -208,6 +233,11 @@ export class Speaker {
             if (wait > 0) await sleep(wait);
         }
         segment.totalMs = stream.receivedMs;
+        // What was handed over and not yet sent out is dropped too
+        if (reason === 'private') {
+            counters.inc('private_stopped');
+            for (const target of this.host.targets()) target.clear?.();
+        }
         // The provider's own failure, once it has no more audio to give: a reply that never made any is a failure too
         const failed = stream.failure !== undefined || (reason === 'completed' && stream.received === 0);
         if (failed && reason === 'completed') reason = 'provider';

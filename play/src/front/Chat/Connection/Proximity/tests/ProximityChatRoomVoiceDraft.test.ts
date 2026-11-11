@@ -312,6 +312,31 @@ describe("ProximityChatRoom: what a voice bot hears this person say (#1664)", ()
             expect(botLines()).toEqual([]);
         });
 
+        it("marks a reply the bot kept from other people's ears, and which of the two happened (#1993)", () => {
+            reply("r-1", "Your interview is at 10.");
+            reply("r-2", "And your salary is 1,200.");
+            const [first, second] = botLines();
+            expect(get(first.keptQuiet)).toBe("");
+            emitStream(stream("r-1", { keptQuiet: "unsaid" }));
+            emitStream(stream("r-2", { keptQuiet: "stopped" }));
+            expect(get(first.keptQuiet)).toBe("unsaid");
+            expect(get(second.keptQuiet)).toBe("stopped");
+            // Not the line for a reply someone spoke over, the words untouched, and no new message
+            expect(get(first.stoppedBySpeech)).toBe(false);
+            expect(get(first.content).body).toBe("Your interview is at 10.");
+            expect(botLines()).toHaveLength(2);
+        });
+
+        it("believes only the bot that wrote the reply about that too, and only the two words it may send", () => {
+            reply("r-1", "Your interview is at 10.");
+            emitStream(stream("r-1", { keptQuiet: "unsaid" }, sara));
+            emitStream(stream("r-1", { keptQuiet: "<b>anything</b>" }));
+            emitStream(stream("r-1", { keptQuiet: "" }));
+            emitStream(stream("nobody", { keptQuiet: "unsaid" }));
+            expect(get(botLines()[0].keptQuiet)).toBe("");
+            expect(botLines()).toHaveLength(1);
+        });
+
         it("knows which reply each bot line is, and makes no message of a reply being heard (round 8)", () => {
             emitStream(stream("r-1", { speaking: true }));
             emitStream(stream("r-1", { speaking: false }));

@@ -153,6 +153,12 @@ async function setupMatrix(): Promise<void> {
         waiting: botRegistry,
         wokaPicture: (config) => botWokaPicture(config, { wokaList: (roomUrl, botId) => adminApiService.getBotWokaList(roomUrl, botId) }),
     });
+    // An answer one person got in nearby chat, with others around, is found again in their direct messages (#1993)
+    const answersBridge = matrixBridge;
+    aiService.keepPrivateAnswersIn({
+        keep: (botId, chatId, text) => void answersBridge.keepNearbyAnswer(botId, chatId, text),
+        opened: (botId, chatId, roomId) => void answersBridge.openedFromNearby(botId, chatId, roomId),
+    });
     matrixRouter = createMatrixAppServiceRouter(matrixConfig, matrixBridge);
     preRouters.push(matrixRouter);
     // The game shows a bot's state in its chat header and the People list. Same cached lookup the replies use.

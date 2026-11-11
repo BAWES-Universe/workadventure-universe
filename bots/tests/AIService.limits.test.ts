@@ -217,6 +217,8 @@ describe("AIService – a bot's limits from Orbit", () => {
                     sendChatMessage: vi.fn(),
                     holdSpeech: vi.fn(() => log.push("hold")),
                     releaseSpeech: vi.fn(() => log.push("release")),
+                    // Alone with the bot (#1993)
+                    othersWith: vi.fn(() => []),
                 },
             };
         };

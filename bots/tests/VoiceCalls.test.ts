@@ -324,6 +324,22 @@ describe('VoiceCalls: a bubble on LiveKit', () => {
         expect(t.sent.some((m) => m.type === 'room.leave')).toBe(false);
     });
 
+    it('has a room audience for one person only while that person is in the bubble (#1993)', () => {
+        const t = setup();
+        t.calls.spaceUsers(SPACE, [t.person('room_7'), t.person('room_8')]);
+        t.calls.handlePrivateEvent(t.livekit('invite'));
+        const room = rooms(t.sent)[0];
+        expect(t.calls.hasAudience(SPACE)).toBe(false);
+        t.fromWorker({ type: 'room.state', sessionId: room.sessionId, epoch: room.epoch, state: 'connected' });
+        expect(t.calls.hasAudience(SPACE)).toBe(true);
+        expect(t.calls.hasAudience(SPACE, 'room_7')).toBe(true);
+        // They left: the room is still connected for the others, and carries nothing to them
+        t.calls.spaceUserLeft(SPACE, 'room_7');
+        expect(t.calls.hasAudience(SPACE)).toBe(true);
+        expect(t.calls.hasAudience(SPACE, 'room_7')).toBe(false);
+        expect(t.calls.hasAudience(SPACE, 'room_8')).toBe(true);
+    });
+
     it('refuses an invitation that is not a LiveKit address and token', () => {
         const t = setup();
         t.calls.handlePrivateEvent(t.livekit('invite', { serverUrl: 'http://evil.example' }));
