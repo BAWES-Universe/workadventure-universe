@@ -736,6 +736,9 @@ export class AIService {
         // there is nothing in the reply to keep secret.
         const others = hearing && channel === 'world' && playerId !== undefined ? this.othersReading(playerId, hearing.spaceName, hearing.botClient) : undefined;
         const context = others ? this.conversationMemory.getConversationContext(botId, playerId, others) : conversationContext;
+        // The same answer decides who is sent the reply: written for someone alone with the bot, it reaches nobody who
+        // walks up while it is being written
+        if (hearing && channel === 'world' && playerId !== undefined) hearing.botClient.replyStarts?.(hearing.spaceName, playerId, !others);
         const name = others ? hearing?.botClient.getPersonForArtifacts?.(playerId)?.name ?? null : null;
         // Only when the bot knows something of this person's that the others were not there for can their message need
         // an answer of its own: then, and only for what a person said, the reply is watched for the marker

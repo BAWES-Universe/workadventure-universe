@@ -661,3 +661,44 @@ describe('Stop speaking (round 8)', () => {
         expect(unspoken).toHaveBeenCalledTimes(1);
     });
 });
+
+describe('a reply written for one person, when someone else walks up (#1993)', () => {
+    it('stops what is being heard of it, and it counts as stopped', () => {
+        const retracted: string[] = [];
+        const voice: SpeechVoice = {
+            say: () => true,
+            hasAudience: () => true,
+            someoneSpeaking: () => false,
+            lastSpokenToAt: () => 0,
+            retract: (_space, segmentId) => void retracted.push(segmentId),
+        };
+        const speech = new BotSpeech(voice, DEFAULT_REPLY_LIMITS, () => 1000);
+        speech.final(SPACE, reply(1), 'Your interview is at 10.');
+        speech.heard(SPACE, 's1');
+
+        expect(speech.hush(SPACE, reply(1))).toBe(true);
+        expect(retracted).toEqual(['s1']);
+        expect(speech.isSpeakingTo(7)).toBe(false);
+    });
+
+    it('is not said later either: not when it is finished, and not when the audio it waited for connects', () => {
+        const writing = setup();
+        writing.speech.begin(reply(1));
+        expect(writing.speech.hush(SPACE, reply(1))).toBe(false);
+        expect(writing.speech.final(SPACE, reply(1), 'Your interview is at 10.')).toBe('again');
+        expect(writing.said).toEqual([]);
+
+        const waiting = setup({ audience: false });
+        expect(waiting.speech.final(SPACE, reply(2), 'Your interview is at 10.')).toBe('waiting');
+        waiting.speech.hush(SPACE, reply(2));
+        waiting.state.audience = true;
+        waiting.speech.audience(SPACE);
+        expect(waiting.said).toEqual([]);
+    });
+
+    it('leaves every other reply alone', () => {
+        const t = setup();
+        t.speech.hush(SPACE, reply(1));
+        expect(t.speech.final(SPACE, reply(2, 9), 'The demo is on Sunday.')).toBe('spoken');
+    });
+});

@@ -122,6 +122,7 @@ async function scene(options: { others?: string[] | undefined; unknown?: boolean
         sendMediaMessage: vi.fn(() => true),
         holdSpeech: vi.fn(),
         releaseSpeech: vi.fn(),
+        replyStarts: vi.fn(),
     };
 
     const say = async (text: string, kind: { greeting?: boolean; retry?: boolean; playerId?: number } = {}) => {
@@ -321,6 +322,22 @@ describe('AIService: private answers in a group (#1993)', () => {
             expect(call.system).not.toContain('PRIVATE THINGS');
         }
         expect(sentPrivately()).toEqual([]);
+    });
+
+    it('tells the bot client, as each reply starts, whether it is for someone who is alone: the same answer the reply is built on', async () => {
+        model(['It is at 10.', 'Hello.', 'Hello.']);
+        const { say, here, botClient } = await scene({ others: [] });
+        await say('When is my interview?');
+        here.others = [SARA];
+        await say('hi');
+        here.others = undefined;
+        await say('hi');
+
+        expect(botClient.replyStarts.mock.calls).toEqual([
+            [BUBBLE, KHALID, true],
+            [BUBBLE, KHALID, false],
+            [BUBBLE, KHALID, false],
+        ]);
     });
 
     it('takes other people as being there when it cannot tell who is', async () => {

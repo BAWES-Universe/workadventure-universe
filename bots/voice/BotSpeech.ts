@@ -260,6 +260,20 @@ export class BotSpeech {
         return stopped;
     }
 
+    /**
+     * Someone else came into the space while a reply written for one person alone was playing or about to (#1993): what is
+     * playing of it stops, and it is not said later. True when it was being heard (the reply is then marked as stopped).
+     */
+    hush(spaceName: string, responseId: string): boolean {
+        if (this.waiting.get(spaceName)?.responseId === responseId) {
+            this.unpark(spaceName);
+            this.giveUp(spaceName, responseId);
+        }
+        // Not said when it is finished either
+        remember(this.said, responseId);
+        return this.stopReply(spaceName, responseId);
+    }
+
     /** This segment's audio is over for the people in the space: its reply stops showing Stop speaking. */
     private quiet(segmentId: string): void {
         const speaking = this.speakingNow.get(segmentId);

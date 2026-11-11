@@ -59,6 +59,7 @@ import { isBotSpaceUser, type BotAsksPort } from '../mcp/NearbyAsks';
 import type { PrivateEventPusherToFront } from '@workadventure/messages';
 import { audioFileNameFor } from '../utils/audioFileName';
 import { isGreetingReply } from './GreetingReply';
+import { ReplyReaders, playerOfReply } from './ReplyReaders';
 
 // Get the secret key from environment - must match pusher's SECRET_KEY
 const SECRET_KEY = process.env.SECRET_KEY || 'default-secret-key';
@@ -122,6 +123,8 @@ export class BotClient {
     private spaces: Map<string, SpaceUser['spaceUserId']> = new Map();
     /** Everyone else in each space the bot is in, people, guests and bots alike (#1993): who would read a reply there. */
     private readonly audience = new SpaceAudience();
+    /** Who each reply is delivered to: one written for someone alone with the bot reaches nobody who walks up meanwhile (#1993). */
+    private readonly readers = new ReplyReaders();
     /** Audio connections with people, for a voice bot only (see isVoiceBot). Null for every other bot. */
     private voice: VoiceCalls | null = null;
     /** What a voice bot says out loud of the replies it writes (see voice/BotSpeech.ts). Null for every other bot. */
@@ -345,6 +348,7 @@ export class BotClient {
         this.stopVoice();
         // Gone from every space: who is in them is no longer known
         this.audience.reset();
+        this.readers.reset();
         // Unregister this bot's userId
         if (this.userId !== null) {
             BotClient.botUserIds.delete(this.userId);
@@ -1478,6 +1482,7 @@ export class BotClient {
             this.speech?.spaceLeft(spaceName);
             this.attention.spaceLeft(spaceName);
             this.audience.spaceLeft(spaceName);
+            this.readers.spaceLeft(spaceName);
             const wasMeeting = this.isMeetingSpace(spaceName);
             await this.emitLeaveSpace(spaceName);
             this.spaces.delete(spaceName);
@@ -2134,6 +2139,8 @@ export class BotClient {
             console.log(`[Bot ${this.config.botId}] Sending stream chunk to space ${spaceName}: token="${token.substring(0, 30)}", isFinal=${isFinal}`);
         }
 
+        // A reply written for someone alone with the bot is delivered to them and nobody else, to its last piece (#1993)
+        const onlyFor = this.readerOf(spaceName, responseId);
         this.send({
             message: {
                 $case: 'publicEvent',
@@ -2152,6 +2159,7 @@ export class BotClient {
                                 reset: reset ?? false,
                                 ...(steps !== undefined ? { steps } : {}),
                                 ...(mood ? { mood } : {}),
+                                ...(onlyFor ? { onlyFor } : {}),
                             },
                         },
                     },
@@ -2161,6 +2169,9 @@ export class BotClient {
         // A greeting the bot made on its own is never a voice reply: it stays in the chat, so it is not spoken and never counts as a
         // spoken reply
         if (isGreetingReply(responseId)) return;
+        // Written for one person, and someone else is here now: it stays in that person's chat and is not said out loud,
+        // where the others would hear it (#1993)
+        if (onlyFor && !this.aloneWith(spaceName, playerOfReply(responseId))) return;
         // A voice bot says what it has written once it is final: after the chat has it, and never the steps line or an error
         if (this.speech && steps === undefined && !isError) {
             if (isFinal) {
@@ -2168,6 +2179,48 @@ export class BotClient {
             } else if (token) {
                 this.speech.begin(responseId);
             }
+        }
+    }
+
+    /**
+     * A reply for this person starts (#1993). `alone` is the answer the reply was built on: with nobody else in the space,
+     * every piece of it goes to that person and nobody else, also when someone walks up while it is being written.
+     */
+    replyStarts(spaceName: string, playerId: number, alone: boolean): void {
+        this.readers.starts(spaceName, playerId, alone);
+    }
+
+    /** Whether this person is alone with the bot in this space right now. Not when the bot cannot tell. */
+    private aloneWith(spaceName: string, playerId: number | undefined): boolean {
+        return playerId !== undefined && this.othersWith(spaceName, playerId)?.length === 0;
+    }
+
+    /** The one reader a reply is delivered to (their space user id), or undefined when it is for everyone in the space. */
+    private readerOf(spaceName: string, responseId: string): string | undefined {
+        return this.readers.readerOf(spaceName, responseId, {
+            alone: (playerId) => this.aloneWith(spaceName, playerId),
+            spaceUserIdOf: (playerId) => {
+                const mine = this.spaces.get(spaceName);
+                const cut = mine?.lastIndexOf('_') ?? -1;
+                return mine && cut >= 0 ? `${mine.slice(0, cut)}_${playerId}` : undefined;
+            },
+        });
+    }
+
+    private onlyForOf(spaceName: string, responseId: string): { onlyFor?: string } {
+        const onlyFor = this.readerOf(spaceName, responseId);
+        return onlyFor ? { onlyFor } : {};
+    }
+
+    /**
+     * Someone came into the space (#1993): whatever the bot is saying out loud, or waits to say, of a reply written for
+     * one person alone stops, because the newcomer would hear it. The reply stays whole in that person's chat.
+     */
+    private hushRepliesForOne(spaceName: string, newcomer: string | undefined): void {
+        if (!this.speech || !newcomer || newcomer === this.spaces.get(spaceName)) return;
+        for (const responseId of this.readers.forOneReaderIn(spaceName)) {
+            if (this.readerOf(spaceName, responseId) === newcomer) continue;
+            if (this.speech.hush(spaceName, responseId)) this.sendSpeechStopped(spaceName, responseId);
         }
     }
 
@@ -2181,7 +2234,7 @@ export class BotClient {
                     spaceEvent: {
                         event: {
                             $case: 'spaceStreamMessage',
-                            spaceStreamMessage: { responseId, token: '', isFinal: true, isError: false, reset: false, stoppedBySpeech: true },
+                            spaceStreamMessage: { responseId, token: '', isFinal: true, isError: false, reset: false, stoppedBySpeech: true, ...this.onlyForOf(spaceName, responseId) },
                         },
                     },
                 },
@@ -2199,7 +2252,7 @@ export class BotClient {
                     spaceEvent: {
                         event: {
                             $case: 'spaceStreamMessage',
-                            spaceStreamMessage: { responseId, token: '', isFinal: true, isError: false, reset: false, speaking },
+                            spaceStreamMessage: { responseId, token: '', isFinal: true, isError: false, reset: false, speaking, ...this.onlyForOf(spaceName, responseId) },
                         },
                     },
                 },
@@ -2919,6 +2972,7 @@ export class BotClient {
             this.speech?.spaceLeft(spaceName);
             this.attention.spaceLeft(spaceName);
             this.audience.spaceLeft(spaceName);
+            this.readers.spaceLeft(spaceName);
             await this.emitLeaveSpace(spaceName);
         } catch (error) {
             console.warn(`[Bot ${this.config.botId}] Could not leave meeting room ${spaceName}:`, error);
@@ -3437,6 +3491,8 @@ export class BotClient {
             case 'addSpaceUserMessage':
                 // First of all: from here on a reply in this space is read by them too (#1993)
                 if (message.addSpaceUserMessage.user) this.audience.joined(message.addSpaceUserMessage.spaceName, message.addSpaceUserMessage.user);
+                // And what the bot is saying out loud to someone who was alone with it stops: they would hear it
+                if (message.addSpaceUserMessage.user) this.hushRepliesForOne(message.addSpaceUserMessage.spaceName, message.addSpaceUserMessage.user.spaceUserId);
                 if (message.addSpaceUserMessage.user) this.voice?.spaceUserJoined(message.addSpaceUserMessage.spaceName, message.addSpaceUserMessage.user);
                 // A person who came back (a reload, or walking back to the bubble) gets their cards and replies again (#1658)
                 if (message.addSpaceUserMessage.user && this.asks && !isBotSpaceUser(message.addSpaceUserMessage.user)) {
@@ -3685,6 +3741,7 @@ export class BotClient {
 
             case 'removeSpaceUserMessage':
                 this.audience.left(message.removeSpaceUserMessage.spaceName, message.removeSpaceUserMessage.spaceUserId);
+                this.readers.personLeft(message.removeSpaceUserMessage.spaceName, BotClient.playerIdOf(message.removeSpaceUserMessage.spaceUserId));
                 this.voice?.spaceUserLeft(message.removeSpaceUserMessage.spaceName, message.removeSpaceUserMessage.spaceUserId);
                 if (this.isMeetingSpace(message.removeSpaceUserMessage.spaceName)) {
                     this.attention.personLeft(
@@ -3904,6 +3961,7 @@ export class BotClient {
             this.speech?.spaceLeft(request.spaceName);
             this.attention.spaceLeft(request.spaceName);
             this.audience.spaceLeft(request.spaceName);
+            this.readers.spaceLeft(request.spaceName);
             const wasMeeting = this.isMeetingSpace(request.spaceName);
             await this.emitLeaveSpace(request.spaceName);
             this.spaces.delete(request.spaceName);
