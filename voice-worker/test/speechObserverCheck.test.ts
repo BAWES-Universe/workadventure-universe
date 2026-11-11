@@ -1,7 +1,8 @@
 // The image's detector check (speech-observer/check.mts) must fail as a command when the check fails, not only say so,
-// or a build or deployment step that looks at the exit status would let a broken detector through.
+// or a build or deployment step that looks at the exit status would let a broken detector through. The command with the
+// real model and native runtime is run in the built image (voice-vad-eval/scripts/image-check.sh); CI does not install the
+// runtime, so here the loader is swapped for a detector made in the test.
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { checkDetector } from '../speech-observer/checkDetector.mts';
@@ -33,24 +34,30 @@ describe('the image check of the detector', () => {
     const run = (env: Record<string, string>) =>
         spawnSync(process.execPath, ['--import', 'tsx', 'speech-observer/check.mts'], { cwd: root, encoding: 'utf8', env: { ...process.env, ORT_DISABLE_TELEMETRY: '1', ...env } });
 
+    const withFake = (probability: string) =>
+        spawnSync(process.execPath, ['--import', 'tsx', '--import', './test/fixtures/checkWithFakeDetector.mjs', 'speech-observer/check.mts'], {
+            cwd: root,
+            encoding: 'utf8',
+            env: { ...process.env, ORT_DISABLE_TELEMETRY: '1', FAKE_DETECTOR_PROBABILITY: probability },
+        });
+
     it('as a command, fails with status 1 when the check fails, and still prints what it found', () => {
-        const result = spawnSync(process.execPath, ['--import', 'tsx', '--import', './test/fixtures/checkWithFakeDetector.mjs', 'speech-observer/check.mts'], { cwd: root, encoding: 'utf8' });
+        const result = withFake('0.9');
         expect(result.status).toBe(1);
         expect(JSON.parse(result.stdout)).toMatchObject({ ok: false, silenceProbability: 0.9 });
         expect(result.stderr).toContain('speech observer check failed: one call: silence taken for speech (0.9)');
+    });
+
+    it('as a command, exits 0 when the check passes', () => {
+        const result = withFake('0.002');
+        expect(result.status).toBe(0);
+        expect(JSON.parse(result.stdout)).toMatchObject({ ok: true, failures: [], silenceProbability: 0.002, reportingOff: true });
+        expect(result.stderr).toBe('');
     });
 
     it('as a command, fails with a non-zero status when it cannot load the pinned model', () => {
         const result = run({ VOICE_SPEECH_OBSERVER_MODEL: `${root}package.json`, VOICE_SPEECH_OBSERVER_RUNTIME: `${root}speech-observer/node_modules/onnxruntime-node` });
         expect(result.status).not.toBe(0);
         expect(result.stdout).toBe('');
-    });
-
-    // Needs the runtime installed beside the model (cd speech-observer && npm ci --ignore-scripts), as the image has it
-    const runtime = `${root}speech-observer/node_modules/onnxruntime-node`;
-    it.skipIf(!existsSync(runtime))('as a command, with the real model and runtime: ok, and status 0', () => {
-        const result = run({ VOICE_SPEECH_OBSERVER_MODEL: `${root}speech-observer/silero_vad_v6.2.3.onnx`, VOICE_SPEECH_OBSERVER_RUNTIME: runtime });
-        expect(result.status).toBe(0);
-        expect(JSON.parse(result.stdout)).toMatchObject({ ok: true, failures: [], reportingOff: true });
     });
 });

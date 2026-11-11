@@ -1,5 +1,5 @@
 // For test/speechObserverCheck.test.ts only: runs speech-observer/check.mts with the real loader swapped for
-// fakeDetectorRuntime.mts, whose detector takes silence for speech, to see the command itself fail.
+// fakeDetectorRuntime.mts, to see the command itself pass and fail without the native runtime.
 import { register } from 'node:module';
 
 register(
