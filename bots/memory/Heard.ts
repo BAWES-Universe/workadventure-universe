@@ -34,6 +34,15 @@ export type MemoryView = 'all' | { present: readonly string[] };
  */
 export const SOMEONE_UNKNOWN = '?';
 
+/**
+ * The view a reply is built for, from who else is in the space with the person: everything when they are alone with the
+ * bot. When the bot cannot tell who is there (`undefined`), it answers as if a stranger were: nothing private is open.
+ */
+export function viewFor(others: readonly string[] | undefined): MemoryView {
+    if (others && others.length === 0) return 'all';
+    return { present: others ?? [SOMEONE_UNKNOWN] };
+}
+
 /** A direct message: nobody else is ever there. */
 export function heardInDm(): Heard {
     return { place: 'dm', with: [] };

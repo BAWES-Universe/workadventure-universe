@@ -13,6 +13,7 @@ import { withNearbySteps } from './NearbySteps';
 import type { AdminApiService } from '../server/AdminApiService';
 import type { ConversationStorage } from '../memory/ConversationStorage';
 import type { ConversationMemory } from '../memory/ConversationMemory';
+import { viewFor } from '../memory/Heard';
 import type { ResponseProcessor, ProcessedResponse } from '../ai/ResponseProcessor';
 import { parseEmotionsFromResponse, appendStreamedChunk, detectEmotionPrefixAtEnd } from '../ai/EmotionParser';
 import type { BotMetricsCollector } from '../metrics/BotMetricsCollector';
@@ -315,9 +316,11 @@ export abstract class BaseBehavior {
      * 2. Player info from BotClient (room nickname, excluding 'Unknown' sentinel)
      * 3. 'Someone' (safe fallback)
      */
-    protected resolvePlayerName(botId: string, playerId: number, conversationMemory: ConversationMemory | null): string | null {
+    protected resolvePlayerName(botId: string, playerId: number, conversationMemory: ConversationMemory | null, spaceName?: string): string | null {
         const playerInfo = this.bot?.getPlayerInfo(playerId);
-        return conversationMemory?.getPersonalInfo(botId, playerId)?.name
+        // A name the person gave privately is not said where other people read the greeting (#1993)
+        const view = spaceName !== undefined && this.bot ? viewFor(this.bot.othersWith?.(spaceName, playerId)) : 'all';
+        return conversationMemory?.nameFor(botId, playerId, view)
             || (playerInfo && playerInfo.name !== 'Unknown' ? playerInfo.name : null);
     }
 

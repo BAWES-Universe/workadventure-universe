@@ -32,6 +32,8 @@ import { CONFIRM_SYSTEM, isConfirm, tapInstead } from '../mcp/NearbyWords';
 import { ASK_PERSON_TOOL, NEVER_ASK_RULE, askPersonDefinition, readQuestion, type QuestionAsked } from '../mcp/QuestionCard';
 import type { BotAsksPort } from '../mcp/NearbyAsks';
 import { appendStreamedChunk } from './EmotionParser';
+import { viewFor } from '../memory/Heard';
+import { MarkerWatch, PrivateAnswers, answeredPrivatelyLine, emotionBlockOf, onlyForThemRule, othersHereRule, privateAnswerRule, privateBodyOf } from './PrivateAnswers';
 import { describeStep, resultOf, showsAsStep, type ToolStep } from './ToolSteps';
 import { jsonrepair } from 'jsonrepair';
 import { resolveVisionSupport } from './providers/visionModels';
@@ -126,6 +128,9 @@ import { linkOfStore } from '../services/ChatFiles';
 import { addTurnMedia, startTurnMedia, turnMediaNotice, type TurnMedia } from './ArtifactMedia';
 import { charsToFree, StepRoom, stepOf, stepsAsText, withStepsAsText, type ReplySteps } from './replySteps';
 
+/** How long after someone joins a space the game has said who they are (the cards wait as long, see NearbyAsks). */
+const PERSON_BACK_WAIT_MS = 1500;
+
 /** What one turn did, for the "Say when nothing was saved" check (Orbit #666). */
 interface TurnFacts {
     /** The bot could make or change artifacts in this turn. */
@@ -134,6 +139,28 @@ interface TurnFacts {
     artifactSaved: boolean;
     /** The switch is on for this bot. */
     guard: boolean;
+}
+
+/**
+ * What two answers to one message share (#1993), so the message is recorded once: one row of usage, which is one reply
+ * of the person's allowance, with the cost of both.
+ */
+interface SharedUsage {
+    ledger: UsageLedger;
+    /** Set once a second answer is known to follow: this answer's figures wait in `held` and are not recorded. */
+    hold: boolean;
+    held?: { providerId: string; tokensUsed: number; promptTokens: number; completionTokens: number; cacheReadTokens: number; cacheWriteTokens: number; latency: number; error: boolean };
+}
+
+/** How one answer of a turn differs from an ordinary one (#1993). */
+interface TurnOptions {
+    /** Other people read this answer: nothing of the person's own from other chats is put in front of the model. */
+    shared?: boolean;
+    /** This answer goes to its person alone: no tools, and none of its words in PostHog or Sentry. */
+    onlyForThem?: boolean;
+    /** Rules for this answer, added at the end of the prompt, after what a provider caches. */
+    rules?: string[];
+    usage?: SharedUsage;
 }
 
 /** A bot's provider, resolved by bot id (#374): the settings to call, where they came from, or "resting". */
@@ -221,6 +248,8 @@ export class AIService {
     /** The card a tool that asks first shows in a direct message (#1657). Without it such a call is not run. */
     private approvals?: ToolApprovals;
     private nearbyAsks?: BotAsksPort;
+    /** The replies only one person saw, where other people were (#1993). */
+    private readonly privateAnswers = new PrivateAnswers();
 
     constructor(
         conversationMemory: ConversationMemory,
@@ -258,7 +287,11 @@ export class AIService {
     asksPort(): BotAsksPort {
         return {
             tap: (bot, spaceName, playerId, answer) => this.nearbyAsks?.tap(bot, spaceName, playerId, answer),
-            personBack: (bot, spaceName, playerId) => this.nearbyAsks?.personBack(bot, spaceName, playerId),
+            personBack: (bot, spaceName, playerId) => {
+                this.nearbyAsks?.personBack(bot, spaceName, playerId);
+                // The game says who someone is a moment after they join: then the answers only they saw come back (#1993)
+                setTimeout(() => this.privateAnswers.personBack(bot, spaceName, playerId), PERSON_BACK_WAIT_MS).unref?.();
+            },
         };
     }
 
@@ -657,7 +690,8 @@ export class AIService {
     private readonly restingLines = new Set<string>();
 
     isRestingLine(text: string): boolean {
-        return this.restingLines.has(text.trim());
+        // The line for an answer that went to its person alone (#1993) is fixed too, and may carry an emotion block
+        return this.restingLines.has(text.trim()) || this.restingLines.has(privateBodyOf(text));
     }
 
     /**
@@ -697,8 +731,19 @@ export class AIService {
         const hearing = spaceName !== undefined && botClient !== undefined ? { spaceName, botClient } : undefined;
         // A new turn starts with nothing held, whatever an earlier one that was cut short left behind
         if (!isRetry) hearing?.botClient.releaseSpeech(hearing.spaceName, playerId);
-        const attempt = (text: string, retry: boolean, facts: TurnFacts) =>
-            this.generateTurn(botId, playerId, text, chatInstructions, providerId, spaceName, conversationContext, botClient, adminApiService, abortSignal, images, channel, toolTimeoutSeconds, homeRoomUrl, peopleInRoom, retry, facts, greeting);
+        // Who else reads this reply (#1993). With other people in the bubble or meeting room it is built again from only
+        // what all of them were there for, whatever the caller passed: nothing private is put in front of the model, so
+        // there is nothing in the reply to keep secret.
+        const others = hearing && channel === 'world' && playerId !== undefined ? this.othersReading(playerId, hearing.spaceName, hearing.botClient) : undefined;
+        const context = others ? this.conversationMemory.getConversationContext(botId, playerId, others) : conversationContext;
+        const name = others ? hearing?.botClient.getPersonForArtifacts?.(playerId)?.name ?? null : null;
+        // Only when the bot knows something of this person's that the others were not there for can their message need
+        // an answer of its own: then, and only for what a person said, the reply is watched for the marker
+        const watch = others && personSaid && !isRetry && !greeting && this.conversationMemory.leavesOut(botId, playerId, others) ? new MarkerWatch() : undefined;
+        const usage: SharedUsage | undefined = watch ? { ledger: new UsageLedger(), hold: false } : undefined;
+        const shared: TurnOptions | undefined = others ? { shared: true, rules: personSaid ? [othersHereRule(name)] : [] } : undefined;
+        const attempt = (text: string, retry: boolean, facts: TurnFacts, options = shared) =>
+            this.generateTurn(botId, playerId, text, chatInstructions, providerId, spaceName, context, botClient, adminApiService, abortSignal, images, channel, toolTimeoutSeconds, homeRoomUrl, peopleInRoom, retry, facts, greeting, options);
         // A card waits for this person in the bubble (#1658): a yes never sends, and anything else closes it
         if (personSaid && !isRetry && channel === 'world' && botClient && spaceName && playerId !== undefined && (await this.whileCardWaits(botId, playerId, message, providerId, spaceName, botClient))) {
             yield { content: '', done: true } as AIStreamChunk;
@@ -706,21 +751,61 @@ export class AIService {
         }
         let said = '';
         let done: AIStreamChunk | null = null;
-        for await (const chunk of attempt(message, isRetry, turn)) {
+        const first = watch && usage ? { ...shared, rules: [...(shared?.rules ?? []), privateAnswerRule(name)], usage } : shared;
+        for await (const chunk of attempt(message, isRetry, turn, first)) {
             // Callers stop at the first done: it is held until the reply is known to be honest
             if (chunk.done) {
                 done = chunk;
                 continue;
             }
+            // The model asked to answer this person alone: whatever else it wrote is for nobody
+            if (watch?.found) {
+                if (chunk.content) watch.push(chunk.content);
+                continue;
+            }
             if (chunk.reset) {
+                const rest = watch?.rest();
+                if (rest) yield { content: rest, done: false };
                 said = '';
                 hearing?.botClient.holdSpeech(hearing.spaceName, playerId);
+            } else if (chunk.content && watch) {
+                // No part of the marker is ever shown: what could be its start waits until it is known not to be
+                const open = watch.push(chunk.content);
+                if (watch.found && usage) usage.hold = true;
+                if (open) {
+                    said += open;
+                    yield { ...chunk, content: open };
+                }
+                continue;
             } else if (chunk.content) {
                 said += chunk.content;
             }
             yield chunk;
         }
+        if (watch?.found && usage && hearing) {
+            if (done && !abortSignal?.aborted && !done.metadata?.error) {
+                yield* this.answerPrivately(
+                    { botId, playerId, message, chatInstructions, providerId, spaceName: hearing.spaceName, botClient: hearing.botClient, adminApiService, abortSignal, images, name },
+                    usage,
+                    said,
+                    emotionBlockOf(watch.after)
+                );
+                return;
+            }
+            // The second answer is never made: the first one's usage is recorded on its own
+            this.recordHeld(botId, playerId, usage);
+            hearing.botClient.releaseSpeech(hearing.spaceName, playerId);
+            if (done) yield done;
+            return;
+        }
         if (!done) return;
+        const rest = watch?.rest();
+        if (rest) {
+            said += rest;
+            yield { content: rest, done: false };
+        }
+        // An ordinary reply: the next answer that goes to this person alone is said so again
+        if (hearing && personSaid && !isRetry) this.privateAnswers.answered(botId, hearing.spaceName, playerId, false);
         if (isRetry || abortSignal?.aborted || done.metadata?.error || !turn.guard || !turn.artifactTools || turn.artifactSaved || !claimsArtifactSaved(said)) {
             hearing?.botClient.releaseSpeech(hearing.spaceName, playerId);
             yield done;
@@ -737,6 +822,107 @@ export class AIService {
             yield chunk;
             if (chunk.done) return;
         }
+    }
+
+    /**
+     * Who else would read a reply in this space (#1993): undefined when the person is alone with the bot. When the bot
+     * cannot tell who is there, it answers as if a stranger were: nothing private is open to them.
+     */
+    private othersReading(playerId: number, spaceName: string, botClient: BotClient): { present: readonly string[] } | undefined {
+        let others: string[] | undefined;
+        try {
+            others = botClient.othersWith?.(spaceName, playerId);
+        } catch {
+            others = undefined;
+        }
+        const view = viewFor(others);
+        return view === 'all' ? undefined : view;
+    }
+
+    /**
+     * The second answer to a message that needs something the others here were not there for (#1993). It is made with
+     * everything the bot and the person share and with no tools, sent to that person alone, and kept as heard by nobody
+     * else. None of it goes to PostHog or Sentry, or to the log the bot's managers read. Everyone reads the fixed line
+     * instead, said once and not again while this person's replies here stay private. The two answers are one message of
+     * the person's allowance.
+     */
+    private async *answerPrivately(
+        ask: {
+            botId: string;
+            playerId: number;
+            message: string;
+            chatInstructions: string;
+            providerId: string;
+            spaceName: string;
+            botClient: BotClient;
+            adminApiService?: AdminApiService;
+            abortSignal?: AbortSignal;
+            images?: string[];
+            name: string | null;
+        },
+        usage: SharedUsage,
+        /** What everyone already read of the first answer, before the marker. */
+        saidBefore: string,
+        /** The emotion block of the first answer, which was made without anything private. */
+        emotionBlock: string
+    ): AsyncGenerator<AIStreamChunk> {
+        const { botId, playerId, spaceName, botClient } = ask;
+        const startTime = Date.now();
+        usage.hold = false;
+        let written = '';
+        let last: AIStreamChunk | null = null;
+        // The same turn asked again (as a retry is): allowed already, and what the person sent with it is still its media
+        for await (const chunk of this.generateTurn(
+            botId, playerId, ask.message, ask.chatInstructions, ask.providerId, spaceName,
+            this.conversationMemory.getConversationContext(botId, playerId), botClient, ask.adminApiService, ask.abortSignal, ask.images,
+            'world', undefined, undefined, undefined, true, undefined, false,
+            { onlyForThem: true, rules: [onlyForThemRule(ask.name)], usage }
+        )) {
+            if (chunk.done) last = chunk;
+            else if (chunk.reset) written = '';
+            else if (chunk.content) written = appendStreamedChunk(written, chunk.content);
+        }
+        // A second answer that never got as far as its usage leaves the first one's to be recorded
+        this.recordHeld(botId, playerId, usage);
+        botClient.releaseSpeech(spaceName, playerId);
+        // Stopped by the person: whoever stopped it says so, and nothing is sent
+        if (ask.abortSignal?.aborted) return;
+        const body = privateBodyOf(written);
+        if (!last || last.metadata?.error || !body || !this.privateAnswers.send(botClient, spaceName, playerId, body)) {
+            console.warn(`[AIService] Bot ${botId} could not answer a person alone; nothing was shown`);
+            yield { content: '', done: true, metadata: { tokensUsed: 0, latency: Date.now() - startTime, error: true } };
+            return;
+        }
+        // Remembered as said to this person alone, so it is never part of an answer anyone else reads
+        try {
+            this.conversationMemory.addPrivateReply(botId, playerId, body, spaceName);
+        } catch (error) {
+            console.error('[AIService] Could not keep a private answer in memory:', error instanceof Error ? error.message : error);
+        }
+        const again = this.privateAnswers.justAnsweredPrivately(botId, spaceName, playerId);
+        this.privateAnswers.answered(botId, spaceName, playerId, true);
+        // No model writes this line; said twice in a row it is not a repetition to fix
+        const line = again ? '' : answeredPrivatelyLine(ask.name);
+        if (line) this.restingLines.add(line);
+        const shown = [line, emotionBlock].filter(Boolean).join('\n');
+        if (shown) yield { content: line && saidBefore.trim() ? `\n\n${shown}` : shown, done: false };
+        yield last;
+    }
+
+    /** The first of two answers to a message was made and the second never recorded: its usage goes out on its own (#1993). */
+    private recordHeld(botId: string, playerId: number, usage: SharedUsage): void {
+        const held = usage.held;
+        if (!held) return;
+        usage.held = undefined;
+        usage.hold = false;
+        this.trackUsage(botId, held.providerId, {
+            tokensUsed: held.tokensUsed,
+            promptTokens: held.promptTokens,
+            completionTokens: held.completionTokens,
+            ...(held.cacheReadTokens || held.cacheWriteTokens ? { cacheReadTokens: held.cacheReadTokens, cacheWriteTokens: held.cacheWriteTokens } : {}),
+            latency: held.latency,
+            error: held.error,
+        }, usage.ledger.summary(), this.usageTalker(botId, playerId, 'world', false)).catch(() => {});
     }
 
     /**
@@ -790,11 +976,14 @@ export class AIService {
          * A greeting the bot makes on its own when someone walks up (greetings cooldown): the person is not asked about their replies
          * left and the usage is sent marked as a greeting, so it is never counted against them. Whoever's key the bot runs on pays.
          */
-        greeting = false
+        greeting = false,
+        /** In a group (#1993): the answer everyone reads, or the one that goes to its person alone. */
+        options?: TurnOptions
     ): AsyncGenerator<AIStreamChunk> {
         const startTime = Date.now();
-        // What each call to the provider cost, priced as it finishes; the reply's cost is their sum (#1173)
-        const ledger = new UsageLedger();
+        // What each call to the provider cost, priced as it finishes; the reply's cost is their sum (#1173). Two answers
+        // to one message add to the same one.
+        const ledger = options?.usage?.ledger ?? new UsageLedger();
         // Whether the reply's usage has been recorded, so a failure after that is not recorded with the same cost again
         let usageRecorded = false;
         // A new turn starts clean: an artifact call is only the same as an earlier one while that turn is asked again
@@ -903,7 +1092,8 @@ export class AIService {
             }
 
             // The newest files line is asked for now, so it comes in while the map context is read
-            const recentFiles = this.recentFilesFor(botId, playerId, botClient, spaceName, adminApiService);
+            // With other people reading, the person's files from their other chats are not named (#1993)
+            const recentFiles = options?.shared ? Promise.resolve('') : this.recentFilesFor(botId, playerId, botClient, spaceName, adminApiService);
 
             // Fetch map context (location + areas) upfront so bot always knows where it is
             let mapContextInfo = '';
@@ -1035,7 +1225,8 @@ export class AIService {
                 // Reads pendingMedia directly so the AI always knows about
                 // pending items at turn start.
                 pendingMediaNotice: [
-                    this.conversationMemory.getPendingMediaNotice(botId, playerId),
+                    // What waits from an earlier visit stays waiting while other people are here (#1993)
+                    options?.shared || options?.onlyForThem ? '' : this.conversationMemory.getPendingMediaNotice(botId, playerId),
                     artifactsEnabled() ? turnMediaNotice(turnMedia) : '',
                 ].filter(Boolean).join('\n\n') || undefined,
                 channel,
@@ -1048,20 +1239,23 @@ export class AIService {
             const isQwenModel = config.model.toLowerCase().includes('qwen');
 
             // Define tools for function calling
-            const { tools, toolServerMap } = await this.buildTools(
-                botId,
-                botClient,
-                adminApiService || this.adminApiService,
-                channel,
-                providerId,
-                this.gatePerson(botId, playerId, botClient, spaceName)
-            );
+            // An answer for one person alone has none (#1993): a tool's steps, cards and files are shown to the whole space
+            const { tools, toolServerMap } = options?.onlyForThem
+                ? { tools: [] as any[], toolServerMap: new Map<string, ToolServerEntry>() }
+                : await this.buildTools(
+                      botId,
+                      botClient,
+                      adminApiService || this.adminApiService,
+                      channel,
+                      providerId,
+                      this.gatePerson(botId, playerId, botClient, spaceName)
+                  );
             // In a bubble, what is on an approval card is for one person only: nothing is said before a tool that asks, and
             // nothing from a card is repeated in the chat (#1658). Added at the end, after what the provider caches.
             const nearbyRule = channel === 'world' && botClient && this.approvals && toolServerMap.size > 0 ? NEARBY_ASK_RULE : '';
             // With "Asks which way to go" on Never the bot says its pick and starts (#1661)
             const neverAsk = botId && this.approvals?.asksQuestions && (await this.approvals.settings(botId)).askWhichWay === 'never' ? NEVER_ASK_RULE : '';
-            const systemPrompt = [basePrompt, nearbyRule, neverAsk].filter(Boolean).join('\n\n');
+            const systemPrompt = [basePrompt, nearbyRule, neverAsk, ...(options?.rules ?? [])].filter(Boolean).join('\n\n');
             if (turn) turn.artifactTools = tools.some((tool) => writesArtifact(tool?.function?.name ?? ''));
 
             // Generate stream with tools
@@ -1139,7 +1333,8 @@ export class AIService {
             const conversationId = `conversation-${botId}-player-${playerId}`;
             // Hide bot conversations (#1166): a private bot sends no conversation or player ids to Sentry and no
             // text to PostHog. Anything else (usage counts, memory, errors) is unchanged.
-            const privateBot = await this.isPrivateBot(botId);
+            // An answer only its person reads is kept out of them the same way (#1993)
+            const privateBot = options?.onlyForThem === true || (await this.isPrivateBot(botId));
             privateTurn = privateBot;
             // Every PostHog capture of this turn goes through here, so a private bot cannot miss one
             const captureGeneration: typeof captureAiGeneration = (params) => {
@@ -2456,7 +2651,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 // the bot produced no message and the user would get media without
                 // context. Preserve the items for the next re-entry instead.
                 if (streamCompleted) {
-                    this.flushPendingMedia(botClient, spaceName, botId, playerId);
+                    // With other people here, only what this answer made goes into the chat (#1993)
+                    this.flushPendingMedia(botClient, spaceName, botId, playerId, options?.shared || options?.onlyForThem ? startTime : undefined);
                 }
                 // Always track usage, even if stream doesn't complete normally
                 const latency = Date.now() - startTime;
@@ -2467,20 +2663,38 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 
                 // Always track usage - fire and forget
                 usageRecorded = true;
-                this.trackUsage(botId, usageProviderId, {
-                    tokensUsed,
-                    promptTokens,
-                    completionTokens,
-                    ...(cacheLedger.read || cacheLedger.write ? { cacheReadTokens: cacheLedger.read, cacheWriteTokens: cacheLedger.write } : {}),
+                // With an earlier answer to the same message, its figures are added: one message, one row (#1993)
+                const before = options?.usage?.held;
+                const figures = {
+                    providerId: usageProviderId,
                     latency,
+                    tokensUsed: tokensUsed + (before?.tokensUsed ?? 0),
+                    promptTokens: promptTokens + (before?.promptTokens ?? 0),
+                    completionTokens: completionTokens + (before?.completionTokens ?? 0),
+                    cacheReadTokens: cacheLedger.read + (before?.cacheReadTokens ?? 0),
+                    cacheWriteTokens: cacheLedger.write + (before?.cacheWriteTokens ?? 0),
                     error,
-                }, ledger.summary(), this.usageTalker(botId, playerId, channel, greeting)).catch(err => {
-                    // Always log errors, even without debug mode
-                    console.error('[AIService] Failed to track usage:', err);
-                    if (err instanceof Error) {
-                        console.error('[AIService] Error details:', err.message);
-                    }
-                });
+                };
+                if (options?.usage?.hold) {
+                    // A second answer follows: it records both
+                    options.usage.held = figures;
+                } else {
+                    if (options?.usage) options.usage.held = undefined;
+                    this.trackUsage(botId, usageProviderId, {
+                        tokensUsed: figures.tokensUsed,
+                        promptTokens: figures.promptTokens,
+                        completionTokens: figures.completionTokens,
+                        ...(figures.cacheReadTokens || figures.cacheWriteTokens ? { cacheReadTokens: figures.cacheReadTokens, cacheWriteTokens: figures.cacheWriteTokens } : {}),
+                        latency,
+                        error,
+                    }, ledger.summary(), this.usageTalker(botId, playerId, channel, greeting)).catch(err => {
+                        // Always log errors, even without debug mode
+                        console.error('[AIService] Failed to track usage:', err);
+                        if (err instanceof Error) {
+                            console.error('[AIService] Error details:', err.message);
+                        }
+                    });
+                }
 
                 // A reply through a person's own key: tell Orbit how it went (a cancelled one says nothing either way).
                 // 401 and 403 mean the provider rejected the key, which marks it Down at once.
@@ -2510,7 +2724,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             // Before this, a reply that broke here left no trace outside debug mode (#1498)
             console.error(`[AIService] Bot ${botId} could not answer: ${privateTurn ? (error?.name ?? 'Error') : providerErrorText(error)}`);
 
-            // Track error
+            // Track error. What an earlier answer to the same message cost is on the same ledger, so it is kept (#1993).
+            if (options?.usage) options.usage.held = undefined;
             this.trackUsage(botId, usageProviderId, {
                 tokensUsed: 0,
                 latency,
@@ -4403,6 +4618,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         spaceName: string,
         botId: string,
         playerId: number,
+        /** With other people in the space (#1993): only what was made since then goes out; anything older waits. */
+        since?: number,
     ): void {
         // generateBotResponseStream can be called without botClient or spaceName
         // (both are optional/undefined in its signature). Guard here prevents
@@ -4422,6 +4639,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const seen = new Set<string>();
 
         for (const item of memory.pendingMedia) {
+            // From an earlier visit, with other people here now: it waits, and is not counted as a failed try
+            if (since !== undefined && item.createdAt < since) {
+                remaining.push(item);
+                continue;
+            }
             // Deduplicate by originalUrl — the same media may exist at both the
             // original URL and the CDN URL. originalUrl is the stable identity.
             const isDuplicate = Array.from(seen).some(

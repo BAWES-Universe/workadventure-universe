@@ -1,0 +1,201 @@
+/**
+ * Private answers in a group (game #1993).
+ *
+ * With other people in the bubble or meeting room, the reply everyone reads is built without anything they were not
+ * there for (see memory/Heard.ts), so there is nothing in it to keep secret. When the answer needs one of those things,
+ * the model says so with one fixed marker and nothing else. The server then makes a second answer with everything the
+ * bot and the person share, and sends it to that person alone, as a reply only they see. Everyone else reads one fixed
+ * line no model wrote.
+ *
+ * This file holds the words and the small parts of that: the marker and the watch that keeps it off every screen, the
+ * rules added to the prompt, the fixed line, and the replies kept so they come back with their person after a reload.
+ */
+import type { BotClient } from '../client/BotClient';
+
+/** What the model answers, alone, when the answer needs something the others were not there for. Never shown. */
+export const PRIVATE_MARKER = '[PRIVATE_REPLY]';
+
+/** A reply only one person sees keeps coming back with them for this long, and no more than this many (as cards' replies do). */
+const KEPT_MS = 2 * 60 * 60 * 1000;
+const KEPT = 10;
+/** How many people's replies are kept at once, across bots. */
+const MAX_KEPT_FOR = 500;
+
+const called = (name: string | null | undefined): string => (name && name.trim() ? name.trim() : 'this person');
+
+/**
+ * The rule a shared reply gets, only when the bot knows something about this person that the others here were not there
+ * for. It goes at the end of the prompt, after what a provider caches.
+ */
+export function privateAnswerRule(name: string | null | undefined): string {
+    const who = called(name);
+    return [
+        'PRIVATE THINGS:',
+        `Other people are here and read this reply. You know more about ${who} than you are shown now: what they told you in direct messages, or when nobody else was around, is left out, because the others were not there for it.`,
+        `If answering ${who}'s message needs any of that (something they told you privately, their own plans or details, their files), reply with exactly ${PRIVATE_MARKER} and nothing else: no greeting, no explanation, no hint of what it is about. ${who} will then get the full answer from you alone.`,
+        'For everything else, answer as usual.',
+    ].join(' ');
+}
+
+/** In a group: what someone else told the bot is theirs to share. */
+export function othersHereRule(name: string | null | undefined): string {
+    const who = called(name);
+    return [
+        "OTHER PEOPLE'S THINGS:",
+        'Other people are here and read this reply. You talk with each of them on their own too, and what someone told you privately is theirs: you are not shown it now, and you never say whether you know it.',
+        `If ${who} asks about another person's private matters, say that it is theirs to share (use that person's name when ${who} did), and offer to help ${who} with something else.`,
+    ].join(' ');
+}
+
+/** The rule the second answer gets: it is for one person alone. */
+export function onlyForThemRule(name: string | null | undefined): string {
+    const who = called(name);
+    return [
+        `ONLY ${who.toUpperCase()} READS THIS REPLY:`,
+        `Other people are nearby, but this reply goes to ${who} alone, in writing. Nobody else sees it. Answer their message fully, with everything you know about them.`,
+        'You have no tools in this reply. If it needs one, say what you can, and that they can carry on with you in direct messages.',
+    ].join(' ');
+}
+
+/** The one line everyone reads when an answer went to its person alone. No model writes it. */
+export function answeredPrivatelyLine(name: string | null | undefined): string {
+    return name && name.trim() ? `${name.trim()}, I've answered that just for you.` : "I've answered that just for you.";
+}
+
+const EMOTION_BLOCK = /\[EMOTION_UPDATE\][\s\S]*?\[\/EMOTION_UPDATE\]/i;
+
+/** The emotion block a reply ends with, as the model wrote it, so the reply that stands for it can carry it on. */
+export function emotionBlockOf(reply: string): string {
+    return reply.match(EMOTION_BLOCK)?.[0] ?? '';
+}
+
+/** A reply as its person reads it: without the model's thinking, its emotion block, or a marker it repeated. */
+export function privateBodyOf(reply: string): string {
+    return reply
+        .replace(/<think>[\s\S]*?<\/think>/gi, '')
+        .replace(/\[EMOTION_UPDATE\][\s\S]*?\[\/EMOTION_UPDATE\]/gi, '')
+        .replace(/\[EMOTION_UPDATE\][\s\S]*$/i, '')
+        .split(PRIVATE_MARKER)
+        .join('')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+}
+
+/**
+ * Reads a reply as it is written and holds back anything that could be the start of the marker, so no part of the
+ * marker is ever shown, wherever in the reply the model put it. Once the marker is found, nothing more goes on.
+ */
+export class MarkerWatch {
+    private held = '';
+    private seen = false;
+    private written = '';
+
+    /** The model asked to answer this person alone. */
+    get found(): boolean {
+        return this.seen;
+    }
+
+    /** What the model wrote after the marker: shown to nobody, read only for its emotion block. */
+    get after(): string {
+        return this.written;
+    }
+
+    /** The part of what was written so far that may go on to everyone. */
+    push(text: string): string {
+        if (this.seen) {
+            this.written += text;
+            return '';
+        }
+        const all = this.held + text;
+        const at = all.toUpperCase().indexOf(PRIVATE_MARKER);
+        if (at >= 0) {
+            this.seen = true;
+            this.held = '';
+            this.written = all.slice(at + PRIVATE_MARKER.length);
+            return all.slice(0, at);
+        }
+        // Keep the longest ending that could still turn into the marker
+        let keep = Math.min(all.length, PRIVATE_MARKER.length - 1);
+        while (keep > 0 && !PRIVATE_MARKER.startsWith(all.slice(all.length - keep).toUpperCase())) keep--;
+        this.held = all.slice(all.length - keep);
+        return all.slice(0, all.length - keep);
+    }
+
+    /** The reply (or this part of it, before a tool) ended: what was held was not the marker after all. */
+    rest(): string {
+        const rest = this.seen ? '' : this.held;
+        this.held = '';
+        return rest;
+    }
+}
+
+interface KeptReply {
+    id: string;
+    text: string;
+    at: number;
+}
+
+/**
+ * The replies only one person saw, for every bot of this server. A reply is a private event the game passes to that
+ * person alone, so nobody else's device ever holds it. Kept a while by who the person is, so a reload (or walking back)
+ * brings theirs back, as it does for a card's replies (#1658). A guest has no lasting id: theirs is sent once.
+ */
+export class PrivateAnswers {
+    private readonly kept = new Map<string, KeptReply[]>();
+    /** Whose last reply here was a private one, so the fixed line is not said again on every turn. */
+    private readonly lastWasPrivate = new Set<string>();
+    private count = 0;
+
+    constructor(private readonly now: () => number = Date.now) {}
+
+    private static where(botId: string, spaceName: string, who: string | number): string {
+        return JSON.stringify([botId, spaceName, who]);
+    }
+
+    /**
+     * Sends a reply to this person alone. False when it could not go (the bot is no longer in the space): then nothing
+     * was shown to anyone. It is addressed to that one person in that one space, so if they have left nobody gets it,
+     * and someone signed in finds it when they are back.
+     */
+    send(bot: Pick<BotClient, 'getBotId' | 'sendAskEvent' | 'getPersonForArtifacts'>, spaceName: string, playerId: number, text: string): boolean {
+        if (!text.trim()) return false;
+        const id = `p${this.now().toString(36)}${(this.count++).toString(36)}`;
+        if (!bot.sendAskEvent(spaceName, playerId, { kind: 'reply', id, revision: 0, body: text })) return false;
+        const person = bot.getPersonForArtifacts(playerId);
+        if (person.signedIn && person.identifier) {
+            const key = PrivateAnswers.where(bot.getBotId(), spaceName, person.identifier);
+            const recent = (this.kept.get(key) ?? []).filter((reply) => this.now() - reply.at <= KEPT_MS).slice(-(KEPT - 1));
+            this.kept.delete(key);
+            this.kept.set(key, [...recent, { id, text, at: this.now() }]);
+            if (this.kept.size > MAX_KEPT_FOR) this.kept.delete(this.kept.keys().next().value as string);
+        }
+        return true;
+    }
+
+    /** The person is in the space again: their replies come back on their screen, in the order they were made. */
+    personBack(bot: Pick<BotClient, 'getBotId' | 'sendAskEvent' | 'getPersonForArtifacts'>, spaceName: string, playerId: number): void {
+        const person = bot.getPersonForArtifacts(playerId);
+        if (!person.signedIn || !person.identifier) return;
+        const key = PrivateAnswers.where(bot.getBotId(), spaceName, person.identifier);
+        const recent = (this.kept.get(key) ?? []).filter((reply) => this.now() - reply.at <= KEPT_MS);
+        if (recent.length === 0) return void this.kept.delete(key);
+        for (const reply of recent) bot.sendAskEvent(spaceName, playerId, { kind: 'reply', id: reply.id, revision: 0, body: reply.text });
+    }
+
+    /** Whether this person's last reply from this bot here went to them alone: the fixed line was just said. */
+    justAnsweredPrivately(botId: string, spaceName: string, playerId: number): boolean {
+        return this.lastWasPrivate.has(PrivateAnswers.where(botId, spaceName, playerId));
+    }
+
+    /** What kind of reply this person just got here. */
+    answered(botId: string, spaceName: string, playerId: number, privately: boolean): void {
+        const key = PrivateAnswers.where(botId, spaceName, playerId);
+        if (privately) {
+            this.lastWasPrivate.delete(key);
+            this.lastWasPrivate.add(key);
+            if (this.lastWasPrivate.size > MAX_KEPT_FOR) this.lastWasPrivate.delete(this.lastWasPrivate.values().next().value as string);
+        } else {
+            this.lastWasPrivate.delete(key);
+        }
+    }
+}

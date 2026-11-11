@@ -5,7 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ConversationMemory } from '../memory/ConversationMemory';
 import { PersistentMemory } from '../memory/PersistentMemory';
-import { SOMEONE_UNKNOWN, heardAlso, heardInDm, mayUse, type Heard } from '../memory/Heard';
+import { SOMEONE_UNKNOWN, heardAlso, heardInDm, mayUse, viewFor, type Heard } from '../memory/Heard';
 
 const BOT = 'bot-1';
 const KHALID = 7;
@@ -374,5 +374,49 @@ describe('PersistentMemory: the place travels with the person', () => {
         const inDm = memory.getMemory(BOT, DM_PLAYER)!.personalInfo.heard!.name;
         expect(inDm).toEqual(onMap);
         expect(inDm).not.toBe(onMap);
+    });
+});
+
+describe('a name given privately', () => {
+    it('is used alone with the person, and not where other people read the greeting', () => {
+        const others = { now: [] as string[] };
+        const memory = memoryWith(others);
+        memory.addMessage(BOT, KHALID, 'My name is Kiko', 'person', DM);
+
+        expect(memory.nameFor(BOT, KHALID)).toBe('Kiko');
+        expect(memory.nameFor(BOT, KHALID, 'all')).toBe('Kiko');
+        expect(memory.nameFor(BOT, KHALID, { present: [SARA] })).toBeUndefined();
+        expect(memory.nameFor(BOT, KHALID, { present: [SOMEONE_UNKNOWN] })).toBeUndefined();
+    });
+
+    it('is used in front of the people it was said to', () => {
+        const others = { now: [SARA] };
+        const memory = memoryWith(others);
+        memory.addMessage(BOT, KHALID, 'My name is Kiko', 'person', BUBBLE);
+
+        expect(memory.nameFor(BOT, KHALID, { present: [SARA] })).toBe('Kiko');
+        expect(memory.nameFor(BOT, KHALID, { present: [SARA, OMAR] })).toBeUndefined();
+    });
+
+    it('keeps a reply only the person read out of what anyone else is told', () => {
+        const others = { now: [SARA] };
+        const memory = memoryWith(others);
+        memory.addMessage(BOT, KHALID, 'When is my interview?', 'person', BUBBLE);
+        memory.addPrivateReply(BOT, KHALID, 'It is at 10 on Thursday.', BUBBLE);
+        memory.addMessage(BOT, KHALID, "Khalid, I've answered that just for you.", 'bot', BUBBLE);
+
+        const shared = memory.getConversationContext(BOT, KHALID, { present: [SARA] });
+        expect(shared).toContain('When is my interview?');
+        expect(shared).toContain("I've answered that just for you.");
+        expect(shared).not.toContain('at 10 on Thursday');
+        expect(memory.getConversationContext(BOT, KHALID)).toContain('It is at 10 on Thursday.');
+    });
+});
+
+describe('viewFor: who a reply is built for', () => {
+    it('is everything alone, the people named in a group, and a stranger when the bot cannot tell', () => {
+        expect(viewFor([])).toBe('all');
+        expect(viewFor([SARA])).toEqual({ present: [SARA] });
+        expect(viewFor(undefined)).toEqual({ present: [SOMEONE_UNKNOWN] });
     });
 });

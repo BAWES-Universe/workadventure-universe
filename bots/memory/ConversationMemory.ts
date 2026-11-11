@@ -325,6 +325,17 @@ export class ConversationMemory {
     }
 
     /**
+     * A reply only this person read, in a space where other people were (#1993): kept as said with nobody else there,
+     * so it is never part of an answer anyone else reads.
+     */
+    addPrivateReply(botId: string, playerId: number, message: string, spaceName: string): void {
+        this.addMessage(botId, playerId, message, 'bot', spaceName);
+        const history = this.getMemory(botId, playerId)?.conversationHistory;
+        const line = history?.[history.length - 1];
+        if (line?.sender === 'bot') line.heard = { place: 'nearby', with: [] };
+    }
+
+    /**
      * Append a vision-description note to the last person message in history.
      *
      * The vision describe path (AIService) injects the image description into
@@ -576,6 +587,15 @@ export class ConversationMemory {
     /**
      * Get personal information for a player
      */
+    /**
+     * The name this person gave the bot, when a reply for this view may use it (#1993): a name given privately is not
+     * said in front of other people.
+     */
+    nameFor(botId: string, playerId: number, view: MemoryView = 'all'): string | undefined {
+        const info = this.getMemory(botId, playerId)?.personalInfo;
+        return info?.name && mayUse(info.heard?.name, view) ? info.name : undefined;
+    }
+
     getPersonalInfo(botId: string, playerId: number): PersonalInfo | null {
         const memory = this.getMemory(botId, playerId);
         return memory?.personalInfo || null;
