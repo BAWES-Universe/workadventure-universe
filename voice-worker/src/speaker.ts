@@ -58,6 +58,11 @@ export class Speaker {
     private abort?: AbortController;
     private stream?: ReplyStream;
     private stopped = false;
+    /** Held: no new frame of the reply is sent until it is let go; already sent audio plays out. */
+    private holding = false;
+    private release?: () => void;
+    /** Played at this fraction of its volume while lowered (a comparison only, never the default). */
+    private gain = 1;
     private readonly encoder: Encoder = newOpusEncoder(32000);
     private readonly done: Promise<void>;
 
@@ -67,6 +72,49 @@ export class Speaker {
 
     get speaking(): boolean {
         return this.current !== undefined;
+    }
+
+    /** The reply playing now, if any (held or not). */
+    get playingId(): string | undefined {
+        return this.current?.id;
+    }
+
+    get held(): boolean {
+        return this.holding;
+    }
+
+    /**
+     * Someone may be speaking over the bot: the reply stops at the next frame not yet sent, and everything after it is
+     * kept, exactly, until `resume` (it goes on from that frame) or a stop (it is dropped as today). Already sent audio
+     * plays out. Returns the reply held, or undefined when nothing is playing. Holding twice is holding once.
+     */
+    hold(): string | undefined {
+        if (!this.current || this.stopped) return undefined;
+        if (!this.holding) {
+            this.holding = true;
+            this.host.counters.inc('playback_holds');
+        }
+        return this.current.id;
+    }
+
+    /** Goes on from the frame where `hold` stopped it, if that reply is still the one playing. */
+    resume(segmentId: string): boolean {
+        if (!this.holding || this.current?.id !== segmentId) return false;
+        this.holding = false;
+        this.host.counters.inc('playback_resumes');
+        this.letGo();
+        return true;
+    }
+
+    /** Lowers the volume of the reply playing now, or puts it back (1). */
+    setGain(gain: number): void {
+        this.gain = Math.min(1, Math.max(0, gain));
+    }
+
+    private letGo(): void {
+        const release = this.release;
+        this.release = undefined;
+        release?.();
     }
 
     enqueue(id: string, text: string, maxMs?: number, lang?: string): void {
@@ -129,6 +177,9 @@ export class Speaker {
         this.cancel = reason;
         this.abort?.abort();
         this.stream?.nudge();
+        // A held reply that is stopped is never let go again
+        this.holding = false;
+        this.letGo();
     }
 
     private async run(): Promise<void> {
@@ -141,6 +192,8 @@ export class Speaker {
             this.cancel = undefined;
             await this.play(segment);
             this.current = undefined;
+            this.holding = false;
+            this.gain = 1;
         }
     }
 
@@ -171,6 +224,15 @@ export class Speaker {
                 reason = 'limit';
                 break;
             }
+            if (this.holding) {
+                // Held: time stands still for the reply, as while waiting for the provider, so nothing comes out in a burst after
+                const heldFrom = performance.now();
+                await new Promise<void>((resolve) => (this.release = resolve));
+                const heldMs = performance.now() - heldFrom;
+                counters.inc('playback_held_ms', Math.round(heldMs));
+                if (started) startedAt += heldMs;
+                continue;
+            }
             const pcm24k = stream.take();
             if (!pcm24k) {
                 if (stream.ended) break;
@@ -188,7 +250,9 @@ export class Speaker {
             const listeners = this.host.targets().filter((t) => t.plays());
             if (listeners.length) {
                 let opus: Buffer | undefined;
-                const out: OutputFrame = { pcm24k, opus: () => (opus ??= Buffer.from(this.encoder.encode(up.process(pcm24k)))) };
+                const gain = this.gain;
+                const pcm = gain >= 1 ? pcm24k : Int16Array.from(pcm24k, (v) => Math.round(v * gain));
+                const out: OutputFrame = { pcm24k: pcm, opus: () => (opus ??= Buffer.from(this.encoder.encode(up.process(pcm)))) };
                 for (const listener of listeners) listener.sendFrame(out);
                 segment.playedMs += FRAME_MS;
                 if (!timed) {

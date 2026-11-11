@@ -44,9 +44,9 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv = process.env): WorkerOpti
         maxPreviewSeconds: int(env.VOICE_MAX_PREVIEW_SECONDS, DEFAULT_MAX_PREVIEW_SECONDS),
         maxPreviews: int(env.VOICE_MAX_PREVIEWS, DEFAULT_MAX_PREVIEWS),
         recognitionFinalTimeoutSeconds: int(env.VOICE_RECOGNITION_FINAL_TIMEOUT_SECONDS, DEFAULT_SONIOX_FINAL_TIMEOUT_MS / 1000),
-        // The speech detector (speechObserver.ts), on when both are set (the image sets both). On, a sound counts as someone
-        // speaking (stopping the bot's voice and holding back its reply) only once the detector also hears speech, and as
-        // today whenever it cannot tell; VOICE_SPEECH_OBSERVER_WATCH_ONLY=1 leaves today's rule alone and only counts.
+        // The speech detector (speechObserver.ts), on when both are set (the image sets the model, not the switch). On, it
+        // only watches and counts: today's rule still decides for everyone. (Work in progress: the reversible pause is
+        // being built for a limited owner rollout only, never on for everyone by default.)
         // It watches at most VOICE_SPEECH_OBSERVER_MAX_STREAMS people at once (default 15, the load it was measured at: 9
         // people in 3 proximity sessions and 6 in 2 LiveKit rooms); anyone beyond that is simply not watched.
         ...(env.VOICE_SPEECH_OBSERVER === '1' && env.VOICE_SPEECH_OBSERVER_MODEL
@@ -54,8 +54,6 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv = process.env): WorkerOpti
                   speechObserver: {
                       load: sileroLoader({ modelPath: env.VOICE_SPEECH_OBSERVER_MODEL, runtime: env.VOICE_SPEECH_OBSERVER_RUNTIME, env }),
                       maxStreams: int(env.VOICE_SPEECH_OBSERVER_MAX_STREAMS, DEFAULT_SPEECH_OBSERVER_MAX_STREAMS),
-                      // It decides whether a sound is someone speaking, unless told only to watch
-                      decides: env.VOICE_SPEECH_OBSERVER_WATCH_ONLY !== '1',
                   },
               }
             : {}),
