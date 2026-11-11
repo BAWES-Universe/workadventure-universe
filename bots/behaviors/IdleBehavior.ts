@@ -10,6 +10,7 @@ import { ConversationMemory } from '../memory/ConversationMemory';
 import { BotClient } from '../client/BotClient';
 import { parseEmotionsFromResponse, appendStreamedChunk, detectEmotionPrefixAtEnd, moodOf, WAVE_MOOD } from '../ai/EmotionParser';
 import { createBatchState, batchAppend, batchFlush } from '../ai/StreamBatcher';
+import type { Heard } from '../memory/Heard';
 
 export interface IdleBehaviorConfig extends BehaviorConfig {
     type: 'idle';
@@ -376,11 +377,14 @@ export class IdleBehavior extends BaseBehavior {
         // With a note for each file it came with (#1508), for the bot's memory only: the saved chat keeps what they wrote
         let historyMessage = message;
         let keepFiles: () => void = () => undefined;
+        // With files, who heard the message when it came: someone who walks up while they are read never got it (#1993)
+        let arrived: { heard: Heard | undefined } | undefined;
         if (url) {
             const files = await this.readBubbleFiles(spaceName, senderId, message, url, mimeType || 'application/octet-stream', mediaType, galleryUrls, uploads);
             message = files.augmented;
             historyMessage = files.line;
             keepFiles = files.keep;
+            arrived = files.arrived;
         }
 
         // Get user info from bot's player map
@@ -408,9 +412,10 @@ export class IdleBehavior extends BaseBehavior {
         // Start conversation in memory if needed
         if (this.conversationMemory) {
             this.conversationMemory.startConversation(botId, senderId);
-            this.conversationMemory.addMessage(botId, senderId, historyMessage, 'person', spaceName);
+            if (arrived) this.conversationMemory.addMessage(botId, senderId, historyMessage, 'person', spaceName, true, arrived);
+            else this.conversationMemory.addMessage(botId, senderId, historyMessage, 'person', spaceName);
             keepFiles();
-            this.conversationMemory.extractPersonalInfo(botId, senderId, originalUserMessage, spaceName);
+            this.conversationMemory.extractPersonalInfo(botId, senderId, originalUserMessage, arrived ? arrived.heard : spaceName);
         }
         
         // Start conversation in storage (if available and UUID is known)

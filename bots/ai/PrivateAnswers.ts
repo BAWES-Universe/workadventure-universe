@@ -270,6 +270,8 @@ export class PrivateAnswers {
         const recent = (this.kept.get(key) ?? []).filter((reply) => this.now() - reply.at <= KEPT_MS);
         if (recent.length === 0) return void this.kept.delete(key);
         for (const reply of recent) bot.sendAskEvent(spaceName, playerId, { kind: 'reply', id: reply.id, revision: 0, body: reply.text });
+        // One the game could not vouch a chat address for when it was made is handed on for their direct messages now
+        this.copy(bot, playerId, recent);
     }
 
     /** Whether this person's last reply from this bot here went to them alone: the fixed line was just said. */

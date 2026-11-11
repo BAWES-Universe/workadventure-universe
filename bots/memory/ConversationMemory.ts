@@ -282,7 +282,9 @@ export class ConversationMemory {
         sender: 'bot' | 'person',
         spaceName?: string,
         /** False for a line the system wrote in the person's turn (about a card they tapped): nothing is learned about them from it. */
-        learn = true
+        learn = true,
+        /** Who heard it when it was said, for a line kept a while after (its files were read first). Otherwise asked now. */
+        arrived?: { heard: Heard | undefined }
     ): void {
         const memory = this.getOrCreateMemory(botId, playerId);
         const now = Date.now();
@@ -294,7 +296,7 @@ export class ConversationMemory {
         }
 
         // Where it is said and who else is there (#1993): kept with the line, and with what is learned from it
-        const heard = this.heardIn(botId, playerId, spaceName, sender);
+        const heard = arrived ? copyHeard(arrived.heard) : this.heardIn(botId, playerId, spaceName, sender);
 
         // Add message to history
         memory.conversationHistory.push({
@@ -836,13 +838,26 @@ export class ConversationMemory {
             woundType = 'betrayal';
         }
 
-        // What hurt is the last thing the person said: the wound is heard where that was (#1993)
+        // What hurt is something the person said since the bot last spoke: the wound is heard where that was (#1993).
+        // With more than one such line (they wrote again while the answer was being made), it cannot be told which
+        // one hurt, so only the people who heard every one of them heard the wound, and nobody if any was private.
         let heard: Heard | undefined;
+        let lines = 0;
         for (let i = memory.conversationHistory.length - 1; i >= 0; i--) {
-            if (memory.conversationHistory[i].sender === 'person') {
-                heard = copyHeard(memory.conversationHistory[i].heard);
-                break;
+            const line = memory.conversationHistory[i];
+            if (line.sender !== 'person') {
+                if (lines > 0) break;
+                continue;
             }
+            const stamp = copyHeard(line.heard);
+            if (lines++ === 0) {
+                heard = stamp;
+            } else if (!stamp || !heard || stamp.place !== 'nearby' || heard.place !== 'nearby') {
+                heard = stamp?.place === 'open' ? heard : heard?.place === 'open' ? stamp : undefined;
+            } else {
+                heard = { place: 'nearby', with: heard.with.filter((id) => stamp.with.includes(id)) };
+            }
+            if (!heard) break;
         }
 
         const wound: EmotionalWound = {

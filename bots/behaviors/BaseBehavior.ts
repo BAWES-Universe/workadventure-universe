@@ -13,7 +13,7 @@ import { withNearbySteps } from './NearbySteps';
 import type { AdminApiService } from '../server/AdminApiService';
 import type { ConversationStorage } from '../memory/ConversationStorage';
 import type { ConversationMemory } from '../memory/ConversationMemory';
-import { namedOthers, viewFor } from '../memory/Heard';
+import { namedOthers, viewFor, type Heard } from '../memory/Heard';
 import type { ResponseProcessor, ProcessedResponse } from '../ai/ResponseProcessor';
 import { parseEmotionsFromResponse, appendStreamedChunk, detectEmotionPrefixAtEnd } from '../ai/EmotionParser';
 import type { BotMetricsCollector } from '../metrics/BotMetricsCollector';
@@ -2496,7 +2496,8 @@ export abstract class BaseBehavior {
     /**
      * A bubble's files (#1508): reads them for the reply as before, and gives the line the history keeps with a note
      * for each upload, and `keep` to call once that line is in the history. Text links in the message are read for
-     * the reply but are not files, so only uploads get a note.
+     * the reply but are not files, so only uploads get a note. `arrived` is who heard the message when it came:
+     * the line and what is learned from it are kept with that, not with who is there once the files are read.
      */
     protected async readBubbleFiles(
         spaceName: string,
@@ -2507,11 +2508,14 @@ export abstract class BaseBehavior {
         mediaType: string | undefined,
         galleryUrls: string[] | undefined,
         uploads: ChatUpload[] | undefined
-    ): Promise<{ augmented: string; line: string; keep: () => void }> {
+    ): Promise<{ augmented: string; line: string; keep: () => void; arrived: { heard: Heard | undefined } }> {
+        // Who was there when it was sent, asked before the files are read: reading takes a while, and someone who walks
+        // up meanwhile was never sent the message or its files (#1993)
+        const arrived = { heard: this.bot?.heardIn?.(spaceName, senderId) };
         const read = new Map<string, ParsedFile | null>();
         const augmented = await this.formatParsedAttachment(message, url, mimeType, mediaType, galleryUrls, undefined, read);
         const botId = this.bot?.getBotId();
-        if (!uploads?.length || !botId || !this.bot) return { augmented, line: message, keep: () => undefined };
+        if (!uploads?.length || !botId || !this.bot) return { augmented, line: message, keep: () => undefined, arrived };
         const noted = this.noteSentFiles({
             botId,
             playerId: senderId,
@@ -2522,9 +2526,9 @@ export abstract class BaseBehavior {
             call: { botId, person: this.bot.getPersonForArtifacts(senderId), chat: { kind: 'nearby', ref: spaceName } },
             personRef: this.userIdToUuid.get(senderId) ?? null,
             // Whoever was in the space when they sent it saw it too (#1993)
-            others: namedOthers(this.bot.heardIn?.(spaceName, senderId)),
+            others: namedOthers(arrived.heard),
         });
-        return { augmented, ...noted };
+        return { augmented, ...noted, arrived };
     }
 
     protected async formatParsedAttachment(

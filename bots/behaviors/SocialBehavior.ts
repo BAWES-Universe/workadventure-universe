@@ -15,6 +15,7 @@ import { parseEmotionsFromResponse, appendStreamedChunk, detectEmotionPrefixAtEn
 import { createBatchState, batchAppend, batchFlush } from '../ai/StreamBatcher';
 import type { BehaviorMoves } from './behaviorModel';
 import { distance, distanceToRoute, nearestPointInCircle, nearestStopIndex, nextStop } from './leash';
+import type { Heard } from '../memory/Heard';
 import {
     buildBotInitiatedGreetingPrompt,
     isAvailableForApproach,
@@ -759,11 +760,14 @@ export class SocialBehavior extends BaseBehavior {
         // With a note for each file it came with (#1508), for the bot's memory only: the saved chat keeps what they wrote
         let historyMessage = message;
         let keepFiles: () => void = () => undefined;
+        // With files, who heard the message when it came: someone who walks up while they are read never got it (#1993)
+        let arrived: { heard: Heard | undefined } | undefined;
         if (url) {
             const files = await this.readBubbleFiles(spaceName, senderId, message, url, mimeType || 'application/octet-stream', mediaType, galleryUrls, uploads);
             message = files.augmented;
             historyMessage = files.line;
             keepFiles = files.keep;
+            arrived = files.arrived;
         }
 
         let conversation = this.activeConversations.get(senderId);
@@ -819,7 +823,8 @@ export class SocialBehavior extends BaseBehavior {
         }
         
         // Store player's message in memory (original, without augmented file content)
-        this.conversationMemory?.addMessage(botId, senderId, historyMessage, 'person', spaceName);
+        if (arrived) this.conversationMemory?.addMessage(botId, senderId, historyMessage, 'person', spaceName, true, arrived);
+        else this.conversationMemory?.addMessage(botId, senderId, historyMessage, 'person', spaceName);
         keepFiles();
 
         // Store player's message in conversation storage (original, without augmented file content)
@@ -832,7 +837,7 @@ export class SocialBehavior extends BaseBehavior {
         }
 
         // Extract personal information from original user message
-        this.conversationMemory?.extractPersonalInfo(botId, senderId, originalUserMessage, spaceName);
+        this.conversationMemory?.extractPersonalInfo(botId, senderId, originalUserMessage, arrived ? arrived.heard : spaceName);
         
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[SocialBehavior] Generating AI response for player ${senderId}...`);

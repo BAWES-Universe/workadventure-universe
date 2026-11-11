@@ -447,24 +447,41 @@ export class MatrixDmBridge implements MatrixEventHandler {
         if (!this.nearbyAnswers.has(key)) return;
         const access = await this.access(botId, matrixUserId);
         if (accessCheckFailed(access)) return;
+        const botUserId = this.botUserId(botId);
+        // Asked while this waited: someone else may have joined the room meanwhile, and then nothing goes there
+        if (!this.stillTheirs(roomId, botUserId, matrixUserId)) return;
         const now = Date.now();
         const due = (this.nearbyAnswers.get(key) ?? []).filter((answer) => now - answer.at <= NEARBY_ANSWER_WAIT_MS);
         // Taken before anything is sent, so two that come at once never send the same answer twice
         this.nearbyAnswers.delete(key);
         if (!mayChat(access)) return;
-        const botUserId = this.botUserId(botId);
+        const keepWaiting = (from: number): void => {
+            // The ones that did not go wait on, ahead of any that came meanwhile
+            const later = this.nearbyAnswers.get(key) ?? [];
+            this.nearbyAnswers.delete(key);
+            this.nearbyAnswers.set(key, [...due.slice(from), ...later].slice(-NEARBY_ANSWERS_PER_CHAT));
+        };
         for (let index = 0; index < due.length; index++) {
+            // Each send waits, so who is in the room is looked at again before every one of them
+            if (!this.stillTheirs(roomId, botUserId, matrixUserId)) return keepWaiting(index);
             try {
                 await this.client.sendMessage(botUserId, roomId, { msgtype: 'm.notice', body: due[index].text, [ANSWERED_NEARBY_KEY]: true });
             } catch (error: any) {
-                // The ones that did not go wait on, ahead of any that came meanwhile
-                const later = this.nearbyAnswers.get(key) ?? [];
-                this.nearbyAnswers.delete(key);
-                this.nearbyAnswers.set(key, [...due.slice(index), ...later].slice(-NEARBY_ANSWERS_PER_CHAT));
+                keepWaiting(index);
                 console.warn(`[MatrixDmBridge] Could not keep an answer of bot ${botId} in ${roomId}:`, error?.message ?? error);
                 return;
             }
         }
+    }
+
+    /**
+     * Whether, by what the bot was last told, only the bot and this person are in the room. A room it was told nothing
+     * about counts as theirs: the caller has just read its members, and a membership event is what would say otherwise.
+     */
+    private stillTheirs(roomId: string, botUserId: string, matrixUserId: string): boolean {
+        const members = this.roomMembers.get(roomId);
+        if (!members) return true;
+        return members.size === 2 && members.has(botUserId) && members.has(matrixUserId);
     }
 
     private botUserId(botId: string): string {

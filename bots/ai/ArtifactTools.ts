@@ -465,9 +465,12 @@ export function describeArtifactError(error: unknown, everyoneHere = false): str
             case 'not_found':
                 if (everyoneHere) return `That artifact isn't here, or it isn't shared with everyone here. ${ASK_IN_PRIVATE}`;
                 return "That artifact isn't here, or this person can't open it.";
-            // "Just you" (#1994): its card is in this chat, so saying it is private tells nobody anything new
+            // "Just you" (#1994): its card is in this chat, so to the person alone, saying it is private tells nothing new.
+            // In front of other people the card may be one they were never shown, so the words are the same as for one
+            // that is not here at all (#1993)
             case 'kept_private':
-                return `Its owner keeps this one private, so it can't be opened here. Say so in one short line.${everyoneHere ? ` ${ASK_IN_PRIVATE}` : ''}`;
+                if (everyoneHere) return `That artifact isn't here, or it isn't shared with everyone here. ${ASK_IN_PRIVATE}`;
+                return "Its owner keeps this one private, so it can't be opened here. Say so in one short line.";
             case 'change_not_allowed':
                 return "The owner hasn't allowed changes from this person. Say so kindly; they can ask the owner, or make their own copy.";
             case 'not_allowed':

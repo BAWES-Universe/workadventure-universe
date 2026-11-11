@@ -136,6 +136,39 @@ describe('MatrixDmBridge: an answer from nearby chat, kept once in direct messag
         expect(copies()).toEqual([[BOT_USER, ROOM, 'One more thing.']]);
     });
 
+    it('sends nothing when someone joins the chat while Orbit is asked, and keeps the answer waiting', async () => {
+        await bridge.onEvent(invite());
+        client.sendMessage.mockClear();
+        const access = (bridge as any).access.bind(bridge);
+        vi.spyOn(bridge as any, 'access').mockImplementationOnce(async (...args: unknown[]) => {
+            const answer = await access(...args);
+            await bridge.onEvent({ type: 'm.room.member', room_id: ROOM, sender: ALICE, event_id: '$join', state_key: BOB, content: { membership: 'join' } });
+            return answer;
+        });
+
+        await bridge.keepNearbyAnswer(BOT, ALICE, ANSWER);
+
+        expect(copies()).toEqual([]);
+        expect((bridge as any).nearbyAnswers.size).toBe(1);
+    });
+
+    it('stops between two answers when someone joins the chat, and keeps the rest waiting in order', async () => {
+        stores.rooms.set(ROOM, BOT);
+        await bridge.keepNearbyAnswer(BOT, ALICE, ANSWER);
+        await bridge.keepNearbyAnswer(BOT, ALICE, 'And bring your portfolio.');
+        expect(client.sendMessage).not.toHaveBeenCalled();
+        client.sendMessage.mockImplementationOnce(async () => {
+            await bridge.onEvent({ type: 'm.room.member', room_id: ROOM, sender: ALICE, event_id: '$join', state_key: BOB, content: { membership: 'join' } });
+            return '$evt';
+        });
+
+        await bridge.openedFromNearby(BOT, ALICE, ROOM);
+
+        expect(copies()).toEqual([[BOT_USER, ROOM, ANSWER]]);
+        const waiting = [...((bridge as any).nearbyAnswers as Map<string, { text: string }[]>).values()].flat().map((answer) => answer.text);
+        expect(waiting).toEqual(['And bring your portfolio.']);
+    });
+
     it('finds the chat in the shared store after a restart, with no message from the person', async () => {
         stores.rooms.set(ROOM, BOT);
         stores.roomsOf.set(`${BOT}|${ALICE}`, ROOM);

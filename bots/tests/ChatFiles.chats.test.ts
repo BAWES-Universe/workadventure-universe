@@ -280,6 +280,19 @@ describe('a file in nearby chat (#1508)', () => {
         here.others = [];
         await send();
         expect(others()).toEqual([['uuid-sara'], undefined]);
+
+        // Someone who walks up while the file is read was never sent it: who heard it is asked before the reading
+        here.others = ['uuid-sara'];
+        behavior.formatParsedAttachment.mockImplementationOnce(async (text: string, url: string, _m: string, _t: string, _g: string[], _b: unknown, found: Map<string, ParsedFile | null>) => {
+            here.others = ['uuid-sara', 'uuid-omar'];
+            found.set(url, { type: 'image', summary: 'Image', mimeType: 'image/png' });
+            return text;
+        });
+        const files = await behavior.readBubbleFiles('space-1', 42, 'look', upload, 'image/png', 'image', undefined, [{ url: upload, name: 'map.png', mimeType: 'image/png', mediaType: 'image' }]);
+        files.keep();
+        await flush();
+        expect(others().at(-1)).toEqual(['uuid-sara']);
+        expect(files.arrived).toEqual({ heard: { place: 'nearby', with: ['uuid-sara'] } });
     });
 
     it('a message with only typed links has no uploads, so nothing is noted or kept', async () => {

@@ -657,6 +657,19 @@ describe('PrivateAnswers: the one copy in direct messages', () => {
         expect(copies.opened).toHaveBeenCalledTimes(2);
     });
 
+    it('hands a waiting answer on when the person is back and the game has said their chat address meanwhile', () => {
+        const { answers, copies } = kept();
+        const client = bot({ chatId: undefined });
+        answers.send(client, BUBBLE, KHALID, 'It is at 10.');
+        expect(copies.keep).not.toHaveBeenCalled();
+
+        client.chatIdOf.mockReturnValue(CHAT);
+        answers.personBack(client, BUBBLE, 21);
+        answers.personBack(client, BUBBLE, 22);
+        expect(copies.keep.mock.calls).toEqual([[BOT, CHAT, 'It is at 10.']]);
+        expect(copies.opened).not.toHaveBeenCalled();
+    });
+
     it('hands nothing on when the reply could not go, or when nowhere keeps copies', () => {
         const { answers, copies } = kept();
         const client = bot();

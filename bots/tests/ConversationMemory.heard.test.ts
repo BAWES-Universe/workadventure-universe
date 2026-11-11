@@ -260,6 +260,46 @@ describe('ConversationMemory: what a bot says in front of others', () => {
         expect(memory.getConversationContext(BOT, KHALID, { present: [OMAR] })).not.toContain('EMOTIONAL WOUNDS');
     });
 
+    it('a wound after a private line and a line in front of Sara, both still unanswered, is not known in front of Sara', () => {
+        say('hello', 'person', BUBBLE);
+        say('Hello!', 'bot', BUBBLE);
+        // Said alone, and before the answer comes Sara walks up and they write again
+        say('You are useless', 'person', BUBBLE);
+        others.now = [SARA];
+        say('anyway, what is for lunch?', 'person', BUBBLE);
+        memory.updateEmotionsFromAI(BOT, KHALID, { personSentiment: -90, isInsult: true, insultSeverity: 8, context: 'angry' });
+
+        expect(memory.getConversationContext(BOT, KHALID)).toContain('EMOTIONAL WOUNDS');
+        expect(memory.getConversationContext(BOT, KHALID, { present: [SARA] })).not.toContain('EMOTIONAL WOUNDS');
+    });
+
+    it('a wound after two unanswered lines is known to those who heard both, also once the answer is kept', () => {
+        others.now = [SARA, OMAR];
+        say('You are useless', 'person', BUBBLE);
+        others.now = [SARA];
+        say('really useless', 'person', BUBBLE);
+        say('I am sorry you feel that way.', 'bot', BUBBLE);
+        memory.updateEmotionsFromAI(BOT, KHALID, { personSentiment: -90, isInsult: true, insultSeverity: 8, context: 'angry' });
+
+        expect(memory.getConversationContext(BOT, KHALID, { present: [SARA] })).toContain('EMOTIONAL WOUNDS');
+        expect(memory.getConversationContext(BOT, KHALID, { present: [OMAR] })).not.toContain('EMOTIONAL WOUNDS');
+    });
+
+    it('keeps a line with who heard it when it came, when it is kept a while after (its files were read first)', () => {
+        // Sent alone; Sara walked up while the file was read
+        const arrived = { heard: { place: 'nearby', with: [] } as Heard };
+        others.now = [SARA];
+        memory.addMessage(BOT, KHALID, 'My name is Kiko, here is my contract', 'person', BUBBLE, true, arrived);
+
+        const kept = memory.getMemory(BOT, KHALID)!;
+        expect(kept.conversationHistory.at(-1)!.heard).toEqual({ place: 'nearby', with: [] });
+        expect(kept.personalInfo.heard?.name).toEqual({ place: 'nearby', with: [] });
+        expect(memory.getConversationContext(BOT, KHALID, { present: [SARA] })).not.toContain('Kiko');
+        // When who heard it could not be told then, it is private, whoever is here now
+        memory.addMessage(BOT, KHALID, 'and the second page', 'person', BUBBLE, true, { heard: undefined });
+        expect(kept.conversationHistory.at(-1)!.heard).toBeUndefined();
+    });
+
     it('keeps how well it knows the person and how it feels: neither says what was said', () => {
         say('hello', 'person', DM);
 

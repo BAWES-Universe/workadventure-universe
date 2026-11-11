@@ -1494,14 +1494,16 @@ export class VoiceCalls {
 
     /**
      * Whether anyone's audio is connected in this bubble, so that what the bot says is heard. With `onlyFor`: whether that
-     * person's is (a room carries everyone's).
+     * person's is (a room carries the audio of everyone who is in the bubble, and of nobody who has left it).
      */
     hasAudience(spaceName: string, onlyFor?: string): boolean {
         for (const call of this.calls.values()) {
             if (onlyFor !== undefined && call.participantId !== onlyFor) continue;
             if (call.spaceName === spaceName && this.joined.get(callKey(spaceName, call.participantId)) === call.epoch) return true;
         }
-        return this.rooms.get(spaceName)?.connected === true;
+        if (this.rooms.get(spaceName)?.connected !== true) return false;
+        // A room carries the audio of everyone in the bubble, so that person's is there only while they are
+        return onlyFor === undefined || this.roster.get(spaceName)?.has(onlyFor) === true;
     }
 
     /** Whether someone is in the middle of speaking to the bot in this bubble. */

@@ -430,7 +430,8 @@ describe('in a reply other people read (game #1993)', () => {
     it('says a "Just you" stays private, and offers direct messages only in front of other people', () => {
         const kept = new ArtifactCallError('kept_private', 404, 'x');
         expect(describeArtifactError(kept)).toBe("Its owner keeps this one private, so it can't be opened here. Say so in one short line.");
-        expect(describeArtifactError(kept, true)).toBe(`Its owner keeps this one private, so it can't be opened here. Say so in one short line. ${ASK_IN_PRIVATE}`);
+        // In front of other people it reads as one that is not here: the card may be one they were never shown
+        expect(describeArtifactError(kept, true)).toBe(`That artifact isn't here, or it isn't shared with everyone here. ${ASK_IN_PRIVATE}`);
     });
 
     it('opens nothing with an Orbit from before it could answer for everyone: it says so, and only in a group', () => {

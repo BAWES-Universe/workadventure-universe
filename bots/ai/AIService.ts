@@ -210,6 +210,8 @@ const NEARBY_ASK_RULE =
     'Other people can read this chat. Some tools ask the person for an OK on a card only they see before they change, delete or send something. ' +
     'Before you call a tool, write nothing first. Never repeat what is on a card (names, subjects, amounts, wording) in your reply or later to anyone else. ' +
     'When a tool says a card was shown, write nothing more.';
+/** What the model hears when an earlier file or card was not sent because someone walked up while it was looked up (#1993). */
+const SOMEONE_CAME = "Someone else just joined, so it wasn't sent. Say so in one short line; they can ask again.";
 const UNIVERSE_AI_REF = 'universe-ai';
 const OWN_KEY_PREFIX = 'key-';
 const needsBotRoute = (ref: string): boolean => ref === UNIVERSE_AI_REF || ref.startsWith(OWN_KEY_PREFIX);
@@ -864,6 +866,17 @@ export class AIService {
         }
         const view = viewFor(others);
         return view === 'all' ? undefined : view;
+    }
+
+    /**
+     * An earlier file or card is about to go to everyone here, and Orbit allowed it for the people who were here when
+     * the reply started (#1993). Whether someone has walked up since: they were not asked about, so it is not sent,
+     * and the next ask is checked with them there.
+     */
+    private someoneCameSince(botClient: BotClient | undefined, spaceName: string | undefined, playerId: number, present: readonly string[] | undefined): boolean {
+        if (!present || !botClient || !spaceName) return false;
+        const now = this.othersReading(playerId, spaceName, botClient);
+        return now !== undefined && now.present.some((id) => !present.includes(id));
     }
 
     /**
@@ -3418,7 +3431,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             linkOf: (store) => linkOfStore(store),
             // One look through Universe AI's vision, never for a bot on a person's own key (as for images people send)
             ...(source === 'own-key' ? {} : { look: (url: string) => this.describeImagesViaDefaultVision([url], abortSignal) }),
-            send: (file, url) => this.sendFileAgain(file, url, { botClient, spaceName, botId, playerId, only: present === undefined ? playerId : undefined }),
+            send: async (file, url) =>
+                this.someoneCameSince(botClient, spaceName, playerId, present)
+                    ? SOMEONE_CAME
+                    : this.sendFileAgain(file, url, { botClient, spaceName, botId, playerId, only: present === undefined ? playerId : undefined }),
             ...(artifactsEnabled() ? { sendArtifact: (id: string) => this.sendArtifactCardAgain(id, { botClient, admin, spaceName, botId, playerId, present }) } : {}),
         });
     }
@@ -3462,6 +3478,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 everyoneHere: present !== undefined,
             });
             if (!run.card) return run.result;
+            if (this.someoneCameSince(botClient, spaceName, playerId, present)) return { error: SOMEONE_CAME };
             if (!this.deliverArtifactCard(run.card, botClient, spaceName, memory, present === undefined ? playerId : undefined)) {
                 return { error: 'The conversation ended before the card could be placed in chat. Say so; do not claim it was shown.' };
             }

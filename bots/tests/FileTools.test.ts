@@ -366,6 +366,8 @@ describe('the file tools in AIService', () => {
         sendAudio: vi.fn(async () => 'https://cdn.example.com/new.mp3'),
         markStored: vi.fn(),
         sendImage: vi.fn(),
+        // Who else is in the bubble with the person right now
+        othersWith: vi.fn((): string[] | undefined => ['uuid-sara']),
     });
     const withFiles = (memory?: Record<string, unknown>) => {
         const ai = new AIService(null!, null!, '');
@@ -373,6 +375,25 @@ describe('the file tools in AIService', () => {
         (ai as unknown as { conversationMemory: unknown }).conversationMemory = { getMemory: () => memory };
         return ai;
     };
+
+    it('holds back an earlier file or card for everyone here when someone has walked up since the reply started (#1993)', () => {
+        const ai = withFiles();
+        const here: { others: string[] | undefined } = { others: ['uuid-sara'] };
+        const bot = { othersWith: () => here.others } as never;
+        const came = (present: readonly string[] | undefined) => ai['someoneCameSince'](bot, 'bubble-1', 7, present);
+
+        // For the person alone nothing is asked: it goes to them only
+        expect(came(undefined)).toBe(false);
+        expect(came(['uuid-sara'])).toBe(false);
+        here.others = ['uuid-sara', 'uuid-omar'];
+        expect(came(['uuid-sara'])).toBe(true);
+        // Someone left: everyone still here was asked about
+        here.others = [];
+        expect(came(['uuid-sara'])).toBe(false);
+        // Who is here cannot be told: as if a stranger were
+        here.others = undefined;
+        expect(came(['uuid-sara'])).toBe(true);
+    });
 
     it('offers find_files, open_file and send_again in place of list_artifacts with an Orbit that keeps files, and nothing new without one', async () => {
         const names = async (ai: AIService, channel: 'world' | 'dm') =>
@@ -618,6 +639,15 @@ describe('the file tools in AIService', () => {
             for (const asked of askedOf(admin.getBotFile)) expect(asked).toEqual(everyone);
             // Everyone there was there for it, so it goes into the space for all of them
             expect(bot.sendAudio).toHaveBeenCalledWith('bubble-1', 'https://cdn.example.com/song.mp3', undefined, 'audio/mpeg', undefined);
+        });
+
+        it('does not send it when someone walked up while it was looked up: they were not asked about', async () => {
+            const bot = client();
+            bot.othersWith.mockReturnValue(['uuid-sara', 'uuid-omar']);
+            const results = await run(withFiles({}), [again], bot, orbit(), ['uuid-sara']);
+
+            expect(bot.sendAudio).not.toHaveBeenCalled();
+            expect(JSON.stringify(results[0].result)).toMatch(/Someone else just joined, so it wasn't sent/);
         });
 
         it('alone with the bot: asks as before, and what it sends again goes to that person only', async () => {
