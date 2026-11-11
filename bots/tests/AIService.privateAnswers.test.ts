@@ -46,7 +46,7 @@ vi.mock('axios', () => ({ default: hoisted.axios, ...hoisted.axios }));
 
 import { ConversationMemory } from '../memory/ConversationMemory';
 import { heardInDm } from '../memory/Heard';
-import { MarkerWatch, PRIVATE_MARKER, PrivateAnswers, answeredPrivatelyLine, privateBodyOf } from '../ai/PrivateAnswers';
+import { MarkerWatch, PRIVATE_MARKER, PrivateAnswers, answeredPrivatelyLine, continuedIn, privateBodyOf } from '../ai/PrivateAnswers';
 
 const BOT = 'bot-1';
 const KHALID = 7;
@@ -265,6 +265,62 @@ describe('AIService: private answers in a group (#1993)', () => {
         expect(memory.getConversationContext(BOT, KHALID)).toContain('It is at 10 on Thursday, at Zain.');
     });
 
+    it('lets everyone read the line first, and its person their answer under it', async () => {
+        model([PRIVATE_MARKER, 'It is at 10 on Thursday, at Zain.']);
+        const { service, memory, adminApi, botClient } = await scene();
+        const context = memory.getConversationContext(BOT, KHALID);
+        const order: string[] = [];
+        botClient.sendAskEvent.mockImplementation(() => (order.push('answer'), true));
+        for await (const chunk of service.generateBotResponseStream(BOT, KHALID, 'When is my interview?', 'You are Nora.', 'test-provider', BUBBLE, context, botClient as any, adminApi, undefined, undefined, 'world', undefined, undefined, undefined, false, true)) {
+            if (chunk.content) order.push(chunk.content);
+        }
+        expect(order).toEqual([LINE, 'answer']);
+    });
+
+    it('still sends the answer when whoever reads the reply stops at the line: the line was read', async () => {
+        model([PRIVATE_MARKER, 'It is at 10 on Thursday, at Zain.']);
+        const { service, memory, adminApi, botClient, sentPrivately } = await scene();
+        const context = memory.getConversationContext(BOT, KHALID);
+        for await (const chunk of service.generateBotResponseStream(BOT, KHALID, 'When is my interview?', 'You are Nora.', 'test-provider', BUBBLE, context, botClient as any, adminApi, undefined, undefined, 'world', undefined, undefined, undefined, false, true)) {
+            if (chunk.content === LINE) break;
+        }
+        expect(sentPrivately()).toEqual([{ space: BUBBLE, to: KHALID, kind: 'reply', body: 'It is at 10 on Thursday, at Zain.' }]);
+        expect(memory.getMemory(BOT, KHALID)!.conversationHistory.at(-1)).toMatchObject({ sender: 'bot', message: 'It is at 10 on Thursday, at Zain.' });
+    });
+
+    it('shows nothing when the bot is no longer in the space once the private answer is made', async () => {
+        model([PRIVATE_MARKER, 'It is at 10 on Thursday, at Zain.']);
+        const { say, botClient, sentPrivately } = await scene();
+        (botClient as any).isInSpace = () => false;
+        const { room, chunks } = await say('When is my interview?');
+        expect(room).toBe('');
+        expect(sentPrivately()).toEqual([]);
+        expect(chunks.at(-1)).toMatchObject({ done: true, metadata: { error: true } });
+    });
+
+    it('takes "Continue privately" as its own, and passes every other tap on to the cards', async () => {
+        model([PRIVATE_MARKER, 'It is at 10 on Thursday, at Zain.']);
+        const { service, say, botClient } = await scene();
+        const copies = { keep: vi.fn(), opened: vi.fn() };
+        const cards = { tap: vi.fn(), personBack: vi.fn() };
+        service.keepPrivateAnswersIn(copies);
+        service.useNearbyAsks(cards as any);
+        (botClient as any).chatIdOf = () => '@khalid:matrix.test';
+        await say('When is my interview?');
+        expect(copies.keep.mock.calls).toEqual([[BOT, '@khalid:matrix.test', 'It is at 10 on Thursday, at Zain.']]);
+
+        const port = service.asksPort();
+        port.tap(botClient as any, BUBBLE, KHALID, { askId: 'p1', revision: 0, tap: JSON.stringify({ action: 'continue', room: '!dm:matrix.test' }) });
+        expect(copies.opened.mock.calls).toEqual([[BOT, '@khalid:matrix.test', '!dm:matrix.test']]);
+        expect(cards.tap).not.toHaveBeenCalled();
+        // Handed on once: opening the chat does not send it there again
+        expect(copies.keep).toHaveBeenCalledTimes(1);
+
+        port.tap(botClient as any, BUBBLE, KHALID, { askId: 'a1', revision: 2, tap: JSON.stringify({ choice: 'yes' }) });
+        expect(cards.tap).toHaveBeenCalledTimes(1);
+        expect(copies.opened).toHaveBeenCalledTimes(1);
+    });
+
     it('shows no part of a marker that comes in pieces, or after other words', async () => {
         model([['One moment. ', '[PRIV', 'ATE_', 'REPLY] it is at'], 'It is at 10.']);
         const { say, sentPrivately } = await scene();
@@ -443,7 +499,7 @@ describe('PrivateAnswers: the replies come back with their person', () => {
         client.sendAskEvent.mockClear();
         answers.personBack(client, BUBBLE, KHALID);
         expect(client.sendAskEvent).toHaveBeenCalledTimes(10);
-        expect(client.sendAskEvent.mock.calls[0][2].body).toBe('answer 4');
+        expect((client.sendAskEvent.mock.calls[0] as any[])[2].body).toBe('answer 4');
 
         now += 2 * 60 * 60 * 1000 + 1;
         client.sendAskEvent.mockClear();
@@ -469,5 +525,89 @@ describe('PrivateAnswers: the replies come back with their person', () => {
         client.sendAskEvent.mockClear();
         answers.personBack(client, BUBBLE, KHALID);
         expect(client.sendAskEvent).not.toHaveBeenCalled();
+    });
+});
+
+describe('PrivateAnswers: the one copy in direct messages', () => {
+    const CHAT = '@khalid:matrix.test';
+    const ROOM = '!dm:matrix.test';
+    const bot = (options: { signedIn?: boolean; chatId?: string | undefined } = {}) => {
+        const signedIn = options.signedIn ?? true;
+        return {
+            getBotId: () => BOT,
+            sendAskEvent: vi.fn(() => true),
+            getPersonForArtifacts: vi.fn(() => ({ signedIn, identifier: signedIn ? 'uuid-khalid' : null, name: 'Khalid' })),
+            chatIdOf: vi.fn((): string | undefined => ('chatId' in options ? options.chatId : CHAT)),
+        };
+    };
+    const kept = () => {
+        const copies = { keep: vi.fn(), opened: vi.fn() };
+        const answers = new PrivateAnswers();
+        answers.keepCopiesIn(copies);
+        return { answers, copies };
+    };
+
+    it('reads the room "Continue privately" names, and nothing from any other tap', () => {
+        expect(continuedIn(JSON.stringify({ action: 'continue', room: ROOM }))).toBe(ROOM);
+        expect(continuedIn(JSON.stringify({ choice: 'yes' }))).toBeNull();
+        expect(continuedIn(JSON.stringify({ action: 'continue' }))).toBeNull();
+        expect(continuedIn(JSON.stringify({ action: 'continue', room: 'not a room' }))).toBeNull();
+        expect(continuedIn(JSON.stringify({ action: 'continue', room: '#alias:matrix.test' }))).toBeNull();
+        expect(continuedIn(JSON.stringify({ action: 'continue', room: 7 }))).toBeNull();
+        expect(continuedIn('continue')).toBeNull();
+        expect(continuedIn('null')).toBeNull();
+        expect(continuedIn('')).toBeNull();
+    });
+
+    it('hands each answer of someone signed in on once, by the chat address the game vouches for', () => {
+        const { answers, copies } = kept();
+        const client = bot();
+        answers.send(client, BUBBLE, KHALID, 'It is at 10.');
+        answers.send(client, BUBBLE, KHALID, 'At Zain.');
+        expect(copies.keep.mock.calls).toEqual([[BOT, CHAT, 'It is at 10.'], [BOT, CHAT, 'At Zain.']]);
+
+        // Coming back shows them their replies again in nearby chat, and sends nothing to direct messages again
+        answers.personBack(client, BUBBLE, 21);
+        answers.continued(client, BUBBLE, 21, ROOM);
+        expect(copies.keep).toHaveBeenCalledTimes(2);
+        expect(copies.opened.mock.calls).toEqual([[BOT, CHAT, ROOM]]);
+    });
+
+    it('gives a guest the reply in nearby chat alone: a guest has no direct messages', () => {
+        const { answers, copies } = kept();
+        const client = bot({ signedIn: false });
+        expect(answers.send(client, BUBBLE, KHALID, 'It is at 10.')).toBe(true);
+        answers.continued(client, BUBBLE, KHALID, ROOM);
+        expect(copies.keep).not.toHaveBeenCalled();
+        expect(copies.opened).not.toHaveBeenCalled();
+    });
+
+    it('waits for the chat address when the game has not said it yet, and hands the answer on when they continue', () => {
+        const { answers, copies } = kept();
+        const client = bot({ chatId: undefined });
+        answers.send(client, BUBBLE, KHALID, 'It is at 10.');
+        expect(copies.keep).not.toHaveBeenCalled();
+        answers.continued(client, BUBBLE, KHALID, ROOM);
+        expect(copies.keep).not.toHaveBeenCalled();
+        expect(copies.opened).not.toHaveBeenCalled();
+
+        client.chatIdOf.mockReturnValue(CHAT);
+        answers.continued(client, BUBBLE, KHALID, ROOM);
+        answers.continued(client, BUBBLE, KHALID, ROOM);
+        expect(copies.keep.mock.calls).toEqual([[BOT, CHAT, 'It is at 10.']]);
+        expect(copies.opened).toHaveBeenCalledTimes(2);
+    });
+
+    it('hands nothing on when the reply could not go, or when nowhere keeps copies', () => {
+        const { answers, copies } = kept();
+        const client = bot();
+        client.sendAskEvent.mockReturnValue(false);
+        answers.send(client, BUBBLE, KHALID, 'It is at 10.');
+        expect(copies.keep).not.toHaveBeenCalled();
+
+        const alone = new PrivateAnswers();
+        const other = bot();
+        expect(alone.send(other, BUBBLE, KHALID, 'It is at 10.')).toBe(true);
+        expect(() => alone.continued(other, BUBBLE, KHALID, ROOM)).not.toThrow();
     });
 });

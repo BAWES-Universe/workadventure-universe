@@ -40,6 +40,7 @@ import { parseNoteTranscript, type NoteTranscript } from "../../Bots/BotTranscri
 import { fileNameOfLink } from "../../../FileViewer/fileKinds";
 import { parseBotReplyLimit, type BotReplyLimit } from "../../Bots/BotReplyLimit";
 import { botAskTapJson, readNearbyBotAsk, type BotAsk, type BotAskTap } from "../../Bots/BotAsk";
+import { continuePrivatelyTapJson } from "../../Bots/PrivateAnswer";
 import {
     afterTypedSend,
     applyDraftEvent,
@@ -1243,6 +1244,24 @@ export class ProximityChatRoom implements ChatRoom {
             shown.botSpaceUserId
         );
         return Promise.resolve();
+    }
+
+    /**
+     * "Continue privately" on a reply a bot wrote for this person alone (#1993): tells that bot, and nobody else, which
+     * direct chat they opened with it, so the same answer is there for them to carry on from. Says nothing when the
+     * bot is no longer here: the answer then reaches that chat with their next message there.
+     */
+    continuedPrivately(reply: Pick<ChatMessage, "id" | "sender">, directRoomId: string): void {
+        const space = this._space;
+        const botSpaceUserId = reply.sender?.spaceUserId;
+        if (!space || space.destroyed || !botSpaceUserId || !this.users?.has(botSpaceUserId)) return;
+        space.emitPrivateMessage(
+            {
+                $case: "botAskAnswer",
+                botAskAnswer: { askId: reply.id, revision: 0, tap: continuePrivatelyTapJson(directRoomId) },
+            },
+            botSpaceUserId
+        );
     }
 
     /**

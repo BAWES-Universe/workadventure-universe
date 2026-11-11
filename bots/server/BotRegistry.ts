@@ -133,6 +133,26 @@ export class BotRegistry {
         await this.redis.hDel('bots:matrix:dm-rooms', roomId);
     }
 
+    /**
+     * The direct message room of a bot and a person (#1993), so an answer made for them elsewhere can be kept there
+     * without a message from them first. Without Redis this is a no-op and the caller keeps its own in-process copy.
+     */
+    async rememberDmRoomOf(botId: string, matrixUserId: string, roomId: string): Promise<void> {
+        if (!this.redis?.isOpen) return;
+        await this.redis.hSet('bots:matrix:dm-room-of', `${botId}|${matrixUserId}`, roomId);
+    }
+
+    /** The direct message room of a bot and a person, or null when unknown. */
+    async getDmRoomOf(botId: string, matrixUserId: string): Promise<string | null> {
+        if (!this.redis?.isOpen) return null;
+        return (await this.redis.hGet('bots:matrix:dm-room-of', `${botId}|${matrixUserId}`)) ?? null;
+    }
+
+    async forgetDmRoomOf(botId: string, matrixUserId: string): Promise<void> {
+        if (!this.redis?.isOpen) return;
+        await this.redis.hDel('bots:matrix:dm-room-of', `${botId}|${matrixUserId}`);
+    }
+
     /** Whether Redis is up, so messages waiting for a resting bot survive a restart and reach every bot server. */
     hasSharedStore(): boolean {
         return !!this.redis?.isOpen;

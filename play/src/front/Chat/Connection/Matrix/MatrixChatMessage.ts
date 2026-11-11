@@ -8,6 +8,7 @@ import { readBotStatusNote, type BotStatusNote } from "../../Bots/BotChatStatus"
 import { readBotRoomLink, type BotRoomLink } from "../../Bots/BotRoomLink";
 import { readBotReplyLimit, type BotReplyLimit } from "../../Bots/BotReplyLimit";
 import { readBotAsk, type BotAsk } from "../../Bots/BotAsk";
+import { readAnsweredNearby } from "../../Bots/PrivateAnswer";
 import { readArtifactField, type ArtifactCard } from "../../../Artifacts/artifactCard";
 import { readBotSteps, type BotSteps } from "../../Bots/BotSteps";
 import { readNoteTranscript, type NoteTranscript, type NoteTranscriptNotice } from "../../Bots/BotTranscript";
@@ -64,6 +65,7 @@ export class MatrixChatMessage implements ChatMessage {
     readonly roomLink: BotRoomLink | undefined;
     readonly replyLimit: BotReplyLimit | undefined;
     readonly artifact: ArtifactCard | undefined;
+    readonly answeredNearby: boolean;
     /** A card a bot's notice asks one answer with (#1657): the bot server edits the same notice as the card ends. */
     readonly ask: Writable<BotAsk | undefined>;
     /** A bot's steps line (#1545): the bot server updates this one message while the bot works. */
@@ -91,6 +93,7 @@ export class MatrixChatMessage implements ChatMessage {
             room.getMember(event.getSender() ?? "")?.name ?? ""
         );
         this.artifact = readArtifactField(event.getSender(), event.getOriginalContent());
+        this.answeredNearby = readAnsweredNearby(event.getSender(), event.getOriginalContent());
         this.steps = writable(readBotSteps(event.getSender(), this.stepsContent()));
         this.transcriptOf = readNoteTranscript(event.getSender(), this.stepsContent());
         this.transcriptNotice = this.transcriptOf !== undefined;

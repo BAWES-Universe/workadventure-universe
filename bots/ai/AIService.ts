@@ -33,7 +33,7 @@ import { ASK_PERSON_TOOL, NEVER_ASK_RULE, askPersonDefinition, readQuestion, typ
 import type { BotAsksPort } from '../mcp/NearbyAsks';
 import { appendStreamedChunk } from './EmotionParser';
 import { viewFor } from '../memory/Heard';
-import { MarkerWatch, PrivateAnswers, answeredPrivatelyLine, emotionBlockOf, onlyForThemRule, othersHereRule, privateAnswerRule, privateBodyOf } from './PrivateAnswers';
+import { MarkerWatch, PrivateAnswers, answeredPrivatelyLine, continuedIn, emotionBlockOf, onlyForThemRule, othersHereRule, privateAnswerRule, privateBodyOf, type PrivateAnswerCopies } from './PrivateAnswers';
 import { describeStep, resultOf, showsAsStep, type ToolStep } from './ToolSteps';
 import { jsonrepair } from 'jsonrepair';
 import { resolveVisionSupport } from './providers/visionModels';
@@ -286,7 +286,12 @@ export class AIService {
     /** The same, for a bot's client, which looks it up each time so it need not be set before the bot spawns. */
     asksPort(): BotAsksPort {
         return {
-            tap: (bot, spaceName, playerId, answer) => this.nearbyAsks?.tap(bot, spaceName, playerId, answer),
+            tap: (bot, spaceName, playerId, answer) => {
+                // "Continue privately" on an answer only they saw (#1993) is no card's tap
+                const room = continuedIn(answer.tap);
+                if (room) return this.privateAnswers.continued(bot, spaceName, playerId, room);
+                this.nearbyAsks?.tap(bot, spaceName, playerId, answer);
+            },
             personBack: (bot, spaceName, playerId) => {
                 this.nearbyAsks?.personBack(bot, spaceName, playerId);
                 // The game says who someone is a moment after they join: then the answers only they saw come back (#1993)
@@ -297,6 +302,11 @@ export class AIService {
 
     useApprovals(approvals: ToolApprovals): void {
         this.approvals = approvals;
+    }
+
+    /** Where an answer only one person saw in nearby chat is found again: their direct messages with the bot (#1993). */
+    keepPrivateAnswersIn(copies: PrivateAnswerCopies | undefined): void {
+        this.privateAnswers.keepCopiesIn(copies);
     }
 
     /** The tool server entry for a tool of this bot as it is now, or null. Read from the cached list: no model is asked. */
@@ -891,25 +901,47 @@ export class AIService {
         // Stopped by the person: whoever stopped it says so, and nothing is sent
         if (ask.abortSignal?.aborted) return;
         const body = privateBodyOf(written);
-        if (!last || last.metadata?.error || !body || !this.privateAnswers.send(botClient, spaceName, playerId, body)) {
+        const nothingShown = (): AIStreamChunk => {
             console.warn(`[AIService] Bot ${botId} could not answer a person alone; nothing was shown`);
-            yield { content: '', done: true, metadata: { tokensUsed: 0, latency: Date.now() - startTime, error: true } };
+            return { content: '', done: true, metadata: { tokensUsed: 0, latency: Date.now() - startTime, error: true } };
+        };
+        // It can go only while the bot is in the space: the line and the answer then travel the same way, one after the other
+        if (!last || last.metadata?.error || !body || !botClient.isInSpace(spaceName)) {
+            yield nothingShown();
             return;
         }
+        const again = this.privateAnswers.justAnsweredPrivately(botId, spaceName, playerId);
+        // No model writes this line; said twice in a row it is not a repetition to fix
+        const line = again ? '' : answeredPrivatelyLine(ask.name);
+        if (line) this.restingLines.add(line);
+        const shown = [line, emotionBlock].filter(Boolean).join('\n');
+        let sent = false;
+        try {
+            // Everyone reads the line, and its person reads their answer under it
+            if (shown) yield { content: line && saidBefore.trim() ? `\n\n${shown}` : shown, done: false };
+        } finally {
+            // Whoever stops reading here has read the line already: the answer it speaks of still goes
+            sent = this.sendPrivately(botClient, spaceName, playerId, body);
+        }
+        if (!sent) {
+            yield nothingShown();
+            return;
+        }
+        yield last;
+    }
+
+    /** Sends the second answer to its person and keeps it as said to them alone. False when it could not go. */
+    private sendPrivately(botClient: BotClient, spaceName: string, playerId: number, body: string): boolean {
+        const botId = botClient.getBotId();
+        if (!this.privateAnswers.send(botClient, spaceName, playerId, body)) return false;
         // Remembered as said to this person alone, so it is never part of an answer anyone else reads
         try {
             this.conversationMemory.addPrivateReply(botId, playerId, body, spaceName);
         } catch (error) {
             console.error('[AIService] Could not keep a private answer in memory:', error instanceof Error ? error.message : error);
         }
-        const again = this.privateAnswers.justAnsweredPrivately(botId, spaceName, playerId);
         this.privateAnswers.answered(botId, spaceName, playerId, true);
-        // No model writes this line; said twice in a row it is not a repetition to fix
-        const line = again ? '' : answeredPrivatelyLine(ask.name);
-        if (line) this.restingLines.add(line);
-        const shown = [line, emotionBlock].filter(Boolean).join('\n');
-        if (shown) yield { content: line && saidBefore.trim() ? `\n\n${shown}` : shown, done: false };
-        yield last;
+        return true;
     }
 
     /** The first of two answers to a message was made and the second never recorded: its usage goes out on its own (#1993). */

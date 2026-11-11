@@ -21,6 +21,9 @@ const KEPT = 10;
 /** How many people's replies are kept at once, across bots. */
 const MAX_KEPT_FOR = 500;
 
+/** What these answers need of a bot's client. */
+type AnswersBot = Pick<BotClient, 'getBotId' | 'sendAskEvent' | 'getPersonForArtifacts'> & Partial<Pick<BotClient, 'chatIdOf'>>;
+
 const called = (name: string | null | undefined): string => (name && name.trim() ? name.trim() : 'this person');
 
 /**
@@ -133,6 +136,36 @@ interface KeptReply {
     id: string;
     text: string;
     at: number;
+    /** Handed on for the one copy in the person's direct messages with the bot. */
+    copied?: boolean;
+}
+
+/**
+ * Where the one copy of such an answer is kept: the person's direct messages with the bot, so they find it there and
+ * carry on from it ("Continue privately"). Nothing is made twice: it is the same words, sent on. Neither call throws.
+ */
+export interface PrivateAnswerCopies {
+    /** Keep this answer in the direct chat of this bot and the person with this chat address, once. */
+    keep(botId: string, chatId: string, text: string): void;
+    /**
+     * The person opened their direct chat with the bot from an answer, and their device says it is this room. It is
+     * checked to be theirs and the bot's before anything goes there.
+     */
+    opened(botId: string, chatId: string, roomId: string): void;
+}
+
+/** A Matrix room id, as a device names the direct chat it opened. */
+const ROOM_ID = /^![^\s:]{1,200}:[^\s]{1,200}$/;
+
+/** The room "Continue privately" names, when that is what was tapped; null for every other tap. */
+export function continuedIn(tap: string): string | null {
+    try {
+        const said = JSON.parse(tap) as { action?: unknown; room?: unknown } | null;
+        if (!said || said.action !== 'continue' || typeof said.room !== 'string') return null;
+        return ROOM_ID.test(said.room) ? said.room : null;
+    } catch {
+        return null;
+    }
 }
 
 /**
@@ -145,8 +178,14 @@ export class PrivateAnswers {
     /** Whose last reply here was a private one, so the fixed line is not said again on every turn. */
     private readonly lastWasPrivate = new Set<string>();
     private count = 0;
+    private copies: PrivateAnswerCopies | undefined;
 
     constructor(private readonly now: () => number = Date.now) {}
+
+    /** Where signed-in people find these answers again (their direct messages). Without it they are only in nearby chat. */
+    keepCopiesIn(copies: PrivateAnswerCopies | undefined): void {
+        this.copies = copies;
+    }
 
     private static where(botId: string, spaceName: string, who: string | number): string {
         return JSON.stringify([botId, spaceName, who]);
@@ -157,7 +196,7 @@ export class PrivateAnswers {
      * was shown to anyone. It is addressed to that one person in that one space, so if they have left nobody gets it,
      * and someone signed in finds it when they are back.
      */
-    send(bot: Pick<BotClient, 'getBotId' | 'sendAskEvent' | 'getPersonForArtifacts'>, spaceName: string, playerId: number, text: string): boolean {
+    send(bot: AnswersBot, spaceName: string, playerId: number, text: string): boolean {
         if (!text.trim()) return false;
         const id = `p${this.now().toString(36)}${(this.count++).toString(36)}`;
         if (!bot.sendAskEvent(spaceName, playerId, { kind: 'reply', id, revision: 0, body: text })) return false;
@@ -165,15 +204,46 @@ export class PrivateAnswers {
         if (person.signedIn && person.identifier) {
             const key = PrivateAnswers.where(bot.getBotId(), spaceName, person.identifier);
             const recent = (this.kept.get(key) ?? []).filter((reply) => this.now() - reply.at <= KEPT_MS).slice(-(KEPT - 1));
+            const reply: KeptReply = { id, text, at: this.now() };
             this.kept.delete(key);
-            this.kept.set(key, [...recent, { id, text, at: this.now() }]);
+            this.kept.set(key, [...recent, reply]);
             if (this.kept.size > MAX_KEPT_FOR) this.kept.delete(this.kept.keys().next().value as string);
+            this.copy(bot, playerId, [reply]);
         }
         return true;
     }
 
+    /**
+     * Hands these answers on for the person's direct messages, each once. Only for someone signed in whose chat address
+     * the game vouches for: a guest has no direct messages, and gets the reply in nearby chat alone.
+     */
+    private copy(bot: AnswersBot, playerId: number, replies: KeptReply[]): string | undefined {
+        const chatId = bot.chatIdOf?.(playerId);
+        if (!chatId || !this.copies) return undefined;
+        for (const reply of replies) {
+            if (reply.copied) continue;
+            reply.copied = true;
+            this.copies.keep(bot.getBotId(), chatId, reply.text);
+        }
+        return chatId;
+    }
+
+    /**
+     * The person tapped "Continue privately" and their direct chat with the bot is open. Any answer of theirs that was
+     * not handed on yet (the game had not vouched for their chat address when it was made) is now, and the bot's side of
+     * direct messages is told which chat it is.
+     */
+    continued(bot: AnswersBot, spaceName: string, playerId: number, roomId: string): void {
+        const person = bot.getPersonForArtifacts(playerId);
+        if (!person.signedIn || !person.identifier) return;
+        const key = PrivateAnswers.where(bot.getBotId(), spaceName, person.identifier);
+        const recent = (this.kept.get(key) ?? []).filter((reply) => this.now() - reply.at <= KEPT_MS);
+        const chatId = this.copy(bot, playerId, recent);
+        if (chatId) this.copies?.opened(bot.getBotId(), chatId, roomId);
+    }
+
     /** The person is in the space again: their replies come back on their screen, in the order they were made. */
-    personBack(bot: Pick<BotClient, 'getBotId' | 'sendAskEvent' | 'getPersonForArtifacts'>, spaceName: string, playerId: number): void {
+    personBack(bot: AnswersBot, spaceName: string, playerId: number): void {
         const person = bot.getPersonForArtifacts(playerId);
         if (!person.signedIn || !person.identifier) return;
         const key = PrivateAnswers.where(bot.getBotId(), spaceName, person.identifier);

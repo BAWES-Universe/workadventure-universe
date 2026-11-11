@@ -84,6 +84,10 @@ export interface BotConfig {
 
 /** Uploads remembered for matching a sent file with the tool that made it. */
 const MAX_UPLOADED_FROM = 500;
+/** How many people's chat addresses a bot keeps at once: more than are ever in a world with it. */
+const MAX_CHAT_IDS = 2000;
+/** The space everyone in the world is in. */
+const WORLD_SPACE = 'allWorldUser';
 
 export class BotClient {
     // Static set of all bot user IDs - shared across all bot instances
@@ -125,6 +129,11 @@ export class BotClient {
     private readonly audience = new SpaceAudience();
     /** Who each reply is delivered to: one written for someone alone with the bot reaches nobody who walks up meanwhile (#1993). */
     private readonly readers = new ReplyReaders();
+    /**
+     * By player: their chat address, as the game's server vouches for it (a browser cannot claim someone else's). It is
+     * where the one copy of an answer only they saw is kept, in their direct messages with this bot (#1993).
+     */
+    private readonly chatIds = new Map<number, string>();
     /** Audio connections with people, for a voice bot only (see isVoiceBot). Null for every other bot. */
     private voice: VoiceCalls | null = null;
     /** What a voice bot says out loud of the replies it writes (see voice/BotSpeech.ts). Null for every other bot. */
@@ -349,6 +358,7 @@ export class BotClient {
         // Gone from every space: who is in them is no longer known
         this.audience.reset();
         this.readers.reset();
+        this.chatIds.clear();
         // Unregister this bot's userId
         if (this.userId !== null) {
             BotClient.botUserIds.delete(this.userId);
@@ -2472,7 +2482,31 @@ export class BotClient {
         if (!sender || !me || event.receiverUserId !== me || sender.spaceUserId === me || isBotSpaceUser(sender)) return;
         const playerId = BotClient.playerIdOf(sender.spaceUserId);
         if (!playerId) return;
+        this.noteChatId(event.spaceName, sender, false);
         this.asks.tap(this, event.spaceName, playerId, inner.botAskAnswer);
+    }
+
+    /**
+     * What the game says a person's chat address is. `joined`: they just came into this space, or were listed in it. In
+     * the space the whole world is in, that is someone new under this number, so one without an address has none.
+     */
+    private noteChatId(spaceName: string, user: { spaceUserId?: string; chatID?: string } | undefined, joined: boolean): void {
+        const playerId = BotClient.playerIdOf(user?.spaceUserId);
+        if (!playerId || playerId === this.userId) return;
+        const chatId = user?.chatID?.trim();
+        if (chatId) {
+            this.chatIds.delete(playerId);
+            this.chatIds.set(playerId, chatId);
+            if (this.chatIds.size > MAX_CHAT_IDS) this.chatIds.delete(this.chatIds.keys().next().value as number);
+        } else if (joined && spaceName === WORLD_SPACE) {
+            // A number the game gave to someone new: never the address of whoever had it before
+            this.chatIds.delete(playerId);
+        }
+    }
+
+    /** This person's chat address, or undefined for a guest and for someone the game has not vouched for yet. */
+    chatIdOf(playerId: number): string | undefined {
+        return this.chatIds.get(playerId);
     }
 
     /**
@@ -3269,7 +3303,7 @@ export class BotClient {
                 
                 // Automatically join the world space (allWorldUser) so bots appear in user list
                 // This matches what regular users do in GameScene.ts
-                const worldSpaceName = "allWorldUser";
+                const worldSpaceName = WORLD_SPACE;
                 this.emitJoinSpace(worldSpaceName, FilterType.ALL_USERS, ["availabilityStatus", "chatID"])
                     .then((spaceUserId) => {
                         this.spaces.set(worldSpaceName, spaceUserId);
@@ -3427,6 +3461,7 @@ export class BotClient {
 
             case 'initSpaceUsersMessage':
                 this.audience.seen(message.initSpaceUsersMessage.spaceName, message.initSpaceUsersMessage.users ?? []);
+                for (const user of message.initSpaceUsersMessage.users ?? []) this.noteChatId(message.initSpaceUsersMessage.spaceName, user, true);
                 this.voice?.spaceUsers(message.initSpaceUsersMessage.spaceName, message.initSpaceUsersMessage.users ?? []);
                 if (this.isMeetingSpace(message.initSpaceUsersMessage.spaceName)) {
                     for (const user of message.initSpaceUsersMessage.users ?? []) this.rememberMeetingPerson(message.initSpaceUsersMessage.spaceName, user);
@@ -3491,6 +3526,7 @@ export class BotClient {
             case 'addSpaceUserMessage':
                 // First of all: from here on a reply in this space is read by them too (#1993)
                 if (message.addSpaceUserMessage.user) this.audience.joined(message.addSpaceUserMessage.spaceName, message.addSpaceUserMessage.user);
+                this.noteChatId(message.addSpaceUserMessage.spaceName, message.addSpaceUserMessage.user, true);
                 // And what the bot is saying out loud to someone who was alone with it stops: they would hear it
                 if (message.addSpaceUserMessage.user) this.hushRepliesForOne(message.addSpaceUserMessage.spaceName, message.addSpaceUserMessage.user.spaceUserId);
                 if (message.addSpaceUserMessage.user) this.voice?.spaceUserJoined(message.addSpaceUserMessage.spaceName, message.addSpaceUserMessage.user);
@@ -3548,6 +3584,8 @@ export class BotClient {
                 break;
 
             case 'updateSpaceUserMessage':
+                // Their browser proved its chat login a moment after they joined
+                this.noteChatId(message.updateSpaceUserMessage.spaceName, message.updateSpaceUserMessage.user, false);
                 if (message.updateSpaceUserMessage.message) {
                     const chatMessage = message.updateSpaceUserMessage.message.message;
                     // When the line reached the bot, before anything is asked about it: a card shown after is not answered by it (#1661)
@@ -3741,6 +3779,8 @@ export class BotClient {
 
             case 'removeSpaceUserMessage':
                 this.audience.left(message.removeSpaceUserMessage.spaceName, message.removeSpaceUserMessage.spaceUserId);
+                // Gone from the world: their number may be given to someone else
+                if (message.removeSpaceUserMessage.spaceName === WORLD_SPACE) this.chatIds.delete(BotClient.playerIdOf(message.removeSpaceUserMessage.spaceUserId));
                 this.readers.personLeft(message.removeSpaceUserMessage.spaceName, BotClient.playerIdOf(message.removeSpaceUserMessage.spaceUserId));
                 this.voice?.spaceUserLeft(message.removeSpaceUserMessage.spaceName, message.removeSpaceUserMessage.spaceUserId);
                 if (this.isMeetingSpace(message.removeSpaceUserMessage.spaceName)) {

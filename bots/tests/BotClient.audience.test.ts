@@ -120,6 +120,95 @@ describe('BotClient: who else is in the space', () => {
     });
 });
 
+describe("BotClient: a person's chat address, as the game vouches for it", () => {
+    const WORLD = 'allWorldUser';
+    const KHALID_CHAT = '@khalid:matrix.test';
+
+    beforeEach(() => {
+        vi.spyOn(console, 'log').mockImplementation(() => undefined);
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    function world() {
+        const scene = setup();
+        scene.internals.spaces.set(WORLD, 'world_12');
+        const update = (user: unknown, spaceName = WORLD) =>
+            (scene.bot as unknown as { handleSubMessage(m: unknown): Promise<void> }).handleSubMessage({ $case: 'updateSpaceUserMessage', updateSpaceUserMessage: { spaceName, user } });
+        return { ...scene, update };
+    }
+
+    it('knows it from who the game lists, who joins, and what the game says a moment later', async () => {
+        const { bot, init, join, update } = world();
+        await init([{ spaceUserId: 'world_7', chatID: KHALID_CHAT }, { spaceUserId: 'world_10' }], WORLD);
+        expect(bot.chatIdOf(7)).toBe(KHALID_CHAT);
+        expect(bot.chatIdOf(10)).toBeUndefined();
+
+        await join({ spaceUserId: 'world_9', chatID: '@sara:matrix.test' }, WORLD);
+        expect(bot.chatIdOf(9)).toBe('@sara:matrix.test');
+
+        // Their browser proved its chat login after they joined
+        await update({ spaceUserId: 'world_10', chatID: '@late:matrix.test' });
+        expect(bot.chatIdOf(10)).toBe('@late:matrix.test');
+    });
+
+    it('keeps it while they walk in and out of a bubble, and through an update that does not carry it', async () => {
+        const { bot, init, join, leave, update } = world();
+        await init([{ spaceUserId: 'world_7', chatID: KHALID_CHAT }], WORLD);
+        await join(KHALID);
+        await update({ spaceUserId: 'world_7' });
+        await leave(KHALID.spaceUserId);
+        expect(bot.chatIdOf(7)).toBe(KHALID_CHAT);
+    });
+
+    it('never gives a number someone new got the address of whoever had it before', async () => {
+        const { bot, init, join, leave } = world();
+        await init([{ spaceUserId: 'world_7', chatID: KHALID_CHAT }], WORLD);
+        await leave('world_7', WORLD);
+        expect(bot.chatIdOf(7)).toBeUndefined();
+
+        await init([{ spaceUserId: 'world_7', chatID: KHALID_CHAT }], WORLD);
+        // A guest joins the world under the same number before the bot saw the other one go
+        await join({ spaceUserId: 'world_7' }, WORLD);
+        expect(bot.chatIdOf(7)).toBeUndefined();
+    });
+
+    it('has none for itself, and none once it disconnects', async () => {
+        const { bot, init } = world();
+        await init([{ spaceUserId: 'world_12', chatID: '@bot_bot-test:matrix.test' }, { spaceUserId: 'world_7', chatID: KHALID_CHAT }], WORLD);
+        expect(bot.chatIdOf(12)).toBeUndefined();
+        bot.disconnect();
+        expect(bot.chatIdOf(7)).toBeUndefined();
+    });
+
+    it('reads it from whoever taps on a reply, and passes "Continue privately" on with who the game says they are', async () => {
+        const { bot, init, internals } = world();
+        await init([KHALID]);
+        const tap = vi.fn();
+        (internals as unknown as { asks: unknown }).asks = { tap, personBack: vi.fn() };
+        const event = (sender: unknown, receiverUserId = ME) =>
+            (bot as unknown as { handleSubMessage(m: unknown): Promise<void> }).handleSubMessage({
+                $case: 'privateEvent',
+                privateEvent: { spaceName: SPACE, receiverUserId, sender, spaceEvent: { event: { $case: 'botAskAnswer', botAskAnswer: { askId: 'p1', revision: 0, tap: '{"action":"continue","room":"!dm:matrix.test"}' } } } },
+            });
+
+        await event({ ...KHALID, chatID: KHALID_CHAT });
+        expect(bot.chatIdOf(7)).toBe(KHALID_CHAT);
+        expect(tap).toHaveBeenCalledWith(bot, SPACE, 7, expect.objectContaining({ askId: 'p1' }));
+
+        // Another bot, or an event not sent to this bot, is no tap and vouches for nothing
+        tap.mockClear();
+        await event({ ...OTHER_BOT, chatID: '@x:matrix.test' });
+        await event({ ...SARA, chatID: '@sara:matrix.test' }, 'room-1_99');
+        expect(tap).not.toHaveBeenCalled();
+        expect(bot.chatIdOf(11)).toBeUndefined();
+        expect(bot.chatIdOf(9)).toBeUndefined();
+    });
+});
+
 describe('BotManager: where a line is heard', () => {
     function manager() {
         const admin = { isConfigured: () => false };

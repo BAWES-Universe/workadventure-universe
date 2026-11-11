@@ -960,6 +960,9 @@ const chat: BaseTranslation = {
         // Nearby chat and voice (#1658): the card comes to the person who asked and nobody else
         onlyYouSeeCard: "Only you see this card",
         onlyYouSeeReply: "Only you see this reply",
+        // A private answer in a group (#1993): carry on in the bot's direct messages, where the same answer is once
+        continuePrivately: "Continue privately",
+        answeredNearby: "Answered in nearby chat, only for you",
         saidSomethingElse: "You said something else, so nothing was done",
     },
     voiceDraft: {
