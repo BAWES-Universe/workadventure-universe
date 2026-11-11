@@ -290,9 +290,13 @@ const BOT_ACCESS_TIMEOUT_MS = 4_000;
 export interface BotConfiguration {
     botId: string;
     name: string;
+    // A Brick (#1995) lives in its owner's chats and stands in no room: both are empty for one.
     roomUrl: string;
     worldUrl: string;
     universeUrl?: string;
+    // Set only for a Brick: whose it is, and whether it is the one every account gets. A config with it is answered in
+    // direct messages only and is never put on a map.
+    brick?: { ownerId: string; isDefault: boolean };
     userId?: string; // User who created the bot
     behaviorType: 'idle' | 'patrol' | 'social';
     behaviorConfig: Record<string, any>;
@@ -330,6 +334,14 @@ export interface BotConfiguration {
     position?: { x: number; y: number }; // Teleport position (runtime-only, not persisted)
     createdAt: Date;
     updatedAt: Date;
+}
+
+/** Whose Brick a configuration from Orbit is (#1995), or null for a room bot and for anything that isn't shaped like one. */
+function brickOf(data: unknown): { ownerId: string; isDefault: boolean } | null {
+    const brick = (data as { brick?: unknown } | null)?.brick;
+    if (!brick || typeof brick !== 'object') return null;
+    const { ownerId, isDefault } = brick as { ownerId?: unknown; isDefault?: unknown };
+    return typeof ownerId === 'string' && ownerId ? { ownerId, isDefault: isDefault === true } : null;
 }
 
 export interface BotUsageMetrics {
@@ -487,9 +499,13 @@ export class AdminApiService {
     }
 
     /**
-     * Get bot configuration from admin API
+     * Get bot configuration from admin API.
+     *
+     * `bricks` also takes a Brick (#1995), which Orbit answers only when asked for by name: a Brick has no room, so only
+     * a caller that never puts the bot on a map (direct messages) may ask for one. Everyone else still gets "no such
+     * bot" for a Brick's id.
      */
-    async getBotConfiguration(botId: string, timeoutMs?: number): Promise<BotConfiguration | null> {
+    async getBotConfiguration(botId: string, timeoutMs?: number, options: { bricks?: boolean } = {}): Promise<BotConfiguration | null> {
         if (!this.isConfigured()) {
             return null;
         }
@@ -499,6 +515,7 @@ export class AdminApiService {
                 `${this.adminApiUrl}/api/bots/configuration/${encodeURIComponent(botId)}`,
                 {
                     timeout: timeoutMs,
+                    ...(options.bricks ? { params: { bricks: 1 } } : {}),
                     headers: {
                         Authorization: `Bearer ${this.adminApiToken}`,
                     },
@@ -517,8 +534,16 @@ export class AdminApiService {
                 });
             }
 
+            const brick = brickOf(response.data);
+            // A Brick that was not asked for is not a bot this caller can run: the same answer as a bot that isn't there
+            if (brick && !options.bricks) return null;
             return {
                 ...response.data,
+                // Orbit sends no room for a Brick; the rest of the bot server reads "no room" as an empty address
+                roomUrl: response.data.roomUrl || '',
+                worldUrl: response.data.worldUrl || '',
+                universeUrl: response.data.universeUrl || undefined,
+                brick: brick ?? undefined,
                 createdAt: new Date(response.data.createdAt),
                 updatedAt: new Date(response.data.updatedAt),
             };

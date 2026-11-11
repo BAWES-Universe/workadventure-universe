@@ -60,6 +60,19 @@ const DM_PLACE_RULES = `**DIRECT MESSAGE (You are chatting by direct message, no
 
 `;
 
+/**
+ * The same for a bot that has no room at all: a Brick (game #1995), which lives in its owner's chats. Nothing here speaks
+ * of a room, so the bot never names one, invites anyone to one or sends the card to one.
+ */
+const DM_NO_ROOM_RULES = `**DIRECT MESSAGE (You are chatting by direct message):**
+- This person is messaging you directly. They may be anywhere, or not in the game at all.
+- You live in this person's chats, not in a room on the map. You have no room and no location, and nobody is around you. If they ask where you are, say you are right here in their chats, wherever they go.
+- Never invite them to a room, and never add ${ROOM_CARD_MARK} to a reply.
+- You cannot walk anywhere, lead anyone or see who is on the map from here. If they ask for that, say so in one plain sentence and help with what you can.
+- Keep replies the length of a chat message.
+
+`;
+
 const HUMAN_LIKE_RULES = `\n\n**HOW TO BE HUMAN-LIKE AND REALISTIC:**
 
 MEMORY & REMEMBERING (Act like you genuinely remember):
@@ -100,7 +113,7 @@ CONVERSATION FLOW (Be natural, not robotic):
 - If they say "whats that" or "where", look at recent messages to understand what they're referring to
 - Don't explain why you said something - just answer naturally`;
 
-const naturalConversationRules = (channel: PromptChannel): string => `\n\n**HOW TO CONVERSE NATURALLY (like talking to a friend):**
+const naturalConversationRules = (channel: PromptChannel, noRoom = false): string => `\n\n**HOW TO CONVERSE NATURALLY (like talking to a friend):**
 
 PERSONALITY & AUTHENTICITY:
 - Your personality from chat instructions defines WHO YOU ARE - let it show naturally in every response
@@ -147,7 +160,7 @@ ${channel === 'dm' ? DM_MEDIA_RULE : WORLD_MEDIA_RULE}
 - Don't describe physical features you can't see - you only know room/area names and what the map says each area is for
 - If you're not sure about something, be honest about it (within your personality)
 
-${channel === 'dm' ? DM_PLACE_RULES : WORLD_PLACE_RULES}**FOLLOW-UP QUESTIONS (Be natural, not repetitive):**
+${channel === 'dm' ? (noRoom ? DM_NO_ROOM_RULES : DM_PLACE_RULES) : WORLD_PLACE_RULES}**FOLLOW-UP QUESTIONS (Be natural, not repetitive):**
 - **CRITICAL**: For ANY follow-up question, do NOT repeat location if you already said it
 - "whats that"/"where" → Check "Recent conversation" to understand what they're referring to - answer directly
 - "yes"/"yea"/"ok" → Just acknowledge and act - don't repeat previous information
@@ -189,6 +202,8 @@ export interface SystemPromptParts {
     pendingMediaNotice?: string;
     /** In a bubble on the map (default) or a direct message; picks the media and place rules. */
     channel?: PromptChannel;
+    /** A direct message with a bot that has no room, a Brick (#1995): its place rules speak of no room. The same for every message of that bot. */
+    noRoom?: boolean;
     /** Clock for the Now line; injectable for tests. */
     now?: Date;
     /** The newest files in this person's chats with the bot (buildRecentFilesLine); empty when there are none. */
@@ -279,7 +294,7 @@ function oneLine(text: string): string {
 }
 
 export function buildSystemPromptWithEnds(parts: SystemPromptParts): BuiltSystemPrompt {
-    const { chatInstructions, mapContextInfo, conversationContext, pendingMediaNotice, now, channel = 'world', recentFiles, endFollowUp } = parts;
+    const { chatInstructions, mapContextInfo, conversationContext, pendingMediaNotice, now, channel = 'world', recentFiles, endFollowUp, noRoom } = parts;
 
     // CRITICAL: Chat instructions define the bot's personality and MUST be followed
     let systemPrompt = '';
@@ -297,7 +312,7 @@ export function buildSystemPromptWithEnds(parts: SystemPromptParts): BuiltSystem
     // Fixed rules, always included. NOTE: personality from chat instructions
     // takes precedence — these are guidelines for natural conversation.
     systemPrompt += HUMAN_LIKE_RULES;
-    systemPrompt += naturalConversationRules(channel);
+    systemPrompt += naturalConversationRules(channel, channel === 'dm' && noRoom === true);
     const cacheEnds = [systemPrompt.length];
 
     if (mapContextInfo) {

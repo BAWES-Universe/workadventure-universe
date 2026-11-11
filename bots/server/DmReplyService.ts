@@ -26,6 +26,39 @@ import type { BotManager } from './BotManager';
 /** Label stored with direct messages in memory and analytics, where bubble messages store their space name. */
 export const DM_SPACE_NAME = 'matrix-dm';
 const DEFAULT_INSTRUCTIONS = 'You are a helpful bot.';
+
+/** How a Brick talks until its owner writes its own instructions (#1995). */
+const BRICK_PERSONALITY =
+    "You are this person's own helper in Universe. Be warm, plain and brief, like a capable friend who gets things done. " +
+    'Use everyday words. Give the answer first, then the next step if there is one.';
+
+/**
+ * What stays true of every Brick, whatever its owner writes (#1995). It comes with the bot's own instructions, which the
+ * rules after them yield to. Where it lives is said again in those rules (ai/systemPrompt.ts, the ones for a bot with no room).
+ */
+function brickFacts(name: string): string {
+    return [
+        'About you (this stays true whatever else is written here):',
+        `- Your name is ${name}. You are a Brick. People also say "bot": to you the two words mean the same thing, you answer to both and you never correct anyone for using either.`,
+        '- You belong to the person you are talking with, and you live in their chats, not in a room on the map.',
+        '- Speak of yourself as "I". You are neither a "he" nor a "she".',
+        '- Only offer what you can do in this chat today, with what you have. When they ask what you can do, give three or four short, concrete ideas you can really carry out right now. When they ask for something you cannot do yet, say so in one plain sentence and offer the closest thing you can do today.',
+    ].join('\n');
+}
+
+/** The instructions a bot answers by: its own, or the built-in ones for its kind. */
+export function instructionsFor(config: Pick<BotConfiguration, 'chatInstructions' | 'brick' | 'name'>): string {
+    if (!config.brick) return config.chatInstructions || DEFAULT_INSTRUCTIONS;
+    return `${config.chatInstructions || BRICK_PERSONALITY}\n\n${brickFacts(config.name || 'Brick')}`;
+}
+
+/** The marker a message carries when the person tapped a starter under a Brick's hello (#1995), and the one starter there is. */
+export const STARTER_IDEAS = 'ideas';
+/**
+ * A Brick's answer to "See what I can do" (#1995): fixed words, so it asks no model and counts toward nothing. The game
+ * shows them in the person's language with the ideas to tap; these are for the bot's memory and for other chat apps.
+ */
+export const BRICK_IDEAS_TEXT = 'A few things I could take off your plate. Pick one, or just ask in your own words.';
 /** A direct message after this long counts as a new conversation, like walking up to the bot again. */
 const NEW_CONVERSATION_AFTER_MS = 30 * 60 * 1000;
 const CONFIG_CACHE_MS = 60 * 1000;
@@ -75,6 +108,8 @@ export interface DmReplyHooks {
     pointedArtifactIds?: string[];
     /** A line from the system about something the person did (a card they tapped), not words they typed: nothing is learned about them from it. */
     note?: boolean;
+    /** The person tapped this starter under a Brick's hello (#1995): the message is the starter's own words. */
+    starter?: string;
 }
 
 export interface DmReply {
@@ -93,6 +128,8 @@ export interface DmReply {
     artifacts?: ArtifactCard[];
     /** The person reached a reply limit (#1159): no AI was called, and the game shows the fixed card instead. */
     replyLimit?: ReplyLimitReached;
+    /** The text is a Brick's fixed "what I can do" (#1995): the game shows its ideas to tap with it. */
+    ideas?: boolean;
     /**
      * This message waited behind an answer in progress and was answered together with the others that waited (#1159):
      * nothing is sent for it. True once that one answer was given, false when it failed or was a reply limit card.
@@ -120,7 +157,7 @@ const MAX_LAST_FILES = 500;
 export class DmReplyService extends BaseBehavior {
     private queues = new Map<string, Promise<unknown>>();
     /** Per chat, the words that wait behind the answer in progress, to be answered together once it is done. */
-    private waiting = new Map<string, { texts: string[]; pointed: string[]; note: boolean; answer: Promise<DmReply | null> }>();
+    private waiting = new Map<string, { texts: string[]; pointed: string[]; note: boolean; starter: boolean; answer: Promise<DmReply | null> }>();
     private playerIds = new Map<string, number>();
     private nextPlayerId = -1;
     private loadedBots = new Set<string>();
@@ -157,8 +194,9 @@ export class DmReplyService extends BaseBehavior {
         // One reply at a time (#1159): messages that come in while the bot is answering wait, and the ones that are
         // only words get one answer together. A message with a file is answered on its own, as before.
         const waiting = this.waiting.get(key);
-        // A note the system wrote is never answered together with what a person typed: the two are kept and learned from differently
-        if (waiting && attachments.length === 0 && waiting.note === !!hooks.note) {
+        // A note the system wrote is never answered together with what a person typed: the two are kept and learned from differently.
+        // Nor is a starter they tapped (#1995): its answer is fixed words, which would leave what they typed unanswered
+        if (waiting && attachments.length === 0 && waiting.note === !!hooks.note && !waiting.starter && !hooks.starter) {
             waiting.texts.push(text);
             // A card replied to in a message that waits is pointed at by the one answer that covers it (game #1781)
             waiting.pointed.push(...(hooks.pointedArtifactIds ?? []));
@@ -169,7 +207,13 @@ export class DmReplyService extends BaseBehavior {
             }));
         }
         const previous = this.queues.get(key);
-        const batch = { texts: [text], pointed: [...(hooks.pointedArtifactIds ?? [])], note: !!hooks.note } as { texts: string[]; pointed: string[]; note: boolean; answer: Promise<DmReply | null> };
+        const batch = { texts: [text], pointed: [...(hooks.pointedArtifactIds ?? [])], note: !!hooks.note, starter: !!hooks.starter } as {
+            texts: string[];
+            pointed: string[];
+            note: boolean;
+            starter: boolean;
+            answer: Promise<DmReply | null>;
+        };
         const next = (previous ?? Promise.resolve())
             .catch(() => undefined)
             .then(() => {
@@ -234,7 +278,8 @@ export class DmReplyService extends BaseBehavior {
         // Without the admin API settings the answer would read as "no such bot", which counts toward closing chats
         if (!admin.isConfigured()) throw new Error('The admin API is not configured, so bot settings cannot be loaded');
         // Bounded, as every caller waits on it: a chat's next events, and the game's bot states
-        const config = await admin.getBotConfiguration(botId, CONFIG_TIMEOUT_MS);
+        // Direct messages are where a Brick lives (#1995), so this is the one place that asks Orbit for one
+        const config = await admin.getBotConfiguration(botId, CONFIG_TIMEOUT_MS, { bricks: true });
         this.configCache.delete(botId);
         this.missingCache.delete(botId);
         if (config) {
@@ -253,7 +298,7 @@ export class DmReplyService extends BaseBehavior {
      */
     async restingLine(config: BotConfiguration, text: string): Promise<string> {
         if (!config.aiProviderRef || !this.aiService || !text.trim()) return '';
-        const instructions = `${config.chatInstructions || DEFAULT_INSTRUCTIONS}\n\n${RESTING_PROMPT}`;
+        const instructions = `${instructionsFor(config)}\n\n${RESTING_PROMPT}`;
         try {
             // With the bot id, so a bot on Universe AI or on a lent key reaches its key the way its replies do
             const line = await this.aiService.quickGenerate(config.aiProviderRef, instructions, text.slice(0, 500), config.botId);
@@ -281,13 +326,31 @@ export class DmReplyService extends BaseBehavior {
     private async replyNow(botId: string, person: DmPerson, text: string, attachments: DmAttachment[], hooks: DmReplyHooks): Promise<DmReply | null> {
         const config = await this.getBotConfig(botId);
         if (!config?.aiProviderRef || !this.aiService || !this.conversationMemory) return null;
-        const chatInstructions = config.chatInstructions || DEFAULT_INSTRUCTIONS;
+        const chatInstructions = instructionsFor(config);
         const playerId = this.playerIdFor(person.matrixUserId);
         const memory = this.conversationMemory;
 
         await this.ensureMemoriesLoaded(botId);
         const withUuid = memory as unknown as { setUserUuid?: (b: string, p: number, u: string, l: boolean) => void };
         withUuid.setUserUuid?.(botId, playerId, person.uuid, !person.isGuest);
+        // "See what I can do" under a Brick's hello (#1995): fixed words, so no model is asked and nothing is counted. Both
+        // lines are remembered like any others, so the bot knows what it offered when the person picks one or asks on.
+        if (config.brick && hooks.starter === STARTER_IDEAS && attachments.length === 0) {
+            const lastMet = memory.getMemory(botId, playerId)?.relationship?.lastMet ?? 0;
+            if (Date.now() - lastMet > NEW_CONVERSATION_AFTER_MS) memory.startConversation(botId, playerId);
+            // Their tap, not words they typed: nothing is learned about them from it
+            memory.addMessage(botId, playerId, text, 'person', DM_SPACE_NAME, false);
+            if (memory.getMemory(botId, playerId)?.userUuid !== person.uuid) {
+                withUuid.setUserUuid?.(botId, playerId, person.uuid, !person.isGuest);
+            }
+            let said = false;
+            const keep = () => {
+                if (said) return;
+                said = true;
+                memory.addMessage(botId, playerId, BRICK_IDEAS_TEXT, 'bot', DM_SPACE_NAME);
+            };
+            return { text: BRICK_IDEAS_TEXT, media: [], ideas: true, keep };
+        }
         // A direct message takes the media its tools made with its answer, so anything still here is from a turn that
         // failed, or was queued in a bubble: it is dropped, never sent with an answer it doesn't belong to. After the
         // uuid is set, because that restores the person's saved memory, queued media included.

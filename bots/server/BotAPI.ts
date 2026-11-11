@@ -242,6 +242,11 @@ export interface BotAPIOptions {
     dmRoom?: (botId: string) => Promise<{ url: string; room: string; world: string; universe: string } | undefined>;
     /** Whether a bot hears voice notes, for the mic in its chat: the same hearing its voice calls use. Left out, no bot is said to hear. */
     noteHearing?: { canHear(botId: string): Promise<boolean> };
+    /**
+     * The one chat of a bot and a person (game #1995): the chat they have, or whether this device is the one to make it;
+     * only when Matrix DMs are on. `chatId` is the person's chat address, already checked to be theirs.
+     */
+    directChat?: (botId: string, chatId: string) => Promise<{ roomId: string } | { create: true } | { wait: true }>;
     /** "Hear this voice say hello" on the bot page (#1852). Left out, it is built from the bot server's own parts the first time it is asked for; null: not available. */
     voiceHello?: VoiceHello | null;
 }
@@ -280,6 +285,7 @@ export class BotAPI {
     private dmStatus: BotAPIOptions['dmStatus'];
     private noteHearing: BotAPIOptions['noteHearing'];
     private dmRoom: BotAPIOptions['dmRoom'];
+    private directChat: BotAPIOptions['directChat'];
     private voiceHelloOption: BotAPIOptions['voiceHello'];
 
     constructor(
@@ -297,6 +303,7 @@ export class BotAPI {
         this.dmStatus = options.dmStatus;
         this.noteHearing = options.noteHearing;
         this.dmRoom = options.dmRoom;
+        this.directChat = options.directChat;
         this.voiceHelloOption = options.voiceHello;
 
         // Routers with their own auth and body limits (the Matrix application service) go before the shared parser.
@@ -871,6 +878,43 @@ export class BotAPI {
             } catch (error) {
                 console.error(`[BotAPI] Error reading the room of bot ${botId}:`, error);
                 res.status(500).json({ error: 'Could not read the room' });
+            }
+        });
+
+        // One chat for a person and a bot, however many of their devices open it at once (game #1995). A device that has
+        // no chat with the bot asks here before it makes one, and is told the chat they already have, to make it (one
+        // device at a time is), or to ask again in a moment. The person is the one the Orbit session names: the chat
+        // address their device sends counts only when Orbit says it is that same person's and that they may message
+        // the bot, so nobody learns of, or holds up, a chat that is not theirs.
+        this.app.post('/api/bots/:botId/direct-chat', requireSession, async (req: BotAPIRequest, res: Response) => {
+            if (!this.directChat) {
+                res.status(404).json({ error: 'Direct messages are off' });
+                return;
+            }
+            const { botId } = req.params;
+            if (!/^[A-Za-z0-9_-]{1,64}$/.test(botId)) {
+                res.status(400).json({ error: 'Not a bot id' });
+                return;
+            }
+            const chatId = req.body?.chatId;
+            if (typeof chatId !== 'string' || !/^@[^\s:]{1,255}:[^\s]{1,255}$/.test(chatId) || chatId.length > 255) {
+                res.status(400).json({ error: 'Not a chat address' });
+                return;
+            }
+            try {
+                const access = await this.adminApiService.checkDmAccess(botId, chatId);
+                if (!access.allowed && (access.reason ?? '').startsWith('admin_api_')) {
+                    res.status(503).json({ error: 'Could not check right now', code: 'cannot_check' });
+                    return;
+                }
+                if (!access.allowed || !access.user || !req.sessionUuid || access.user.uuid !== req.sessionUuid) {
+                    res.status(403).json({ error: 'You cannot message this bot', code: 'not_allowed' });
+                    return;
+                }
+                res.json(await this.directChat(botId, chatId));
+            } catch (error) {
+                console.error(`[BotAPI] Error finding the direct chat of bot ${botId}:`, error);
+                res.status(500).json({ error: 'Could not find the chat' });
             }
         });
 

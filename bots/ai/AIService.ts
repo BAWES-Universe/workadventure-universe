@@ -230,6 +230,8 @@ interface CachedCredentials {
 const WORLD_NAVIGATION_FOLLOW_UP = `- For "take me to X" questions: Just say "Follow me!" or "I'll take you there" - do NOT say the location
 - For navigation: Just respond naturally (e.g., "Follow me!") - do NOT prefix with location`;
 const DM_NAVIGATION_FOLLOW_UP = `- For "take me to X" questions: You can't walk anywhere from a direct message. Invite them to come find you in your room by name instead`;
+/** The same for a bot with no room, a Brick (game #1995): there is nowhere to invite anyone. */
+const DM_NO_ROOM_FOLLOW_UP = `- For "take me to X" questions: You can't walk anywhere, and you have no room: you live in this person's chats. Say so in one plain sentence`;
 
 export class AIService {
     private adminApiService: AdminApiService;
@@ -754,7 +756,8 @@ export class AIService {
         greeting = false
     ): AsyncGenerator<AIStreamChunk> {
         const turn: TurnFacts = { artifactTools: false, artifactSaved: false, guard: false };
-        const hearing = spaceName !== undefined && botClient !== undefined ? { spaceName, botClient } : undefined;
+        // Direct messages have no bot on the map: their first answer passes no client, and their second try (after a repeat) a null one
+        const hearing = spaceName !== undefined && botClient ? { spaceName, botClient } : undefined;
         // A new turn starts with nothing held, whatever an earlier one that was cut short left behind
         if (!isRetry) hearing?.botClient.releaseSpeech(hearing.spaceName, playerId);
         // Who else reads this reply (#1993). With other people in the bubble or meeting room it is built again from only
@@ -1303,6 +1306,8 @@ export class AIService {
                     artifactsEnabled() ? turnMediaNotice(turnMedia) : '',
                 ].filter(Boolean).join('\n\n') || undefined,
                 channel,
+                // A direct message with a bot that lives in no room, a Brick (#1995)
+                noRoom: channel === 'dm' && !roomUrl,
                 recentFiles: await recentFiles,
                 // A voice bot with others in the bubble tells, by its own judgement, when this person is done talking with it (#1670)
                 endFollowUp: channel === 'world' && !!spaceName && playerId !== undefined && !!botClient?.mayEndFollowUp?.(spaceName, playerId),
@@ -1908,7 +1913,7 @@ export class AIService {
                             }
 
                             // Continue the reply after its steps, with how to carry on as the last line
-                            const followUpRules = `Continue this reply from the tool results above. Do NOT restate your intent or repeat anything you already said.\n\nCRITICAL RESPONSE RULES:\n- Continue naturally — do NOT re-introduce yourself, re-greet, apologize, or repeat anything you already said\n- This is the same conversation turn — just keep answering\n- Use ONLY information from tool results above - never invent or make up details\n- **CRITICAL: Do NOT repeat location (universe/world/room) if you already said it in this conversation - check "Recent conversation" first!**\n- Only mention location if this is the FIRST time they ask "where are we" - otherwise just answer the question directly\n- For "what areas" questions: Just list the areas (e.g., "There's a Social Area and Meeting Room here") - do NOT say the location again\n${channel === 'dm' ? DM_NAVIGATION_FOLLOW_UP : WORLD_NAVIGATION_FOLLOW_UP}\n- Use actual names from results - never placeholders or made-up text\n- Be conversational and natural - avoid repetitive responses`;
+                            const followUpRules = `Continue this reply from the tool results above. Do NOT restate your intent or repeat anything you already said.\n\nCRITICAL RESPONSE RULES:\n- Continue naturally — do NOT re-introduce yourself, re-greet, apologize, or repeat anything you already said\n- This is the same conversation turn — just keep answering\n- Use ONLY information from tool results above - never invent or make up details\n- **CRITICAL: Do NOT repeat location (universe/world/room) if you already said it in this conversation - check "Recent conversation" first!**\n- Only mention location if this is the FIRST time they ask "where are we" - otherwise just answer the question directly\n- For "what areas" questions: Just list the areas (e.g., "There's a Social Area and Meeting Room here") - do NOT say the location again\n${channel === 'dm' ? (roomUrl ? DM_NAVIGATION_FOLLOW_UP : DM_NO_ROOM_FOLLOW_UP) : WORLD_NAVIGATION_FOLLOW_UP}\n- Use actual names from results - never placeholders or made-up text\n- Be conversational and natural - avoid repetitive responses`;
 
                             // Add /no_think for Qwen models in follow-up message
                             // The whole turn's list every round: a song made two steps back must still be one it can put in a page

@@ -3,7 +3,7 @@ import type { MatrixAppServiceClient } from './MatrixAppServiceClient';
 import type { MatrixEvent, MatrixEventHandler } from './MatrixAppServiceRouter';
 import { BOT_LOCALPART_PREFIX, botIdFromMatrixId, type MatrixAppServiceConfig } from './MatrixConfig';
 import type { BotConfiguration } from '../server/AdminApiService';
-import type { DmAttachment, DmPerson, DmReply, DmReplyHooks } from '../server/DmReplyService';
+import { STARTER_IDEAS, type DmAttachment, type DmPerson, type DmReply, type DmReplyHooks } from '../server/DmReplyService';
 import { MAX_OUTGOING_MEDIA_BYTES, type PendingMedia } from '../memory/ConversationMemory';
 import {
     availabilityOf,
@@ -31,6 +31,19 @@ export const ROOM_LINK_KEY = 'universe.room_link';
 export const TRANSCRIPT_KEY = 'universe.transcript';
 /** Marks the one copy, in a direct chat, of an answer its person got in nearby chat with others around (game #1993). */
 export const ANSWERED_NEARBY_KEY = 'universe.answered_nearby';
+/** On a person's message: the starter they tapped under a Brick's hello (game #1995). The message is the starter's own words. */
+export const STARTER_KEY = 'universe.starter';
+/** On a Brick's reply: these are its fixed "what I can do" words, and the game shows its ideas to tap with them (game #1995). */
+export const BRICK_IDEAS_KEY = 'universe.brick_ideas';
+/** The device told to make a chat has this long to make it before another device may (game #1995). */
+const DIRECT_CHAT_CLAIM_MS = 20_000;
+
+/**
+ * What a device with no chat of its own is told when it asks for the one chat of a bot and a person (game #1995): the
+ * chat they already have, to make it, or to ask again in a moment (another device is making it, or the chat could not be
+ * looked at just now).
+ */
+export type DirectChatAnswer = { roomId: string } | { create: true } | { wait: true };
 
 export interface DmAccessResult {
     allowed: boolean;
@@ -77,6 +90,11 @@ export interface MatrixDmBridgeDeps {
         rememberDmRoomOf?(botId: string, matrixUserId: string, roomId: string): Promise<void>;
         getDmRoomOf?(botId: string, matrixUserId: string): Promise<string | null>;
         forgetDmRoomOf?(botId: string, matrixUserId: string): Promise<void>;
+        /**
+         * One device at a time makes the chat of a bot and a person (#1995): true for the first to ask while the claim
+         * lasts, false for the others. Null when there is no shared store, and the bridge keeps its own claim.
+         */
+        claimDirectChat?(botId: string, matrixUserId: string, forMs: number): Promise<boolean | null>;
     };
     /** The cards of tools that ask first (#1657). Without it taps are ignored and nothing waits. */
     approvals?: MatrixDmApprovals;
@@ -186,6 +204,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
     private openedRetryDelaysMs = [3000, 10_000];
     /** By bot and person: such a chat is being looked at again. */
     private lookingAgain = new Set<string>();
+    /** By bot and person, when there is no shared store: until when one device is making their chat (#1995). */
+    private directChatClaims = new Map<string, number>();
     /** Bots Orbit last said don't exist: how many times in a row, and when that was last counted. */
     private botNotFound = new Map<string, { inARow: number; at: number }>();
     /** When each chat last got a live answer: a message left there while the bot rested, older than that, is passed. */
@@ -422,20 +442,54 @@ export class MatrixDmBridge implements MatrixEventHandler {
 
     /** The direct chat of this bot and this person, when one is known and still theirs alone. */
     private async directRoomOf(botId: string, matrixUserId: string): Promise<string | null> {
+        return (await this.lookUpDirectRoom(botId, matrixUserId)).roomId;
+    }
+
+    /** The same, and whether a chat that is known could not be looked at just now (so "none" is not certain). */
+    private async lookUpDirectRoom(botId: string, matrixUserId: string): Promise<{ roomId: string | null; unsure: boolean }> {
         const key = MatrixDmBridge.pair(botId, matrixUserId);
         const roomId = this.directRooms.get(key) ?? (await this.deps.rooms?.getDmRoomOf?.(botId, matrixUserId).catch(() => null)) ?? null;
-        if (!roomId) return null;
+        if (!roomId) return { roomId: null, unsure: false };
         const theirs = await this.isTheirDirectChat(botId, matrixUserId, roomId);
         if (theirs) {
             await this.noteDirectRoom(botId, matrixUserId, roomId);
-            return roomId;
+            return { roomId, unsure: false };
         }
         // Not theirs any more (the bot left, or someone joined): forgotten. Unreadable just now: asked again next time
         if (theirs === false) {
             if (this.directRooms.get(key) === roomId) this.directRooms.delete(key);
             await this.deps.rooms?.forgetDmRoomOf?.(botId, matrixUserId).catch(() => undefined);
         }
-        return null;
+        return { roomId: null, unsure: theirs === null };
+    }
+
+    /**
+     * One chat for a bot and a person, however many of their devices open it at once (game #1995). A device that has no
+     * chat with the bot asks here before it makes one. It gets the chat the bot already shares with this person, or is
+     * told to make it, which only one device at a time is; the others are told to ask again in a moment, and by then the
+     * bot has joined the chat the first one made. The caller has checked that this person may message the bot and is who
+     * they say. A device told to make the chat that never does holds the others back only for a few seconds.
+     */
+    async directChatFor(botId: string, matrixUserId: string): Promise<DirectChatAnswer> {
+        if (botIdFromMatrixId(this.config.domain, matrixUserId)) return { wait: true };
+        const known = await this.lookUpDirectRoom(botId, matrixUserId);
+        if (known.roomId) return { roomId: known.roomId };
+        // A chat that is there but could not be looked at is never made a second time
+        if (known.unsure) return { wait: true };
+        return (await this.claimDirectChat(botId, matrixUserId)) ? { create: true } : { wait: true };
+    }
+
+    private async claimDirectChat(botId: string, matrixUserId: string): Promise<boolean> {
+        const shared = await this.deps.rooms?.claimDirectChat?.(botId, matrixUserId, DIRECT_CHAT_CLAIM_MS).catch(() => null);
+        if (shared !== null && shared !== undefined) return shared;
+        const key = MatrixDmBridge.pair(botId, matrixUserId);
+        const now = Date.now();
+        if ((this.directChatClaims.get(key) ?? 0) > now) return false;
+        for (const [other, until] of this.directChatClaims) {
+            if (until <= now) this.directChatClaims.delete(other);
+        }
+        this.directChatClaims.set(key, now + DIRECT_CHAT_CLAIM_MS);
+        return true;
     }
 
     /**
@@ -665,7 +719,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
             return;
         }
         // A bot that is off or deleted takes no new chats. The game shows its state without needing a room.
-        if (!config || config.enabled === false) {
+        // A Brick that is off still takes its owner's chat (#1995): its chat is always in their list, and what they write
+        // there waits for it like in any chat with a resting bot.
+        if (!config || (config.enabled === false && !config.brick)) {
             await this.client.leaveRoom(botUserId, event.room_id).catch(() => undefined);
             return;
         }
@@ -916,6 +972,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
             const reply = await this.deps.reply(botId, person, text, attachments, {
                 roomId: event.room_id,
                 pointedArtifactIds,
+                // A starter tapped under a Brick's hello (#1995); a message that waited for a resting Brick is answered as typed
+                ...(content[STARTER_KEY] === STARTER_IDEAS && !catchUp ? { starter: STARTER_IDEAS } : {}),
                 onInterimMessage: async (interim) => {
                     // A lost "let me look" line must not cost the person the real answer, so it never throws.
                     try {
@@ -976,6 +1034,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
                     body: reply.text,
                     [ROOM_LINK_KEY]: reply.roomLink,
                 });
+            } else if (reply.text && reply.ideas) {
+                // A Brick's fixed "what I can do": the game shows its ideas to tap with it (#1995)
+                await this.client.sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body: reply.text, [BRICK_IDEAS_KEY]: true });
             } else if (reply.text) {
                 await this.client.sendText(botUserId, event.room_id, reply.text);
             }

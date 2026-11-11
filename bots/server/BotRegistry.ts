@@ -153,6 +153,16 @@ export class BotRegistry {
         await this.redis.hDel('bots:matrix:dm-room-of', `${botId}|${matrixUserId}`);
     }
 
+    /**
+     * One device at a time makes the direct chat of a bot and a person (game #1995), across every bot server: true for
+     * the first to ask, false for anyone who asks while that claim lasts. Null without Redis, and the caller keeps its
+     * own in-process claim.
+     */
+    async claimDirectChat(botId: string, matrixUserId: string, forMs: number): Promise<boolean | null> {
+        if (!this.redis?.isOpen) return null;
+        return (await this.redis.set(`bots:matrix:dm-claim:${botId}|${matrixUserId}`, this.serverId, { NX: true, PX: forMs })) === 'OK';
+    }
+
     /** Whether Redis is up, so messages waiting for a resting bot survive a restart and reach every bot server. */
     hasSharedStore(): boolean {
         return !!this.redis?.isOpen;
