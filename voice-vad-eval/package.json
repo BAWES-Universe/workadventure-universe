@@ -1,0 +1,23 @@
+{
+  "name": "@workadventure/voice-vad-eval",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Offline, test-only comparison of the voice worker's volume gate with a Silero speech detector (Stage 0 and 1). Not part of any image.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "fetch-data": "bash scripts/fetch-data.sh",
+    "evaluate": "for i in 0 1 2 3; do tsx src/evaluate.ts data out $i 4 native & done; wait",
+    "report": "tsx src/report.ts out",
+    "parity": "tsx src/parity.ts data out \"silero p>=0.50 for 64 ms\"",
+    "bench": "tsx src/bench.ts data/silero_vad_v6.2.3.onnx native 20 30 data/ms-snsd/noise_test/Typing_1.wav"
+  },
+  "dependencies": {
+    "@evan/opus": "1.0.3",
+    "onnxruntime-node": "1.31.1",
+    "onnxruntime-web": "1.31.1",
+    "tsx": "4.23.15"
+  }
+}
