@@ -23,6 +23,15 @@ Switched on, it only counts (the `observer_*` counters in `/stats` and `engine.s
 hears, says, or stops for. To switch it off again: remove `VOICE_SPEECH_OBSERVER` and restart the worker. Nothing else
 is stored anywhere.
 
+## The limited owner rollout
+
+Only with the observer on, and only for the bots named in `VOICE_YIELD_BOTS` (bot ids, comma separated), a loud sound
+while the bot speaks pauses its voice instead of stopping it, and the voice stops only once the sound is confirmed as
+speech; it goes on from the same spot only after a clean, empty result and fresh silence (`../src/yieldControl.ts`).
+Every other bot keeps today's rule. It is an internal setting, never a user one. `VOICE_YIELD_POLICY` is `hold` unless
+set to `confirm` or `dip`, which exist only for comparison. Its counters are `yield_*` and `playback_hold*`. To end it:
+remove `VOICE_YIELD_BOTS` and restart the worker.
+
 ## In the image
 
 The Dockerfile keeps only what the detector needs: the two packages, and the native library for the machine the image

@@ -19,7 +19,8 @@
     "worker-load": "sh scripts/worker-load.sh \"$PWD/data\" \"$PWD/out/worker-load\"",
     "worker-soak": "sh scripts/worker-soak.sh \"$PWD/data\" \"$PWD/out/worker-soak\" && python3 -I scripts/worker-soak-table.py \"$PWD/out/worker-soak\"",
     "image-check": "bash scripts/image-check.sh \"$PWD/data\" \"$PWD/out/image-check\"",
-    "room-rehear": "tsx src/room-rehear.ts"
+    "room-rehear": "tsx src/room-rehear.ts",
+    "yield-replay": "tsx src/yield-replay.ts data results/raw.jsonl.gz out report && tsx src/yield-report.ts out && cp out/yield-replay.md results/yield-replay.md"
   },
   "dependencies": {
     "@evan/opus": "1.0.3",
