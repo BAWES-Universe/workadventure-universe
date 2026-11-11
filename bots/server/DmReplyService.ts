@@ -21,6 +21,7 @@ import type { ParsedFile } from '../services/FileParser';
 import { withoutNoteIds, type ChatUpload } from '../services/ChatFiles';
 import { chatFileKeeper, sentMediaJob } from '../services/ChatFileKeeper';
 import type { BotConfiguration } from './AdminApiService';
+import { BRICK_CHAT_LINK } from '../ai/BrickTools';
 import type { BrickNote } from '../ai/BrickTools';
 import type { BotManager } from './BotManager';
 
@@ -70,7 +71,9 @@ export interface OfferedBrick {
 }
 
 /** A Brick's words once it made the Brick it suggested (#1996): fixed, so no model is asked. For memory and other chat apps; the game shows its own. */
-export const brickMadeText = (name: string): string => `Done. ${name} is ready and knows its job. Open its chat, or find it in Chats any time.`;
+/** With the Brick's id, "Open its chat" is the link the game opens that chat from; without, the same words plain. */
+export const brickMadeText = (name: string, id?: string): string =>
+    `Done. ${name} is ready and knows its job. ${id ? `[Open its chat](${BRICK_CHAT_LINK}${id})` : 'Open its chat'}, or find it in Chats any time.`;
 export const BRICK_NOT_MADE_TEXT = "I couldn't make it just now. Ask me again in a moment.";
 /** A direct message after this long counts as a new conversation, like walking up to the bot again. */
 const NEW_CONVERSATION_AFTER_MS = 30 * 60 * 1000;
@@ -398,8 +401,8 @@ export class DmReplyService extends BaseBehavior {
                     ...(offered.instructions ? { chatInstructions: offered.instructions } : {}),
                 });
                 void admin.answerBrickOffer(botId, person.uuid, offered.topic, 'made');
-                const words = brickMadeText(brick.name);
-                return { text: words, media: [], keep: keepAs(words), bricks: [{ kind: 'made', id: brick.id, name: brick.name, line: brick.description, look: brick.characterTextureId, made }] };
+                // Remembered in plain words: the link is for the game, not something to repeat later
+                return { text: brickMadeText(brick.name, brick.id), media: [], keep: keepAs(brickMadeText(brick.name)), bricks: [{ kind: 'made', id: brick.id, name: brick.name, line: brick.description, look: brick.characterTextureId, made }] };
             } catch (error) {
                 console.warn(`[DmReplyService] Bot ${botId} could not make the Brick it suggested:`, error instanceof Error ? error.message : error);
                 return { text: BRICK_NOT_MADE_TEXT, media: [], keep: keepAs(BRICK_NOT_MADE_TEXT) };

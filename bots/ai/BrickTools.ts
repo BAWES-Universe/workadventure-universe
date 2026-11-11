@@ -133,6 +133,10 @@ export interface BrickToolContext {
 }
 
 /** Runs one of the two tools. Never throws: the model is told in plain words what happened. */
+/** The link to a Brick's chat as the game opens it from inside an answer (play: Chat/Bricks/BrickChatLink.ts). */
+export const BRICK_CHAT_LINK = '#brick-chat=';
+const chatLink = (brickId: string) => `[Open its chat](${BRICK_CHAT_LINK}${brickId})`;
+
 export async function runBrickTool(name: string, args: Record<string, unknown>, context: BrickToolContext): Promise<Record<string, unknown>> {
     const brickName = text(args.name, NAME_MAX);
     const line = text(args.line, LINE_MAX);
@@ -154,8 +158,8 @@ export async function runBrickTool(name: string, args: Record<string, unknown>, 
             });
             context.notes.push({ kind: 'made', id: brick.id, name: brick.name, line: brick.description, look: brick.characterTextureId, made });
             return made
-                ? { made: true, name: brick.name, note: 'It is ready and knows its job. Its chat is in their Chats now. Say so in one or two short sentences.' }
-                : { made: false, name: brick.name, note: 'They already have a Brick of this name, so nothing new was made. Tell them it is in their Chats. Make a second only if they ask for one.' };
+                ? { made: true, name: brick.name, note: `It is ready and knows its job. Say so in one or two short sentences, and give them this link to its chat, with its words in their language and its address exactly as written: ${chatLink(brick.id)}. It is in their Chats too.` }
+                : { made: false, name: brick.name, note: `They already have a Brick of this name, so nothing new was made. Tell them, and give them this link to its chat, with its words in their language and its address exactly as written: ${chatLink(brick.id)}. Make a second only if they ask for one.` };
         } catch (error) {
             console.warn('[BrickTools] Could not make a Brick:', error instanceof Error ? error.message : error);
             return { error: 'The Brick could not be made just now. Say so in one plain sentence and offer to try again.' };

@@ -144,6 +144,8 @@ describe('The two Brick tools', () => {
 
         expect(admin.makeBrickFor).toHaveBeenCalledWith(BRICK, 'uuid-alice', { name: 'Recipe Brick', description: "Keeps your mum's recipes", chatInstructions: 'You keep recipes.', hello: 'Send me the first recipe.' });
         expect(result).toMatchObject({ made: true, name: 'Recipe Brick' });
+        // The model is handed the link the game opens the new chat from
+        expect(String(result.note)).toContain('[Open its chat](#brick-chat=made-1)');
         expect(notes).toEqual([{ kind: 'made', id: 'made-1', name: 'Recipe Brick', line: "Keeps your mum's recipes", look: 'brick-red', made: true }]);
     });
 
@@ -301,7 +303,7 @@ describe('A reply that made a Brick, or suggests one', () => {
         expect(generate).not.toHaveBeenCalled();
         expect(admin.makeBrickFor).toHaveBeenCalledWith(BRICK, 'uuid-alice', { name: 'Recipe Brick', description: "Keeps your mum's recipes", chatInstructions: 'You keep recipes.' });
         expect(admin.answerBrickOffer).toHaveBeenCalledWith(BRICK, 'uuid-alice', 'recipes', 'made');
-        expect(reply).toMatchObject({ text: brickMadeText('Recipe Brick'), bricks: [{ kind: 'made', id: 'made-1', name: 'Recipe Brick', made: true }] });
+        expect(reply).toMatchObject({ text: 'Done. Recipe Brick is ready and knows its job. [Open its chat](#brick-chat=made-1), or find it in Chats any time.', bricks: [{ kind: 'made', id: 'made-1', name: 'Recipe Brick', made: true }] });
         reply!.keep!();
         reply!.keep!();
         expect(history()).toEqual([['person', 'Make Recipe Brick'], ['bot', brickMadeText('Recipe Brick')]]);

@@ -83,6 +83,9 @@ describe("more Bricks (#1996): what Orbit and a Brick say, as the game reads it"
 
     it("writes a day the short way, and nothing for a date it cannot read", () => {
         expect(shortDay("2026-11-17T09:00:00.000Z", "en-GB")).toBe("17 Nov");
+        // English puts the day first whichever English it is, as the Bricks page is drawn
+        expect(shortDay("2026-11-17T09:00:00.000Z", "en-US")).toBe("17 Nov");
+        expect(shortDay("2026-11-17T09:00:00.000Z", "fr-FR")).toBe("17 nov.");
         expect(shortDay("soon", "en-GB")).toBe("");
     });
 

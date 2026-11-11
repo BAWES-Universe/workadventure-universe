@@ -85,6 +85,7 @@
         brickStartersCard,
     } from "../../Bricks/BrickHello";
     import BrickMadeLinks from "../../Bricks/BrickMadeLinks.svelte";
+    import { brickChatLinks } from "../../Bricks/BrickChatLink";
     import { botApiService } from "../../../external-modules/bots/services/BotApiService";
     import { brickHelloMessage } from "../../Bricks/BrickHelloMessage";
     import {
@@ -1330,6 +1331,7 @@
                 </div>
             {/if}
             <ul
+                use:brickChatLinks
                 bind:this={messageListContentRef}
                 class="list-none p-0 flex-1 flex flex-col max-h-full pt-10 {$messages.length === 0 && !shownHello
                     ? 'items-center justify-center pb-4'
@@ -1459,7 +1461,7 @@
                                 runStart={place?.runStart ?? true}
                             />
                             {#if entry.message.brickMade?.length}
-                                <BrickMadeLinks made={entry.message.brickMade} />
+                                <BrickMadeLinks made={entry.message.brickMade} content={entry.message.content} />
                             {/if}
                             {#if entry.message.stoppedBySpeech}
                                 <StoppedBySpeechNote stopped={entry.message.stoppedBySpeech} />

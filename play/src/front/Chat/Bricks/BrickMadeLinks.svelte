@@ -1,33 +1,41 @@
 <script lang="ts">
+    import type { Readable } from "svelte/store";
     import LL from "../../../i18n/i18n-svelte";
+    import type { ChatMessageContent } from "../Connection/ChatConnection";
     import type { MadeBrick } from "./Brick";
     import { openBrickChat, openingBrickChats } from "./BrickChat";
+    import { linksBrickChat } from "./BrickChatLink";
 
     /**
-     * Under an answer in which a Brick made another Brick (game #1996): one tap to the new Brick's chat. The step line
-     * over the answer says what was made; this is the way there.
+     * Under an answer in which a Brick made another Brick (game #1996): one tap to the new Brick's chat, for each
+     * Brick the answer's own words do not already link to ("Open its chat" inside the sentence is the usual way).
      */
     export let made: MadeBrick[];
+    export let content: Readable<ChatMessageContent>;
+
+    $: unlinked = made.filter((brick) => !linksBrickChat($content.body, brick.id));
 
     function open(brick: MadeBrick) {
         openBrickChat(brick.id).catch((error) => console.error(error));
     }
 </script>
 
-<div class="made" data-testid="brickMadeLinks">
-    {#each made as brick (brick.id)}
-        <button
-            type="button"
-            class="made-go"
-            aria-busy={$openingBrickChats.has(brick.id)}
-            data-testid="brickMadeOpen"
-            on:click={() => open(brick)}
-            >{made.length === 1
-                ? $LL.chat.brick.openItsChat()
-                : $LL.chat.brick.openChatOf({ name: brick.name })}</button
-        >
-    {/each}
-</div>
+{#if unlinked.length > 0}
+    <div class="made" data-testid="brickMadeLinks">
+        {#each unlinked as brick (brick.id)}
+            <button
+                type="button"
+                class="made-go"
+                aria-busy={$openingBrickChats.has(brick.id)}
+                data-testid="brickMadeOpen"
+                on:click={() => open(brick)}
+                >{made.length === 1
+                    ? $LL.chat.brick.openItsChat()
+                    : $LL.chat.brick.openChatOf({ name: brick.name })}</button
+            >
+        {/each}
+    </div>
+{/if}
 
 <style>
     /* Under the answer, in line with its words */

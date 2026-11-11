@@ -77,11 +77,18 @@ export function parseUndoDays(value: unknown): number | undefined {
     return typeof days === "number" && Number.isFinite(days) && days > 0 ? days : undefined;
 }
 
-/** A day as the Bricks page says it ("17 Nov"). Empty for a date that cannot be read. */
+/**
+ * A day as the Bricks page says it: "17 Nov", the day first. English is the one language here whose usual short date
+ * can put the month first ("Nov 17"), so it is written the day-first way; every other language keeps its own order.
+ * Empty for a date that cannot be read.
+ */
 export function shortDay(date: string | number | Date, locale?: string): string {
     const day = new Date(date);
     if (Number.isNaN(day.getTime())) return "";
-    return day.toLocaleDateString(locale, { day: "numeric", month: "short" });
+    return day.toLocaleDateString(locale?.toLowerCase().startsWith("en") ? "en-GB" : locale, {
+        day: "numeric",
+        month: "short",
+    });
 }
 
 /** A list of Bricks as Orbit sends it (`{ bricks: [...] }`); anything else is no Bricks. */
