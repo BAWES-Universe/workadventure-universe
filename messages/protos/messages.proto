@@ -1567,6 +1567,7 @@ message SpaceMessage {
   optional SpaceMessageSpoken spoken = 12; // Set on the line made from a person's own speech to a voice bot
   optional uint32 voiceDurationMs = 13; // A voice note's length, measured by its sender
   repeated uint32 voiceWaveform = 14;   // A voice note's shape, 0 to 1024 per point (as Matrix writes it)
+  optional string onlyFor = 15;         // What a bot sends in a reply to someone who was alone with it (#1993): the space user id of that person. The pusher delivers it to nobody else. Not set: everyone in the space, as before
 }
 
 /**

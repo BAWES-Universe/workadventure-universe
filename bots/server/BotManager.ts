@@ -196,7 +196,7 @@ export class BotManager {
         
         // Each thing a bot remembers carries where it was said and who else was there (#1993): a direct message, or the
         // bubble or meeting room with whoever is in it at that moment
-        this.conversationMemory.useHeard((botId, playerId, spaceName) => this.whoHeard(botId, playerId, spaceName));
+        this.conversationMemory.useHeard((botId, playerId, spaceName, sender) => this.whoHeard(botId, playerId, spaceName, sender));
 
         // Initialize metrics collector
         this.metricsCollector = new BotMetricsCollector(this.adminApiService);
@@ -510,11 +510,13 @@ export class BotManager {
     /**
      * Where a line said to this bot is heard, and by whom (#1993). A direct message has nobody else in it; on the map it is
      * whoever the bot's own client sees in that space. Undefined when the bot is not there to see: the line is then kept
-     * as private.
+     * as private. The bot's own line (`sender` 'bot') is heard by whoever its reply went to: its person alone when the
+     * reply was written for them alone, whoever has walked up since.
      */
-    whoHeard(botId: string, playerId: number, spaceName: string): Heard | undefined {
+    whoHeard(botId: string, playerId: number, spaceName: string, sender?: 'bot' | 'person'): Heard | undefined {
         if (spaceName === DM_SPACE_NAME) return heardInDm();
-        return this.getBot(botId)?.heardIn(spaceName, playerId);
+        const bot = this.getBot(botId);
+        return sender === 'bot' ? bot?.saidIn(spaceName, playerId) : bot?.heardIn(spaceName, playerId);
     }
 
     /**

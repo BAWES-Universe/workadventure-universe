@@ -71,6 +71,40 @@ describe('ReplyReaders', () => {
         readers.spaceLeft(SPACE);
         expect(readers.forOneReaderIn(SPACE)).toEqual([]);
     });
+
+    it('knows whether the reply last sent to someone went to them alone', () => {
+        const readers = new ReplyReaders();
+        // Nothing sent yet: nothing to say
+        expect(readers.wentToThemAlone(SPACE, 7)).toBe(false);
+
+        readers.starts(SPACE, 7, true);
+        readers.readerOf(SPACE, REPLY, now(false));
+        expect(readers.wentToThemAlone(SPACE, 7)).toBe(true);
+        expect(readers.wentToThemAlone(SPACE, 9)).toBe(false);
+        expect(readers.wentToThemAlone('elsewhere', 7)).toBe(false);
+
+        // Their next reply is one everyone reads
+        readers.starts(SPACE, 7, false);
+        readers.readerOf(SPACE, 'bot-bot-test-player-7-next', now(false));
+        expect(readers.wentToThemAlone(SPACE, 7)).toBe(false);
+        // A late piece of the first reply still went to them alone
+        readers.readerOf(SPACE, REPLY, now(false));
+        expect(readers.wentToThemAlone(SPACE, 7)).toBe(true);
+    });
+
+    it('forgets who the last reply went to once the person, or the bot, has left', () => {
+        const readers = new ReplyReaders();
+        readers.starts(SPACE, 7, true);
+        readers.readerOf(SPACE, REPLY, now(true));
+        readers.personLeft(SPACE, 7);
+        expect(readers.wentToThemAlone(SPACE, 7)).toBe(false);
+
+        readers.starts(SPACE, 7, true);
+        readers.readerOf(SPACE, 'bot-bot-test-player-7-again', now(true));
+        expect(readers.wentToThemAlone(SPACE, 7)).toBe(true);
+        readers.spaceLeft(SPACE);
+        expect(readers.wentToThemAlone(SPACE, 7)).toBe(false);
+    });
 });
 
 describe('BotClient: who a reply is sent to', () => {
@@ -173,5 +207,141 @@ describe('BotClient: who a reply is sent to', () => {
         bot.sendStreamMessage(SPACE, REPLY, '', true, 'Your interview is at 10.');
 
         expect(speech.final).toHaveBeenCalledWith(SPACE, REPLY, 'Your interview is at 10.');
+    });
+});
+
+describe('BotClient: what a reply for one person sends with it', () => {
+    const PAYSLIP = 'https://cdn.example.test/files/payslip.pdf';
+
+    function setup() {
+        const bot = new BotClient({
+            botId: 'bot-test',
+            name: 'Nora',
+            roomUrl: 'http://play.example.test/_/global/maps.example.test/lobby.tmj',
+            pusherUrl: 'http://play.example.test',
+            position: { x: 100, y: 100 },
+            viewport: { top: 0, bottom: 600, left: 0, right: 800 },
+            characterTextureIds: [],
+        });
+        const send = vi.fn();
+        Object.assign(bot as unknown as { send: unknown }, { send });
+        const internals = bot as unknown as { spaces: Map<string, string>; userId: number; behavior: unknown };
+        internals.spaces.set(SPACE, ME);
+        internals.userId = 12;
+        const onBotMediaSent = vi.fn();
+        internals.behavior = { onBotMediaSent, onSpaceUserJoined: vi.fn(), onSpaceUserLeft: vi.fn(), onSpaceJoined: vi.fn(), onChatMessage: vi.fn() };
+        const receive = (message: unknown) => (bot as unknown as { handleSubMessage(m: unknown): Promise<void> }).handleSubMessage(message);
+        const init = (users: unknown[]) => receive({ $case: 'initSpaceUsersMessage', initSpaceUsersMessage: { spaceName: SPACE, users } });
+        const join = (user: unknown) => receive({ $case: 'addSpaceUserMessage', addSpaceUserMessage: { spaceName: SPACE, user } });
+        /** The chat messages that went into the space: a card, a picture, a file. */
+        const sent = () =>
+            send.mock.calls
+                .map((call) => call[0]?.message?.publicEvent?.spaceEvent?.event?.spaceMessage)
+                .filter(Boolean)
+                .map((message) => ({ message: message.message, url: message.url, onlyFor: message.onlyFor }));
+        return { bot, init, join, sent, onBotMediaSent };
+    }
+
+    beforeEach(() => {
+        vi.spyOn(console, 'log').mockImplementation(() => undefined);
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    });
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    it('sends a card to that person only, also after someone walks up', async () => {
+        const { bot, init, join, sent } = setup();
+        await init([KHALID]);
+        await join(SARA);
+        bot.sendChatMessage(SPACE, '::artifact:art-1:1:page::Budget', 7);
+
+        expect(sent()).toEqual([{ message: '::artifact:art-1:1:page::Budget', url: undefined, onlyFor: 'room-1_7' }]);
+    });
+
+    it('sends a file to that person only, and keeps it as one nobody else was sent', async () => {
+        const { bot, init, join, sent, onBotMediaSent } = setup();
+        await init([KHALID]);
+        await join(SARA);
+
+        expect(bot.sendMediaMessage(SPACE, PAYSLIP, 'file', 'application/pdf', '', 'payslip.pdf', 7, 7)).toBe(true);
+
+        expect(sent()).toEqual([{ message: '', url: PAYSLIP, onlyFor: 'room-1_7' }]);
+        expect(onBotMediaSent).toHaveBeenCalledWith(SPACE, 7, [expect.objectContaining({ url: PAYSLIP })], true);
+    });
+
+    it('sends several pictures to that person only', async () => {
+        const { bot, init, sent, onBotMediaSent } = setup();
+        await init([KHALID, SARA]);
+        const pictures = ['https://cdn.example.test/a.png', 'https://cdn.example.test/b.png'];
+
+        expect(bot.sendMediaGallery(SPACE, pictures, 'Two charts', undefined, 7, 7)).toBe(true);
+
+        expect(sent()).toEqual([{ message: 'Two charts', url: pictures[0], onlyFor: 'room-1_7' }]);
+        expect(onBotMediaSent).toHaveBeenCalledWith(SPACE, 7, [expect.objectContaining({ url: pictures[0] }), expect.objectContaining({ url: pictures[1] })], true);
+    });
+
+    it('sends to everyone when no one person is named, as before', async () => {
+        const { bot, init, sent, onBotMediaSent } = setup();
+        await init([KHALID, SARA]);
+        bot.sendChatMessage(SPACE, '::artifact:art-1:1:page::Budget');
+        bot.sendMediaMessage(SPACE, PAYSLIP, 'file', 'application/pdf', '', 'payslip.pdf', 7);
+        bot.sendMediaGallery(SPACE, ['https://cdn.example.test/a.png', 'https://cdn.example.test/b.png'], undefined, undefined, 7);
+
+        expect(sent().map((message) => message.onlyFor)).toEqual([undefined, undefined, undefined]);
+        // Everyone there was sent it: the file is kept with who is in the space
+        expect(onBotMediaSent).toHaveBeenNthCalledWith(1, SPACE, 7, [expect.objectContaining({ url: PAYSLIP })]);
+        expect(onBotMediaSent.mock.calls.every((call) => call.length === 3)).toBe(true);
+    });
+
+    it('sends nothing for one person in a space the bot is not in', () => {
+        const { bot, sent, onBotMediaSent } = setup();
+        bot.sendChatMessage('elsewhere', 'a card', 7);
+
+        expect(bot.sendMediaMessage('elsewhere', PAYSLIP, 'file', 'application/pdf', '', 'payslip.pdf', 7, 7)).toBe(false);
+        expect(bot.sendMediaGallery('elsewhere', [PAYSLIP, PAYSLIP], undefined, undefined, 7, 7)).toBe(false);
+        expect(sent()).toEqual([]);
+        expect(onBotMediaSent).not.toHaveBeenCalled();
+    });
+
+    it('passes the one person on from a picture, a file, a song or a video it uploads first', async () => {
+        const { bot, init, sent } = setup();
+        await init([KHALID, SARA]);
+        vi.spyOn(bot as never, 'uploadMedia').mockImplementation((async (url: string, mimeType: string) => ({ location: url, mediaType: mimeType.split('/')[0] === 'application' ? 'file' : mimeType.split('/')[0], mimeType })) as never);
+
+        await bot.sendImage(SPACE, 'https://cdn.example.test/a.png', 'A chart', 7, 'image/png', 7);
+        await bot.sendFile(SPACE, PAYSLIP, 'payslip.pdf', 7, 'application/pdf', 7);
+        await bot.sendAudio(SPACE, 'https://cdn.example.test/song.mp3', 7, 'audio/mpeg', 7);
+        await bot.sendVideo(SPACE, 'https://cdn.example.test/clip.mp4', 7, 'video/mp4', 7);
+        // A file sent again names no asker (it is kept already) and still goes to its person alone
+        await bot.sendFile(SPACE, PAYSLIP, 'payslip.pdf', undefined, 'application/pdf', 7);
+        // And to everyone when no one is named
+        await bot.sendImage(SPACE, 'https://cdn.example.test/logo.png', 'Our logo', 7, 'image/png');
+
+        expect(sent().map((message) => message.onlyFor)).toEqual(['room-1_7', 'room-1_7', 'room-1_7', 'room-1_7', 'room-1_7', undefined]);
+    });
+
+    it('remembers what it said in a reply for one person as said with nobody else there, whoever walked up', async () => {
+        const { bot, init, join } = setup();
+        await init([KHALID]);
+        bot.replyStarts(SPACE, 7, true);
+        bot.sendStreamMessage(SPACE, REPLY, 'Your interview ', false);
+        await join(SARA);
+        bot.sendStreamMessage(SPACE, REPLY, '', true, 'Your interview is at 10.');
+
+        // Sara is there now, and was sent none of it
+        expect(bot.heardIn(SPACE, 7)).toEqual({ place: 'nearby', with: ['uuid-sara'] });
+        expect(bot.saidIn(SPACE, 7)).toEqual({ place: 'nearby', with: [] });
+    });
+
+    it('remembers what it said in a reply everyone read with everyone who is there', async () => {
+        const { bot, init } = setup();
+        await init([KHALID, SARA]);
+        bot.replyStarts(SPACE, 7, false);
+        bot.sendStreamMessage(SPACE, REPLY, '', true, 'The demo is on Sunday.');
+
+        expect(bot.saidIn(SPACE, 7)).toEqual({ place: 'nearby', with: ['uuid-sara'] });
+        // A space the bot is not in: it cannot say
+        expect(bot.saidIn('elsewhere', 7)).toBeUndefined();
     });
 });

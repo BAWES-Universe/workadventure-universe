@@ -19,15 +19,20 @@ import type { EventProcessor } from "./EventProcessor";
 import type { SpaceUserExtended, Space, PartialSpaceUser } from "./Space";
 
 /**
- * The one person a bot's reply is for (#1993): set by a bot when it writes to someone who is alone with it. Only a bot's
- * word counts. From anyone else the event goes to everyone in the space, as it always did.
+ * The one person a bot's reply is for (#1993): set by a bot when it writes to someone who is alone with it, on the reply
+ * itself and on what it sends with it (a picture, a file, a card). Only a bot's word counts. From anyone else the event
+ * goes to everyone in the space, as it always did.
  */
 export function onlyReaderOf(
     event: NonNullable<PublicEvent["spaceEvent"]>["event"],
     sender: Pick<SpaceUser, "tags" | "uuid"> | undefined
 ): string | undefined {
-    if (event?.$case !== "spaceStreamMessage") return undefined;
-    const onlyFor = event.spaceStreamMessage.onlyFor;
+    const onlyFor =
+        event?.$case === "spaceStreamMessage"
+            ? event.spaceStreamMessage.onlyFor
+            : event?.$case === "spaceMessage"
+            ? event.spaceMessage.onlyFor
+            : undefined;
     if (!onlyFor) return undefined;
     const fromBot = !!sender && (sender.tags.includes("bot") || (sender.uuid ?? "").startsWith("bot-"));
     return fromBot ? onlyFor : undefined;

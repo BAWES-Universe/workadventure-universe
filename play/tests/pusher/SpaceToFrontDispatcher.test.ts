@@ -1,4 +1,4 @@
-import type { SubMessage, PusherToBackSpaceMessage } from "@workadventure/messages";
+import type { SubMessage, PusherToBackSpaceMessage, BackToPusherSpaceMessage } from "@workadventure/messages";
 import { SpaceUser } from "@workadventure/messages";
 import { describe, it, vi, expect } from "vitest";
 import { mock } from "vitest-mock-extended";
@@ -788,6 +788,70 @@ describe("SpaceToFrontDispatcher", () => {
                 const dispatcher = new SpaceToFrontDispatcher(spaceWith(khalid, sara, omar), new EventProcessor());
 
                 dispatcher.handleMessage(reply("room_7", "room_9"));
+
+                expect(sara.emitInBatch).toHaveBeenCalledTimes(1);
+                expect(omar.emitInBatch).toHaveBeenCalledTimes(1);
+            });
+
+            // What the bot sends with such a reply: a picture, a file, a card
+            const sent = (senderUserId: string, onlyFor?: string): BackToPusherSpaceMessage => ({
+                message: {
+                    $case: "publicEvent",
+                    publicEvent: {
+                        spaceName: "test",
+                        senderUserId,
+                        spaceEvent: {
+                            event: {
+                                $case: "spaceMessage",
+                                spaceMessage: {
+                                    message: "Your payslip",
+                                    characterTextures: [],
+                                    url: "https://files.example.test/payslip.pdf",
+                                    mediaType: "file",
+                                    galleryUrls: [],
+                                    fileNames: [],
+                                    voiceWaveform: [],
+                                    ...(onlyFor ? { onlyFor } : {}),
+                                },
+                            },
+                        },
+                    },
+                },
+            });
+
+            it("a file sent with it reaches that person and nobody who walked up meanwhile", () => {
+                const bot = user("room_12", { uuid: "bot-nora", tags: ["bot"] });
+                const khalid = user("room_7");
+                const sara = user("room_9");
+                const dispatcher = new SpaceToFrontDispatcher(spaceWith(bot, khalid, sara), new EventProcessor());
+
+                dispatcher.handleMessage(sent("room_12", "room_7"));
+
+                expect(khalid.emitInBatch).toHaveBeenCalledTimes(1);
+                expect(JSON.stringify(khalid.emitInBatch.mock.calls[0][0])).toContain("payslip.pdf");
+                expect(sara.emitInBatch).not.toHaveBeenCalled();
+                expect(bot.emitInBatch).not.toHaveBeenCalled();
+            });
+
+            it("a file a bot sends to everyone goes to everyone, as before", () => {
+                const bot = user("room_12", { uuid: "bot-nora", tags: ["bot"] });
+                const khalid = user("room_7");
+                const sara = user("room_9");
+                const dispatcher = new SpaceToFrontDispatcher(spaceWith(bot, khalid, sara), new EventProcessor());
+
+                dispatcher.handleMessage(sent("room_12"));
+
+                expect(khalid.emitInBatch).toHaveBeenCalledTimes(1);
+                expect(sara.emitInBatch).toHaveBeenCalledTimes(1);
+            });
+
+            it("a person's own message goes to everyone, whatever it names", () => {
+                const khalid = user("room_7", { uuid: "uuid-khalid" });
+                const sara = user("room_9");
+                const omar = user("room_10");
+                const dispatcher = new SpaceToFrontDispatcher(spaceWith(khalid, sara, omar), new EventProcessor());
+
+                dispatcher.handleMessage(sent("room_7", "room_9"));
 
                 expect(sara.emitInBatch).toHaveBeenCalledTimes(1);
                 expect(omar.emitInBatch).toHaveBeenCalledTimes(1);

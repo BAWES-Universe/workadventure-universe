@@ -29,6 +29,8 @@ export class ReplyReaders {
     private readonly turns = new Map<string, boolean>();
     /** By reply: its space, and its one reader's space user id, or null when it is for everyone there. */
     private readonly bound = new Map<string, { spaceName: string; reader: string | null }>();
+    /** By space and player: whether the reply last sent to them there went to them alone. */
+    private readonly latest = new Map<string, boolean>();
 
     private static turnKey(spaceName: string, playerId: number): string {
         return `${spaceName}\n${playerId}`;
@@ -50,9 +52,12 @@ export class ReplyReaders {
      * as for a line the bot says outside a turn), and their space user id.
      */
     readerOf(spaceName: string, responseId: string, now: { alone(playerId: number): boolean; spaceUserIdOf(playerId: number): string | undefined }): string | undefined {
-        const known = this.bound.get(responseId);
-        if (known) return known.reader ?? undefined;
         const playerId = playerOfReply(responseId);
+        const known = this.bound.get(responseId);
+        if (known) {
+            this.noteLatest(spaceName, playerId, known.reader !== null);
+            return known.reader ?? undefined;
+        }
         let reader: string | null = null;
         if (playerId !== undefined) {
             const alone = this.turns.get(ReplyReaders.turnKey(spaceName, playerId)) ?? now.alone(playerId);
@@ -60,7 +65,24 @@ export class ReplyReaders {
         }
         this.bound.set(responseId, { spaceName, reader });
         if (this.bound.size > MAX_BOUND) this.bound.delete(this.bound.keys().next().value as string);
+        this.noteLatest(spaceName, playerId, reader !== null);
         return reader ?? undefined;
+    }
+
+    private noteLatest(spaceName: string, playerId: number | undefined, alone: boolean): void {
+        if (playerId === undefined) return;
+        const key = ReplyReaders.turnKey(spaceName, playerId);
+        this.latest.delete(key);
+        this.latest.set(key, alone);
+        if (this.latest.size > MAX_TURNS) this.latest.delete(this.latest.keys().next().value as string);
+    }
+
+    /**
+     * Whether the reply last sent to this person here went to them alone. What the bot said in it is then remembered as
+     * said with nobody else there, whoever has walked up since: nobody else was sent it.
+     */
+    wentToThemAlone(spaceName: string, playerId: number): boolean {
+        return this.latest.get(ReplyReaders.turnKey(spaceName, playerId)) === true;
     }
 
     /** The replies in this space that are for one reader alone. */
@@ -75,12 +97,15 @@ export class ReplyReaders {
     /** The person left the space: the next reply for them there is decided afresh. */
     personLeft(spaceName: string, playerId: number): void {
         this.turns.delete(ReplyReaders.turnKey(spaceName, playerId));
+        this.latest.delete(ReplyReaders.turnKey(spaceName, playerId));
     }
 
     /** The bot left the space. */
     spaceLeft(spaceName: string): void {
-        for (const key of [...this.turns.keys()]) {
-            if (key.startsWith(`${spaceName}\n`)) this.turns.delete(key);
+        for (const kept of [this.turns, this.latest]) {
+            for (const key of [...kept.keys()]) {
+                if (key.startsWith(`${spaceName}\n`)) kept.delete(key);
+            }
         }
         for (const [responseId, reply] of [...this.bound]) {
             if (reply.spaceName === spaceName) this.bound.delete(responseId);
@@ -90,5 +115,6 @@ export class ReplyReaders {
     reset(): void {
         this.turns.clear();
         this.bound.clear();
+        this.latest.clear();
     }
 }

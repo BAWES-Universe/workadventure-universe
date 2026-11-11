@@ -31,6 +31,9 @@ eventProcessor.registerPublicEventProcessor("spaceMessage", (event, senderId, us
             spoken: event.spaceMessage.spoken,
             voiceDurationMs: event.spaceMessage.voiceDurationMs,
             voiceWaveform: event.spaceMessage.voiceWaveform ?? [],
+            // The one person a bot's message is for (#1993). Passed on as it is: the pusher delivers it to that person
+            // alone, and only when a bot sent it
+            onlyFor: event.spaceMessage.onlyFor,
         },
     };
 });

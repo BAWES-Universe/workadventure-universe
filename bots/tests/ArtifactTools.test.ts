@@ -17,6 +17,7 @@ import {
     type ArtifactContext,
 } from '../ai/ArtifactTools';
 import { ArtifactCallError } from '../server/AdminApiService';
+import { ASK_IN_PRIVATE } from '../ai/PrivateAnswers';
 
 const summary = { id: 'art-1', title: 'Quests board', kind: 'app' as const, makerName: 'Scout', version: 1 };
 
@@ -381,5 +382,60 @@ describe('the share link and the card again (#1815)', () => {
         const run = await artifactCardAgain('art-9', { ...cardContext, admin: { readArtifact } as never });
         expect(run.card).toBeUndefined();
         expect(run.result).toEqual({ error: "That artifact isn't here, or this person can't open it." });
+    });
+});
+
+describe('in a reply other people read (game #1993)', () => {
+    const group = (admin: Partial<ArtifactContext['admin']> = {}) => ({ ...context(admin), everyoneHere: true });
+    const who = { botId: 'bot1', person: { signedIn: true, identifier: 'uuid-1', name: 'Khalid' }, chat: { kind: 'nearby', ref: 'bubble-1' } };
+    const callsOf = (fn: unknown) => (fn as { mock: { calls: unknown[][] } }).mock.calls;
+
+    it('reads, changes and lists saying so, so Orbit answers with only what the chat shares with everyone', async () => {
+        const ctx = { ...group(), referencedArtifactIds: ['art-1'] };
+        await runArtifactTool('read_artifact', { id: 'art-1' }, ctx);
+        await runArtifactTool('change_artifact', { id: 'art-1', content: '<p>two</p>' }, ctx);
+        await runArtifactTool('list_artifacts', {}, ctx);
+        await artifactCardAgain('art-1', ctx);
+
+        expect(callsOf(ctx.admin.readArtifact)[0].slice(0, 2)).toEqual(['art-1', { ...who, everyoneHere: true, referencedArtifactIds: ['art-1'] }]);
+        expect(callsOf(ctx.admin.changeArtifact)[0][1]).toEqual({ ...who, everyoneHere: true, referencedArtifactIds: ['art-1'] });
+        expect(ctx.admin.listArtifactsInChat).toHaveBeenCalledWith({ ...who, everyoneHere: true });
+        expect(ctx.admin.readArtifact).toHaveBeenLastCalledWith('art-1', { ...who, everyoneHere: true, referencedArtifactIds: ['art-1'] });
+    });
+
+    it('makes one as before: whoever makes it owns it, wherever they are', async () => {
+        const ctx = group();
+        await runArtifactTool('make_artifact', { title: 'Budget', kind: 'page', content: '<p>x</p>' }, ctx);
+        expect(callsOf(ctx.admin.makeArtifact)[0][0]).toEqual(who);
+    });
+
+    it('says nothing of it when the person is alone with the bot', async () => {
+        const ctx = context();
+        await runArtifactTool('read_artifact', { id: 'art-1' }, ctx);
+        await runArtifactTool('list_artifacts', {}, ctx);
+        expect(callsOf(ctx.admin.readArtifact)[0][1]).toEqual(who);
+        expect(ctx.admin.listArtifactsInChat).toHaveBeenCalledWith(who);
+    });
+
+    it('never says whether the person has it somewhere else: it offers direct messages, and guesses at nothing', async () => {
+        const missing = describeArtifactError(new ArtifactCallError('not_found', 404, 'x'), true);
+        expect(missing).toBe(`That artifact isn't here, or it isn't shared with everyone here. ${ASK_IN_PRIVATE}`);
+        const ctx = group({ readArtifact: vi.fn(async () => { throw new ArtifactCallError('not_found', 404, 'x'); }) });
+        expect((await runArtifactTool('read_artifact', { id: 'art-9' }, ctx)).result).toEqual({ error: missing });
+        expect((await artifactCardAgain('art-9', ctx)).result).toEqual({ error: missing });
+        // Alone, the words are the old ones
+        expect(describeArtifactError(new ArtifactCallError('not_found', 404, 'x'))).not.toContain('direct messages');
+    });
+
+    it('says a "Just you" stays private, and offers direct messages only in front of other people', () => {
+        const kept = new ArtifactCallError('kept_private', 404, 'x');
+        expect(describeArtifactError(kept)).toBe("Its owner keeps this one private, so it can't be opened here. Say so in one short line.");
+        expect(describeArtifactError(kept, true)).toBe(`Its owner keeps this one private, so it can't be opened here. Say so in one short line. ${ASK_IN_PRIVATE}`);
+    });
+
+    it('opens nothing with an Orbit from before it could answer for everyone: it says so, and only in a group', () => {
+        const older = new ArtifactCallError('Invalid request data', 400, 'Invalid request data');
+        expect(describeArtifactError(older, true)).toBe("Artifacts can't be opened while other people are here yet. Say so in one short line.");
+        expect(describeArtifactError(older)).not.toContain('other people');
     });
 });

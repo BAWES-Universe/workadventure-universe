@@ -11,6 +11,7 @@
 import { pointedArtifactIds } from './ArtifactReferences';
 import type { ConversationMemory } from '../memory/ConversationMemory';
 import type { AdminApiService, AIProviderCredentials, BotAccessPerson, BotAiCredentialsAnswer } from '../server/AdminApiService';
+import { reachFor } from '../server/AdminApiService';
 import { BotAccessGate } from '../server/BotAccessGate';
 import { BotClient } from '../client/BotClient';
 import type { AIProviderConfig, AIStreamChunk, AIUsageMetadata, BotLimits, ToolCall } from './types';
@@ -32,7 +33,7 @@ import { CONFIRM_SYSTEM, isConfirm, tapInstead } from '../mcp/NearbyWords';
 import { ASK_PERSON_TOOL, NEVER_ASK_RULE, askPersonDefinition, readQuestion, type QuestionAsked } from '../mcp/QuestionCard';
 import type { BotAsksPort } from '../mcp/NearbyAsks';
 import { appendStreamedChunk } from './EmotionParser';
-import { viewFor } from '../memory/Heard';
+import { mayUse, SOMEONE_UNKNOWN, viewFor } from '../memory/Heard';
 import { MarkerWatch, PrivateAnswers, answeredPrivatelyLine, continuedIn, emotionBlockOf, onlyForThemRule, othersHereRule, privateAnswerRule, privateBodyOf, type PrivateAnswerCopies } from './PrivateAnswers';
 import { describeStep, resultOf, showsAsStep, type ToolStep } from './ToolSteps';
 import { jsonrepair } from 'jsonrepair';
@@ -156,11 +157,24 @@ interface SharedUsage {
 interface TurnOptions {
     /** Other people read this answer: nothing of the person's own from other chats is put in front of the model. */
     shared?: boolean;
+    /**
+     * With `shared`: everyone else in the bubble or meeting room, by who they are. What the answer's tools read (files,
+     * artifacts) is held to the same rule as what it remembers: only what all of them may see.
+     */
+    present?: readonly string[];
     /** This answer goes to its person alone: no tools, and none of its words in PostHog or Sentry. */
     onlyForThem?: boolean;
     /** Rules for this answer, added at the end of the prompt, after what a provider caches. */
     rules?: string[];
     usage?: SharedUsage;
+}
+
+/**
+ * The one person a reply's pictures, files and cards go to (#1993). A reply is written for its person alone unless other
+ * people read it, and what it sends follows it: someone who walks up while it is being made is sent none of it.
+ */
+function sentOnlyTo(options: TurnOptions | undefined, playerId: number | undefined): number | undefined {
+    return options?.shared ? undefined : playerId;
 }
 
 /** A bot's provider, resolved by bot id (#374): the settings to call, where they came from, or "resting". */
@@ -754,7 +768,7 @@ export class AIService {
         // an answer of its own: then, and only for what a person said, the reply is watched for the marker
         const watch = others && personSaid && !isRetry && !greeting && this.conversationMemory.leavesOut(botId, playerId, others) ? new MarkerWatch() : undefined;
         const usage: SharedUsage | undefined = watch ? { ledger: new UsageLedger(), hold: false } : undefined;
-        const shared: TurnOptions | undefined = others ? { shared: true, rules: personSaid ? [othersHereRule(name)] : [] } : undefined;
+        const shared: TurnOptions | undefined = others ? { shared: true, present: others.present, rules: personSaid ? [othersHereRule(name)] : [] } : undefined;
         const attempt = (text: string, retry: boolean, facts: TurnFacts, options = shared) =>
             this.generateTurn(botId, playerId, text, chatInstructions, providerId, spaceName, context, botClient, adminApiService, abortSignal, images, channel, toolTimeoutSeconds, homeRoomUrl, peopleInRoom, retry, facts, greeting, options);
         // A card waits for this person in the bubble (#1658): a yes never sends, and anything else closes it
@@ -1127,8 +1141,9 @@ export class AIService {
             }
 
             // The newest files line is asked for now, so it comes in while the map context is read
-            // With other people reading, the person's files from their other chats are not named (#1993)
-            const recentFiles = options?.shared ? Promise.resolve('') : this.recentFilesFor(botId, playerId, botClient, spaceName, adminApiService);
+            // With other people reading, only what all of them were shown is named (#1993)
+            const present = options?.shared ? options.present ?? [SOMEONE_UNKNOWN] : undefined;
+            const recentFiles = this.recentFilesFor(botId, playerId, botClient, spaceName, adminApiService, present);
 
             // Fetch map context (location + areas) upfront so bot always knows where it is
             let mapContextInfo = '';
@@ -1793,7 +1808,7 @@ export class AIService {
                             // Tool calls from a reply that hit its length cap may hold half a file (the repair of broken JSON would still
                             // pass it): the first round reads the cap from this chunk, later rounds from the previous round's last chunk
                             const replyCutOff = !!(followUpIterations === 1 ? chunk.metadata?.truncated : lastFollowUpDoneChunk?.metadata?.truncated);
-                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia);
+                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia, present);
                             // A card went to one person alone (#1658): the line everyone reads is the whole reply, said instead of the model's own words
                             const sharedLine = sharedLineOf(toolResults);
                             const sharedLineIds = sharedLineIdsOf(toolResults);
@@ -1850,7 +1865,7 @@ export class AIService {
 
                             // Auto-send interceptor: scan all tool results for media URLs
                             // and send them inline. Non-media results pass through unchanged.
-                            await this.autoSendMedia(toolResults, botClient, spaceName, iterationSentUrls, botId, playerId, priorPendingKeys);
+                            await this.autoSendMedia(toolResults, botClient, spaceName, iterationSentUrls, botId, playerId, priorPendingKeys, sentOnlyTo(options, playerId));
 
                             const step = stepOf(
                                 followUpIterations,
@@ -2687,7 +2702,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 // context. Preserve the items for the next re-entry instead.
                 if (streamCompleted) {
                     // With other people here, only what this answer made goes into the chat (#1993)
-                    this.flushPendingMedia(botClient, spaceName, botId, playerId, options?.shared || options?.onlyForThem ? startTime : undefined);
+                    this.flushPendingMedia(botClient, spaceName, botId, playerId, options?.shared || options?.onlyForThem ? startTime : undefined, sentOnlyTo(options, playerId));
                 }
                 // Always track usage, even if stream doesn't complete normally
                 const latency = Date.now() - startTime;
@@ -3375,9 +3390,19 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     private async runFileToolCall(
         name: string,
         args: Record<string, unknown>,
-        where: { botClient?: BotClient; adminApiService?: AdminApiService; spaceName?: string; botId?: string; playerId?: number; abortSignal?: AbortSignal; source?: string }
+        where: {
+            botClient?: BotClient;
+            adminApiService?: AdminApiService;
+            spaceName?: string;
+            botId?: string;
+            playerId?: number;
+            abortSignal?: AbortSignal;
+            source?: string;
+            /** Set when other people read the reply (#1993): everyone else who is there. */
+            present?: readonly string[];
+        }
     ): Promise<Record<string, unknown>> {
-        const { botClient, spaceName, botId, playerId, abortSignal, source } = where;
+        const { botClient, spaceName, botId, playerId, abortSignal, source, present } = where;
         const admin = where.adminApiService ?? this.adminApiService;
         if (!admin || !botId || playerId === undefined) return { error: "Earlier files can't be looked up right now." };
         const who = this.chatCallFor(botId, playerId, botClient, spaceName);
@@ -3385,15 +3410,28 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const limits = this.limitsFor(botId);
         return runFileTool(name, args, {
             admin,
-            call: { botId, ...who },
+            // With other people reading, Orbit answers with only the files all of them were there for (#1993)
+            call: { botId, ...who, ...reachFor(present) },
+            everyoneHere: present !== undefined,
             limits,
             artifacts: artifactsEnabled(),
             linkOf: (store) => linkOfStore(store),
             // One look through Universe AI's vision, never for a bot on a person's own key (as for images people send)
             ...(source === 'own-key' ? {} : { look: (url: string) => this.describeImagesViaDefaultVision([url], abortSignal) }),
-            send: (file, url) => this.sendFileAgain(file, url, { botClient, spaceName, botId, playerId }),
-            ...(artifactsEnabled() ? { sendArtifact: (id: string) => this.sendArtifactCardAgain(id, { botClient, admin, spaceName, botId, playerId }) } : {}),
+            send: (file, url) => this.sendFileAgain(file, url, { botClient, spaceName, botId, playerId, only: present === undefined ? playerId : undefined }),
+            ...(artifactsEnabled() ? { sendArtifact: (id: string) => this.sendArtifactCardAgain(id, { botClient, admin, spaceName, botId, playerId, present }) } : {}),
         });
+    }
+
+    /**
+     * The artifacts the person pointed at, for read and change (game #1781): their pasted links in the recent messages,
+     * and a card they replied to. For a reply other people read (#1993), only links in messages all of them were there
+     * for: a link pasted in a direct message points at nothing in front of anyone else.
+     */
+    private pointedFor(memory: BotPlayerMemory | undefined, botId: string, present: readonly string[] | undefined): string[] {
+        const history = this.recentHistoryOf(memory, botId);
+        if (!present) return pointedArtifactIds(history, memory?.pointedArtifacts);
+        return pointedArtifactIds(history?.filter((line) => mayUse(line.heard, { present })));
     }
 
     /**
@@ -3403,9 +3441,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
      */
     private async sendArtifactCardAgain(
         id: string,
-        where: { botClient?: BotClient; admin: AdminApiService; spaceName?: string; botId: string; playerId: number }
+        where: { botClient?: BotClient; admin: AdminApiService; spaceName?: string; botId: string; playerId: number; present?: readonly string[] }
     ): Promise<Record<string, unknown>> {
-        const { botClient, admin, spaceName, botId, playerId } = where;
+        const { botClient, admin, spaceName, botId, playerId, present } = where;
         if (botClient && !spaceName) return { error: 'Cannot show the card: not currently in a conversation space' };
         const who = this.chatCallFor(botId, playerId, botClient, spaceName);
         if (!who) return { error: 'Artifacts are not available in this chat.' };
@@ -3420,10 +3458,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 botId,
                 person: who.person,
                 chat: who.chat,
-                referencedArtifactIds: pointedArtifactIds(this.recentHistoryOf(memory, botId), memory?.pointedArtifacts),
+                referencedArtifactIds: this.pointedFor(memory, botId, present),
+                everyoneHere: present !== undefined,
             });
             if (!run.card) return run.result;
-            if (!this.deliverArtifactCard(run.card, botClient, spaceName, memory)) {
+            if (!this.deliverArtifactCard(run.card, botClient, spaceName, memory, present === undefined ? playerId : undefined)) {
                 return { error: 'The conversation ended before the card could be placed in chat. Say so; do not claim it was shown.' };
             }
             return run.result;
@@ -3441,7 +3480,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     private async sendFileAgain(
         file: { ref?: string; kind: string; name: string; mimeType: string | null; line: string | null; sizeBytes?: number | null; store?: FileStore },
         url: string,
-        where: { botClient?: BotClient; spaceName?: string; botId: string; playerId: number }
+        where: { botClient?: BotClient; spaceName?: string; botId: string; playerId: number; only?: number }
     ): Promise<string | null> {
         // Sent once a turn: the model calling it twice, at once or one after the other, or the turn asked again, gets
         // what the first send did. A send that was refused can be tried again
@@ -3459,10 +3498,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     private async putFileInChat(
         file: { kind: string; name: string; mimeType: string | null; line: string | null; sizeBytes?: number | null; store?: FileStore },
         url: string,
-        where: { botClient?: BotClient; spaceName?: string },
+        /** `only`: the one person it goes to, for a reply written for them alone (#1993). */
+        where: { botClient?: BotClient; spaceName?: string; only?: number },
         memory: BotPlayerMemory | undefined
     ): Promise<string | null> {
-        const { botClient, spaceName } = where;
+        const { botClient, spaceName, only } = where;
         const mediaType: PendingMedia['mediaType'] = file.kind === 'image' || file.kind === 'audio' || file.kind === 'video' ? file.kind : 'file';
         // What Orbit says it is, for a link whose name has no extension to tell
         const mimeType = file.mimeType || undefined;
@@ -3472,10 +3512,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             // A link kept as typed goes the usual way, with its checks
             if (file.store && 'bucket' in file.store) botClient.markStored?.(url);
             try {
-                if (mediaType === 'image') await botClient.sendImage(spaceName, url, file.line ?? undefined, undefined, mimeType);
-                else if (mediaType === 'audio') await botClient.sendAudio(spaceName, url, undefined, mimeType);
-                else if (mediaType === 'video') await botClient.sendVideo(spaceName, url, undefined, mimeType);
-                else await botClient.sendFile(spaceName, url, file.name, undefined, mimeType);
+                if (mediaType === 'image') await botClient.sendImage(spaceName, url, file.line ?? undefined, undefined, mimeType, only);
+                else if (mediaType === 'audio') await botClient.sendAudio(spaceName, url, undefined, mimeType, only);
+                else if (mediaType === 'video') await botClient.sendVideo(spaceName, url, undefined, mimeType, only);
+                else await botClient.sendFile(spaceName, url, file.name, undefined, mimeType, only);
                 return null;
             } catch {
                 return "It couldn't be sent right now. Say so simply and offer to try again.";
@@ -3535,14 +3575,22 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
      * end of the prompt. Empty when there are none, the setting is 0, or Orbit doesn't answer in time: the reply goes on
      * without it.
      */
-    private async recentFilesFor(botId: string, playerId: number, botClient?: BotClient, spaceName?: string, adminApiService?: AdminApiService): Promise<string> {
+    private async recentFilesFor(
+        botId: string,
+        playerId: number,
+        botClient?: BotClient,
+        spaceName?: string,
+        adminApiService?: AdminApiService,
+        /** Set when other people read the reply (#1993): only what all of them were shown is named. */
+        present?: readonly string[]
+    ): Promise<string> {
         const limit = this.limitsFor(botId).recentFiles;
         const admin = adminApiService ?? this.adminApiService;
         if (limit <= 0 || !admin) return '';
         try {
             const who = this.chatCallFor(botId, playerId, botClient, spaceName);
             if (!who) return '';
-            const found = await admin.findBotFiles({ botId, ...who }, { limit }, RECENT_FILES_WAIT_MS, false);
+            const found = await admin.findBotFiles({ botId, ...who, ...reachFor(present) }, { limit }, RECENT_FILES_WAIT_MS, false);
             this.orbitKeepsFiles = true;
             return buildRecentFilesLine(found.items ?? []);
         } catch {
@@ -3564,9 +3612,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     private async runArtifactToolCall(
         name: string,
         args: Record<string, unknown>,
-        where: { botClient?: BotClient; adminApiService?: AdminApiService; spaceName?: string; botId?: string; playerId?: number; turnMedia?: TurnMedia[] }
+        where: { botClient?: BotClient; adminApiService?: AdminApiService; spaceName?: string; botId?: string; playerId?: number; turnMedia?: TurnMedia[]; present?: readonly string[] }
     ): Promise<Record<string, unknown>> {
-        const { botClient, spaceName, botId, playerId } = where;
+        const { botClient, spaceName, botId, playerId, present } = where;
         const admin = where.adminApiService ?? this.adminApiService;
         if (!admin || !botId || playerId === undefined) return { error: 'Artifacts are not available right now.' };
 
@@ -3588,12 +3636,14 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             person,
             chat,
             // Only what the person themselves pointed at: their messages in the recent window, and a card they replied to
-            referencedArtifactIds: pointedArtifactIds(this.recentHistoryOf(memory, botId), memory?.pointedArtifacts),
+            referencedArtifactIds: this.pointedFor(memory, botId, present),
+            // With other people reading, only what the chat shares with all of them is read, listed or changed (#1993)
+            everyoneHere: present !== undefined,
             saveTimeoutMs: limits.artifactSaveSeconds * 1000,
             media: { turn: where.turnMedia ?? memory?.turnMedia ?? [], maxBytes: limits.artifactMediaBytes },
         });
         if (!run.card) return run.result;
-        if (!this.deliverArtifactCard(run.card, botClient, spaceName, memory)) {
+        if (!this.deliverArtifactCard(run.card, botClient, spaceName, memory, present === undefined ? playerId : undefined)) {
             // The bubble closed while the file was being made: the file is saved, but nobody was shown it, so a retry may place it
             return { ...run.result, notShown: 'The conversation ended before the card could be placed in chat. Say so; do not claim it was shown.' };
         }
@@ -3605,11 +3655,14 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         card: ArtifactCard,
         botClient: BotClient | undefined,
         spaceName: string | undefined,
-        memory: { pendingArtifacts?: ArtifactCard[] } | undefined
+        memory: { pendingArtifacts?: ArtifactCard[] } | undefined,
+        /** The one person the card goes to, for a reply written for them alone (#1993). */
+        only?: number
     ): boolean {
         if (botClient && spaceName) {
             if (!botClient.isInSpace(spaceName)) return false;
-            botClient.sendChatMessage(spaceName, artifactMarker(card));
+            if (only === undefined) botClient.sendChatMessage(spaceName, artifactMarker(card));
+            else botClient.sendChatMessage(spaceName, artifactMarker(card), only);
             return true;
         }
         if (!memory) return false;
@@ -3637,8 +3690,12 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         /** What this reply runs on ("own-key", "universe-ai"…): a person's own key never has an image looked at by Universe AI. */
         source?: string,
         /** This turn's media list (#1510), for an artifact to carry. */
-        turnMedia?: TurnMedia[]
+        turnMedia?: TurnMedia[],
+        /** Set when other people read the reply (#1993): everyone else who is there, by who they are. */
+        present?: readonly string[]
     ): Promise<Array<{ id: string; name: string; result: any }>> {
+        // What this reply sends goes to its person alone unless other people read the reply (#1993)
+        const only = present === undefined ? playerId : undefined;
         // Filter out invalid tool calls (empty name, undefined, etc.)
         const validToolCalls = toolCalls.filter(tc => tc && tc.name && tc.name.trim() !== '');
         
@@ -3861,7 +3918,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             }
                             result = await this.sendMediaWithRetry(
                                 botClient, spaceName, imageUrl, alt, 'image',
-                                () => botClient.sendImage(spaceName, imageUrl, alt, playerId),
+                                () => botClient.sendImage(spaceName, imageUrl, alt, playerId, undefined, only),
                                 botId, playerId
                             );
                         } else {
@@ -3886,7 +3943,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             }
                             result = await this.sendMediaWithRetry(
                                 botClient, spaceName, fileUrl, filename, 'file',
-                                () => botClient.sendFile(spaceName, fileUrl, filename, playerId),
+                                () => botClient.sendFile(spaceName, fileUrl, filename, playerId, undefined, only),
                                 botId, playerId
                             );
                         } else {
@@ -3910,7 +3967,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             }
                             result = await this.sendMediaWithRetry(
                                 botClient, spaceName, audioUrl, '', 'audio',
-                                () => botClient.sendAudio(spaceName, audioUrl, playerId),
+                                () => botClient.sendAudio(spaceName, audioUrl, playerId, undefined, only),
                                 botId, playerId
                             );
                         } else {
@@ -3934,7 +3991,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             }
                             result = await this.sendMediaWithRetry(
                                 botClient, spaceName, videoUrl, '', 'video',
-                                () => botClient.sendVideo(spaceName, videoUrl, playerId),
+                                () => botClient.sendVideo(spaceName, videoUrl, playerId, undefined, only),
                                 botId, playerId
                             );
                         } else {
@@ -3953,7 +4010,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         result = await this.runArtifactToolCall(
                             toolCall.name,
                             typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
-                            { botClient, adminApiService, spaceName, botId, playerId, turnMedia }
+                            { botClient, adminApiService, spaceName, botId, playerId, turnMedia, present }
                         );
                         break;
 
@@ -3963,7 +4020,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         result = await this.runFileToolCall(
                             toolCall.name,
                             typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
-                            { botClient, adminApiService, spaceName, botId, playerId, abortSignal, source }
+                            { botClient, adminApiService, spaceName, botId, playerId, abortSignal, source, present }
                         );
                         break;
 
@@ -4369,7 +4426,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         /** URLs that were in pendingMedia before the current tool call iteration.
          *  Only skip these — URLs queued by preQueueToolResults in this same
          *  iteration should still be sent by autoSendMedia. */
-        priorPendingKeys?: Set<string>
+        priorPendingKeys?: Set<string>,
+        /** The one person it all goes to, for a reply written for them alone (#1993). */
+        only?: number
     ): Promise<Array<{ id: string; name: string; result: any }>> {
         if (!botClient || !spaceName) return toolResults;
 
@@ -4437,7 +4496,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             // Send images: batch 2+ as a gallery, single image as individual send
             if (imageUrlsToSend.length >= 2) {
                 try {
-                    const success = botClient.sendMediaGallery(spaceName, imageUrlsToSend, undefined, undefined, playerId);
+                    const success = botClient.sendMediaGallery(spaceName, imageUrlsToSend, undefined, undefined, playerId, only);
                     if (success) {
                         sentCount += imageUrlsToSend.length;
                         for (const url of imageUrlsToSend) sentUrls.add(url);
@@ -4445,7 +4504,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         // Gallery send returned false (e.g. not in space) — fall back to individual sends
                         for (const url of imageUrlsToSend) {
                             try {
-                                await botClient.sendImage(spaceName, url, undefined, playerId);
+                                await botClient.sendImage(spaceName, url, undefined, playerId, undefined, only);
                                 sentCount++;
                                 sentUrls.add(url);
                             } catch (err2: any) {
@@ -4461,7 +4520,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     // Fallback: send individually on gallery failure
                     for (const url of imageUrlsToSend) {
                         try {
-                            await botClient.sendImage(spaceName, url, undefined, playerId);
+                            await botClient.sendImage(spaceName, url, undefined, playerId, undefined, only);
                             sentCount++;
                             sentUrls.add(url);
                         } catch (err2: any) {
@@ -4471,7 +4530,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 }
             } else if (imageUrlsToSend.length === 1) {
                 try {
-                    await botClient.sendImage(spaceName, imageUrlsToSend[0], undefined, playerId);
+                    await botClient.sendImage(spaceName, imageUrlsToSend[0], undefined, playerId, undefined, only);
                     sentCount++;
                     sentUrls.add(imageUrlsToSend[0]);
                 } catch (err: any) {
@@ -4519,15 +4578,15 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             for (const { url, ext } of otherUrlsToSend) {
                 try {
                     if (VIDEO_EXT_SET.has(ext)) {
-                        await botClient.sendVideo(spaceName, url, playerId);
+                        await botClient.sendVideo(spaceName, url, playerId, undefined, only);
                         sentCount++;
                         sentUrls.add(url);
                     } else if (AUDIO_EXT_SET.has(ext)) {
-                        await botClient.sendAudio(spaceName, url, playerId);
+                        await botClient.sendAudio(spaceName, url, playerId, undefined, only);
                         sentCount++;
                         sentUrls.add(url);
                     } else {
-                        await botClient.sendFile(spaceName, url, undefined, playerId);
+                        await botClient.sendFile(spaceName, url, undefined, playerId, undefined, only);
                         sentCount++;
                         sentUrls.add(url);
                     }
@@ -4655,6 +4714,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         playerId: number,
         /** With other people in the space (#1993): only what was made since then goes out; anything older waits. */
         since?: number,
+        /** The one person it goes to, for a reply written for them alone (#1993). */
+        only?: number,
     ): void {
         // generateBotResponseStream can be called without botClient or spaceName
         // (both are optional/undefined in its signature). Guard here prevents
@@ -4701,7 +4762,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 remaining.push(item);
                 continue;
             }
-            if (botClient.sendMediaMessage(spaceName, item.url, item.mediaType, item.mimeType || 'application/octet-stream', item.caption || '', undefined, playerId)) {
+            if (botClient.sendMediaMessage(spaceName, item.url, item.mediaType, item.mimeType || 'application/octet-stream', item.caption || '', undefined, playerId, only)) {
                 if (process.env.ENABLE_BOT_DEBUG === 'true') {
                     console.log(`[AIService] ✅ Flushed pending ${item.mediaType} to ${spaceName}: ${item.url.substring(0, 60)}`);
                 }

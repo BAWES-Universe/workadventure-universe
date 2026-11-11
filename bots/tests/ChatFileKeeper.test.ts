@@ -158,4 +158,30 @@ describe('keeping the files people send (#1508)', () => {
         expect(onRef).not.toHaveBeenCalled();
         expect(admin.keepBotFileText).not.toHaveBeenCalled();
     });
+
+    describe('who else was there (#1993)', () => {
+        const nearby = { ...call, chat: { kind: 'nearby' as const, ref: 'bubble-1' } };
+        const added = () => admin.addBotFile.mock.calls.map((one) => one[1] as { others?: string[] });
+
+        it('adds a file from a bubble or meeting room with everyone else who was there', async () => {
+            await keeper.keepAll(admin as never, [job({ call: nearby, others: ['uuid-sara', 'uuid-omar'] })]);
+            expect(added()[0].others).toEqual(['uuid-sara', 'uuid-omar']);
+        });
+
+        it('names nobody when the person was alone with the bot', async () => {
+            await keeper.keepAll(admin as never, [job({ call: nearby, others: [] }), job({ call: nearby })]);
+            expect(added().map((file) => 'others' in file)).toEqual([false, false]);
+        });
+
+        it('never names anyone for a direct message, whatever it was given', async () => {
+            await keeper.keepAll(admin as never, [job({ others: ['uuid-sara'] })]);
+            expect(added()[0]).not.toHaveProperty('others');
+        });
+
+        it('sends no more people than Orbit takes', async () => {
+            const crowd = Array.from({ length: 250 }, (_, i) => `uuid-${i}`);
+            await keeper.keepAll(admin as never, [job({ call: nearby, others: crowd })]);
+            expect(added()[0].others).toEqual(crowd.slice(0, 200));
+        });
+    });
 });

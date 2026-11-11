@@ -75,6 +75,15 @@ export function heardAlso(before: Heard | undefined, now: Heard | undefined): He
     return { place: everyone.length > 0 ? 'nearby' : now.place, with: everyone };
 }
 
+/**
+ * Everyone else who was there, as a file is kept with them: only people the bot can name. Someone it cannot name was
+ * there too, but can never be told from a stranger later, so the file is never open to them again; that is the safe side.
+ */
+export function namedOthers(heard: Heard | undefined): string[] {
+    if (!heard || heard.place !== 'nearby' || !Array.isArray(heard.with)) return [];
+    return [...new Set(heard.with.filter((id) => typeof id === 'string' && id !== SOMEONE_UNKNOWN && id.trim().length > 1))];
+}
+
 /** A copy that shares nothing with the original. */
 export function copyHeard(heard: Heard | undefined): Heard | undefined {
     return heard ? { place: heard.place, with: [...(Array.isArray(heard.with) ? heard.with : [])] } : undefined;

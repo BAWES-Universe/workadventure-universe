@@ -1516,9 +1516,9 @@ export class BotClient {
     }
 
     /**
-     * Send chat message to space
+     * Send chat message to space. `only`: the one person it is for (see `toOnly`); left out, everyone in the space.
      */
-    sendChatMessage(spaceName: string, message: string): void {
+    sendChatMessage(spaceName: string, message: string, only?: number): void {
         const spaceUserId = this.spaces.get(spaceName);
         if (!spaceUserId) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -1526,6 +1526,8 @@ export class BotClient {
             }
             return;
         }
+        const to = this.toOnly(spaceName, only);
+        if (!to) return;
 
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[Bot ${this.config.botId}] Sending chat message to space ${spaceName}: "${message}"`);
@@ -1547,6 +1549,7 @@ export class BotClient {
                                 galleryUrls: [],
                                 fileNames: [],
                                 voiceWaveform: [],
+                                ...to,
                             },
                         },
                     },
@@ -1819,11 +1822,11 @@ export class BotClient {
      * Send an image to a space.
      * Uploads the image from the provided URL to the CDN (if needed) and sends it to the chat.
      */
-    async sendImage(spaceName: string, url: string, alt?: string, asker?: number, mimeType?: string): Promise<string> {
+    async sendImage(spaceName: string, url: string, alt?: string, asker?: number, mimeType?: string, only?: number): Promise<string> {
         const mimeHint = mimeType || this.inferMimeFromExt(url);
         try {
             const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
-            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, alt || '', undefined, asker)) {
+            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, alt || '', undefined, asker, only)) {
                 const err = new Error(`Bot is not in space ${spaceName} — cannot send image`);
                 (err as any)._cdnUrl = location;
                 (err as any)._mediaType = mediaType;
@@ -1845,11 +1848,11 @@ export class BotClient {
     /**
      * Send a file to a space.
      */
-    async sendFile(spaceName: string, url: string, filename?: string, asker?: number, mimeType?: string): Promise<string> {
+    async sendFile(spaceName: string, url: string, filename?: string, asker?: number, mimeType?: string, only?: number): Promise<string> {
         const mimeHint = mimeType || this.inferMimeFromExt(url);
         try {
             const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
-            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, '', filename, asker)) {
+            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, '', filename, asker, only)) {
                 const err = new Error(`Bot is not in space ${spaceName} — cannot send file`);
                 (err as any)._cdnUrl = location;
                 (err as any)._mediaType = mediaType;
@@ -1871,7 +1874,7 @@ export class BotClient {
     /**
      * Send audio to a space.
      */
-    async sendAudio(spaceName: string, url: string, asker?: number, mimeType?: string): Promise<string> {
+    async sendAudio(spaceName: string, url: string, asker?: number, mimeType?: string, only?: number): Promise<string> {
         const mimeHint = mimeType || this.inferMimeFromExt(url);
         try {
             const { location, mimeType: uploadedType } = await this.uploadMedia(url, mimeHint);
@@ -1881,7 +1884,7 @@ export class BotClient {
             const audioType = [mimeHint, uploadedType].find((one) => one?.startsWith('audio/')) ?? 'audio/mpeg';
             const fileName = audioFileNameFor(location, audioType);
             const sentType = uploadedType.startsWith('audio/') ? uploadedType : audioType;
-            if (!this.sendMediaMessage(spaceName, location, 'audio', sentType, undefined, fileName, asker)) {
+            if (!this.sendMediaMessage(spaceName, location, 'audio', sentType, undefined, fileName, asker, only)) {
                 const err = new Error(`Bot is not in space ${spaceName} — cannot send audio`);
                 (err as any)._cdnUrl = location;
                 (err as any)._mediaType = 'audio';
@@ -1903,11 +1906,11 @@ export class BotClient {
     /**
      * Send video to a space.
      */
-    async sendVideo(spaceName: string, url: string, asker?: number, mimeType?: string): Promise<string> {
+    async sendVideo(spaceName: string, url: string, asker?: number, mimeType?: string, only?: number): Promise<string> {
         const mimeHint = mimeType || this.inferMimeFromExt(url);
         try {
             const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
-            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, undefined, undefined, asker)) {
+            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, undefined, undefined, asker, only)) {
                 const err = new Error(`Bot is not in space ${spaceName} — cannot send video`);
                 (err as any)._cdnUrl = location;
                 (err as any)._mediaType = mediaType;
@@ -1993,9 +1996,10 @@ export class BotClient {
     }
 
     /**
-     * Send a media message to a space via publicEvent spaceMessage.
+     * Send a media message to a space via publicEvent spaceMessage. `only`: the one person it is for (see `toOnly`);
+     * left out, everyone in the space.
      */
-    public sendMediaMessage(spaceName: string, url: string, mediaType: string, mimeType: string, caption?: string, fileName?: string, asker?: number): boolean {
+    public sendMediaMessage(spaceName: string, url: string, mediaType: string, mimeType: string, caption?: string, fileName?: string, asker?: number, only?: number): boolean {
         const spaceUserId = this.spaces.get(spaceName);
         if (!spaceUserId) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -2003,6 +2007,8 @@ export class BotClient {
             }
             return false;
         }
+        const to = this.toOnly(spaceName, only);
+        if (!to) return false;
 
         this.send({
             message: {
@@ -2023,13 +2029,14 @@ export class BotClient {
                                 fileNames: [],
                                 fileName,
                                 voiceWaveform: [],
+                                ...to,
                             },
                         },
                     },
                 },
             },
         });
-        this.mediaSent(spaceName, asker, [{ url, mediaType, mimeType, caption, fileName }]);
+        this.mediaSent(spaceName, asker, [{ url, mediaType, mimeType, caption, fileName }], only !== undefined);
         return true;
     }
 
@@ -2038,7 +2045,7 @@ export class BotClient {
      * The first image goes in the `url` field (backwards compatible), and
      * additional images go in `galleryUrls`. The caption appears below the grid.
      */
-    public sendMediaGallery(spaceName: string, urls: string[], caption?: string, fileNames?: string[], asker?: number): boolean {
+    public sendMediaGallery(spaceName: string, urls: string[], caption?: string, fileNames?: string[], asker?: number, only?: number): boolean {
         if (urls.length === 0) return false;
 
         const spaceUserId = this.spaces.get(spaceName);
@@ -2048,6 +2055,8 @@ export class BotClient {
             }
             return false;
         }
+        const to = this.toOnly(spaceName, only);
+        if (!to) return false;
 
         const firstUrl = urls[0];
         const extraUrls = urls.slice(1);
@@ -2071,13 +2080,14 @@ export class BotClient {
                                 galleryUrls: extraUrls,
                                 fileNames: fileNames ?? [],
                                 voiceWaveform: [],
+                                ...to,
                             },
                         },
                     },
                 },
             },
         });
-        this.mediaSent(spaceName, asker, urls.map((one, i) => ({ url: one, mediaType: 'image', mimeType: this.inferMimeFromExt(one), caption: i === 0 ? caption : undefined, fileName: fileNames?.[i] })));
+        this.mediaSent(spaceName, asker, urls.map((one, i) => ({ url: one, mediaType: 'image', mimeType: this.inferMimeFromExt(one), caption: i === 0 ? caption : undefined, fileName: fileNames?.[i] })), only !== undefined);
         return true;
     }
 
@@ -2096,11 +2106,13 @@ export class BotClient {
     /**
      * Files the bot sent, for the list of files (#1508): theirs, for `asker`, the person whose reply sent them. Every
      * reply passes its own, so two replies at once never swap files; a send with no asker (not from a reply) isn't kept.
+     * `toThemAlone`: nobody else was sent them (#1993), whoever is in the space.
      */
-    private mediaSent(spaceName: string, asker: number | undefined, items: SentMedia[]): void {
+    private mediaSent(spaceName: string, asker: number | undefined, items: SentMedia[], toThemAlone = false): void {
         if (asker === undefined || !this.behavior) return;
         try {
-            this.behavior.onBotMediaSent(spaceName, asker, items);
+            if (toThemAlone) this.behavior.onBotMediaSent(spaceName, asker, items, true);
+            else this.behavior.onBotMediaSent(spaceName, asker, items);
         } catch (error) {
             // Keeping the file never stops it being sent
             console.warn(`[Bot ${this.config.botId}] Could not keep a sent file:`, (error as Error)?.message ?? error);
@@ -2209,12 +2221,27 @@ export class BotClient {
     private readerOf(spaceName: string, responseId: string): string | undefined {
         return this.readers.readerOf(spaceName, responseId, {
             alone: (playerId) => this.aloneWith(spaceName, playerId),
-            spaceUserIdOf: (playerId) => {
-                const mine = this.spaces.get(spaceName);
-                const cut = mine?.lastIndexOf('_') ?? -1;
-                return mine && cut >= 0 ? `${mine.slice(0, cut)}_${playerId}` : undefined;
-            },
+            spaceUserIdOf: (playerId) => this.spaceUserIdOf(spaceName, playerId),
         });
+    }
+
+    /** A person's id in this space, from the bot's own id there. Undefined when the bot is not in the space. */
+    private spaceUserIdOf(spaceName: string, playerId: number): string | undefined {
+        const mine = this.spaces.get(spaceName);
+        const cut = mine?.lastIndexOf('_') ?? -1;
+        return mine && cut >= 0 ? `${mine.slice(0, cut)}_${playerId}` : undefined;
+    }
+
+    /**
+     * Who a message the bot sends with a reply is delivered to (#1993): a picture, a file, a card. `only` is the person
+     * the reply was written for when they were alone with the bot as it started. The game server then delivers the
+     * message to them and nobody else, so someone who walks up meanwhile is not sent it. Left out: everyone in the
+     * space. Null when that person cannot be named, and the message is then not sent at all.
+     */
+    private toOnly(spaceName: string, only: number | undefined): { onlyFor?: string } | null {
+        if (only === undefined) return {};
+        const onlyFor = this.spaceUserIdOf(spaceName, only);
+        return onlyFor ? { onlyFor } : null;
     }
 
     private onlyForOf(spaceName: string, responseId: string): { onlyFor?: string } {
@@ -2468,6 +2495,15 @@ export class BotClient {
     heardIn(spaceName: string, playerId: number): Heard | undefined {
         const others = this.othersWith(spaceName, playerId);
         return others ? { place: 'nearby', with: others } : undefined;
+    }
+
+    /**
+     * Where what the bot itself just said to this person is heard (#1993). A reply that went to them alone was read by
+     * nobody else, whoever has walked up while it was written, so it is remembered as said with nobody else there.
+     */
+    saidIn(spaceName: string, playerId: number): Heard | undefined {
+        if (this.readers.wentToThemAlone(spaceName, playerId)) return this.spaces.has(spaceName) ? { place: 'nearby', with: [] } : undefined;
+        return this.heardIn(spaceName, playerId);
     }
 
     /**

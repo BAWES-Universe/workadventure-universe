@@ -65,4 +65,31 @@ describe("the nearby chat line the server passes on", () => {
         expect(processed.$case === "spaceMessage" && processed.spaceMessage.voiceDurationMs).toBe(4200);
         expect(processed.$case === "spaceMessage" && processed.spaceMessage.voiceWaveform).toEqual([82, 512, 1024]);
     });
+
+    it("passes on the one person a bot's message is for, so the pusher can deliver it to them alone (#1993)", () => {
+        const bot = { spaceUserId: "room_12", name: "Nora", characterTextures: [] } as unknown as SpaceUser;
+        const send = (onlyFor?: string) =>
+            eventProcessor.processPublicEvent(
+                {
+                    $case: "spaceMessage",
+                    spaceMessage: {
+                        message: "Your payslip",
+                        characterTextures: [],
+                        url: "https://files.example.test/payslip.pdf",
+                        mediaType: "file",
+                        galleryUrls: [],
+                        fileNames: [],
+                        voiceWaveform: [],
+                        ...(onlyFor ? { onlyFor } : {}),
+                    },
+                },
+                "room_12",
+                [sender, bot]
+            );
+
+        const forOne = send("room_7");
+        expect(forOne.$case === "spaceMessage" && forOne.spaceMessage.onlyFor).toBe("room_7");
+        const forAll = send();
+        expect(forAll.$case === "spaceMessage" && forAll.spaceMessage.onlyFor).toBeUndefined();
+    });
 });

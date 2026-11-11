@@ -447,6 +447,46 @@ describe('AIService: private answers in a group (#1993)', () => {
     });
 
 
+    describe('what the reply sends with it', () => {
+        const CHART = 'https://cdn.example.test/chart.png';
+        /** A model that sends a picture with its tool, then says a line. */
+        const sendsPicture = () => {
+            let calls = 0;
+            hoisted.generateStream.mockReset().mockImplementation(async function* () {
+                calls++;
+                if (calls === 1) yield { content: '', done: false, toolCalls: [{ id: 'call_1', name: 'send_image', arguments: JSON.stringify({ url: CHART, alt: 'A chart' }) }] };
+                else yield { content: 'Here it is.', done: false };
+                yield { content: '', done: true, metadata: { tokensUsed: 110, promptTokens: 100, completionTokens: 10, latency: 5, error: false, truncated: false } };
+            });
+        };
+        const waitingSong = () => ({ url: 'https://cdn.example.test/song.mp3', mediaType: 'audio' as const, mimeType: 'audio/mpeg', caption: 'Your song', createdAt: Date.now() - 60_000, retryCount: 0 });
+
+        it('alone with the bot: a picture, and a song that was waiting, go to that person and nobody who walks up meanwhile', async () => {
+            sendsPicture();
+            const { say, botClient, memory } = await scene({ others: [] });
+            const sendImage = vi.fn(async (_space: string, url: string) => url);
+            Object.assign(botClient, { sendImage, getFullConfig: () => ({}) });
+            memory.getMemory(BOT, KHALID)!.pendingMedia = [waitingSong()];
+            await say('Show me my chart');
+
+            expect(sendImage).toHaveBeenCalledWith(BUBBLE, CHART, 'A chart', KHALID, undefined, KHALID);
+            expect(botClient.sendMediaMessage).toHaveBeenCalledWith(BUBBLE, 'https://cdn.example.test/song.mp3', 'audio', 'audio/mpeg', 'Your song', undefined, KHALID, KHALID);
+        });
+
+        it('in a group: a picture goes into the space for everyone, and what was waiting from before stays waiting', async () => {
+            sendsPicture();
+            const { say, botClient, memory } = await scene();
+            const sendImage = vi.fn(async (_space: string, url: string) => url);
+            Object.assign(botClient, { sendImage, getFullConfig: () => ({}) });
+            memory.getMemory(BOT, KHALID)!.pendingMedia = [waitingSong()];
+            await say('Show us the chart');
+
+            expect(sendImage).toHaveBeenCalledWith(BUBBLE, CHART, 'A chart', KHALID, undefined, undefined);
+            expect(botClient.sendMediaMessage).not.toHaveBeenCalled();
+            expect(memory.getMemory(BOT, KHALID)!.pendingMedia).toHaveLength(1);
+        });
+    });
+
     it('answers a guest alone too', async () => {
         model([PRIVATE_MARKER, 'It is at 10.']);
         const { say, sentPrivately } = await scene({ signedIn: false });

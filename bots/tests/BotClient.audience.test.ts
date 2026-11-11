@@ -213,7 +213,7 @@ describe('BotManager: where a line is heard', () => {
     function manager() {
         const admin = { isConfigured: () => false };
         const botManager = new BotManager(admin as never, {} as never);
-        const client = { heardIn: vi.fn(() => ({ place: 'nearby', with: ['uuid-sara'] })) };
+        const client = { heardIn: vi.fn(() => ({ place: 'nearby', with: ['uuid-sara'] })), saidIn: vi.fn(() => ({ place: 'nearby', with: [] })) };
         (botManager as unknown as { bots: Map<string, unknown> }).bots.set('b1', { botId: 'b1', client, status: 'connected' });
         return { botManager, client };
     }
@@ -243,5 +243,27 @@ describe('BotManager: where a line is heard', () => {
 
         expect(memory.getMemory('b1', 7)!.conversationHistory[0].heard).toEqual({ place: 'nearby', with: ['uuid-sara'] });
         expect(memory.getMemory('b1', -1)!.conversationHistory[0].heard).toEqual({ place: 'dm', with: [] });
+    });
+
+    it("the bot's own line is heard by whoever its reply went to, not by whoever is there now", () => {
+        const { botManager, client } = manager();
+        // The reply went to its person alone; Sara walked up while it was written
+        expect(botManager.whoHeard('b1', 7, SPACE, 'bot')).toEqual({ place: 'nearby', with: [] });
+        expect(client.saidIn).toHaveBeenCalledWith(SPACE, 7);
+        expect(client.heardIn).not.toHaveBeenCalled();
+        // What the person says is heard by everyone there
+        expect(botManager.whoHeard('b1', 7, SPACE, 'person')).toEqual({ place: 'nearby', with: ['uuid-sara'] });
+        expect(botManager.whoHeard('b1', -1, 'matrix-dm', 'bot')).toEqual({ place: 'dm', with: [] });
+    });
+
+    it('stamps a reply that went to its person alone as said with nobody else there', () => {
+        const { botManager } = manager();
+        const memory = botManager.getConversationMemory();
+        memory.addMessage('b1', 7, 'when is my interview?', 'person', SPACE);
+        memory.addMessage('b1', 7, 'Your interview is at 10.', 'bot', SPACE);
+
+        const [asked, answered] = memory.getMemory('b1', 7)!.conversationHistory;
+        expect(asked.heard).toEqual({ place: 'nearby', with: ['uuid-sara'] });
+        expect(answered.heard).toEqual({ place: 'nearby', with: [] });
     });
 });

@@ -5,7 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ConversationMemory } from '../memory/ConversationMemory';
 import { PersistentMemory } from '../memory/PersistentMemory';
-import { SOMEONE_UNKNOWN, heardAlso, heardInDm, mayUse, viewFor, type Heard } from '../memory/Heard';
+import { SOMEONE_UNKNOWN, heardAlso, heardInDm, mayUse, namedOthers, viewFor, type Heard } from '../memory/Heard';
 
 const BOT = 'bot-1';
 const KHALID = 7;
@@ -418,5 +418,22 @@ describe('viewFor: who a reply is built for', () => {
         expect(viewFor([])).toBe('all');
         expect(viewFor([SARA])).toEqual({ present: [SARA] });
         expect(viewFor(undefined)).toEqual({ present: [SOMEONE_UNKNOWN] });
+    });
+});
+
+describe('namedOthers: who a file is kept with', () => {
+    it('is everyone else who was in the bubble or meeting room, each once', () => {
+        expect(namedOthers({ place: 'nearby', with: [SARA, 'uuid-omar', SARA] })).toEqual([SARA, 'uuid-omar']);
+        expect(namedOthers({ place: 'nearby', with: [] })).toEqual([]);
+    });
+
+    it('is nobody for a direct message, an open place, or when the bot cannot tell', () => {
+        expect(namedOthers(heardInDm())).toEqual([]);
+        expect(namedOthers({ place: 'open', with: [SARA] })).toEqual([]);
+        expect(namedOthers(undefined)).toEqual([]);
+    });
+
+    it('leaves out someone the bot cannot name: they can never be told from a stranger later', () => {
+        expect(namedOthers({ place: 'nearby', with: [SOMEONE_UNKNOWN, SARA, '', ' ', 'x'] })).toEqual([SARA]);
     });
 });

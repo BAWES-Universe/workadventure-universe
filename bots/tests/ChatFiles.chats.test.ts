@@ -245,6 +245,43 @@ describe('a file in nearby chat (#1508)', () => {
         expect(admin.keepBotFileText).not.toHaveBeenCalled();
     });
 
+    it('keeps an upload with everyone else who was in the bubble when it was sent (#1993), and with nobody when the person was alone', async () => {
+        const { BaseBehavior } = await import('../behaviors/BaseBehavior');
+        const { ConversationMemory } = await import('../memory/ConversationMemory');
+        class Plain extends (BaseBehavior as unknown as { new (config: object): any }) {
+            update() {}
+        }
+        const behavior = new Plain({ type: 'idle' });
+        const admin = { addBotFile: vi.fn(async () => ({ file: { ref: 'f7' }, hidden: false })), keepBotFileText: vi.fn(async () => ({})) };
+        const here: { others: string[] } = { others: ['uuid-sara'] };
+        const heardIn = vi.fn(() => ({ place: 'nearby', with: here.others }));
+        Object.assign(behavior, {
+            bot: { getBotId: () => BOT, getPersonForArtifacts: () => ({ signedIn: true, identifier: 'uuid-alice', name: 'Alice' }), heardIn },
+            aiService: { botLimitsFor: () => ({ fileTextChars: 2_000_000 }), readCharsFor: () => 50_000 },
+            adminApiService: admin,
+            conversationMemory: new ConversationMemory(),
+            formatParsedAttachment: vi.fn(async (text: string, url: string, _m: string, _t: string, _g: string[], _b: unknown, found: Map<string, ParsedFile | null>) => {
+                found.set(url, { type: 'image', summary: 'Image', mimeType: 'image/png' });
+                return `${text}\n[User also sent an image]`;
+            }),
+        });
+        const upload = 'https://uploader.test/upload-file/0b5c1a6e-3f2d-4c8b-9a71-2e4f6d8c0a1b.png';
+        const send = async () => {
+            const files = await behavior.readBubbleFiles('space-1', 42, 'look', upload, 'image/png', 'image', undefined, [{ url: upload, name: 'map.png', mimeType: 'image/png', mediaType: 'image' }]);
+            files.keep();
+            await flush();
+        };
+        const others = () => (admin.addBotFile.mock.calls as unknown as Array<[unknown, { others?: string[] }]>).map((one) => one[1].others);
+
+        await send();
+        expect(heardIn).toHaveBeenCalledWith('space-1', 42);
+        expect(others()).toEqual([['uuid-sara']]);
+
+        here.others = [];
+        await send();
+        expect(others()).toEqual([['uuid-sara'], undefined]);
+    });
+
     it('a message with only typed links has no uploads, so nothing is noted or kept', async () => {
         const { BaseBehavior } = await import('../behaviors/BaseBehavior');
         class Plain extends (BaseBehavior as unknown as { new (config: object): any }) {

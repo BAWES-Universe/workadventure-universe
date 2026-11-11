@@ -143,6 +143,37 @@ describe('a file the bot sends in nearby chat', () => {
             expect.objectContaining({ source: 'bot', madeWith: 'make_song', madePrompt: 'an oud song', store: { url: CDN } })
         );
     });
+
+    it('is kept with everyone who was sent it (#1993): whoever is in the space, or nobody when it went to its person alone', async () => {
+        const { BaseBehavior } = await import('../behaviors/BaseBehavior');
+        class Plain extends (BaseBehavior as unknown as { new (config: object): any }) {
+            update() {}
+        }
+        const behavior = new Plain({ type: 'idle' });
+        const admin = orbit();
+        const person = { signedIn: true, identifier: 'uuid-alice', name: 'Alice' };
+        const heardIn = vi.fn(() => ({ place: 'nearby', with: ['uuid-sara', '?'] }));
+        Object.assign(behavior, {
+            bot: { getBotId: () => BOT, getPersonForArtifacts: () => person, uploadedFromOf: () => undefined, heardIn },
+            aiService: { botLimitsFor: () => ({ fileTextChars: 2_000_000 }), madeFor: () => null },
+            adminApiService: admin,
+        });
+        behavior.userIdToUuid.set(42, 'uuid-alice');
+        const song = [{ url: CDN, mediaType: 'audio', mimeType: 'audio/mpeg' }];
+        const others = () => (admin.addBotFile.mock.calls as unknown as Array<[unknown, { others?: string[] }]>).map((one) => one[1].others);
+
+        // Sent into the space: Sara received it too. Someone the bot cannot name is not kept
+        behavior.onBotMediaSent('space-1', 42, song);
+        await flush();
+        expect(heardIn).toHaveBeenCalledWith('space-1', 42);
+        expect(others()).toEqual([['uuid-sara']]);
+
+        // Sent with a reply written for the person alone: Sara walked up meanwhile and was sent none of it
+        behavior.onBotMediaSent('space-1', 42, song, true);
+        await flush();
+        expect(others()).toEqual([['uuid-sara'], undefined]);
+        expect(heardIn).toHaveBeenCalledTimes(1);
+    });
 });
 
 describe('a file the bot sends in a direct message', () => {

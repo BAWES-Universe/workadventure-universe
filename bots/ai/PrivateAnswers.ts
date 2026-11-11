@@ -40,6 +40,13 @@ export function privateAnswerRule(name: string | null | undefined): string {
     ].join(' ');
 }
 
+/**
+ * What a file or artifact tool adds, in a reply other people read, when it found nothing all of them may see: the tool
+ * is not told whether the person has such a thing elsewhere, so neither is the model, and it never guesses out loud.
+ */
+export const ASK_IN_PRIVATE =
+    "Only what everyone here was shown can be used while other people are here. If they mean something of their own from a private chat with you, don't guess at it: tell them in one short line that you can go through it with them in direct messages.";
+
 /** In a group: what someone else told the bot is theirs to share. */
 export function othersHereRule(name: string | null | undefined): string {
     const who = called(name);

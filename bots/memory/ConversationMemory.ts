@@ -187,11 +187,14 @@ export class ConversationMemory {
         this.maxMemories = maxMemories;
     }
 
-    /** Tells where a line is being said and who else is there (#1993). Until it is set nothing is stamped, so all of it is private. */
-    private whoHeard?: (botId: string, playerId: number, spaceName: string) => Heard | undefined;
+    /**
+     * Tells where a line is being said and who else is there (#1993). Until it is set nothing is stamped, so all of it is
+     * private. `sender` says whose line it is: the bot's own reply may have gone to its person alone.
+     */
+    private whoHeard?: (botId: string, playerId: number, spaceName: string, sender?: 'bot' | 'person') => Heard | undefined;
 
     /** Set once by the bot server: the one place that knows a direct message from a bubble, and who is in the bubble. */
-    useHeard(whoHeard: (botId: string, playerId: number, spaceName: string) => Heard | undefined): void {
+    useHeard(whoHeard: (botId: string, playerId: number, spaceName: string, sender?: 'bot' | 'person') => Heard | undefined): void {
         this.whoHeard = whoHeard;
     }
 
@@ -199,10 +202,10 @@ export class ConversationMemory {
      * Where something said in this space right now is heard, and by whom. Undefined when that cannot be told: what is
      * kept then counts as private. Never throws.
      */
-    heardIn(botId: string, playerId: number, spaceName: string | undefined): Heard | undefined {
+    heardIn(botId: string, playerId: number, spaceName: string | undefined, sender?: 'bot' | 'person'): Heard | undefined {
         if (!spaceName || !this.whoHeard) return undefined;
         try {
-            return copyHeard(this.whoHeard(botId, playerId, spaceName));
+            return copyHeard(this.whoHeard(botId, playerId, spaceName, sender));
         } catch (error) {
             console.warn('[ConversationMemory] Could not tell who heard a line, so it is kept as private:', error instanceof Error ? error.message : error);
             return undefined;
@@ -291,7 +294,7 @@ export class ConversationMemory {
         }
 
         // Where it is said and who else is there (#1993): kept with the line, and with what is learned from it
-        const heard = this.heardIn(botId, playerId, spaceName);
+        const heard = this.heardIn(botId, playerId, spaceName, sender);
 
         // Add message to history
         memory.conversationHistory.push({

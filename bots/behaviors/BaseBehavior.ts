@@ -13,7 +13,7 @@ import { withNearbySteps } from './NearbySteps';
 import type { AdminApiService } from '../server/AdminApiService';
 import type { ConversationStorage } from '../memory/ConversationStorage';
 import type { ConversationMemory } from '../memory/ConversationMemory';
-import { viewFor } from '../memory/Heard';
+import { namedOthers, viewFor } from '../memory/Heard';
 import type { ResponseProcessor, ProcessedResponse } from '../ai/ResponseProcessor';
 import { parseEmotionsFromResponse, appendStreamedChunk, detectEmotionPrefixAtEnd } from '../ai/EmotionParser';
 import type { BotMetricsCollector } from '../metrics/BotMetricsCollector';
@@ -2429,6 +2429,8 @@ export abstract class BaseBehavior {
         /** Who and where, as Orbit's file routes take them; null when the files can't be kept here. */
         call: ArtifactCall | null;
         personRef: string | null;
+        /** Everyone else who was in the bubble or meeting room when the files were sent (#1993). Nobody in a direct message. */
+        others?: string[];
     }): { line: string; keep: () => void } {
         const files = where.uploads.map((upload) => {
             const parsed = where.read.get(upload.url) ?? null;
@@ -2456,6 +2458,7 @@ export abstract class BaseBehavior {
                     kind: file.kind,
                     pages: file.pages,
                     maxTextChars,
+                    ...(where.others?.length ? { others: where.others } : {}),
                     ...(!textual ? {} : readAgain ? { readAgain: { mimeType: file.parsed!.mimeType } } : { text: keptTextOf(file.parsed) }),
                     onRef: (ref) => {
                         if (entry?.message.includes(file.note)) {
@@ -2473,7 +2476,7 @@ export abstract class BaseBehavior {
      * Files the bot just sent in a bubble (#1508), to the person it is answering: they go on that person's list with the
      * tool that made each one and what the bot asked it for. In the background; nothing here stops the file being sent.
      */
-    onBotMediaSent(spaceName: string, playerId: number, items: SentMedia[]): void {
+    onBotMediaSent(spaceName: string, playerId: number, items: SentMedia[], toThemAlone = false): void {
         const admin = this.adminApiService;
         const botId = this.bot?.getBotId();
         if (!admin || !botId || !this.bot || items.length === 0) return;
@@ -2481,6 +2484,9 @@ export abstract class BaseBehavior {
             call: { botId, person: this.bot.getPersonForArtifacts(playerId), chat: { kind: 'nearby' as const, ref: spaceName } },
             personRef: this.userIdToUuid.get(playerId) ?? null,
             maxTextChars: this.aiService?.botLimitsFor(botId).fileTextChars ?? 0,
+            // Whoever is in the space as it goes out received it with the person (#1993). Sent with a reply written for
+            // the person alone, nobody else received it, whoever has walked up meanwhile
+            others: toThemAlone ? [] : namedOthers(this.bot.heardIn?.(spaceName, playerId)),
         };
         // The bubble sends the uploader's copy: the tool gave back the link it was uploaded from
         const jobs = items.map((item) => sentMediaJob(item, where, this.aiService?.madeFor(item.url, this.bot!.uploadedFromOf(item.url)) ?? null));
@@ -2515,6 +2521,8 @@ export abstract class BaseBehavior {
             // The same person and chat the artifact tools name: Orbit decides who may use the file from them
             call: { botId, person: this.bot.getPersonForArtifacts(senderId), chat: { kind: 'nearby', ref: spaceName } },
             personRef: this.userIdToUuid.get(senderId) ?? null,
+            // Whoever was in the space when they sent it saw it too (#1993)
+            others: namedOthers(this.bot.heardIn?.(spaceName, senderId)),
         });
         return { augmented, ...noted };
     }
