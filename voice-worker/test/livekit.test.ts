@@ -334,6 +334,81 @@ describe.skipIf(!serverUp)('a voice bot in a LiveKit bubble', () => {
         expect(r.violations).toEqual([]);
     });
 
+    it('says a reply for one person alone into the room only while they are the one person connected to it (#1993)', async () => {
+        const r = await startRig();
+        rigs.push(r);
+        const roomName = r.game.spaceName;
+        const bot = r.game.botId;
+        const finished = (segmentId: string) =>
+            r.fromWorker.find((m) => m.type === 'playback.progress' && m.segmentId === segmentId && m.finished) as Extract<(typeof r.fromWorker)[number], { type: 'playback.progress' }> | undefined;
+        const alice = await person('room_alice').join(roomName);
+        r.calls.spaceUsers(roomName, [roster('room_alice')]);
+        await invite(r, roomName);
+        await waitFor('the bot to be in the room', () => roomUp(r));
+
+        // Alone in the room with the bot: it is said, and she hears it
+        r.calls.say(roomName, 'one-1', 'an answer for alice and nobody else in the room', undefined, 'room_alice');
+        await waitFor('the reply to be heard', () => alice.loudFrom(bot) >= 20);
+        await waitFor('the reply to end', () => !!finished('one-1'));
+        expect(finished('one-1')).toMatchObject({ interrupted: false, reason: 'completed' });
+
+        // Someone the bot was told nothing about connects: the bot has one track here, so they would hear it
+        const bob = await person('room_bob').join(roomName);
+        await waitFor('bob to see the bot', () => bob.room.remoteParticipants.has(bot));
+        await sleep(500);
+        const sent = r.worker.counters.get('room_frames_out');
+        const heard = alice.loudFrom(bot);
+        r.calls.say(roomName, 'one-2', 'another answer for alice that is not said with someone else there', undefined, 'room_alice');
+        await waitFor('the reply to be turned down', () => !!finished('one-2'));
+        expect(finished('one-2')).toMatchObject({ playedMs: 0, interrupted: true, reason: 'private' });
+        await sleep(600);
+        // Nothing of it went into the room, and neither of them received any
+        expect(r.worker.counters.get('room_frames_out')).toBe(sent);
+        expect(bob.loudFrom(bot)).toBe(0);
+        expect(alice.loudFrom(bot)).toBe(heard);
+
+        // What is said to everyone reaches both, so his silence was the rule and not a broken connection
+        r.calls.say(roomName, 'all-1', 'and this one is for everyone in the room');
+        await waitFor('both to hear the bot', () => bob.loudFrom(bot) >= 20 && alice.loudFrom(bot) >= heard + 20);
+        expect(r.violations).toEqual([]);
+    }, 30000);
+
+    it('stops a reply for one person alone when someone else connects to the room while it plays, and they hear none of it (#1993)', async () => {
+        const r = await startRig();
+        rigs.push(r);
+        const roomName = r.game.spaceName;
+        const bot = r.game.botId;
+        const finished = (segmentId: string) =>
+            r.fromWorker.find((m) => m.type === 'playback.progress' && m.segmentId === segmentId && m.finished) as Extract<(typeof r.fromWorker)[number], { type: 'playback.progress' }> | undefined;
+        const alice = await person('room_alice').join(roomName);
+        r.calls.spaceUsers(roomName, [roster('room_alice')]);
+        await invite(r, roomName);
+        await waitFor('the bot to be in the room', () => roomUp(r));
+
+        // About nine seconds of fake speech
+        r.calls.say(roomName, 'one-1', 'This is an answer for one person in the room, and it goes on long enough for someone else to come in while it is being said.', undefined, 'room_alice');
+        await waitFor('the reply to be heard', () => alice.loudFrom(bot) >= 20);
+        expect(finished('one-1')).toBeUndefined();
+
+        const bob = await person('room_bob').join(roomName);
+        await waitFor('the reply to stop', () => !!finished('one-1'), 3000);
+        expect(finished('one-1')).toMatchObject({ interrupted: true, reason: 'private' });
+        expect(finished('one-1')!.playedMs).toBeGreaterThan(0);
+        expect(finished('one-1')!.playedMs).toBeLessThan(8000);
+        await waitFor('bob to see the bot', () => bob.room.remoteParticipants.has(bot));
+        await sleep(800);
+        // Not a frame of it reached him: what the bot's track still held was dropped as he came in
+        expect(bob.loudFrom(bot)).toBe(0);
+        const heard = alice.loudFrom(bot);
+        await sleep(400);
+        expect(alice.loudFrom(bot)).toBe(heard);
+
+        // What is said to everyone next reaches him
+        r.calls.say(roomName, 'all-1', 'and this one is for everyone in the room');
+        await waitFor('bob to hear the bot', () => bob.loudFrom(bot) >= 20);
+        expect(r.violations).toEqual([]);
+    }, 30000);
+
     it('leaves the bot out of the room and text-only when the token it was given is not for the bot\'s own room', async () => {
         const r = await startRig();
         rigs.push(r);

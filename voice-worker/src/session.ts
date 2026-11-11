@@ -417,9 +417,10 @@ export class Session {
         this.sendStatus();
     }
 
-    say(segmentId: string, text: string, maxMs?: number, lang?: string): void {
+    /** `onlyFor`: the reply is for this person alone, and is sent on a path only they hear (see Speaker). */
+    say(segmentId: string, text: string, maxMs?: number, lang?: string, onlyFor?: string): void {
         this.pairReply(segmentId);
-        this.speaker.enqueue(segmentId, text, maxMs, lang);
+        this.speaker.enqueue(segmentId, text, maxMs, lang, onlyFor);
     }
 
     // ---- how long a turn takes (#1865): times and provider names only ----

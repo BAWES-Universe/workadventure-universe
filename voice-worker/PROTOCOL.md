@@ -27,7 +27,8 @@ Bot server to worker: `session.open` (optionally naming the bubble's providers, 
 game made for the bot's identity), `room.people` (whose microphone the bot may subscribe to, with their modes; replaces the
 earlier list) and `room.leave`. `recognition.terms` replaces the names the hearing is asked to expect (see Providers).
 
-Worker to bot server: `session.start` (session accepted), `participant.join` (audio is connected both ways),
+Worker to bot server: `session.start` (session accepted; `features` names what this worker can do beyond the first version of
+the bridge, see "A reply for one person alone"), `participant.join` (audio is connected both ways),
 `participant.leave`, `lane.signal` (the answer), `playback.progress`, `engine.status` (with `room` while in a room), `mode.ack`
 (a `mode.set` that carried a `requestId` is applied: the path that carries the person's audio, `lane`, `room` or `none` yet, and its epoch),
 `room.state` (`connected`, or `closed` / `failed` when the connection ended without being asked to), `user.speech_started`,
@@ -98,6 +99,28 @@ longer than `VOICE_MAX_REPLY_SECONDS`. Segments play one at a time, in order. `p
   person's permitted microphone audio, with no round trip to the bot server: speech counts after `VOICE_BARGE_IN_MS` of voiced
   audio, so a click or a cough does not stop it. It stops the voice for everyone in the bubble; it cancels nothing but audio.
   The bot server marks the message when `playedMs` is more than zero.
+
+* `private`: the reply was for one person alone, and a path it would go out on reaches other people too (see below).
+
+### A reply for one person alone
+
+`bot.say` may carry `onlyFor`: the participant id of the one person the reply is for (game #1993: a reply written for
+someone who was alone with the bot holds what the two of them share). Its audio then goes out only on a path that reaches
+that person and nobody else, checked for every frame, by the speaker and again by the path itself:
+
+* **Lanes.** The frames are written to that person's own connection and to no other. Someone whose connection opens while
+  the reply plays is sent none of it, and the reply goes on for its person. If their connection is replaced, the rest goes
+  to the new one.
+* **A room.** The bot has one track there, and everyone connected to the room can take it. So the reply is said into the
+  room only while that person is the one other participant connected to it. With anyone else connected (a person, another
+  bot, someone the bot server never named) it is not said: it ends with reason `private` and `playedMs: 0`, and the
+  provider is not asked for it. When someone else connects while it plays, it stops within a frame with reason `private`,
+  and what the bot's track still held is dropped at once, on the media server's word that they connected.
+
+The worker names `say.onlyFor` in `session.start` `features`. Unknown fields are ignored, so a worker from before would say
+such a reply to the whole bubble: the bot server sends `onlyFor` only to a worker that named the feature, sends nothing for
+one person alone before `session.start` has arrived, and gives a worker from before such a reply only while its person is
+alone with the bot (and takes it back when someone walks up).
 
 The speech itself comes from the bubble's speech connector (see Providers), which hands the reply over in pieces as the
 provider makes it. The first piece plays at once; the worker does not wait for the whole reply. Because of that, `totalMs`

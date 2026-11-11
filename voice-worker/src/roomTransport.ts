@@ -18,12 +18,17 @@ import type { RemoteParticipant, RemoteTrack, RemoteTrackPublication } from '@li
 import type { Counters } from './counters.ts';
 import { TTS_RATE } from './audioFormat.ts';
 import { type Mode, modeListens, modePlays } from './protocol.ts';
-import type { InputSink, OutputFrame, OutputTarget } from './transport.ts';
+import type { InputSink, OutputFrame, OutputTarget, Reach } from './transport.ts';
 
 const CONNECT_TIMEOUT_MS = 15000;
 /** Audio the media stack may hold for the bot's track. Short, so a stop leaves little to play out. */
 const OUTPUT_QUEUE_MS = 200;
 const INPUT_RATE = 16000;
+/**
+ * How long after the last frame of a reply for one person alone some of it may still be on its way out: what the bot's
+ * track holds (`OUTPUT_QUEUE_MS`) and a moment more for the media stack.
+ */
+const PRIVATE_TAIL_MS = OUTPUT_QUEUE_MS + 300;
 
 export interface RoomDeps {
     counters: Counters;
@@ -43,6 +48,9 @@ export class RoomTransport implements OutputTarget {
     private readonly people = new Map<string, Mode>();
     private source?: AudioSource;
     private readonly readers = new Map<string, AudioStream>();
+    /** The person the last frames of a reply for one person alone were for, and until when some may still be on the way out. */
+    private privateFor?: string;
+    private privateUntil = 0;
 
     constructor(readonly epoch: number, private readonly serverUrl: string, private readonly token: string, private readonly deps: RoomDeps) {}
 
@@ -51,6 +59,9 @@ export class RoomTransport implements OutputTarget {
         room.on(RoomEvent.TrackPublished, (publication, participant) => this.consider(participant, publication));
         room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => this.onSubscribed(track, publication, participant));
         room.on(RoomEvent.TrackUnsubscribed, (track) => this.stopReading(track.sid ?? ''));
+        // Someone came into the room: whatever is still held of a reply that was for another person alone is dropped at
+        // once, before the media server can pass any of it on to them (#1993)
+        room.on(RoomEvent.ParticipantConnected, (participant) => this.keepPrivateFrom(participant.identity));
         room.on(RoomEvent.Disconnected, () => {
             if (!this.gone) this.deps.onGone(this, 'closed');
         });
@@ -180,14 +191,48 @@ export class RoomTransport implements OutputTarget {
 
     // ---- outbound ----
 
-    plays(): boolean {
+    plays(onlyFor?: string): boolean {
         if (this.gone || !this.connected || !this.deps.voiceActive()) return false;
+        if (onlyFor !== undefined) {
+            const mode = this.people.get(onlyFor);
+            return mode !== undefined && modePlays(mode);
+        }
         for (const mode of this.people.values()) if (modePlays(mode)) return true;
         return false;
     }
 
-    sendFrame(frame: OutputFrame): void {
-        if (!this.plays() || !this.source) return;
+    /**
+     * The bot has one track here, and everyone connected to the room can take it. So what goes into it reaches a person
+     * alone only while that person is the one other participant connected: with anyone else there (a person, another
+     * bot, a recorder) it is `shared`, and with that person not connected it reaches them not at all.
+     */
+    reach(participantId: string): Reach {
+        let there = false;
+        for (const participant of this.room.remoteParticipants.values()) {
+            if (participant.identity !== participantId) return 'shared';
+            there = true;
+        }
+        return there ? 'alone' : 'elsewhere';
+    }
+
+    /** Someone connected: nothing of a reply for another person alone is left to be sent out. */
+    private keepPrivateFrom(identity: string): void {
+        if (this.privateFor === undefined || identity === this.privateFor || performance.now() > this.privateUntil) return;
+        this.source?.clearQueue();
+        this.deps.counters.inc('room_private_cleared');
+    }
+
+    sendFrame(frame: OutputFrame, onlyFor?: string): void {
+        if (!this.plays(onlyFor) || !this.source) return;
+        if (onlyFor !== undefined) {
+            // Checked here again, at the moment the frame is handed over, whatever the caller saw a moment ago
+            if (this.reach(onlyFor) !== 'alone') {
+                this.deps.counters.inc('private_frames_refused');
+                return;
+            }
+            this.privateFor = onlyFor;
+            this.privateUntil = performance.now() + PRIVATE_TAIL_MS;
+        }
         const samples = new Int16Array(frame.pcm24k);
         this.source.captureFrame(new AudioFrame(samples, TTS_RATE, 1, samples.length)).catch(() => this.deps.counters.inc('room_out_errors'));
         this.deps.counters.inc('room_frames_out');
