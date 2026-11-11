@@ -1,5 +1,7 @@
-// What the detector costs the worker: start-up, memory, CPU, and whether it gets in the way of the media loop.
-// N people are analysed at once, in real time (a 20 ms frame each, every 20 ms), for a number of seconds.
+// What the detector costs BY ITSELF, in a bare process: start-up, memory, CPU, event-loop delay. This is not the worker:
+// the worker with its real audio work is measured by scripts/worker-load.sh (worker-under-load.ts and load.ts).
+// N people are analysed at once, in real time (a 20 ms frame each, every 20 ms), for a number of seconds. The run only
+// ends when every frame handed over has been answered, and fails if any was not.
 //   tsx src/bench.ts <model> <native|wasm> <streams> <seconds> [noise wav]
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { SileroModel, type Runtime } from './silero.ts';
@@ -32,6 +34,8 @@ let inferences = 0;
 let peakRss = rssLoaded;
 let pending = 0;
 let maxPending = 0;
+let failed = 0;
+const work: Promise<void>[] = [];
 const frames = Math.round((seconds * 1000) / 20);
 await new Promise<void>((resolve) => {
     let n = 0;
@@ -43,21 +47,32 @@ await new Promise<void>((resolve) => {
             const arrived = performance.now();
             pending++;
             maxPending = Math.max(maxPending, pending);
-            void person.stream.push(frame).then((probs) => {
-                pending--;
-                if (probs.length) {
-                    inferences += probs.length;
-                    queueAges.push(performance.now() - arrived);
-                }
-            });
+            work.push(
+                person.stream.push(frame).then(
+                    (probs) => {
+                        pending--;
+                        if (probs.length) {
+                            inferences += probs.length;
+                            queueAges.push(performance.now() - arrived);
+                        }
+                    },
+                    () => {
+                        pending--;
+                        failed++;
+                    }
+                )
+            );
         }
-        if (n % 50 === 0) peakRss = Math.max(peakRss, process.memoryUsage().rss);
+        if (n % 5 === 0) peakRss = Math.max(peakRss, process.memoryUsage().rss);
         n++;
-        if (n >= frames) return void setTimeout(resolve, 200);
+        if (n >= frames) return void resolve();
         setTimeout(tick, Math.max(0, due + 20 - performance.now()));
     };
     tick();
 });
+await Promise.all(work);
+const expected = Math.floor((frames * 320) / 512) * streams;
+if (failed || pending || inferences !== expected) throw new Error(`not all work was done: ${inferences} of ${expected} windows, ${failed} failed, ${pending} pending`);
 const wallMs = performance.now() - wall0;
 const cpu = process.cpuUsage(cpu0);
 loop.disable();
@@ -66,6 +81,8 @@ const q = (p: number): number => Math.round((sorted[Math.min(sorted.length - 1, 
 console.log(
     JSON.stringify({
         runtime,
+        node: process.version,
+        arch: process.arch,
         streams,
         seconds,
         loadMs: Math.round(loadMs),

@@ -2,17 +2,21 @@
   "name": "@workadventure/voice-vad-eval",
   "private": true,
   "version": "0.0.0",
-  "description": "Offline, test-only comparison of the voice worker's volume gate with a Silero speech detector (Stage 0 and 1). Not part of any image.",
+  "description": "Test-only: offline comparison of the voice worker's volume gate with a Silero speech detector, and load measurements of the worker with its switched-off-by-default speech observer. Not part of any image.",
   "type": "module",
   "engines": {
     "node": ">=22"
   },
   "scripts": {
     "fetch-data": "bash scripts/fetch-data.sh",
-    "evaluate": "for i in 0 1 2 3; do tsx src/evaluate.ts data out $i 4 native & done; wait",
-    "report": "tsx src/report.ts out",
-    "parity": "tsx src/parity.ts data out \"silero p>=0.50 for 64 ms\"",
-    "bench": "tsx src/bench.ts data/silero_vad_v6.2.3.onnx native 20 30 data/ms-snsd/noise_test/Typing_1.wav"
+    "evaluate": "ORT_DISABLE_TELEMETRY=1 tsx src/run-all.ts data out 4",
+    "report": "tsx src/report.ts data out results/adjudication.tsv",
+    "parity": "ORT_DISABLE_TELEMETRY=1 tsx src/parity.ts data out \"silero p>=0.50 for 64 ms\"",
+    "bench": "ORT_DISABLE_TELEMETRY=1 tsx src/bench.ts data/silero_vad_v6.2.3.onnx native 20 30 data/ms-snsd/noise_test/Typing_1.wav",
+    "telemetry-check": "bash scripts/telemetry-check.sh data/silero_vad_v6.2.3.onnx",
+    "batch-parity": "ORT_DISABLE_TELEMETRY=1 tsx src/batch-parity.ts data",
+    "worker-telemetry-check": "bash scripts/worker-telemetry-check.sh \"$PWD/data\"",
+    "worker-load": "sh scripts/worker-load.sh \"$PWD/data\" \"$PWD/out/worker-load\""
   },
   "dependencies": {
     "@evan/opus": "1.0.3",

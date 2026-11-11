@@ -1,0 +1,14 @@
+{
+  "streams": 1,
+  "seconds": 180,
+  "joins": 12,
+  "joinFailures": 0,
+  "leaves": 11,
+  "sent": 8066,
+  "withheld": 302,
+  "said": 17,
+  "linkDowns": 0,
+  "botAudioPackets": 2874,
+  "errors": [],
+  "stillConnected": 1
+}

@@ -1,0 +1,21 @@
+{
+  "path": "lane",
+  "streams": 5,
+  "seconds": 180,
+  "joins": 16,
+  "joinFailures": 0,
+  "leaves": 11,
+  "sent": 43716,
+  "withheld": 653,
+  "said": 85,
+  "linkDowns": 0,
+  "botAudioPackets": 18998,
+  "errors": [],
+  "measured": {
+    "seconds": 160,
+    "sent": 38821,
+    "withheld": 588,
+    "audioSecondsSent": 776
+  },
+  "stillConnected": 5
+}

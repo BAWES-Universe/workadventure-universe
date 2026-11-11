@@ -24,6 +24,8 @@ for (let index = 0; index < manifest.length; index++) {
     const built = item.build();
     const gate: Record<string, GateResult> = {};
     for (const ms of [100, 200, 300]) gate[`gate ${ms} ms`] = runGate(built.pcm, ms, 320);
+    // The provider-partial route: a provider that hears words in whatever it is sent
+    gate['gate 100 ms, provider hears words'] = runGate(built.pcm, 100, 320, 'words');
     const probs = await model.stream().push(built.pcm);
     lines.push(
         JSON.stringify({
@@ -33,16 +35,21 @@ for (let index = 0; index < manifest.length; index++) {
             label: item.label,
             condition: item.condition,
             split: item.split,
+            source: item.source,
+            speaker: item.speaker,
             seconds: built.pcm.length / 16000,
             clipStart: item.kind === 'speech' ? LEAD : undefined,
             onset: built.onset,
             offset: built.offset,
             level: Math.round(built.level * 10) / 10,
             gate,
-            probs: Buffer.from(Uint8Array.from(probs, (p) => Math.round(p * 255))).toString('base64'),
+            // Full precision: the same numbers every report and every path check works from
+            probs: Buffer.from(Float32Array.from(probs).buffer).toString('base64'),
         })
     );
     if (++done % 200 === 0) console.error(`shard ${shard}: ${done} clips, ${Math.round((Date.now() - started) / 1000)} s`);
 }
 writeFileSync(join(out, `raw-${shard}.jsonl`), lines.join('\n') + '\n');
+// Written last: a shard without this did not finish
+writeFileSync(join(out, `done-${shard}.json`), JSON.stringify({ shard, shards, clips: done, runtime }));
 console.error(`shard ${shard}: ${done} clips done in ${Math.round((Date.now() - started) / 1000)} s`);

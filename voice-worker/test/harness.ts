@@ -1,6 +1,7 @@
 // Test harness: a fake person's browser (a werift peer connection that signals the way the game's simple-peer does)
 // and a fake game side for the bot server's relay. No browser, no network beyond loopback, no speech provider.
 import { MediaStreamTrack, RTCPeerConnection, RtpHeader, RtpPacket, useOPUS, useVP8 } from 'werift';
+import { appendFileSync } from 'node:fs';
 import { Decoder, Encoder } from '@evan/opus';
 import { VoiceCalls, type GameSide } from '../../bots/voice/VoiceCalls.ts';
 import { WorkerLink } from '../../bots/voice/VoiceLink.ts';
@@ -8,6 +9,8 @@ import type { FromWorker, ListenInfo, ToWorker, VoiceDraft, VoiceStatus } from '
 import { checkMessage } from '../src/validate.ts';
 import { VoiceWorker } from '../src/server.ts';
 import type { RecognizerFactory } from '../src/recognizer.ts';
+import type { SpeechObserverSettings } from '../src/speechObserver.ts';
+import { sileroLoader } from '../src/speechObserverRuntime.ts';
 import type { InputSink } from '../src/transport.ts';
 
 export const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -207,8 +210,23 @@ export function privateEvent(game: FakeGame, senderId: string, event: { $case: s
     } as never;
 }
 
-export async function startRig(options: { secret?: string; maxLanes?: number; input?: InputSink; recognizer?: RecognizerFactory; maxUtteranceSeconds?: number; maxReplySeconds?: number } = {}): Promise<Rig> {
+/**
+ * The whole suite can be run a second time with the speech observer switched on, to show that nothing it tests changes:
+ *   ORT_DISABLE_TELEMETRY=1 VOICE_TEST_SPEECH_OBSERVER_MODEL=<silero_vad.onnx> VOICE_TEST_SPEECH_OBSERVER_RUNTIME=<onnxruntime-node folder> npm test
+ * VOICE_TEST_SPEECH_OBSERVER_REPORT=<file> gets one line per worker with what the observer counted, so the run can show it was really on.
+ */
+function observerFromEnv(): SpeechObserverSettings | undefined {
+    const modelPath = process.env.VOICE_TEST_SPEECH_OBSERVER_MODEL;
+    return modelPath ? { load: sileroLoader({ modelPath, runtime: process.env.VOICE_TEST_SPEECH_OBSERVER_RUNTIME }) } : undefined;
+}
+
+export async function startRig(
+    options: { secret?: string; maxLanes?: number; input?: InputSink; recognizer?: RecognizerFactory; maxUtteranceSeconds?: number; maxReplySeconds?: number; speechObserver?: SpeechObserverSettings | false } = {}
+): Promise<Rig> {
+    // false: without it even in a run of the whole suite with it on (the test that compares with and without)
+    const speechObserver = options.speechObserver === false ? undefined : (options.speechObserver ?? observerFromEnv());
     const worker = new VoiceWorker({
+        speechObserver,
         port: 0,
         host: '127.0.0.1',
         secret: options.secret,
@@ -221,6 +239,15 @@ export async function startRig(options: { secret?: string; maxLanes?: number; in
         maxReplySeconds: options.maxReplySeconds,
     });
     const workerPort = await worker.listen();
+    const report = process.env.VOICE_TEST_SPEECH_OBSERVER_REPORT;
+    if (report && speechObserver) {
+        const close = worker.close.bind(worker);
+        worker.close = async () => {
+            const c = worker.counters;
+            appendFileSync(report, `${JSON.stringify({ loaded: c.get('observer_loaded'), unavailable: c.get('observer_unavailable'), windows: c.get('observer_windows'), streams: c.get('observer_streams'), ended: c.get('observer_streams_ended'), late: c.get('observer_late_discarded'), errors: c.get('observer_errors'), droppedMs: c.get('observer_dropped_ms') })}\n`);
+            await close();
+        };
+    }
     const game = new FakeGame();
     const violations: string[] = [];
     const fromWorker: FromWorker[] = [];

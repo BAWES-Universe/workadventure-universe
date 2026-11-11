@@ -1,5 +1,6 @@
-// The labelled test set, built the same way every run (seeded). Nothing here is tuned to a detector: speech clips get a
-// true onset from their own energy before any noise is added, and noise clips are labelled by their source's class name.
+// The test set, built the same way every run (seeded). Nothing here is tuned to a detector. Labels are NOT human labels:
+// a speech clip's start and end are ESTIMATED from its own energy before any noise is added (a hum or a click in a bad
+// recording can set them), and noise clips are grouped by their source's class name (nobody listened to every file).
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { readWav16k } from './wav.ts';
@@ -18,11 +19,15 @@ export interface Item {
     condition: string;
     /** Half the items are only ever used to pick settings, the other half only to report. */
     split: 'tune' | 'report';
+    /** The recording this clip was made from. Several clips (levels, conditions) share one source: they are not independent. */
+    source: string;
+    /** Commands only: the contributor, from the file name as each dataset documents it. Sentences carry none. */
+    speaker?: string;
     build(): Built;
 }
 export interface Built {
     pcm: Int16Array;
-    /** Speech only: where the person really starts and stops, in seconds. */
+    /** Speech only: where the person starts and stops, in seconds, ESTIMATED from energy (see speechBounds). */
     onset?: number;
     offset?: number;
     /** What the level really came out as (dBFS): whole-clip RMS for noise, active-speech RMS for speech. */
@@ -53,7 +58,7 @@ function rmsOf(x: ArrayLike<number>, from = 0, to = x.length): number {
     return Math.sqrt(s / Math.max(1, to - from));
 }
 
-/** Active-speech level and true onset/offset of a clean clip, from 10 ms frame energies. */
+/** Active-speech level and an energy-based estimate of onset/offset of a clip, from 10 ms frame energies. A heuristic. */
 export function speechBounds(x: Int16Array): { activeRms: number; onset: number; offset: number } {
     const F = 160;
     const n = Math.floor(x.length / F);
@@ -111,6 +116,7 @@ export function noiseGroup(cls: string): 'nonspeech' | 'scene' | 'speechlike' {
     return 'scene';
 }
 
+const speakerOf = (key: string): string => (key.split('/').pop() ?? '').split('_')[0];
 const wavs = (dir: string): string[] => (existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith('.wav')).sort() : []);
 const classOf = (file: string): string => file.replace(/\.wav$/, '').replace(/_\d+$/, '');
 
@@ -138,6 +144,7 @@ export function buildManifest(data: string): Item[] {
                 label: noiseGroup(nf.cls),
                 condition: String(level),
                 split: split(nf.key),
+                source: nf.key,
                 build: () => {
                     const src = readWav16k(nf.path).subarray(0, NOISE_SECONDS * RATE);
                     let gain = fromDb(level) / Math.max(1, rmsOf(src));
@@ -180,8 +187,12 @@ export function buildManifest(data: string): Item[] {
                 set: sp.set,
                 label: sp.label,
                 condition,
-                // A speaker is on one side of the split only, in every word and every condition (file names start with the speaker's id)
-                split: split(sp.set === 'en-sentence' ? sp.key : `${sp.set}/${(sp.key.split('/').pop() ?? '').split('_')[0]}`),
+                // Commands: a contributor is on one side of the split only, in every word and condition. Both datasets document
+                // that the file name starts with the contributor's id (Speech Commands: "<hash>_nohash_<n>.wav"; Arabic Speech
+                // Commands: first eight digits). Sentences: the source gives no speaker identity, so they are split by FILE only.
+                split: split(sp.set === 'en-sentence' ? sp.key : `${sp.set}/${speakerOf(sp.key)}`),
+                source: sp.key,
+                speaker: sp.set === 'en-sentence' ? undefined : `${sp.set}/${speakerOf(sp.key)}`,
                 build: () => {
                     const rand = mulberry32(hash(`${sp.key}|${condition}`));
                     let clip = readWav16k(sp.path);
@@ -221,6 +232,7 @@ export function buildManifest(data: string): Item[] {
                 label: 'nonspeech',
                 condition: String(level),
                 split: k % 2 === 0 ? 'tune' : 'report',
+                source: `synthetic/burst/${level}/${k}`,
                 build: () => {
                     const rand = mulberry32(hash(`burst|${level}|${k}`));
                     const total = 4 * RATE;

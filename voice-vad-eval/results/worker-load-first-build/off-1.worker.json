@@ -1,0 +1,33 @@
+{
+  "observer": "off",
+  "node": "v22.23.4",
+  "arch": "x64",
+  "cpuModel": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+  "seconds": 174,
+  "memory": {
+    "limitMb": 512,
+    "peakMb": 79,
+    "peakShareOfLimit": 0.153,
+    "peakAnonMbSampled": 73,
+    "peakProcessRssMbSampled": 124,
+    "endAnonMb": 72,
+    "oomKills": 0
+  },
+  "cpu": {
+    "coresUsed": 0.049,
+    "throttledSeconds": 0,
+    "throttledPeriods": 0
+  },
+  "eventLoopDelayMs": {
+    "p50": 5.1,
+    "p99": 6,
+    "max": 24.7
+  },
+  "heard": {
+    "frames": 7618,
+    "speechTurns": 11,
+    "lanesConnected": 11,
+    "lanesClosed": 11
+  },
+  "maxQueuedMsSeen": 0
+}

@@ -4,6 +4,7 @@ import type { IceConfig } from './lane.ts';
 import { DEFAULT_BARGE_IN_MS } from './recognition.ts';
 import { DEFAULT_SONIOX_FINAL_TIMEOUT_MS } from './soniox.ts';
 import { DEFAULT_MAX_PREVIEWS, DEFAULT_MAX_PREVIEW_SECONDS } from './preview.ts';
+import { sileroLoader } from './speechObserverRuntime.ts';
 import { DEFAULT_MAX_REPLY_SECONDS, DEFAULT_MAX_UTTERANCE_SECONDS, DEFAULT_SPEECH_TIMEOUT_SECONDS, type WorkerOptions } from './server.ts';
 
 const int = (value: string | undefined, fallback: number): number => {
@@ -40,6 +41,10 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv = process.env): WorkerOpti
         maxPreviewSeconds: int(env.VOICE_MAX_PREVIEW_SECONDS, DEFAULT_MAX_PREVIEW_SECONDS),
         maxPreviews: int(env.VOICE_MAX_PREVIEWS, DEFAULT_MAX_PREVIEWS),
         recognitionFinalTimeoutSeconds: int(env.VOICE_RECOGNITION_FINAL_TIMEOUT_SECONDS, DEFAULT_SONIOX_FINAL_TIMEOUT_MS / 1000),
+        // Internal and off unless both are set: a second listener that only counts (speechObserver.ts). It changes nothing anyone hears.
+        ...(env.VOICE_SPEECH_OBSERVER === '1' && env.VOICE_SPEECH_OBSERVER_MODEL
+            ? { speechObserver: { load: sileroLoader({ modelPath: env.VOICE_SPEECH_OBSERVER_MODEL, runtime: env.VOICE_SPEECH_OBSERVER_RUNTIME, env }) } }
+            : {}),
     };
 }
 

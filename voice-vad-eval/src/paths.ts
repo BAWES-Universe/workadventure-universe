@@ -34,7 +34,7 @@ function sincLowpass(taps: number, cutoffNorm: number): Float32Array {
 const clamp16 = (v: number): number => (v > 32767 ? 32767 : v < -32768 ? -32768 : Math.round(v));
 
 /** 16 kHz -> 48 kHz, what a browser's capture would have been before it encodes. */
-function up3(x: Int16Array): Int16Array {
+export function up3(x: Int16Array): Int16Array {
     const h = sincLowpass(145, 7600 / 48000);
     const out = new Int16Array(x.length * 3);
     const half = (h.length - 1) / 2;

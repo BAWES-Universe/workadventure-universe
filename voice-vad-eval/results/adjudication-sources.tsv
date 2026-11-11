@@ -1,0 +1,1351 @@
+source	label	reason	language	expected	whisper	voice_from	voice_to	voice_ms
+ar/cancel/00000001_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	لك	0.21	0.65	440
+ar/cancel/00000002_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	في مرع	0.20	0.86	620
+ar/cancel/00000002_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	إنر	0.06	0.74	600
+ar/cancel/00000003_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	الهات	0.14	0.75	610
+ar/cancel/00000003_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	نلغة	0.20	1.00	750
+ar/cancel/00000003_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	الهات	0.01	1.00	950
+ar/cancel/00000003_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	ويلاحق	0.00	1.00	1000
+ar/cancel/00000004_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	الرا	0.00	0.91	770
+ar/cancel/00000005_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	الراق	0.28	1.00	710
+ar/cancel/00000006_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	للاحار	0.00	0.71	570
+ar/cancel/00000006_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	الرا	0.18	0.80	620
+ar/cancel/00000007_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	لرى	0.19	0.74	550
+ar/cancel/00000007_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	الرب	0.21	0.77	560
+ar/cancel/00000007_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	إلرا	0.02	1.00	770
+ar/cancel/00000007_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	وفا	0.30	0.70	410
+ar/cancel/00000008_NO_02.wav	valid speech	Whisper hears the expected word	ar	cancel	لغاء	0.00	0.99	980
+ar/cancel/00000008_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	نحر	0.21	0.77	560
+ar/cancel/00000008_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	الرا	0.23	0.79	560
+ar/cancel/00000009_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	إنراء	0.21	0.66	450
+ar/cancel/00000009_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	إلرا	0.21	0.67	460
+ar/cancel/00000009_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	الوقت	0.24	0.73	490
+ar/cancel/00000009_NO_09.wav	valid speech	Whisper hears the expected word	ar	cancel	إلا	0.26	0.73	470
+ar/cancel/00000010_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	دلغة	0.24	0.84	600
+ar/cancel/00000010_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	الواقع	0.12	0.74	620
+ar/cancel/00000010_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	الرا	0.20	0.83	630
+ar/cancel/00000010_NO_10.wav	valid speech	Whisper hears the expected word	ar	cancel	الغر	0.13	0.70	570
+ar/cancel/00000011_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	إنرا	0.11	0.87	750
+ar/cancel/00000012_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	لقد لا	0.13	0.87	680
+ar/cancel/00000012_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	لا لا لا لا لا لا	0.16	0.90	720
+ar/cancel/00000013_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	دين رقص	0.29	0.80	510
+ar/cancel/00000013_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	إبثار	0.14	0.62	480
+ar/cancel/00000013_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	إذن صع	0.27	0.82	550
+ar/cancel/00000013_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	نمك سعر	0.15	0.79	600
+ar/cancel/00000013_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	سمسا	0.19	0.67	480
+ar/cancel/00000013_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	وطلع	0.24	0.76	520
+ar/cancel/00000013_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	إليها	0.30	0.87	570
+ar/cancel/00000014_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	إن رو	0.28	0.84	560
+ar/cancel/00000014_NO_04.wav	valid speech	Whisper hears the expected word	ar	cancel	الغر	0.27	0.82	550
+ar/cancel/00000014_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	امرا	0.26	0.84	580
+ar/cancel/00000014_NO_09.wav	valid speech	Whisper hears the expected word	ar	cancel	إلغة	0.22	0.76	540
+ar/cancel/00000015_NO_03.wav	valid speech	Whisper hears the expected word	ar	cancel	إلا	0.12	0.90	780
+ar/cancel/00000015_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	المزا	0.19	0.85	660
+ar/cancel/00000016_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	لك	0.21	0.83	620
+ar/cancel/00000016_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	لنعود	0.20	0.80	600
+ar/cancel/00000016_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	تلغى	0.15	0.78	630
+ar/cancel/00000016_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	الوقت	0.17	0.78	610
+ar/cancel/00000017_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	دلبا	0.15	0.81	660
+ar/cancel/00000017_NO_10.wav	valid speech	Whisper hears the expected word	ar	cancel	إلا فا	0.16	0.93	770
+ar/cancel/00000018_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	تلك	0.27	0.75	480
+ar/cancel/00000018_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	الزهور	0.25	0.76	510
+ar/cancel/00000018_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	ملحة	0.19	0.90	710
+ar/cancel/00000018_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	لقد فعل	0.29	0.86	570
+ar/cancel/00000018_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	لقد	0.25	0.76	510
+ar/cancel/00000018_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	لفا	0.26	0.76	500
+ar/cancel/00000019_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	حيث	0.23	0.74	510
+ar/cancel/00000019_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	نمتع	0.24	0.77	530
+ar/cancel/00000019_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	انه رب	0.24	0.80	560
+ar/cancel/00000020_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	الواقع	0.13	0.94	760
+ar/cancel/00000020_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	نرى	0.20	0.88	680
+ar/cancel/00000020_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	الهى	0.16	0.73	570
+ar/cancel/00000020_NO_09.wav	valid speech	Whisper hears the expected word	ar	cancel	الغاق	0.19	0.86	670
+ar/cancel/00000021_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	إلخة	0.18	0.74	560
+ar/cancel/00000021_NO_06.wav	valid speech	Whisper hears the expected word	ar	cancel	إلا غاة	0.10	0.84	740
+ar/cancel/00000021_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	لقد	0.16	0.70	540
+ar/cancel/00000021_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	لغة	0.26	0.80	540
+ar/cancel/00000022_NO_02.wav	valid speech	Whisper hears the expected word	ar	cancel	إلا را	0.15	0.76	610
+ar/cancel/00000023_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	لها	0.11	0.86	750
+ar/cancel/00000023_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	إِن لك	0.18	0.94	760
+ar/cancel/00000023_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	نعم	0.01	1.00	990
+ar/cancel/00000023_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	نحن نحن	0.00	0.88	880
+ar/cancel/00000023_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	نجا	0.19	0.79	600
+ar/cancel/00000024_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	تنها	0.17	0.91	740
+ar/cancel/00000024_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	دوزة	0.15	0.84	690
+ar/cancel/00000024_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	المتحدة	0.12	0.88	760
+ar/cancel/00000024_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	تتوقف	0.14	0.79	650
+ar/cancel/00000024_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	فرصة	0.11	0.82	710
+ar/cancel/00000024_NO_09.wav	valid speech	Whisper hears the expected word	ar	cancel	الغراء	0.08	0.75	670
+ar/cancel/00000024_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	كان هنا	0.05	0.92	820
+ar/cancel/00000025_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	يم رأ	0.24	0.76	520
+ar/cancel/00000025_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	يلا با	0.15	0.74	590
+ar/cancel/00000026_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	إنه	0.12	0.83	710
+ar/cancel/00000026_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	نورا	0.15	0.85	700
+ar/cancel/00000026_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	لنغا	0.14	0.77	630
+ar/cancel/00000026_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	نرى	0.12	0.80	680
+ar/cancel/00000027_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	نحن	0.12	0.81	690
+ar/cancel/00000027_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	مقاب	0.16	0.89	730
+ar/cancel/00000027_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	لقد أمك	0.15	0.91	760
+ar/cancel/00000027_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	كذلك	0.10	0.81	710
+ar/cancel/00000027_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	الرا	0.12	0.82	700
+ar/cancel/00000028_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	لقد	0.21	0.82	610
+ar/cancel/00000028_NO_08.wav	valid speech	Whisper hears the expected word	ar	cancel	إنغاء	0.21	0.80	590
+ar/cancel/00000028_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	نرى	0.17	0.80	630
+ar/cancel/00000029_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	الرا	0.19	0.92	730
+ar/cancel/00000029_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	الرا	0.12	0.91	790
+ar/cancel/00000029_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	الرو	0.18	0.93	750
+ar/cancel/00000029_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	لها	0.12	0.79	670
+ar/cancel/00000030_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	نتوقع	0.21	0.78	570
+ar/cancel/00000030_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	الهار	0.20	0.75	550
+ar/cancel/00000030_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	المغاق	0.21	0.76	550
+ar/cancel/00000030_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	cancel	نرى	0.18	0.73	550
+ar/close/00000001_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	ربلا	0.15	0.80	650
+ar/close/00000001_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	الوقت	0.13	0.76	620
+ar/close/00000001_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	لقد حدث	0.25	0.84	590
+ar/close/00000001_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	توقف	0.14	0.75	590
+ar/close/00000002_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	إز لق	0.13	1.00	870
+ar/close/00000002_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	از مق	0.06	0.94	770
+ar/close/00000002_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	إِلما	0.31	0.73	420
+ar/close/00000003_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	أهل لعب	0.25	0.99	740
+ar/close/00000003_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	أدريك	0.18	1.00	820
+ar/close/00000004_NO_01.wav	valid speech	Whisper hears the expected word	ar	close	إغلاق	0.00	0.84	750
+ar/close/00000004_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	اخلوق	0.22	0.85	630
+ar/close/00000004_NO_06.wav	valid speech	Whisper hears the expected word	ar	close	اغلق	0.26	0.88	620
+ar/close/00000004_NO_10.wav	valid speech	Whisper hears the expected word	ar	close	اغلق	0.15	0.86	710
+ar/close/00000005_NO_01.wav	valid speech	Whisper hears the expected word	ar	close	أغلق	0.25	0.85	600
+ar/close/00000005_NO_06.wav	valid speech	Whisper hears the expected word	ar	close	أغلاق	0.23	1.00	770
+ar/close/00000005_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	الغر	0.00	0.82	750
+ar/close/00000006_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	رلا	0.09	0.91	740
+ar/close/00000006_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	إذا لا	0.09	0.96	780
+ar/close/00000007_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	رلاق	0.12	0.94	740
+ar/close/00000007_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	رلا	0.19	0.81	570
+ar/close/00000007_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	تفلا	0.09	0.98	800
+ar/close/00000007_NO_07.wav	valid speech	Whisper hears the expected word	ar	close	أغلاق	0.07	1.00	840
+ar/close/00000008_NO_01.wav	valid speech	Whisper hears the expected word	ar	close	أغلا	0.21	0.90	640
+ar/close/00000008_NO_03.wav	valid speech	Whisper hears the expected word	ar	close	اغلاق	0.10	0.84	740
+ar/close/00000008_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	أهلا	0.20	0.95	690
+ar/close/00000008_NO_08.wav	valid speech	Whisper hears the expected word	ar	close	أغلاق	0.25	0.92	650
+ar/close/00000008_NO_09.wav	valid speech	Whisper hears the expected word	ar	close	أغلا	0.19	0.89	650
+ar/close/00000009_NO_02.wav	valid speech	Whisper hears the expected word	ar	close	إغلاق	0.19	0.84	630
+ar/close/00000009_NO_05.wav	valid speech	Whisper hears the expected word	ar	close	اغلاق	0.26	0.76	500
+ar/close/00000009_NO_10.wav	valid speech	Whisper hears the expected word	ar	close	إغلاق	0.31	0.84	530
+ar/close/00000010_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	إزلا	0.19	0.93	740
+ar/close/00000010_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	اغناء	0.17	0.93	760
+ar/close/00000010_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	ازلوا	0.13	0.97	840
+ar/close/00000011_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	الهلاق	0.10	0.95	780
+ar/close/00000011_NO_03.wav	valid speech	Whisper hears the expected word	ar	close	الغلق	0.08	0.92	760
+ar/close/00000011_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	انفلاق	0.15	0.97	750
+ar/close/00000011_NO_08.wav	valid speech	Whisper hears the expected word	ar	close	أصلاق	0.16	0.98	750
+ar/close/00000011_NO_09.wav	valid speech	Whisper hears the expected word	ar	close	إذلاق	0.10	0.94	750
+ar/close/00000012_NO_06.wav	valid speech	Whisper hears the expected word	ar	close	أزلق	0.16	0.88	690
+ar/close/00000012_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	اغلير	0.22	0.86	640
+ar/close/00000012_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	زمت	0.15	1.00	820
+ar/close/00000013_NO_03.wav	valid speech	Whisper hears the expected word	ar	close	أزلق	0.22	0.91	700
+ar/close/00000013_NO_04.wav	valid speech	Whisper hears the expected word	ar	close	أغنق	0.22	0.71	490
+ar/close/00000013_NO_05.wav	valid speech	Whisper hears the expected word	ar	close	افلاق	0.14	0.75	610
+ar/close/00000013_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	أغماء	0.22	0.77	550
+ar/close/00000013_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	أزلاؤ	0.20	0.79	590
+ar/close/00000014_NO_01.wav	valid speech	Whisper hears the expected word	ar	close	إغلاق	0.21	0.81	600
+ar/close/00000014_NO_04.wav	valid speech	Whisper hears the expected word	ar	close	اغلاق	0.21	0.90	690
+ar/close/00000014_NO_07.wav	valid speech	Whisper hears the expected word	ar	close	إغلاب	0.23	0.70	470
+ar/close/00000014_NO_08.wav	valid speech	Whisper hears the expected word	ar	close	إغلاق	0.26	0.75	490
+ar/close/00000015_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	ايجنا	0.07	0.95	800
+ar/close/00000016_NO_04.wav	valid speech	Whisper hears the expected word	ar	close	إغلاق	0.25	0.98	660
+ar/close/00000016_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	في غبام	0.19	0.95	690
+ar/close/00000017_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	إذن لا	0.19	0.89	700
+ar/close/00000017_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	لقد نمه	0.16	0.92	760
+ar/close/00000017_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	نعم	0.14	0.96	790
+ar/close/00000017_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	نعب	0.13	0.93	800
+ar/close/00000017_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	الزلاب	0.14	0.88	740
+ar/close/00000018_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	رغلوق	0.30	0.79	490
+ar/close/00000018_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	لقد لقد	0.28	0.87	580
+ar/close/00000018_NO_09.wav	valid speech	Whisper hears the expected word	ar	close	اغلق	0.24	0.82	580
+ar/close/00000019_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	إرلا	0.28	0.90	610
+ar/close/00000019_NO_02.wav	valid speech	Whisper hears the expected word	ar	close	تغلق	0.24	0.85	570
+ar/close/00000019_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	الوقت	0.20	0.74	540
+ar/close/00000019_NO_06.wav	valid speech	Whisper hears the expected word	ar	close	اغلاق	0.35	0.83	480
+ar/close/00000019_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	وحن	0.27	0.76	490
+ar/close/00000020_NO_01.wav	valid speech	Whisper hears the expected word	ar	close	اغلاق	0.26	0.91	650
+ar/close/00000021_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	الغوص	0.17	0.95	750
+ar/close/00000021_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	رلا	0.26	0.92	580
+ar/close/00000021_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	رلا	0.24	0.95	630
+ar/close/00000022_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	إيهلا	0.23	0.92	620
+ar/close/00000022_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	إرلا	0.12	0.94	820
+ar/close/00000022_NO_07.wav	valid speech	Whisper hears the expected word	ar	close	إفلاق	0.21	0.90	670
+ar/close/00000022_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	افنق	0.16	0.89	680
+ar/close/00000023_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	إلا	0.16	0.96	750
+ar/close/00000023_NO_03.wav	valid speech	Whisper hears the expected word	ar	close	إغلاق	0.14	0.89	740
+ar/close/00000024_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	يغلو	0.13	0.92	770
+ar/close/00000024_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	تفعله	0.10	0.92	780
+ar/close/00000024_NO_05.wav	valid speech	Whisper hears the expected word	ar	close	يغلق	0.06	0.73	670
+ar/close/00000025_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	سيفة لعب	0.23	0.89	660
+ar/close/00000025_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	الزال	0.15	0.85	700
+ar/close/00000026_NO_07.wav	valid speech	Whisper hears the expected word	ar	close	إغلا	0.11	0.86	750
+ar/close/00000026_NO_08.wav	valid speech	Whisper hears the expected word	ar	close	إغلاق	0.15	0.87	720
+ar/close/00000026_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	نحن	0.09	0.81	720
+ar/close/00000027_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	تجنع	0.17	0.79	620
+ar/close/00000027_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	ايه ناو	0.10	0.80	700
+ar/close/00000027_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	إذا لا	0.09	0.80	710
+ar/close/00000028_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	في القرآن	0.28	0.87	580
+ar/close/00000028_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	فيناك	0.20	0.84	640
+ar/close/00000028_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	رلا	0.18	0.80	620
+ar/close/00000028_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	أخلو	0.25	0.82	570
+ar/close/00000029_NO_02.wav	valid speech	Whisper hears the expected word	ar	close	تغلق	0.10	0.94	790
+ar/close/00000029_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	أمك	0.15	0.79	640
+ar/close/00000029_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	اوهلا	0.14	0.69	550
+ar/close/00000030_NO_01.wav	valid speech	Whisper hears the expected word	ar	close	الغلاق	0.21	0.87	630
+ar/close/00000030_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	أزلاء	0.25	0.96	690
+ar/close/00000030_NO_03.wav	valid speech	Whisper hears the expected word	ar	close	الغلق	0.19	0.87	620
+ar/close/00000030_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	الزلاق	0.14	0.88	710
+ar/close/00000030_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	الزلاق	0.14	0.91	710
+ar/close/00000030_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	close	الزلاب	0.23	0.93	670
+ar/no/00000001_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	ل	0.22	0.72	500
+ar/no/00000001_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	ل	0.14	0.63	490
+ar/no/00000001_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	ل	0.17	0.63	460
+ar/no/00000001_NO_07.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.14	0.59	450
+ar/no/00000001_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	ل	0.12	0.61	490
+ar/no/00000001_NO_10.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.12	0.60	480
+ar/no/00000002_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	نا	0.23	0.88	570
+ar/no/00000002_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	نا	0.00	1.00	1000
+ar/no/00000002_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	ن	0.00	0.62	460
+ar/no/00000003_NO_01.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.00	1.00	650
+ar/no/00000003_NO_02.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.00	0.63	490
+ar/no/00000004_NO_03.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.18	0.65	470
+ar/no/00000004_NO_05.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.18	0.54	360
+ar/no/00000004_NO_06.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.30	1.00	490
+ar/no/00000004_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	ل	0.25	0.63	400
+ar/no/00000004_NO_10.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.26	0.68	420
+ar/no/00000005_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	لعب	0.29	0.95	460
+ar/no/00000005_NO_03.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.25	0.58	330
+ar/no/00000005_NO_10.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.26	0.60	340
+ar/no/00000006_NO_02.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.19	0.63	440
+ar/no/00000006_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	ل	0.22	0.69	470
+ar/no/00000006_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	ل	0.28	0.74	460
+ar/no/00000006_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	ل	0.26	0.80	540
+ar/no/00000006_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	لام	0.25	0.71	460
+ar/no/00000007_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	ل	0.23	0.64	410
+ar/no/00000007_NO_04.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.29	0.57	280
+ar/no/00000007_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	نا	0.15	0.68	530
+ar/no/00000007_NO_09.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.29	0.58	290
+ar/no/00000008_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	ل	0.18	0.68	500
+ar/no/00000009_NO_01.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.25	0.54	290
+ar/no/00000009_NO_07.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.32	0.69	370
+ar/no/00000009_NO_08.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.30	0.66	360
+ar/no/00000010_NO_02.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.28	0.77	490
+ar/no/00000010_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	نا	0.24	0.82	580
+ar/no/00000010_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	نا	0.21	0.61	400
+ar/no/00000010_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	نا	0.25	0.63	380
+ar/no/00000011_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	ل	0.32	0.75	430
+ar/no/00000011_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	نا	0.17	0.64	470
+ar/no/00000011_NO_06.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.19	0.66	470
+ar/no/00000011_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	ل	0.24	0.72	480
+ar/no/00000012_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	اللّة	0.26	0.66	400
+ar/no/00000012_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	ل	0.30	0.79	490
+ar/no/00000013_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	ل	0.25	0.71	460
+ar/no/00000013_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	ل	0.27	0.72	450
+ar/no/00000013_NO_06.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.32	0.79	470
+ar/no/00000014_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	ل	0.27	0.71	440
+ar/no/00000014_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	ل	0.42	0.90	480
+ar/no/00000014_NO_10.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.32	0.80	480
+ar/no/00000015_NO_02.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.31	0.80	490
+ar/no/00000016_NO_04.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.31	0.82	510
+ar/no/00000016_NO_05.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.35	0.80	450
+ar/no/00000016_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	نا	0.28	0.69	410
+ar/no/00000016_NO_08.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.27	0.65	380
+ar/no/00000016_NO_10.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.26	0.74	480
+ar/no/00000018_NO_04.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.27	0.63	360
+ar/no/00000018_NO_06.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.36	0.75	390
+ar/no/00000018_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	ل	0.26	0.70	440
+ar/no/00000019_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	ل	0.28	0.66	380
+ar/no/00000019_NO_07.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.35	0.70	350
+ar/no/00000019_NO_09.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.38	0.73	350
+ar/no/00000020_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	ل	0.24	0.86	620
+ar/no/00000020_NO_05.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.32	0.72	400
+ar/no/00000020_NO_07.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.42	0.82	400
+ar/no/00000020_NO_08.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.25	0.68	430
+ar/no/00000020_NO_10.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.30	0.74	440
+ar/no/00000021_NO_02.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.36	0.80	440
+ar/no/00000021_NO_03.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.35	0.78	430
+ar/no/00000021_NO_08.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.30	0.64	340
+ar/no/00000021_NO_10.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.32	0.72	400
+ar/no/00000022_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	ل	0.14	0.67	530
+ar/no/00000022_NO_06.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.20	0.68	480
+ar/no/00000022_NO_10.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.23	0.78	550
+ar/no/00000023_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	ل	0.22	0.70	480
+ar/no/00000023_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	ل	0.24	0.71	470
+ar/no/00000023_NO_07.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.27	0.78	510
+ar/no/00000024_NO_03.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.21	0.88	670
+ar/no/00000024_NO_05.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.18	0.74	560
+ar/no/00000024_NO_06.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.18	0.72	540
+ar/no/00000024_NO_09.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.14	0.73	590
+ar/no/00000024_NO_10.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.16	0.72	560
+ar/no/00000025_NO_09.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.29	0.68	390
+ar/no/00000026_NO_02.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.24	0.60	360
+ar/no/00000026_NO_03.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.25	0.65	400
+ar/no/00000026_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	نا	0.18	0.69	510
+ar/no/00000026_NO_06.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.22	0.72	500
+ar/no/00000026_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	ل	0.17	0.69	520
+ar/no/00000027_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	ل	0.23	0.66	430
+ar/no/00000027_NO_02.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.27	0.73	460
+ar/no/00000027_NO_03.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.22	0.70	480
+ar/no/00000027_NO_04.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.23	0.70	470
+ar/no/00000027_NO_08.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.22	0.67	450
+ar/no/00000028_NO_01.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.30	0.71	410
+ar/no/00000028_NO_02.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.34	0.81	470
+ar/no/00000028_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	نو	0.29	0.75	460
+ar/no/00000028_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	ل	0.27	0.73	460
+ar/no/00000029_NO_03.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.31	0.82	510
+ar/no/00000029_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	لغة	0.25	0.76	510
+ar/no/00000029_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	no	ل	0.25	0.75	500
+ar/no/00000029_NO_08.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.15	0.86	710
+ar/no/00000030_NO_07.wav	valid speech	Whisper hears the expected word	ar	no	لا	0.24	0.67	430
+ar/ok/00000001_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	وصب	0.10	0.80	630
+ar/ok/00000001_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	لسك	0.10	0.64	540
+ar/ok/00000001_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	وفق	0.17	0.82	650
+ar/ok/00000001_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	مواصف	0.30	0.97	600
+ar/ok/00000002_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	موسك	0.22	0.99	710
+ar/ok/00000002_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	موانسة	0.31	0.88	570
+ar/ok/00000003_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	ماذا	0.21	0.83	620
+ar/ok/00000003_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	ماذا؟	0.16	0.76	600
+ar/ok/00000004_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	وفق	0.11	0.82	700
+ar/ok/00000004_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	موزك	0.25	0.86	610
+ar/ok/00000005_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	موحك	0.18	0.78	580
+ar/ok/00000005_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	مواصف	0.23	0.88	620
+ar/ok/00000005_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	موحك	0.22	0.83	610
+ar/ok/00000005_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	نوازق	0.19	0.79	600
+ar/ok/00000006_NO_01.wav	valid speech	Whisper hears the expected word	ar	ok	مواشق	0.12	0.91	700
+ar/ok/00000006_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	موعسط	0.10	0.92	720
+ar/ok/00000006_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	مو أسط	0.12	0.81	680
+ar/ok/00000006_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	مو عسط	0.11	1.00	750
+ar/ok/00000007_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	نوح	0.14	0.89	530
+ar/ok/00000007_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	نوع سك	0.19	0.89	610
+ar/ok/00000008_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	مواصف	0.11	0.79	680
+ar/ok/00000008_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	وفق	0.15	0.94	710
+ar/ok/00000008_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	مواصف	0.19	0.86	670
+ar/ok/00000009_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	نوهفق	0.29	0.94	560
+ar/ok/00000009_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	موثق	0.20	0.87	620
+ar/ok/00000010_NO_03.wav	valid speech	Whisper hears the expected word	ar	ok	نوافق	0.16	0.94	780
+ar/ok/00000010_NO_05.wav	valid speech	Whisper hears the expected word	ar	ok	موافق	0.05	0.98	920
+ar/ok/00000011_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	نواتك	0.19	0.93	650
+ar/ok/00000011_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	مرحب	0.18	0.79	610
+ar/ok/00000011_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	نواتك	0.09	0.93	740
+ar/ok/00000012_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	مو أثق	0.15	0.79	610
+ar/ok/00000012_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	مواتف	0.18	0.80	620
+ar/ok/00000013_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	موفرق	0.31	0.94	630
+ar/ok/00000013_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	نعم	0.28	0.98	670
+ar/ok/00000013_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	وفق	0.24	0.89	650
+ar/ok/00000013_NO_08.wav	valid speech	Whisper hears the expected word	ar	ok	موفق	0.23	0.88	650
+ar/ok/00000013_NO_10.wav	valid speech	Whisper hears the expected word	ar	ok	موفق	0.22	0.81	590
+ar/ok/00000014_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	وفر	0.23	0.78	550
+ar/ok/00000014_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	أولفق	0.24	0.86	620
+ar/ok/00000014_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	أصدق	0.22	0.84	620
+ar/ok/00000015_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	ملاسة	0.12	0.76	640
+ar/ok/00000015_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	ملافة	0.18	0.91	730
+ar/ok/00000015_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	ملافس	0.20	0.86	660
+ar/ok/00000015_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	بلافة	0.17	0.85	670
+ar/ok/00000016_NO_02.wav	valid speech	Whisper hears the expected word	ar	ok	موافر	0.12	0.73	610
+ar/ok/00000016_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	الفيق	0.15	0.95	700
+ar/ok/00000016_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	وفق	0.15	0.95	720
+ar/ok/00000016_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	موفك	0.17	0.95	720
+ar/ok/00000016_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	موفك	0.17	0.97	720
+ar/ok/00000017_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	مصد	0.19	0.87	680
+ar/ok/00000017_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	موسط	0.16	0.82	660
+ar/ok/00000017_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	وصف	0.13	0.79	660
+ar/ok/00000017_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	وفت	0.24	0.91	670
+ar/ok/00000018_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	موالفر	0.11	0.95	760
+ar/ok/00000018_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	موصق	0.19	0.85	590
+ar/ok/00000018_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	وفر	0.25	0.69	440
+ar/ok/00000019_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	مواصة	0.18	0.86	610
+ar/ok/00000019_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	نحن	0.23	0.86	590
+ar/ok/00000019_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	مواصة	0.19	0.88	590
+ar/ok/00000019_NO_07.wav	valid speech	Whisper hears the expected word	ar	ok	نوافق	0.30	0.82	520
+ar/ok/00000019_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	نواصف	0.27	0.92	550
+ar/ok/00000019_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	وصف	0.22	0.74	520
+ar/ok/00000020_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	وفق	0.22	0.87	580
+ar/ok/00000020_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	مولفك	0.17	0.91	650
+ar/ok/00000020_NO_10.wav	valid speech	Whisper hears the expected word	ar	ok	مافق	0.19	0.93	740
+ar/ok/00000021_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	مواصف	0.16	0.94	700
+ar/ok/00000021_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	بواصف	0.08	0.97	780
+ar/ok/00000021_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	لفق	0.17	1.00	720
+ar/ok/00000022_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	نافق	0.12	0.90	770
+ar/ok/00000022_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	مصحق	0.18	0.90	690
+ar/ok/00000022_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	نلاث	0.17	0.98	810
+ar/ok/00000022_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	ملحك	0.10	0.92	780
+ar/ok/00000022_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	موسك	0.10	0.98	860
+ar/ok/00000023_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	بلا فق	0.09	0.99	900
+ar/ok/00000023_NO_10.wav	valid speech	Whisper hears the expected word	ar	ok	موافق	0.05	0.85	800
+ar/ok/00000024_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	موافتي	0.15	0.75	600
+ar/ok/00000025_NO_05.wav	valid speech	Whisper hears the expected word	ar	ok	مواطق	0.17	0.76	590
+ar/ok/00000025_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	وفف	0.23	0.92	690
+ar/ok/00000025_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	ملاف	0.14	0.73	590
+ar/ok/00000025_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	وارتك	0.23	0.85	620
+ar/ok/00000026_NO_01.wav	valid speech	Whisper hears the expected word	ar	ok	موافة	0.16	0.88	720
+ar/ok/00000026_NO_09.wav	valid speech	Whisper hears the expected word	ar	ok	موافق	0.03	0.90	850
+ar/ok/00000027_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	الموالسة	0.07	0.86	760
+ar/ok/00000027_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	ملافة	0.14	0.87	730
+ar/ok/00000027_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	نوى فرق	0.08	0.90	810
+ar/ok/00000027_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	مواصة	0.13	0.92	790
+ar/ok/00000028_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	نوفك	0.15	0.81	620
+ar/ok/00000028_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	نصق	0.20	0.88	660
+ar/ok/00000028_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	نوصق	0.15	0.85	630
+ar/ok/00000028_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	موحك	0.15	0.90	740
+ar/ok/00000028_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	موفك	0.20	0.91	690
+ar/ok/00000028_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	نعم	0.17	0.80	620
+ar/ok/00000028_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	موطق	0.18	0.84	640
+ar/ok/00000029_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	ووو فير	0.09	1.00	840
+ar/ok/00000029_NO_04.wav	valid speech	Whisper hears the expected word	ar	ok	نوافق	0.02	1.00	900
+ar/ok/00000029_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	موانفك	0.06	0.97	860
+ar/ok/00000030_NO_02.wav	valid speech	Whisper hears the expected word	ar	ok	مافق	0.18	0.85	670
+ar/ok/00000030_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	لنصف	0.14	0.92	660
+ar/ok/00000030_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	نواصف	0.15	0.90	670
+ar/ok/00000030_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	ok	نحن	0.26	0.97	480
+ar/stop/00000001_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طوكة	0.20	0.83	560
+ar/stop/00000001_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طوقه	0.22	0.86	560
+ar/stop/00000001_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طوكة	0.15	0.74	540
+ar/stop/00000002_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طوحكة	0.23	1.00	770
+ar/stop/00000002_NO_10.wav	valid speech	Whisper hears the expected word	ar	stop	توقف	0.24	1.00	750
+ar/stop/00000003_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	دوكط	0.25	0.69	450
+ar/stop/00000003_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طوحة	0.26	0.75	490
+ar/stop/00000003_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طوكة	0.07	0.82	730
+ar/stop/00000003_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طوحة	0.00	0.82	550
+ar/stop/00000004_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طوكف	0.21	0.87	620
+ar/stop/00000005_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	تلور بطل	0.20	1.00	800
+ar/stop/00000005_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	دوكو	0.00	0.88	500
+ar/stop/00000005_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طوال	0.00	0.84	650
+ar/stop/00000006_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	دوكة	0.31	0.91	500
+ar/stop/00000006_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	دوكف	0.27	0.95	580
+ar/stop/00000006_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	دوكة	0.17	0.90	620
+ar/stop/00000006_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	دوكة	0.18	0.90	540
+ar/stop/00000006_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	دوك	0.21	0.90	560
+ar/stop/00000007_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طبقى	0.15	0.77	540
+ar/stop/00000007_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طوكة	0.23	0.71	400
+ar/stop/00000007_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طلق	0.26	0.63	350
+ar/stop/00000007_NO_05.wav	valid speech	Whisper hears the expected word	ar	stop	دوقف	0.38	0.78	340
+ar/stop/00000007_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طوح قد	0.29	0.81	460
+ar/stop/00000007_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طوكة	0.34	0.76	420
+ar/stop/00000008_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طبحة	0.28	0.89	510
+ar/stop/00000008_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	دوقع	0.18	0.78	530
+ar/stop/00000008_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طاقة	0.25	0.86	550
+ar/stop/00000008_NO_07.wav	valid speech	Whisper hears the expected word	ar	stop	توقف	0.28	0.89	530
+ar/stop/00000008_NO_08.wav	valid speech	Whisper hears the expected word	ar	stop	توقف	0.28	0.90	540
+ar/stop/00000008_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طوح قص	0.19	0.81	540
+ar/stop/00000009_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طوك	0.26	0.69	370
+ar/stop/00000009_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طواقع	0.25	0.77	490
+ar/stop/00000009_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طواقر	0.31	0.82	510
+ar/stop/00000010_NO_02.wav	valid speech	Whisper hears the expected word	ar	stop	توقع	0.27	0.90	590
+ar/stop/00000010_NO_03.wav	valid speech	Whisper hears the expected word	ar	stop	توقف	0.27	0.92	610
+ar/stop/00000010_NO_05.wav	valid speech	Whisper hears the expected word	ar	stop	طوى قف	0.24	0.96	690
+ar/stop/00000011_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طلق	0.26	0.87	540
+ar/stop/00000011_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	دوكا	0.19	0.74	480
+ar/stop/00000011_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طوكة	0.19	0.77	530
+ar/stop/00000012_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	دوكا	0.24	0.85	550
+ar/stop/00000012_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	دوكب	0.23	0.83	570
+ar/stop/00000012_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	دوكب	0.26	0.84	550
+ar/stop/00000013_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طبقى	0.19	0.72	520
+ar/stop/00000013_NO_07.wav	valid speech	Whisper hears the expected word	ar	stop	طوقف	0.17	0.77	590
+ar/stop/00000014_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طوكف	0.22	0.80	560
+ar/stop/00000014_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	تبارك	0.30	0.82	520
+ar/stop/00000014_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طوكة	0.30	0.82	520
+ar/stop/00000015_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طواقف	0.26	0.94	610
+ar/stop/00000015_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	دوكف	0.13	0.89	690
+ar/stop/00000015_NO_04.wav	valid speech	Whisper hears the expected word	ar	stop	توقع	0.21	0.85	580
+ar/stop/00000015_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	دوركا	0.22	0.91	600
+ar/stop/00000015_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طواقع	0.21	0.92	630
+ar/stop/00000015_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	دا وقا	0.17	0.86	600
+ar/stop/00000016_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طوكة	0.28	0.89	550
+ar/stop/00000016_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طواتك	0.17	0.80	590
+ar/stop/00000016_NO_09.wav	valid speech	Whisper hears the expected word	ar	stop	توقف	0.16	0.73	520
+ar/stop/00000017_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طواقع	0.21	0.79	580
+ar/stop/00000017_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طوك	0.16	0.75	590
+ar/stop/00000017_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طبقا	0.20	0.78	570
+ar/stop/00000018_NO_01.wav	valid speech	Whisper hears the expected word	ar	stop	توقف	0.24	0.91	640
+ar/stop/00000018_NO_03.wav	valid speech	Whisper hears the expected word	ar	stop	توقف	0.18	0.73	550
+ar/stop/00000018_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	تبقى	0.23	0.69	450
+ar/stop/00000018_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	دعوك	0.32	0.75	430
+ar/stop/00000018_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	دعوك	0.25	0.74	490
+ar/stop/00000019_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طوقة	0.31	0.88	560
+ar/stop/00000019_NO_02.wav	valid speech	Whisper hears the expected word	ar	stop	توقف	0.29	0.79	430
+ar/stop/00000019_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طوح	0.32	0.83	440
+ar/stop/00000020_NO_04.wav	valid speech	Whisper hears the expected word	ar	stop	توقف	0.30	0.89	550
+ar/stop/00000020_NO_08.wav	valid speech	Whisper hears the expected word	ar	stop	توقف	0.34	0.89	500
+ar/stop/00000021_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	دوكف	0.28	1.00	670
+ar/stop/00000022_NO_03.wav	valid speech	Whisper hears the expected word	ar	stop	توقف	0.16	0.88	730
+ar/stop/00000022_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طوك	0.15	1.00	800
+ar/stop/00000022_NO_07.wav	valid speech	Whisper hears the expected word	ar	stop	توقف	0.17	1.00	810
+ar/stop/00000023_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طلوقف	0.00	0.98	820
+ar/stop/00000023_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	العبب	0.10	1.00	800
+ar/stop/00000023_NO_09.wav	valid speech	Whisper hears the expected word	ar	stop	توقف	0.14	1.00	770
+ar/stop/00000023_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طوكف	0.00	1.00	800
+ar/stop/00000024_NO_02.wav	valid speech	Whisper hears the expected word	ar	stop	نوقف	0.14	1.00	860
+ar/stop/00000024_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	نور	0.00	0.95	920
+ar/stop/00000024_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	العقر	0.21	0.88	670
+ar/stop/00000024_NO_10.wav	valid speech	Whisper hears the expected word	ar	stop	توقع	0.17	0.75	580
+ar/stop/00000025_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طوط قوة	0.22	0.79	570
+ar/stop/00000025_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	ورقوا	0.23	0.78	550
+ar/stop/00000025_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	نحن	0.26	0.82	560
+ar/stop/00000025_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	تبعض قل	0.28	0.87	590
+ar/stop/00000025_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طوات كب	0.18	0.80	620
+ar/stop/00000026_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	ثم القوة	0.17	0.86	560
+ar/stop/00000027_NO_03.wav	valid speech	Whisper hears the expected word	ar	stop	توقف	0.12	0.83	670
+ar/stop/00000027_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	وقفت	0.12	0.87	690
+ar/stop/00000027_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	دعوك	0.16	0.87	700
+ar/stop/00000028_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	دورقة	0.29	0.85	500
+ar/stop/00000028_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	دوكة	0.25	0.78	500
+ar/stop/00000029_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	نحن نحن	0.12	1.00	830
+ar/stop/00000029_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	تبكف	0.19	1.00	760
+ar/stop/00000029_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	كورك	0.00	0.90	800
+ar/stop/00000029_NO_07.wav	valid speech	Whisper hears the expected word	ar	stop	توقف	0.10	0.92	770
+ar/stop/00000029_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طوط كف	0.08	0.86	740
+ar/stop/00000029_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طوطكة	0.18	0.89	650
+ar/stop/00000030_NO_03.wav	valid speech	Whisper hears the expected word	ar	stop	تلوقف	0.18	0.81	510
+ar/stop/00000030_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	stop	طبب	0.22	0.82	530
+ar/yes/00000001_NO_02.wav	valid speech	Whisper hears the expected word	ar	yes	نام	0.23	0.74	510
+ar/yes/00000001_NO_03.wav	valid speech	Whisper hears the expected word	ar	yes	نام	0.17	0.71	540
+ar/yes/00000002_NO_02.wav	valid speech	Whisper hears the expected word	ar	yes	نعم	0.26	0.76	500
+ar/yes/00000002_NO_03.wav	valid speech	Whisper hears the expected word	ar	yes	نعم	0.06	0.66	600
+ar/yes/00000002_NO_05.wav	valid speech	Whisper hears the expected word	ar	yes	نام	0.00	0.73	730
+ar/yes/00000002_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	yes	لا	0.00	1.00	860
+ar/yes/00000002_NO_10.wav	valid speech	Whisper hears the expected word	ar	yes	نعم	0.00	0.58	380
+ar/yes/00000003_NO_01.wav	valid speech	Whisper hears the expected word	ar	yes	نعم	0.00	1.00	1000
+ar/yes/00000003_NO_02.wav	valid speech	Whisper hears the expected word	ar	yes	نعم	0.00	0.52	440
+ar/yes/00000003_NO_06.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	yes	لا	0.21	0.84	620
+ar/yes/00000003_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	yes	دع	0.14	0.78	640
+ar/yes/00000003_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	yes	دم	0.27	0.85	580
+ar/yes/00000003_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	yes	لا	0.00	0.64	510
+ar/yes/00000004_NO_01.wav	valid speech	Whisper hears the expected word	ar	yes	نعم	0.27	0.76	490
+ar/yes/00000005_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	yes	لا	0.23	0.65	420
+ar/yes/00000005_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	yes	لا	0.28	0.70	420
+ar/yes/00000006_NO_01.wav	valid speech	Whisper hears the expected word	ar	yes	نعم	0.30	0.76	460
+ar/yes/00000006_NO_04.wav	valid speech	Whisper hears the expected word	ar	yes	نام	0.27	0.79	520
+ar/yes/00000006_NO_05.wav	valid speech	Whisper hears the expected word	ar	yes	نام	0.33	0.85	520
+ar/yes/00000006_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	yes	لا	0.19	0.72	530
+ar/yes/00000006_NO_10.wav	valid speech	Whisper hears the expected word	ar	yes	نام	0.26	0.77	510
+ar/yes/00000007_NO_03.wav	valid speech	Whisper hears the expected word	ar	yes	نام	0.24	0.86	620
+ar/yes/00000007_NO_05.wav	valid speech	Whisper hears the expected word	ar	yes	نم	0.33	0.73	400
+ar/yes/00000007_NO_07.wav	valid speech	Whisper hears the expected word	ar	yes	نم	0.40	0.72	320
+ar/yes/00000008_NO_01.wav	valid speech	Whisper hears the expected word	ar	yes	نعم	0.19	0.67	480
+ar/yes/00000008_NO_02.wav	valid speech	Whisper hears the expected word	ar	yes	نعم	0.31	0.81	500
+ar/yes/00000008_NO_03.wav	valid speech	Whisper hears the expected word	ar	yes	نم	0.25	0.74	490
+ar/yes/00000008_NO_07.wav	valid speech	Whisper hears the expected word	ar	yes	نام	0.26	0.76	500
+ar/yes/00000008_NO_09.wav	valid speech	Whisper hears the expected word	ar	yes	نوم	0.21	0.75	540
+ar/yes/00000009_NO_09.wav	valid speech	Whisper hears the expected word	ar	yes	نم	0.28	0.71	430
+ar/yes/00000009_NO_10.wav	valid speech	Whisper hears the expected word	ar	yes	نم	0.29	0.75	460
+ar/yes/00000010_NO_01.wav	valid speech	Whisper hears the expected word	ar	yes	نعم	0.27	0.79	520
+ar/yes/00000010_NO_07.wav	valid speech	Whisper hears the expected word	ar	yes	نعم	0.24	0.68	440
+ar/yes/00000010_NO_10.wav	valid speech	Whisper hears the expected word	ar	yes	نعم	0.29	0.80	510
+ar/yes/00000012_NO_04.wav	valid speech	Whisper hears the expected word	ar	yes	نام	0.29	0.74	450
+ar/yes/00000012_NO_06.wav	valid speech	Whisper hears the expected word	ar	yes	نام	0.28	0.70	420
+ar/yes/00000012_NO_07.wav	valid speech	Whisper hears the expected word	ar	yes	نم	0.23	0.70	470
+ar/yes/00000012_NO_08.wav	valid speech	Whisper hears the expected word	ar	yes	نم	0.27	0.71	440
+ar/yes/00000012_NO_09.wav	valid speech	Whisper hears the expected word	ar	yes	نام	0.30	0.79	490
+ar/yes/00000012_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	yes	نا	0.29	0.78	490
+ar/yes/00000013_NO_07.wav	valid speech	Whisper hears the expected word	ar	yes	نام	0.32	0.80	480
+ar/yes/00000013_NO_10.wav	valid speech	Whisper hears the expected word	ar	yes	نام	0.27	0.86	500
+ar/yes/00000014_NO_04.wav	valid speech	Whisper hears the expected word	ar	yes	نعم	0.34	0.81	470
+ar/yes/00000014_NO_05.wav	valid speech	Whisper hears the expected word	ar	yes	نعم	0.27	0.70	430
+ar/yes/00000014_NO_09.wav	valid speech	Whisper hears the expected word	ar	yes	نعم	0.40	0.84	440
+ar/yes/00000015_NO_01.wav	valid speech	Whisper hears the expected word	ar	yes	نام	0.19	0.68	490
+ar/yes/00000015_NO_02.wav	valid speech	Whisper hears the expected word	ar	yes	نعم	0.32	0.78	460
+ar/yes/00000015_NO_07.wav	valid speech	Whisper hears the expected word	ar	yes	نعم	0.31	0.83	520
+ar/yes/00000015_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	yes	لا	0.25	0.72	470
+ar/yes/00000016_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	yes	لا	0.25	0.77	520
+ar/yes/00000016_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	yes	لا	0.32	0.76	440
+ar/yes/00000016_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	yes	لا	0.30	0.80	500
+ar/yes/00000016_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	yes	لا	0.28	0.80	520
+ar/yes/00000017_NO_01.wav	valid speech	Whisper hears the expected word	ar	yes	نام	0.26	0.74	480
+ar/yes/00000017_NO_02.wav	valid speech	Whisper hears the expected word	ar	yes	نعم	0.26	0.77	510
+ar/yes/00000017_NO_04.wav	valid speech	Whisper hears the expected word	ar	yes	نام	0.27	0.76	490
+ar/yes/00000017_NO_09.wav	valid speech	Whisper hears the expected word	ar	yes	نعم	0.25	0.79	540
+ar/yes/00000018_NO_01.wav	valid speech	Whisper hears the expected word	ar	yes	نام	0.29	0.68	390
+ar/yes/00000018_NO_06.wav	valid speech	Whisper hears the expected word	ar	yes	نعم	0.39	0.76	370
+ar/yes/00000019_NO_04.wav	valid speech	Whisper hears the expected word	ar	yes	نعم	0.26	0.59	330
+ar/yes/00000019_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	yes	لا	0.39	0.77	380
+ar/yes/00000019_NO_07.wav	valid speech	Whisper hears the expected word	ar	yes	نعم	0.31	0.61	300
+ar/yes/00000019_NO_08.wav	valid speech	Whisper hears the expected word	ar	yes	نعم	0.36	0.68	320
+ar/yes/00000020_NO_03.wav	valid speech	Whisper hears the expected word	ar	yes	نام	0.20	0.79	590
+ar/yes/00000020_NO_05.wav	valid speech	Whisper hears the expected word	ar	yes	نام	0.24	0.68	440
+ar/yes/00000020_NO_09.wav	valid speech	Whisper hears the expected word	ar	yes	نعم	0.40	0.82	420
+ar/yes/00000021_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	yes	نو	0.42	0.86	440
+ar/yes/00000021_NO_04.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	yes	نو	0.33	0.71	380
+ar/yes/00000021_NO_08.wav	valid speech	Whisper hears the expected word	ar	yes	نام	0.27	0.64	370
+ar/yes/00000022_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	yes	نون	0.34	0.68	340
+ar/yes/00000022_NO_08.wav	valid speech	Whisper hears the expected word	ar	yes	نم	0.23	0.69	460
+ar/yes/00000022_NO_09.wav	valid speech	Whisper hears the expected word	ar	yes	نام	0.20	0.77	570
+ar/yes/00000022_NO_10.wav	valid speech	Whisper hears the expected word	ar	yes	نام	0.29	0.85	560
+ar/yes/00000023_NO_03.wav	valid speech	Whisper hears the expected word	ar	yes	نوم	0.27	0.77	500
+ar/yes/00000023_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	yes	لا	0.28	0.81	530
+ar/yes/00000023_NO_09.wav	valid speech	Whisper hears the expected word	ar	yes	نعم	0.24	0.68	440
+ar/yes/00000024_NO_01.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	yes	لا	0.21	0.76	550
+ar/yes/00000024_NO_02.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	yes	لا	0.27	0.80	530
+ar/yes/00000024_NO_04.wav	valid speech	Whisper hears the expected word	ar	yes	نع	0.25	0.75	500
+ar/yes/00000024_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	yes	نعطة	0.22	0.75	530
+ar/yes/00000024_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	yes	لا	0.19	0.64	450
+ar/yes/00000025_NO_07.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	yes	لا	0.30	0.76	460
+ar/yes/00000025_NO_08.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	yes	لا	0.25	0.72	470
+ar/yes/00000025_NO_09.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	yes	لا	0.20	0.70	500
+ar/yes/00000025_NO_10.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	yes	لا	0.27	0.73	460
+ar/yes/00000026_NO_01.wav	valid speech	Whisper hears the expected word	ar	yes	نام	0.34	0.83	490
+ar/yes/00000026_NO_02.wav	valid speech	Whisper hears the expected word	ar	yes	نام	0.19	0.79	600
+ar/yes/00000026_NO_05.wav	valid speech	Whisper hears the expected word	ar	yes	نام	0.20	0.72	520
+ar/yes/00000026_NO_06.wav	valid speech	Whisper hears the expected word	ar	yes	نام	0.12	0.75	630
+ar/yes/00000026_NO_10.wav	valid speech	Whisper hears the expected word	ar	yes	نام	0.15	0.72	570
+ar/yes/00000027_NO_03.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	yes	now	0.17	0.68	510
+ar/yes/00000027_NO_05.wav	valid speech	Whisper hears other words and the voice detector finds a voice	ar	yes	نا	0.28	0.76	480
+ar/yes/00000028_NO_04.wav	valid speech	Whisper hears the expected word	ar	yes	دعم	0.24	0.65	410
+ar/yes/00000029_NO_03.wav	valid speech	Whisper hears the expected word	ar	yes	نعم	0.24	0.72	480
+ar/yes/00000029_NO_09.wav	valid speech	Whisper hears the expected word	ar	yes	نعم	0.26	0.78	520
+ar/yes/00000030_NO_01.wav	valid speech	Whisper hears the expected word	ar	yes	نام	0.29	0.75	460
+ar/yes/00000030_NO_03.wav	valid speech	Whisper hears the expected word	ar	yes	نام	0.30	0.82	520
+ar/yes/00000030_NO_04.wav	valid speech	Whisper hears the expected word	ar	yes	نام	0.21	0.67	460
+ar/yes/00000030_NO_06.wav	valid speech	Whisper hears the expected word	ar	yes	نام	0.25	0.67	420
+ar/yes/00000030_NO_07.wav	valid speech	Whisper hears the expected word	ar	yes	نام	0.20	0.66	460
+en/go/0137b3f4_nohash_3.wav	valid speech	Whisper hears the expected word	en	go	go	0.26	0.68	420
+en/go/01bb6a2a_nohash_3.wav	valid speech	Whisper hears the expected word	en	go	go	0.59	0.99	400
+en/go/02746d24_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.16	0.63	490
+en/go/0616de09_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	go	0.00	0.98	680
+en/go/079d1020_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	0.91	540
+en/go/0d53e045_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go!	0.00	1.00	1000
+en/go/0eb48e10_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	1.00	520
+en/go/0ff728b5_nohash_2.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	0.90	640
+en/go/122c5aa7_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.11	0.85	520
+en/go/122c5aa7_nohash_3.wav	valid speech	Whisper hears the expected word	en	go	Go	0.01	0.61	500
+en/go/14872d06_nohash_2.wav	valid speech	Whisper hears the expected word	en	go	Go	0.40	0.83	430
+en/go/15f04ff8_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	1.00	750
+en/go/1626bc5a_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	1.00	1000
+en/go/173ae793_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go.	0.03	0.96	570
+en/go/1a673010_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.02	0.67	610
+en/go/1bb574f9_nohash_1.wav	valid speech	Whisper hears the expected word	en	go	Go	0.47	0.81	340
+en/go/1bb6ed89_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	go	0.01	0.38	370
+en/go/1d919a90_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.18	0.47	290
+en/go/1e9b215e_nohash_4.wav	valid speech	Whisper hears the expected word	en	go	Go	0.01	0.98	450
+en/go/1ed557b9_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.46	0.94	480
+en/go/20174140_nohash_1.wav	valid speech	Whisper hears the expected word	en	go	Go!	0.00	1.00	1000
+en/go/2197f41c_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	1.00	470
+en/go/2335770e_nohash_1.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	0.78	540
+en/go/25040e85_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.36	0.88	520
+en/go/2bfe70ef_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	1.00	1000
+en/go/2cf28b70_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	0.85	530
+en/go/2f0a410b_nohash_1.wav	valid speech	Whisper hears the expected word	en	go	Go	0.50	0.97	470
+en/go/30137d34_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go!	0.00	1.00	1000
+en/go/31e686d2_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	0.69	650
+en/go/333784b7_nohash_3.wav	valid speech	Whisper hears the expected word	en	go	Go	0.18	0.79	580
+en/go/3402e488_nohash_2.wav	valid speech	Whisper hears the expected word	en	go	Go	0.50	0.94	440
+en/go/35d1b6ee_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.23	1.00	510
+en/go/37fc5d97_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	go	0.00	0.85	840
+en/go/39543cfd_nohash_0.wav	valid speech	Whisper hears other words and the voice detector finds a voice	en	go	though	0.00	1.00	550
+en/go/39999a0f_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	0.81	810
+en/go/39999a0f_nohash_1.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	1.00	620
+en/go/3a182c98_nohash_1.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	1.00	1000
+en/go/3bc21161_nohash_3.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	0.67	490
+en/go/3c8836dc_nohash_1.wav	valid speech	Whisper hears the expected word	en	go	Go	0.39	0.77	380
+en/go/3d53244b_nohash_4.wav	valid speech	Whisper hears the expected word	en	go	Go	0.14	0.52	380
+en/go/3ffa3457_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	1.00	1000
+en/go/418e7158_nohash_1.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	0.85	510
+en/go/422d3197_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	0.72	720
+en/go/460f2bad_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	0.79	520
+en/go/47565088_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go.	0.38	0.80	420
+en/go/4abb2400_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go!	0.22	0.79	570
+en/go/4f2ab70c_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go.	0.29	1.00	530
+en/go/4f5c0b28_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.62	0.95	340
+en/go/50928b05_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	0.92	600
+en/go/51055bda_nohash_3.wav	valid speech	Whisper hears the expected word	en	go	Go	0.51	0.95	440
+en/go/5628d7b7_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	0.96	960
+en/go/5628d7b7_nohash_2.wav	valid speech	Whisper hears the expected word	en	go	Go.	0.00	0.98	980
+en/go/56eab10e_nohash_2.wav	valid speech	Whisper hears the expected word	en	go	Go	0.17	0.71	540
+en/go/56f8a100_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.52	0.88	360
+en/go/5c8af87a_nohash_0.wav	valid speech	Whisper hears other words and the voice detector finds a voice	en	go	Rico	0.35	0.93	440
+en/go/5efb758c_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	1.00	1000
+en/go/5f8e50a0_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go.	0.00	1.00	590
+en/go/617de221_nohash_3.wav	valid speech	Whisper hears the expected word	en	go	Go!	0.00	1.00	640
+en/go/65040d9b_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	0.67	390
+en/go/686d030b_nohash_3.wav	valid speech	Whisper hears the expected word	en	go	Go!	0.04	0.72	470
+en/go/69953f48_nohash_1.wav	valid speech	Whisper hears the expected word	en	go	Go	0.16	0.53	370
+en/go/6aafb34f_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.47	1.00	530
+en/go/6f7724f5_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go!	0.46	0.89	440
+en/go/71e6ab20_nohash_1.wav	valid speech	Whisper hears the expected word	en	go	Go	0.46	0.94	460
+en/go/7211390b_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.09	0.64	510
+en/go/743edf9d_nohash_3.wav	valid speech	Whisper hears the expected word	en	go	Go	0.50	0.90	400
+en/go/78102205_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	0.85	790
+en/go/7846fd85_nohash_2.wav	valid speech	Whisper hears the expected word	en	go	Go	0.37	0.86	490
+en/go/7846fd85_nohash_3.wav	valid speech	Whisper hears the expected word	en	go	Go	0.35	0.81	460
+en/go/7910d292_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.47	1.00	530
+en/go/798f702a_nohash_1.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	1.00	1000
+en/go/7be5a0f3_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go!	0.00	1.00	940
+en/go/7dc50b88_nohash_1.wav	valid speech	Whisper hears the expected word	en	go	Go!	0.00	0.89	580
+en/go/80fe1dc7_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.38	0.80	420
+en/go/8134f43f_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.01	1.00	950
+en/go/8281a2a8_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	0.59	590
+en/go/85834399_nohash_1.wav	valid speech	Whisper hears the expected word	en	go	Go!	0.66	1.00	340
+en/go/86f12ac0_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go!	0.00	0.77	480
+en/go/87728a88_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	0.88	880
+en/go/881583a6_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	0.75	450
+en/go/888a0c49_nohash_2.wav	valid speech	Whisper hears the expected word	en	go	Go	0.18	0.72	540
+en/go/8a0457c9_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.57	1.00	430
+en/go/8a194ee6_nohash_0.wav	valid speech	Whisper hears other words and the voice detector finds a voice	en	go	Carl	0.00	0.48	480
+en/go/8c3c4715_nohash_1.wav	valid speech	Whisper hears the expected word	en	go	Go!	0.49	0.87	380
+en/go/8e05039f_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.65	0.98	330
+en/go/918a2473_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.63	0.97	340
+en/go/9229bff9_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	0.89	890
+en/go/96a48d28_nohash_3.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	0.77	490
+en/go/96cd0255_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	0.92	880
+en/go/9712cce0_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.02	0.78	610
+en/go/97f4c236_nohash_2.wav	valid speech	Whisper hears the expected word	en	go	Go	0.37	0.93	560
+en/go/9a69672b_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.72	1.00	280
+en/go/9a69672b_nohash_1.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	0.84	560
+en/go/9ff1b8b6_nohash_0.wav	valid speech	Whisper hears other words and the voice detector finds a voice	en	go	Done	0.43	0.80	370
+en/go/a0f93943_nohash_1.wav	valid speech	Whisper hears the expected word	en	go	Go	0.10	1.00	380
+en/go/a108341b_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	1.00	770
+en/go/a1cff772_nohash_4.wav	valid speech	Whisper hears the expected word	en	go	Go	0.36	0.85	490
+en/go/a3fc7884_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	0.86	760
+en/go/a3fc7884_nohash_1.wav	valid speech	Whisper hears the expected word	en	go	Go	0.35	0.73	380
+en/go/a4ca3afe_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go!	0.54	0.96	420
+en/go/a6d586b7_nohash_3.wav	valid speech	Whisper hears the expected word	en	go	Go	0.31	0.75	440
+en/go/a759efbc_nohash_1.wav	valid speech	Whisper hears the expected word	en	go	Go	0.01	0.95	640
+en/go/a996cf66_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	0.90	810
+en/go/ac652c60_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.29	0.85	510
+en/go/acde7e73_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.37	0.69	320
+en/go/aef8dcf5_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go!	0.10	0.61	510
+en/go/afd53389_nohash_2.wav	valid speech	Whisper hears the expected word	en	go	Go!	0.01	0.88	800
+en/go/aff582a1_nohash_3.wav	valid speech	Whisper hears the expected word	en	go	Go	0.58	1.00	420
+en/go/b01c8f61_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	0.46	260
+en/go/b16f2d0d_nohash_1.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	1.00	550
+en/go/b25b6065_nohash_1.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	0.90	900
+en/go/b4604db4_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	1.00	1000
+en/go/b487da60_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	1.00	470
+en/go/b7a0754f_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go!	0.00	0.86	520
+en/go/b8b8cb52_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.47	1.00	460
+en/go/baeac2ba_nohash_1.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	0.89	470
+en/go/be91a00a_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.28	0.76	480
+en/go/c120e80e_nohash_4.wav	valid speech	Whisper hears the expected word	en	go	Go	0.35	0.90	550
+en/go/c1d39ce8_nohash_4.wav	valid speech	Whisper hears the expected word	en	go	Go	0.23	1.00	410
+en/go/c4e1f6e0_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	go	0.00	1.00	1000
+en/go/c948d727_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	0.45	450
+en/go/c9b653a0_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.15	0.81	620
+en/go/ca48dc76_nohash_1.wav	valid speech	Whisper hears the expected word	en	go	Go	0.24	0.61	370
+en/go/cb2929ce_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.44	0.86	420
+en/go/cb2929ce_nohash_3.wav	valid speech	Whisper hears the expected word	en	go	Go	0.29	0.78	490
+en/go/d0faf7e4_nohash_1.wav	valid speech	Whisper hears other words and the voice detector finds a voice	en	go	Dao	0.01	1.00	610
+en/go/d0faf7e4_nohash_2.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	1.00	850
+en/go/d0faf7e4_nohash_4.wav	valid speech	Whisper hears the expected word	en	go	Go	0.00	0.70	590
+en/go/d3a18257_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	go	0.09	0.76	390
+en/go/d3badc9a_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.62	1.00	380
+en/go/d6360b32_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.27	0.96	710
+en/go/d8c52371_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.52	0.85	330
+en/go/d9d6559e_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go!	0.47	0.94	470
+en/go/dbaf8fc6_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go!	0.00	1.00	1000
+en/go/dcc012ec_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go.	0.00	0.38	380
+en/go/de6eb27c_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	go	0.00	1.00	420
+en/go/df1d5024_nohash_1.wav	valid speech	Whisper hears the expected word	en	go	go	0.00	0.63	490
+en/go/e0315cf6_nohash_2.wav	valid speech	Whisper hears other words and the voice detector finds a voice	en	go	Cool	0.33	0.68	350
+en/go/e0ff1e9c_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.29	0.70	410
+en/go/e1469561_nohash_4.wav	valid speech	Whisper hears the expected word	en	go	Go	0.15	0.51	360
+en/go/e41a903b_nohash_1.wav	valid speech	Whisper hears the expected word	en	go	Go!	0.43	0.86	430
+en/go/e7ea8b76_nohash_2.wav	valid speech	Whisper hears the expected word	en	go	Go	0.24	0.71	470
+en/go/eb3d8eb1_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.52	1.00	480
+en/go/f19c1390_nohash_4.wav	valid speech	Whisper hears the expected word	en	go	Go!	0.28	0.72	450
+en/go/f264e0df_nohash_1.wav	valid speech	Whisper hears the expected word	en	go	Go!	0.57	0.98	410
+en/go/f59d0771_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go	0.03	0.93	380
+en/go/f7b43563_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go!	0.00	0.84	840
+en/go/fac7deca_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go!	0.00	1.00	540
+en/go/fafe8101_nohash_0.wav	valid speech	Whisper hears the expected word	en	go	Go.	0.46	0.91	460
+en/go/fde2dee7_nohash_1.wav	valid speech	Whisper hears the expected word	en	go	Go	0.20	0.58	380
+en/no/012c8314_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No.	0.38	0.76	380
+en/no/01bb6a2a_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No?	0.51	0.99	480
+en/no/06a79a03_nohash_2.wav	valid speech	Whisper hears the expected word	en	no	No	0.08	0.80	650
+en/no/07ad9b59_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No.	0.06	1.00	590
+en/no/096456f9_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	Now	0.06	0.44	400
+en/no/0c2d2ffa_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No.	0.09	0.86	440
+en/no/0cd323ec_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No	0.06	0.96	630
+en/no/122c5aa7_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No.	0.01	0.60	470
+en/no/14587ff0_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No.	0.40	0.83	430
+en/no/14587ff0_nohash_3.wav	valid speech	Whisper hears the expected word	en	no	No.	0.47	0.95	480
+en/no/14775481_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No.	0.09	0.60	510
+en/no/14775481_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No.	0.03	0.50	470
+en/no/15c563d7_nohash_1.wav	valid speech	Whisper hears other words and the voice detector finds a voice	en	no	(music)	0.00	1.00	960
+en/no/172dc2b0_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No	0.00	0.73	500
+en/no/173e6bbf_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	no	0.01	0.76	710
+en/no/17c94b23_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No!	0.44	0.84	400
+en/no/187af8be_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No	0.50	1.00	500
+en/no/1995cf9e_nohash_3.wav	valid speech	Whisper hears the expected word	en	no	No	0.43	0.93	510
+en/no/19b05529_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No	0.00	1.00	520
+en/no/19e246ad_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No	0.00	0.95	950
+en/no/1b4c9b89_nohash_3.wav	valid speech	Whisper hears the expected word	en	no	No	0.61	1.00	390
+en/no/1c1060b1_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No.	0.00	1.00	410
+en/no/1c3f50ad_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No.	0.00	0.71	470
+en/no/21307344_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No	0.51	1.00	490
+en/no/23059a35_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No	0.07	0.77	600
+en/no/24befdb3_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No	0.00	1.00	550
+en/no/24befdb3_nohash_4.wav	valid speech	Whisper hears the expected word	en	no	No	0.00	0.94	840
+en/no/2510c044_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No	0.35	0.94	500
+en/no/264f471d_nohash_4.wav	valid speech	Whisper hears the expected word	en	no	No	0.51	0.92	410
+en/no/28ed6bc9_nohash_4.wav	valid speech	Whisper hears the expected word	en	no	No.	0.41	0.86	450
+en/no/2903efb3_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No.	0.17	0.47	300
+en/no/2da58b32_nohash_2.wav	valid speech	Whisper hears the expected word	en	no	No	0.23	0.94	610
+en/no/2e0d80f7_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No.	0.00	0.96	950
+en/no/333784b7_nohash_4.wav	valid speech	Whisper hears the expected word	en	no	No	0.34	0.80	460
+en/no/33903159_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No.	0.00	0.59	590
+en/no/35d1b6ee_nohash_4.wav	valid speech	Whisper hears the expected word	en	no	No.	0.10	0.58	480
+en/no/36de13e1_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No.	0.05	1.00	710
+en/no/37dca74f_nohash_4.wav	valid speech	Whisper hears the expected word	en	no	No	0.00	0.95	300
+en/no/39025b21_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No	0.00	1.00	1000
+en/no/3a70ab7f_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No.	0.00	0.48	480
+en/no/3cfc6b3a_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No.	0.28	0.80	520
+en/no/3d53244b_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No	0.12	0.58	460
+en/no/3e3fa7fd_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No.	0.00	1.00	1000
+en/no/412c675c_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No	0.00	0.92	510
+en/no/4249c833_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No	0.38	0.92	540
+en/no/459345ea_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	Now	0.14	0.64	500
+en/no/46a153d8_nohash_2.wav	valid speech	Whisper hears other words and the voice detector finds a voice	en	no	Nice	0.03	1.00	970
+en/no/471a0925_nohash_2.wav	valid speech	Whisper hears the expected word	en	no	No.	0.00	0.98	620
+en/no/49af4432_nohash_2.wav	valid speech	Whisper hears the expected word	en	no	No	0.29	0.76	470
+en/no/4a1e736b_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No.	0.10	0.83	720
+en/no/4a1e736b_nohash_3.wav	valid speech	Whisper hears the expected word	en	no	Now	0.03	0.73	670
+en/no/4bb1244f_nohash_2.wav	valid speech	Whisper hears the expected word	en	no	No	0.54	1.00	460
+en/no/4beff0c5_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No.	0.00	0.58	580
+en/no/4f5c0b28_nohash_1.wav	valid speech	Whisper hears other words and the voice detector finds a voice	en	no	Never	0.00	0.87	410
+en/no/4fe01997_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No	0.00	1.00	1000
+en/no/50928b05_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No	0.00	0.79	700
+en/no/520e8c0e_nohash_2.wav	valid speech	Whisper hears the expected word	en	no	No	0.32	0.71	390
+en/no/53578f4e_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No	0.00	1.00	1000
+en/no/53fd1780_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No.	0.00	1.00	320
+en/no/541e4079_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No	0.00	0.70	350
+en/no/563aa4e6_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No	0.48	0.90	420
+en/no/56eb74ae_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No	0.10	0.99	550
+en/no/573cdb8a_nohash_2.wav	valid speech	Whisper hears the expected word	en	no	No.	0.46	0.81	350
+en/no/5c237956_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No	0.00	1.00	800
+en/no/5c39594f_nohash_4.wav	valid speech	Whisper hears the expected word	en	no	No?	0.00	0.57	390
+en/no/5ff3f9a1_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No.	0.12	0.93	510
+en/no/611d2b50_nohash_3.wav	valid speech	Whisper hears the expected word	en	no	No	0.19	0.52	330
+en/no/617de221_nohash_3.wav	valid speech	Whisper hears the expected word	en	no	No	0.26	0.77	510
+en/no/62641b88_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No.	0.05	0.47	420
+en/no/62ff07ef_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No.	0.52	0.91	390
+en/no/6414258b_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No	0.00	0.92	900
+en/no/686d030b_nohash_4.wav	valid speech	Whisper hears the expected word	en	no	No.	0.41	0.81	400
+en/no/68effe85_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No.	0.00	0.72	740
+en/no/692a88e6_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No	0.00	0.97	670
+en/no/692a88e6_nohash_4.wav	valid speech	Whisper hears the expected word	en	no	No.	0.12	1.00	200
+en/no/6a2fb9a5_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No	0.00	0.85	730
+en/no/6d818f6c_nohash_3.wav	valid speech	Whisper hears the expected word	en	no	No.	0.46	0.96	500
+en/no/6e916de8_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No	0.18	0.69	480
+en/no/7211390b_nohash_2.wav	valid speech	Whisper hears the expected word	en	no	No.	0.41	0.94	480
+en/no/735845ab_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No.	0.24	0.61	370
+en/no/748cb308_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No.	0.02	1.00	660
+en/no/7c1d8533_nohash_4.wav	valid speech	Whisper hears the expected word	en	no	No	0.33	0.91	570
+en/no/7cf14c54_nohash_2.wav	valid speech	Whisper hears the expected word	en	no	No	0.30	0.63	330
+en/no/7fd25f7c_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No.	0.11	0.49	380
+en/no/82305c3a_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No	0.42	0.83	410
+en/no/86cb59b2_nohash_2.wav	valid speech	Whisper hears the expected word	en	no	No	0.00	0.96	960
+en/no/876c84d6_nohash_2.wav	valid speech	Whisper hears the expected word	en	no	No.	0.22	1.00	680
+en/no/8830e17f_nohash_4.wav	valid speech	Whisper hears the expected word	en	no	No.	0.00	1.00	580
+en/no/8d9cc260_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No.	0.00	0.84	510
+en/no/8eb4a1bf_nohash_3.wav	valid speech	Whisper hears the expected word	en	no	No!	0.24	0.90	660
+en/no/902258bb_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No	0.07	1.00	930
+en/no/9712cce0_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No	0.00	0.80	800
+en/no/97f4c236_nohash_3.wav	valid speech	Whisper hears the expected word	en	no	No	0.05	0.67	490
+en/no/981e2a16_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No.	0.18	0.77	590
+en/no/9886d8bf_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No	0.02	0.50	470
+en/no/989a2213_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	Now	0.46	0.76	300
+en/no/9a69672b_nohash_3.wav	valid speech	Whisper hears the expected word	en	no	No	0.45	0.91	460
+en/no/9acd0254_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	Now	0.04	0.48	440
+en/no/9b402bc2_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No.	0.03	0.46	430
+en/no/9e2ce5e3_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No	0.02	0.99	510
+en/no/a1cff772_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No	0.15	0.71	560
+en/no/a60a09cf_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No.	0.00	1.00	1000
+en/no/a97017df_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No.	0.00	0.87	560
+en/no/ab00c4b2_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No.	0.54	0.97	430
+en/no/ad340ed7_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No	0.19	0.83	530
+en/no/af8b2f2c_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No.	0.00	0.77	530
+en/no/afbec28d_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No	0.24	0.65	410
+en/no/b43c8f2f_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No.	0.43	0.84	410
+en/no/b5552931_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No.	0.29	0.59	300
+en/no/b65f6015_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No.	0.06	0.50	440
+en/no/b83c1acf_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No.	0.10	0.62	520
+en/no/b8b8cb52_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No.	0.11	1.00	430
+en/no/b8c48ffb_nohash_2.wav	valid speech	Whisper hears the expected word	en	no	No	0.00	0.94	380
+en/no/b97c9f77_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No	0.26	1.00	740
+en/no/bbb2eb5b_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No	0.00	0.75	430
+en/no/be7fa0a3_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No	0.00	0.69	520
+en/no/be91a00a_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No	0.18	0.77	590
+en/no/c08585c1_nohash_4.wav	valid speech	Whisper hears the expected word	en	no	No	0.31	0.74	430
+en/no/c0c0d87d_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No.	0.01	1.00	990
+en/no/c38720cb_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	Now	0.00	0.93	460
+en/no/c4e1f6e0_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No	0.62	1.00	270
+en/no/c68cf200_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No	0.42	0.85	440
+en/no/c79159aa_nohash_4.wav	valid speech	Whisper hears the expected word	en	no	No	0.45	0.93	480
+en/no/cc71bada_nohash_3.wav	valid speech	Whisper hears the expected word	en	no	No.	0.10	0.65	550
+en/no/ccb1266b_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No.	0.46	0.96	500
+en/no/cd7f8c1b_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No	0.34	0.77	430
+en/no/ced835d3_nohash_1.wav	valid speech	Whisper hears other words and the voice detector finds a voice	en	no	[	0.01	0.41	320
+en/no/cee22275_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No.	0.02	1.00	470
+en/no/d0f7bef5_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No	0.00	0.81	520
+en/no/d6b155a5_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No	0.34	0.78	440
+en/no/d91a159e_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No	0.04	0.73	580
+en/no/da584bc0_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No	0.42	0.89	470
+en/no/dc6e9c04_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No	0.00	0.87	870
+en/no/df038de4_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No	0.00	0.94	940
+en/no/df1d5024_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No	0.18	0.46	280
+en/no/df280250_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No	0.00	1.00	1000
+en/no/e0315cf6_nohash_2.wav	valid speech	Whisper hears the expected word	en	no	No.	0.00	0.68	520
+en/no/e14d3db8_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No	0.03	0.92	670
+en/no/e53139ad_nohash_3.wav	valid speech	Whisper hears the expected word	en	no	No.	0.64	1.00	360
+en/no/e6515415_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No	0.00	1.00	1000
+en/no/e7ea8b76_nohash_3.wav	valid speech	Whisper hears the expected word	en	no	No.	0.00	0.57	570
+en/no/e9287461_nohash_1.wav	valid speech	Whisper hears the expected word	en	no	No.	0.32	0.86	540
+en/no/eb0676ec_nohash_2.wav	valid speech	Whisper hears the expected word	en	no	No	0.64	1.00	360
+en/no/eb67fcbc_nohash_2.wav	valid speech	Whisper hears the expected word	en	no	No	0.00	0.78	780
+en/no/ec201020_nohash_3.wav	valid speech	Whisper hears the expected word	en	no	No	0.00	0.60	470
+en/no/f5e5e8b0_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No.	0.44	0.81	370
+en/no/f9273a21_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No	0.39	1.00	610
+en/no/f9af823e_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No	0.00	1.00	1000
+en/no/fbf3dd31_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No.	0.00	0.81	480
+en/no/fffcabd1_nohash_0.wav	valid speech	Whisper hears the expected word	en	no	No.	0.01	1.00	520
+en/stop/0132a06d_nohash_3.wav	valid speech	Whisper hears other words and the voice detector finds a voice	en	stop	Stubber	0.00	0.58	470
+en/stop/05739450_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop!	0.08	0.77	640
+en/stop/07ad9b59_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.23	0.99	620
+en/stop/0c40e715_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	0.96	960
+en/stop/0ff728b5_nohash_4.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.06	0.85	500
+en/stop/10ace7eb_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.13	0.61	480
+en/stop/122c5aa7_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	0.63	550
+en/stop/15c563d7_nohash_2.wav	valid speech	Whisper hears the expected word	en	stop	Stop!	0.01	0.69	670
+en/stop/1890e5c3_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.13	0.68	550
+en/stop/190821dc_nohash_2.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.31	0.85	490
+en/stop/1b835b87_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.39	0.68	290
+en/stop/2313e093_nohash_2.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.02	0.94	480
+en/stop/24befdb3_nohash_3.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.21	0.64	430
+en/stop/24befdb3_nohash_4.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.05	0.69	580
+en/stop/2510c044_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop.	0.25	0.91	660
+en/stop/25132942_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop.	0.02	0.40	370
+en/stop/257251e0_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.01	1.00	990
+en/stop/28ce0c58_nohash_3.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	0.75	590
+en/stop/29fb33da_nohash_3.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	1.00	1000
+en/stop/2bdbe5f7_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	0.64	560
+en/stop/2bfe70ef_nohash_2.wav	valid speech	Whisper hears other words and the voice detector finds a voice	en	stop	Start	0.70	0.99	290
+en/stop/2da58b32_nohash_4.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.16	0.64	480
+en/stop/2dcb6848_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.30	0.89	560
+en/stop/30a09789_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.07	0.75	670
+en/stop/30aabd44_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.10	1.00	560
+en/stop/311fde72_nohash_4.wav	valid speech	Whisper hears other words and the voice detector finds a voice	en	stop	Start!	0.00	0.71	630
+en/stop/33f60c62_nohash_0.wav	valid speech	Whisper hears other words and the voice detector finds a voice	en	stop	Start.	0.01	0.46	450
+en/stop/3777c08e_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	1.00	900
+en/stop/37fc5d97_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	0.81	380
+en/stop/38d78313_nohash_3.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.14	0.91	630
+en/stop/3a182c98_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	1.00	1000
+en/stop/3bfd30e6_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	0.81	810
+en/stop/3c257192_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.19	0.69	420
+en/stop/3da7f617_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.45	1.00	510
+en/stop/3ff840aa_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.31	0.71	410
+en/stop/418e7158_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.29	0.93	640
+en/stop/437455be_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	1.00	1000
+en/stop/471a0925_nohash_2.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	0.52	520
+en/stop/48a8a69d_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop!	0.29	0.84	550
+en/stop/48bdc11c_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.40	0.98	580
+en/stop/48bfde8e_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	1.00	1000
+en/stop/4f8ef132_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.09	0.78	660
+en/stop/51055bda_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop!	0.56	0.97	360
+en/stop/51055bda_nohash_3.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.30	0.73	430
+en/stop/53458368_nohash_0.wav	valid speech	Whisper hears other words and the voice detector finds a voice	en	stop	Start	0.00	1.00	350
+en/stop/5e3dde6b_nohash_4.wav	valid speech	Whisper hears the expected word	en	stop	Let's stop.	0.00	0.77	750
+en/stop/62581901_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	1.00	1000
+en/stop/62641b88_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	0.94	680
+en/stop/63996b7c_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop Stop Stop Stop Stop Stop	0.20	0.85	650
+en/stop/66aa0f29_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop!	0.21	0.91	670
+en/stop/6727b579_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.27	0.86	590
+en/stop/68dd409e_nohash_2.wav	valid speech	Whisper hears the expected word	en	stop	Stop.	0.04	0.92	880
+en/stop/6a014b29_nohash_2.wav	valid speech	Whisper hears the expected word	en	stop	Stop!	0.22	0.88	490
+en/stop/6c429c7b_nohash_2.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.65	0.99	340
+en/stop/6d2d3b0d_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop.	0.59	1.00	410
+en/stop/6e2ef3d5_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.38	0.73	350
+en/stop/6f689791_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.08	0.67	590
+en/stop/6f689791_nohash_2.wav	valid speech	Whisper hears the expected word	en	stop	stop	0.24	0.63	390
+en/stop/7014b07e_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	0.65	460
+en/stop/712e4d58_nohash_2.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	0.91	740
+en/stop/74b73f88_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop.	0.07	0.70	630
+en/stop/76b58705_nohash_0.wav	valid speech	Whisper hears other words and the voice detector finds a voice	en	stop	Start	0.04	0.58	530
+en/stop/778a4a01_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	0.81	460
+en/stop/7e6bd776_nohash_2.wav	valid speech	Whisper hears the expected word	en	stop	Stop!	0.00	0.95	730
+en/stop/7ff4fc72_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop!	0.65	1.00	350
+en/stop/826268f8_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	1.00	1000
+en/stop/834f03fe_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	0.76	700
+en/stop/834f03fe_nohash_3.wav	valid speech	Whisper hears the expected word	en	stop	Stop.	0.12	0.74	590
+en/stop/850e2222_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.01	0.96	890
+en/stop/89865a6f_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.48	0.78	300
+en/stop/8dc26a15_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop Stop Stop Stop Stop Stop	0.00	0.76	700
+en/stop/8f4c551f_nohash_2.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.30	0.75	450
+en/stop/918a2473_nohash_3.wav	valid speech	Whisper hears other words and the voice detector finds a voice	en	stop	Up	0.16	0.75	560
+en/stop/92b2bf59_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.07	0.58	510
+en/stop/94de6a6a_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	0.88	690
+en/stop/94de6a6a_nohash_3.wav	valid speech	Whisper hears the expected word	en	stop	Stomp.	0.23	0.53	300
+en/stop/97f4c236_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	1.00	590
+en/stop/9a7c1f83_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	0.89	570
+en/stop/9acd0254_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.40	0.94	540
+en/stop/9acd0254_nohash_2.wav	valid speech	Whisper hears the expected word	en	stop	Stop Stop Stop Stop Stop Stop	0.48	1.00	520
+en/stop/9d7036f9_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.38	0.99	580
+en/stop/9db2bfe9_nohash_2.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.05	0.85	590
+en/stop/9f6fbdb4_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop!	0.01	1.00	700
+en/stop/a4ca3afe_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	0.89	580
+en/stop/a4e8a997_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.28	1.00	720
+en/stop/a8cf01bc_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	0.50	450
+en/stop/a996cf66_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	1.00	1000
+en/stop/ab71c9a7_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	0.83	400
+en/stop/ac652c60_nohash_2.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.15	0.66	510
+en/stop/ad63d93c_nohash_3.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.01	0.53	520
+en/stop/adc216c5_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop.	0.11	0.61	480
+en/stop/ae927455_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	0.93	930
+en/stop/af130f12_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	1.00	820
+en/stop/b1114e4f_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop!	0.00	0.90	800
+en/stop/b3bdded5_nohash_1.wav	valid speech	Whisper hears other words and the voice detector finds a voice	en	stop	Start	0.30	0.75	400
+en/stop/b87bdb22_nohash_4.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.27	0.77	500
+en/stop/b8b8cb52_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.61	0.92	310
+en/stop/b959cd0c_nohash_0.wav	valid speech	Whisper hears other words and the voice detector finds a voice	en	stop	(upbeat music)	0.00	1.00	940
+en/stop/b9cccd01_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop!	0.00	0.94	690
+en/stop/bbd0bbd0_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.09	0.62	530
+en/stop/be7a5b2d_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	step step step step step step	0.31	0.97	590
+en/stop/bed06fac_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	0.86	860
+en/stop/bf8d5617_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	0.79	510
+en/stop/bfdb9801_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.33	0.74	410
+en/stop/c0fb6812_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	0.77	770
+en/stop/c1d39ce8_nohash_2.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.20	1.00	800
+en/stop/c1d39ce8_nohash_9.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	0.85	580
+en/stop/c22d3f18_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.02	0.44	420
+en/stop/c53b335a_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.35	0.64	290
+en/stop/c6ee87a7_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.13	0.72	470
+en/stop/c71e3acc_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	0.72	720
+en/stop/c9b653a0_nohash_3.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	1.00	760
+en/stop/cb164eea_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	0.74	450
+en/stop/cb2929ce_nohash_5.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.30	0.82	520
+en/stop/cd7f8c1b_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.45	1.00	360
+en/stop/cd85758f_nohash_3.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	1.00	710
+en/stop/ce7a8e92_nohash_2.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	1.00	1000
+en/stop/ced4e2a1_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	0.78	450
+en/stop/cf8d91cf_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.25	0.81	520
+en/stop/d0faf7e4_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.29	0.52	230
+en/stop/d1d3e64d_nohash_2.wav	valid speech	Whisper hears the expected word	en	stop	Stop.	0.02	0.38	380
+en/stop/d6b155a5_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	0.85	530
+en/stop/d90b4138_nohash_4.wav	valid speech	Whisper hears the expected word	en	stop	Stop.	0.06	0.51	450
+en/stop/da8fa823_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	0.77	610
+en/stop/db7c95b0_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	0.74	740
+en/stop/dbb40d24_nohash_0.wav	valid speech	Whisper hears other words and the voice detector finds a voice	en	stop	Yeah	0.00	1.00	920
+en/stop/dbb40d24_nohash_2.wav	valid speech	Whisper hears other words and the voice detector finds a voice	en	stop	done	0.00	0.44	190
+en/stop/dca6b373_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.26	0.36	100
+en/stop/e0ff1e9c_nohash_2.wav	valid speech	Whisper hears other words and the voice detector finds a voice	en	stop	Start	0.49	0.96	470
+en/stop/e32ff49d_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.35	0.93	530
+en/stop/e7117d00_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.15	0.89	520
+en/stop/e77d88fc_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop!	0.00	0.94	690
+en/stop/e9287461_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.19	0.86	650
+en/stop/e9b61425_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.31	0.88	550
+en/stop/eb3f7d82_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.28	0.69	410
+en/stop/ec201020_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.35	0.96	500
+en/stop/ecbd8d66_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.25	0.77	510
+en/stop/f0ae7203_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.30	0.97	560
+en/stop/f104f742_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop Stop Stop Stop Stop Stop	0.03	0.54	490
+en/stop/f2b8fc18_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop.	0.04	0.58	540
+en/stop/f33660af_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.40	0.90	500
+en/stop/f4504600_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.16	0.94	650
+en/stop/f5733968_nohash_3.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.27	0.69	420
+en/stop/f632210f_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.02	0.85	830
+en/stop/f8f60f59_nohash_1.wav	valid speech	Whisper hears other words and the voice detector finds a voice	en	stop	(music)	0.00	0.61	610
+en/stop/f8f60f59_nohash_2.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.27	1.00	480
+en/stop/f9ebdba0_nohash_0.wav	valid speech	Whisper hears the expected word	en	stop	Stop	0.00	1.00	1000
+en/stop/fd395b74_nohash_3.wav	uncertain	Whisper hears words but no voice is found	en	stop	[Music]	0.00	0.05	50
+en/stop/fd395b74_nohash_4.wav	uncertain	Whisper hears words but no voice is found	en	stop	[Music]			0
+en/stop/ffa76c4a_nohash_1.wav	valid speech	Whisper hears the expected word	en	stop	Stop!	0.09	0.60	410
+en/yes/060cd039_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	1.00	1000
+en/yes/060cd039_nohash_1.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	0.92	770
+en/yes/0685264e_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.13	0.81	680
+en/yes/105a0eea_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.49	1.00	510
+en/yes/10627519_nohash_2.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	0.83	470
+en/yes/106a6183_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.47	0.94	470
+en/yes/106a6183_nohash_1.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.47	0.99	520
+en/yes/15c563d7_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.37	1.00	630
+en/yes/161fcca8_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	1.00	570
+en/yes/1746d7b6_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.37	0.65	280
+en/yes/1942abd7_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes.	0.09	0.61	560
+en/yes/19b05529_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yeah	0.00	1.00	450
+en/yes/1a892463_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	0.95	590
+en/yes/1b4c9b89_nohash_2.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.21	0.83	510
+en/yes/1cbcc7a7_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	1.00	1000
+en/yes/20d3f11f_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	0.63	310
+en/yes/2197f41c_nohash_2.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.13	1.00	780
+en/yes/229978fd_nohash_2.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	1.00	980
+en/yes/24befdb3_nohash_2.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.20	1.00	640
+en/yes/24c9f572_nohash_1.wav	valid speech	Whisper hears the expected word	en	yes	yes.	0.03	0.71	680
+en/yes/264f471d_nohash_3.wav	valid speech	Whisper hears the expected word	en	yes	yes	0.29	1.00	710
+en/yes/28ce0c58_nohash_3.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	1.00	570
+en/yes/28e47b1a_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.10	1.00	720
+en/yes/28ed6bc9_nohash_3.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.50	0.83	350
+en/yes/29b81b73_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	yes	0.01	0.53	520
+en/yes/300384f0_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.16	0.51	350
+en/yes/3209ec42_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.29	1.00	700
+en/yes/324210dd_nohash_4.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	0.73	520
+en/yes/32561e9e_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.63	1.00	330
+en/yes/32561e9e_nohash_1.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	0.76	480
+en/yes/3402e488_nohash_4.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.38	0.85	470
+en/yes/35d1b6ee_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.06	0.64	580
+en/yes/36050ef3_nohash_2.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.33	0.92	590
+en/yes/36050ef3_nohash_4.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.14	0.66	510
+en/yes/370844f7_nohash_1.wav	valid speech	Whisper hears the expected word	en	yes	Yes.	0.33	0.81	480
+en/yes/38d78313_nohash_2.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.26	0.84	580
+en/yes/3ab9ba07_nohash_2.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.02	1.00	940
+en/yes/3b8406c0_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	0.96	580
+en/yes/3bc21161_nohash_1.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.23	0.83	600
+en/yes/3e31dffe_nohash_2.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.02	1.00	630
+en/yes/41285056_nohash_2.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	0.93	560
+en/yes/41285056_nohash_3.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	0.93	580
+en/yes/421ed23f_nohash_1.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.19	0.70	450
+en/yes/4620dc14_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.12	0.41	290
+en/yes/46a153d8_nohash_2.wav	valid speech	Whisper hears other words and the voice detector finds a voice	en	yes	please	0.00	1.00	670
+en/yes/471a0925_nohash_1.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	0.90	570
+en/yes/48a8a69d_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.53	1.00	470
+en/yes/49af4432_nohash_3.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.19	0.67	480
+en/yes/4a1e736b_nohash_1.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.24	0.86	620
+en/yes/4c62312c_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.41	1.00	590
+en/yes/4f781a59_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	0.92	920
+en/yes/50f55535_nohash_1.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	0.45	370
+en/yes/5184ed3e_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.46	0.94	480
+en/yes/5195f0ec_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes.	0.61	1.00	390
+en/yes/5588c7e6_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	1.00	560
+en/yes/563aa4e6_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	0.84	470
+en/yes/56eb74ae_nohash_2.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.22	0.90	680
+en/yes/56eb74ae_nohash_3.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.32	1.00	680
+en/yes/57376a4c_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes.	0.00	0.66	660
+en/yes/589bce2c_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	1.00	1000
+en/yes/59c3a7f2_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	0.72	600
+en/yes/5fb88f4c_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	1.00	1000
+en/yes/617de221_nohash_4.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	1.00	920
+en/yes/6205088b_nohash_1.wav	valid speech	Whisper hears the expected word	en	yes	Yeah	0.00	1.00	680
+en/yes/62581901_nohash_1.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	0.85	410
+en/yes/6c0f6493_nohash_2.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.36	0.93	570
+en/yes/6f2f57c1_nohash_1.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.23	1.00	750
+en/yes/6f689791_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	0.65	440
+en/yes/70a00e98_nohash_3.wav	valid speech	Whisper hears the expected word	en	yes	Yes.	0.26	0.82	560
+en/yes/712e4d58_nohash_4.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.59	1.00	410
+en/yes/71904de3_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	1.00	850
+en/yes/71f6fed7_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	0.91	430
+en/yes/7211390b_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.25	0.93	680
+en/yes/73124b26_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes.	0.04	0.48	440
+en/yes/76424fa5_nohash_1.wav	valid speech	Whisper hears the expected word	en	yes	Yes.	0.00	1.00	350
+en/yes/7799c9cd_nohash_1.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	0.85	850
+en/yes/7846fd85_nohash_1.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	0.84	470
+en/yes/7846fd85_nohash_4.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.26	0.66	400
+en/yes/7ca023e2_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.42	1.00	580
+en/yes/7f74626f_nohash_4.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	1.00	680
+en/yes/7ff085e1_nohash_1.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	0.90	600
+en/yes/8012c69d_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.31	0.76	450
+en/yes/8012c69d_nohash_3.wav	valid speech	Whisper hears the expected word	en	yes	Yes.	0.04	0.56	510
+en/yes/8056e897_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	0.86	860
+en/yes/834f03fe_nohash_3.wav	valid speech	Whisper hears the expected word	en	yes	Yes.	0.18	0.62	440
+en/yes/86402da1_nohash_2.wav	valid speech	Whisper hears the expected word	en	yes	yes	0.02	0.73	630
+en/yes/881583a6_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes.	0.10	0.61	510
+en/yes/8931f494_nohash_1.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.35	0.63	280
+en/yes/8a28231e_nohash_1.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.47	0.95	480
+en/yes/8c7b691a_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.03	0.82	790
+en/yes/8d8d9855_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes.	0.04	0.60	560
+en/yes/96a48d28_nohash_4.wav	valid speech	Whisper hears the expected word	en	yes	Yes.	0.04	0.67	630
+en/yes/977a3be4_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.03	0.77	670
+en/yes/97ae8b25_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.21	0.59	380
+en/yes/97f4c236_nohash_2.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.03	1.00	790
+en/yes/99e6cab8_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	0.89	860
+en/yes/9aa21fa9_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.40	0.95	550
+en/yes/9db2bfe9_nohash_3.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.47	1.00	530
+en/yes/a24cf51c_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	1.00	1000
+en/yes/a4b21cbc_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes.	0.00	1.00	420
+en/yes/a4c938ce_nohash_1.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	0.77	770
+en/yes/a5d485dc_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.51	0.82	310
+en/yes/ac4b3fc3_nohash_1.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.47	1.00	510
+en/yes/ad89eb1e_nohash_2.wav	valid speech	Whisper hears the expected word	en	yes	yes	0.00	0.78	710
+en/yes/ae71797c_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes.	0.51	0.77	260
+en/yes/af7a8296_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.26	0.52	260
+en/yes/b00c4c53_nohash_1.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.47	0.78	310
+en/yes/b41a92a3_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.29	0.64	350
+en/yes/b4aa9fef_nohash_1.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.15	0.67	520
+en/yes/b5552931_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.11	0.58	470
+en/yes/b5552931_nohash_1.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.15	0.60	450
+en/yes/b84f83d2_nohash_1.wav	valid speech	Whisper hears the expected word	en	yes	Yes.	0.03	0.30	270
+en/yes/b9f46737_nohash_3.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.35	0.99	630
+en/yes/bbaa7946_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.26	0.98	720
+en/yes/bd11a2e7_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.42	0.89	470
+en/yes/be7a5b2d_nohash_3.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	0.99	890
+en/yes/bfaf2000_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.24	0.75	510
+en/yes/c0445658_nohash_1.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.48	1.00	520
+en/yes/c103a2d5_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	0.75	750
+en/yes/c120e80e_nohash_7.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.37	0.93	560
+en/yes/c1d39ce8_nohash_1.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.22	1.00	780
+en/yes/c1d39ce8_nohash_2.wav	valid speech	Whisper hears the expected word	en	yes	Yes.	0.00	1.00	660
+en/yes/c634a189_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	1.00	780
+en/yes/c90c0105_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.40	0.95	520
+en/yes/c93d5e22_nohash_1.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.72	1.00	280
+en/yes/cb164eea_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	0.89	610
+en/yes/cb2929ce_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.19	0.74	560
+en/yes/cb2929ce_nohash_6.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.10	0.67	570
+en/yes/cb8f8307_nohash_2.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.10	0.66	560
+en/yes/cb8f8307_nohash_5.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.10	0.66	560
+en/yes/cc6ee39b_nohash_3.wav	valid speech	Whisper hears the expected word	en	yes	Yes.	0.09	0.70	610
+en/yes/d0faf7e4_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.15	0.67	520
+en/yes/d312f481_nohash_1.wav	valid speech	Whisper hears the expected word	en	yes	Yes.	0.00	0.87	870
+en/yes/d4d898d7_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.15	0.48	330
+en/yes/d53e25ba_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes.	0.32	0.78	460
+en/yes/d9d6559e_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.38	0.83	450
+en/yes/dabf67d9_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.21	0.88	670
+en/yes/db72a474_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes.	0.03	0.39	360
+en/yes/db9cd41d_nohash_1.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.05	0.63	580
+en/yes/dbb7723a_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.36	0.76	320
+en/yes/df1d5024_nohash_2.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	0.42	340
+en/yes/e0344f60_nohash_1.wav	valid speech	Whisper hears the expected word	en	yes	Yes.	0.26	1.00	730
+en/yes/e77d88fc_nohash_1.wav	valid speech	Whisper hears the expected word	en	yes	Yes.	0.00	0.74	590
+en/yes/ec5ab5d5_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.22	0.77	460
+en/yes/f2dd248e_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.38	1.00	620
+en/yes/f34e6f44_nohash_2.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	0.72	490
+en/yes/f3957e23_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.03	1.00	810
+en/yes/f7879738_nohash_1.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	0.76	390
+en/yes/f9318c93_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.19	0.67	480
+en/yes/fe5c4a7a_nohash_0.wav	valid speech	Whisper hears the expected word	en	yes	Yes	0.00	0.81	660
+sent/clnsp1012.wav	valid speech	Whisper hears the expected word	en	sentence	These curves were derived by an analysis of extensive sky	0.07	4.00	3830
+sent/clnsp103.wav	valid speech	Whisper hears the expected word	en	sentence	In earlier years, the preservation of food was essential.	0.00	4.00	3480
+sent/clnsp1044.wav	valid speech	Whisper hears the expected word	en	sentence	a flame with usap air. One of these is the solidarity and com-	0.00	4.00	3480
+sent/clnsp1049.wav	valid speech	Whisper hears the expected word	en	sentence	weakness in leadership. She always could sense the shag and of a	0.00	4.00	3760
+sent/clnsp1050.wav	valid speech	Whisper hears the expected word	en	sentence	Have you got enough blanket? Closer still regular barricades of.	0.00	4.00	3630
+sent/clnsp1053.wav	valid speech	Whisper hears the expected word	en	sentence	under this law, annual grants are given to systems in substantial amounts.	0.00	3.99	3780
+sent/clnsp1054.wav	valid speech	Whisper hears the expected word	en	sentence	Encourage them to exercise their benefits. Use deduct	0.18	4.00	3320
+sent/clnsp1058.wav	valid speech	Whisper hears the expected word	en	sentence	The museum hires musicians every evening. A roll of wire lay near the wall.	0.00	4.00	3600
+sent/clnsp1067.wav	valid speech	Whisper hears the expected word	en	sentence	Okay, take the tray. That'll be plenty to eat by. Presently, his-	0.00	4.00	3130
+sent/clnsp1078.wav	valid speech	Whisper hears the expected word	en	sentence	Drunkenness was no longer tolerated. It would be well to sh-	0.00	4.00	3750
+sent/clnsp1081.wav	valid speech	Whisper hears the expected word	en	sentence	This is the second year your mother's donated my fishing tackle to the bizarre. She-	0.00	4.00	3580
+sent/clnsp1083.wav	valid speech	Whisper hears the expected word	en	sentence	Stay right here where your kid, he cold. The kid has no manners.	0.00	4.00	3470
+sent/clnsp1093.wav	valid speech	Whisper hears the expected word	en	sentence	Another brand of indefinite reference arises out of the use of the double verb.	0.00	4.00	3570
+sent/clnsp1096.wav	valid speech	Whisper hears the expected word	en	sentence	No more startling contrast to a system of cell and satellites could...	0.00	4.00	3980
+sent/clnsp1097.wav	valid speech	Whisper hears the expected word	en	sentence	may have a point in urging that decadent themes be given fewer prizes.	0.00	4.00	3730
+sent/clnsp110.wav	valid speech	Whisper hears the expected word	en	sentence	Fill small hole in bowl with clay. Chaser assembled in bowl.	0.00	4.00	3500
+sent/clnsp116.wav	valid speech	Whisper hears the expected word	en	sentence	His sure-sure was enthusiastic this time to care of him and maybe you'll make...	0.00	4.00	3680
+sent/clnsp119.wav	valid speech	Whisper hears the expected word	en	sentence	They own a big house in the remote countryside. He picked up	0.00	4.00	3760
+sent/clnsp123.wav	valid speech	Whisper hears the expected word	en	sentence	their curiosity went happily out of bounds. Yes, ma'am, the children-	0.00	4.00	3660
+sent/clnsp125.wav	valid speech	Whisper hears the expected word	en	sentence	My sincere wish is that he continues to add to this record he said.	0.00	4.00	3880
+sent/clnsp127.wav	valid speech	Whisper hears the expected word	en	sentence	They were shown how to advance against an enemy outpost atop a cleared ring.	0.00	4.00	3940
+sent/clnsp132.wav	valid speech	Whisper hears the expected word	en	sentence	Thus far, the advances made have been almost entirely along fun.	0.00	4.00	3660
+sent/clnsp134.wav	valid speech	Whisper hears the expected word	en	sentence	to many experts, the strand was inevitable. They considered	0.06	4.00	3380
+sent/clnsp146.wav	valid speech	Whisper hears the expected word	en	sentence	They all like long hot showers. A young mouse scampered across the field.	0.00	4.00	3730
+sent/clnsp154.wav	valid speech	Whisper hears the expected word	en	sentence	Where can we get this cereal he likes so much? Homemade	0.00	4.00	3550
+sent/clnsp163.wav	valid speech	Whisper hears the expected word	en	sentence	He looked lazy, spoiled, a little quarreless.	0.00	3.83	3370
+sent/clnsp164.wav	valid speech	Whisper hears the expected word	en	sentence	Perhaps it was right, perhaps it was just. He merely said	0.08	4.00	3420
+sent/clnsp175.wav	valid speech	Whisper hears the expected word	en	sentence	The ramifications of the issue are enormous.	0.00	4.00	3630
+sent/clnsp180.wav	valid speech	Whisper hears the expected word	en	sentence	Let us differentiate a few of these ideas. It is the	0.00	4.00	3270
+sent/clnsp198.wav	valid speech	Whisper hears the expected word	en	sentence	but such cases were in the past unusual. When did women?	0.00	4.00	3870
+sent/clnsp210.wav	valid speech	Whisper hears the expected word	en	sentence	He checked into a motel and drove downtown. The sheriff's swivel chair.	0.00	4.00	3730
+sent/clnsp215.wav	valid speech	Whisper hears the expected word	en	sentence	How come you're writing the rods kids like you? Now forget	0.00	4.00	3600
+sent/clnsp233.wav	valid speech	Whisper hears the expected word	en	sentence	Hope to see you again. Two gas lamps were no more than a...	0.00	4.00	3560
+sent/clnsp235.wav	valid speech	Whisper hears the expected word	en	sentence	Would you allow acts of violence? How do oysters make pearls?	0.00	3.82	3520
+sent/clnsp236.wav	valid speech	Whisper hears the expected word	en	sentence	How's your luck honey? "Stake me" she said. And let me at the...	0.01	4.00	3070
+sent/clnsp245.wav	valid speech	Whisper hears the expected word	en	sentence	We now generalize these ideas for general binomial experiments.	0.00	4.00	3900
+sent/clnsp246.wav	valid speech	Whisper hears the expected word	en	sentence	under this law, annual grants are given to systems in substantial amounts.	0.00	3.99	3800
+sent/clnsp251.wav	valid speech	Whisper hears the expected word	en	sentence	22 or 23. "Snakes are ugly," he said again.	0.06	3.66	3340
+sent/clnsp267.wav	valid speech	Whisper hears the expected word	en	sentence	Confusion became chaos. Each succeeding day brought new acts.	0.00	4.00	3570
+sent/clnsp27.wav	valid speech	Whisper hears the expected word	en	sentence	The Mayan neoclassic scholar disappeared while serving	0.00	4.00	3730
+sent/clnsp278.wav	valid speech	Whisper hears the expected word	en	sentence	Why buy oil when you always use mine? They enjoy it when I add	0.00	4.00	3330
+sent/clnsp280.wav	valid speech	Whisper hears the expected word	en	sentence	One could hear a very faint lady-like sigh of relief as a result.	0.00	4.00	3560
+sent/clnsp31.wav	valid speech	Whisper hears the expected word	en	sentence	He ate four extra eggs for breakfast. We plan to build a new beverage.	0.00	4.00	3780
+sent/clnsp317.wav	valid speech	Whisper hears the expected word	en	sentence	Last year's gas shortage caused steep price increases.	0.00	3.73	3170
+sent/clnsp318.wav	valid speech	Whisper hears the expected word	en	sentence	Alimony harms a divorced man's wealth. Illuminum silverware can't off.	0.15	4.00	3630
+sent/clnsp319.wav	valid speech	Whisper hears the expected word	en	sentence	He had not covered 100 yards before a gun crashed from somewhere behind.	0.00	4.00	3630
+sent/clnsp320.wav	valid speech	Whisper hears the expected word	en	sentence	Don't ask me to carry an oily rag like that. Soon the office...	0.00	4.00	3510
+sent/clnsp322.wav	valid speech	Whisper hears the expected word	en	sentence	the government sought authorization of his citizenship. As Khaua	0.00	4.00	3640
+sent/clnsp332.wav	valid speech	Whisper hears the expected word	en	sentence	Are you underwriting expensive team trips? Are you utilizing vending?	0.00	4.00	3630
+sent/clnsp333.wav	valid speech	Whisper hears the expected word	en	sentence	help celebrate your brother's success. Only the most accomplished artists	0.00	4.00	3630
+sent/clnsp339.wav	valid speech	Whisper hears the expected word	en	sentence	in the pity for them his loneliness was gone. It is the same all same	0.00	4.00	3710
+sent/clnsp345.wav	valid speech	Whisper hears the expected word	en	sentence	The mixing head moves back and forth slowly across the width of the wrist.	0.00	4.00	3750
+sent/clnsp349.wav	valid speech	Whisper hears the expected word	en	sentence	is a dream simply a mental or cerebral movie in most	0.00	4.00	3690
+sent/clnsp364.wav	valid speech	Whisper hears the expected word	en	sentence	Why pick me for your patty? Why accuse a shipmate of being behind?	0.00	4.00	3290
+sent/clnsp374.wav	valid speech	Whisper hears the expected word	en	sentence	He reached once more into the carpet bag and brought up a package.	0.00	4.00	3980
+sent/clnsp381.wav	valid speech	Whisper hears the expected word	en	sentence	The Mayan neoclassic scholar disappeared while serving	0.00	4.00	3810
+sent/clnsp383.wav	valid speech	Whisper hears the expected word	en	sentence	The fish began to leap frantically on the surface of the small	0.00	4.00	3940
+sent/clnsp384.wav	valid speech	Whisper hears the expected word	en	sentence	The filtered air benefits allergies asthma sinus hay fever.	0.00	3.97	3480
+sent/clnsp385.wav	valid speech	Whisper hears the expected word	en	sentence	Encyclopedias seldom present anecdotal evidence.	0.04	3.60	3520
+sent/clnsp406.wav	valid speech	Whisper hears the expected word	en	sentence	There work mirrors the mentality of the psychopath,	0.05	4.00	3560
+sent/clnsp408.wav	valid speech	Whisper hears the expected word	en	sentence	The deans can form an important bridge between the President and the faculty.	0.00	3.96	3750
+sent/clnsp410.wav	valid speech	Whisper hears the expected word	en	sentence	His history is his alone, yet each man must recognize his own	0.01	4.00	3810
+sent/clnsp420.wav	valid speech	Whisper hears the expected word	en	sentence	How will we work it out? A lot of people will roam the streets and	0.00	4.00	3740
+sent/clnsp422.wav	valid speech	Whisper hears the expected word	en	sentence	The farmer's life must be arranged to meet the demands of crops and life.	0.00	4.00	3680
+sent/clnsp436.wav	valid speech	Whisper hears the expected word	en	sentence	they consider it simply as a sign of our times. While he was in custody...	0.00	3.80	3190
+sent/clnsp439.wav	valid speech	Whisper hears the expected word	en	sentence	This theory eventually proved in exact. The Heavens Refuge	0.16	4.00	3390
+sent/clnsp44.wav	valid speech	Whisper hears the expected word	en	sentence	If they are not ellipsoids, the conclusions will be a reasonable approach.	0.00	4.00	3910
+sent/clnsp447.wav	valid speech	Whisper hears the expected word	en	sentence	A rabbit punch redoubled him. No more could he defend himself against them.	0.00	4.00	3810
+sent/clnsp45.wav	valid speech	Whisper hears the expected word	en	sentence	He showed puny men attacked by splendidly tyrannical machines.	0.00	4.00	3910
+sent/clnsp470.wav	valid speech	Whisper hears the expected word	en	sentence	I honor my mom.	0.00	4.00	3640
+sent/clnsp478.wav	valid speech	Whisper hears the expected word	en	sentence	Their results, a study of literature, freed from the tyranny of	0.00	4.00	3840
+sent/clnsp485.wav	valid speech	Whisper hears the expected word	en	sentence	how much will it cost to do any necessary modernizing?	0.00	4.00	3810
+sent/clnsp496.wav	valid speech	Whisper hears the expected word	en	sentence	Many selections are themselves convincing contributions to the surprising	0.00	4.00	3880
+sent/clnsp500.wav	valid speech	Whisper hears the expected word	en	sentence	They'll move around that rock all day following the shade. He gaze.	0.00	4.00	3400
+sent/clnsp51.wav	valid speech	Whisper hears the expected word	en	sentence	Those who are not purest use canned vegetables when making stew the f-	0.00	4.00	3710
+sent/clnsp510.wav	valid speech	Whisper hears the expected word	en	sentence	The failure to keep these two usages distinct present.	0.00	4.00	3800
+sent/clnsp512.wav	valid speech	Whisper hears the expected word	en	sentence	about dawn he got up to blow. It had assumed that	0.00	4.00	3530
+sent/clnsp52.wav	valid speech	Whisper hears the expected word	en	sentence	many experts, this trend was inevitable. They consider it symph...	0.00	4.00	3380
+sent/clnsp54.wav	valid speech	Whisper hears the expected word	en	sentence	One of the problems associated with the expressway stems from the basic	0.00	4.00	3670
+sent/clnsp547.wav	valid speech	Whisper hears the expected word	en	sentence	it has multiple implications and possible headaches for your marketing.	0.00	4.00	3870
+sent/clnsp553.wav	valid speech	Whisper hears the expected word	en	sentence	all not coronals, arige and protein, the so-called	0.00	4.00	3420
+sent/clnsp556.wav	valid speech	Whisper hears the expected word	en	sentence	Add intervals and alumni directories issued between meeting	0.00	4.00	3600
+sent/clnsp560.wav	valid speech	Whisper hears the expected word	en	sentence	then the choreographer must arbitrate. He must rearrange	0.00	4.00	3520
+sent/clnsp562.wav	valid speech	Whisper hears the expected word	en	sentence	Both eventualities are possible logically, but practically they are	0.00	4.00	3670
+sent/clnsp567.wav	valid speech	Whisper hears the expected word	en	sentence	Too many new things are happening for it to be a complete	0.00	4.00	3490
+sent/clnsp57.wav	valid speech	Whisper hears the expected word	en	sentence	She radiated warmth from good fellowship. We can die too. We can die.	0.00	4.00	3440
+sent/clnsp572.wav	valid speech	Whisper hears the expected word	en	sentence	His eyes burned feverishly. Come on, he whispered. A floor level's about three.	0.00	4.00	3570
+sent/clnsp584.wav	valid speech	Whisper hears the expected word	en	sentence	If any of us miss, they can pick up the pieces.	0.00	4.00	3550
+sent/clnsp586.wav	valid speech	Whisper hears the expected word	en	sentence	where only one club existed before he said "two will flourish."	0.00	4.00	3200
+sent/clnsp587.wav	valid speech	Whisper hears the expected word	en	sentence	But if she wasn't interested, she'd just go back to the same life she'd left.	0.00	4.00	3940
+sent/clnsp593.wav	valid speech	Whisper hears the expected word	en	sentence	The misprint provoked an immediate disclaimer. A large household	0.00	4.00	3680
+sent/clnsp594.wav	valid speech	Whisper hears the expected word	en	sentence	Women may never become completely equal to men.	0.00	4.00	3530
+sent/clnsp601.wav	valid speech	Whisper hears the expected word	en	sentence	All nut kernels are rich in protein, the so-called vegetable ivory.	0.00	4.00	3690
+sent/clnsp604.wav	valid speech	Whisper hears the expected word	en	sentence	His failure to open the store by 8 cost him his job.	0.00	4.00	3540
+sent/clnsp606.wav	valid speech	Whisper hears the expected word	en	sentence	Corey attacked the project with extra determination. You always come up with	0.00	4.00	3390
+sent/clnsp608.wav	valid speech	Whisper hears the expected word	en	sentence	Family Loyalty's and corporate work have been unbroken for generations.	0.00	4.00	3740
+sent/clnsp611.wav	valid speech	Whisper hears the expected word	en	sentence	What elements of our behavior are decisive? American newspaper reviews	0.15	4.00	3610
+sent/clnsp614.wav	valid speech	Whisper hears the expected word	en	sentence	He did not mind the useless kindly questions. Have you got enough f**k?	0.00	4.00	3580
+sent/clnsp616.wav	valid speech	Whisper hears the expected word	en	sentence	her eyes were glazed as if she didn't hear or even see him. No girl.	0.00	4.00	3600
+sent/clnsp633.wav	valid speech	Whisper hears the expected word	en	sentence	Don't look for group valuables in a bank vault. Suburban housewife	0.00	4.00	3610
+sent/clnsp652.wav	valid speech	Whisper hears the expected word	en	sentence	Some of them ignored the text and had apparently memorized the words	0.00	4.00	3850
+sent/clnsp662.wav	valid speech	Whisper hears the expected word	en	sentence	their curiosity went happily out of bounds. Yes, ma'am, the children-	0.00	4.00	3630
+sent/clnsp665.wav	valid speech	Whisper hears the expected word	en	sentence	Manual leveling requires an appropriate display of the accelerometer.	0.00	3.94	3890
+sent/clnsp680.wav	valid speech	Whisper hears the expected word	en	sentence	First add milk to the shredded cheese. Sveurical gifts are difficult.	0.15	4.00	3640
+sent/clnsp686.wav	valid speech	Whisper hears the expected word	en	sentence	In flammatory cells were strikingly absent. These were thought to	0.00	4.00	3630
+sent/clnsp687.wav	valid speech	Whisper hears the expected word	en	sentence	He checked into a motel and drove downtown. The sheriff's swivel chair.	0.00	4.00	3760
+sent/clnsp699.wav	valid speech	Whisper hears the expected word	en	sentence	The groundhog clearly saw his shadow but stayed out only a minute.	0.00	4.00	3300
+sent/clnsp70.wav	valid speech	Whisper hears the expected word	en	sentence	Why said the teacher, "Are they so late? He who does not love."	0.00	4.00	3670
+sent/clnsp709.wav	valid speech	Whisper hears the expected word	en	sentence	but it must be remembered that the plan should not be oriented to the geography.	0.00	4.00	3690
+sent/clnsp713.wav	valid speech	Whisper hears the expected word	en	sentence	There's still such a thing as mental illness. Her hum became a girl.	0.11	4.00	3320
+sent/clnsp727.wav	valid speech	Whisper hears the expected word	en	sentence	County officials have cooperated consistently with that herod.	0.00	4.00	3470
+sent/clnsp732.wav	valid speech	Whisper hears the expected word	en	sentence	All three must compare notes and agree to go. They were chasing a f-	0.00	4.00	3680
+sent/clnsp734.wav	valid speech	Whisper hears the expected word	en	sentence	The structures housing the apartments are of masonry and frame	0.00	4.00	3920
+sent/clnsp736.wav	valid speech	Whisper hears the expected word	en	sentence	My own experience has followed simpler lines. Religion thus	0.00	4.00	3420
+sent/clnsp740.wav	valid speech	Whisper hears the expected word	en	sentence	Steve collects rare and novel coins. I'll receive the	0.00	4.00	3230
+sent/clnsp741.wav	valid speech	Whisper hears the expected word	en	sentence	the farmer's wife must be arranged to meet the demand.	0.00	4.00	3140
+sent/clnsp749.wav	valid speech	Whisper hears the expected word	en	sentence	It does not indicate loose management in effective controls or poor p-	0.00	4.00	3750
+sent/clnsp774.wav	valid speech	Whisper hears the expected word	en	sentence	the sides broken so chop the wood instead. With dry only as	0.00	4.00	3580
+sent/clnsp783.wav	valid speech	Whisper hears the expected word	en	sentence	One of the most common of camp maladies was diarrhea.	0.00	4.00	3620
+sent/clnsp787.wav	valid speech	Whisper hears the expected word	en	sentence	breaks streaked behind us and what eyes they were.	0.00	4.00	3660
+sent/clnsp791.wav	valid speech	Whisper hears the expected word	en	sentence	The clouds bulge downward and burst settingly into a great...	0.00	4.00	3970
+sent/clnsp792.wav	valid speech	Whisper hears the expected word	en	sentence	Fill that canteen with fresh spring water. Gently place	0.00	4.00	3520
+sent/clnsp80.wav	valid speech	Whisper hears the expected word	en	sentence	There's no chance now of all of us getting away, you'll have to try it alone.	0.00	4.00	3740
+sent/clnsp803.wav	valid speech	Whisper hears the expected word	en	sentence	He wondered if it were the old anxiety or the old thoughts.	0.00	3.99	3650
+sent/clnsp806.wav	valid speech	Whisper hears the expected word	en	sentence	Our campus unfortunately owns no films. The battery	0.13	4.00	3310
+sent/clnsp827.wav	valid speech	Whisper hears the expected word	en	sentence	Lifeboats were stuck fast. Even those ropes.	0.00	3.80	3270
+sent/clnsp832.wav	valid speech	Whisper hears the expected word	en	sentence	ideally he knew, it should be proceeded by concrete progress at low	0.00	4.00	3690
+sent/clnsp835.wav	valid speech	Whisper hears the expected word	en	sentence	Mom strongly dislikes appetizers. She is thinner than I am.	0.00	4.00	3520
+sent/clnsp836.wav	valid speech	Whisper hears the expected word	en	sentence	Steam baths, rights. Do Steam baths have any...	0.00	4.00	2420
+sent/clnsp842.wav	valid speech	Whisper hears the expected word	en	sentence	and a few caraway seats too if you'd like.	0.00	4.00	3500
+sent/clnsp846.wav	valid speech	Whisper hears the expected word	en	sentence	Eat your raisins, outdoors on the porch steps. Did you eat yet?	0.00	4.00	3570
+sent/clnsp850.wav	valid speech	Whisper hears the expected word	en	sentence	Now don't tell me what a good ball player you are. Baseball is no cinch.	0.00	4.00	3480
+sent/clnsp851.wav	valid speech	Whisper hears the expected word	en	sentence	This may be of overriding importance in considering military	0.00	4.00	3870
+sent/clnsp879.wav	valid speech	Whisper hears the expected word	en	sentence	Should the accelerating growth of technology then warn us?	0.00	4.00	3630
+sent/clnsp884.wav	valid speech	Whisper hears the expected word	en	sentence	the plaintiff in school desegregation cases. Why else would Dan	0.00	4.00	3560
+sent/clnsp893.wav	valid speech	Whisper hears the expected word	en	sentence	Knows the score with a supreme effort. He broke it off. Maybe they already...	0.00	4.00	3730
+sent/clnsp908.wav	valid speech	Whisper hears the expected word	en	sentence	such legislation was clarified and extended from time	0.00	4.00	3780
+sent/clnsp919.wav	valid speech	Whisper hears the expected word	en	sentence	Of course you can have another Tunifish sandwich. There was a gigantic...	0.00	4.00	3570
+sent/clnsp923.wav	valid speech	Whisper hears the expected word	en	sentence	will rub and wear a yellow lily, swing your arm as high as you can.	0.00	4.00	3770
+sent/clnsp94.wav	valid speech	Whisper hears the expected word	en	sentence	where only one club existed before he said "two will flourish."	0.00	4.00	3160
+sent/clnsp95.wav	valid speech	Whisper hears the expected word	en	sentence	The trouble is that like many symbols it doesn't seem a very realist	0.00	4.00	3930
+sent/clnsp953.wav	valid speech	Whisper hears the expected word	en	sentence	Fiddles screeched a piano tingle. They stayed at hotels and	0.15	4.00	3320
+sent/clnsp964.wav	valid speech	Whisper hears the expected word	en	sentence	Time and space have both become cinematic. Not surprised.	0.00	4.00	3480
+sent/clnsp968.wav	valid speech	Whisper hears the expected word	en	sentence	You young men get to be my age, you won't take flu so lightly. In the-	0.00	4.00	3580
+sent/clnsp973.wav	valid speech	Whisper hears the expected word	en	sentence	They used pink tan or cream powder.	0.00	4.00	3350
+sent/clnsp976.wav	valid speech	Whisper hears the expected word	en	sentence	Does Hindu ideology honor cows? How ancient is this?	0.00	4.00	3510
+sent/clnsp978.wav	valid speech	Whisper hears the expected word	en	sentence	My ideal morning begins with hot coffee. The Erate Actor Stun	0.00	4.00	3570
+sent/clnsp980.wav	valid speech	Whisper hears the expected word	en	sentence	This viscosity of the material and the drops is, of course.	0.00	3.73	3490
+sent/clnsp982.wav	valid speech	Whisper hears the expected word	en	sentence	The causeway ended abruptly at the shore. Even I occasionally get	0.12	4.00	3570
+sent/clnsp986.wav	valid speech	Whisper hears the expected word	en	sentence	Buying a thorough bread horse requires intuition and expertise.	0.00	4.00	3780

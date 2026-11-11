@@ -1,24 +1,27 @@
-report	speech|ar/cancel/00000020_NO_01.wav|N10
-report	speech|en/go/0d53e045_nohash_0.wav|S40
-report	speech|en/no/15c563d7_nohash_1.wav|S40
-report	speech|en/stop/7014b07e_nohash_1.wav|S40
-report	speech|en/stop/b1114e4f_nohash_0.wav|S20
-report	speech|en/stop/b1114e4f_nohash_0.wav|S30
-report	speech|en/stop/b1114e4f_nohash_0.wav|S40
-report	speech|en/stop/f8f60f59_nohash_1.wav|N10
-report	speech|en/stop/f8f60f59_nohash_1.wav|S20
-report	speech|en/stop/f8f60f59_nohash_1.wav|S30
-report	speech|en/stop/f8f60f59_nohash_1.wav|S40
-report	speech|en/stop/fd395b74_nohash_3.wav|S40
-report	speech|en/stop/fd395b74_nohash_4.wav|S30
-report	speech|en/stop/fd395b74_nohash_4.wav|S40
-report	speech|en/yes/f34e6f44_nohash_2.wav|S40
-tune	speech|en/go/b01c8f61_nohash_0.wav|N5
-tune	speech|en/no/735845ab_nohash_0.wav|N10
-tune	speech|en/no/ced835d3_nohash_1.wav|S20
-tune	speech|en/no/ced835d3_nohash_1.wav|S30
-tune	speech|en/no/ced835d3_nohash_1.wav|S40
-tune	speech|en/stop/778a4a01_nohash_1.wav|S40
-tune	speech|en/stop/b959cd0c_nohash_0.wav|N10
-tune	speech|en/stop/b959cd0c_nohash_0.wav|S20
-tune	speech|en/stop/b959cd0c_nohash_0.wav|S30
+report	speech|ar/cancel/00000020_NO_01.wav|N10	none
+report	speech|en/go/0d53e045_nohash_0.wav|S40	none
+report	speech|en/no/15c563d7_nohash_1.wav|S40	none
+report	speech|en/stop/7014b07e_nohash_1.wav|S40	none
+report	speech|en/stop/b1114e4f_nohash_0.wav|S20	none
+report	speech|en/stop/b1114e4f_nohash_0.wav|S30	none
+report	speech|en/stop/b1114e4f_nohash_0.wav|S40	none
+report	speech|en/stop/f8f60f59_nohash_1.wav|N10	none
+report	speech|en/stop/f8f60f59_nohash_1.wav|S20	none
+report	speech|en/stop/f8f60f59_nohash_1.wav|S30	none
+report	speech|en/stop/f8f60f59_nohash_1.wav|S40	none
+report	speech|en/stop/fd395b74_nohash_3.wav|S40	none
+report	speech|en/stop/fd395b74_nohash_4.wav|S30	none
+report	speech|en/stop/fd395b74_nohash_4.wav|S40	none
+report	speech|en/yes/28ce0c58_nohash_3.wav|S20	early
+report	speech|en/yes/97f4c236_nohash_2.wav|S20	early
+report	speech|en/yes/f34e6f44_nohash_2.wav|S40	none
+tune	speech|en/go/5c8af87a_nohash_0.wav|S20	early
+tune	speech|en/go/b01c8f61_nohash_0.wav|N5	none
+tune	speech|en/no/735845ab_nohash_0.wav|N10	none
+tune	speech|en/no/ced835d3_nohash_1.wav|S20	none
+tune	speech|en/no/ced835d3_nohash_1.wav|S30	none
+tune	speech|en/no/ced835d3_nohash_1.wav|S40	none
+tune	speech|en/stop/778a4a01_nohash_1.wav|S40	none
+tune	speech|en/stop/b959cd0c_nohash_0.wav|N10	none
+tune	speech|en/stop/b959cd0c_nohash_0.wav|S20	none
+tune	speech|en/stop/b959cd0c_nohash_0.wav|S30	none
