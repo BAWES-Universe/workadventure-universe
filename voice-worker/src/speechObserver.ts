@@ -30,6 +30,13 @@ const WINDOW_MS = 32;
 const GAP_RESET_MS = 100;
 /** The detector's firing and today's gate count as agreeing when they come within this of each other for the same person. */
 const AGREE_MS = 600;
+/**
+ * Deciding: how often a waiting gate decision checks that the detector keeps up with this person. Audio of theirs
+ * given to it (at least FALLBACK_AUDIO_MS) with no answer for any of it in this time means it is falling behind,
+ * and today's behaviour applies.
+ */
+const FALLBACK_CHECK_MS = 500;
+const FALLBACK_AUDIO_MS = 96;
 const EMPTY = new Float32Array(0);
 
 /** Which way the audio came: a person's own peer connection, or the bubble's LiveKit room. */
@@ -55,6 +62,14 @@ export interface SessionObserver {
     drop(match: (participantId: string, epoch: number) => boolean): void;
     /** Today's gate decided this person is speaking (and whether that stopped the bot's voice): counted beside the detector's own firings. */
     baseline(participantId: string, stoppedTheVoice: boolean): void;
+    /**
+     * Today's gate heard something loud enough from this person to count as speaking. Watching only, or whenever the
+     * detector cannot tell (not loaded, switched off, not watching this person, falling behind), `go` is called at once,
+     * which is today's behaviour. Deciding, `go` is called once the detector also hears speech from them, at once if it
+     * already does; and never if it does not (a fan, typing, a knock), or once they are no longer heard. The returned
+     * function says the stretch is over: nothing more is waited for. `go` is called at most once.
+     */
+    confirm(participantId: string, epoch: number, go: () => void): () => void;
     /** The session is over. For good: nothing given to this handle afterwards is taken. */
     close(): void;
 }
@@ -69,6 +84,11 @@ export interface SpeechObserverSettings {
     maxQueuedMsTotal?: number;
     /** People watched at once; more are not watched. Default 64. */
     maxStreams?: number;
+    /**
+     * Whether it decides when someone counts as speaking (see `SessionObserver.confirm`). Off, it only counts. Default
+     * off.
+     */
+    decides?: boolean;
     /** Failures in a row after which the observer switches itself off until the worker restarts. Default 5. */
     maxFailures?: number;
     /** People judged in one call to the detector, when it can take several (`runMany`). Default 32. */
@@ -110,6 +130,18 @@ interface Owner {
     spokeAt: number;
     /** Per person: which path they are on, and the last unmatched firing and gate decision. At most `maxStreams` people. */
     marks: Map<string, { path: ObserverPath; epoch: number; firingAt: number; baselineAt: number }>;
+    /** Per person: today's gate heard them, and the detector has not heard speech from them yet. */
+    pending: Map<string, Pending>;
+}
+
+/** A gate decision waiting on the detector. */
+interface Pending {
+    epoch: number;
+    go: () => void;
+    /** Their audio given to the observer, and their windows answered, since the last look. */
+    offeredMs: number;
+    answered: number;
+    timer?: NodeJS.Timeout;
 }
 
 class Stream {
@@ -200,6 +232,7 @@ export class SpeechObserver {
     private readonly maxStream: number;
     private readonly maxTotal: number;
     private readonly maxStreams: number;
+    private readonly decides: boolean;
     private readonly maxFailures: number;
     private readonly maxBatch: number;
     private readonly inferenceTimeout: number;
@@ -211,6 +244,7 @@ export class SpeechObserver {
         this.maxStream = Math.round(((options.maxQueuedMsPerStream ?? 400) * RATE) / 1000);
         this.maxTotal = Math.round(((options.maxQueuedMsTotal ?? 16000) * RATE) / 1000);
         this.maxStreams = options.maxStreams ?? 64;
+        this.decides = options.decides === true;
         this.maxFailures = options.maxFailures ?? 5;
         this.maxBatch = Math.max(1, options.maxBatch ?? 32);
         this.inferenceTimeout = options.inferenceTimeoutMs ?? 2000;
@@ -279,6 +313,8 @@ export class SpeechObserver {
         if (this.status !== 'on') return;
         this.status = 'off';
         this.options.counters.inc(counter);
+        // Whoever was waiting on the detector is decided as today, and so is everyone after this
+        for (const owner of this.owners) for (const participantId of [...owner.pending.keys()]) this.decide(owner, participantId, 'observer_decide_fallback');
         this.clear('failed');
         if (this.outstanding) void this.outstanding.then(() => this.release());
         else void this.release();
@@ -298,7 +334,10 @@ export class SpeechObserver {
         this.streams.clear();
         this.line.length = 0;
         this.queuedSamples = 0;
-        for (const owner of this.owners) owner.marks.clear();
+        for (const owner of this.owners) {
+            owner.marks.clear();
+            for (const participantId of [...owner.pending.keys()]) this.forgetPending(owner, participantId);
+        }
         clearTimeout(this.sweepTimer);
         this.sweepTimer = undefined;
     }
@@ -308,7 +347,7 @@ export class SpeechObserver {
      * `botSpeaking` is only read, to count how much was observed while the bot was talking.
      */
     session(sessionId: string, about: { botSpeaking?: () => boolean } = {}): SessionObserver {
-        const owner: Owner = { id: ++this.sessions, sessionId, closed: false, botSpeaking: about.botSpeaking, spokeAt: -Infinity, marks: new Map() };
+        const owner: Owner = { id: ++this.sessions, sessionId, closed: false, botSpeaking: about.botSpeaking, spokeAt: -Infinity, marks: new Map(), pending: new Map() };
         this.owners.add(owner);
         const c = this.options.counters;
         const mine = (): Stream[] => [...this.streams.values()].filter((stream) => stream.owner === owner);
@@ -329,6 +368,8 @@ export class SpeechObserver {
                 try {
                     for (const stream of mine()) if (match(stream.participantId, stream.epoch)) this.end(stream, 'revoked');
                     for (const [participantId, mark] of [...owner.marks]) if (match(participantId, mark.epoch)) owner.marks.delete(participantId);
+                    // No longer heard: nothing of theirs is acted on
+                    for (const [participantId, pending] of [...owner.pending]) if (match(participantId, pending.epoch)) this.forgetPending(owner, participantId);
                 } catch {
                     c.inc('observer_errors');
                 }
@@ -341,15 +382,110 @@ export class SpeechObserver {
                     c.inc('observer_errors');
                 }
             },
+            confirm: (participantId, epoch, go) => {
+                let once = false;
+                const call = (): void => {
+                    if (once) return;
+                    once = true;
+                    try {
+                        go();
+                    } catch {
+                        c.inc('observer_errors');
+                    }
+                };
+                if (!this.decides) {
+                    call();
+                    return () => undefined;
+                }
+                try {
+                    return this.ask(owner, participantId, epoch, call);
+                } catch {
+                    c.inc('observer_errors');
+                    c.inc('observer_decide_fallback');
+                    call();
+                    return () => undefined;
+                }
+            },
             close: () => {
                 if (owner.closed) return;
                 // Closed first, so nothing that arrives while the rest of the session shuts down is taken
                 owner.closed = true;
+                for (const participantId of [...owner.pending.keys()]) this.forgetPending(owner, participantId);
                 for (const stream of mine()) this.end(stream, 'revoked');
                 owner.marks.clear();
                 this.owners.delete(owner);
             },
         };
+    }
+
+    /**
+     * Deciding: today's gate heard this person. `go` at once when the detector already hears speech from them, or cannot
+     * tell; otherwise once it does. Returns how to say the stretch is over.
+     */
+    private ask(owner: Owner, participantId: string, epoch: number, go: () => void): () => void {
+        const c = this.options.counters;
+        c.inc('observer_decide_asked');
+        const stream = this.streams.get(`${owner.id}\n${participantId}`);
+        // Not able to tell: not loaded, switched off, closing, or not watching this person (beyond the limit, or their audio
+        // was just started afresh): today's behaviour
+        if (owner.closed || this.status !== 'on' || !this.model || !stream || stream.ended || stream.epoch !== epoch) {
+            c.inc('observer_decide_fallback');
+            go();
+            return () => undefined;
+        }
+        if (stream.evidence >= MIN_MS) {
+            c.inc('observer_decide_confirmed');
+            c.inc('observer_decide_at_once');
+            go();
+            return () => undefined;
+        }
+        this.forgetPending(owner, participantId);
+        const pending: Pending = { epoch, go, offeredMs: 0, answered: 0 };
+        owner.pending.set(participantId, pending);
+        this.checkLater(owner, participantId, pending);
+        return () => {
+            if (owner.pending.get(participantId) !== pending) return;
+            // The stretch ended and the detector never heard speech in it: today's gate would have stopped the bot here
+            c.inc('observer_decide_held');
+            try {
+                if (owner.botSpeaking?.() === true || performance.now() - owner.spokeAt <= AGREE_MS) c.inc('observer_decide_held_bot_speaking');
+            } catch {
+                c.inc('observer_errors');
+            }
+            this.forgetPending(owner, participantId);
+        };
+    }
+
+    /** Every FALLBACK_CHECK_MS while it waits: audio of theirs given, and none of it answered, is the detector falling behind. */
+    private checkLater(owner: Owner, participantId: string, pending: Pending): void {
+        pending.timer = setTimeout(() => {
+            if (owner.pending.get(participantId) !== pending) return;
+            if (pending.offeredMs >= FALLBACK_AUDIO_MS && pending.answered === 0) {
+                this.decide(owner, participantId, 'observer_decide_fallback_slow');
+                return;
+            }
+            pending.offeredMs = 0;
+            pending.answered = 0;
+            this.checkLater(owner, participantId, pending);
+        }, FALLBACK_CHECK_MS);
+        pending.timer.unref?.();
+    }
+
+    /** Says go for a waiting decision, once, and counts why. */
+    private decide(owner: Owner, participantId: string, counter: string): void {
+        const pending = owner.pending.get(participantId);
+        if (!pending) return;
+        this.forgetPending(owner, participantId);
+        this.options.counters.inc(counter);
+        if (counter.startsWith('observer_decide_fallback_')) this.options.counters.inc('observer_decide_fallback');
+        pending.go();
+    }
+
+    private forgetPending(owner: Owner, participantId: string): void {
+        const pending = owner.pending.get(participantId);
+        if (!pending) return;
+        clearTimeout(pending.timer);
+        owner.pending.delete(participantId);
     }
 
     /** Stops watching a stream: its waiting audio goes at once and is counted under why, and it leaves the line. */
@@ -372,6 +508,12 @@ export class SpeechObserver {
         }
         if (this.streams.get(stream.key) === stream) this.streams.delete(stream.key);
         c.inc('observer_streams_ended');
+        // Dropped because the detector could not keep up, or failed: a decision waiting on it is made as today. Not
+        // heard any more (revoked): nothing. Their audio paused (idle) or was lost on the way (reset): their next audio
+        // starts a new stream, which goes on deciding.
+        if ((reason === 'expired' || reason === 'overflow' || reason === 'failed') && stream.owner.pending.get(stream.participantId)?.epoch === stream.epoch) {
+            this.decide(stream.owner, stream.participantId, 'observer_decide_fallback_behind');
+        }
     }
 
     private take(owner: Owner, frame: InputFrame, path: ObserverPath): void {
@@ -383,6 +525,8 @@ export class SpeechObserver {
         const now = performance.now();
         c.inc('observer_offered_ms', ms);
         c.inc(`observer_offered_ms_${path}`, ms);
+        const pending = owner.pending.get(frame.participantId);
+        if (pending && pending.epoch === frame.epoch) pending.offeredMs += ms;
         const mark = owner.marks.get(frame.participantId);
         if (mark) {
             mark.path = path;
@@ -589,6 +733,11 @@ export class SpeechObserver {
                     }
                     if (result.probability >= ON) c.inc('observer_speech_windows');
                     if (stream.judge(result.probability)) this.fired(stream, now);
+                    const pending = stream.owner.pending.get(stream.participantId);
+                    if (pending && pending.epoch === stream.epoch) {
+                        pending.answered++;
+                        if (stream.evidence >= MIN_MS) this.decide(stream.owner, stream.participantId, 'observer_decide_confirmed');
+                    }
                     try {
                         this.options.onVerdict?.({ sessionId: stream.owner.sessionId, participantId: stream.participantId, epoch: stream.epoch, probability: result.probability, ageMs });
                     } catch {

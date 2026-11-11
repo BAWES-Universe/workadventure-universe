@@ -7,6 +7,9 @@ import { DEFAULT_MAX_PREVIEWS, DEFAULT_MAX_PREVIEW_SECONDS } from './preview.ts'
 import { sileroLoader } from './speechObserverRuntime.ts';
 import { DEFAULT_MAX_REPLY_SECONDS, DEFAULT_MAX_UTTERANCE_SECONDS, DEFAULT_SPEECH_TIMEOUT_SECONDS, type WorkerOptions } from './server.ts';
 
+/** People the speech observer watches at once when switched on: the load it was measured at (9 + 6). */
+export const DEFAULT_SPEECH_OBSERVER_MAX_STREAMS = 15;
+
 const int = (value: string | undefined, fallback: number): number => {
     const parsed = Number.parseInt(value ?? '', 10);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -41,9 +44,20 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv = process.env): WorkerOpti
         maxPreviewSeconds: int(env.VOICE_MAX_PREVIEW_SECONDS, DEFAULT_MAX_PREVIEW_SECONDS),
         maxPreviews: int(env.VOICE_MAX_PREVIEWS, DEFAULT_MAX_PREVIEWS),
         recognitionFinalTimeoutSeconds: int(env.VOICE_RECOGNITION_FINAL_TIMEOUT_SECONDS, DEFAULT_SONIOX_FINAL_TIMEOUT_MS / 1000),
-        // Internal and off unless both are set: a second listener that only counts (speechObserver.ts). It changes nothing anyone hears.
+        // The speech detector (speechObserver.ts), on when both are set (the image sets both). On, a sound counts as someone
+        // speaking (stopping the bot's voice and holding back its reply) only once the detector also hears speech, and as
+        // today whenever it cannot tell; VOICE_SPEECH_OBSERVER_WATCH_ONLY=1 leaves today's rule alone and only counts.
+        // It watches at most VOICE_SPEECH_OBSERVER_MAX_STREAMS people at once (default 15, the load it was measured at: 9
+        // people in 3 proximity sessions and 6 in 2 LiveKit rooms); anyone beyond that is simply not watched.
         ...(env.VOICE_SPEECH_OBSERVER === '1' && env.VOICE_SPEECH_OBSERVER_MODEL
-            ? { speechObserver: { load: sileroLoader({ modelPath: env.VOICE_SPEECH_OBSERVER_MODEL, runtime: env.VOICE_SPEECH_OBSERVER_RUNTIME, env }) } }
+            ? {
+                  speechObserver: {
+                      load: sileroLoader({ modelPath: env.VOICE_SPEECH_OBSERVER_MODEL, runtime: env.VOICE_SPEECH_OBSERVER_RUNTIME, env }),
+                      maxStreams: int(env.VOICE_SPEECH_OBSERVER_MAX_STREAMS, DEFAULT_SPEECH_OBSERVER_MAX_STREAMS),
+                      // It decides whether a sound is someone speaking, unless told only to watch
+                      decides: env.VOICE_SPEECH_OBSERVER_WATCH_ONLY !== '1',
+                  },
+              }
             : {}),
     };
 }

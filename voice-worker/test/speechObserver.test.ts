@@ -894,6 +894,14 @@ describe('off unless the worker is started with it', () => {
         expect(optionsFromEnv({ VOICE_SPEECH_OBSERVER: '1', VOICE_SPEECH_OBSERVER_MODEL: '/m.onnx' }).speechObserver).toBeDefined();
     });
 
+    it('switched on, watches at most 15 people at once unless told otherwise', () => {
+        const on = { VOICE_SPEECH_OBSERVER: '1', VOICE_SPEECH_OBSERVER_MODEL: '/m.onnx' };
+        expect(optionsFromEnv(on).speechObserver?.maxStreams).toBe(15);
+        expect(optionsFromEnv({ ...on, VOICE_SPEECH_OBSERVER_MAX_STREAMS: '6' }).speechObserver?.maxStreams).toBe(6);
+        expect(optionsFromEnv({ ...on, VOICE_SPEECH_OBSERVER_MAX_STREAMS: '0' }).speechObserver?.maxStreams).toBe(15);
+        expect(optionsFromEnv({ ...on, VOICE_SPEECH_OBSERVER_MAX_STREAMS: 'many' }).speechObserver?.maxStreams).toBe(15);
+    });
+
     it('a worker started without it never asks for a detector and says nothing about one', async () => {
         const worker = new VoiceWorker({ port: 0, host: '127.0.0.1', maxLanes: 1, maxSessionsPerConnection: 1, ice: { iceServers: [] } });
         expect(worker.stats().speechObserver).toBeUndefined();

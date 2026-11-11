@@ -40,6 +40,12 @@ export interface RecognitionOptions {
     bargeInMs?: number;
     /** A person is speaking (not just a sound): called once per stretch, as soon as it is clear. Local, no recognizer involved. */
     onSpeaking?(participantId: string): void;
+    /**
+     * Asked once per stretch when it is loud enough for long enough (the barge-in time): calls `go` when it is speech,
+     * which may be at once, later, or never (only a noise). The stretch counts as speaking, and `onSpeaking` is called,
+     * only then. Returns how to say the stretch is over. Absent: loud enough is speaking, at once.
+     */
+    confirmSpeech?(participantId: string, epoch: number, go: () => void): () => void;
     /** No audio at all this long while someone is speaking counts as a pause too (a sender that sends nothing while silent). Default: the pause. */
     idleMs?: number;
     counters: Counters;
@@ -61,6 +67,9 @@ interface Turn {
     /** Voiced audio so far, and whether the stretch has been called speech yet. */
     voicedMs: number;
     speaking: boolean;
+    /** Loud enough for long enough, and asked whether it is speech; and how to say the stretch is over to whoever was asked. */
+    asked: boolean;
+    settleAsk?: () => void;
     /** user.speech_started has gone out: only once it is speech (or words came through), never for a click or a cough. */
     announced: boolean;
     /** The last words heard. */
@@ -155,10 +164,23 @@ export class Recognition {
         turn.quietMs = voiced ? 0 : turn.quietMs + ms;
         c.inc('speech_ms', Math.round(ms));
         if (voiced) turn.voicedMs += ms;
-        if (!turn.speaking && turn.voicedMs >= (this.options.bargeInMs ?? DEFAULT_BARGE_IN_MS)) {
-            turn.speaking = true;
-            this.announce(turn, frame.participantId, frame.epoch);
-            this.options.onSpeaking?.(frame.participantId);
+        if (!turn.asked && turn.voicedMs >= (this.options.bargeInMs ?? DEFAULT_BARGE_IN_MS)) {
+            turn.asked = true;
+            const participantId = frame.participantId;
+            const epoch = frame.epoch;
+            const go = (): void => {
+                if (turn.speaking || turn.over || this.disposed) return;
+                turn.speaking = true;
+                turn.settleAsk = undefined;
+                this.announce(turn, participantId, epoch);
+                this.options.onSpeaking?.(participantId);
+            };
+            if (this.options.confirmSpeech) {
+                const settle = this.options.confirmSpeech(participantId, epoch, go);
+                if (!turn.speaking) turn.settleAsk = settle;
+            } else {
+                go();
+            }
         }
         turn.recognizer.push(frame.pcm16k);
         if (turn.over) return;
@@ -176,6 +198,7 @@ export class Recognition {
     /** The person paused: no more audio is coming for this stretch, so its recognizer says the final words. */
     private pause(person: Person, turn: Turn): void {
         clearTimeout(turn.timer);
+        this.settle(turn);
         if (person.speaking === turn) person.speaking = undefined;
         turn.recognizer.finish();
     }
@@ -211,6 +234,7 @@ export class Recognition {
             gapMs: 0,
             voicedMs: 0,
             speaking: false,
+            asked: false,
             announced: false,
             text: '',
             over: false,
@@ -267,6 +291,13 @@ export class Recognition {
         return turn;
     }
 
+    /** The stretch is over (paused or ended) before it was ever called speech: nothing more is waited for. */
+    private settle(turn: Turn): void {
+        const settle = turn.settleAsk;
+        turn.settleAsk = undefined;
+        settle?.();
+    }
+
     /** Tells the bot server someone is speaking, once per stretch. A short noise never gets this far, so it holds back no reply. */
     private announce(turn: Turn, participantId: string, epoch: number): void {
         if (turn.announced) return;
@@ -279,6 +310,7 @@ export class Recognition {
         if (turn.over) return;
         turn.over = true;
         clearTimeout(turn.timer);
+        this.settle(turn);
         person.open.delete(turn);
         if (person.speaking === turn) person.speaking = undefined;
         turn.recognizer.close();
@@ -338,6 +370,7 @@ export class Recognition {
         for (const person of this.people.values()) {
             for (const turn of person.open) {
                 clearTimeout(turn.timer);
+                this.settle(turn);
                 turn.recognizer.close();
             }
         }

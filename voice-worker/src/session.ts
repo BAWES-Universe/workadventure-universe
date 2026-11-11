@@ -140,6 +140,9 @@ export class Session {
                   onFinal: ({ participantId, hearMs }) => this.heardTurn(settings.recognition?.adapter, participantId, hearMs),
                   // A person speaking over the bot stops its voice at once, here, with no round trip; and a reply is
                   // likely soon, so the speaking provider gets ready for it
+                  // With the speech detector deciding, loud enough is speaking only once it also hears speech (so a
+                  // fan, typing or a knock neither stops the bot nor holds back its reply); whenever it cannot tell, at once
+                  ...(observer ? { confirmSpeech: (participantId: string, epoch: number, go: () => void) => observer.confirm(participantId, epoch, go) } : {}),
                   onSpeaking: (participantId) => {
                       const stopped = this.speaker.bargeIn();
                       this.speaker.prepare();
