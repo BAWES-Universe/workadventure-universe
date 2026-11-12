@@ -43,8 +43,10 @@ vi.mock("../../Stores/StoredWokaStore", async () => {
             store.readable<string | undefined>(`drawn:${textures[0].url}`),
     };
 });
+// The person's chat address: null until their chat signed in
+const me = vi.hoisted(() => ({ chatId: "@omar:chat.test" as string | null }));
 vi.mock("../../../Connection/LocalUserStore", () => ({
-    localUserStore: { getChatId: () => "@omar:chat.test" },
+    localUserStore: { getChatId: () => me.chatId },
 }));
 vi.mock("../../../Stores/MenuStore", async () => {
     const store = await import("svelte/store");
@@ -65,6 +67,7 @@ import {
     myBricksStore,
     myDeletedBrickChatIds,
     myDeletedBricksStore,
+    refreshMyChatId,
     setMyBrickEnabled,
     undoMyBrick,
     withMyBricks,
@@ -160,6 +163,23 @@ describe("a person's own Bricks", () => {
         const byChatId = get(myBricksByChatId);
         expect([...byChatId.keys()]).toEqual([`@bot_${BRICK}:chat.test`, `@bot_${MADE}:chat.test`]);
         expect(byChatId.get(`@bot_${MADE}:chat.test`)?.name).toBe("Recipe Brick");
+    });
+
+    it("are found by their chat address once the chat signs in, even when they were read before it did", async () => {
+        me.chatId = null;
+        const seen: number[] = [];
+        const stop = myBricksByChatId.subscribe((byChatId) => seen.push(byChatId.size));
+        try {
+            await loadMyBricks();
+            expect(get(myBricksByChatId).size).toBe(0);
+            me.chatId = "@omar:chat.test";
+            refreshMyChatId();
+            expect([...get(myBricksByChatId).keys()]).toEqual([`@bot_${BRICK}:chat.test`, `@bot_${MADE}:chat.test`]);
+            expect(seen.at(-1)).toBe(2);
+        } finally {
+            stop();
+            me.chatId = "@omar:chat.test";
+        }
     });
 });
 

@@ -217,3 +217,5 @@ export { default as IconTicket } from "~icons/tabler/ticket";
 export { default as IconFileSpreadsheet } from "~icons/tabler/file-spreadsheet";
 export { default as IconCircleCheck } from "~icons/tabler/circle-check";
 export { default as IconHandFinger } from "~icons/tabler/hand-finger";
+export { default as IconPhoneOff } from "~icons/tabler/phone-off";
+export { default as IconPhoneCall } from "~icons/tabler/phone-call";
