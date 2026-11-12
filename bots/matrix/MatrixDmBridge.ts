@@ -249,6 +249,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
     private directChatClaims = new Map<string, number>();
     /** The hand-overs of a guest's chat already brought into a chat (#1997), so one is never brought twice. */
     private carriedChats = new Set<string>();
+    /** The hand-overs being brought right now, so an ask that comes meanwhile waits for how that ends. */
+    private carrying = new Map<string, Promise<'sent' | 'wait'>>();
     /** Bots Orbit last said don't exist: how many times in a row, and when that was last counted. */
     private botNotFound = new Map<string, { inARow: number; at: number }>();
     /** When each chat last got a live answer: a message left there while the bot rested, older than that, is passed. */
@@ -535,24 +537,32 @@ export class MatrixDmBridge implements MatrixEventHandler {
         if (botIdFromMatrixId(this.config.domain, matrixUserId)) return 'wait';
         const key = `${MatrixDmBridge.pair(botId, matrixUserId)}|${carryId}`;
         if (this.carriedChats.has(key)) return 'already';
-        // Taken before anything is looked at or sent, so two asks at once bring it once
-        this.carriedChats.add(key);
-        if (this.carriedChats.size > CARRIED_CHATS_MAX) this.carriedChats.delete(this.carriedChats.values().next().value!);
+        // Taken before anything is looked at or sent, so two asks at once bring it once; the second waits for how the first ends
+        // and says "already" only if it was sent (a device is told to drop its copy on "already", so it must be there)
+        const inFlight = this.carrying.get(key);
+        if (inFlight) return (await inFlight) === 'sent' ? 'already' : 'wait';
+        const sending = this.sendCarried(botId, matrixUserId, carryId, lines);
+        this.carrying.set(key, sending);
         try {
-            const known = await this.lookUpDirectRoom(botId, matrixUserId);
-            if (!known.roomId) {
-                this.carriedChats.delete(key);
-                return 'wait';
+            const result = await sending;
+            if (result === 'sent') {
+                this.carriedChats.add(key);
+                if (this.carriedChats.size > CARRIED_CHATS_MAX) this.carriedChats.delete(this.carriedChats.values().next().value!);
             }
-            const body = lines.map((line) => `${line.from === 'guest' ? 'You' : 'Brick'}: ${line.text}`).join('\n');
-            // The same transaction id for every try of this hand-over: a try that failed after the homeserver had taken the message is not sent twice
-            const txnId = createHash('sha256').update(`guest-chat|${botId}|${matrixUserId}|${carryId}`).digest('hex');
-            await this.client.sendMessage(this.botUserId(botId), known.roomId, { msgtype: 'm.text', body, [GUEST_CHAT_KEY]: lines }, txnId);
-            return 'sent';
-        } catch (error: any) {
-            this.carriedChats.delete(key);
-            throw error;
+            return result;
+        } finally {
+            this.carrying.delete(key);
         }
+    }
+
+    private async sendCarried(botId: string, matrixUserId: string, carryId: string, lines: GuestChatNote[]): Promise<'sent' | 'wait'> {
+        const known = await this.lookUpDirectRoom(botId, matrixUserId);
+        if (!known.roomId) return 'wait';
+        const body = lines.map((line) => `${line.from === 'guest' ? 'You' : 'Brick'}: ${line.text}`).join('\n');
+        // The same transaction id for every try of this hand-over: a try that failed after the homeserver had taken the message is not sent twice
+        const txnId = createHash('sha256').update(`guest-chat|${botId}|${matrixUserId}|${carryId}`).digest('hex');
+        await this.client.sendMessage(this.botUserId(botId), known.roomId, { msgtype: 'm.text', body, [GUEST_CHAT_KEY]: lines }, txnId);
+        return 'sent';
     }
 
     private async claimDirectChat(botId: string, matrixUserId: string): Promise<boolean> {

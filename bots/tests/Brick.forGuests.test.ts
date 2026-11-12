@@ -364,6 +364,33 @@ describe("A guest's chat, brought along when they sign in", () => {
         expect(await bridge.carryGuestChat(BRICK, ALICE, 'another-guest', [...LINES])).toBe('sent');
     });
 
+    it('does not say "already" while the first ask is still sending, so a second tab never drops a chat that then fails to send', async () => {
+        const { bridge, client } = bridgeWithChat(true);
+        let fail: (error: Error) => void = () => undefined;
+        client.sendMessage.mockImplementationOnce(
+            () =>
+                new Promise<string>((_resolve, reject) => {
+                    fail = reject;
+                })
+        );
+
+        const first = bridge.carryGuestChat(BRICK, ALICE, GUEST, [...LINES]);
+        const second = bridge.carryGuestChat(BRICK, ALICE, GUEST, [...LINES]);
+        const secondSettled = vi.fn();
+        second.then(secondSettled, secondSettled);
+        await new Promise((resolve) => {
+            setTimeout(resolve, 10);
+        });
+        // Still sending: the second has not been told "already"
+        expect(secondSettled).not.toHaveBeenCalled();
+
+        fail(new Error('homeserver down'));
+        await expect(first).rejects.toThrow('homeserver down');
+        await expect(second).rejects.toThrow('homeserver down');
+        // Neither was brought, so the next ask brings it
+        expect(await bridge.carryGuestChat(BRICK, ALICE, GUEST, [...LINES])).toBe('sent');
+    });
+
     it('waits when the chat is not there yet, and brings it after a failed send on the next ask', async () => {
         const none = bridgeWithChat(false);
         expect(await none.bridge.carryGuestChat(BRICK, ALICE, GUEST, [...LINES])).toBe('wait');
