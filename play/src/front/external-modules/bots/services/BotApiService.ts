@@ -1202,6 +1202,54 @@ export class BotApiService {
     }
 
     /**
+     * What a Brick's page says about visiting, for the room the person is in (game #2005): `{ state, place }`. Orbit
+     * answers only its owner. Throws when it refuses or can't be reached.
+     */
+    async getBrickVisit(brickId: string, roomUrl: string): Promise<unknown> {
+        const response = await this.fetch(
+            `/api/bricks/${encodeURIComponent(brickId)}/visit?roomUrl=${encodeURIComponent(roomUrl)}`
+        );
+        return response.json();
+    }
+
+    /**
+     * "Bring along" (game #2005): the Brick walks beside its owner from the room they are in. Whichever Brick walked
+     * with them before goes home. Throws with `status` 409 when the place does not take visiting Bricks or the Brick is
+     * switched off.
+     */
+    async startBrickVisit(brickId: string, roomUrl: string): Promise<unknown> {
+        const response = await this.fetch(`/api/bricks/${encodeURIComponent(brickId)}/visit`, {
+            method: "POST",
+            body: JSON.stringify({ roomUrl }),
+        });
+        return response.json();
+    }
+
+    /** "End visit" (game #2005): the Brick goes home. Only the visit goes; nothing of the Brick changes. */
+    async endBrickVisit(brickId: string): Promise<unknown> {
+        const response = await this.fetch(`/api/bricks/${encodeURIComponent(brickId)}/visit`, { method: "DELETE" });
+        return response.json();
+    }
+
+    /**
+     * Tells the bot server the person walked into a room, brought a Brick along or ended the visit, so the Brick they
+     * walk with is put beside them on this room's map or taken off it (game #2005). `position` is only where it first
+     * appears. Never throws: without it the Brick is put on the map the next time the person walks into a room.
+     */
+    async syncVisitingBrick(position?: { x: number; y: number }): Promise<void> {
+        const roomId = this.roomId;
+        if (!this.botServerUrl || !roomId) return;
+        try {
+            await this.fetchBotServer("/api/bricks/visit/sync", {
+                method: "POST",
+                body: JSON.stringify({ roomId, ...(position ?? {}) }),
+            });
+        } catch (error) {
+            console.warn("Could not put the Brick beside you", error);
+        }
+    }
+
+    /**
      * "Not now" on a Brick's suggestion (game #1996): kept with the person's account, so the same topic is not
      * suggested again in any chat or on any device. Throws when it could not be kept.
      */

@@ -23,6 +23,7 @@
     import { botStatusColour } from "../../Chat/Bots/BotChatStatus";
     import { botFeeling, WORK_EMOJI } from "../../Chat/Bots/BotMood";
     import { botCardInfo, type BotCardInfo } from "../../external-modules/bots/botCardInfo";
+    import { visitingWith } from "../../Chat/Bricks/BrickVisit";
     import BotFeelings from "../../external-modules/bots/components/BotFeelings.svelte";
     import PersonCardView from "./PersonCardView.svelte";
     import { worldUsersStore } from "./personCardContext";
@@ -87,7 +88,18 @@
     $: statusStore = isSelf
         ? availabilityStatusStore
         : worldUser?.reactiveUser.availabilityStatus ?? readable(undefined);
-    $: status = cardStatus(isBot, $botAvailability, $statusStore, isSelf, isMyOtherSession, $LL);
+    // A Brick that walks beside someone (game #2005) says whose it is and who it is with, in the place of "Online", unless
+    // it is resting or not ready: that is worth more to know
+    $: visiting = isBot ? visitingWith(worldUser?.tags) : undefined;
+    $: ordinaryStatus = cardStatus(isBot, $botAvailability, $statusStore, isSelf, isMyOtherSession, $LL);
+    $: status =
+        visiting && ordinaryStatus?.colour === botStatusColour("online")
+            ? {
+                  label: `${$LL.chat.brick.madeBy({ name: visiting })} · ${$LL.chat.brick.visitingWith({
+                      name: visiting,
+                  })}`,
+              }
+            : ordinaryStatus;
 
     function cardStatus(
         bot: boolean,
@@ -224,6 +236,11 @@
                 {#if $botInfo.description}
                     <p class="bot-description">{$botInfo.description}</p>
                 {/if}
+                {#if visiting}
+                    <p class="bot-visiting" data-testid="visitingBrickLine">
+                        {$LL.chat.brick.visitingCardLine({ name: visiting })}
+                    </p>
+                {/if}
                 {#if $botInfo.emotions !== undefined}
                     <BotFeelings botName={displayName(wokaMenuData.wokaName)} emotions={$botInfo.emotions} />
                 {/if}
@@ -235,6 +252,12 @@
 {/if}
 
 <style lang="scss">
+    .bot-visiting {
+        margin: 0 18px 10px;
+        font-size: 14px;
+        line-height: 1.45;
+        color: rgb(255 255 255 / 0.62);
+    }
     .bot-description {
         margin: 4px 18px 10px;
         font-size: 15px;

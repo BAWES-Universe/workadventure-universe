@@ -6,8 +6,12 @@
     import type { BotData, BrickChange, BrickPageWay } from "../../external-modules/bots/types";
     import { warningMessageStore } from "../../Stores/ErrorStore";
     import { brickPageBot, shortDay, type BrickCard } from "./Brick";
+    import PageButton from "../../external-modules/bots/components/page/PageButton.svelte";
     import BrickPicture from "./BrickPicture.svelte";
+    import { canOfferBringAlong } from "./BrickVisit";
+    import { bringBrickAlong, brickVisitStore, endBrickVisit, loadBrickVisit } from "./BrickVisitStore";
     import { brickUndoDays, changeMyBrick, deleteMyBrick } from "./MyBricksStore";
+    import { IconWalk } from "@wa-icons";
 
     /**
      * A Brick's own page (game #1996), opened by a tap on its row on the Bricks page: the bot page every bot has (mock
@@ -28,6 +32,11 @@
     let failed = false;
     let deleting = false;
     let loadedFor: string | undefined;
+    let visitBusy = false;
+
+    // What the page says about visiting (#2005), for the room the person is in: read again for each Brick it opens on
+    $: visit = $brickVisitStore;
+    $: loadBrickVisit(brick.id).catch((error) => console.error(error));
 
     $: if (brick.id !== loadedFor) load(brick);
 
@@ -54,6 +63,33 @@
         files: undefined,
     } satisfies BrickPageWay;
 
+    function bringAlong() {
+        if (visitBusy) return;
+        visitBusy = true;
+        bringBrickAlong(brick.id)
+            .then((refusal) => {
+                if (refusal)
+                    warningMessageStore.addWarningMessage($LL.chat.brick.bringAlongFailed({ name: brick.name }));
+            })
+            .catch((error) => console.error(error))
+            .finally(() => {
+                visitBusy = false;
+            });
+    }
+
+    function endVisit() {
+        if (visitBusy) return;
+        visitBusy = true;
+        endBrickVisit(brick.id)
+            .then((ended) => {
+                if (!ended) warningMessageStore.addWarningMessage($LL.chat.brick.endVisitFailed());
+            })
+            .catch((error) => console.error(error))
+            .finally(() => {
+                visitBusy = false;
+            });
+    }
+
     function onDelete() {
         if (deleting) return;
         deleting = true;
@@ -75,6 +111,37 @@
         {#if bot}
             <BotDetailView {bot} brick={way} {deleting} onSave={() => {}} {onDelete}>
                 <BrickPicture slot="look" look={bot.characterTexture || brick.characterTextureId} size={44} />
+                <svelte:fragment slot="visit">
+                    {#if visit?.state === "visiting"}
+                        <div class="bkp-visit" data-testid="brickVisiting">
+                            <span class="bkp-visit-state">
+                                <span class="bkp-dot" aria-hidden="true" />
+                                {visit.place
+                                    ? $LL.chat.brick.visitingPlace({ place: visit.place })
+                                    : $LL.chat.brick.visiting()}
+                            </span>
+                            <PageButton tall disabled={visitBusy} testId="brickEndVisit" on:click={endVisit}
+                                >{$LL.chat.brick.endVisit()}</PageButton
+                            >
+                        </div>
+                        <p class="bkp-visit-line">{$LL.chat.brick.endVisitLine()}</p>
+                    {:else if visit?.state === "blocked"}
+                        <p class="bkp-visit-line bkp-blocked" data-testid="brickVisitBlocked">
+                            {$LL.chat.brick.notTaken({ place: visit.place, name: brick.name })}
+                        </p>
+                    {:else if canOfferBringAlong(brick, visit)}
+                        <div class="bkp-visit">
+                            <PageButton tall disabled={visitBusy} testId="brickBringAlong" on:click={bringAlong}
+                                ><IconWalk font-size="18" />{$LL.chat.brick.bringAlong()}</PageButton
+                            >
+                        </div>
+                        <p class="bkp-visit-line">
+                            {visit?.place
+                                ? $LL.chat.brick.bringAlongLine({ name: brick.name, place: visit.place })
+                                : $LL.chat.brick.bringAlongLineNoPlace({ name: brick.name })}
+                        </p>
+                    {/if}
+                </svelte:fragment>
             </BotDetailView>
         {:else if failed}
             <p class="bkp-note bkp-bad" data-testid="brickPageFailed">{$LL.chat.brick.loadFailed()}</p>
@@ -110,6 +177,39 @@
     }
     .bkp-bad {
         color: #ff8a7a;
+    }
+    .bkp-visit {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 2px 0 0;
+    }
+    .bkp-visit-state {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+        font-size: 15px;
+        font-weight: 650;
+        color: #c4b5fd;
+    }
+    .bkp-dot {
+        flex: none;
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: #34d399;
+    }
+    .bkp-visit-line {
+        margin: 0;
+        padding: 4px 2px 10px;
+        font-size: 13px;
+        line-height: 1.4;
+        color: rgba(244, 242, 250, 0.64);
+    }
+    .bkp-blocked {
+        padding-top: 8px;
     }
     .bkp-pill {
         align-self: flex-start;

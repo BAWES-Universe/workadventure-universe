@@ -12,6 +12,7 @@ import { gameManager } from "../../Phaser/Game/GameManager";
 import { wokaMenuStore, type WokaMenuData, type WokaMenuAction } from "../../Stores/WokaMenuStore";
 import { warningMessageStore } from "../../Stores/ErrorStore";
 import { refreshThisDeviceOnce } from "../../Notification/Push/PushDevice";
+import { provideOwnPosition } from "../../Chat/Bricks/BrickVisitStore";
 import { getBotServerUrl } from "./services/BotServerUrl";
 import { botApiService } from "./services/BotApiService";
 import { summonFailureLine, type SummonFailure } from "./services/summonFailure";
@@ -788,6 +789,43 @@ function setupBotEditor(options: ExtensionModuleOptions) {
     }
 }
 
+/**
+ * Has the bot server put the Brick this person brought along beside them on this room's map (game #2005), once they are
+ * signed in and the game has their place. The Brick stays where the person is brought along or walks in; nothing happens
+ * for a guest, who brings nobody along.
+ */
+function ownPlace(): { x: number; y: number } | undefined {
+    const player = gameManager.getCurrentGameScene()?.CurrentPlayer;
+    return player ? { x: player.x, y: player.y } : undefined;
+}
+
+function putVisitingBrickBeside(): void {
+    // The Brick page brings a Brick along from where the person stands
+    provideOwnPosition(ownPlace);
+    const sync = () => {
+        // The player's sprite is made a moment after the room loads: the Brick appears where they stand
+        setTimeout(() => {
+            void botApiService.syncVisitingBrick(ownPlace());
+        }, 1500);
+    };
+    // One wait at a time: a room entered again replaces the wait of the one before
+    stopWaitingToSignIn?.();
+    stopWaitingToSignIn = undefined;
+    if (get(userIsConnected)) {
+        sync();
+        return;
+    }
+    let done = false;
+    const unsubscribe = userIsConnected.subscribe((connected) => {
+        if (!connected || done) return;
+        done = true;
+        sync();
+    });
+    stopWaitingToSignIn = unsubscribe;
+}
+
+let stopWaitingToSignIn: (() => void) | undefined;
+
 // Function to notify bot-server when player enters room (for all users, authenticated or not)
 function notifyRoomEnterForAllUsers(options: ExtensionModuleOptions) {
     // Initialize API service with minimal config (just for bot-server calls)
@@ -800,6 +838,8 @@ function notifyRoomEnterForAllUsers(options: ExtensionModuleOptions) {
         // Notify bot-server that a player entered the room (spawns bots)
         // This should happen for ALL users, not just authenticated ones
         console.log(`[Bot Extension] Notifying room enter for: ${options.roomId}`);
+        // The Brick the person brought along walks into this room with them (game #2005): signed-in people only
+        putVisitingBrickBeside();
         botApiService
             .notifyRoomEnter(options.roomId)
             .then(() => {

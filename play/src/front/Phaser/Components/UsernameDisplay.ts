@@ -34,6 +34,7 @@ export class UsernameDisplay implements UsernameDomLayerClient {
     private readonly statusDisplay = new UsernameStatusDisplay();
     private readonly megaphoneDisplay = new UsernameMegaphoneDisplay();
     private readonly talkBubble = new UsernameTalkBubble();
+    private captionElement: HTMLDivElement | undefined;
     private displayScale = 1;
     private x: number;
     private y: number;
@@ -94,6 +95,25 @@ export class UsernameDisplay implements UsernameDomLayerClient {
 
     public isTalking(): boolean {
         return this.talkBubble.isShown();
+    }
+
+    /**
+     * A small line under the pill ("Visiting with Khalid", on a Brick that walks beside someone: game #2005). It is a child
+     * of the pill, so it follows its position and scale. Without text the line is gone.
+     */
+    public setCaption(text: string | undefined): void {
+        if (!text) {
+            this.captionElement?.remove();
+            this.captionElement = undefined;
+            return;
+        }
+        if (!this.captionElement) {
+            this.captionElement = document.createElement("div");
+            this.captionElement.className = "username-caption";
+            this.captionElement.setAttribute("aria-hidden", "true");
+            this.element.append(this.captionElement);
+        }
+        this.captionElement.textContent = text;
     }
 
     /** Faded along with the player (see Character.setFaded). */

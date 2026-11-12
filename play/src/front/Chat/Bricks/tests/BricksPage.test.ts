@@ -24,6 +24,11 @@ const game = vi.hoisted(() => ({
     openModal: vi.fn<(component: unknown) => void>(),
     getBot: vi.fn<(brickId: string) => Promise<unknown>>(),
     changeMyBrick: vi.fn<(brickId: string, change: Record<string, unknown>) => Promise<unknown>>(),
+    getRoomId: vi.fn<() => string | undefined>(),
+    getBrickVisit: vi.fn<(brickId: string, roomUrl: string) => Promise<unknown>>(),
+    startBrickVisit: vi.fn<(brickId: string, roomUrl: string) => Promise<unknown>>(),
+    endBrickVisit: vi.fn<(brickId: string) => Promise<unknown>>(),
+    syncVisitingBrick: vi.fn<(position?: { x: number; y: number }) => Promise<void>>(),
 }));
 const looks = vi.hoisted(() => {
     // A tiny store, made before the modules load: the WOKAs the game offers a bot
@@ -57,6 +62,11 @@ vi.mock("../../../external-modules/bots/services/BotApiService", () => ({
         tellBrickChanged: game.tellBrickChanged,
         getBot: game.getBot,
         changeMyBrick: game.changeMyBrick,
+        getRoomId: game.getRoomId,
+        getBrickVisit: game.getBrickVisit,
+        startBrickVisit: game.startBrickVisit,
+        endBrickVisit: game.endBrickVisit,
+        syncVisitingBrick: game.syncVisitingBrick,
         isInitialized: () => true,
     },
 }));
@@ -114,6 +124,7 @@ import { loadLocale } from "../../../../i18n/i18n-util.sync";
 import { setLocale } from "../../../../i18n/i18n-svelte";
 import { bricksPageOpenStore } from "../../Stores/ChatStore";
 import { forgetMyBricks } from "../MyBricksStore";
+import { forgetBrickVisit, provideOwnPosition } from "../BrickVisitStore";
 import BricksPage from "../BricksPage.svelte";
 
 const BRICK = "0b7c1d2e-1111-4222-8333-944455556666";
@@ -157,6 +168,12 @@ describe("the Bricks page (#1995)", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         forgetMyBricks();
+        forgetBrickVisit();
+        provideOwnPosition(() => ({ x: 320, y: 480 }));
+        // A room, and a place that has not heard of visits yet: nothing about visiting is shown until Orbit says so
+        game.getRoomId.mockReturnValue("/@/team/universe/room");
+        game.getBrickVisit.mockResolvedValue({ state: "none", place: "Universe" });
+        game.syncVisitingBrick.mockResolvedValue(undefined);
         bricksPageOpenStore.set(true);
         game.ensureMyBrick.mockResolvedValue({ brick: card(), made: false, deleted: false });
         game.listMyBricks.mockResolvedValue({ bricks: [card(), made()] });
@@ -555,6 +572,108 @@ describe("the Bricks page (#1995)", () => {
             await click("brickDeleteConfirm");
             expect(game.warn).toHaveBeenCalledWith("Couldn't delete the Brick. Try again.");
             expect(byId("brickPage")).not.toBeNull();
+        });
+    });
+
+    describe("bringing a Brick along (#2005)", () => {
+        const click = async (id: string) => {
+            byId(id)?.click();
+            await settle();
+        };
+        const openMade = async () => {
+            game.listMyBricks.mockResolvedValue({ bricks: [card(), made()], deleted: [], undoDays: 7 });
+            await open();
+            rows()[1].click();
+            await settle();
+        };
+
+        it("offers Bring along under the Brick's name, and says whose it stays and where it would walk", async () => {
+            await openMade();
+            expect(game.getBrickVisit).toHaveBeenCalledWith(MADE, "/@/team/universe/room");
+            expect(byId("brickBringAlong")?.textContent?.trim()).toBe("Bring along");
+            expect(text()).toContain(
+                "Recipe Brick walks beside you at Universe. People here can talk to it too. What's between you two stays yours."
+            );
+            expect(byId("brickEndVisit")).toBeNull();
+        });
+
+        it("says nothing about visiting when Orbit could not be asked, or the Brick is switched off", async () => {
+            game.getBrickVisit.mockRejectedValue(new Error("offline"));
+            await openMade();
+            expect(byId("brickBringAlong")).toBeNull();
+            expect(byId("brickEndVisit")).toBeNull();
+            expect(byId("brickVisitBlocked")).toBeNull();
+            page?.$destroy();
+            target.replaceChildren();
+            forgetBrickVisit();
+            game.getBrickVisit.mockResolvedValue({ state: "none", place: "Universe" });
+            game.listMyBricks.mockResolvedValue({ bricks: [card(), made({ enabled: false })], deleted: [] });
+            await open();
+            rows()[1].click();
+            await settle();
+            expect(byId("brickBringAlong")).toBeNull();
+        });
+
+        it("says so, in one line, when the place does not take visiting Bricks", async () => {
+            game.getBrickVisit.mockResolvedValue({ state: "blocked", place: "Studio" });
+            await openMade();
+            expect(byId("brickBringAlong")).toBeNull();
+            expect(byId("brickVisitBlocked")?.textContent?.trim()).toBe(
+                "Studio doesn't take visiting Bricks. Recipe Brick still answers your direct messages here."
+            );
+        });
+
+        it("brings it along from where the person stands, and then offers End visit", async () => {
+            game.startBrickVisit.mockResolvedValue({ state: "visiting", place: "Universe" });
+            await openMade();
+            await click("brickBringAlong");
+            expect(game.startBrickVisit).toHaveBeenCalledWith(MADE, "/@/team/universe/room");
+            expect(game.syncVisitingBrick).toHaveBeenCalledWith({ x: 320, y: 480 });
+            expect(byId("brickBringAlong")).toBeNull();
+            expect(byId("brickVisiting")?.textContent).toContain("Visiting Universe with you");
+            expect(byId("brickEndVisit")?.textContent?.trim()).toBe("End visit");
+            expect(text()).toContain("It walks with you from room to room, and goes when you leave or end the visit.");
+            expect(game.warn).not.toHaveBeenCalled();
+        });
+
+        it("ends the visit and goes back to offering Bring along", async () => {
+            game.getBrickVisit.mockResolvedValueOnce({ state: "visiting", place: "Universe" });
+            game.endBrickVisit.mockResolvedValue({ state: "none", place: null });
+            await openMade();
+            expect(byId("brickEndVisit")).not.toBeNull();
+            game.getBrickVisit.mockResolvedValue({ state: "none", place: "Universe" });
+            await click("brickEndVisit");
+            expect(game.endBrickVisit).toHaveBeenCalledWith(MADE);
+            expect(game.syncVisitingBrick).toHaveBeenCalledWith();
+            expect(byId("brickEndVisit")).toBeNull();
+            expect(byId("brickBringAlong")).not.toBeNull();
+        });
+
+        it("says so when it could not be brought along, or the visit could not be ended", async () => {
+            game.startBrickVisit.mockRejectedValue(new Error("offline"));
+            await openMade();
+            await click("brickBringAlong");
+            expect(game.warn).toHaveBeenCalledWith("Couldn't bring Recipe Brick along. Try again.");
+            expect(game.syncVisitingBrick).not.toHaveBeenCalled();
+            expect(byId("brickBringAlong")).not.toBeNull();
+
+            page?.$destroy();
+            target.replaceChildren();
+            forgetBrickVisit();
+            game.getBrickVisit.mockResolvedValue({ state: "visiting", place: "Universe" });
+            game.endBrickVisit.mockRejectedValue(new Error("offline"));
+            await openMade();
+            await click("brickEndVisit");
+            expect(game.warn).toHaveBeenCalledWith("Couldn't end the visit. Try again.");
+        });
+
+        it("shows the place's own answer when it stopped taking visits since the page was read", async () => {
+            game.startBrickVisit.mockRejectedValue(Object.assign(new Error("conflict"), { status: 409 }));
+            await openMade();
+            game.getBrickVisit.mockResolvedValue({ state: "blocked", place: "Universe" });
+            await click("brickBringAlong");
+            expect(game.warn).toHaveBeenCalledWith("Couldn't bring Recipe Brick along. Try again.");
+            expect(byId("brickVisitBlocked")?.textContent).toContain("Universe doesn't take visiting Bricks.");
         });
     });
 });

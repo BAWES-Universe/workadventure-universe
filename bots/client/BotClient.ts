@@ -239,6 +239,13 @@ export class BotClient {
         return Array.from(BotClient.botUserIds);
     }
 
+    /** The tag that names the person a visiting Brick walks with, for the game's caption under its name (#2005). */
+    private visitingTag(): string[] {
+        const visiting = this.fullConfig?.brick?.visiting;
+        const name = visiting?.ownerName?.replace(/\s+/g, ' ').trim().slice(0, 40);
+        return name ? [`visiting:${name}`] : [];
+    }
+
     /**
      * Generate a JWT token for this bot
      */
@@ -251,7 +258,8 @@ export class BotClient {
             identifier: botIdentifier,
             username: this.config.name,
             // A voice bot is the only kind of bot the game opens an audio connection with
-            tags: this.isVoiceBot() ? ['bot', VOICE_BOT_TAG] : ['bot'],
+            // `visiting:<name>` makes the map say who a visiting Brick walks with (#2005)
+            tags: [...(this.isVoiceBot() ? ['bot', VOICE_BOT_TAG] : ['bot']), ...this.visitingTag()],
         };
         
         return jwt.sign(tokenData, SECRET_KEY, { expiresIn: '30d' });

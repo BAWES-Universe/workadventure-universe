@@ -1055,6 +1055,23 @@ const chat: BaseTranslation = {
         offerMake: "Make {name}",
         offerNotNow: "Not now",
         offerNotNowLine: "I'll keep helping here, and won't ask again",
+        // Bringing a Brick along (#2005): the Brick's page, and the tag and card it has on the map
+        bringAlong: "Bring along",
+        bringAlongLine:
+            "{name} walks beside you at {place}. People here can talk to it too. What's between you two stays yours.",
+        bringAlongLineNoPlace:
+            "{name} walks beside you. People here can talk to it too. What's between you two stays yours.",
+        visitingPlace: "Visiting {place} with you",
+        visiting: "Visiting with you",
+        endVisit: "End visit",
+        endVisitLine: "It walks with you from room to room, and goes when you leave or end the visit.",
+        notTaken: "{place} doesn't take visiting Bricks. {name} still answers your direct messages here.",
+        bringAlongFailed: "Couldn't bring {name} along. Try again.",
+        endVisitFailed: "Couldn't end the visit. Try again.",
+        visitingWith: "Visiting with {name}",
+        madeBy: "Made by {name}",
+        visitingCardLine:
+            "You chat with it on your own usage. It never uses {name}'s apps for you, and it keeps what {name} told it to itself.",
     },
     voiceDraft: {
         onlyYou: "Only you see this",
