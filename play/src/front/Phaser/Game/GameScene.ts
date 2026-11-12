@@ -223,6 +223,7 @@ import { startObjectSounds } from "./objectSoundsForScene";
 import type { ObjectSounds } from "./ObjectSounds";
 import { releaseSpawnSilence, seedSpawnSilence } from "./SpawnSilence";
 import { GameMapFrontWrapper } from "./GameMap/GameMapFrontWrapper";
+import { getCameraViewport } from "./CameraViewport";
 import { AreaLiveState } from "./GameMap/AreaLiveState";
 import { gameManager } from "./GameManager";
 import { Game } from "./Game";
@@ -1783,10 +1784,7 @@ export class GameScene extends DirtyScene {
         }
 
         // We detect NaN values here for obscure reasons (Phaser bug)
-        const left = Math.max(0, camera.scrollX - margin);
-        const top = Math.max(0, camera.scrollY - margin);
-        const right = camera.scrollX + camera.width + margin;
-        const bottom = camera.scrollY + camera.height + margin;
+        const { left, top, right, bottom } = getCameraViewport(camera, margin);
         if (Number.isNaN(left) || Number.isNaN(top) || Number.isNaN(right) || Number.isNaN(bottom)) {
             console.error("NaN detected in viewport calculation", { left, top, right, bottom, camera });
             return;
@@ -2191,12 +2189,7 @@ export class GameScene extends DirtyScene {
                     {
                         ...this.startPositionCalculator.startPosition,
                     },
-                    {
-                        left: camera.scrollX,
-                        top: camera.scrollY,
-                        right: camera.scrollX + camera.width,
-                        bottom: camera.scrollY + camera.height,
-                    },
+                    getCameraViewport(camera),
                     gameManager.getCompanionTextureId(),
                     get(availabilityStatusStore),
                     this.getGameMap().getLastCommandId(),
@@ -4197,13 +4190,7 @@ export class GameScene extends DirtyScene {
     private doPushPlayerPosition(event: HasPlayerMovedInterface): void {
         this.lastMoveEventSent = event;
         this.lastSentTick = this.currentTick;
-        const camera = this.cameras.main;
-        let viewport = {
-            left: camera.scrollX,
-            top: camera.scrollY,
-            right: camera.scrollX + camera.width,
-            bottom: camera.scrollY + camera.height,
-        };
+        let viewport = getCameraViewport(this.cameras.main);
         if (!this.scene.scene.renderer) {
             // In the very special case where we have no renderer, the viewport will not move along the Woka.
             // We need to adjust it manually. We set it to something very large to make sure the Woka sees
