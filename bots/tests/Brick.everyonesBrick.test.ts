@@ -452,6 +452,41 @@ describe('One chat for a person and their Brick, however many devices open it', 
         expect(await bridge.directChatFor(BRICK, ALICE)).toEqual({ roomId: ROOM });
     });
 
+    it('keeps renewing the turn through an invite longer than the claim, also after one renewal failed', async () => {
+        vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+        try {
+            const { bridge, deps } = makeBridge();
+            deps.rooms.claimDirectChat = vi.fn().mockResolvedValue(null);
+            // The second renewal fails (Redis blipped); the ones after it go through again
+            deps.rooms.holdDirectChat = vi
+                .fn()
+                .mockResolvedValueOnce(undefined)
+                .mockRejectedValueOnce(new Error('redis timeout'))
+                .mockResolvedValue(undefined);
+            deps.rooms.releaseDirectChat = vi.fn(async () => undefined);
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            let configRead: () => void = () => undefined;
+            const config = deps.getBotConfig.getMockImplementation();
+            deps.getBotConfig.mockImplementationOnce(() => new Promise((resolve) => (configRead = () => resolve(config()))));
+
+            const taking = bridge.onEvent(invite());
+            await vi.advanceTimersByTimeAsync(45_000);
+            // Renewed every 10 seconds for 45 seconds, the failed one included: never left to lapse
+            expect((deps.rooms.holdDirectChat as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(5);
+            expect(await bridge.directChatFor(BRICK, ALICE)).toEqual({ wait: true });
+            configRead();
+            await taking;
+            expect(deps.rooms.releaseDirectChat).toHaveBeenCalledWith(BRICK, ALICE);
+            const renewals = (deps.rooms.holdDirectChat as ReturnType<typeof vi.fn>).mock.calls.length;
+            await vi.advanceTimersByTimeAsync(30_000);
+            // Once the bot has the chat, nothing renews it
+            expect((deps.rooms.holdDirectChat as ReturnType<typeof vi.fn>).mock.calls.length).toBe(renewals);
+            warn.mockRestore();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('never has a second chat made while the one they have could not be looked at', async () => {
         const { bridge, client } = makeBridge();
         await bridge.onEvent(invite());
