@@ -14,6 +14,8 @@ import { Speaker } from '../src/speaker.ts';
 import { CONTEXT, type DetectorModel, SpeechObserver, type SessionObserver, type SpeechObserverSettings, STATE } from '../src/speechObserver.ts';
 import type { OutputTarget } from '../src/transport.ts';
 import { isStopCommand, type YieldPolicy, YieldControl, type YieldSpeaker } from '../src/yieldControl.ts';
+import { optionsFromEnv } from '../src/config.ts';
+import type { WorkerOptions } from '../src/server.ts';
 import { FakeHuman, type Rig, privateEvent, sleep, startRig, waitFor } from './harness.ts';
 
 const VOICE_HZ = 200;
@@ -53,6 +55,19 @@ const tone = (hz: number, samples = 320, start = 0): Int16Array => Int16Array.fr
 const settle = async (): Promise<void> => {
     for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve));
 };
+
+describe('the rollout setting', () => {
+    const model = { VOICE_SPEECH_OBSERVER: '1', VOICE_SPEECH_OBSERVER_MODEL: '/model.onnx' };
+    it('names bots only with the detector on; hold unless a comparison policy is named; nothing when empty or removed', () => {
+        expect(optionsFromEnv({ ...model, VOICE_YIELD_BOTS: ' a ,b,, ' }).yieldBots).toEqual({ botIds: new Set(['a', 'b']), policy: 'hold' });
+        expect(optionsFromEnv({ ...model, VOICE_YIELD_BOTS: 'a', VOICE_YIELD_POLICY: 'dip' }).yieldBots?.policy).toBe('dip');
+        expect(optionsFromEnv({ ...model, VOICE_YIELD_BOTS: 'a', VOICE_YIELD_POLICY: 'anything' }).yieldBots?.policy).toBe('hold');
+        expect(optionsFromEnv({ ...model, VOICE_YIELD_BOTS: ' , ' }).yieldBots).toBeUndefined();
+        expect(optionsFromEnv(model).yieldBots).toBeUndefined();
+        expect(optionsFromEnv({ VOICE_YIELD_BOTS: 'a' }).yieldBots).toBeUndefined();
+        expect(optionsFromEnv({ VOICE_SPEECH_OBSERVER: '1', VOICE_YIELD_BOTS: 'a' }).yieldBots).toBeUndefined();
+    });
+});
 
 describe('a stop command', () => {
     it('at the very start of a stretch, after at most two openers, whole words, English and Arabic', () => {
@@ -749,7 +764,7 @@ describe('the speaker, held and let go', () => {
     function numbered(frames: number) {
         const sent: { n: number; at: number }[] = [];
         const progress: unknown[] = [];
-        const target: OutputTarget = { participantId: 'p', epoch: 1, plays: () => true, sendFrame: (f) => sent.push({ n: f.pcm24k[0], at: performance.now() }), clear: () => undefined };
+        const target: OutputTarget = { participantId: 'p', epoch: 1, plays: () => true, reach: () => 'alone', sendFrame: (f) => sent.push({ n: f.pcm24k[0], at: performance.now() }), clear: () => undefined };
         const counters = new Counters();
         const speaker = new Speaker({
             counters,
@@ -804,7 +819,7 @@ describe('the speaker, held and let go', () => {
         let finish!: () => void;
         const sent: number[] = [];
         const progress: { finished: boolean; reason?: string; interrupted?: boolean }[] = [];
-        const target: OutputTarget = { participantId: 'p', epoch: 1, plays: () => true, sendFrame: (f) => sent.push(f.pcm24k[0]), clear: () => undefined };
+        const target: OutputTarget = { participantId: 'p', epoch: 1, plays: () => true, reach: () => 'alone', sendFrame: (f) => sent.push(f.pcm24k[0]), clear: () => undefined };
         const speaker = new Speaker({
             counters: new Counters(),
             voice: {
@@ -869,12 +884,13 @@ afterEach(async () => {
 type Progress = Extract<Rig['fromWorker'][number], { type: 'playback.progress' }>;
 
 describe("end to end over a person's own connection (proximity), the bot speaking", () => {
-    async function bubble(yieldBots: boolean, script: ConstructorParameters<typeof FakeEars>[0] = []) {
+    async function bubble(yieldBots: boolean | WorkerOptions['yieldBots'], script: ConstructorParameters<typeof FakeEars>[0] = []) {
         const d = detector();
+        const bots = yieldBots === true ? { botIds: new Set(['bot1']), policy: 'hold' as const } : yieldBots || undefined;
         const r = await startRig({
             recognizer: new FakeEars(script).factory,
             speechObserver: { load: async () => d.model },
-            ...(yieldBots ? { yieldBots: { botIds: new Set(['bot1']), policy: 'hold' as const } } : {}),
+            ...(bots ? { yieldBots: bots } : {}),
         });
         rigs.push(r);
         r.calls.spaceUsers(r.game.spaceName, [{ spaceUserId: 'alice', uuid: 'uuid-alice', tags: [], name: 'alice' } as never]);
@@ -1006,6 +1022,33 @@ describe("end to end over a person's own connection (proximity), the bot speakin
         expect(r.fromWorker.filter((m) => m.type === 'user.speech_started')).toHaveLength(1);
         expect(r.violations).toEqual([]);
     }, 30_000);
+
+    it('the switch-off procedure: named in VOICE_YIELD_BOTS the hum pauses and goes on; restarted without it, the same hum stops as today', async () => {
+        const on = optionsFromEnv({ VOICE_SPEECH_OBSERVER: '1', VOICE_SPEECH_OBSERVER_MODEL: '/model.onnx', VOICE_YIELD_BOTS: 'other, bot1' });
+        const off = optionsFromEnv({ VOICE_SPEECH_OBSERVER: '1', VOICE_SPEECH_OBSERVER_MODEL: '/model.onnx' });
+        expect(off.yieldBots).toBeUndefined();
+        for (const [settings, pauses] of [
+            [on.yieldBots, true],
+            [off.yieldBots, false],
+        ] as const) {
+            const { r, alice, mic, finished } = await bubble(settings ?? false);
+            await waitFor('the detector to hear her', () => r.worker.counters.get('observer_windows_accepted') > 10, 5000);
+            r.calls.say(r.game.spaceName, 'seg-1', LONG);
+            await waitFor('the bot to be heard', () => alice.loudFrames >= 25);
+            mic(NOISE_HZ);
+            await sleep(500);
+            mic(0);
+            if (pauses) {
+                await waitFor('the bot to go on', () => r.worker.counters.get('yield_resumes') === 1, 6000);
+                await waitFor('the end of the reply', () => finished('seg-1').length > 0, 15_000);
+                expect(finished('seg-1')[0]).toMatchObject({ interrupted: false, reason: 'completed' });
+            } else {
+                await waitFor('the voice to stop', () => finished('seg-1').length > 0, 3000);
+                expect(finished('seg-1')[0]).toMatchObject({ interrupted: true, reason: 'barge_in' });
+                expect(r.worker.counters.get('yield_episodes')).toBe(0);
+            }
+        }
+    }, 60_000);
 
     it('a bot not in the rollout: the same hum stops it as today', async () => {
         const { r, alice, mic, finished } = await bubble(false);
