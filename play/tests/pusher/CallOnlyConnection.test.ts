@@ -123,3 +123,62 @@ describe("closing a call-only connection", () => {
         expect(leaveRoom).toHaveBeenCalledTimes(1);
     });
 });
+
+describe("the events of a call (the sound is set up with them)", () => {
+    function socketWith(data: Record<string, unknown>): Socket {
+        const full = {
+            disconnecting: false,
+            spaceUserId: "call_1",
+            spaces: new Set<string>(["w.call__x"]),
+            joinSpacesPromise: new Map<string, Promise<void>>(),
+            ...data,
+        };
+        return { getUserData: () => full } as unknown as Socket;
+    }
+
+    function managerWithSpace() {
+        const socketManager = new SocketManager(mock<SpaceConnection>());
+        const forwardMessageToSpaceBack = vi.fn();
+        const space = {
+            localName: "call__x",
+            forwarder: { forwardMessageToSpaceBack },
+        };
+        (socketManager as unknown as { spaces: Map<string, unknown> }).spaces.set("w.call__x", space);
+        return { socketManager, forwardMessageToSpaceBack };
+    }
+
+    it("lets a call-only connection send public and private events with its space id as the sender", async () => {
+        const { socketManager, forwardMessageToSpaceBack } = managerWithSpace();
+        const socket = socketWith({ callOnly: true, userId: undefined });
+
+        await socketManager.handlePublicEvent(socket, {
+            spaceName: "w.call__x",
+            spaceEvent: {},
+        } as never);
+        await socketManager.handlePrivateEvent(socket, {
+            spaceName: "w.call__x",
+            receiverUserId: "u_9",
+            spaceEvent: {},
+        } as never);
+
+        expect(forwardMessageToSpaceBack).toHaveBeenCalledTimes(2);
+        expect(forwardMessageToSpaceBack.mock.calls[0][0].publicEvent.senderUserId).toBe("call_1");
+        expect(forwardMessageToSpaceBack.mock.calls[1][0].privateEvent.senderUserId).toBe("call_1");
+    });
+
+    it("still refuses an ordinary connection that has no user id yet", async () => {
+        const { socketManager, forwardMessageToSpaceBack } = managerWithSpace();
+        const socket = socketWith({ userId: undefined });
+        await expect(
+            socketManager.handlePublicEvent(socket, { spaceName: "w.call__x", spaceEvent: {} } as never)
+        ).rejects.toThrow("User id not found");
+        await expect(
+            socketManager.handlePrivateEvent(socket, {
+                spaceName: "w.call__x",
+                receiverUserId: "u_9",
+                spaceEvent: {},
+            } as never)
+        ).rejects.toThrow("User id not found");
+        expect(forwardMessageToSpaceBack).not.toHaveBeenCalled();
+    });
+});

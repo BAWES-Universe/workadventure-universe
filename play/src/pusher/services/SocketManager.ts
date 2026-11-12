@@ -1966,7 +1966,8 @@ export class SocketManager implements ZoneEventListener {
                 `Trying to send a public event to a space that does not exist: "${publicEvent.spaceName}".`
             );
         }
-        if (!socketData.userId) {
+        // A call-only connection has no room, so no room user id: it is known by its id in the space (spaceUserId)
+        if (!socketData.userId && !socketData.callOnly) {
             throw new Error("User id not found");
         }
 
@@ -1989,7 +1990,8 @@ export class SocketManager implements ZoneEventListener {
                 `Trying to send a private event to a space that does not exist: "${privateEvent.spaceName}"`
             );
         }
-        if (!socketData.userId) {
+        // A call-only connection has no room, so no room user id: it is known by its id in the space (spaceUserId)
+        if (!socketData.userId && !socketData.callOnly) {
             throw new Error("User id not found");
         }
 
