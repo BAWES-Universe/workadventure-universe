@@ -38,8 +38,27 @@ const AGREE_MS = 600;
  * and today's behaviour applies. Well inside the 2 s inference timeout, which is for watching only.
  */
 const FALLBACK_CHECK_MS = 300;
+/**
+ * Asked to confirm: an answer counts toward a decision only for audio that arrived at most this long before it. An older
+ * one (the detector was slow even once) is today's rule for that question, at once; it is still counted, as watching.
+ */
+export const DECISION_FRESH_MS = 300;
 const FALLBACK_AUDIO_MS = 96;
 const EMPTY = new Float32Array(0);
+
+/**
+ * What the detector last made of one person. `ageMs`: how long ago the newest audio it answered for arrived. `quietMs`:
+ * how long (in their audio) it has heard no speech. `speech`: it hears speech now. `stream`: which unbroken run of their
+ * audio this is: it changes whenever audio went missing, waited too long, overflowed or failed, so the same number twice
+ * means every bit of their audio in between was answered. `droppedMs`: audio lost on the way within this run.
+ */
+export interface Heard {
+    ageMs: number;
+    quietMs: number;
+    speech: boolean;
+    stream: number;
+    droppedMs: number;
+}
 
 /** Which way the audio came: a person's own peer connection, or the bubble's LiveKit room. */
 export type ObserverPath = 'lane' | 'room';
@@ -77,7 +96,7 @@ export interface SessionObserver {
      * how long ago the newest audio it answered for arrived (fresh evidence is young); `quietMs`: how long it has heard
      * no speech from them; `speech`: it hears speech now.
      */
-    heard(participantId: string, epoch: number): { ageMs: number; quietMs: number; speech: boolean } | undefined;
+    heard(participantId: string, epoch: number): Heard | undefined;
     /** The session is over. For good: nothing given to this handle afterwards is taken. */
     close(): void;
 }
@@ -147,6 +166,8 @@ interface Pending {
     timer?: NodeJS.Timeout;
 }
 
+let streamSerials = 0;
+
 class Stream {
     state = new Float32Array(STATE);
     context = new Float32Array(CONTEXT);
@@ -162,6 +183,9 @@ class Stream {
     missingMs = 0;
     /** When the newest audio of the last answer kept arrived. */
     answeredAt = -Infinity;
+    /** Audio lost on the way within this run (less than GAP_RESET_MS at a time, or it would have ended the run). */
+    droppedMs = 0;
+    readonly serial = ++streamSerials;
     // The rule
     evidence = 0;
     gap = 0;
@@ -413,7 +437,7 @@ export class SpeechObserver {
                 if (owner.closed || this.status !== 'on' || !this.model) return undefined;
                 const stream = this.streams.get(`${owner.id}\n${participantId}`);
                 if (!stream || stream.ended || stream.epoch !== epoch || stream.answeredAt === -Infinity) return undefined;
-                return { ageMs: performance.now() - stream.answeredAt, quietMs: stream.quiet, speech: stream.evidence >= MIN_MS };
+                return { ageMs: performance.now() - stream.answeredAt, quietMs: stream.quiet, speech: stream.evidence >= MIN_MS, stream: stream.serial, droppedMs: stream.droppedMs };
             },
             close: () => {
                 if (owner.closed) return;
@@ -442,7 +466,8 @@ export class SpeechObserver {
             go(true);
             return () => undefined;
         }
-        if (stream.evidence >= MIN_MS) {
+        // Speech heard already, and recently enough to decide on
+        if (stream.evidence >= MIN_MS && performance.now() - stream.answeredAt <= DECISION_FRESH_MS) {
             c.inc('observer_decide_confirmed');
             c.inc('observer_decide_at_once');
             go(false);
@@ -559,6 +584,7 @@ export class SpeechObserver {
             this.end(stream, 'reset');
             stream = undefined;
         }
+        if (stream) stream.droppedMs += frame.droppedMs;
         // Audio that has waited too long is not worth an answer: it goes, and they start afresh
         if (stream && stream.waiting.length > 0 && now - stream.waiting[0].at > this.maxAge) {
             this.end(stream, stream.samples < WINDOW ? 'idle' : 'expired');
@@ -746,8 +772,12 @@ export class SpeechObserver {
                     if (stream.judge(result.probability)) this.fired(stream, now);
                     const pending = stream.owner.pending.get(stream.participantId);
                     if (pending && pending.epoch === stream.epoch) {
-                        pending.answered++;
-                        if (stream.evidence >= MIN_MS) this.decide(stream.owner, stream.participantId, 'observer_decide_confirmed');
+                        // Too slow for a decision, even once: today's rule for this question, at once
+                        if (ageMs > DECISION_FRESH_MS) this.decide(stream.owner, stream.participantId, 'observer_decide_fallback_stale');
+                        else {
+                            pending.answered++;
+                            if (stream.evidence >= MIN_MS) this.decide(stream.owner, stream.participantId, 'observer_decide_confirmed');
+                        }
                     }
                     try {
                         this.options.onVerdict?.({ sessionId: stream.owner.sessionId, participantId: stream.participantId, epoch: stream.epoch, probability: result.probability, ageMs });

@@ -34,15 +34,19 @@ function judgeWindow(input: Float32Array): number {
 
 /** A detector that judges each window by its sound, or (held) never answers, or fails. */
 function detector(mode: 'judge' | 'held' | 'fails' = 'judge') {
+    let delay = 0;
     const model: DetectorModel = {
         run: (input) => {
             if (mode === 'held') return new Promise(() => undefined);
             if (mode === 'fails') return Promise.reject(new Error('detector failed'));
-            return Promise.resolve({ probability: judgeWindow(input), state: new Float32Array(STATE) });
+            const answer = { probability: judgeWindow(input), state: new Float32Array(STATE) };
+            return delay ? new Promise((resolve) => setTimeout(() => resolve(answer), delay)) : Promise.resolve(answer);
         },
         release: async () => undefined,
     };
-    return { model };
+    /** From now on each answer takes this long (a detector slow for a while). */
+    const slow = (ms: number) => (delay = ms);
+    return { model, slow };
 }
 
 const tone = (hz: number, samples = 320, start = 0): Int16Array => Int16Array.from({ length: samples }, (_, i) => Math.round(8000 * Math.sin((2 * Math.PI * hz * (start + i)) / 16000)));
@@ -50,12 +54,14 @@ const settle = async (): Promise<void> => {
     for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve));
 };
 
-describe('a stop word', () => {
-    it('counts as the first words of a stretch, as a whole word, in English and Arabic', () => {
-        for (const yes of ['stop', 'Stop!', 'wait', 'please stop', 'ok wait a sec', 'hold on', 'وقف', 'خلاص', 'استنى شوي']) expect(isStopCommand(yes), yes).toBe(true);
+describe('a stop command', () => {
+    it('at the very start of a stretch, after at most two openers, whole words, English and Arabic', () => {
+        for (const yes of ['stop', 'Stop!', 'wait', 'please stop', 'ok wait a sec', 'hold on', 'hang on a second', 'stop talking right now please', 'okay please stop', 'وقف', 'خلاص', 'استنى شوي', 'توقف لو سمحت'])
+            expect(isStopCommand(yes), yes).toBe(true);
     });
-    it('not "no", not inside another word, not turned around, not in passing', () => {
-        for (const no of ['no', 'no no', 'stopwatch', 'waiting', "don't stop", 'do not stop', 'لا توقف', 'I would never want it to stop', '', 'mm-hm']) expect(isStopCommand(no), no).toBe(false);
+    it('not later in a sentence, not negated, not quoted or mentioned, not inside a word, not "no"', () => {
+        for (const no of ['no', 'no no', 'a bus stop', 'please don\'t ever stop', "don't stop", 'do not stop', 'he said stop', 'I said wait', 'stopwatch', 'waiting', 'hold the door', 'لا توقف', 'I would never want it to stop', '', 'mm-hm', 'ok so um stop'])
+            expect(isStopCommand(no), no).toBe(false);
     });
 });
 
@@ -78,7 +84,7 @@ describe('the detector, asked about one person', () => {
             const done = session.confirm(who, epoch, (fallback) => answers.push(fallback));
             return { answers, done };
         };
-        return { counters, observer, session, feed, asked };
+        return { counters, observer, session, feed, asked, slow: d.slow };
     }
 
     it('already hearing speech from them: speech at once', async () => {
@@ -158,6 +164,34 @@ describe('the detector, asked about one person', () => {
         expect(performance.now() - from).toBeLessThan(800);
     });
 
+    it('slow even once (answers that keep coming, but late): today\'s rule for that question, never a late confirmation', async () => {
+        const o = asking();
+        await o.observer.ready();
+        o.feed(NOISE_HZ, 100);
+        await settle();
+        const a = o.asked();
+        // Under the falling-behind threshold (96 ms given), so only the late answer itself can decide
+        o.slow(330);
+        o.feed(VOICE_HZ, 40);
+        await sleep(450);
+        await settle();
+        expect(a.answers).toEqual([true]);
+        expect(o.counters.get('observer_decide_fallback_stale')).toBe(1);
+        expect(o.counters.get('observer_decide_confirmed')).toBe(0);
+        // Speech heard, then nothing newer for longer than the bound: a new question is never confirmed at once on it
+        o.slow(0);
+        o.feed(VOICE_HZ, 100);
+        await settle();
+        await sleep(20);
+        const fresh = o.asked();
+        expect(fresh.answers).toEqual([false]);
+        const atOnce = o.counters.get('observer_decide_at_once');
+        await sleep(350);
+        const b = o.asked();
+        expect(b.answers).not.toContain(false);
+        expect(o.counters.get('observer_decide_at_once')).toBe(atOnce);
+    });
+
     it('failing: whoever waited gets today\'s rule', async () => {
         const o = asking('fails', { maxFailures: 2 });
         await o.observer.ready();
@@ -193,14 +227,15 @@ describe('the detector, asked about one person', () => {
 });
 
 describe('hearing tells the control how each stretch it was asked about ended', () => {
-    function hearing(script: (string | FakeUtterance)[], answer: boolean, maxUtteranceMs = 180000) {
+    function hearing(script: (string | FakeUtterance)[], answer: boolean, maxUtteranceMs = 180000, owning = false) {
         const sent: OutgoingMessage[] = [];
         const spoke: [string, boolean][] = [];
         const log: string[] = [];
         let speech: ((stop: boolean) => void) | undefined;
         const control: Interruptions = {
+            owns: () => owning,
             loud: (turn, s) => {
-                log.push(`loud ${turn.participantId}`);
+                log.push(`loud ${turn.participantId}${turn.heard ? ` heard ${turn.heard}` : ''}`);
                 speech = s;
                 return answer;
             },
@@ -294,7 +329,7 @@ describe('hearing tells the control how each stretch it was asked about ended', 
             pauseMs: 400,
             counters: new Counters(),
             send: () => undefined,
-            interruptions: { loud: () => true, words: () => undefined, ended: (_, how) => ended.push(how) },
+            interruptions: { owns: () => true, loud: () => true, words: () => undefined, ended: (_, how) => ended.push(how) },
         });
         for (let t = 0; t < 300; t += 20) recognition.sink({ participantId: 'p1', epoch: 1, pcm16k: tone(440), droppedMs: 0 });
         for (let t = 0; t < 500; t += 20) recognition.sink({ participantId: 'p1', epoch: 1, pcm16k: new Int16Array(320), droppedMs: 0 });
@@ -307,7 +342,7 @@ describe('hearing tells the control how each stretch it was asked about ended', 
         expect(h.log.filter((l) => l.startsWith('ended'))).toEqual(['ended failed']);
     });
 
-    it('a hole in the audio or the limit: "lost"', () => {
+    it('a hole in the audio: "lost"; the limit: "capped"', () => {
         const gap = hearing([''], true);
         gap.loud(200);
         gap.loud(100, 500);
@@ -315,7 +350,72 @@ describe('hearing tells the control how each stretch it was asked about ended', 
         expect(gap.log.filter((l) => l.startsWith('ended'))).toEqual(['ended lost']);
         const cap = hearing([''], true, 600);
         cap.loud(800);
-        expect(cap.log.filter((l) => l.startsWith('ended'))).toEqual(['ended lost']);
+        expect(cap.log.filter((l) => l.startsWith('ended'))).toEqual(['ended capped']);
+    });
+
+    it('words taken back before an empty final: "retracted", never "empty"', () => {
+        const ended: TurnEnd[] = [];
+        const recognition = new Recognition({
+            factory: (events) => {
+                let n = 0;
+                return {
+                    push: () => {
+                        n++;
+                        if (n === 8) events.partial('hello');
+                        if (n === 10) events.partial('');
+                    },
+                    finish: () => events.final(''),
+                    close: () => undefined,
+                };
+            },
+            maxUtteranceMs: 180000,
+            pauseMs: 400,
+            counters: new Counters(),
+            send: () => undefined,
+            interruptions: { owns: () => true, loud: () => true, words: () => undefined, ended: (_, how) => ended.push(how) },
+        });
+        for (let t = 0; t < 300; t += 20) recognition.sink({ participantId: 'p1', epoch: 1, pcm16k: tone(440), droppedMs: 0 });
+        for (let t = 0; t < 500; t += 20) recognition.sink({ participantId: 'p1', epoch: 1, pcm16k: new Int16Array(320), droppedMs: 0 });
+        expect(ended).toEqual(['retracted']);
+    });
+
+    it('any missing audio at all, even 20 ms, then an empty final: "lost", never "empty"', () => {
+        const h = hearing([''], true);
+        h.loud(200);
+        h.loud(100, 20);
+        h.quiet(500);
+        expect(h.log.filter((l) => l.startsWith('ended'))).toEqual(['ended lost']);
+        // The public outcome is unchanged: nothing to keep
+        expect(h.sent.filter((m) => m.type === 'user.turn')).toMatchObject([{ outcome: 'cleared' }]);
+    });
+
+    it('while the control owns it, a fast partial before the gate goes out privately only, and its words reach the gate', () => {
+        const h = hearing([{ text: 'hello there', wordMs: 20 }], true, 180000, true);
+        h.loud(40);
+        expect(h.sent.some((m) => m.type === 'user.partial')).toBe(true);
+        expect(h.started()).toBe(0);
+        h.loud(100);
+        expect(h.log).toContain('loud p1 heard hello there');
+        expect(h.started()).toBe(0);
+        h.speech(true);
+        expect(h.started()).toBe(1);
+    });
+
+    it('while the control owns it, words from a stretch that never reaches the gate are announced just before its end', () => {
+        const h = hearing([{ text: 'hi', wordMs: 20 }], true, 180000, true);
+        h.loud(40);
+        h.quiet(500);
+        expect(h.log.some((l) => l.startsWith('loud'))).toBe(false);
+        const at = (entry: string) => h.log.indexOf(entry);
+        expect(at('user.speech_started')).toBeGreaterThan(-1);
+        expect(at('user.turn')).toBeGreaterThan(at('user.speech_started'));
+        expect(h.spoke).toEqual([]);
+    });
+
+    it('not owned (the bot silent, or another bot): a fast partial announces at once, as today', () => {
+        const h = hearing([{ text: 'hello', wordMs: 20 }], true);
+        h.loud(40);
+        expect(h.started()).toBe(1);
     });
 
     it('no longer heard: "gone"', () => {
@@ -339,7 +439,7 @@ function controlled(policy: YieldPolicy = 'hold', settings: { silenceMs?: number
         resume: (id) => (calls.push(`resume ${id}`), true),
         setGain: (g) => calls.push(`gain ${g}`),
     };
-    const views = new Map<string, { ageMs: number; quietMs: number; speech: boolean }>();
+    const views = new Map<string, { ageMs: number; quietMs: number; speech: boolean; stream: number; droppedMs: number }>();
     const asks = new Map<string, { go: (fallback: boolean) => void; cancelled: boolean }>();
     const observer: SessionObserver = {
         frame: () => undefined,
@@ -356,8 +456,8 @@ function controlled(policy: YieldPolicy = 'hold', settings: { silenceMs?: number
     const control = new YieldControl({ policy, counters, speaker, observer, silenceMs: 300, freshMs: 300, watchdogMs: 2000, ...settings });
     control.onStopHeld = () => calls.push('stop held');
     const spoke: [string, boolean][] = [];
-    const loud = (p: string, turnId = `t-${p}`) => control.loud({ participantId: p, epoch: 1, turnId }, (stop) => spoke.push([p, stop]));
-    const fresh = (p: string, quietMs = 0, speech = false) => views.set(p, { ageMs: 20, quietMs, speech });
+    const loud = (p: string, turnId = `t-${p}`, heard = '') => control.loud({ participantId: p, epoch: 1, turnId, heard }, (stop) => spoke.push([p, stop]));
+    const fresh = (p: string, quietMs = 0, speech = false, stream = 1) => views.set(p, { ageMs: 20, quietMs, speech, stream, droppedMs: 0 });
     return { control, counters, calls, speaker, views, asks, spoke, loud, fresh };
 }
 
@@ -370,7 +470,7 @@ describe('the control, step by step', () => {
         c.speaker.playing = 'r1';
         c.views.clear();
         expect(c.loud('p1')).toBe(false);
-        c.views.set('p1', { ageMs: 900, quietMs: 0, speech: false });
+        c.views.set('p1', { ageMs: 900, quietMs: 0, speech: false, stream: 1, droppedMs: 0 });
         expect(c.loud('p1')).toBe(false);
         expect(c.calls).toEqual([]);
         expect(c.counters.get('yield_fallback_not_fresh')).toBe(2);
@@ -398,7 +498,7 @@ describe('the control, step by step', () => {
         c.fresh('p1');
         c.loud('p1');
         c.control.ended('t-p1', 'empty');
-        c.views.set('p1', { ageMs: 900, quietMs: 900, speech: false });
+        c.views.set('p1', { ageMs: 900, quietMs: 900, speech: false, stream: 1, droppedMs: 0 });
         await sleep(250);
         c.fresh('p1', 900, true);
         await sleep(250);
@@ -515,6 +615,130 @@ describe('the control, step by step', () => {
     });
 });
 
+describe('steady noise: the voice goes on provisionally while the open stretch is watched', () => {
+    async function continuing(settings: { watchdogMs?: number } = {}) {
+        const c = controlled('hold', settings);
+        c.fresh('p1');
+        c.loud('p1');
+        c.fresh('p1', 5000);
+        await waitFor('the voice to go on', () => c.calls.includes('resume r1'), 1000);
+        expect(c.counters.get('yield_continues')).toBe(1);
+        expect(c.counters.get('yield_resumes')).toBe(0);
+        return c;
+    }
+
+    it('quiet from before the sound does not count: only the time since it', async () => {
+        const c = controlled();
+        c.fresh('p1', 60_000);
+        c.loud('p1');
+        await sleep(150);
+        expect(c.calls).toEqual(['hold']);
+        await waitFor('the voice to go on', () => c.calls.includes('resume r1'), 1000);
+    });
+
+    it('not with words ever heard, not while the detector hears speech, not after a break in its view', async () => {
+        const words = controlled('hold', { watchdogMs: 800 });
+        words.fresh('p1', 5000);
+        words.loud('p1', 't-p1', 'hmm');
+        await waitFor('the watchdog', () => words.counters.get('yield_watchdog') === 1, 1500);
+        expect(words.calls).not.toContain('resume r1');
+
+        const broken = controlled('hold', { watchdogMs: 800 });
+        broken.fresh('p1', 5000);
+        broken.loud('p1');
+        broken.fresh('p1', 5000, false, 2);
+        await waitFor('the watchdog', () => broken.counters.get('yield_watchdog') === 1, 1500);
+        expect(broken.calls).not.toContain('resume r1');
+
+        const speech = controlled('hold', { watchdogMs: 800 });
+        speech.fresh('p1', 5000, true);
+        speech.loud('p1');
+        await waitFor('the watchdog', () => speech.counters.get('yield_watchdog') === 1, 1500);
+        expect(speech.calls).not.toContain('resume r1');
+    });
+
+    it('then any words, speech from the detector, a failure or a break in its view stop the reply as today', async () => {
+        const words = await continuing();
+        words.control.words('t-p1', 'so');
+        expect(words.spoke).toEqual([['p1', true]]);
+        expect(words.counters.get('yield_confirmed_words_while_continuing')).toBe(1);
+
+        const detector = await continuing();
+        detector.asks.get('p1')!.go(false);
+        expect(detector.spoke).toEqual([['p1', true]]);
+        expect(detector.counters.get('yield_confirmed_detector_while_continuing')).toBe(1);
+
+        const failed = await continuing();
+        failed.control.ended('t-p1', 'failed');
+        expect(failed.spoke).toEqual([['p1', true]]);
+
+        const heard = await continuing();
+        heard.fresh('p1', 0, true);
+        await waitFor('the stop', () => heard.spoke.length === 1, 500);
+        expect(heard.counters.get('yield_confirmed_detector_while_continuing')).toBe(1);
+
+        const view = await continuing();
+        view.fresh('p1', 5000, false, 7);
+        await waitFor('the stop', () => view.spoke.length === 1, 500);
+        expect(view.counters.get('yield_continuing_view_lost')).toBe(1);
+    });
+
+    it('no stop for staying open: the pause deadline does not apply once going on', async () => {
+        const c = await continuing({ watchdogMs: 500 });
+        await sleep(900);
+        expect(c.spoke).toEqual([]);
+        expect(c.calls).toEqual(['hold', 'resume r1']);
+    });
+
+    it('ends quietly when the stretch ends empty, at the length limit with no words, or the person leaves', async () => {
+        for (const how of ['empty', 'capped', 'gone'] as const) {
+            const c = await continuing();
+            c.control.ended('t-p1', how);
+            expect(c.spoke, how).toEqual([]);
+            expect(c.calls, how).toEqual(['hold', 'resume r1']);
+            // Over: a late answer changes nothing
+            c.asks.get('p1')!.go(false);
+            expect(c.spoke, how).toEqual([]);
+        }
+    });
+
+    it('a new sound pauses again; the reply going away lets the watched stretch go without stopping or announcing anything', async () => {
+        const c = await continuing();
+        c.fresh('p2');
+        c.loud('p2');
+        expect(c.calls).toEqual(['hold', 'resume r1', 'hold']);
+        expect(c.counters.get('yield_repauses')).toBe(1);
+
+        const d = await continuing();
+        d.speaker.playing = 'r2';
+        await waitFor('it to be let go', () => d.counters.get('yield_reply_gone') === 1, 500);
+        expect(d.spoke).toEqual([]);
+        // A late answer for the old reply never stops the new one
+        d.asks.get('p1')!.go(false);
+        expect(d.spoke).toEqual([]);
+    });
+
+    it('two people: it goes on only when both qualify', async () => {
+        const c = controlled();
+        c.fresh('p1', 5000);
+        c.fresh('p2', 0, true);
+        c.loud('p1');
+        c.loud('p2');
+        await sleep(450);
+        expect(c.calls).toEqual(['hold']);
+        c.fresh('p2', 5000);
+        await waitFor('the voice to go on', () => c.calls.includes('resume r1'), 1000);
+    });
+
+    it('not for the comparison policies', async () => {
+        const c = controlled('dip', { watchdogMs: 700 });
+        c.fresh('p1', 5000);
+        c.loud('p1');
+        await waitFor('the watchdog', () => c.counters.get('yield_watchdog') === 1, 1500);
+        expect(c.counters.get('yield_continues')).toBe(0);
+    });
+});
+
 describe('the speaker, held and let go', () => {
     /** A reply whose every 20 ms frame carries its own number, so order and gaps can be read off what was sent. */
     function numbered(frames: number) {
@@ -600,10 +824,10 @@ afterEach(async () => {
 type Progress = Extract<Rig['fromWorker'][number], { type: 'playback.progress' }>;
 
 describe("end to end over a person's own connection (proximity), the bot speaking", () => {
-    async function bubble(yieldBots: boolean) {
+    async function bubble(yieldBots: boolean, script: ConstructorParameters<typeof FakeEars>[0] = []) {
         const d = detector();
         const r = await startRig({
-            recognizer: new FakeEars([]).factory,
+            recognizer: new FakeEars(script).factory,
             speechObserver: { load: async () => d.model },
             ...(yieldBots ? { yieldBots: { botIds: new Set(['bot1']), policy: 'hold' as const } } : {}),
         });
@@ -669,6 +893,56 @@ describe("end to end over a person's own connection (proximity), the bot speakin
         expect(r.violations).toEqual([]);
     }, 30_000);
 
+    it('a steady fan: the bot pauses, then goes on while the fan stays, announcing no one; a voice inside the same stretch then stops it', async () => {
+        const { r, alice, mic, finished } = await bubble(true);
+        const n = r.worker.counters;
+        await waitFor('the detector to hear her', () => n.get('observer_windows_accepted') > 10, 5000);
+        r.calls.say(r.game.spaceName, 'seg-1', LONG);
+        await waitFor('the bot to be heard', () => alice.loudFrames >= 25);
+        mic(NOISE_HZ);
+        await waitFor('the pause', () => n.get('yield_holds') === 1, 1000);
+        await waitFor('the bot to go on over the fan', () => n.get('yield_continues') === 1, 4000);
+        const goingAt = alice.audioPackets;
+        await sleep(800);
+        // Going on: the bot is heard again while the fan stays on and its stretch stays open
+        expect(alice.audioPackets - goingAt).toBeGreaterThan(25);
+        expect(finished('seg-1')).toHaveLength(0);
+        expect(r.fromWorker.some((m) => m.type === 'user.speech_started')).toBe(false);
+        expect(n.get('yield_watchdog')).toBe(0);
+        expect(n.get('yield_holds')).toBe(1);
+        // Someone starts talking inside the same stretch, with no gap: stopped for good, announced once
+        const spokeAt = performance.now();
+        mic(VOICE_HZ);
+        await waitFor('the voice to stop', () => finished('seg-1').length > 0, 3000);
+        const stoppedIn = performance.now() - spokeAt;
+        mic(0);
+        expect(finished('seg-1')[0]).toMatchObject({ interrupted: true, reason: 'barge_in' });
+        expect(r.fromWorker.filter((m) => m.type === 'user.speech_started')).toHaveLength(1);
+        expect(n.get('yield_confirmed_detector_while_continuing')).toBe(1);
+        expect(n.get('yield_repauses')).toBe(0);
+        expect(stoppedIn).toBeLessThan(700);
+        expect(r.violations).toEqual([]);
+    }, 30_000);
+
+    it('a soft voice the detector misses, inside the same fan-held stretch: its words, when they come, stop the bot', async () => {
+        // The fan's stretch carries words that only show up after 3 s of its audio: someone speaking under the fan
+        const { r, alice, mic, finished } = await bubble(true, [{ text: 'so anyway', wordMs: 3000 }]);
+        const n = r.worker.counters;
+        await waitFor('the detector to hear her', () => n.get('observer_windows_accepted') > 10, 5000);
+        r.calls.say(r.game.spaceName, 'seg-1', LONG);
+        await waitFor('the bot to be heard', () => alice.loudFrames >= 25);
+        mic(NOISE_HZ);
+        await waitFor('the bot to go on over the fan', () => n.get('yield_continues') === 1, 4000);
+        expect(r.fromWorker.some((m) => m.type === 'user.speech_started')).toBe(false);
+        await waitFor('the words to stop it', () => finished('seg-1').length > 0, 4000);
+        mic(0);
+        expect(finished('seg-1')[0]).toMatchObject({ interrupted: true, reason: 'barge_in' });
+        expect(n.get('yield_confirmed_words_while_continuing')).toBe(1);
+        expect(n.get('observer_speech_windows')).toBe(0);
+        expect(r.fromWorker.filter((m) => m.type === 'user.speech_started')).toHaveLength(1);
+        expect(r.violations).toEqual([]);
+    }, 30_000);
+
     it('a bot not in the rollout: the same hum stops it as today', async () => {
         const { r, alice, mic, finished } = await bubble(false);
         r.calls.say(r.game.spaceName, 'seg-1', LONG);
@@ -692,7 +966,7 @@ const serverUp = await fetch(HTTP_URL, { signal: AbortSignal.timeout(1500) }).th
 );
 
 describe.skipIf(!serverUp)('end to end in a LiveKit room, the bot speaking', () => {
-    it('a hum pauses the bot and it goes on to the end; then a voice stops it, announced once', async () => {
+    async function room() {
         const d = detector();
         const r = await startRig({ recognizer: new FakeEars([]).factory, speechObserver: { load: async () => d.model }, yieldBots: { botIds: new Set(['bot1']), policy: 'hold' } });
         rigs.push(r);
@@ -725,13 +999,17 @@ describe.skipIf(!serverUp)('end to end in a LiveKit room, the bot speaking', () 
         const n = r.worker.counters;
         await waitFor('carol to be heard in the room', () => n.get('observer_accepted_ms_room') > 300, 15_000);
         const finished = (segmentId: string) => r.fromWorker.filter((m): m is Progress => m.type === 'playback.progress' && m.segmentId === segmentId && m.finished);
+        return { r, n, finished, mic: (to: number) => (hz = to) };
+    }
 
+    it('a hum pauses the bot and it goes on to the end; then a voice stops it, announced once', async () => {
+        const { r, n, finished, mic } = await room();
         r.calls.say(r.game.spaceName, 'seg-1', LONG);
         await waitFor('the bot to speak', () => n.get('segments_started') >= 1, 5000);
         await sleep(500);
-        hz = NOISE_HZ;
+        mic(NOISE_HZ);
         await sleep(500);
-        hz = 0;
+        mic(0);
         await waitFor('the pause', () => n.get('yield_holds') === 1, 1000);
         await waitFor('the bot to go on', () => n.get('yield_resumes') === 1, 6000);
         await waitFor('the end of the reply', () => finished('seg-1').length > 0, 15_000);
@@ -742,13 +1020,33 @@ describe.skipIf(!serverUp)('end to end in a LiveKit room, the bot speaking', () 
         r.calls.say(r.game.spaceName, 'seg-2', LONG);
         await waitFor('the bot to speak again', () => n.get('segments_started') >= 2, 5000);
         await sleep(500);
-        hz = VOICE_HZ;
+        mic(VOICE_HZ);
         await waitFor('the voice to stop', () => finished('seg-2').length > 0, 3000);
-        hz = 0;
+        mic(0);
         await sleep(300);
         expect(finished('seg-2')[0]).toMatchObject({ interrupted: true, reason: 'barge_in' });
         expect(r.fromWorker.filter((m) => m.type === 'user.speech_started')).toHaveLength(1);
         expect(n.get('yield_confirmed_detector')).toBe(1);
+        expect(r.violations).toEqual([]);
+    }, 60_000);
+
+    it('a steady fan: the bot pauses, goes on while the fan stays, then a voice inside the same stretch stops it', async () => {
+        const { r, n, finished, mic } = await room();
+        r.calls.say(r.game.spaceName, 'seg-1', LONG);
+        await waitFor('the bot to speak', () => n.get('segments_started') >= 1, 5000);
+        await sleep(500);
+        mic(NOISE_HZ);
+        await waitFor('the pause', () => n.get('yield_holds') === 1, 1000);
+        await waitFor('the bot to go on over the fan', () => n.get('yield_continues') === 1, 4000);
+        await sleep(800);
+        expect(finished('seg-1')).toHaveLength(0);
+        expect(r.fromWorker.some((m) => m.type === 'user.speech_started')).toBe(false);
+        mic(VOICE_HZ);
+        await waitFor('the voice to stop', () => finished('seg-1').length > 0, 3000);
+        mic(0);
+        expect(finished('seg-1')[0]).toMatchObject({ interrupted: true, reason: 'barge_in' });
+        expect(r.fromWorker.filter((m) => m.type === 'user.speech_started')).toHaveLength(1);
+        expect(n.get('yield_confirmed_detector_while_continuing')).toBe(1);
         expect(r.violations).toEqual([]);
     }, 60_000);
 });
