@@ -45,6 +45,7 @@ export class PersistentMemory extends ConversationMemory {
     private unreportedItemForgets: Map<string, { botId: string; userUuid: string; itemKey: string; kind: string; since: number }> = new Map();
     private unreportedRetryTimer: NodeJS.Timeout | null = null;
     private static readonly UNREPORTED_RETRY_MS = 30 * 1000;
+    /** A retry safety guard, not a limit anyone sees: a forget Orbit has not taken in a day is let go, so a report it will never take is not tried for ever. */
     private static readonly UNREPORTED_GIVE_UP_MS = 24 * 60 * 60 * 1000;
     /** An older Orbit repeats a Forget for a minute: longer than that plus one 30-second privacy check */
     private static readonly FORGET_REPEAT_WINDOW_MS = 2 * 60 * 1000;
