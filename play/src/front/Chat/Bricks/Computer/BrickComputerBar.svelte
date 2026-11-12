@@ -112,8 +112,8 @@
         margin: 0 8px;
         padding: 8px 10px;
         border-radius: 16px;
-        background: rgba(255, 255, 255, 0.05);
-        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.22);
+        background: rgba(10, 9, 24, 0.72);
+        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.3), 0 0 22px rgba(134, 41, 252, 0.16);
         color: #fff;
     }
     .cb-ic {
@@ -141,7 +141,7 @@
     .cb-quiet,
     .cb-go {
         flex: none;
-        height: 40px;
+        height: 44px;
         margin: 0;
         padding: 0 16px;
         border: 0;

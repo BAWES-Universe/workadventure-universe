@@ -64,15 +64,11 @@
         : view.files.savedAt
         ? $LL.chat.brick.computer.filesLine({ size: fileSize(view.files.bytes) })
         : $LL.chat.brick.computer.filesNone();
+    // The line says which step it is on, not what the step is: the bar above the chat says that. It keeps this card to two lines.
     $: stepLine = !active
         ? ""
         : active.stepTotal
-        ? active.stepLabel
-            ? `${active.stepLabel} · ${$LL.chat.brick.computer.stepOf({
-                  done: active.stepDone,
-                  total: active.stepTotal,
-              })}`
-            : $LL.chat.brick.computer.stepOf({ done: active.stepDone, total: active.stepTotal })
+        ? $LL.chat.brick.computer.stepOf({ done: active.stepDone, total: active.stepTotal })
         : active.stepLabel ?? $LL.chat.brick.computer.gettingReady();
 
     onMount(() => followBrickComputer(brick.id));

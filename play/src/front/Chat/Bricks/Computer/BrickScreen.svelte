@@ -12,7 +12,7 @@
     import type { BrickCard } from "../Brick";
     import { brickComputerAction, brickComputers, followBrickComputer } from "./BrickComputerStore";
     import { canWatch, holdsComputer } from "./BrickComputer";
-    import { IconCircleCheck, IconHandFinger, IconId } from "@wa-icons";
+    import { IconCircleCheck, IconHandFinger, IconId, IconLoader2 } from "@wa-icons";
 
     export let brick: BrickCard;
     export let onClose: () => void;
@@ -135,28 +135,40 @@
         </div>
     {/if}
 
-    <div class="bs-actions">
-        {#if inControl}
-            <button
-                type="button"
-                class={lastStep ? "bs-go" : "bs-quiet"}
-                disabled={busy}
-                data-testid="brickScreenHandBack"
-                on:click={() => act("hand-back")}>{$LL.chat.brick.computer.handBack({ name: brick.name })}</button
-            >
-        {:else if holdsComputer(job)}
-            <PageButton tall disabled={busy} testId="brickScreenStop" on:click={() => act("stop")}
-                >{$LL.chat.brick.computer.stop()}</PageButton
-            >
-            <button
-                type="button"
-                class="bs-take"
-                disabled={busy}
-                data-testid="brickScreenTakeOver"
-                on:click={() => act("take-over")}
-                ><IconHandFinger font-size="18" />{$LL.chat.brick.computer.takeOver()}</button
-            >
+    <div class="bs-actions" class:watch={!inControl}>
+        {#if !inControl && holdsComputer(job)}
+            <div class="bs-now" data-testid="brickScreenNow">
+                <span class="bs-spin"><IconLoader2 font-size="22" /></span>
+                <span class="bs-tx"
+                    ><span class="bs-h">{job?.stepLabel ?? job?.title}</span><span class="bs-l"
+                        >{$LL.chat.brick.computer.screenWatchLine({ name: brick.name })}</span
+                    ></span
+                >
+            </div>
         {/if}
+        <div class="bs-btns">
+            {#if inControl}
+                <button
+                    type="button"
+                    class={lastStep ? "bs-go" : "bs-quiet"}
+                    disabled={busy}
+                    data-testid="brickScreenHandBack"
+                    on:click={() => act("hand-back")}>{$LL.chat.brick.computer.handBack({ name: brick.name })}</button
+                >
+            {:else if holdsComputer(job)}
+                <PageButton tall disabled={busy} testId="brickScreenStop" on:click={() => act("stop")}
+                    >{$LL.chat.brick.computer.stop()}</PageButton
+                >
+                <button
+                    type="button"
+                    class="bs-take"
+                    disabled={busy}
+                    data-testid="brickScreenTakeOver"
+                    on:click={() => act("take-over")}
+                    ><IconHandFinger font-size="18" />{$LL.chat.brick.computer.takeOver()}</button
+                >
+            {/if}
+        </div>
     </div>
 </div>
 
@@ -167,7 +179,7 @@
         gap: 10px;
         height: 100%;
         min-height: 0;
-        padding: 0 12px 12px;
+        padding: 14px 12px 12px;
         color: #fff;
     }
     .bs-screen {
@@ -240,10 +252,53 @@
     }
     .bs-actions {
         display: flex;
+        flex-direction: column;
         gap: 10px;
     }
-    .bs-actions > :global(*) {
+    .bs-btns {
+        display: flex;
+        gap: 10px;
+    }
+    .bs-btns > :global(*) {
         flex: 1;
+    }
+    .bs-now {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 2px 6px;
+    }
+    .bs-spin {
+        flex: none;
+        display: grid;
+        place-items: center;
+        color: #a78bfa;
+        animation: bs-turn 1.4s linear infinite;
+    }
+    @keyframes bs-turn {
+        to {
+            transform: rotate(360deg);
+        }
+    }
+    @media (prefers-reduced-motion: reduce) {
+        .bs-spin {
+            animation: none;
+        }
+    }
+    /* Beside the chat there is room: the line that says what it is doing sits on the left, the two buttons stay compact on the right */
+    @media (min-width: 1024px) {
+        .bs-actions.watch {
+            flex-direction: row;
+            align-items: center;
+        }
+        .bs-actions.watch .bs-now {
+            flex: 1;
+            min-width: 0;
+        }
+        .bs-actions.watch .bs-btns {
+            flex: none;
+            width: 440px;
+        }
     }
     .bs-go,
     .bs-quiet,

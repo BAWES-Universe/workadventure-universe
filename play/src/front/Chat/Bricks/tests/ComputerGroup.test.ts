@@ -116,7 +116,7 @@ describe("a Brick's computer on screen (#2000)", () => {
     it("shows what a working computer is doing, with Stop and Watch, and the month in words", async () => {
         await showGroup(computer({ machine: "working", job: job() }));
         expect(text()).toContain("Book the table");
-        expect(text()).toContain("Opening the site");
+        expect(text()).toContain("step 2 of 5");
         expect(byId("brickComputerStop")).not.toBeNull();
         expect(byId("brickComputerWatch")?.textContent).toContain("Watch");
         expect(byId("brickComputerMonth")?.textContent).toMatch(/plenty|left/i);

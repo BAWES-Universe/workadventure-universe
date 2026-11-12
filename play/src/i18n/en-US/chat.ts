@@ -1121,6 +1121,7 @@ const chat: BaseTranslation = {
             stepOf: "step {done} of {total}",
             gettingReady: "getting it ready",
             screenWatching: "Working · you're watching",
+            screenWatchLine: "{name} types nothing of yours. Your details, paying and submitting are yours.",
             screenInControl: "You're in control · {name} can't see or type",
             screenNone: "The screen isn't available now.",
             screenBack: "Back to the chat",
