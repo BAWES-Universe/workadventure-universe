@@ -892,6 +892,11 @@ const mapEditor: BaseTranslation = {
                     keyHosted: "Your key, lent to {universe:string}. You pay.",
                     keyComputer: "Your computer, lent to {universe:string}.",
                     keyUnlent: "Your key, no longer lent here.",
+                    // A Brick's page: its keys are its owner's own, lent to no universe
+                    keyHostedBrick: "Your key. You pay.",
+                    keyComputerBrick: "Your computer.",
+                    makerHintBrick: "Your own AI keys show here.",
+                    noKeysHintBrick: "Add an AI key in AI keys to run {bot:string} on it.",
                     downNow: "Down now",
                     downUseUniverseAi: ", so Universe AI answers until it’s back.",
                     downStops: ", so this bot rests until it’s back.",

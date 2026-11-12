@@ -14,8 +14,9 @@
      * d-2 and desktop 11), with "Bricks" to go back. Its look, name, line and switch on top, then its parts, then who
      * made it and Delete. Delete asks once and says what goes, what stays, and until when Undo works.
      *
-     * A Brick has no room, so its changes go through its own route. Only the parts a Brick has so far are on it; Usage,
-     * Apps, Computer, Goals and tasks, Memory, Files and the rest come with their own issues.
+     * A Brick has no room, so its changes go through its own route. Only the parts a Brick has so far are on it: its look,
+     * Mind, Personality, Behavior and Companion, and Advanced settings. Usage, Voice, Apps, Computer, Goals and tasks,
+     * Memory, Files, Permissions and Template come with their own issues.
      */
     export let brick: BrickCard;
     export let onBack: () => void;
@@ -74,7 +75,7 @@
     <div class="bkp-scroll">
         {#if bot}
             <BotDetailView {bot} brick={way} {deleting} onSave={() => {}} {onDelete}>
-                <BrickPicture slot="look" look={bot.characterTexture || brick.characterTextureId} size={44} />
+                <BrickPicture slot="look" let:look {look} size={44} />
             </BotDetailView>
         {:else if failed}
             <p class="bkp-note bkp-bad" data-testid="brickPageFailed">{$LL.chat.brick.loadFailed()}</p>

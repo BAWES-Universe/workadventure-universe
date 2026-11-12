@@ -28,6 +28,8 @@
     /** Shown inside Behavior, without its own row */
     export let bare = false;
     export let onEditRoute: () => void;
+    /** A Brick's page: no route to walk, as a Brick is on no map of its own. A route it was saved with stays saved. */
+    export let brick = false;
 
     const MOVES: BotMoves[] = ["stay", "wander", "route"];
     const PAUSES = [0, 5, 30, 60];
@@ -70,7 +72,9 @@
         options={[
             { value: MOVES[0], label: page.moves.stay(), testId: "bot-moves-stay" },
             { value: MOVES[1], label: page.moves.wander(), testId: "bot-moves-wander" },
-            { value: MOVES[2], label: page.moves.route(), testId: "bot-moves-route" },
+            ...(brick && model.moves !== "route"
+                ? []
+                : [{ value: MOVES[2], label: page.moves.route(), testId: "bot-moves-route" }]),
         ]}
         value={model.moves}
         onPick={pickMoves}

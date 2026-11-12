@@ -1011,6 +1011,7 @@ const chat: BaseTranslation = {
         // More Bricks (#1996): New Brick on the Bricks page, in the game's own dialog
         newBrick: "New Brick",
         pickLook: "Pick its look",
+        backToBrick: "Back to {name}",
         wokas: "WOKAs",
         readyToTalk: "Ready to talk as soon as you create it, on Universe AI.",
         makeFailed: "Couldn't make the Brick. Try again.",

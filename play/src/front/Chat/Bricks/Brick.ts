@@ -64,6 +64,21 @@ function botUser(value: unknown): BotUser | null {
     return { id, name: typeof name === "string" ? name : null, email: typeof email === "string" ? email : null };
 }
 
+function behaviorTypeOf(value: unknown): "idle" | "patrol" | "social" {
+    return value === "patrol" || value === "social" ? value : "idle";
+}
+
+/** What Orbit saved of how a Brick behaves, with the circle the page's own groups expect when none is saved. */
+function brickBehaviorConfig(value: unknown, behaviorType: "idle" | "patrol" | "social"): BotData["behaviorConfig"] {
+    const saved = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+    const space = saved.assignedSpace as BotData["behaviorConfig"]["assignedSpace"] | undefined;
+    return {
+        ...saved,
+        behaviorType,
+        assignedSpace: space && typeof space.radius === "number" ? space : { center: { x: 0, y: 0 }, radius: 0 },
+    };
+}
+
 /**
  * A Brick as its page shows it (game #1996): the bot page's own data, from Orbit's read of the bot. What the read does
  * not say is taken from its card, so the page never shows a Brick with no name. A Brick stands nowhere on a map.
@@ -79,8 +94,9 @@ export function brickPageBot(value: unknown, card: BrickCard): BotData {
         description: text("description") ?? card.description ?? undefined,
         characterTexture: look,
         characterTextureIds: look ? [look] : [],
-        behaviorType: "idle",
-        behaviorConfig: { behaviorType: "idle", assignedSpace: { center: { x: 0, y: 0 }, radius: 0 } },
+        behaviorType: behaviorTypeOf(bot.behaviorType),
+        behaviorConfig: brickBehaviorConfig(bot.behaviorConfig, behaviorTypeOf(bot.behaviorType)),
+        companionTextureId: text("companionTextureId") ?? null,
         chatInstructions: text("chatInstructions") ?? "",
         aiProviderRef: text("aiProviderRef"),
         aiModel: text("aiModel") ?? null,
