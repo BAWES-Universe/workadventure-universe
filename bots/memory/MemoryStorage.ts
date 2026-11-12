@@ -7,9 +7,9 @@
 
 import type { BotPlayerMemory } from './ConversationMemory';
 import axios from 'axios';
-import { parseForgetNotice, type MemoryForgetHandler } from './ForgetNotice';
+import { parseForgetNotice, parseItemForgets, type ItemForgetHandler, type MemoryForgetHandler } from './ForgetNotice';
 
-export type { MemoryForgetNotice, MemoryForgetHandler } from './ForgetNotice';
+export type { MemoryForgetNotice, MemoryForgetHandler, ItemForgetNotice, ItemForgetHandler } from './ForgetNotice';
 
 /** A failed save in words, without the request it carried. */
 function describeSaveError(error: unknown): string {
@@ -37,12 +37,18 @@ export class MemoryStorage {
     private maxRetries: number;
     private saveTimer: NodeJS.Timeout | null = null;
     private forgetHandler: MemoryForgetHandler | null = null;
+    private itemForgetHandler: ItemForgetHandler | null = null;
 
     constructor(config: MemoryStorageConfig) {
         this.adminApiUrl = config.adminApiUrl || process.env.ADMIN_API_URL;
         this.botServiceToken = config.botServiceToken || process.env.BOT_SERVICE_TOKEN;
         this.saveInterval = config.saveInterval || 5 * 60 * 1000; // 5 minutes
         this.maxRetries = config.maxRetries || 3;
+    }
+
+    /** Called when a save is answered with things a person forgot (#2003). */
+    setItemForgetHandler(handler: ItemForgetHandler | null): void {
+        this.itemForgetHandler = handler;
     }
 
     /** Called when a save is answered with people to forget. */
@@ -156,6 +162,7 @@ export class MemoryStorage {
                     }
                 );
                 this.applyForgetNotice(botId, response?.data?.forget);
+                this.applyItemForgets(botId, response?.data?.forgetItems);
                 return; // Success
             } catch (error: any) {
                 retries++;
@@ -194,6 +201,54 @@ export class MemoryStorage {
                 console.warn(`[MemoryStorage] Could not report forgotten memories for bot ${botId}: ${describeSaveError(error)}`);
             }
             return false;
+        }
+    }
+
+    /**
+     * Tell Orbit these things are dropped from memory, by Forget id (#2003). Orbit keeps sending a Forget until it hears
+     * this; the Forget itself stays, so a restored row cannot bring the thing back. True when Orbit took it.
+     */
+    async acknowledgeItemForgets(botId: string, itemIds: string[]): Promise<boolean> {
+        if (!this.isConfigured() || !this.botServiceToken || !botId || itemIds.length === 0) return false;
+        try {
+            await axios.post(
+                `${this.adminApiUrl}/api/bots/memory/${encodeURIComponent(botId)}/forgotten`,
+                { itemIds },
+                { headers: { Authorization: `Bearer ${this.botServiceToken}`, 'Content-Type': 'application/json' }, timeout: 10000 }
+            );
+            return true;
+        } catch (error) {
+            console.warn(`[MemoryStorage] Could not report forgotten things for bot ${botId}: ${describeSaveError(error)}`);
+            return false;
+        }
+    }
+
+    /**
+     * Tell Orbit one thing a person asked this bot to forget in the chat ("forget that"), by its key. Orbit keeps it as
+     * forgotten whether or not it has saved the thing yet. True when Orbit took it.
+     */
+    async reportForgottenItem(botId: string, userUuid: string, itemKey: string, kind: string): Promise<boolean> {
+        if (!this.isConfigured() || !this.botServiceToken || !botId || !userUuid || !itemKey) return false;
+        try {
+            await axios.post(
+                `${this.adminApiUrl}/api/bots/memory/${encodeURIComponent(botId)}/items`,
+                { userUuid, itemKey, kind },
+                { headers: { Authorization: `Bearer ${this.botServiceToken}`, 'Content-Type': 'application/json' }, timeout: 10000 }
+            );
+            return true;
+        } catch (error) {
+            console.warn(`[MemoryStorage] Could not tell Orbit what was forgotten for bot ${botId}: ${describeSaveError(error)}`);
+            return false;
+        }
+    }
+
+    private applyItemForgets(botId: string, forgetItems: unknown): void {
+        const items = parseItemForgets(forgetItems);
+        if (!this.itemForgetHandler || items.length === 0) return;
+        try {
+            this.itemForgetHandler(botId, items);
+        } catch (error) {
+            console.error('[MemoryStorage] Could not drop forgotten things:', error);
         }
     }
 

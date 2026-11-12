@@ -125,6 +125,7 @@ import {
 } from './ArtifactTools';
 import { MAX_OUTGOING_MEDIA_BYTES, type BotPlayerMemory, type PendingMedia } from '../memory/ConversationMemory';
 import { FIND_FILES_TOOL, OPEN_FILE_TOOL, SEND_AGAIN_TOOL, fileToolDefinitions, formatFileResult, isFileTool, runFileTool } from './FileTools';
+import { FORGET_MEMORY_TOOL, WHAT_I_REMEMBER_TOOL, isMemoryTool, memoryToolDefinitions, memoryToolsNote, runMemoryTool } from './MemoryTools';
 import { MAKE_BRICK_TOOL, SUGGEST_BRICK_TOOL, brickToolDefinitions, brickToolsNote, isBrickTool, runBrickTool, type BrickNote } from './BrickTools';
 import { linkOfStore } from '../services/ChatFiles';
 import { addTurnMedia, startTurnMedia, turnMediaNotice, type TurnMedia } from './ArtifactMedia';
@@ -1307,6 +1308,8 @@ export class AIService {
                     artifactsEnabled() ? turnMediaNotice(turnMedia) : '',
                     // A person's own first Brick, in their direct messages: it can make Bricks, and what it already suggested (#1996)
                     channel === 'dm' && botId && playerId !== undefined ? await this.brickNoteFor(botId, playerId, adminApiService) : '',
+                    // Any bot, in a direct message: what it remembers about the person, and forgetting it (#2003)
+                    channel === 'dm' && this.memoryToolsOn(botId, botClient) ? memoryToolsNote() : '',
                 ].filter(Boolean).join('\n\n') || undefined,
                 channel,
                 // A direct message with a bot that lives in no room, a Brick (#1995)
@@ -3331,6 +3334,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         // Tools: make another Brick, and suggest one (game #1996). Only a person's own first Brick has them, in its owner's direct messages.
         if (channel === 'dm' && this.brickToolsOn(botId, botClient, adminApiService)) tools.push(...brickToolDefinitions());
 
+        // Tools: what the bot remembers about this person, and forgetting it (game #2003). Any bot, in a direct message only.
+        if (channel === 'dm' && this.memoryToolsOn(botId, botClient)) tools.push(...memoryToolDefinitions());
+
         // Add MCP tools
         if (botId && adminApiService) {
             try {
@@ -3422,6 +3428,21 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     private brickToolsOn(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService): boolean {
         const admin = adminApiService ?? this.adminApiService;
         return !botClient && !!botId && this.helperBricks.has(botId) && !!admin?.isConfigured?.();
+    }
+
+    /** Whether this reply has the two memory tools: a direct message, with a memory that can forget (one kept with Orbit). */
+    private memoryToolsOn(botId?: string, botClient?: BotClient): boolean {
+        return !botClient && !!botId && typeof this.conversationMemory?.forgetThings === 'function';
+    }
+
+    /** Runs what_i_remember or forget_memory for the person in this direct message. */
+    private async runMemoryToolCall(name: string, args: Record<string, unknown>, where: { botId?: string; playerId?: number }): Promise<Record<string, unknown>> {
+        const { botId, playerId } = where;
+        if (!botId || playerId === undefined) return { error: "That can't be done in this chat right now." };
+        return runMemoryTool(name, args, {
+            memory: this.conversationMemory.getMemory(botId, playerId),
+            forget: (keys, kinds) => this.conversationMemory.forgetThings!(botId, playerId, keys, kinds),
+        });
     }
 
     /** What such a Brick is told with its instructions: that it can make Bricks, and what it already suggested. */
@@ -3800,7 +3821,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 // With artifacts off, a tool of the same name belongs to an MCP server: send it down the default branch
                 // So does a file tool's name when Orbit doesn't keep files here (#1508)
                 // And a Brick tool's name anywhere but in a first Brick's direct messages (#1996)
-                switch ((isArtifactTool(toolCall.name) && !artifactsEnabled()) || (isFileTool(toolCall.name) && !this.filesOn(botId, adminApiService)) || (isBrickTool(toolCall.name) && !this.brickToolsOn(botId, botClient, adminApiService)) ? '' : toolCall.name) {
+                switch ((isArtifactTool(toolCall.name) && !artifactsEnabled()) || (isFileTool(toolCall.name) && !this.filesOn(botId, adminApiService)) || (isBrickTool(toolCall.name) && !this.brickToolsOn(botId, botClient, adminApiService)) || (isMemoryTool(toolCall.name) && !this.memoryToolsOn(botId, botClient)) ? '' : toolCall.name) {
                     case 'get_people_on_map':
                         if (botClient) {
                             const people = botClient.getAllPeople();
@@ -4114,6 +4135,15 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             toolCall.name,
                             typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
                             { adminApiService, botId, playerId }
+                        );
+                        break;
+
+                    case WHAT_I_REMEMBER_TOOL:
+                    case FORGET_MEMORY_TOOL:
+                        result = await this.runMemoryToolCall(
+                            toolCall.name,
+                            typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
+                            { botId, playerId }
                         );
                         break;
 

@@ -11,7 +11,8 @@
 import { ConversationMemory, type BotPlayerMemory, type ConversationMessage, type EmotionalState, type PersonalInfo } from './ConversationMemory';
 import { copyHeard, type Heard } from './Heard';
 import { MemoryStorage } from './MemoryStorage';
-import type { MemoryForgetNotice } from './ForgetNotice';
+import type { ItemForgetNotice, MemoryForgetNotice } from './ForgetNotice';
+import { dropItems } from './MemoryItems';
 
 export type ConversationPurpose = 'navigation' | 'information' | 'social' | 'support' | 'entertainment' | 'unknown';
 
@@ -61,6 +62,7 @@ export class PersistentMemory extends ConversationMemory {
         });
         // Orbit answers a save with the people a manager asked the bot to forget (#435)
         this.memoryStorage.setForgetHandler((botId, notice) => this.forget(botId, notice));
+        this.memoryStorage.setItemForgetHandler((botId, items) => this.forgetItems(botId, items));
     }
 
     /**
@@ -73,6 +75,92 @@ export class PersistentMemory extends ConversationMemory {
         this.dropForgotten(botId, notice);
         // Every Forget with an id in this notice gets reported, the new ones and the ones a lost report left behind
         if (notice.rows && notice.rows.length > 0) this.reportForgotten(botId, notice.rows.map((row) => row.id));
+    }
+
+    /**
+     * Drop things a person forgot one at a time (#2003) from everything held for them: what is active, what was loaded
+     * for them to join later and any save still waiting, with what was built from each. A thing is dropped once per
+     * Forget (Orbit repeats it until we report it), and a thing the person said again after they forgot it stays.
+     * Reported to Orbit when done, which stops it being repeated.
+     */
+    forgetItems(botId: string, items: ItemForgetNotice[]): void {
+        const now = Date.now();
+        const fresh = items.filter((item) => !this.appliedForgets.has(`${botId}|item:${item.id}`));
+        const byPerson = new Map<string, { keys: Set<string>; at: Map<string, number> }>();
+        for (const item of fresh) {
+            const one = byPerson.get(item.userUuid) ?? { keys: new Set<string>(), at: new Map<string, number>() };
+            one.keys.add(item.itemKey);
+            one.at.set(item.itemKey, Math.max(item.at, one.at.get(item.itemKey) ?? 0));
+            byPerson.set(item.userUuid, one);
+            this.appliedForgets.set(`${botId}|item:${item.id}`, now + PersistentMemory.FORGET_UNREPORTED_KEEP_MS);
+        }
+        if (byPerson.size > 0) {
+            const prefix = `${botId}_`;
+            for (const [key, memory] of this.getAllMemories().entries()) {
+                if (!key.startsWith(prefix)) continue;
+                const one = byPerson.get(this.personOf(key, memory));
+                if (one) dropItems(memory, one.keys, one.at);
+            }
+            for (const [key, memory] of this.loadedMemoriesByUuid) {
+                const one = key.startsWith(prefix) ? byPerson.get(key.slice(prefix.length)) : undefined;
+                if (one) dropItems(memory, one.keys, one.at);
+            }
+            // A save waiting holds the memory itself; a copy kept for a save is dropped from too
+            for (const [key, memory] of this.pendingSaves) {
+                const one = key.startsWith(prefix) ? byPerson.get(this.personOf(key, memory)) : undefined;
+                if (one) dropItems(memory, one.keys, one.at);
+            }
+        }
+        // Every Forget in this notice gets reported, the new ones and the ones a lost report left behind
+        this.reportForgottenItems(botId, items.map((item) => item.id));
+    }
+
+    /** Who a memory is about: the uuid tracked for the chat, else the one it carries ("temp-<id>" until it is known). */
+    private personOf(key: string, memory: BotPlayerMemory): string {
+        return this.uuidTracking.get(key)?.userUuid ?? memory.userUuid ?? '';
+    }
+
+    private reportForgottenItems(botId: string, ids: string[]): void {
+        const pending = ids.filter((id) => !this.reporting.has(`${botId}|item:${id}`));
+        if (pending.length === 0) return;
+        for (const id of pending) this.reporting.add(`${botId}|item:${id}`);
+        this.memoryStorage
+            .acknowledgeItemForgets(botId, pending)
+            .then((reported) => {
+                if (!reported) return;
+                const keepUntil = Date.now() + PersistentMemory.FORGET_REPEAT_WINDOW_MS;
+                for (const id of pending) {
+                    if (this.appliedForgets.has(`${botId}|item:${id}`)) this.appliedForgets.set(`${botId}|item:${id}`, keepUntil);
+                }
+            })
+            .catch(() => undefined)
+            .finally(() => {
+                for (const id of pending) this.reporting.delete(`${botId}|item:${id}`);
+            });
+    }
+
+    /**
+     * A person asked the bot to forget these things in the chat ("forget that"): they are dropped from memory now, with
+     * what was built from them, and Orbit is told by key so it keeps them gone whatever it has saved. Returns how many
+     * things went.
+     */
+    async forgetThings(botId: string, playerId: number, keys: ReadonlySet<string>, kinds: ReadonlyMap<string, string>): Promise<number> {
+        const memory = this.getMemory(botId, playerId);
+        if (!memory || keys.size === 0) return 0;
+        const userUuid = this.personOf(`${botId}_${playerId}`, memory);
+        const removed = dropItems(memory, keys);
+        // The snapshots of this person are dropped from too, so joining again does not bring a thing back
+        const snapshot = this.loadedMemoriesByUuid.get(`${botId}_${userUuid}`);
+        if (snapshot) dropItems(snapshot, keys);
+        for (const [key, other] of this.getAllMemories()) {
+            if (key.startsWith(`${botId}_`) && other !== memory && this.personOf(key, other) === userUuid) dropItems(other, keys);
+        }
+        // A person who is not known to Orbit yet (no uuid) has nothing there to forget
+        if (!userUuid.startsWith('temp-')) {
+            await Promise.all([...keys].map((itemKey) => this.memoryStorage.reportForgottenItem(botId, userUuid, itemKey, kinds.get(itemKey) ?? 'fact')));
+        }
+        if (removed > 0) this.scheduleDebouncedSave(botId, playerId);
+        return removed;
     }
 
     private dropForgotten(botId: string, notice: MemoryForgetNotice): void {
@@ -252,10 +340,15 @@ export class PersistentMemory extends ConversationMemory {
                     const prefsFrom = live.preferences && live.preferences.length > 0 ? live : saved;
                     const factsFrom = live.facts.size > 0 ? live : saved;
                     const heard: Record<string, Heard> = {};
+                    // And when it was said (#2003), from the same side
+                    const drawnFrom: Record<string, number> = {};
                     const keep = (from: PersonalInfo, mine: (key: string) => boolean) => {
                         for (const [key, stamp] of Object.entries(from.heard ?? {})) {
                             const copy = mine(key) ? copyHeard(stamp) : undefined;
                             if (copy) heard[key] = copy;
+                        }
+                        for (const [key, at] of Object.entries(from.drawnFrom ?? {})) {
+                            if (mine(key)) drawnFrom[key] = at;
                         }
                     };
                     keep(live.name ? live : saved, (key) => key === 'name');
@@ -269,6 +362,7 @@ export class PersistentMemory extends ConversationMemory {
                         facts: factsFrom === live ? live.facts : new Map(saved.facts),
                         lastInfoUpdate: live.lastInfoUpdate,
                         ...(Object.keys(heard).length > 0 ? { heard } : {}),
+                        ...(Object.keys(drawnFrom).length > 0 ? { drawnFrom } : {}),
                     };
                     // Relationship: take the best of both (max conversations, earliest firstMet, latest lastMet)
                     existingOrNew.relationship = {
@@ -826,6 +920,7 @@ export class PersistentMemory extends ConversationMemory {
                 ...(memory.personalInfo.heard
                     ? { heard: Object.fromEntries(Object.entries(memory.personalInfo.heard).map(([key, stamp]) => [key, copyHeard(stamp)!])) }
                     : {}),
+                ...(memory.personalInfo.drawnFrom ? { drawnFrom: { ...memory.personalInfo.drawnFrom } } : {}),
             },
             relationship: {
                 ...memory.relationship,

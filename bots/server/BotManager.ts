@@ -33,6 +33,7 @@ import {
     type LegacyBehaviorType,
 } from '../behaviors/behaviorModel';
 import { chatFileKeeper } from '../services/ChatFileKeeper';
+import { FileRemovalSweeper } from '../services/FileRemovals';
 import { heardInDm, type Heard } from '../memory/Heard';
 import { DM_SPACE_NAME } from './DmReplyService';
 
@@ -116,6 +117,8 @@ export class BotManager {
      * respawns), so a Forget must reach it too (#435).
      */
     private botsHoldingMemory: Set<string> = new Set();
+    /** Takes files people deleted from a Brick's list off the uploader (#2003) */
+    private fileRemovals: FileRemovalSweeper | null = null;
     private adminApiService: AdminApiService;
     /** Asks Orbit who may chat with a bot nearby or summon it, before the bot's AI is reached. */
     private accessGate: BotAccessGate;
@@ -169,6 +172,8 @@ export class BotManager {
                 chatFileKeeper.forget(botId, notice);
                 persistentMemory.forget(botId, notice);
             });
+            // Things a person forgot one at a time, in their list in Orbit or in the chat (#2003)
+            this.adminApiService.setItemForgetHandler?.((botId, items) => persistentMemory.forgetItems(botId, items));
             
             // Initialize AI service
             const adminApiUrl = process.env.ADMIN_API_URL || '';
@@ -289,6 +294,14 @@ export class BotManager {
                 if (!this.bots.has(botId)) this.botsHoldingMemory.delete(botId);
             }
         );
+
+        // Files people deleted from a Brick's list leave the uploader too (#2003)
+        this.fileRemovals = new FileRemovalSweeper({
+            adminApiUrl: process.env.ADMIN_API_URL,
+            uploaderUrl: process.env.UPLOADER_URL,
+            botServiceToken: process.env.BOT_SERVICE_TOKEN,
+        });
+        this.fileRemovals.start();
 
         // TODO: Load bots from storage (WAM files + Admin API)
         // This will be called on server startup
@@ -1367,6 +1380,7 @@ export class BotManager {
         // Stop verification interval
         this.stopRoomVerification();
         this.adminApiService.stopPrivacySync?.();
+        this.fileRemovals?.stop();
 
         const shutdownPromises = Array.from(this.bots.keys()).map(botId => this.despawnBot(botId));
         await Promise.all(shutdownPromises);
