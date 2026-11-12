@@ -120,9 +120,15 @@ export function checkSpaceJoin(
         SocketData,
         "grantedBubbleSpaces" | "megaphoneChannels" | "refusedAreaSpaces" | "areaSpacePolicyUnknown"
     > &
-        Partial<Pick<SocketData, "userUuid" | "userIdentifier" | "tags">>
+        Partial<Pick<SocketData, "userUuid" | "userIdentifier" | "tags" | "callOnly">>
 ): void {
     const { localSpaceName, filterType, propertiesToSync } = request;
+
+    // A call-only connection is in no room: the one thing it may join is the call it was opened for. Joining the
+    // world's space or a bubble would list it among the room's people, which is exactly what it must never be.
+    if (socketData.callOnly && !isCallSpaceName(localSpaceName)) {
+        throw new SpaceJoinRefusedError(localSpaceName, "a call-only connection can only join a call");
+    }
 
     // The back has never been able to read the room's areas, so nothing says who may join this one yet
     if (socketData.areaSpacePolicyUnknown && isAreaSpaceName(localSpaceName)) {

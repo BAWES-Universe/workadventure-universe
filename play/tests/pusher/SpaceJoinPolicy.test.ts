@@ -255,6 +255,28 @@ describe("call spaces (game #2004)", () => {
         expect(parseCallSpaceName(callSpaceName(odd))).toEqual(odd);
     });
 
+    it("keeps a call-only connection to its call: never the world, a bubble, a meeting room or any other space", () => {
+        const callOnly = { ...socketData([BUBBLE]), ...bot, callOnly: true };
+        expect(() => checkSpaceJoin(join(CALL, FilterType.ALL_USERS, MEDIA), callOnly)).not.toThrow();
+        expect(() =>
+            checkSpaceJoin(join(WORLD_SPACE_NAME, FilterType.ALL_USERS, ["availabilityStatus"]), callOnly)
+        ).toThrow(SpaceJoinRefusedError);
+        expect(() => checkSpaceJoin(join(BUBBLE, FilterType.ALL_USERS, MEDIA), callOnly)).toThrow(
+            SpaceJoinRefusedError
+        );
+        expect(() => checkSpaceJoin(join(MEGAPHONE, FilterType.LIVE_STREAMING_USERS), callOnly)).toThrow(
+            SpaceJoinRefusedError
+        );
+        expect(() => checkSpaceJoin(join("some-other-space"), callOnly)).toThrow(SpaceJoinRefusedError);
+        // The same bot with its ordinary room connection is not held to calls
+        expect(() =>
+            checkSpaceJoin(join(WORLD_SPACE_NAME, FilterType.ALL_USERS, ["availabilityStatus"]), {
+                ...socketData(),
+                ...bot,
+            })
+        ).not.toThrow();
+    });
+
     it("holds two members and no third", () => {
         expect(() => checkCallSpaceRoom(CALL, 0)).not.toThrow();
         expect(() => checkCallSpaceRoom(CALL, 1)).not.toThrow();
