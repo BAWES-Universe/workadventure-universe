@@ -88,13 +88,14 @@ const SOMEONE_ELSES = new Set([
 
 /**
  * The only other words a request may hold for "name" or "birthday" to be clearly the person's own: who it belongs to ("my",
- * "me"), the plain words around a request ("forget that my name please"), and the question words ("when's my birthday").
+ * "me") and the plain words around a request to forget ("can you forget that my name please"). Words that ask for it to be
+ * told or kept ("tell", "know", "remember", "what", "when") are not among them: "tell me my name" is not a request to forget.
  * Anything else in the phrase ("dog", "friend", "Sam's", "cake", "gave", "of Sam") makes it not clearly theirs.
  */
 const OWN_FILLER = new Set([
     'my', 'me', 'i', 'mine', 'myself', 'the', 'a', 'an', 'that', 'this', 'is', 'was', 'are', 'to', 'of', 'and', 'it', 'about',
     'forget', 'delete', 'remove', 'erase', 'clear', 'drop', 'please', 'pls', 'you', 'do', 'does', 'can', 'could', 'will', 'would',
-    'what', 'whats', "what's", 'when', 'whens', "when's", 'remember', 'know', 'tell', 'everything', 'all', 'anything',
+    'everything', 'all', 'anything',
 ]);
 
 /** Said just before a value, so that the value is the person's own name or date: "my name is Mark". */
@@ -203,8 +204,22 @@ interface Clause {
     keep: boolean;
 }
 
-/** What starts a clause that asks for something to be kept. */
-const KEEPING = /^(?:please\s+)?(?:(?:do\s*n['o]?t|do not|never)\s+(?:forget|delete|remove|erase|drop|clear)|remember|keep|save|leave)\b/u;
+/** Words that ask for something to be kept or told, not forgotten. */
+const KEEP_WORDS = new Set(['remember', 'keep', 'save', 'leave', 'remind']);
+const FORGET_WORDS = new Set(['forget', 'delete', 'remove', 'erase', 'drop', 'clear']);
+const NOT_FORGET = /\b(?:do\s*n['o]?t|do not|never)\s+(?:forget|delete|remove|erase|drop|clear)\b/u;
+
+/**
+ * Whether a clause asks for something to be kept: "don't forget", or "remember"/"keep" anywhere in it, or what follows a
+ * "but", "except" or "not". A clause that says forget, delete, remove or erase is never one ("remember coffee but forget tea").
+ */
+function asksToKeep(text: string, joiner: string, first: boolean): boolean {
+    if (NOT_FORGET.test(text)) return true;
+    const tokens = tokensOf(text);
+    if (tokens.some((token) => FORGET_WORDS.has(token))) return false;
+    if (tokens.some((token) => KEEP_WORDS.has(token))) return true;
+    return !first && (joiner === 'but' || joiner === 'except' || joiner === 'although' || joiner === 'though' || /^(?:not|no)\s/u.test(text));
+}
 
 /** A request cut into the things it asks about, and what it says to keep. Words joining them ("and", "but") are at a boundary. */
 function clausesOf(asked: string): Clause[] {
@@ -217,7 +232,7 @@ function clausesOf(asked: string): Clause[] {
             joiner = text;
             continue;
         }
-        if (text) clauses.push({ text, keep: KEEPING.test(text) || (clauses.length > 0 && (joiner === 'but' || joiner === 'except' || joiner === 'although' || joiner === 'though' || /^(?:not|no)\s/u.test(text))) });
+        if (text) clauses.push({ text, keep: asksToKeep(text, joiner, clauses.length === 0) });
         joiner = '';
     }
     return clauses;
@@ -289,7 +304,7 @@ export function itemsAbout(items: MemoryItem[], about: string): MemoryItem[] {
     return resolveForgetting(items, about).chosen;
 }
 
-/** The most words of a request to forget that are weighed. A longer one is not cut: a "but not" past the cut would be lost, so it is not acted on. */
+/** The most characters of a request to forget that are weighed. A longer one is not cut: a "but not" past the cut would be lost, so it is not acted on. */
 const ABOUT_MOST = 200;
 
 export interface MemoryToolContext {

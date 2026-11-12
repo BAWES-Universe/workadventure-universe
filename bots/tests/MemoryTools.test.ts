@@ -65,7 +65,9 @@ describe('the memory tools', () => {
     it('find a name or a birthday by what it is, not only by its words', () => {
         const items = memoryItemsOf(sara());
         expect(itemsAbout(items, 'my name').map((item) => item.kind)).toEqual(['name']);
-        expect(itemsAbout(items, "when's my birthday").map((item) => item.kind)).toEqual(['birthday']);
+        expect(itemsAbout(items, 'forget my birthday').map((item) => item.kind)).toEqual(['birthday']);
+        // Asking for it told is not asking for it forgotten
+        expect(itemsAbout(items, "when's my birthday")).toEqual([]);
         expect(itemsAbout(items, '')).toEqual([]);
     });
 
@@ -76,7 +78,7 @@ describe('the memory tools', () => {
         }
         // Unusual wording is not clearly theirs: nothing goes, and the tool sends the model to the ids
         expect(itemsAbout(items, 'the name I gave you').map((item) => item.kind)).toEqual([]);
-        for (const own of ['my name', 'name', 'forget everything about my name', 'forget my name now', 'forget that my name is Sara', 'when is my birthday']) {
+        for (const own of ['my name', 'name', 'forget everything about my name', 'forget my name now', 'forget that my name is Sara', 'can you forget my name', 'could you please forget my birthday', 'will you forget my name', 'delete my birthday']) {
             expect(itemsAbout(items, own).map((item) => item.kind), own).toEqual([own.includes('birthday') ? 'birthday' : 'name']);
         }
         for (const other of ['the name of my dog', "my dog's name", 'her birthday', 'the name I gave my cat', 'my birthday cake', 'birthday party for Sam']) {
@@ -360,5 +362,58 @@ describe('forget_memory as the model calls it (GPT B2, B3, B4)', () => {
         expect(text).toContain('not clear which memory');
         expect(text).toContain('Never use it for a question');
         expect(text).not.toContain('Never ask them to confirm first');
+    });
+});
+
+describe('asking to be told or to keep is never asking to forget (audit)', () => {
+    const named = [thing('name', 'Mark'), thing('birthday', '12 June'), thing('pref', 'coffee'), thing('pref', 'tea')];
+    const recall = [
+        'can you tell me my birthday', 'tell me my name', 'you know my name', 'can you remember my name', 'will you remember my birthday',
+        'could you tell me what my name is', 'tell me everything about my birthday', 'do remember my birthday', 'you remember my birthday right',
+        'my birthday is when', 'remind me of my name', 'do you know my birthday', 'what is my name',
+    ];
+
+    it('takes nothing for a request to be told, and asks which memory is meant', async () => {
+        for (const about of recall) {
+            expect(itemsAbout(named, about), about).toEqual([]);
+            const forget = vi.fn(async () => 1);
+            const answer = (await runMemoryTool(FORGET_MEMORY_TOOL, { about }, { memory: sara(), forget })) as any;
+            expect(forget, about).not.toHaveBeenCalled();
+            expect(answer.forgotten, about).toEqual([]);
+        }
+    });
+
+    it('still forgets when forgetting is what is asked, however politely', () => {
+        for (const about of ['forget my name', 'please forget my name', 'can you forget my name', 'could you please erase my name', 'will you delete my name now', 'forget my birthday', 'would you forget my birthday for now']) {
+            expect(ids(itemsAbout(named, about)), about).toEqual([about.includes('birthday') ? 'birthday::12 June' : 'name::Mark']);
+        }
+    });
+
+    it('treats "remember" or "keep" anywhere in a clause as a request to keep', () => {
+        for (const about of ['remember my name', 'please remember my birthday', 'you should keep my name', 'keep coffee', 'I want you to remember coffee']) {
+            const result = resolveForgetting(named, about);
+            expect(result.chosen, about).toEqual([]);
+            expect(result.keepOnly, about).toBe(true);
+        }
+    });
+
+    it('is not keep-only when the request also says to forget', () => {
+        for (const about of ['keep coffee forget tea', 'remember coffee but forget tea', 'keep my name, forget my birthday', 'forget everything you remember about my name']) {
+            const result = resolveForgetting(named, about);
+            expect(result.keepOnly, about).toBe(false);
+        }
+        // What is clear is still done, and what is kept stays
+        expect(ids(itemsAbout(named, 'remember coffee but forget tea'))).toEqual(['pref::tea']);
+        expect(ids(itemsAbout(named, 'remember my name and forget my birthday'))).toEqual(['birthday::12 June']);
+        // Said as one run with no joint, it settles nothing: the model is told it is unclear, and never that it will keep it
+        expect(itemsAbout(named, 'keep coffee forget tea')).toEqual([]);
+    });
+
+    it('never tells the person it will keep something when they also asked to forget', async () => {
+        const forget = vi.fn(async () => 1);
+        const answer = (await runMemoryTool(FORGET_MEMORY_TOOL, { about: 'keep coffee forget tea' }, { memory: sara(), forget })) as any;
+        expect(forget).not.toHaveBeenCalled();
+        expect(answer.unclear).toBe(true);
+        expect(answer.note).not.toContain('keep it, not to forget');
     });
 });
