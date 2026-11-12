@@ -205,6 +205,8 @@ interface Clause {
 }
 
 /** Words that ask for something to be kept or told, not forgotten. */
+/** Words that point back at what was just said. */
+const PRONOUNS = new Set(['it', 'that', 'this', 'them', 'those', 'these', 'one', 'ones']);
 const KEEP_WORDS = new Set(['remember', 'keep', 'save', 'leave', 'remind']);
 const FORGET_WORDS = new Set(['forget', 'delete', 'remove', 'erase', 'drop', 'clear']);
 const NOT_FORGET = /\b(?:do\s*n['o]?t|do not|never)\s+(?:forget|delete|remove|erase|drop|clear)\b/u;
@@ -262,17 +264,21 @@ export function resolveForgetting(items: MemoryItem[], about: string): Forgettin
     const unsure = new Map<string, MemoryItem>();
     let unsettled = false;
     let asking = 0;
+    let lastAsked: MemoryItem[] = [];
     for (const clause of clausesOf(asked)) {
         const tokens = tokensOf(clause.text);
         const found = resolveClause(items, tokens);
         if (clause.keep) {
             for (const item of found.picked) kept.add(item.id);
+            // "my name, remember it": a keep that names nothing but "it" is about what was just said, so that is kept, not forgotten
+            if (found.picked.length === 0 && tokens.every((token) => FILLER.has(token) || KEEP_WORDS.has(token) || PRONOUNS.has(token) || NEGATIONS.has(token) || FORGET_WORDS.has(token))) for (const item of lastAsked) kept.add(item.id);
             continue;
         }
         asking++;
         for (const item of found.unsure) unsure.set(item.id, item);
         if (found.picked.length === 0) unsettled = true;
         for (const item of found.picked) chosen.set(item.id, item);
+        lastAsked = found.picked;
     }
     const taken = [...chosen.values()].filter((item) => !kept.has(item.id));
     return {

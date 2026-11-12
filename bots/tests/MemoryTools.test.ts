@@ -417,3 +417,20 @@ describe('asking to be told or to keep is never asking to forget (audit)', () =>
         expect(answer.note).not.toContain('keep it, not to forget');
     });
 });
+
+describe('a keep that names nothing keeps what was just said (audit)', () => {
+    const named = [thing('name', 'Mark'), thing('birthday', '12 June'), thing('pref', 'coffee'), thing('pref', 'tea')];
+    it('never forgets what the person asks to keep with "it" or "that"', () => {
+        for (const about of ['my name, remember it', 'my birthday, keep that', 'my name - remember this', 'coffee, keep them', 'forget my name and remember it', 'my name; remember that', 'my name, do not forget it', "my birthday, don't forget that"]) {
+            expect(itemsAbout(named, about), about).toEqual([]);
+            expect(resolveForgetting(named, about).clear, about).toBe(false);
+        }
+    });
+    it('still takes the other thing, and never tells them it will keep what they asked to forget', async () => {
+        expect(ids(itemsAbout(named, 'my name and my birthday, remember it'))).toEqual(['name::Mark']);
+        const forget = vi.fn(async () => 1);
+        const answer = (await runMemoryTool(FORGET_MEMORY_TOOL, { about: 'my name, remember it' }, { memory: sara(), forget })) as any;
+        expect(forget).not.toHaveBeenCalled();
+        expect(answer.forgotten).toEqual([]);
+    });
+});
