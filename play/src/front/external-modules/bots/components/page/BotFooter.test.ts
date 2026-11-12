@@ -39,7 +39,12 @@ describe("Delete on a Brick's page (#1996, mock d-2)", () => {
 
     it("offers its computer's files first, with their size and Download", async () => {
         const download = vi.fn();
-        await ask({ brick: { undoLine: "You can undo this until 17 Nov, on the Bricks page.", files: { size: "1.2 GB", download } } });
+        await ask({
+            brick: {
+                undoLine: "You can undo this until 17 Nov, on the Bricks page.",
+                files: { size: "1.2 GB", download },
+            },
+        });
         const files = byId("brickDeleteFiles");
         expect(files?.textContent?.replace(/\s+/g, " ").trim()).toBe("Its files 1.2 GB on its computer Download");
         byId("brickDeleteDownload")?.click();

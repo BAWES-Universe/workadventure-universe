@@ -70,7 +70,7 @@ function botUser(value: unknown): BotUser | null {
  */
 export function brickPageBot(value: unknown, card: BrickCard): BotData {
     const bot = (value && typeof value === "object" ? value : {}) as Record<string, unknown>;
-    const text = (key: string): string | undefined => (typeof bot[key] === "string" ? (bot[key]) : undefined);
+    const text = (key: string): string | undefined => (typeof bot[key] === "string" ? bot[key] : undefined);
     const look = text("characterTextureId") ?? card.characterTextureId ?? "";
     return {
         id: card.id,

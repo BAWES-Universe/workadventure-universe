@@ -100,7 +100,9 @@ export async function setMyBrickEnabled(brickId: string, enabled: boolean): Prom
  */
 export async function changeMyBrick(brickId: string, change: BrickChange): Promise<boolean> {
     try {
-        const saved = parseBrickCard(((await botApiService.changeMyBrick(brickId, change)) as { brick?: unknown })?.brick);
+        const saved = parseBrickCard(
+            ((await botApiService.changeMyBrick(brickId, change)) as { brick?: unknown })?.brick
+        );
         if (saved) bricks.update((list) => list?.map((brick) => (brick.id === brickId ? saved : brick)));
         await botApiService.tellBrickChanged(brickId);
         return true;

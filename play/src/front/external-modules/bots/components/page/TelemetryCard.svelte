@@ -38,7 +38,8 @@
         {/if}
     </div>
     {#if locked}
-        <span class="tm-lock" title={lockedHint ?? text.lockedBy()} aria-hidden="true"><IconLock font-size="16" /></span>
+        <span class="tm-lock" title={lockedHint ?? text.lockedBy()} aria-hidden="true"><IconLock font-size="16" /></span
+        >
     {/if}
     <button
         type="button"
