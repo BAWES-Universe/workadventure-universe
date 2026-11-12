@@ -28,7 +28,8 @@ const game = vi.hoisted(() => ({
     getBrickVisit: vi.fn<(brickId: string, roomUrl: string) => Promise<unknown>>(),
     startBrickVisit: vi.fn<(brickId: string, roomUrl: string) => Promise<unknown>>(),
     endBrickVisit: vi.fn<(brickId: string) => Promise<unknown>>(),
-    syncVisitingBrick: vi.fn<(position?: { x: number; y: number }) => Promise<boolean | undefined>>(),
+    syncVisitingBrick:
+        vi.fn<(position?: { x: number; y: number }, options?: { ending?: boolean }) => Promise<boolean | undefined>>(),
 }));
 const looks = vi.hoisted(() => {
     // A tiny store, made before the modules load: the WOKAs the game offers a bot
@@ -659,7 +660,7 @@ describe("the Bricks page (#1995)", () => {
             game.getBrickVisit.mockResolvedValue({ state: "none", place: "Universe" });
             await click("brickEndVisit");
             expect(game.endBrickVisit).toHaveBeenCalledWith(MADE);
-            expect(game.syncVisitingBrick).toHaveBeenCalledWith();
+            expect(game.syncVisitingBrick).toHaveBeenCalledWith(undefined, { ending: true });
             expect(byId("brickEndVisit")).toBeNull();
             expect(byId("brickBringAlong")).not.toBeNull();
         });

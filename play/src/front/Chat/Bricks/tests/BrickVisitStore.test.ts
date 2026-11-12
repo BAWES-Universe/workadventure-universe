@@ -6,7 +6,8 @@ const api = vi.hoisted(() => ({
     getBrickVisit: vi.fn<(brickId: string, roomUrl: string) => Promise<unknown>>(),
     startBrickVisit: vi.fn<(brickId: string, roomUrl: string) => Promise<unknown>>(),
     endBrickVisit: vi.fn<(brickId: string) => Promise<unknown>>(),
-    syncVisitingBrick: vi.fn<(position?: { x: number; y: number }) => Promise<boolean | undefined>>(),
+    syncVisitingBrick:
+        vi.fn<(position?: { x: number; y: number }, options?: { ending?: boolean }) => Promise<boolean | undefined>>(),
 }));
 vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService: api }));
 
@@ -160,7 +161,16 @@ describe("what the Brick page knows about visiting (#2005)", () => {
         await expect(endBrickVisit(A)).resolves.toBe(true);
         expect(api.endBrickVisit).toHaveBeenCalledWith(A);
         expect(get(brickVisitStore)).toEqual({ state: "none", place: "Universe" });
-        expect(api.syncVisitingBrick).toHaveBeenCalledWith();
+        expect(api.syncVisitingBrick).toHaveBeenCalledWith(undefined, { ending: true });
+    });
+
+    it("asks once more to take the Brick off the map when the bot server did not answer the first time (Sentry on #2023)", async () => {
+        api.endBrickVisit.mockResolvedValue({ state: "none", place: null });
+        api.getBrickVisit.mockResolvedValue({ state: "none", place: "Universe" });
+        api.syncVisitingBrick.mockResolvedValueOnce(undefined).mockResolvedValueOnce(true);
+        await expect(endBrickVisit(A)).resolves.toBe(true);
+        expect(api.syncVisitingBrick).toHaveBeenCalledTimes(2);
+        expect(api.syncVisitingBrick).toHaveBeenNthCalledWith(2, undefined, { ending: true });
     });
 
     it("says false when a visit could not be ended, and leaves the map alone", async () => {

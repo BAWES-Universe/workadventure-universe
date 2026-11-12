@@ -47,7 +47,7 @@ describe('POST /api/bricks/visit/sync', () => {
         const answer = await sync({ roomId: ROOM, x: 40, y: 50 });
         expect(answer.status).toBe(200);
         expect(await answer.json()).toEqual({ present: true });
-        expect(botManager.syncVisitingBrick).toHaveBeenCalledWith(ROOM, { uuid: 'uuid-alice' }, { x: 40, y: 50 });
+        expect(botManager.syncVisitingBrick).toHaveBeenCalledWith(ROOM, { uuid: 'uuid-alice' }, { x: 40, y: 50 }, true);
     });
 
     it('says the Brick is not on the map when there is none for this person', async () => {
@@ -70,6 +70,25 @@ describe('POST /api/bricks/visit/sync', () => {
         expect(answers.slice(0, 60).every((status) => status === 200)).toBe(true);
         expect(answers[60]).toBe(429);
         expect(botManager.syncVisitingBrick).toHaveBeenCalledTimes(60);
+    });
+
+    it('never holds up the end of a visit: no room check, its own allowance, and it only takes the Brick off (Sentry on #2023)', async () => {
+        botManager.hasPlayersIn.mockResolvedValue(false);
+        botManager.syncVisitingBrick.mockResolvedValue({ botId: null });
+        const answer = await sync({ roomId: ROOM, ending: true, x: 1, y: 2 });
+        expect(answer.status).toBe(200);
+        expect(await answer.json()).toEqual({ present: false });
+        expect(botManager.hasPlayersIn).not.toHaveBeenCalled();
+        expect(botManager.syncVisitingBrick).toHaveBeenCalledWith(ROOM, { uuid: 'uuid-alice' }, undefined, false);
+    });
+
+    it('lets a person who used up their placements still end a visit', async () => {
+        adminApiService.validateSessionToken.mockResolvedValue({ userId: 'u-spent', uuid: 'uuid-spent', email: null });
+        for (let i = 0; i < 61; i++) await sync();
+        expect((await sync()).status).toBe(429);
+        botManager.syncVisitingBrick.mockClear();
+        expect((await sync({ roomId: ROOM, ending: true })).status).toBe(200);
+        expect(botManager.syncVisitingBrick).toHaveBeenCalledTimes(1);
     });
 
     it('needs an Orbit session and a room', async () => {

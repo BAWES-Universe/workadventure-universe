@@ -936,7 +936,7 @@ export class BotManager {
      * room, brings a Brick along, or ends the visit. The Brick of an earlier room, or a Brick they swapped it for, is
      * taken off the map first. Never throws for a person Orbit has nothing for: it only takes the Brick off.
      */
-    async syncVisitingBrick(roomUrl: string, person: { uuid: string }, position?: { x: number; y: number }): Promise<{ botId: string | null }> {
+    async syncVisitingBrick(roomUrl: string, person: { uuid: string }, position?: { x: number; y: number }, mayPlace = true): Promise<{ botId: string | null }> {
         const uuid = person.uuid;
         // One sync at a time per person, so two calls together never put the Brick on the map twice
         // (a loop: calls that queued behind the same sync wake together, and only one of them may go next)
@@ -945,7 +945,7 @@ export class BotManager {
             await pending.catch(() => undefined);
             pending = this.visitSyncs.get(uuid);
         }
-        const run = this.runVisitSync(roomUrl, uuid, position);
+        const run = this.runVisitSync(roomUrl, uuid, position, mayPlace);
         this.visitSyncs.set(uuid, run);
         try {
             return await run;
@@ -956,7 +956,7 @@ export class BotManager {
 
     private visitSyncs: Map<string, Promise<{ botId: string | null }>> = new Map();
 
-    private async runVisitSync(roomUrl: string, uuid: string, position?: { x: number; y: number }): Promise<{ botId: string | null }> {
+    private async runVisitSync(roomUrl: string, uuid: string, position?: { x: number; y: number }, mayPlace = true): Promise<{ botId: string | null }> {
         let configs: BotConfiguration[];
         try {
             configs = await this.adminApiService.getVisitingBricks(roomUrl, [uuid]);
@@ -971,6 +971,9 @@ export class BotManager {
             await this.endVisitor(uuid, current.botId);
         }
         if (!mine) return { botId: null };
+        // Taking a Brick off the map is always allowed (ending a visit is never refused); only putting one on needs the
+        // caller to have been checked
+        if (!mayPlace) return { botId: this.visitors.get(uuid)?.botId ?? null };
 
         const running = this.bots.get(mine.botId);
         if (running && running.status === 'connected' && this.visitors.get(uuid)?.botId === mine.botId) {

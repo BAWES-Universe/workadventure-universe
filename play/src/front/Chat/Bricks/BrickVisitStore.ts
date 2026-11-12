@@ -82,7 +82,10 @@ export async function endBrickVisit(brickId: string): Promise<boolean> {
         await botApiService.endBrickVisit(brickId);
         // Read again rather than guess: the answer to an ended visit names no place, and the page says where it would walk
         await loadBrickVisit(brickId);
-        await botApiService.syncVisitingBrick();
+        // The visit is over in Orbit; the Brick is taken off the map, asked once more when the bot server did not answer
+        if ((await botApiService.syncVisitingBrick(undefined, { ending: true })) === undefined) {
+            await botApiService.syncVisitingBrick(undefined, { ending: true });
+        }
         return true;
     } catch (error) {
         console.warn("Could not end a Brick's visit", error);

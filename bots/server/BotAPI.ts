@@ -345,8 +345,8 @@ export class BotAPI {
 
     private visitSyncCounts = new Map<string, { count: number; since: number }>();
 
-    /** At most 60 Brick placements a minute for one person: far more than walking room to room and tapping, too few to keep Orbit busy. */
-    private visitSyncAllowed(userId: string, now = Date.now()): boolean {
+    /** At most `limit` Brick placements (or ends) a minute for one person: far more than walking room to room and tapping, too few to keep Orbit busy. */
+    private visitSyncAllowed(userId: string, limit: number, now = Date.now()): boolean {
         const seen = this.visitSyncCounts.get(userId);
         if (!seen || now - seen.since >= 60_000) {
             this.visitSyncCounts.delete(userId);
@@ -355,7 +355,7 @@ export class BotAPI {
             return true;
         }
         seen.count += 1;
-        return seen.count <= 60;
+        return seen.count <= limit;
     }
 
     private voiceHello(): VoiceHello | null {
@@ -988,20 +988,21 @@ export class BotAPI {
             }
             const { x, y } = req.body ?? {};
             const position = typeof x === 'number' && typeof y === 'number' && Number.isFinite(x) && Number.isFinite(y) ? { x, y } : undefined;
-            if (!req.sessionUserId || !this.visitSyncAllowed(req.sessionUserId)) {
+            // Ending a visit is not held up by the room check, and has an allowance of its own that placing never uses up: it only
+            // takes a Brick off the map. Putting a Brick on the map is asked of a room people are really in, as room-enter does.
+            const ending = req.body?.ending === true;
+            if (!req.sessionUserId || !this.visitSyncAllowed(`${ending ? 'end' : 'place'}:${req.sessionUserId}`, ending ? 30 : 60)) {
                 res.status(429).json({ error: 'Too many changes, try again in a minute' });
                 return;
             }
             try {
-                // As for room-enter, only a room people are really in: the room comes from the caller, so a room nobody is in
-                // gets no Brick. (Orbit adds that a person is only placed in a room they may open.)
-                if (!(await this.botManager.hasPlayersIn(roomId, 3, 1000))) {
+                if (!ending && !(await this.botManager.hasPlayersIn(roomId, 3, 1000))) {
                     res.json({ present: false });
                     return;
                 }
                 // One Brick per person, in a room that exists and whose universe takes visits (Orbit says), and it goes by
                 // itself when its person is not seen in the room: so there is no wait here, and ending a visit is at once
-                const answer = await this.botManager.syncVisitingBrick(roomId, { uuid: req.sessionUuid }, position);
+                const answer = await this.botManager.syncVisitingBrick(roomId, { uuid: req.sessionUuid }, ending ? undefined : position, !ending);
                 res.json({ present: answer.botId !== null });
             } catch (error) {
                 console.error('[BotAPI] Error syncing a visiting Brick:', error instanceof Error ? error.message : error);

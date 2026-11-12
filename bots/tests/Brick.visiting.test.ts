@@ -290,6 +290,20 @@ describe('putting the Brick on the map', () => {
         expect(spawn).toHaveBeenCalledTimes(1);
     });
 
+    it('takes a Brick off the map when only taking off is allowed, and never puts one on (Sentry on #2023)', async () => {
+        const { botManager, orbit, spawn, despawn } = manager();
+        orbit.answer = [visitingConfig('brick-1', ROOM_A)];
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID });
+        expect(spawn).toHaveBeenCalledTimes(1);
+        orbit.answer = [];
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, undefined, false);
+        expect(despawn).toHaveBeenCalledWith('brick-1');
+
+        orbit.answer = [visitingConfig('brick-2', ROOM_A)];
+        expect(await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, undefined, false)).toEqual({ botId: null });
+        expect(spawn).toHaveBeenCalledTimes(1);
+    });
+
     it('takes it off the map when the visit has ended', async () => {
         const { botManager, orbit, despawn } = manager();
         orbit.answer = [visitingConfig('brick-1', ROOM_A)];
