@@ -7,6 +7,9 @@
 
 import { createClient, type RedisClientType, commandOptions } from 'redis';
 
+/** Where bot servers tell each other that a Brick changed (#1996). */
+const BRICK_CHANGED_CHANNEL = 'bots:brick-changed';
+
 export interface BotServerInfo {
     serverId: string;
     capacity: number;
@@ -36,6 +39,8 @@ export class BotRegistry {
      * that drops is an outage, not a server on its own.
      */
     private sharedStoreSeen = false;
+    /** The connection that hears Brick changes from other bot servers (#1996), once listening. */
+    private brickListener: RedisClientType | null = null;
     private serverId: string;
     private heartbeatInterval: NodeJS.Timeout | null = null;
     private readonly HEARTBEAT_INTERVAL = 5000; // 5 seconds
@@ -109,6 +114,9 @@ export class BotRegistry {
             clearInterval(this.heartbeatInterval);
             this.heartbeatInterval = null;
         }
+
+        if (this.brickListener?.isOpen) await this.brickListener.quit().catch(() => undefined);
+        this.brickListener = null;
 
         if (this.redis && this.redis.isOpen) {
             // Mark server as shutting down
@@ -186,6 +194,43 @@ export class BotRegistry {
     async releaseDirectChat(botId: string, matrixUserId: string): Promise<void> {
         if (!this.redis?.isOpen) return;
         await this.redis.del(`bots:matrix:dm-claim:${botId}|${matrixUserId}`);
+    }
+
+    /**
+     * Tell every other bot server that an owner's Brick changed (#1996), so each reads it again before its next message
+     * instead of within the minute its cache lasts. Without Redis this is a no-op: this server is then the only one.
+     */
+    async tellBrickChanged(botId: string, ownerId: string): Promise<void> {
+        if (!this.redis?.isOpen) return;
+        await this.redis.publish(BRICK_CHANGED_CHANNEL, JSON.stringify({ botId, ownerId, from: this.serverId }));
+    }
+
+    /**
+     * Hear what other bot servers say about Bricks that changed. Messages come on a connection of their own, as Redis
+     * asks of one that listens; this server's own messages are skipped, as it already acted on them. Without Redis
+     * there is nothing to hear.
+     */
+    async onBrickChanged(heard: (botId: string, ownerId: string) => void): Promise<void> {
+        if (!this.redis || this.brickListener) return;
+        const listener = this.redis.duplicate();
+        listener.on('error', (err) => console.error('[BotRegistry] Redis error (Brick changes):', err));
+        this.brickListener = listener;
+        try {
+            await listener.connect();
+            await listener.subscribe(BRICK_CHANGED_CHANNEL, (message) => {
+                try {
+                    const said = JSON.parse(message) as { botId?: unknown; ownerId?: unknown; from?: unknown };
+                    if (said.from === this.serverId || typeof said.botId !== 'string' || typeof said.ownerId !== 'string') return;
+                    heard(said.botId, said.ownerId);
+                } catch (err) {
+                    console.warn('[BotRegistry] Ignored a Brick change that could not be read:', err);
+                }
+            });
+        } catch (err) {
+            this.brickListener = null;
+            if (listener.isOpen) await listener.quit().catch(() => undefined);
+            throw err;
+        }
     }
 
     /** Whether Redis is up, so messages waiting for a resting bot survive a restart and reach every bot server. */

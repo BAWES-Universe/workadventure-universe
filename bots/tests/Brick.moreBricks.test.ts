@@ -19,6 +19,8 @@ vi.mock('../utils/MovementLogger', () => ({ movementLogger: {} }));
 
 import { AdminApiService } from '../server/AdminApiService';
 import { BotAPI } from '../server/BotAPI';
+import { BotRegistry } from '../server/BotRegistry';
+import { brickChangedEverywhere } from '../server/brickChanges';
 import { BRICK_NOT_MADE_TEXT, DmReplyService, brickMadeText } from '../server/DmReplyService';
 import { ConversationMemory } from '../memory/ConversationMemory';
 import { BRICK_MADE_KEY, BRICK_MAKE_KEY, BRICK_OFFER_KEY, MatrixDmBridge } from '../matrix/MatrixDmBridge';
@@ -633,5 +635,152 @@ describe('Making a Brick as a step of the answer', () => {
         const other = describeStep({ id: 'c2', name: 'make_brick', arguments: JSON.stringify({ name: 'Trip Brick', line: 'Plans trips' }) });
         expect(summaryOf([{ ...step, state: 'done' }])).toBe('Made Recipe Brick');
         expect(summaryOf([{ ...step, state: 'done' }, { ...other, state: 'done' }])).toContain('Made Trip Brick');
+    });
+});
+
+describe('A deleted Brick stops on every bot server, not only the one the owner reached', () => {
+    const SESSION = `orb_sess_v2_${'a'.repeat(64)}`;
+    const adminApiService = { validateSessionToken: vi.fn(async () => ({ userId: 'user-alice', uuid: 'uuid-alice', email: null })) };
+
+    /** One Redis that several bot servers share: what is published reaches every connection listening then. */
+    function sharedStore() {
+        const listening = new Map<string, Set<(message: string) => void>>();
+        const client = (): any => {
+            const redis: any = {
+                isOpen: true,
+                on: vi.fn(),
+                publish: vi.fn(async (channel: string, message: string) => {
+                    const heard = [...(listening.get(channel) ?? [])];
+                    for (const hear of heard) hear(message);
+                    return heard.length;
+                }),
+                duplicate: () => {
+                    const listener: any = {
+                        isOpen: false,
+                        on: vi.fn(),
+                        connect: vi.fn(async () => {
+                            listener.isOpen = true;
+                        }),
+                        subscribe: vi.fn(async (channel: string, hear: (message: string) => void) => {
+                            if (!listening.has(channel)) listening.set(channel, new Set());
+                            listening.get(channel)!.add(hear);
+                        }),
+                        quit: vi.fn(async () => {
+                            listener.isOpen = false;
+                        }),
+                    };
+                    return listener;
+                },
+            };
+            return redis;
+        };
+        return { client };
+    }
+
+    /** A bot server: its registry on the shared store, and its replies with a Brick of Alice's held for the minute. */
+    async function botServer(serverId: string, redis: any) {
+        const registry = Object.create(BotRegistry.prototype) as BotRegistry;
+        Object.assign(registry, { redis, serverId, sharedStoreSeen: true, brickListener: null });
+        let deleted = false;
+        const admin = {
+            isConfigured: () => true,
+            getBotConfiguration: vi.fn(async () =>
+                deleted
+                    ? { botId: BRICK, enabled: false, brick: { ownerId: 'user-alice', isDefault: false, deleted: true } }
+                    : { botId: BRICK, enabled: true, brick: { ownerId: 'user-alice', isDefault: false } }
+            ),
+        };
+        const replies = Object.create(DmReplyService.prototype) as DmReplyService;
+        Object.assign(replies, { botManager: { getBot: () => null, getAdminApiService: () => admin }, configCache: new Map(), missingCache: new Map() });
+        await registry.onBrickChanged((botId, ownerId) => void replies.forgetBrickOf(botId, ownerId));
+        expect((await replies.getBotConfig(BRICK))?.enabled).toBe(true);
+        return { registry, replies, admin, deleteInOrbit: () => (deleted = true) };
+    }
+
+    async function api(brickChanged: (botId: string, ownerId: string) => boolean) {
+        const botApi = new BotAPI({ getAccessGate: vi.fn() } as never, adminApiService as never, {} as never, [], { brickChanged });
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const app = (botApi as any).app;
+        const server = await new Promise<Server>((resolve) => {
+            const started = app.listen(0, () => resolve(started));
+        });
+        const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+        const post = () => fetch(`${base}/api/bots/${BRICK}/brick-changed`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SESSION}` }, body: '{}' });
+        return { post, close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
+    }
+
+    beforeEach(() => {
+        vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    });
+
+    it('deleted through server A, server B reads it again at once and stops answering', async () => {
+        const store = sharedStore();
+        const a = await botServer('server-a', store.client());
+        const b = await botServer('server-b', store.client());
+        const route = await api(brickChangedEverywhere(a.registry, (botId, ownerId) => a.replies.forgetBrickOf(botId, ownerId)));
+        try {
+            a.deleteInOrbit();
+            b.deleteInOrbit();
+            expect((await route.post()).status).toBe(204);
+            await vi.waitFor(() => expect((b.replies as any).configCache.has(BRICK)).toBe(false));
+
+            // Both servers read Orbit again before the minute is up, and both see the Brick deleted
+            expect((await a.replies.getBotConfig(BRICK))?.enabled).toBe(false);
+            expect((await b.replies.getBotConfig(BRICK))?.enabled).toBe(false);
+            expect(a.admin.getBotConfiguration).toHaveBeenCalledTimes(2);
+            expect(b.admin.getBotConfiguration).toHaveBeenCalledTimes(2);
+        } finally {
+            await route.close();
+        }
+    });
+
+    it("drops nothing on another server for someone who is not the Brick's owner", async () => {
+        const store = sharedStore();
+        const a = await botServer('server-a', store.client());
+        const b = await botServer('server-b', store.client());
+        await a.registry.tellBrickChanged(BRICK, 'user-bob');
+        await b.replies.getBotConfig(BRICK);
+        expect(b.admin.getBotConfiguration).toHaveBeenCalledTimes(1);
+    });
+
+    it('skips its own message, and ignores one it cannot read', async () => {
+        const store = sharedStore();
+        const a = await botServer('server-a', store.client());
+        const heard = vi.fn();
+        const registry = Object.create(BotRegistry.prototype) as BotRegistry;
+        const redis = store.client();
+        Object.assign(registry, { redis, serverId: 'server-c', brickListener: null });
+        await registry.onBrickChanged(heard);
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        await redis.publish('bots:brick-changed', 'not json');
+        await redis.publish('bots:brick-changed', JSON.stringify({ botId: BRICK }));
+        await registry.tellBrickChanged(BRICK, 'user-alice');
+        expect(heard).not.toHaveBeenCalled();
+        // Another server's message is heard
+        await a.registry.tellBrickChanged(BRICK, 'user-alice');
+        expect(heard).toHaveBeenCalledWith(BRICK, 'user-alice');
+    });
+
+    it('still answers the owner and drops its own copy when telling the others fails', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const forget = vi.fn(() => true);
+        const registry = { tellBrickChanged: vi.fn(async () => Promise.reject(new Error('redis timeout'))) };
+        const route = await api(brickChangedEverywhere(registry, forget));
+        try {
+            expect((await route.post()).status).toBe(204);
+            expect(forget).toHaveBeenCalledWith(BRICK, 'user-alice');
+            await vi.waitFor(() => expect(warn).toHaveBeenCalledWith(expect.stringContaining('Could not tell the other bot servers'), expect.any(Error)));
+        } finally {
+            await route.close();
+        }
+    });
+
+    it('stays on this server alone without Redis', async () => {
+        const registry = Object.create(BotRegistry.prototype) as BotRegistry;
+        Object.assign(registry, { redis: null, serverId: 'server-a', brickListener: null });
+        await expect(registry.tellBrickChanged(BRICK, 'user-alice')).resolves.toBeUndefined();
+        await expect(registry.onBrickChanged(vi.fn())).resolves.toBeUndefined();
+        Object.assign(registry, { redis: { isOpen: false } });
+        await expect(registry.tellBrickChanged(BRICK, 'user-alice')).resolves.toBeUndefined();
     });
 });
