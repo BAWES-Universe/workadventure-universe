@@ -7,6 +7,9 @@ import {
     GUEST_KEEP_CARD,
     GUEST_STARTERS_CARD,
     REQUEST_LINES_MAX,
+    CARRIED_BYTES_MAX,
+    CARRIED_LINES_MAX,
+    CARRIED_LINE_CHARS,
     carriedLines,
     guestBrickCard,
     guestKeepCard,
@@ -194,6 +197,25 @@ describe("the Brick for guests: the chat a guest's device keeps (#1997)", () => 
             { from: "guest", text: "hi", at: 2 },
             { from: "brick", text: "Sign in.", at: 3 },
         ]);
+    });
+
+    it("brings along only the newest lines that fit in one message, each cut, so a long chat never makes a message too big", () => {
+        let chat = newGuestChat(GUEST, 1);
+        for (let at = 1; at <= 300; at++) chat = withLine(chat, { from: "guest", text: `line ${at}`, at });
+        const few = carriedLines(chat);
+        expect(few).toHaveLength(CARRIED_LINES_MAX);
+        expect(few[few.length - 1].at).toBe(300);
+        expect(few[0].at).toBe(101);
+
+        let long = newGuestChat(GUEST, 1);
+        for (let at = 1; at <= 40; at++) long = withLine(long, { from: "brick", text: "é".repeat(5000), at });
+        const cut = carriedLines(long);
+        expect(cut.every((line) => line.text.length === CARRIED_LINE_CHARS)).toBe(true);
+        expect(cut.reduce((all, line) => all + new TextEncoder().encode(line.text).length, 0)).toBeLessThanOrEqual(
+            CARRIED_BYTES_MAX
+        );
+        expect(cut.length).toBeGreaterThan(0);
+        expect(cut[cut.length - 1].at).toBe(40);
     });
 });
 

@@ -200,7 +200,21 @@ export function guestKeepCard(ll: TranslationFunctions): BotAsk {
 /** What a card remembers it was closed by: the chat it was in, so a new chat starts with its cards again. */
 export const guestChatCardId = (chat: Pick<GuestChat, "startedAt">): string => `${GUEST_BRICK_ID}:${chat.startedAt}`;
 
-/** The lines to bring along after sign-in: what was said, and when. */
+/** What a carried chat holds at most (the bot server keeps to the same): the newest lines, each cut, within a byte budget. */
+export const CARRIED_LINES_MAX = 200;
+export const CARRIED_LINE_CHARS = 2000;
+export const CARRIED_BYTES_MAX = 20000;
+
+/** The lines to bring along after sign-in: what was said, and when, the newest ones that fit in one message. */
 export function carriedLines(chat: GuestChat): GuestChatLine[] {
-    return chat.lines.map(({ from, text, at }) => ({ from, text, at }));
+    const kept: GuestChatLine[] = [];
+    let bytes = 0;
+    for (let index = chat.lines.length - 1; index >= 0 && kept.length < CARRIED_LINES_MAX; index--) {
+        const { from, text, at } = chat.lines[index];
+        const cut = text.slice(0, CARRIED_LINE_CHARS);
+        bytes += new TextEncoder().encode(cut).length;
+        if (bytes > CARRIED_BYTES_MAX) break;
+        kept.unshift({ from, text: cut, at });
+    }
+    return kept;
 }

@@ -14,7 +14,7 @@ vi.mock('../mcp/MCPConnector', () => ({ MCPConnector: { clearCache: vi.fn() } })
 vi.mock('../utils/MovementLogger', () => ({ movementLogger: {} }));
 
 import { BotAPI } from '../server/BotAPI';
-import { GuestBrickService, guestTurn, readCarriedLines, readHistory, readMark, NEEDS_ACCOUNT_MARK } from '../server/GuestBrickService';
+import { CARRIED_BYTES_MAX, CARRIED_LINES_MAX, CARRIED_LINE_CHARS, GuestBrickService, guestTurn, readCarriedLines, readHistory, readMark, NEEDS_ACCOUNT_MARK } from '../server/GuestBrickService';
 import { GUEST_CHAT_KEY, MatrixDmBridge } from '../matrix/MatrixDmBridge';
 import type { GuestBrickAllowance, GuestBrickSetup } from '../server/AdminApiService';
 
@@ -201,6 +201,20 @@ describe('What the bot server takes in', () => {
             ['brick', 'hello', 'now'],
         ]);
     });
+
+    it('keeps a carried chat to the newest lines that fit in one message, each cut, so it never goes past what a homeserver takes', () => {
+        const many = Array.from({ length: 400 }, (_, index) => ({ from: 'guest', text: `line ${index + 1}`, at: index + 1 }));
+        const kept = readCarriedLines(many);
+        expect(kept).toHaveLength(CARRIED_LINES_MAX);
+        expect(kept[kept.length - 1].at).toBe(400);
+
+        const long = Array.from({ length: 40 }, (_, index) => ({ from: 'brick', text: 'é'.repeat(5000), at: index + 1 }));
+        const cut = readCarriedLines(long);
+        expect(cut.length).toBeGreaterThan(0);
+        expect(cut.every((line) => line.text.length === CARRIED_LINE_CHARS)).toBe(true);
+        expect(cut.reduce((all, line) => all + Buffer.byteLength(line.text, 'utf8'), 0)).toBeLessThanOrEqual(CARRIED_BYTES_MAX);
+        expect(cut[cut.length - 1].at).toBe(40);
+    });
 });
 
 describe('POST /api/guest-brick/reply', () => {
@@ -359,6 +373,16 @@ describe("A guest's chat, brought along when they sign in", () => {
         client.sendMessage.mockRejectedValueOnce(new Error('homeserver down'));
         await expect(bridge.carryGuestChat(BRICK, ALICE, GUEST, [...LINES])).rejects.toThrow('homeserver down');
         expect(await bridge.carryGuestChat(BRICK, ALICE, GUEST, [...LINES])).toBe('sent');
+    });
+
+    it('sends a message within what a homeserver takes in an event, even for the longest chat a device may bring', async () => {
+        const { bridge, client } = bridgeWithChat(true);
+        const worst = Array.from({ length: 400 }, (_, index) => ({ from: index % 2 ? 'brick' : 'guest', text: '"\n€'.repeat(700), at: index + 1 }));
+
+        expect(await bridge.carryGuestChat(BRICK, ALICE, GUEST, readCarriedLines(worst))).toBe('sent');
+
+        const content = client.sendMessage.mock.calls[0][2];
+        expect(Buffer.byteLength(JSON.stringify(content), 'utf8')).toBeLessThan(65536);
     });
 
     it('is not for a bot account', async () => {

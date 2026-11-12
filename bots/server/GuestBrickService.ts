@@ -87,6 +87,14 @@ export function readHistory(value: unknown, max: number, chars: number): GuestCh
     return lines.slice(-Math.max(0, max));
 }
 
+/**
+ * The most a carried chat holds, so the one message that brings it never goes past what a homeserver takes in an event
+ * (the lines are in it twice: as text and as data) or what a request may carry: the newest lines, each cut, within a byte budget.
+ */
+export const CARRIED_LINES_MAX = 200;
+export const CARRIED_LINE_CHARS = 2000;
+export const CARRIED_BYTES_MAX = 20000;
+
 /** The lines of a chat a guest held, as their device brings them along after sign-in: each with when it was said. */
 export function readCarriedLines(value: unknown): GuestChatNote[] {
     if (!Array.isArray(value)) return [];
@@ -95,9 +103,17 @@ export function readCarriedLines(value: unknown): GuestChatNote[] {
         if (!one || typeof one !== 'object') continue;
         const { from, text, at } = one as Record<string, unknown>;
         if ((from !== 'guest' && from !== 'brick') || typeof text !== 'string' || !text.trim()) continue;
-        lines.push({ from, text: text.trim(), at: typeof at === 'number' && Number.isFinite(at) && at > 0 ? Math.floor(at) : Date.now() });
+        lines.push({ from, text: text.trim().slice(0, CARRIED_LINE_CHARS), at: typeof at === 'number' && Number.isFinite(at) && at > 0 ? Math.floor(at) : Date.now() });
     }
-    return lines;
+    // The newest ones that fit: the start of a long chat is what is left behind
+    const kept: GuestChatNote[] = [];
+    let bytes = 0;
+    for (let index = lines.length - 1; index >= 0 && kept.length < CARRIED_LINES_MAX; index--) {
+        bytes += Buffer.byteLength(lines[index].text, 'utf8');
+        if (bytes > CARRIED_BYTES_MAX) break;
+        kept.unshift(lines[index]);
+    }
+    return kept;
 }
 
 /** What the model is given as the guest's turn: the chat so far, then what they write now. */
