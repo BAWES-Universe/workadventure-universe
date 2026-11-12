@@ -1,4 +1,6 @@
+import { FilterType } from "@workadventure/messages";
 import type { ClientToServerMessage } from "@workadventure/messages";
+import { callSpaceName } from "@workadventure/shared-utils/src/Space/callSpaceName";
 import { describe, expect, it, vi } from "vitest";
 import { mock } from "vitest-mock-extended";
 import {
@@ -8,6 +10,7 @@ import {
 } from "../../src/pusher/services/CallOnlyConnection";
 import type { Socket } from "../../src/pusher/services/SocketManager";
 import { SocketManager } from "../../src/pusher/services/SocketManager";
+import { SpaceJoinRefusedError } from "../../src/pusher/services/SpaceJoinPolicy";
 import type { SpaceConnection } from "../../src/pusher/models/SpaceConnection";
 
 // The pusher's environment is checked when SocketManager is imported
@@ -180,5 +183,40 @@ describe("the events of a call (the sound is set up with them)", () => {
             } as never)
         ).rejects.toThrow("User id not found");
         expect(forwardMessageToSpaceBack).not.toHaveBeenCalled();
+    });
+});
+
+describe("a call holds its two members through the server, and no third", () => {
+    it("refuses a join to a call space that already has its person and its bot", async () => {
+        const name = callSpaceName({ botId: "b1", callerUuid: "user-7", callId: "c1" });
+        const socketManager = new SocketManager(mock<SpaceConnection>());
+        (socketManager as unknown as { spaces: Map<string, unknown> }).spaces.set(`w.${name}`, {
+            localName: name,
+            filterType: FilterType.ALL_USERS,
+            users: new Map([
+                ["u_1", {}],
+                ["call_1", {}],
+            ]),
+        });
+        // The caller's second tab: allowed by name, but the call is full
+        const data = {
+            world: "w",
+            disconnecting: false,
+            userUuid: "user-7",
+            userIdentifier: "user-7",
+            tags: [] as string[],
+            spaceUserId: "u_2",
+            spaces: new Set<string>(),
+            joinSpacesPromise: new Map<string, Promise<void>>(),
+            grantedBubbleSpaces: new Set<string>(),
+            megaphoneChannels: new Map<string, boolean>(),
+        };
+        const socket = { getUserData: () => data } as unknown as Socket;
+        await expect(
+            socketManager.handleJoinSpace(socket, `w.${name}`, name, FilterType.ALL_USERS, [], {
+                signal: new AbortController().signal,
+            })
+        ).rejects.toBeInstanceOf(SpaceJoinRefusedError);
+        expect(data.spaces.size).toBe(0);
     });
 });
