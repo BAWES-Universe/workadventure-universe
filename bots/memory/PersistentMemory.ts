@@ -98,7 +98,9 @@ export class PersistentMemory extends ConversationMemory {
         for (const item of fresh) {
             const one = byPerson.get(item.userUuid) ?? { keys: new Set<string>(), at: new Map<string, number>() };
             one.keys.add(item.itemKey);
-            one.at.set(item.itemKey, Math.max(item.at, one.at.get(item.itemKey) ?? 0));
+            // A forget with no time (0) takes the thing whenever it was said, and no other forget of it can put that back
+            const seen = one.at.get(item.itemKey);
+            one.at.set(item.itemKey, item.at <= 0 || seen === 0 ? 0 : Math.max(item.at, seen ?? 0));
             byPerson.set(item.userUuid, one);
             this.appliedForgets.set(`${botId}|item:${item.id}`, now + PersistentMemory.FORGET_UNREPORTED_KEEP_MS);
         }

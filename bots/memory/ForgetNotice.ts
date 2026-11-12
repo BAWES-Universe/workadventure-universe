@@ -57,6 +57,6 @@ export function parseItemForgets(value: unknown): ItemForgetNotice[] {
     return value.flatMap((entry) => {
         const { id, userUuid, itemKey, at } = (entry ?? {}) as Record<string, unknown>;
         if (typeof id !== 'string' || typeof userUuid !== 'string' || typeof itemKey !== 'string' || itemKey === '') return [];
-        return [{ id, userUuid, itemKey, at: typeof at === 'number' && Number.isFinite(at) ? at : 0 }];
+        return [{ id, userUuid, itemKey, at: typeof at === 'number' && Number.isFinite(at) && at > 0 ? at : 0 }];
     });
 }

@@ -232,6 +232,20 @@ describe('PersistentMemory: Forget of one thing', () => {
         expect(memory.getMemory(BOT, SARA)!.personalInfo.preferences).toEqual(['lo-fi']);
     });
 
+    it('drops it when Orbit sent no time, or one that is not a time, however recently it was said', () => {
+        for (const at of [undefined, 0, 'x', -5, Number.NaN]) {
+            const memory = held();
+            const [notice] = parseItemForgets([{ id: 'f0', userUuid: 'uuid-sara', itemKey: lofi, at }]);
+            expect(notice.at, String(at)).toBe(0);
+            memory.forgetItems(BOT, [notice]);
+            expect(memory.getMemory(BOT, SARA)!.personalInfo.preferences, String(at)).toEqual([]);
+        }
+        // A real time later than what was said also takes it; a no-time forget is not undone by a timed one for the same thing
+        const memory = held();
+        memory.forgetItems(BOT, [{ id: 'g1', userUuid: 'uuid-sara', itemKey: lofi, at: 0 }, { id: 'g2', userUuid: 'uuid-sara', itemKey: lofi, at: 100 }]);
+        expect(memory.getMemory(BOT, SARA)!.personalInfo.preferences).toEqual([]);
+    });
+
     it('leaves another person and another bot alone', () => {
         const memory = held();
         memory.forgetItems('bot-2', [{ id: 'f2', userUuid: 'uuid-sara', itemKey: lofi, at: 2000 }]);
