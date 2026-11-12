@@ -82,6 +82,9 @@ const CONTENT_WORDS_OF = (text: string) => WORDS_OF(text).filter((word) => !STOP
 /** The shortest words, said alone, that may be found inside what is remembered. Shorter ones match far too much. */
 const MIN_ASKED = 4;
 
+/** Words that name a kind of thing, not what it is. */
+const KIND_WORDS = new Set(['name', 'birthday', 'bday']);
+
 /** Words that put "name" or "birthday" in someone else's hands: "her birthday", "my dog name". */
 const SOMEONE_ELSES = new Set(['his', 'her', 'their', 'its', 'our', 'dog', 'cat', 'pet', 'friend', 'mom', 'mum', 'dad', 'boss', 'wife', 'husband', 'brother', 'sister', 'kid', 'son', 'daughter', 'partner', 'child']);
 
@@ -95,9 +98,10 @@ function isAboutThem(asked: string, words: readonly string[]): boolean {
     return tokens.some((token, index) => {
         if (!words.includes(token)) return false;
         const before = tokens[index - 1];
-        if (before === undefined) return true;
-        if (/['\u2019]s$/u.test(before)) return false;
-        return !SOMEONE_ELSES.has(before);
+        if (before !== undefined && (/['\u2019]s$/u.test(before) || SOMEONE_ELSES.has(before))) return false;
+        // "my birthday cake" and "a name tag" are about the next word, not about the person's birthday or name
+        const after = tokens[index + 1];
+        return !(after !== undefined && CONTENT_WORDS_OF(after).length > 0);
     });
 }
 
@@ -109,7 +113,8 @@ function isAboutThem(asked: string, words: readonly string[]): boolean {
 export function itemsAbout(items: MemoryItem[], about: string): MemoryItem[] {
     const asked = about.toLowerCase().trim();
     if (!asked) return [];
-    const words = CONTENT_WORDS_OF(asked);
+    // "birthday" and "name" say which kind of thing is meant; they must not pick out a cake or a name tag by sharing the word
+    const words = CONTENT_WORDS_OF(asked).filter((word) => !KIND_WORDS.has(word));
     return items.filter((item) => {
         const value = item.value.toLowerCase().trim();
         if (item.kind === 'name' && isAboutThem(asked, ['name'])) return true;

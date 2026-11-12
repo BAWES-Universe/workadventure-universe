@@ -78,6 +78,19 @@ describe('the memory tools', () => {
         expect(itemsAbout(items, "my name and my dog's name").map((item) => item.kind)).toEqual(['name']);
     });
 
+    it('does not let the word "birthday" or "name" pick out another thing that shares it', () => {
+        const items: any[] = [
+            ...memoryItemsOf(sara()),
+            { id: 'cake', kind: 'pref', label: null, value: 'birthday cake' },
+            { id: 'tag', kind: 'fact', label: 'badge', value: 'name tag' },
+        ];
+        // "my birthday" is the birthday, and not the cake that shares its word
+        expect(itemsAbout(items, 'my birthday').map((item) => item.id)).toEqual(items.filter((item) => item.kind === 'birthday').map((item) => item.id));
+        expect(itemsAbout(items, 'my name').map((item) => item.id)).toEqual(items.filter((item) => item.kind === 'name').map((item) => item.id));
+        // "my birthday cake" is the cake, and not the birthday
+        expect(itemsAbout(items, 'my birthday cake').map((item) => item.id)).toEqual(['cake']);
+    });
+
     it('never matches on short or common words, because forgetting is for good', () => {
         const items = memoryItemsOf(sara());
         for (const vague of ['i', 'it', 'a', 'the', 'that', 'the thing I said about my cat', 'what I said', 'all of that', 'everything']) {
