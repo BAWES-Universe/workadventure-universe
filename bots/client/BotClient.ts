@@ -60,6 +60,7 @@ import type { PrivateEventPusherToFront } from '@workadventure/messages';
 import { audioFileNameFor } from '../utils/audioFileName';
 import { isGreetingReply } from './GreetingReply';
 import { ReplyReaders } from './ReplyReaders';
+import { isCallSpaceName } from '../../libs/shared-utils/src/Space/callSpaceName';
 
 // Get the secret key from environment - must match pusher's SECRET_KEY
 const SECRET_KEY = process.env.SECRET_KEY || 'default-secret-key';
@@ -80,6 +81,12 @@ export interface BotConfig {
     companionTextureId?: string;
     token?: string;
     uploaderUrl?: string;
+    /**
+     * A call-only connection (game #2004): the bot is not in the room at all. It has no body on the map and joins
+     * nothing but the private space of the one call it was opened for. Only a person's call to a bot that is not
+     * there in person uses it.
+     */
+    callOnly?: boolean;
 }
 
 /** Uploads remembered for matching a sent file with the tool that made it. */
@@ -88,6 +95,8 @@ const MAX_UPLOADED_FROM = 500;
 const MAX_CHAT_IDS = 2000;
 /** The space everyone in the world is in. */
 const WORLD_SPACE = 'allWorldUser';
+/** What the pusher starts the space user id of a call-only connection with (it has no room number). */
+const CALL_ONLY_SPACE_USER_PREFIX = 'call_';
 
 export class BotClient {
     // Static set of all bot user IDs - shared across all bot instances
@@ -181,6 +190,8 @@ export class BotClient {
 
     // Callback invoked when WebSocket unexpectedly disconnects (not during initial connection)
     public onDisconnect?: () => void;
+    /** A call-only connection: the person who called is no longer in the call's space, so the call is over. */
+    public onCallOver?: (spaceName: string) => void;
 
     /**
      * Who the bot listens to when others are in the bubble (#1220): the person who says its name, who summoned it, or
@@ -220,6 +231,8 @@ export class BotClient {
 
     /** The numeric player id in a space user id ("roomID_userID"), or 0. */
     private static playerIdOf(spaceUserId: string | undefined): number {
+        // A call-only connection has no room number: what follows its "call_" is a random id, never a player
+        if (spaceUserId?.startsWith(CALL_ONLY_SPACE_USER_PREFIX)) return 0;
         const at = spaceUserId?.lastIndexOf('_') ?? -1;
         const id = at === -1 ? NaN : Number.parseInt(spaceUserId!.substring(at + 1), 10);
         return Number.isNaN(id) ? 0 : id;
@@ -294,6 +307,7 @@ export class BotClient {
             params.set('cameraState', 'false');
             params.set('microphoneState', 'false');
             params.set('screenSharingState', 'false');
+            if (this.config.callOnly) params.set('callOnly', 'true');
 
             // Generate bot token for authentication
             const token = this.config.token || this.generateBotToken();
@@ -311,6 +325,12 @@ export class BotClient {
                     console.log(`[Bot ${this.config.botId}] Connected successfully`);
                 }
                 this.connected = true;
+                if (this.config.callOnly) {
+                    // The server never says the bot joined a room, because it joins none: it is ready once the socket is
+                    // open, and its voice (the only reason for the call) starts now
+                    this.markJoined();
+                    this.startVoice();
+                }
                 resolve();
             });
 
@@ -407,6 +427,8 @@ export class BotClient {
     private async mayChat(spaceName: string, senderId: number, message: object): Promise<boolean> {
         // A meeting room's chat is not the bot's to answer: there the bot only takes part in the audio
         if (this.isMeetingSpace(spaceName)) return false;
+        // A call was allowed by Orbit's "Call" rule when it was started (and only that person is in it)
+        if (isCallSpaceName(spaceName)) return true;
         const gate = this.accessGate;
         if (!gate || !this.behavior) return true;
         // Someone's first words can arrive just before the game says who they are: asking Orbit now would take a
@@ -466,6 +488,8 @@ export class BotClient {
      * only (see GreetingReply), so a person who may chat is greeted each time they come, whatever replies they have left. Never throws.
      */
     async mayGreet(spaceName: string, personId: number): Promise<boolean> {
+        // A call is for talking: a written greeting would land in a space no chat shows
+        if (isCallSpaceName(spaceName)) return false;
         const gate = this.accessGate;
         if (!gate || !this.behavior) return true;
         const verdict = await this.chatVerdict(gate, this.behavior.getPersonForAccess(personId));
@@ -3087,6 +3111,47 @@ export class BotClient {
         }
     }
 
+    /**
+     * The bot takes a call: it joins the call's private space (the pusher lets in only the caller and this bot), where
+     * the caller's browser offers the audio and the voice code answers as in any space. It joins as a space user with
+     * nothing on the map: no camera, microphone or screen of its own to show, and no availability to change, because
+     * a call-only connection has no room user. Resolves true once it is in the space.
+     */
+    async acceptCall(spaceName: string): Promise<boolean> {
+        if (!this.config.callOnly || !isCallSpaceName(spaceName)) return false;
+        try {
+            const spaceUserId = await this.emitJoinSpace(spaceName, FilterType.ALL_USERS, ['cameraState', 'microphoneState', 'screenShareState']);
+            this.spaces.set(spaceName, spaceUserId);
+            this.emitAddSpaceFilter(spaceName);
+            this.sendSpaceUserUpdate(spaceName, { cameraState: false, microphoneState: false, screenSharingState: false });
+            // The behaviour only needs to know the space it answers in (it is never told to greet there: see mayGreet)
+            this.behavior?.onSpaceJoined(spaceName);
+            return true;
+        } catch (error) {
+            console.warn(`[Bot ${this.config.botId}] Could not take the call ${spaceName}: ${error instanceof Error ? error.message : error}`);
+            return false;
+        }
+    }
+
+    /** The call is over: the bot leaves its space and closes its connection. Never throws. */
+    async endCall(spaceName: string): Promise<void> {
+        try {
+            if (this.spaces.has(spaceName)) {
+                this.emitRemoveSpaceFilter(spaceName);
+                this.voice?.spaceLeft(spaceName);
+                this.speech?.spaceLeft(spaceName);
+                this.attention.spaceLeft(spaceName);
+                this.audience.spaceLeft(spaceName);
+                this.readers.spaceLeft(spaceName);
+                await this.emitLeaveSpace(spaceName);
+            }
+        } catch (error) {
+            console.warn(`[Bot ${this.config.botId}] Could not leave the call ${spaceName}:`, error);
+        }
+        this.spaces.delete(spaceName);
+        this.disconnect();
+    }
+
     private async leaveMeetingSpace(spaceName: string): Promise<void> {
         try {
             this.emitRemoveSpaceFilter(spaceName);
@@ -3871,6 +3936,14 @@ export class BotClient {
                 if (message.removeSpaceUserMessage.spaceName === WORLD_SPACE) this.chatIds.delete(BotClient.playerIdOf(message.removeSpaceUserMessage.spaceUserId));
                 this.readers.personLeft(message.removeSpaceUserMessage.spaceName, BotClient.playerIdOf(message.removeSpaceUserMessage.spaceUserId));
                 this.voice?.spaceUserLeft(message.removeSpaceUserMessage.spaceName, message.removeSpaceUserMessage.spaceUserId);
+                // A call has two members, the bot and the caller: the caller leaving is the call ending
+                if (
+                    this.config.callOnly &&
+                    isCallSpaceName(message.removeSpaceUserMessage.spaceName) &&
+                    message.removeSpaceUserMessage.spaceUserId !== this.spaces.get(message.removeSpaceUserMessage.spaceName)
+                ) {
+                    this.onCallOver?.(message.removeSpaceUserMessage.spaceName);
+                }
                 if (this.isMeetingSpace(message.removeSpaceUserMessage.spaceName)) {
                     this.attention.personLeft(
                         message.removeSpaceUserMessage.spaceName,
