@@ -142,11 +142,31 @@ describe("a person's own Bricks", () => {
     it("stay unknown when Orbit cannot be reached, without failing whoever asked, and are asked for again later", async () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
         api.ensureMyBrick.mockRejectedValueOnce(new Error("offline"));
+        api.listMyBricks.mockRejectedValueOnce(new Error("offline"));
         await expect(loadMyBricks()).resolves.toBeUndefined();
         expect(get(myBricksStore)).toBeUndefined();
         expect(get(myBricksSettled)).toBe(true);
         await loadMyBricks();
         expect(get(myBricksStore)).toHaveLength(2);
+        warn.mockRestore();
+    });
+
+    it("show a list that came with Bricks on the first read, with the failed line, when the Brick everyone gets could not be asked for", async () => {
+        api.ensureMyBrick.mockRejectedValueOnce(new Error("offline"));
+        await loadMyBricks();
+        expect(get(myBricksStore)?.map((brick) => brick.id)).toEqual([BRICK, MADE]);
+        expect(get(myBricksListFailed)).toBe(true);
+        await loadMyBricks();
+        expect(get(myBricksListFailed)).toBe(false);
+    });
+
+    it("never say they have no Brick on the first read when the Brick everyone gets could not be asked for and the list is empty", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        api.ensureMyBrick.mockRejectedValueOnce(new Error("offline"));
+        api.listMyBricks.mockResolvedValueOnce({ bricks: [] });
+        await loadMyBricks();
+        expect(get(myBricksStore)).toBeUndefined();
+        expect(get(myBricksSettled)).toBe(true);
         warn.mockRestore();
     });
 

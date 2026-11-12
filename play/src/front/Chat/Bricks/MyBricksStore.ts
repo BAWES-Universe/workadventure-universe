@@ -73,7 +73,15 @@ async function load(asked: number, read = 1): Promise<void> {
     // Orbit could not be asked for the Brick everyone gets: the read failed. What was known stays, and the page says
     // the read failed, with Try again, rather than show the Bricks as freshly read.
     if (ownFailed) {
-        if (known === undefined) throw new Error("Could not read the Brick everyone gets");
+        if (known === undefined) {
+            // A list that came with Bricks still shows them, with the failed line and Try again. An empty or unread
+            // one does not: it could say "You have no Brick" to someone whose Brick could not be made just now.
+            const listed = list === undefined ? [] : parseBrickCards(list);
+            if (listed.length === 0) throw new Error("Could not read the Brick everyone gets");
+            bricks.set(listed);
+            deleted.set(parseDeletedBricks(list));
+            undoDays.set(parseUndoDays(list));
+        }
         listFailed.set(true);
         return;
     }

@@ -307,6 +307,7 @@ describe("the Bricks page (#1995)", () => {
     it("says when the Bricks could not be loaded, and tries again on a tap", async () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
         game.ensureMyBrick.mockRejectedValueOnce(new Error("offline"));
+        game.listMyBricks.mockRejectedValueOnce(new Error("offline"));
         await open();
         expect(byId("bricksLoadFailed")?.textContent).toBe("Couldn't load your Bricks.");
         byId("bricksTryAgain")?.click();
@@ -314,6 +315,18 @@ describe("the Bricks page (#1995)", () => {
         expect(byId("bricksLoadFailed")).toBeNull();
         expect(rows()).toHaveLength(2);
         warn.mockRestore();
+    });
+
+    it("shows the Bricks the list came with, and the failed line, when the Brick everyone gets could not be asked for", async () => {
+        game.ensureMyBrick.mockRejectedValueOnce(new Error("offline"));
+        await open();
+        expect(rows()).toHaveLength(2);
+        expect(byId("bricksNone")).toBeNull();
+        expect(byId("bricksLoadFailed")?.textContent).toBe("Couldn't load your Bricks.");
+        byId("bricksTryAgain")?.click();
+        await settle();
+        expect(byId("bricksLoadFailed")).toBeNull();
+        expect(rows()).toHaveLength(2);
     });
 
     it("says the list failed, never that they have none, when only the Brick everyone gets could be read", async () => {
