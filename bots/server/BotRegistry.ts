@@ -184,16 +184,40 @@ export class BotRegistry {
         return (await this.redis.set(`bots:matrix:dm-claim:${botId}|${matrixUserId}`, this.serverId, { NX: true, PX: forMs })) === 'OK';
     }
 
-    /** Holds that claim for a while longer, whoever has it: the bot is still taking a chat this person just made. */
-    async holdDirectChat(botId: string, matrixUserId: string, forMs: number): Promise<void> {
+    /**
+     * Holds that claim for a while longer: the bot is still taking a chat this person just made. The invite holds it
+     * under its own token. The first hold takes the claim over from whoever had it (the device that made this chat).
+     * A renewal keeps it only while it is still this invite's, or nobody's, so an invite that ran past the claim never
+     * takes it back from a device that claimed it since. Without a token, it is held whoever has it.
+     */
+    async holdDirectChat(botId: string, matrixUserId: string, forMs: number, token?: string, takeOver = true): Promise<void> {
         if (!this.redis?.isOpen) return;
-        await this.redis.set(`bots:matrix:dm-claim:${botId}|${matrixUserId}`, this.serverId, { PX: forMs });
+        const key = `bots:matrix:dm-claim:${botId}|${matrixUserId}`;
+        if (!token) {
+            await this.redis.set(key, this.serverId, { PX: forMs });
+            return;
+        }
+        await this.redis.eval(
+            "local held = redis.call('GET', KEYS[1]) if ARGV[3] == '1' or not held or held == ARGV[1] then redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2]) return 1 end return 0",
+            { keys: [key], arguments: [token, String(forMs), takeOver ? '1' : '0'] }
+        );
     }
 
-    /** Lets the next device make the chat again: the bot has taken (or turned down) the one just made. */
-    async releaseDirectChat(botId: string, matrixUserId: string): Promise<void> {
+    /**
+     * Lets the next device make the chat again: the bot has taken (or turned down) the one just made. With a token, only
+     * a claim this invite still holds is let go, never one another device took since.
+     */
+    async releaseDirectChat(botId: string, matrixUserId: string, token?: string): Promise<void> {
         if (!this.redis?.isOpen) return;
-        await this.redis.del(`bots:matrix:dm-claim:${botId}|${matrixUserId}`);
+        const key = `bots:matrix:dm-claim:${botId}|${matrixUserId}`;
+        if (!token) {
+            await this.redis.del(key);
+            return;
+        }
+        await this.redis.eval("if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0", {
+            keys: [key],
+            arguments: [token],
+        });
     }
 
     /**

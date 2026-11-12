@@ -327,7 +327,8 @@ export function createOneListStore(
                 target.unreadNotificationCount.subscribe(markValues),
                 target.hasUnreadMessages.subscribe(markValues),
             ];
-            if (mode === "direct" && "members" in target && target.members && typeof target.members === "object") {
+            // Who is in a chat decides whether "Bot" finds it, or the folder it is in
+            if ("members" in target && target.members && typeof target.members === "object") {
                 unsubscribers.push((target.members as Readable<unknown>).subscribe(markValues));
             }
             return unsubscribers;

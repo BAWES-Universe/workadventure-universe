@@ -20,7 +20,7 @@ vi.mock('../utils/MovementLogger', () => ({ movementLogger: {} }));
 import { AdminApiService } from '../server/AdminApiService';
 import { BotAPI } from '../server/BotAPI';
 import { BotRegistry } from '../server/BotRegistry';
-import { brickChangedEverywhere } from '../server/brickChanges';
+import { brickChangedEverywhere, listenForBrickChanges } from '../server/brickChanges';
 import { BRICK_NOT_MADE_TEXT, DmReplyService, brickMadeText } from '../server/DmReplyService';
 import { ConversationMemory } from '../memory/ConversationMemory';
 import { BRICK_MADE_KEY, BRICK_MAKE_KEY, BRICK_OFFER_KEY, MatrixDmBridge } from '../matrix/MatrixDmBridge';
@@ -498,7 +498,7 @@ describe("More Bricks in a Brick's chat", () => {
 
         expect(order).toEqual(['answer', 'card']);
         const { kind: _kind, ...card } = offer;
-        expect(client.sendMessage.mock.calls[0]).toEqual([BRICK_USER, ROOM, { msgtype: 'm.text', body: offer.ask, [BRICK_OFFER_KEY]: card }]);
+        expect(client.sendMessage.mock.calls[0]).toEqual([BRICK_USER, ROOM, { msgtype: 'm.text', body: offer.ask, [BRICK_OFFER_KEY]: card }, expect.any(String)]);
 
         client.sendMessage.mockClear();
         deps.reply.mockResolvedValue({ text: '', media: [], bricks: [offer] });
@@ -516,6 +516,9 @@ describe("More Bricks in a Brick's chat", () => {
         await bridge.onEvent(message('pasta again?'));
         const cards = client.sendMessage.mock.calls.filter(([, , content]: any[]) => BRICK_OFFER_KEY in content);
         expect(cards).toHaveLength(2);
+        // One message to Matrix: a first try that arrived but whose answer was lost is not posted twice
+        expect(cards[0][3]).toEqual(expect.any(String));
+        expect(cards[1][3]).toBe(cards[0][3]);
     });
 
     it('hands "Make it" on with the Brick the card described, cut to size, and typed words with nothing', async () => {
@@ -782,5 +785,49 @@ describe('A deleted Brick stops on every bot server, not only the one the owner 
         await expect(registry.onBrickChanged(vi.fn())).resolves.toBeUndefined();
         Object.assign(registry, { redis: { isOpen: false } });
         await expect(registry.tellBrickChanged(BRICK, 'user-alice')).resolves.toBeUndefined();
+    });
+});
+
+describe('Hearing Brick changes from other bot servers', () => {
+    it('tries again, less often each time, when listening cannot start, and stops trying once the server stops', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const registry = {
+            onBrickChanged: vi
+                .fn()
+                .mockRejectedValueOnce(new Error('redis busy'))
+                .mockRejectedValueOnce(new Error('redis busy'))
+                .mockResolvedValue(undefined),
+        };
+        const heard = vi.fn();
+        const stop = await listenForBrickChanges(registry, heard, { firstRetryMs: 1_000, maxRetryMs: 60_000 });
+        expect(registry.onBrickChanged).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(999);
+        expect(registry.onBrickChanged).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(registry.onBrickChanged).toHaveBeenCalledTimes(2);
+        // Twice as long the next time
+        await vi.advanceTimersByTimeAsync(1_999);
+        expect(registry.onBrickChanged).toHaveBeenCalledTimes(2);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(registry.onBrickChanged).toHaveBeenCalledTimes(3);
+        expect(registry.onBrickChanged).toHaveBeenLastCalledWith(heard);
+        // Listening now: nothing more is tried
+        await vi.advanceTimersByTimeAsync(120_000);
+        expect(registry.onBrickChanged).toHaveBeenCalledTimes(3);
+        expect(warn).toHaveBeenCalledTimes(2);
+        stop();
+    });
+
+    it('tries no more once the server stops', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const registry = { onBrickChanged: vi.fn().mockRejectedValue(new Error('redis down')) };
+        const stop = await listenForBrickChanges(registry, vi.fn(), { firstRetryMs: 1_000, maxRetryMs: 4_000 });
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(registry.onBrickChanged).toHaveBeenCalledTimes(2);
+        stop();
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(registry.onBrickChanged).toHaveBeenCalledTimes(2);
     });
 });

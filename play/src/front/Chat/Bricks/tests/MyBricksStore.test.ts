@@ -150,6 +150,103 @@ describe("a person's own Bricks", () => {
         warn.mockRestore();
     });
 
+    it("say the read failed, keeping the Bricks known, when the Brick everyone gets could not be asked for", async () => {
+        await loadMyBricks();
+        api.ensureMyBrick.mockRejectedValueOnce(new Error("offline"));
+        await loadMyBricks();
+        expect(get(myBricksStore)?.map((brick) => brick.id)).toEqual([BRICK, MADE]);
+        expect(get(myBricksListFailed)).toBe(true);
+        await loadMyBricks();
+        expect(get(myBricksListFailed)).toBe(false);
+    });
+
+    it("never put a list read before a change back over it: it is read again", async () => {
+        await loadMyBricks();
+        // A read starts with the Brick still there, and the delete is done before Orbit's list arrives
+        let answerOld: (value: unknown) => void = () => undefined;
+        api.listMyBricks.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    answerOld = resolve;
+                })
+        );
+        const reading = loadMyBricks();
+        await vi.waitFor(() => expect(api.listMyBricks).toHaveBeenCalledTimes(2));
+        api.deleteMyBrick.mockResolvedValue({
+            brick: { ...made, enabled: false, deletedAt: "2026-11-12T09:00:00Z", goneAt: "2026-11-19T09:00:00Z" },
+        });
+        expect(await deleteMyBrick(MADE)).toBe(true);
+        // Orbit's newer list no longer has it
+        api.listMyBricks.mockResolvedValue({
+            bricks: [card()],
+            deleted: [{ ...made, enabled: false, deletedAt: "2026-11-12T09:00:00Z", goneAt: "2026-11-19T09:00:00Z" }],
+        });
+        answerOld({ bricks: [card(), made] });
+        await reading;
+        expect(get(myBricksStore)?.map((brick) => brick.id)).toEqual([BRICK]);
+        expect(api.listMyBricks).toHaveBeenCalledTimes(3);
+    });
+
+    it("never let a change answered after a sign-out reach whoever signs in next", async () => {
+        await loadMyBricks();
+        api.listMyBricks.mockResolvedValue({
+            bricks: [card()],
+            deleted: [{ ...made, enabled: false, deletedAt: "2026-11-12T09:00:00Z", goneAt: "2026-11-19T09:00:00Z" }],
+        });
+        let answerUndo: (value: unknown) => void = () => undefined;
+        api.undoMyBrick.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    answerUndo = resolve;
+                })
+        );
+        const undoing = undoMyBrick(MADE);
+        // They sign out, and someone else signs in on this device
+        forgetMyBricks();
+        api.ensureMyBrick.mockResolvedValue({ brick: card({ id: "other-brick" }), made: false, deleted: false });
+        api.listMyBricks.mockResolvedValue({ bricks: [card({ id: "other-brick" })] });
+        await loadMyBricks();
+        answerUndo({ brick: made });
+        expect(await undoing).toBe(false);
+        expect(get(myBricksStore)?.map((brick) => brick.id)).toEqual(["other-brick"]);
+
+        // The same for a switch, a save, a new Brick and a delete
+        const late = <T>() => {
+            let answer: (value: T) => void = () => undefined;
+            const promise = new Promise<T>((resolve) => {
+                answer = resolve;
+            });
+            return { promise, answer };
+        };
+        const switched = late<unknown>();
+        api.setBrickEnabled.mockReturnValueOnce(switched.promise);
+        const making = late<unknown>();
+        api.makeMyBrick.mockReturnValueOnce(making.promise);
+        const deleting = late<unknown>();
+        api.deleteMyBrick.mockReturnValueOnce(deleting.promise);
+        const asked = [
+            setMyBrickEnabled("other-brick", false),
+            makeMyBrick("Theirs", "brick-red"),
+            deleteMyBrick("other-brick"),
+        ];
+        forgetMyBricks();
+        api.ensureMyBrick.mockResolvedValue({ brick: card({ id: "third-brick" }), made: false, deleted: false });
+        api.listMyBricks.mockResolvedValue({ bricks: [card({ id: "third-brick" })] });
+        await loadMyBricks();
+        switched.answer({ brick: card({ id: "other-brick", enabled: false }) });
+        making.answer({ brick: card({ id: "theirs", name: "Theirs", isDefault: false }) });
+        deleting.answer({
+            brick: {
+                ...card({ id: "other-brick" }),
+                deletedAt: "2026-11-12T09:00:00Z",
+                goneAt: "2026-11-19T09:00:00Z",
+            },
+        });
+        expect(await Promise.all(asked)).toEqual([false, undefined, false]);
+        expect(get(myBricksStore)?.map((brick) => brick.id)).toEqual(["third-brick"]);
+        expect(get(myDeletedBricksStore)).toEqual([]);
+    });
+
     it("say the list failed, rather than none, when it can't be read and Orbit gave no Brick", async () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
         api.ensureMyBrick.mockResolvedValue({ brick: null, made: false, deleted: true });
@@ -465,6 +562,33 @@ describe("how the chat draws a person's own Bricks", () => {
             expect(seen[seen.length - 1]).toBe("drawn:http://pusher.test/resources/ada.png");
             stop();
             expect(brickPicture("woka-ada")).toBe(picture);
+        });
+
+        it("shows no picture when opened again after the game stopped offering that WOKA, not the one drawn before", () => {
+            const offered = (ids: string[]) => ({
+                woka: {
+                    collections: [
+                        {
+                            name: "WOKAs",
+                            position: 0,
+                            textures: ids.map((id, position) => ({
+                                id,
+                                name: id,
+                                url: `resources/${id}.png`,
+                                position,
+                            })),
+                        },
+                    ],
+                },
+            });
+            looks.catalog.set(offered(["woka-bea"]));
+            const picture = brickPicture("woka-bea");
+            const stop = picture.subscribe(() => undefined);
+            expect(get(picture)).toBe("drawn:http://pusher.test/resources/woka-bea.png");
+            stop();
+            // Nobody shows it while the game stops offering it; then a list shows it again
+            looks.catalog.set(offered(["woka-ada"]));
+            expect(get(picture)).toBeUndefined();
         });
     });
 });

@@ -443,12 +443,13 @@ describe('One chat for a person and their Brick, however many devices open it', 
         deps.getBotConfig.mockImplementationOnce(() => new Promise((resolve) => (configRead = () => resolve(config()))));
 
         const taking = bridge.onEvent(invite());
-        await vi.waitFor(() => expect(deps.rooms.holdDirectChat).toHaveBeenCalledWith(BRICK, ALICE, 20_000));
+        // The first hold takes the claim over, under this invite's own token
+        await vi.waitFor(() => expect(deps.rooms.holdDirectChat).toHaveBeenCalledWith(BRICK, ALICE, 20_000, expect.any(String), true));
         // Another device asks while the bot is still taking it: it waits (the turn is renewed until the bot is done)
         expect(await bridge.directChatFor(BRICK, ALICE)).toEqual({ wait: true });
         configRead();
         await taking;
-        expect(deps.rooms.releaseDirectChat).toHaveBeenCalledWith(BRICK, ALICE);
+        expect(deps.rooms.releaseDirectChat).toHaveBeenCalledWith(BRICK, ALICE, expect.any(String));
         expect(await bridge.directChatFor(BRICK, ALICE)).toEqual({ roomId: ROOM });
     });
 
@@ -476,7 +477,7 @@ describe('One chat for a person and their Brick, however many devices open it', 
             expect(await bridge.directChatFor(BRICK, ALICE)).toEqual({ wait: true });
             configRead();
             await taking;
-            expect(deps.rooms.releaseDirectChat).toHaveBeenCalledWith(BRICK, ALICE);
+            expect(deps.rooms.releaseDirectChat).toHaveBeenCalledWith(BRICK, ALICE, expect.any(String));
             const renewals = (deps.rooms.holdDirectChat as ReturnType<typeof vi.fn>).mock.calls.length;
             await vi.advanceTimersByTimeAsync(30_000);
             // Once the bot has the chat, nothing renews it
@@ -543,6 +544,45 @@ describe('One chat for a person and their Brick, however many devices open it', 
         } finally {
             vi.useRealTimers();
         }
+    });
+
+    it('renews and lets go under the token it took the claim with, taking it over only the first time', async () => {
+        const { bridge, deps } = makeBridge();
+        deps.rooms.claimDirectChat = vi.fn().mockResolvedValue(null);
+        deps.rooms.holdDirectChat = vi.fn(async () => undefined);
+        deps.rooms.releaseDirectChat = vi.fn(async () => undefined);
+        vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+        try {
+            let configRead: () => void = () => undefined;
+            const config = deps.getBotConfig.getMockImplementation();
+            deps.getBotConfig.mockImplementationOnce(() => new Promise((resolve) => (configRead = () => resolve(config()))));
+            const taking = bridge.onEvent(invite());
+            await vi.advanceTimersByTimeAsync(11_000);
+            const holds = (deps.rooms.holdDirectChat as ReturnType<typeof vi.fn>).mock.calls;
+            expect(holds.length).toBeGreaterThanOrEqual(3);
+            const token = holds[0][3];
+            expect(holds.map((call: unknown[]) => call[3])).toEqual(holds.map(() => token));
+            expect(holds.map((call: unknown[]) => call[4])).toEqual([true, ...holds.slice(1).map(() => false)]);
+            configRead();
+            await taking;
+            expect(deps.rooms.releaseDirectChat).toHaveBeenCalledWith(BRICK, ALICE, token);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('gives the chat another device just noted, instead of making a second, when it was noted while the claim was asked', async () => {
+        const { bridge, deps } = makeBridge();
+        deps.rooms.releaseDirectChat = vi.fn(async () => undefined);
+        // Between this device's first look and its claim, the other device's invite was taken, noted and its claim let go
+        deps.rooms.claimDirectChat = vi.fn(async () => {
+            await bridge.onEvent(invite());
+            return true;
+        });
+
+        expect(await bridge.directChatFor(BRICK, ALICE)).toEqual({ roomId: ROOM });
+        // The claim it was given goes back at once: no device is held up by it
+        expect(deps.rooms.releaseDirectChat).toHaveBeenLastCalledWith(BRICK, ALICE);
     });
 
     it('never has a second chat made while the one they have could not be looked at', async () => {
@@ -619,6 +659,63 @@ describe('BotRegistry: one turn to make a chat, across bot servers', () => {
         // The connection drops later: the claim fails rather than fall back to a claim of this server alone
         redis.isOpen = false;
         await expect(registry.claimDirectChat(BRICK, ALICE, 20_000)).rejects.toThrow('The shared store is down');
+    });
+
+    it("never lets an invite that ran past its claim take back, or let go of, a claim another device took since", async () => {
+        // One Redis key with its value, and the two scripts the registry runs on it
+        const store = new Map<string, string>();
+        const redis = {
+            isOpen: true,
+            set: vi.fn(async (key: string, value: string, options: { NX?: boolean }) => {
+                if (options?.NX && store.has(key)) return null;
+                store.set(key, value);
+                return 'OK';
+            }),
+            eval: vi.fn(async (script: string, { keys: [key], arguments: args }: { keys: string[]; arguments: string[] }) => {
+                const held = store.get(key);
+                if (script.includes("'DEL'")) {
+                    if (held !== args[0]) return 0;
+                    store.delete(key);
+                    return 1;
+                }
+                if (args[2] === '1' || held === undefined || held === args[0]) {
+                    store.set(key, args[0]);
+                    return 1;
+                }
+                return 0;
+            }),
+            del: vi.fn(async (key: string) => Number(store.delete(key))),
+        };
+        const registry = Object.create(BotRegistry.prototype) as BotRegistry;
+        Object.assign(registry, { redis, serverId: 'server-1', sharedStoreSeen: true });
+        const key = `bots:matrix:dm-claim:${BRICK}|${ALICE}`;
+
+        // The device that made the chat claimed it; the invite takes it over under its own token
+        expect(await registry.claimDirectChat(BRICK, ALICE, 20_000)).toBe(true);
+        await registry.holdDirectChat(BRICK, ALICE, 20_000, 'invite-1', true);
+        expect(store.get(key)).toBe('invite-1');
+        // Renewed while it is still the invite's
+        await registry.holdDirectChat(BRICK, ALICE, 20_000, 'invite-1', false);
+        expect(store.get(key)).toBe('invite-1');
+
+        // Its claim ran out, and another device claimed through another server
+        store.delete(key);
+        Object.assign(registry, { serverId: 'server-2' });
+        expect(await registry.claimDirectChat(BRICK, ALICE, 20_000)).toBe(true);
+        // The late invite neither takes it back nor lets it go
+        await registry.holdDirectChat(BRICK, ALICE, 20_000, 'invite-1', false);
+        expect(store.get(key)).toBe('server-2');
+        await registry.releaseDirectChat(BRICK, ALICE, 'invite-1');
+        expect(store.get(key)).toBe('server-2');
+        expect(await registry.claimDirectChat(BRICK, ALICE, 20_000)).toBe(false);
+
+        // An invite that still holds its own claim lets it go
+        await registry.holdDirectChat(BRICK, ALICE, 20_000, 'invite-2', true);
+        await registry.releaseDirectChat(BRICK, ALICE, 'invite-2');
+        expect(store.has(key)).toBe(false);
+        // A renewal of a claim nobody holds takes it again: the invite is still being taken
+        await registry.holdDirectChat(BRICK, ALICE, 20_000, 'invite-3', false);
+        expect(store.get(key)).toBe('invite-3');
     });
 
     it('fails the claim while a Redis it was using is down, so nobody makes the chat on their own', async () => {

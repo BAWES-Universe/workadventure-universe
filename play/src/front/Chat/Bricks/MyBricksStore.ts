@@ -43,18 +43,40 @@ const listFailed = writable(false);
 export const myBricksListFailed: Readable<boolean> = { subscribe: listFailed.subscribe };
 
 let loading: Promise<void> | undefined;
-// Counts sign-outs: a read that was asked for before the person signed out changes nothing when it ends.
+// Counts sign-outs: a read or a change that was asked for before the person signed out changes nothing when it ends.
 let generation = 0;
+// Counts changes made here (a switch, a save, a new Brick, a delete, an Undo): a list Orbit read before one of them is
+// older than what the page shows, so it is read again rather than put back over it.
+let changes = 0;
+/** How many times a read is tried when changes keep coming meanwhile; then what the page shows stays. */
+const READS_WHILE_CHANGING = 3;
 
-async function load(asked: number): Promise<void> {
-    // Orbit makes the Brick everyone gets the first time this account asks, and never again: asking is safe from every
-    // device, as often as the chat opens. An account whose owner deleted it gets none.
-    const own = (await botApiService.ensureMyBrick()) as { brick?: unknown } | null;
+async function load(asked: number, read = 1): Promise<void> {
+    const seen = changes;
+    // Orbit makes the Brick everyone gets the first time this account asks, and never again: asking is safe from
+    // every device, as often as the chat opens. An account whose owner deleted it gets none.
+    let ownFailed = false;
+    const own = (await botApiService.ensureMyBrick().catch(() => {
+        ownFailed = true;
+        return null;
+    })) as { brick?: unknown } | null;
     const first = parseBrickCard(own?.brick);
     // The Bricks they made come with the list; when it can't be read, the one everyone gets still shows.
     const list = await botApiService.listMyBricks().catch(() => undefined);
     if (asked !== generation) return;
+    if (seen !== changes) {
+        if (read < READS_WHILE_CHANGING) await load(asked, read + 1);
+        return;
+    }
     refreshMyChatId();
+    const known = get(bricks);
+    // Orbit could not be asked for the Brick everyone gets: the read failed. What was known stays, and the page says
+    // the read failed, with Try again, rather than show the Bricks as freshly read.
+    if (ownFailed) {
+        if (known === undefined) throw new Error("Could not read the Brick everyone gets");
+        listFailed.set(true);
+        return;
+    }
     if (list !== undefined) {
         bricks.set(parseBrickCards(list));
         deleted.set(parseDeletedBricks(list));
@@ -63,11 +85,15 @@ async function load(asked: number): Promise<void> {
         return;
     }
     // What was already known stays: a list that could not be read again does not take Bricks out of Chats
-    const known = get(bricks);
     if (known === undefined && !first) throw new Error("Could not list the Bricks");
     if (known === undefined) bricks.set(first ? [first] : []);
     else if (first && !known.some((brick) => brick.id === first.id)) bricks.set([first, ...known]);
     listFailed.set(true);
+}
+
+/** A change made here: a list read before it is not put back over it. */
+function changed(): void {
+    changes++;
 }
 
 /**
@@ -96,18 +122,24 @@ export function loadMyBricks(): Promise<void> {
  * A Brick that is off stays in Chats and keeps its chat; it says it is resting instead of answering.
  */
 export async function setMyBrickEnabled(brickId: string, enabled: boolean): Promise<boolean> {
+    const asked = generation;
     const before = get(bricks);
-    const put = (change: (brick: BrickCard) => BrickCard) =>
+    const put = (change: (brick: BrickCard) => BrickCard) => {
+        changed();
         bricks.update((list) => list?.map((brick) => (brick.id === brickId ? change(brick) : brick)));
+    };
     put((brick) => ({ ...brick, enabled }));
     try {
         const saved = parseBrickCard(
             ((await botApiService.setBrickEnabled(brickId, enabled)) as { brick?: unknown })?.brick
         );
+        // Signed out meanwhile: what Orbit said belongs to the person before, and goes nowhere
+        if (asked !== generation) return false;
         if (saved) put(() => saved);
         return true;
     } catch (error) {
         console.warn("Could not turn a Brick on or off", error);
+        if (asked !== generation) return false;
         const was = before?.find((brick) => brick.id === brickId);
         if (was) put((brick) => ({ ...brick, enabled: was.enabled }));
         return false;
@@ -119,12 +151,15 @@ export async function setMyBrickEnabled(brickId: string, enabled: boolean): Prom
  * Chats follows at once when Orbit saved it, and the bot server reads the Brick again now. False when it was not saved.
  */
 export async function changeMyBrick(brickId: string, change: BrickChange): Promise<boolean> {
+    const asked = generation;
     try {
         const saved = parseBrickCard(
             ((await botApiService.changeMyBrick(brickId, change)) as { brick?: unknown })?.brick
         );
-        if (saved) bricks.update((list) => list?.map((brick) => (brick.id === brickId ? saved : brick)));
         tellBrickChanged(brickId);
+        if (asked !== generation) return false;
+        changed();
+        if (saved) bricks.update((list) => list?.map((brick) => (brick.id === brickId ? saved : brick)));
         return true;
     } catch (error) {
         console.warn("Could not save a change to a Brick", error);
@@ -137,11 +172,13 @@ export async function changeMyBrick(brickId: string, change: BrickChange): Promi
  * it. Undefined when Orbit refused or could not be reached: nothing was made.
  */
 export async function makeMyBrick(name: string, look: string): Promise<BrickCard | undefined> {
+    const asked = generation;
     try {
         const made = parseBrickCard(
             ((await botApiService.makeMyBrick({ name, characterTextureId: look })) as { brick?: unknown })?.brick
         );
-        if (!made) return undefined;
+        if (!made || asked !== generation) return undefined;
+        changed();
         bricks.update((list) => [...(list ?? []).filter((brick) => brick.id !== made.id), made]);
         return made;
     } catch (error) {
@@ -155,13 +192,16 @@ export async function makeMyBrick(name: string, look: string): Promise<BrickCard
  * brings it back. False when Orbit refused: the Brick is still there.
  */
 export async function deleteMyBrick(brickId: string): Promise<boolean> {
+    const asked = generation;
     try {
         const answer = (await botApiService.deleteMyBrick(brickId)) as { brick?: unknown };
-        const gone = parseDeletedBricks({ deleted: [answer?.brick] })[0];
-        bricks.update((list) => list?.filter((brick) => brick.id !== brickId));
-        if (gone) deleted.update((list) => [...list.filter((brick) => brick.id !== brickId), gone]);
         // The bot server stops the Brick now, not within the minute
         tellBrickChanged(brickId);
+        if (asked !== generation) return false;
+        const gone = parseDeletedBricks({ deleted: [answer?.brick] })[0];
+        changed();
+        bricks.update((list) => list?.filter((brick) => brick.id !== brickId));
+        if (gone) deleted.update((list) => [...list.filter((brick) => brick.id !== brickId), gone]);
         // The answer says the Brick but not always the day: the list does
         if (!gone) loadMyBricks().catch((error: unknown) => console.warn(error));
         return true;
@@ -173,6 +213,7 @@ export async function deleteMyBrick(brickId: string): Promise<boolean> {
 
 /** Brings a deleted Brick back (#1996), with its chat and what it remembers. False when it could not be. */
 export async function undoMyBrick(brickId: string): Promise<boolean> {
+    const asked = generation;
     let back: BrickCard | undefined;
     try {
         back = parseBrickCard(((await botApiService.undoMyBrick(brickId)) as { brick?: unknown })?.brick);
@@ -181,14 +222,18 @@ export async function undoMyBrick(brickId: string): Promise<boolean> {
         return false;
     }
     tellBrickChanged(brickId);
+    // Signed out meanwhile: the Brick that came back is the person before's, and never shows to whoever is here now
+    if (asked !== generation) return false;
     if (back) {
         const card = back;
+        changed();
         deleted.update((list) => list.filter((brick) => brick.id !== brickId));
         bricks.update((list) => [...(list ?? []).filter((brick) => brick.id !== card.id), card]);
         return true;
     }
     // The answer did not say the Brick: the list says whether it is back, and Undo stays until it does
     await loadMyBricks();
+    if (asked !== generation) return false;
     return (get(bricks) ?? []).some((brick) => brick.id === brickId);
 }
 

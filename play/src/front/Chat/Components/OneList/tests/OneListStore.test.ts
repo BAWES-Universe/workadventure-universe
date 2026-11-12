@@ -285,6 +285,22 @@ describe("createOneListStore", () => {
         expect(list.ids()).toEqual(["Melody", "Team"]);
     });
 
+    it('lists a folder by "Bot" once a bot joins one of its chats, after the search started', () => {
+        const list = setup();
+        const members = writable([{ id: "@me:chat.test" }, { id: "@sara:chat.test" }]);
+        const inFolder = fakeRoom("Helper", 2, { members } as unknown as Partial<ChatRoom>);
+        list.folders.set([fakeFolder("Team", [inFolder])]);
+        list.search.set("bot");
+        expect(list.ids()).toEqual([]);
+        // Nothing else of the chat changes: only who is in it
+        members.set([
+            { id: "@me:chat.test" },
+            { id: "@sara:chat.test" },
+            { id: "@bot_1c8d2e3f-2222-4333-8444-a55566667777:chat.test" },
+        ]);
+        expect(list.ids()).toEqual(["Team"]);
+    });
+
     it("drops every room subscription when unsubscribed", () => {
         const list = setup();
         const room = fakeRoom("a", 1);
