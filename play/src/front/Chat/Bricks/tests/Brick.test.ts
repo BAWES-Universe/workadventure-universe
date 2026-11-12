@@ -235,13 +235,23 @@ describe("opening the one chat of a person and their Brick", () => {
         expect(steps.ask).toHaveBeenCalledTimes(1);
     });
 
-    it("stops waiting in the end, and opens the chat itself", async () => {
+    it("stops waiting in the end without making a second chat, and says to try again", async () => {
         const { steps } = device();
         steps.ask.mockResolvedValue({ wait: true });
-        await expect(openBrickChatWith(BRICK, steps)).resolves.toBe(`chat with ${BRICK_CHAT}`);
+        await expect(openBrickChatWith(BRICK, steps)).resolves.toBeUndefined();
         // A little longer than the 20 seconds the bot server keeps the other device's turn
         expect(steps.ask.mock.calls.length).toBeGreaterThan(20);
         expect(steps.ask.mock.calls.length).toBeLessThan(30);
+        expect(steps.openChatWith).not.toHaveBeenCalled();
+        expect(steps.sayStillLoading).toHaveBeenCalledTimes(1);
+    });
+
+    it("never makes the chat itself once told another device is making it, even when the bot server then cannot say", async () => {
+        const { steps } = device();
+        steps.ask.mockResolvedValueOnce({ wait: true }).mockResolvedValue(undefined);
+        await expect(openBrickChatWith(BRICK, steps)).resolves.toBeUndefined();
+        expect(steps.openChatWith).not.toHaveBeenCalled();
+        expect(steps.sayStillLoading).toHaveBeenCalledTimes(1);
     });
 
     it("goes on making the chat on a second tap, instead of being told to wait for itself", async () => {

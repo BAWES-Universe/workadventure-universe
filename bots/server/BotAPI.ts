@@ -21,6 +21,8 @@ export interface BotAPIRequest extends Request {
     userIdentifier?: string;
     /** The uuid of the person behind the Orbit session (what the game calls the player's uuid). */
     sessionUuid?: string;
+    /** Orbit's own id of that person: the one a Brick's owner is named by. */
+    sessionUserId?: string;
     isLogged?: boolean;
     sessionToken?: string;
     /** Set when the request carried an Orbit session the Admin API did not accept (expired or revoked). */
@@ -65,6 +67,7 @@ async function authenticateToken(
         req.isLogged = true;
         req.sessionToken = bearerToken;
         req.sessionUuid = userInfo.uuid;
+        req.sessionUserId = userInfo.userId;
         next();
     } catch (error) {
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -178,6 +181,7 @@ async function identifyPlayer(
                 req.isLogged = true;
                 req.sessionToken = bearerToken;
                 req.sessionUuid = userInfo.uuid;
+                req.sessionUserId = userInfo.userId;
             } else {
                 req.sessionRejected = true;
             }
@@ -224,6 +228,7 @@ async function identifyForAccessMiddleware(
             req.isLogged = true;
             req.sessionToken = bearerToken;
             req.sessionUuid = userInfo.uuid;
+            req.sessionUserId = userInfo.userId;
         } catch {
             res.status(401).json({ error: 'Orbit session validation failed' });
             return;
@@ -247,8 +252,11 @@ export interface BotAPIOptions {
      * only when Matrix DMs are on. `chatId` is the person's chat address, already checked to be theirs.
      */
     directChat?: (botId: string, chatId: string) => Promise<{ roomId: string } | { create: true } | { wait: true }>;
-    /** A Brick was deleted or taken back with Undo (game #1996): its settings are read again before its next message. */
-    brickChanged?: (botId: string) => void;
+    /**
+     * A Brick was deleted or taken back with Undo (game #1996): its settings are read again before its next message.
+     * Only when it is a Brick of `ownerId` (Orbit's id of the person); says whether it was.
+     */
+    brickChanged?: (botId: string, ownerId: string) => boolean;
     /** "Hear this voice say hello" on the bot page (#1852). Left out, it is built from the bot server's own parts the first time it is asked for; null: not available. */
     voiceHello?: VoiceHello | null;
 }
@@ -289,6 +297,8 @@ export class BotAPI {
     private dmRoom: BotAPIOptions['dmRoom'];
     private directChat: BotAPIOptions['directChat'];
     private brickChanged: BotAPIOptions['brickChanged'];
+    /** Per person, how many Brick changes they told in the current minute. */
+    private brickChangedCounts = new Map<string, { count: number; since: number }>();
     private voiceHelloOption: BotAPIOptions['voiceHello'];
 
     constructor(
@@ -318,6 +328,19 @@ export class BotAPI {
         // Keep constructor simple - no route registration here
         this.setupMiddleware();
         this.setupRoutes();
+    }
+
+    /** At most 30 Brick changes a minute for one person: far more than tapping Delete and Undo, too few to keep Orbit busy. */
+    private brickChangedAllowed(userId: string, now = Date.now()): boolean {
+        const seen = this.brickChangedCounts.get(userId);
+        if (!seen || now - seen.since >= 60_000) {
+            this.brickChangedCounts.delete(userId);
+            this.brickChangedCounts.set(userId, { count: 1, since: now });
+            if (this.brickChangedCounts.size > 10_000) this.brickChangedCounts.delete(this.brickChangedCounts.keys().next().value!);
+            return true;
+        }
+        seen.count += 1;
+        return seen.count <= 30;
     }
 
     private voiceHello(): VoiceHello | null {
@@ -924,14 +947,18 @@ export class BotAPI {
 
         // A Brick was just deleted, or taken back with Undo, on the Bricks page (game #1996). Orbit already decided it; this
         // only has the bot server read the Brick again now instead of within the minute, so a deleted Brick stops at
-        // once. It changes nothing and tells nothing, so any signed-in person may say it of any bot id.
+        // once. Only the Brick's owner may say it, and only so often, so nobody can keep the bot server asking Orbit.
         this.app.post('/api/bots/:botId/brick-changed', requireSession, (req: BotAPIRequest, res: Response) => {
             const { botId } = req.params;
-            if (!/^[A-Za-z0-9_-]{1,64}$/.test(botId)) {
+            if (!/^[A-Za-z0-9_-]{1,64}$/.test(botId) || !req.sessionUserId) {
                 res.status(400).json({ error: 'Not a bot id' });
                 return;
             }
-            this.brickChanged?.(botId);
+            if (!this.brickChangedAllowed(req.sessionUserId)) {
+                res.status(429).json({ error: 'Too many changes, try again in a minute' });
+                return;
+            }
+            this.brickChanged?.(botId, req.sessionUserId);
             res.status(204).end();
         });
 
