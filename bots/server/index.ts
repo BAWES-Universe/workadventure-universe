@@ -127,7 +127,7 @@ aiService.useApprovals(approvals);
 aiService.useNearbyAsks(nearbyAsks);
 let dmRoom: ((botId: string) => Promise<DmRoomLink | undefined>) | undefined;
 let directChat: ((botId: string, chatId: string) => Promise<DirectChatAnswer>) | undefined;
-let brickChanged: ((botId: string) => void) | undefined;
+let brickChanged: ((botId: string, ownerId: string) => boolean) | undefined;
 let carryGuestChat: ((botId: string, chatId: string, carryId: string, lines: GuestChatNote[]) => Promise<'sent' | 'already' | 'wait' | 'not_brick'>) | undefined;
 /** How often Orbit is asked to remove deleted Bricks whose days are over (#1996). Nothing depends on when it runs. */
 const BRICK_SWEEP_EVERY_MS = 60 * 60 * 1000;
@@ -185,7 +185,7 @@ async function setupMatrix(): Promise<void> {
     // One chat for a person and a bot across their devices (#1995)
     directChat = (botId, chatId) => bridge.directChatFor(botId, chatId);
     // A Brick that was just deleted, or taken back with Undo, is read again before its next message (#1996)
-    brickChanged = (botId) => dmReplyService.forgetConfig(botId);
+    brickChanged = (botId, ownerId) => dmReplyService.forgetBrickOf(botId, ownerId);
     // A guest's chat is brought into the Brick they now have (#1997), and only into the one Brick everyone gets
     carryGuestChat = async (botId, chatId, carryId, lines) => {
         const config = await dmReplyService.getBotConfig(botId);
