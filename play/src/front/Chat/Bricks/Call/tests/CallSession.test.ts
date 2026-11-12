@@ -65,6 +65,30 @@ describe("a call starts and connects", () => {
         expect(ticked.phase).toBe("on");
     });
 
+    it("speech, work and the wait for the person's OK each end by their own event, in any order", () => {
+        const waiting = run(live(), { type: "bot-waiting", waiting: true, now: T0 + 1000 });
+        // Speaking or working while an OK is still pending: the wait still shows, and still counts as not quiet
+        const speaking = run(waiting, { type: "bot-speaking", speaking: true, now: T0 + 2000 });
+        expect(speaking.doing).toBe("waiting");
+        const stillWaiting = run(speaking, { type: "bot-speaking", speaking: false, now: T0 + 3000 });
+        expect(stillWaiting.doing).toBe("waiting");
+        const working = run(waiting, { type: "bot-working", work: "search", line: "Looking it up", now: T0 + 2000 });
+        const workDone = run(working, { type: "bot-working", work: undefined, now: T0 + 3000 });
+        expect(workDone.doing).toBe("waiting");
+        expect(workDone.workLine).toBeUndefined();
+        expect(run(workDone, { type: "tick", now: T0 + 9e9, quietMs: 60_000 }).phase).toBe("on");
+        // Only once the OK is answered is the call quiet again
+        const answered = run(workDone, { type: "bot-waiting", waiting: false, now: T0 + 4000 });
+        expect(answered.doing).toBe("listening");
+        // Work that goes on while the bot speaks still shows as work once the speech is over
+        const both = run(
+            live(),
+            { type: "bot-speaking", speaking: true, now: T0 + 1000 },
+            { type: "bot-working", work: "search", now: T0 + 1500 }
+        );
+        expect(run(both, { type: "bot-speaking", speaking: false, now: T0 + 2000 }).doing).toBe("working");
+    });
+
     it("ignores the bot's doings before it is on, and after the call is over", () => {
         const connecting = startCall(T0);
         expect(run(connecting, { type: "bot-speaking", speaking: true, now: T0 })).toBe(connecting);

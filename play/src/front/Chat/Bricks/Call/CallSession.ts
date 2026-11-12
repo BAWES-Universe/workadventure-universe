@@ -33,7 +33,16 @@ export interface WalkUp {
 
 export interface CallState {
     phase: CallPhase;
+    /**
+     * What the bot is doing, worked out from the three separate facts below by `settle`, never set by hand: waiting for
+     * the person's OK shows first, then work, then speech. Each fact ends by its own event, so one ending never cuts
+     * short another, and a call is only quiet when none of them is going on.
+     */
     doing: CallDoing;
+    /** The bot is speaking right now. */
+    speakingNow?: boolean;
+    /** The bot waits for the person's OK. */
+    waitingNow?: boolean;
     /** What it is working on, while `doing` is "working". */
     work?: BotStepKind;
     workLine?: string;
@@ -87,6 +96,18 @@ export const botMaySpeak = (state: CallState): boolean => state.phase === "on";
 /** "On a call" for other people, while the call lasts. A passing label only: it never replaces Busy or Do not disturb. */
 export const showsOnACall = (state: CallState): boolean => state.phase !== "ended";
 
+/** Works out `doing` from the separate facts, and drops the work line once the work is over. */
+function settle(state: CallState): CallState {
+    const doing: CallDoing = state.waitingNow
+        ? "waiting"
+        : state.work
+        ? "working"
+        : state.speakingNow
+        ? "speaking"
+        : "listening";
+    return { ...state, doing, ...(state.work ? {} : { workLine: undefined }) };
+}
+
 export function callReducer(state: CallState, event: CallEvent): CallState {
     if (state.phase === "ended") return state;
     switch (event.type) {
@@ -107,23 +128,18 @@ export function callReducer(state: CallState, event: CallEvent): CallState {
             return state.phase === "on" ? { ...state, lastHeardAt: event.now } : state;
         case "bot-speaking":
             if (state.phase !== "on") return state;
-            if (event.speaking)
-                return { ...state, doing: "speaking", work: undefined, workLine: undefined, lastHeardAt: event.now };
-            // The end of speech only leaves "speaking": it never cuts short work or the wait for the person's OK
-            return { ...state, doing: state.doing === "speaking" ? "listening" : state.doing, lastHeardAt: event.now };
+            return settle({ ...state, speakingNow: event.speaking, lastHeardAt: event.now });
         case "bot-working":
             if (state.phase !== "on") return state;
-            if (!event.work) {
-                // The end of work only leaves "working": it never cuts short speech or the wait for the person's OK
-                if (state.doing !== "working") return { ...state, lastHeardAt: event.now };
-                return { ...state, doing: "listening", work: undefined, workLine: undefined, lastHeardAt: event.now };
-            }
-            return { ...state, doing: "working", work: event.work, workLine: event.line, lastHeardAt: event.now };
+            return settle({
+                ...state,
+                work: event.work,
+                workLine: event.work ? event.line : undefined,
+                lastHeardAt: event.now,
+            });
         case "bot-waiting":
             if (state.phase !== "on") return state;
-            // Waiting for the person's OK ends when the OK is answered. It never cuts short what the bot is speaking or working on.
-            if (event.waiting) return { ...state, doing: "waiting", lastHeardAt: event.now };
-            return { ...state, doing: state.doing === "waiting" ? "listening" : state.doing, lastHeardAt: event.now };
+            return settle({ ...state, waitingNow: event.waiting, lastHeardAt: event.now });
         case "someone-here":
             // One card at a time: a second person is not shown until the first card is answered. No card while the call
             // is on hold: it is already held for a person or a meeting, and joining someone else would overwrite that.
@@ -141,6 +157,8 @@ export function callReducer(state: CallState, event: CallEvent): CallState {
                 hold: { kind: "person", name: state.walkUp.name },
                 walkUp: undefined,
                 doing: "listening",
+                speakingNow: false,
+                waitingNow: false,
                 work: undefined,
                 workLine: undefined,
             };
@@ -152,6 +170,8 @@ export function callReducer(state: CallState, event: CallEvent): CallState {
                 hold: { kind: "meeting" },
                 walkUp: undefined,
                 doing: "listening",
+                speakingNow: false,
+                waitingNow: false,
                 work: undefined,
                 workLine: undefined,
             };
