@@ -33,6 +33,19 @@ describe("a call starts and connects", () => {
         expect(run(base, { type: "bot-waiting", waiting: true, now: T0 + 2000 }).doing).toBe("waiting");
     });
 
+    it("answering the person's OK only leaves waiting: it never cuts short speaking or working", () => {
+        const waiting = run(live(), { type: "bot-waiting", waiting: true, now: T0 + 1000 });
+        expect(run(waiting, { type: "bot-waiting", waiting: false, now: T0 + 2000 }).doing).toBe("listening");
+        const working = run(live(), { type: "bot-working", work: "search", line: "Looking it up", now: T0 + 1000 });
+        expect(run(working, { type: "bot-waiting", waiting: false, now: T0 + 2000 })).toMatchObject({
+            doing: "working",
+            work: "search",
+            workLine: "Looking it up",
+        });
+        const speaking = run(live(), { type: "bot-speaking", speaking: true, now: T0 + 1000 });
+        expect(run(speaking, { type: "bot-waiting", waiting: false, now: T0 + 2000 }).doing).toBe("speaking");
+    });
+
     it("ignores the bot's doings before it is on, and after the call is over", () => {
         const connecting = startCall(T0);
         expect(run(connecting, { type: "bot-speaking", speaking: true, now: T0 })).toBe(connecting);
@@ -54,6 +67,15 @@ describe("someone walks up (check 64)", () => {
         const first = run(live(), { type: "someone-here", id: "u1", name: "Sara" });
         expect(run(first, { type: "someone-here", id: "u2", name: "Omar" }).walkUp?.name).toBe("Sara");
         expect(run(startCall(T0), { type: "someone-here", id: "u1", name: "Sara" }).walkUp).toBeUndefined();
+    });
+
+    it("shows no card while the call is on hold, so a meeting or person hold is never overwritten", () => {
+        const inMeeting = run(live(), { type: "meeting-joined" });
+        const after = run(inMeeting, { type: "someone-here", id: "u1", name: "Sara" }, { type: "hold-and-talk" });
+        expect(after.walkUp).toBeUndefined();
+        expect(after.hold).toEqual({ kind: "meeting" });
+        const withPerson = run(live(), { type: "someone-here", id: "u1", name: "Sara" }, { type: "hold-and-talk" });
+        expect(run(withPerson, { type: "someone-here", id: "u2", name: "Omar" }).walkUp).toBeUndefined();
     });
 
     it("Not now keeps the call exactly as it was", () => {

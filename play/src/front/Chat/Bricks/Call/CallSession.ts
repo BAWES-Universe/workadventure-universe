@@ -110,17 +110,20 @@ export function callReducer(state: CallState, event: CallEvent): CallState {
             return { ...state, doing: "working", work: event.work, workLine: event.line, lastHeardAt: event.now };
         case "bot-waiting":
             if (state.phase !== "on") return state;
-            return { ...state, doing: event.waiting ? "waiting" : "listening", lastHeardAt: event.now };
+            // Waiting for the person's OK ends when the OK is answered. It never cuts short what the bot is speaking or working on.
+            if (event.waiting) return { ...state, doing: "waiting", lastHeardAt: event.now };
+            return { ...state, doing: state.doing === "waiting" ? "listening" : state.doing, lastHeardAt: event.now };
         case "someone-here":
-            // One card at a time: a second person is not shown until the first card is answered
-            if (state.walkUp || state.phase === "connecting") return state;
+            // One card at a time: a second person is not shown until the first card is answered. No card while the call
+            // is on hold: it is already held for a person or a meeting, and joining someone else would overwrite that.
+            if (state.walkUp || state.phase !== "on") return state;
             return { ...state, walkUp: { id: event.id, name: event.name } };
         case "not-now":
             // The call carries on untouched. The other person can still message.
             return { ...state, walkUp: undefined };
         case "hold-and-talk":
             // Hold first. The two people are joined by the game after this state is shown, never before.
-            if (!state.walkUp) return state;
+            if (!state.walkUp || state.phase !== "on") return state;
             return {
                 ...state,
                 phase: "hold",
