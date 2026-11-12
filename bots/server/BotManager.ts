@@ -481,6 +481,17 @@ export class BotManager {
             return client;
         } catch (error) {
             console.error(`[BotManager] Failed to spawn bot ${botId}:`, error);
+            // A start that fails part-way (the registry could not be reached after the client connected) leaves nothing behind:
+            // not a connected client standing on the map, and not a connected-looking instance the next sync would find and skip
+            if (this.bots.get(botId)?.client === client) {
+                this.bots.delete(botId);
+                this.aiService.noteRoomBrick(botId, undefined);
+            }
+            try {
+                await client.disconnect();
+            } catch (disconnectError) {
+                console.warn(`[BotManager] Could not disconnect bot ${botId} after a failed start:`, disconnectError);
+            }
             throw error;
         }
     }
