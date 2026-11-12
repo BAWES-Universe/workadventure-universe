@@ -75,6 +75,13 @@ describe('the memory tools', () => {
             expect(itemsAbout(items, other).map((item) => item.kind), other).not.toContain(other.includes('birthday') ? 'birthday' : 'name');
         }
         expect(itemsAbout(items, 'the name I gave you').map((item) => item.kind)).toEqual(['name']);
+        // Time and polite words after it do not make it someone else's: a person asking to be forgotten is not refused
+        for (const own of ['forget my name now', 'forget my name again', 'forget my name please', 'forget my name, thanks']) {
+            expect(itemsAbout(items, own).map((item) => item.kind), own).toEqual(['name']);
+        }
+        for (const own of ['forget my birthday please', 'forget my birthday today', 'forget my birthday again, thanks']) {
+            expect(itemsAbout(items, own).map((item) => item.kind), own).toEqual(['birthday']);
+        }
         expect(itemsAbout(items, "my name and my dog's name").map((item) => item.kind)).toEqual(['name']);
     });
 

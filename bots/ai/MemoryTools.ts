@@ -85,6 +85,12 @@ const MIN_ASKED = 4;
 /** Words that name a kind of thing, not what it is. */
 const KIND_WORDS = new Set(['name', 'birthday', 'bday']);
 
+/** Words that may follow "name" or "birthday" without turning it into another thing ("my name now"). */
+const MAY_FOLLOW = new Set([
+    'now', 'again', 'today', 'tonight', 'tomorrow', 'yesterday', 'already', 'anymore', 'forever', 'permanently', 'completely', 'entirely', 'totally', 'immediately', 'instead', 'then', 'there', 'here',
+    'please', 'pls', 'plz', 'thanks', 'thank', 'sorry', 'okay', 'right', 'asap', 'sure', 'actually', 'really', 'honestly',
+]);
+
 /** Words that put "name" or "birthday" in someone else's hands: "her birthday", "my dog name". */
 const SOMEONE_ELSES = new Set(['his', 'her', 'their', 'its', 'our', 'dog', 'cat', 'pet', 'friend', 'mom', 'mum', 'dad', 'boss', 'wife', 'husband', 'brother', 'sister', 'kid', 'son', 'daughter', 'partner', 'child']);
 
@@ -100,8 +106,9 @@ function isAboutThem(asked: string, words: readonly string[]): boolean {
         const before = tokens[index - 1];
         if (before !== undefined && (/['\u2019]s$/u.test(before) || SOMEONE_ELSES.has(before))) return false;
         // "my birthday cake" and "a name tag" are about the next word, not about the person's birthday or name
+        // (time and polite words may follow: "my name now", "my birthday please")
         const after = tokens[index + 1];
-        return !(after !== undefined && CONTENT_WORDS_OF(after).length > 0);
+        return !(after !== undefined && CONTENT_WORDS_OF(after).length > 0 && !MAY_FOLLOW.has(after));
     });
 }
 
