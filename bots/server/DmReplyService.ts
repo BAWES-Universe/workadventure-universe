@@ -184,6 +184,17 @@ export class DmReplyService extends BaseBehavior {
         this.missingCache.delete(botId);
     }
 
+    /**
+     * The same, when the owner says their Brick changed: only a Brick this server holds as theirs is read again, so
+     * nobody else can make it ask Orbit for bots. One it does not hold is read fresh anyway when it is next needed.
+     */
+    forgetBrickOf(botId: string, ownerId: string): boolean {
+        const cached = this.configCache.get(botId);
+        if (!cached || cached.config.brick?.ownerId !== ownerId) return false;
+        this.configCache.delete(botId);
+        return true;
+    }
+
     private playerIds = new Map<string, number>();
     private nextPlayerId = -1;
     private loadedBots = new Set<string>();
