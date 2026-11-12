@@ -91,6 +91,21 @@ describe('the memory tools', () => {
         expect(itemsAbout(items, 'my birthday cake').map((item) => item.id)).toEqual(['cake']);
     });
 
+    it('needs all that was asked to be part of the thing, or all of the thing to be said, not one shared word', () => {
+        const items: any[] = [
+            { id: 'place', kind: 'pref', label: null, value: 'pizza' },
+            { id: 'dough', kind: 'pref', label: null, value: 'pizza dough recipe' },
+            { id: 'coffee', kind: 'pref', label: null, value: 'coffee, no sugar' },
+        ];
+        // The false match: only "pizza" is shared with the dough recipe
+        expect(itemsAbout(items, 'my favourite pizza place').map((item) => item.id)).toEqual(['place']);
+        // What must still work: the whole thing said back among other words, a part of it, and a part of a longer one
+        expect(itemsAbout(items, 'forget that I like pizza').map((item) => item.id)).toEqual(['place']);
+        expect(itemsAbout(items, 'the dough recipe').map((item) => item.id)).toEqual(['dough']);
+        expect(itemsAbout(items, 'the coffee').map((item) => item.id)).toEqual(['coffee']);
+        expect(itemsAbout(items, 'the thing about my pizza dough recipe').map((item) => item.id)).toEqual(['dough']);
+    });
+
     it('never matches on short or common words, because forgetting is for good', () => {
         const items = memoryItemsOf(sara());
         for (const vague of ['i', 'it', 'a', 'the', 'that', 'the thing I said about my cat', 'what I said', 'all of that', 'everything']) {

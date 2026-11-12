@@ -115,7 +115,12 @@ export function itemsAbout(items: MemoryItem[], about: string): MemoryItem[] {
     if (!asked) return [];
     // "birthday" and "name" say which kind of thing is meant; they must not pick out a cake or a name tag by sharing the word
     const words = CONTENT_WORDS_OF(asked).filter((word) => !KIND_WORDS.has(word));
-    return items.filter((item) => {
+    const sameWords = (item: MemoryItem) => {
+        const valueWords = CONTENT_WORDS_OF(item.value.toLowerCase());
+        return words.length > 0 && valueWords.length === words.length && valueWords.every((word) => words.includes(word));
+    };
+    const exactly = new Set(items.filter((item) => item.kind !== 'name' && item.kind !== 'birthday' && sameWords(item)));
+    const matched = items.filter((item) => {
         const value = item.value.toLowerCase().trim();
         if (item.kind === 'name' && isAboutThem(asked, ['name'])) return true;
         if (item.kind === 'birthday' && isAboutThem(asked, ['birthday', 'bday'])) return true;
@@ -125,8 +130,17 @@ export function itemsAbout(items: MemoryItem[], about: string): MemoryItem[] {
             if (whole.test(asked)) return true;
         }
         const valueWords = CONTENT_WORDS_OF(value);
-        return words.some((word) => valueWords.includes(word));
+        // One shared word is not enough: "my favourite pizza place" must not take "pizza dough recipe". Either all that was
+        // asked is part of what is remembered ("coffee" for "coffee, no sugar"), or all of what is remembered was said.
+        if (words.length === 0 || valueWords.length === 0) return false;
+        // When one thing is exactly what was asked ("pizza"), it alone is meant, not the longer things that hold the word
+        if (exactly.size > 0) return exactly.has(item);
+        return words.every((word) => valueWords.includes(word)) || valueWords.every((word) => words.includes(word));
     });
+    // A thing that is only part of another matched thing ("pizza" inside "pizza dough recipe") is left: the longer one was meant
+    const partOfAnother = (item: MemoryItem) =>
+        matched.some((other) => other !== item && other.kind === item.kind && CONTENT_WORDS_OF(item.value.toLowerCase()).length > 0 && CONTENT_WORDS_OF(item.value.toLowerCase()).length < CONTENT_WORDS_OF(other.value.toLowerCase()).length && CONTENT_WORDS_OF(item.value.toLowerCase()).every((word) => CONTENT_WORDS_OF(other.value.toLowerCase()).includes(word)));
+    return matched.filter((item) => item.kind === 'name' || item.kind === 'birthday' || !partOfAnother(item));
 }
 
 export interface MemoryToolContext {
