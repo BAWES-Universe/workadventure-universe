@@ -1,5 +1,5 @@
 import { savedNearbyPage, type SavedNearbyItem } from "../../../Chat/Components/Room/Details/NearbySaved";
-import type { BotAiOptions, BotData } from "../types";
+import type { BotAiOptions, BotData, BrickChange } from "../types";
 import {
     readPermissions,
     readRule,
@@ -1151,6 +1151,18 @@ export class BotApiService {
         const response = await this.fetch(`/api/bricks/${encodeURIComponent(brickId)}`, {
             method: "PATCH",
             body: JSON.stringify({ enabled }),
+        });
+        return response.json();
+    }
+
+    /**
+     * Saves a change to one of the person's own Bricks from its page (game #1996): its name, line, Personality or
+     * switch. Answers with `{ brick }`, its card as it is now. Throws when Orbit refuses or can't be reached.
+     */
+    async changeMyBrick(brickId: string, change: BrickChange): Promise<unknown> {
+        const response = await this.fetch(`/api/bricks/${encodeURIComponent(brickId)}`, {
+            method: "PATCH",
+            body: JSON.stringify(change),
         });
         return response.json();
     }

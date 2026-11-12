@@ -5,13 +5,12 @@
     import { onMount } from "svelte";
     import LL from "../../../../i18n/i18n-svelte";
     import { warningMessageStore } from "../../../Stores/ErrorStore";
-    import type { BrickCard } from "../Brick";
     import { brickComputerAction, brickComputers, followBrickComputer } from "./BrickComputerStore";
     import { barState, canWatch, type WaitingFor } from "./BrickComputer";
-    import { openBrickScreen } from "./BrickScreenStore";
+    import { openBrickScreen, type BrickRef } from "./BrickScreenStore";
     import { IconDeviceDesktop } from "@wa-icons";
 
-    export let brick: BrickCard;
+    export let brick: BrickRef;
 
     $: view = $brickComputers.get(brick.id);
     $: state = barState(view);

@@ -128,6 +128,20 @@ describe("New Brick, in the game's own dialog (#1996)", () => {
         expect(byId("newBrickCancel")?.textContent?.trim()).toBe("Cancel");
     });
 
+    it("has Advanced settings under the note, as the New bot form does: a Brick's chats stay its owner's", async () => {
+        await open();
+        const advanced = byId("newBrickAdvanced")!;
+        expect(advanced.textContent?.trim()).toBe("Advanced settings");
+        expect(advanced.getAttribute("aria-expanded")).toBe("false");
+        expect(byId("bot-telemetry-card")).toBeNull();
+        advanced.click();
+        await settle();
+        expect(advanced.getAttribute("aria-expanded")).toBe("true");
+        expect(byId("bot-telemetry-card")?.textContent).toContain("A Brick's chats are yours");
+        expect(byId<HTMLButtonElement>("bot-telemetry-switch")?.disabled).toBe(true);
+        expect(byId<HTMLButtonElement>("bot-telemetry-switch")?.getAttribute("aria-checked")).toBe("false");
+    });
+
     it("starts on the first colour the person's Bricks do not wear, named after it", async () => {
         await open();
         // Their one Brick is orange, so red is next

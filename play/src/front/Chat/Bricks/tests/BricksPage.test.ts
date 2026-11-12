@@ -2,6 +2,16 @@ import { tick } from "svelte";
 import { get } from "svelte/store";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+// A Brick's page is the bot page, which reads the game's settings as it loads
+vi.hoisted(() => {
+    (window as unknown as { env: Record<string, unknown> }).env = {};
+    globalThis.ResizeObserver ??= class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+    } as unknown as typeof ResizeObserver;
+});
+
 const game = vi.hoisted(() => ({
     ensureMyBrick: vi.fn<() => Promise<unknown>>(),
     listMyBricks: vi.fn<() => Promise<unknown>>(),
@@ -12,6 +22,8 @@ const game = vi.hoisted(() => ({
     undoMyBrick: vi.fn<(brickId: string) => Promise<unknown>>(),
     tellBrickChanged: vi.fn<(brickId: string) => Promise<void>>(),
     openModal: vi.fn<(component: unknown) => void>(),
+    getBot: vi.fn<(brickId: string) => Promise<unknown>>(),
+    changeMyBrick: vi.fn<(brickId: string, change: Record<string, unknown>) => Promise<unknown>>(),
 }));
 const looks = vi.hoisted(() => {
     // A tiny store, made before the modules load: the WOKAs the game offers a bot
@@ -43,8 +55,13 @@ vi.mock("../../../external-modules/bots/services/BotApiService", () => ({
         deleteMyBrick: game.deleteMyBrick,
         undoMyBrick: game.undoMyBrick,
         tellBrickChanged: game.tellBrickChanged,
+        getBot: game.getBot,
+        changeMyBrick: game.changeMyBrick,
+        isInitialized: () => true,
     },
 }));
+vi.mock("../../../Phaser/Game/GameManager", () => ({ gameManager: {} }));
+vi.mock("../../../external-modules/admin-api/index", () => ({ canOpenOrbit: () => false, openOrbitPage: () => {} }));
 vi.mock("../../../Enum/ComputedConst", () => ({ ABSOLUTE_PUSHER_URL: "http://pusher.test/" }));
 vi.mock("../../../external-modules/bots/stores/BotWokaCatalogStore", () => ({
     botWokaCatalogStore: looks.catalog,
@@ -63,7 +80,13 @@ vi.mock(
     "../NewBrickDialog.svelte",
     async () => await import("../../../external-modules/bots/components/testStub.svelte")
 );
-vi.mock("../../../Connection/LocalUserStore", () => ({ localUserStore: { getChatId: () => "@omar:chat.test" } }));
+// The bot page's stores read more of it as they load: anything else answers nothing
+vi.mock("../../../Connection/LocalUserStore", () => ({
+    localUserStore: new Proxy(
+        {},
+        { get: (_store, key) => (key === "getChatId" ? () => "@omar:chat.test" : () => undefined) }
+    ),
+}));
 vi.mock("../../../Stores/MenuStore", async () => {
     const store = await import("svelte/store");
     return { userIsConnected: store.writable(true) };
@@ -138,6 +161,18 @@ describe("the Bricks page (#1995)", () => {
         game.ensureMyBrick.mockResolvedValue({ brick: card(), made: false, deleted: false });
         game.listMyBricks.mockResolvedValue({ bricks: [card(), made()] });
         game.openBrickChat.mockResolvedValue(undefined);
+        // Orbit's read of a Brick for its page: the whole bot, with who made it
+        game.getBot.mockImplementation((id: string) =>
+            Promise.resolve({
+                ...(id === MADE ? made() : card()),
+                chatInstructions: id === MADE ? "Keeps Mum's recipes." : null,
+                aiProviderRef: "universe-ai",
+                roomId: null,
+                updatedAt: "2026-11-11T12:00:00.000Z",
+                createdBy: { id: "u-omar", name: "Omar", email: null },
+                updatedBy: { id: "u-omar", name: "Omar", email: null },
+            })
+        );
         target = document.createElement("div");
         document.body.appendChild(target);
     });
@@ -200,22 +235,31 @@ describe("the Bricks page (#1995)", () => {
         expect(get(bricksPageOpenStore)).toBe(false);
     });
 
-    it("opens a Brick's chat on a tap on its row, and with Enter", async () => {
+    it("opens a Brick's own page on a tap on its row, and with Enter, as a bot's row opens its page", async () => {
         await open();
+        expect(rows()[1].getAttribute("aria-label")).toBe("Open Recipe Brick's page");
+        // Nothing else on a row: its picture, name, line and switch (mock s-7)
+        expect(target.querySelector('[data-testid="bricksRowMore"]')).toBeNull();
         rows()[1].click();
-        expect(game.openBrickChat).toHaveBeenCalledWith(MADE);
+        await settle();
+        expect(byId("brickPage")).not.toBeNull();
+        expect(game.getBot).toHaveBeenCalledWith(MADE);
+        expect(game.openBrickChat).not.toHaveBeenCalled();
+        target.querySelector<HTMLElement>('[data-testid="edit-panel-back"]')?.click();
+        await settle();
         rows()[0].dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-        expect(game.openBrickChat).toHaveBeenLastCalledWith(BRICK);
-        expect(rows()[0].getAttribute("aria-label")).toBe("Open the chat with Brick");
+        await settle();
+        expect(game.getBot).toHaveBeenLastCalledWith(BRICK);
+        expect(byId("brickPage")).not.toBeNull();
     });
 
-    it("turns a Brick off with its switch, without opening its chat, and keeps the row where it is", async () => {
+    it("turns a Brick off with its switch, without opening its page, and keeps the row where it is", async () => {
         game.setBrickEnabled.mockResolvedValue({ brick: made({ enabled: false }) });
         await open();
         switches()[1].click();
         await settle();
         expect(game.setBrickEnabled).toHaveBeenCalledWith(MADE, false);
-        expect(game.openBrickChat).not.toHaveBeenCalled();
+        expect(byId("brickPage")).toBeNull();
         expect(switches().map((one) => one.checked)).toEqual([true, false]);
         // Still under Active until the page opens again: the row does not jump from under the finger
         expect(sections()).toEqual(["Active · 2"]);
@@ -223,10 +267,11 @@ describe("the Bricks page (#1995)", () => {
         expect(game.warn).not.toHaveBeenCalled();
     });
 
-    it("does not open the chat when Space is pressed on the switch", async () => {
+    it("does not open the page when Space is pressed on the switch", async () => {
         await open();
         switches()[0].dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
-        expect(game.openBrickChat).not.toHaveBeenCalled();
+        await settle();
+        expect(byId("brickPage")).toBeNull();
     });
 
     it("puts the switch back and says so when the change could not be saved", async () => {
@@ -352,34 +397,117 @@ describe("the Bricks page (#1995)", () => {
             expect(byId("bricksDeletedRow")).not.toBeNull();
         });
 
-        it("opens a Brick's own page from the dots on its row, without opening its chat", async () => {
+        const openPage = async (index = 1) => {
+            rows()[index].click();
+            await settle();
+        };
+
+        it("opens a Brick's page as the bot page: its look, name, line and switch, then its parts, then who made it", async () => {
             game.listMyBricks.mockResolvedValue({ bricks: [card(), made()], deleted: [], undoDays: 7 });
             await open();
-            const more = target.querySelectorAll<HTMLElement>('[data-testid="bricksRowMore"]');
-            expect(more[1].getAttribute("aria-label")).toBe("More about Recipe Brick");
-            await click("bricksRowMore", 1);
-            expect(game.openBrickChat).not.toHaveBeenCalled();
+            await openPage();
             expect(byId("bricksPage")).toBeNull();
-            expect(byId("brickPage")).not.toBeNull();
-            expect(target.querySelector(".em-title")?.textContent).toBe("Recipe Brick");
+            // "Bricks" on top, with the way back (mock d-2)
+            expect(target.querySelector(".em-title")?.textContent).toBe("Bricks");
             expect(target.querySelector('[data-testid="edit-panel-back"]')?.getAttribute("aria-label")).toBe(
                 "Back to Bricks"
             );
-            await click("brickPageChat");
-            expect(game.openBrickChat).toHaveBeenCalledWith(MADE);
+            expect(byId("brick-look")?.querySelector("img")?.getAttribute("src")).toBe(
+                "/static/images/bricks/brick-orange.png"
+            );
+            expect(target.querySelector<HTMLInputElement>('[data-testid="bot-name"]')?.value).toBe("Recipe Brick");
+            expect(target.querySelector<HTMLTextAreaElement>('[data-testid="bot-description"]')?.value).toBe(
+                "Keeps the family recipes"
+            );
+            expect(target.querySelector<HTMLElement>('[data-testid="bot-switch"]')).not.toBeNull();
+            // The parts a Brick has so far: Personality and Advanced settings. The rest come with their own issues.
+            const groups = [...target.querySelectorAll<HTMLElement>('[data-testid^="bot-page-group-"]')].map(
+                (group) => group.dataset.testid
+            );
+            expect(groups).toEqual(["bot-page-group-say", "bot-page-group-advanced"]);
+            expect(byId("bot-page-group-advanced")?.textContent).toContain("Bot chat telemetry off");
+            expect(target.querySelector(".bp-meta")?.textContent).toMatch(/^Made by Omar · .+ · Changed .+$/);
             await click("edit-panel-back");
             expect(byId("bricksPage")).not.toBeNull();
+        });
+
+        it("keeps a Brick's chats out of telemetry: Advanced settings shows it off and locked, and reads nothing", async () => {
+            await open();
+            await openPage();
+            byId("bot-page-group-advanced")?.querySelector<HTMLElement>("button")?.click();
+            await settle();
+            const card = byId("bot-telemetry-card");
+            expect(card?.textContent).toContain("A Brick's chats are yours");
+            expect(card?.querySelector<HTMLButtonElement>('[data-testid="bot-telemetry-switch"]')?.disabled).toBe(true);
+        });
+
+        it("saves the switch on its page through the Brick's own route, and puts it back when Orbit refused", async () => {
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            game.changeMyBrick.mockResolvedValueOnce({ brick: made({ enabled: false }) });
+            await open();
+            await openPage();
+            const pageSwitch = () => target.querySelector<HTMLInputElement>('[data-testid="bot-switch"]');
+            pageSwitch()?.click();
+            await settle();
+            expect(game.changeMyBrick).toHaveBeenCalledWith(MADE, { enabled: false });
+            expect(game.tellBrickChanged).toHaveBeenCalledWith(MADE);
+            expect(pageSwitch()?.checked).toBe(false);
+            expect(byId("brick-save-error")).toBeNull();
+
+            game.changeMyBrick.mockRejectedValueOnce(new Error("offline"));
+            pageSwitch()?.click();
+            await settle();
+            expect(pageSwitch()?.checked).toBe(false);
+            expect(byId("brick-save-error")?.textContent).toBe("Could not save this. Check again in a moment.");
+            warn.mockRestore();
+        });
+
+        it("saves its name, line and Personality through the Brick's own route once typing stops, only what changed", async () => {
+            game.changeMyBrick.mockImplementation((_id, change) => Promise.resolve({ brick: made(change) }));
+            await open();
+            await openPage();
+            const type = (selector: string, value: string) => {
+                const field = target.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector);
+                if (!field) throw new Error(`no ${selector}`);
+                field.value = value;
+                field.dispatchEvent(new Event("input", { bubbles: true }));
+            };
+            type('[data-testid="bot-name"]', "Mum's Recipes");
+            type('[data-testid="bot-description"]', "Keeps the family recipes, and Mum's.");
+            await new Promise<void>((resolve) => {
+                setTimeout(resolve, 1100);
+            });
+            await settle();
+            expect(game.changeMyBrick).toHaveBeenCalledWith(MADE, { description: "Keeps the family recipes, and Mum's." });
+            expect(game.changeMyBrick).toHaveBeenCalledWith(MADE, { name: "Mum's Recipes" });
+            expect(game.changeMyBrick).toHaveBeenCalledTimes(2);
+        });
+
+        it("says so when the Brick could not be read, and reads it again on a tap", async () => {
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            game.getBot.mockRejectedValueOnce(new Error("offline"));
+            await open();
+            await openPage();
+            expect(byId("brickPageFailed")).not.toBeNull();
+            await click("brickPageTryAgain");
+            expect(byId("brickPageFailed")).toBeNull();
+            expect(target.querySelector<HTMLInputElement>('[data-testid="bot-name"]')?.value).toBe("Recipe Brick");
+            warn.mockRestore();
         });
 
         it("asks once before deleting: what goes, what stays, and until when Undo works", async () => {
             game.listMyBricks.mockResolvedValue({ bricks: [card(), made()], deleted: [], undoDays: 7 });
             await open();
-            await click("bricksRowMore", 1);
+            await openPage();
             expect(byId("brickDeleteAsk")).toBeNull();
             await click("brickDelete");
             const ask = byId("brickDeleteAsk")?.textContent?.replace(/\s+/g, " ").trim() ?? "";
             expect(ask).toContain("Delete Recipe Brick?");
-            expect(ask).toContain("Its chat and what it remembers go. Everything it made stays in Your artifacts.");
+            expect(ask).toContain(
+                "Its chat, what it remembers, its goals and tasks and its computer's files go. Everything it made stays in Your artifacts."
+            );
+            // Nothing to download while it has no computer files
+            expect(byId("brickDeleteFiles")).toBeNull();
             expect(byId("brickDeleteUndoLine")?.textContent?.trim()).toMatch(
                 /^You can undo this until .+, on the Bricks page\.$/
             );
@@ -392,7 +520,7 @@ describe("the Bricks page (#1995)", () => {
 
         it("names no day when Orbit did not say how long a deleted Brick waits", async () => {
             await open();
-            await click("bricksRowMore", 1);
+            await openPage();
             await click("brickDelete");
             expect(byId("brickDeleteUndoLine")?.textContent?.trim()).toBe("You can undo this on the Bricks page.");
         });
@@ -407,7 +535,7 @@ describe("the Bricks page (#1995)", () => {
                 }),
             });
             await open();
-            await click("bricksRowMore", 1);
+            await openPage();
             await click("brickDelete");
             await click("brickDeleteConfirm");
             expect(game.deleteMyBrick).toHaveBeenCalledWith(MADE);
@@ -420,7 +548,7 @@ describe("the Bricks page (#1995)", () => {
         it("says so and stays on the page when the Brick could not be deleted", async () => {
             game.deleteMyBrick.mockRejectedValue(new Error("offline"));
             await open();
-            await click("bricksRowMore", 1);
+            await openPage();
             await click("brickDelete");
             await click("brickDeleteConfirm");
             expect(game.warn).toHaveBeenCalledWith("Couldn't delete the Brick. Try again.");

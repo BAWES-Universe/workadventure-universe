@@ -92,7 +92,8 @@ describe("a Brick's computer on screen (#2000)", () => {
     async function showGroup(read: unknown) {
         game.getBrickComputer.mockResolvedValue(read);
         await loadBrickComputer(BRICK);
-        piece = new ComputerGroup({ target, props: { brick, open: true, onToggle: () => undefined } });
+        const made = new ComputerGroup({ target, props: { brick, open: true, onToggle: () => undefined } });
+        piece = made;
         await settle();
     }
 
@@ -141,19 +142,20 @@ describe("a Brick's computer on screen (#2000)", () => {
     it("has a bar only while the computer has something to do, and Take over when it waits for the person", async () => {
         game.getBrickComputer.mockResolvedValue(computer());
         await loadBrickComputer(BRICK);
-        piece = new BrickComputerBar({ target, props: { brick } });
+        const first = new BrickComputerBar({ target, props: { brick } });
         await settle();
         expect(byId("brickComputerBar")).toBeNull();
-        piece.$destroy();
+        first.$destroy();
         game.getBrickComputer.mockResolvedValue(
             computer({ machine: "working", job: job({ status: "waiting", waitingFor: "details" }) })
         );
         await loadBrickComputer(BRICK);
-        piece = new BrickComputerBar({ target, props: { brick } });
+        const second = new BrickComputerBar({ target, props: { brick } });
         await settle();
         expect(byId("brickComputerBar")).not.toBeNull();
         expect(byId("brickComputerBarStop")).not.toBeNull();
         expect(text()).toContain("Take over");
+        second.$destroy();
     });
 
     it("shows the screen only for a working computer, and the one tap names exactly what goes in", async () => {

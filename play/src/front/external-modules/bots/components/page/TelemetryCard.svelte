@@ -11,6 +11,8 @@
     /** Why the last change was not saved: the switch is back where Orbit holds it, and this says so. */
     export let error: string | undefined = undefined;
     export let onChange: (on: boolean) => void;
+    /** The line a locked switch shows, when something other than the universe locks it (a Brick, game #1996). */
+    export let lockedHint: string | undefined = undefined;
 
     $: text = $LL.mapEditor.edit.bots.page.telemetry;
 
@@ -23,7 +25,7 @@
         <div class="u-option-title" id="bot-telemetry-label">{text.switchTitle()}</div>
         <div class="u-option-desc tm-hint">
             {#if locked}
-                {text.lockedHint()}
+                {lockedHint ?? text.lockedHint()}
             {:else}
                 {text.hint()}
             {/if}
@@ -36,7 +38,7 @@
         {/if}
     </div>
     {#if locked}
-        <span class="tm-lock" title={text.lockedBy()} aria-hidden="true"><IconLock font-size="16" /></span>
+        <span class="tm-lock" title={lockedHint ?? text.lockedBy()} aria-hidden="true"><IconLock font-size="16" /></span>
     {/if}
     <button
         type="button"

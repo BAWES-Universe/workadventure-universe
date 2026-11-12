@@ -8,7 +8,6 @@
     import { bricksPageOpenStore } from "../Stores/ChatStore";
     import PageButton from "../../external-modules/bots/components/page/PageButton.svelte";
     import { shortDay, type BrickCard, type DeletedBrickCard } from "./Brick";
-    import { openBrickChat, openingBrickChats } from "./BrickChat";
     import BrickPage from "./BrickPage.svelte";
     import BrickPicture from "./BrickPicture.svelte";
     import {
@@ -20,13 +19,13 @@
         undoMyBrick,
     } from "./MyBricksStore";
     import NewBrickDialog from "./NewBrickDialog.svelte";
-    import { IconChevronDown, IconDots, IconLoader, IconPlus } from "@wa-icons";
+    import { IconChevronDown, IconPlus } from "@wa-icons";
 
     /**
      * The Bricks page (game #1995): the person's own Bricks, each with its switch. The Bricks button in the Chats footer
-     * opens it over the chat list, the way "Find a group" opens. A tap on a Brick opens its chat. New Brick on top makes
-     * another one (#1996); the dots on a row open that Brick's own page, where it can be deleted; a deleted Brick waits
-     * under Deleted with Undo until the day it is gone for good. Goals and tasks, apps and usage come to this page with
+     * opens it over the chat list, the way "Find a group" opens. A tap on a Brick opens its own page (#1996), as a tap on a
+     * bot opens its page in the map editor, and its chat is in Chats. New Brick on top makes another one (#1996); a
+     * deleted Brick waits under Deleted with Undo until the day it is gone for good. Goals and tasks, apps and usage come to this page with
      * their own issues.
      *
      * Drawn like the bots list of the map editor (BotList and BotRow): the same header, sections, rows and switch.
@@ -87,7 +86,7 @@
     }
 
     function open(brick: BrickCard) {
-        openBrickChat(brick.id).catch((error) => console.error(error));
+        pageOfId = brick.id;
     }
 
     function onRowKey(event: KeyboardEvent, brick: BrickCard) {
@@ -148,8 +147,7 @@
                                     class:off={!brick.enabled}
                                     role="button"
                                     tabindex="0"
-                                    aria-label={$LL.chat.brick.openChat({ name: brick.name })}
-                                    aria-busy={$openingBrickChats.has(brick.id)}
+                                    aria-label={$LL.chat.brick.openPage({ name: brick.name })}
                                     data-testid="bricksRow"
                                     on:click={() => open(brick)}
                                     on:keydown={(event) => onRowKey(event, brick)}
@@ -161,21 +159,6 @@
                                             <span class="bk-m">{brick.description}</span>
                                         {/if}
                                     </span>
-                                    {#if $openingBrickChats.has(brick.id)}
-                                        <span class="bk-busy" data-testid="bricksRowOpening">
-                                            <IconLoader class="animate-[spin_2s_linear_infinite]" font-size="18" />
-                                        </span>
-                                    {/if}
-                                    <button
-                                        type="button"
-                                        class="bk-more"
-                                        aria-label={$LL.chat.brick.more({ name: brick.name })}
-                                        data-testid="bricksRowMore"
-                                        on:click|stopPropagation={() => (pageOfId = brick.id)}
-                                        on:keydown|stopPropagation
-                                    >
-                                        <IconDots font-size="20" />
-                                    </button>
                                     <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
                                     <span class="bk-sw" on:click|stopPropagation>
                                         <PageSwitch
@@ -339,30 +322,6 @@
             background: transparent;
         }
     }
-    .bk-more {
-        display: grid;
-        place-items: center;
-        flex: none;
-        width: 44px;
-        height: 44px;
-        margin: 0;
-        padding: 0;
-        border: 0;
-        border-radius: 50%;
-        background: transparent;
-        color: rgba(244, 242, 250, 0.64);
-        cursor: pointer;
-    }
-    @media (hover: hover) {
-        .bk-more:hover {
-            background: rgba(255, 255, 255, 0.08);
-            color: #fff;
-        }
-    }
-    .bk-more:focus-visible {
-        outline: 2px solid #a78bfa;
-        outline-offset: -2px;
-    }
     .off .bk-pic {
         filter: grayscale(1);
         opacity: 0.6;
@@ -392,12 +351,6 @@
         font-size: 12.5px;
         line-height: 1.3;
         color: rgba(244, 242, 250, 0.64);
-    }
-    .bk-busy {
-        display: grid;
-        place-items: center;
-        flex: none;
-        color: rgba(244, 242, 250, 0.6);
     }
     .bk-sw {
         display: grid;

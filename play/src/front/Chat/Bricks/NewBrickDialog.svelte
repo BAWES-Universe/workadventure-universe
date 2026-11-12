@@ -7,18 +7,20 @@
     import WokaImage from "../../Components/Woka/WokaImage.svelte";
     import { botWokaCatalogStore, ensureBotWokaCatalog } from "../../external-modules/bots/stores/BotWokaCatalogStore";
     import { warningMessageStore } from "../../Stores/ErrorStore";
+    import TelemetryCard from "../../external-modules/bots/components/page/TelemetryCard.svelte";
     import { BRICK_LOOKS, brickPictureUrl, isBrickLook, type BrickLook } from "./Brick";
     import { openBrickChat } from "./BrickChat";
     import { wokaTextureUrl } from "./BrickLookPicture";
     import BrickPicture from "./BrickPicture.svelte";
     import { firstFreeLook, lookColour } from "./NewBrick";
     import { makeMyBrick, myBricksStore } from "./MyBricksStore";
-    import { IconCheck, IconX } from "@wa-icons";
+    import { IconCheck, IconChevronDown, IconX } from "@wa-icons";
 
     /**
      * New Brick (game #1996), in the game's own dialog: today's new bot form with a name and a look, then Create. The
      * Brick talks right away on Universe AI, so there is nothing else to set first. Looks are the Brick colours and
-     * the WOKAs the game offers a bot.
+     * the WOKAs the game offers a bot. Advanced settings opens under it, as on the New bot form; for a Brick it says
+     * that its chats stay its owner's.
      */
     export let isOpen: boolean;
 
@@ -28,6 +30,7 @@
     let look: string = firstFreeLook(worn);
     let tab: Tab = "bricks";
     let busy = false;
+    let advancedOpen = false;
     // The name follows the colour until the person writes their own
     let name = suggestedName(look);
     let nameIsOurs = true;
@@ -220,6 +223,31 @@
 
             <p class="nbd-note">{$LL.chat.brick.readyToTalk()}</p>
 
+            <div class="nbd-adv">
+                <button
+                    type="button"
+                    class="nbd-disclosure"
+                    class:open={advancedOpen}
+                    aria-expanded={advancedOpen}
+                    aria-controls="new-brick-advanced"
+                    data-testid="newBrickAdvanced"
+                    on:click={() => (advancedOpen = !advancedOpen)}
+                >
+                    <span>{$LL.mapEditor.edit.bots.page.telemetry.newBotAdvanced()}</span>
+                    <span class="nbd-chev"><IconChevronDown font-size="18" /></span>
+                </button>
+                {#if advancedOpen}
+                    <div id="new-brick-advanced">
+                        <TelemetryCard
+                            on={false}
+                            locked
+                            lockedHint={$LL.chat.brick.telemetryOff()}
+                            onChange={() => {}}
+                        />
+                    </div>
+                {/if}
+            </div>
+
             <div class="nbd-foot">
                 <button type="button" class="nbd-btn" data-testid="newBrickCancel" on:click={closeModal}
                     >{create.cancel()}</button
@@ -405,6 +433,55 @@
         font-size: 13px;
         line-height: 1.35;
         color: rgba(255, 255, 255, 0.68);
+    }
+    /* Advanced settings, as on the New bot form (NewBotView): a quiet row that opens in place */
+    .nbd-adv {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        flex: none;
+    }
+    .nbd-disclosure {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        width: 100%;
+        height: 44px;
+        margin: 0;
+        padding: 0 8px 0 4px;
+        border: 0;
+        border-radius: 12px;
+        background: transparent;
+        font: inherit;
+        font-size: 13px;
+        font-weight: 600;
+        color: #fff;
+        text-align: start;
+        cursor: pointer;
+    }
+    @media (hover: hover) {
+        .nbd-disclosure:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+    }
+    .nbd-disclosure:focus-visible {
+        outline: 2px solid #a78bfa;
+        outline-offset: -2px;
+    }
+    .nbd-chev {
+        display: grid;
+        place-items: center;
+        flex: none;
+        color: rgba(244, 242, 250, 0.64);
+        transform: rotate(-90deg);
+    }
+    :global([dir="rtl"]) .nbd-chev {
+        transform: rotate(90deg);
+    }
+    .nbd-disclosure.open .nbd-chev {
+        transform: none;
+        color: #fff;
     }
     .nbd-foot {
         display: grid;

@@ -1,3 +1,4 @@
+import type { BotData, BotUser } from "../../external-modules/bots/types";
 import { botIdFromChatId } from "../Bots/BotChatStatus";
 
 /**
@@ -53,6 +54,41 @@ export function parseBrickCard(value: unknown): BrickCard | undefined {
         isDefault: isDefault === true,
         createdAt: typeof createdAt === "string" ? createdAt : "",
         hello: typeof hello === "string" && hello.trim() ? hello.trim().slice(0, LINE_MAX) : null,
+    };
+}
+
+function botUser(value: unknown): BotUser | null {
+    if (!value || typeof value !== "object") return null;
+    const { id, name, email } = value as Record<string, unknown>;
+    if (typeof id !== "string" || !id) return null;
+    return { id, name: typeof name === "string" ? name : null, email: typeof email === "string" ? email : null };
+}
+
+/**
+ * A Brick as its page shows it (game #1996): the bot page's own data, from Orbit's read of the bot. What the read does
+ * not say is taken from its card, so the page never shows a Brick with no name. A Brick stands nowhere on a map.
+ */
+export function brickPageBot(value: unknown, card: BrickCard): BotData {
+    const bot = (value && typeof value === "object" ? value : {}) as Record<string, unknown>;
+    const text = (key: string): string | undefined => (typeof bot[key] === "string" ? (bot[key]) : undefined);
+    const look = text("characterTextureId") ?? card.characterTextureId ?? "";
+    return {
+        id: card.id,
+        botId: card.id,
+        name: text("name")?.trim() || card.name,
+        description: text("description") ?? card.description ?? undefined,
+        characterTexture: look,
+        characterTextureIds: look ? [look] : [],
+        behaviorType: "idle",
+        behaviorConfig: { behaviorType: "idle", assignedSpace: { center: { x: 0, y: 0 }, radius: 0 } },
+        chatInstructions: text("chatInstructions") ?? "",
+        aiProviderRef: text("aiProviderRef"),
+        aiModel: text("aiModel") ?? null,
+        enabled: typeof bot.enabled === "boolean" ? bot.enabled : card.enabled,
+        createdAt: text("createdAt") ?? card.createdAt,
+        updatedAt: text("updatedAt"),
+        createdBy: botUser(bot.createdBy),
+        updatedBy: botUser(bot.updatedBy),
     };
 }
 

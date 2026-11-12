@@ -12,7 +12,7 @@
     import LL from "../../../../i18n/i18n-svelte";
     import { ABSOLUTE_PUSHER_URL } from "../../../Enum/ComputedConst";
     import { mobileLayoutStore } from "../../../Stores/MobileLayoutStore";
-    import type { BotAiOptions, BotData } from "../types";
+    import type { BotAiOptions, BotData, BrickChange, BrickPageWay } from "../types";
     import WokaImage from "../../../Components/Woka/WokaImage.svelte";
     import { botPreviewsStore, selectedBotStore, startWaypointEditing, upsertBot } from "../stores/BotEditorStore";
     import { botApiService } from "../services/BotApiService";
@@ -30,6 +30,7 @@
     import { UNIVERSE_AI_REF } from "../mindModel";
     import type { UsageScreen } from "../usageModel";
     import type { ToolsScreen } from "../toolsModel";
+    import ComputerGroup from "../../../Chat/Bricks/Computer/ComputerGroup.svelte";
     import BotWokaPicker from "./BotWokaPicker.svelte";
     import BotCompanionPicker from "./BotCompanionPicker.svelte";
     import BotRuleScreen from "./BotRuleScreen.svelte";
@@ -58,6 +59,14 @@
     export let onSave: () => void;
     export let onDelete: () => void;
     export let onLocate: (() => void) | undefined = undefined;
+    /**
+     * Set when the page is a Brick's own (game #1996): a bot with an owner and no room. Its changes go through the
+     * Brick's own route instead of the room editor, its look is drawn by the Brick page (the "look" slot), and only the
+     * parts a Brick has so far are shown. Each other part comes to it with its own issue.
+     */
+    export let brick: BrickPageWay | undefined = undefined;
+    /** Set while a Brick's delete is on its way: its question's buttons wait. */
+    export let deleting = false;
 
     let currentBot: BotData | null = null;
     /** What "Runs on" offers this bot, as the Mind group loads it: the Tools group's reply limits come from it */
@@ -82,8 +91,12 @@
     /** One of Tools' screens: a server, one of its headings, or Asking for approvals */
     export let toolsScreen: ToolsScreen | null = null;
     $: telemetryState = $botTelemetryStore && $botTelemetryStore.botId === bot?.id ? $botTelemetryStore : undefined;
+    // A Brick's chats are its owner's: Orbit keeps every Brick's chat text out of analytics and the admin pages
+    // (lib/bot-privacy.ts), so its Advanced settings show bot chat telemetry off and locked, with nothing to read.
     $: telemetryLocked = telemetryState?.data?.universeHides === true;
-    $: advancedBrief = !telemetryState
+    $: advancedBrief = brick
+        ? $LL.mapEditor.edit.bots.page.telemetry.briefOff()
+        : !telemetryState
         ? $LL.mapEditor.edit.bots.page.telemetry.briefLoading()
         : telemetryState.status === "failed"
         ? $LL.mapEditor.edit.bots.page.telemetry.briefFailed()
@@ -98,7 +111,7 @@
         if (currentBot) void setBotTelemetry(currentBot.id, next);
     }
     let telemetryLoadedFor: string | undefined;
-    $: if (bot && bot.id !== telemetryLoadedFor) {
+    $: if (bot && !brick && bot.id !== telemetryLoadedFor) {
         telemetryLoadedFor = bot.id;
         void loadBotTelemetry(bot.id);
     }
@@ -106,7 +119,7 @@
     // the bot to retry
     let advancedWasOpen = false;
     $: {
-        if (editingAdvanced && !advancedWasOpen && bot && telemetryState?.status === "failed") {
+        if (editingAdvanced && !advancedWasOpen && bot && !brick && telemetryState?.status === "failed") {
             void loadBotTelemetry(bot.id);
         }
         advancedWasOpen = editingAdvanced;
@@ -274,6 +287,7 @@
             }
             // Reset last saved name when bot changes
             lastSavedName = bot.name || null;
+            brickSaved = { description: bot.description ?? null, chatInstructions: bot.chatInstructions ?? null };
         }
     } else {
         // Bot prop became null - clear currentBot to prevent errors
@@ -285,6 +299,42 @@
     let autoSaveTimeout: ReturnType<typeof setTimeout> | null = null;
     let nameSaveTimeout: ReturnType<typeof setTimeout> | null = null;
     let lastSavedName: string | null = null;
+    /** What a Brick's page last saved of the fields it saves while typing, so only a real change is sent. */
+    let brickSaved: { description: string | null; chatInstructions: string | null } = {
+        description: null,
+        chatInstructions: null,
+    };
+    /** Why a Brick's last change was not saved, in a line for the person; cleared by the next one that is. */
+    let brickError: string | null = null;
+
+    /** Saves a change of a Brick's page through its own route. False when it was not saved. */
+    async function saveBrick(change: BrickChange): Promise<boolean> {
+        if (!brick) return false;
+        const saved = await brick.save(change).catch((error: unknown) => {
+            console.error("[BotDetailView] Failed to save a Brick:", error);
+            return false;
+        });
+        brickError = saved ? null : $LL.mapEditor.edit.bots.page.telemetry.saveFailed();
+        return saved;
+    }
+
+    /** A Brick's description and Personality, once typing stopped: only what changed since the last save. */
+    function flushBrickFields() {
+        if (!currentBot || !brick) return;
+        const botId = currentBot.id;
+        const next = {
+            description: currentBot.description?.trim() || null,
+            chatInstructions: currentBot.chatInstructions?.trim() || null,
+        };
+        const change: BrickChange = {};
+        if (next.description !== brickSaved.description) change.description = next.description;
+        if (next.chatInstructions !== brickSaved.chatInstructions) change.chatInstructions = next.chatInstructions;
+        if (Object.keys(change).length === 0) return;
+        void saveBrick(change).then((saved) => {
+            if (!saved || currentBot?.id !== botId) return;
+            brickSaved = { ...brickSaved, ...change } as typeof brickSaved;
+        });
+    }
 
     // Auto-save when currentBot changes (debounced) - for AI config and behavior config only
     function autoSave() {
@@ -312,6 +362,10 @@
         if (!currentBot || !currentBot.id) {
             return; // currentBot became null during debounce
         }
+        if (brick) {
+            flushBrickFields();
+            return;
+        }
         if (!get(botPreviewsStore).has(currentBot.id)) {
             return; // The bot was deleted: upserting it would bring it back
         }
@@ -328,7 +382,7 @@
 
     // Handle name changes separately - direct API call with immediate respawn
     function handleNameChange() {
-        if (!currentBot || !currentBot.id || !botApiService.isInitialized()) {
+        if (!currentBot || !currentBot.id || (!brick && !botApiService.isInitialized())) {
             return;
         }
 
@@ -352,6 +406,18 @@
     function flushNameSave() {
         const botId = currentBot?.id;
         const newName = currentBot?.name?.trim() || "";
+        if (brick) {
+            if (!botId || !newName || newName === lastSavedName) return;
+            void saveBrick({ name: newName }).then((saved) => {
+                if (currentBot?.id !== botId) return;
+                if (saved) {
+                    lastSavedName = newName;
+                } else {
+                    currentBot = { ...currentBot, name: lastSavedName || "" };
+                }
+            });
+            return;
+        }
         if (
             !currentBot ||
             !botId ||
@@ -497,6 +563,8 @@
         : "";
 
     onMount(() => {
+        // A Brick's look is drawn by its page, and it has no companion yet: neither list is needed for it
+        if (brick) return;
         void ensureBotWokaCatalog();
         void ensureBotCompanionCatalog();
     });
@@ -527,7 +595,28 @@
         startWaypointEditing();
     }
 
+    function switchBrick(enabled: boolean) {
+        if (!currentBot || switching) return;
+        const botId = currentBot.id;
+        const was = currentBot.enabled !== false;
+        flushPendingSaves();
+        switching = true;
+        currentBot = { ...currentBot, enabled };
+        saveBrick({ enabled })
+            .then((saved) => {
+                if (!saved && currentBot?.id === botId) currentBot = { ...currentBot, enabled: was };
+            })
+            .catch((error) => console.error(error))
+            .finally(() => {
+                switching = false;
+            });
+    }
+
     function switchOnOff(enabled: boolean) {
+        if (brick) {
+            switchBrick(enabled);
+            return;
+        }
         const target = currentBot ? get(botPreviewsStore).get(currentBot.id) : undefined;
         if (!currentBot || !target || switching) return;
         // Save edits first: the switch saves the bot as the store has it
@@ -628,7 +717,9 @@
     <BotToolsApprovalsScreen bot={currentBot} />
 {:else if currentBot && editingAdvanced}
     <div class="bot-page" data-testid="bot-advanced">
-        {#if telemetryState?.data}
+        {#if brick}
+            <TelemetryCard on={false} locked lockedHint={$LL.chat.brick.telemetryOff()} onChange={() => {}} />
+        {:else if telemetryState?.data}
             <TelemetryCard
                 on={telemetryState.data.on}
                 locked={telemetryLocked}
@@ -646,6 +737,9 @@
 {:else if currentBot}
     <div class="bot-page" data-testid="bot-page">
         <div class="bp-hd">
+            {#if brick}
+                <span class="bp-woka bp-look" data-testid="brick-look"><slot name="look" /></span>
+            {:else}
             <button
                 type="button"
                 class="bp-woka"
@@ -664,6 +758,7 @@
                     />
                 {/if}
             </button>
+            {/if}
             <div class="bp-hd-tx">
                 <label class="bp-name-wrap">
                     <input
@@ -708,8 +803,24 @@
         {#if switchError}
             <p class="bp-error" role="alert">{switchError}</p>
         {/if}
+        {#if brickError}
+            <p class="bp-error" role="alert" data-testid="brick-save-error">{brickError}</p>
+        {/if}
 
         <div class="bp-groups">
+            {#if brick}
+                <!-- A Brick's page so far: the parts a Brick has. Usage, Mind, Voice, Behavior, Apps, Computer, Goals and
+                     tasks, Memory, Files, Permissions, Companion and Template come with their own issues -->
+                <SayGroup bot={currentBot} open={openGroup === "say"} onToggle={toggleGroup} onChange={apply} />
+                <!-- Computer comes after Personality, in the mock's order (game #2000) -->
+                {#if currentBot?.id}
+                    <ComputerGroup
+                        brick={{ id: currentBot.id, name: currentBot.name || "Brick" }}
+                        open={openGroup === "computer"}
+                        onToggle={toggleGroup}
+                    />
+                {/if}
+            {:else}
             {#if askedUsage && currentBot}
                 <MakerAskedCard name={currentBot.name || "Bot"} usage={askedUsage} onUseKey={openMind} />
             {/if}
@@ -768,6 +879,7 @@
                 link
                 onToggle={() => (editingCompanion = true)}
             />
+            {/if}
             <!-- Settings most owners never need, on a screen of their own -->
             <PageGroup
                 id="advanced"
@@ -778,7 +890,7 @@
                 onToggle={() => (editingAdvanced = true)}
             />
         </div>
-        <BotFooter bot={currentBot} {onDelete} />
+        <BotFooter bot={currentBot} {onDelete} {brick} {deleting} />
     </div>
 {/if}
 
@@ -818,6 +930,15 @@
     @media (hover: hover) {
         .bp-woka:hover {
             box-shadow: inset 0 0 0 2px rgba(196, 181, 253, 0.7);
+        }
+    }
+    /* A Brick's look, drawn by its page: not a button until a Brick's look can be changed */
+    .bp-look {
+        cursor: default;
+    }
+    @media (hover: hover) {
+        .bp-woka.bp-look:hover {
+            box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.28);
         }
     }
     .bp-woka:focus-visible {

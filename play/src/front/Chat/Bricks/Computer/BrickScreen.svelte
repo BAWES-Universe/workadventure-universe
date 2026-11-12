@@ -9,12 +9,12 @@
     import PageButton from "../../../external-modules/bots/components/page/PageButton.svelte";
     import { botApiService } from "../../../external-modules/bots/services/BotApiService";
     import { warningMessageStore } from "../../../Stores/ErrorStore";
-    import type { BrickCard } from "../Brick";
     import { brickComputerAction, brickComputers, followBrickComputer } from "./BrickComputerStore";
     import { canWatch, holdsComputer } from "./BrickComputer";
+    import type { BrickRef } from "./BrickScreenStore";
     import { IconCircleCheck, IconHandFinger, IconId, IconLoader2 } from "@wa-icons";
 
-    export let brick: BrickCard;
+    export let brick: BrickRef;
     export let onClose: () => void;
 
     /** A watch link lasts a few minutes: it is asked for again before it runs out. */

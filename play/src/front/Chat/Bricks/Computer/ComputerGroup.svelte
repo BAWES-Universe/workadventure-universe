@@ -7,10 +7,10 @@
     import PageGroup from "../../../external-modules/bots/components/page/PageGroup.svelte";
     import PageButton from "../../../external-modules/bots/components/page/PageButton.svelte";
     import { warningMessageStore } from "../../../Stores/ErrorStore";
-    import { shortDay, type BrickCard } from "../Brick";
+    import { shortDay } from "../Brick";
     import { brickComputerAction, brickComputers, followBrickComputer } from "./BrickComputerStore";
     import { canWatch, fileSize, holdsComputer, monthWord } from "./BrickComputer";
-    import { openBrickScreen } from "./BrickScreenStore";
+    import { openBrickScreen, type BrickRef } from "./BrickScreenStore";
     import {
         IconDeviceDesktop,
         IconFileSpreadsheet,
@@ -23,7 +23,7 @@
         IconChevronRight,
     } from "@wa-icons";
 
-    export let brick: BrickCard;
+    export let brick: BrickRef;
     export let open = false;
     export let onToggle: (id: string) => void;
     /** The Usage page, when the game has one for a Brick (#1999): the month's "Usage" link. */

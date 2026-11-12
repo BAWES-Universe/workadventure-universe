@@ -1,12 +1,16 @@
 import { writable } from "svelte/store";
 import type { Readable } from "svelte/store";
-import type { BrickCard } from "../Brick";
+/** What a computer needs to know of its Brick: which one, and what it is called. A Brick card is one. */
+export interface BrickRef {
+    id: string;
+    name: string;
+}
 
 /** The Brick whose computer screen is open (Watch, game #2000), over the chat panel. Undefined: none. */
-const screen = writable<BrickCard | undefined>(undefined);
-export const brickScreenStore: Readable<BrickCard | undefined> = { subscribe: screen.subscribe };
+const screen = writable<BrickRef | undefined>(undefined);
+export const brickScreenStore: Readable<BrickRef | undefined> = { subscribe: screen.subscribe };
 
-export function openBrickScreen(brick: BrickCard): void {
+export function openBrickScreen(brick: BrickRef): void {
     screen.set(brick);
 }
 
