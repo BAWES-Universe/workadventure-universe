@@ -19,6 +19,7 @@ import { VisitingBrickBehavior, spotBeside, VISIT_GONE_AFTER_MS, VISIT_LOOK_ACRO
 
 const KHALID = 'uuid-khalid';
 const NOURA = 'uuid-noura';
+const AT = { x: 100, y: 200 };
 const ROOM_A = 'https://play.test/_/acme/hq/lobby.tmj';
 const ROOM_B = 'https://play.test/_/acme/hq/cafe.tmj';
 
@@ -260,7 +261,7 @@ describe('putting the Brick on the map', () => {
         const { botManager, orbit, spawn } = manager();
         orbit.answer = [visitingConfig('brick-1', ROOM_A)];
         expect(await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, { x: 40, y: 50 })).toEqual({ botId: 'brick-1' });
-        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID });
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT);
         expect(spawn).toHaveBeenCalledTimes(1);
         expect(spawn.mock.calls[0][2]).toEqual({ position: { x: 40, y: 50 } });
     });
@@ -284,7 +285,7 @@ describe('putting the Brick on the map', () => {
                 running -= 1;
             }
         };
-        const answers = await Promise.all([1, 2, 3, 4].map(() => botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID })));
+        const answers = await Promise.all([1, 2, 3, 4].map(() => botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT)));
         expect(most).toBe(1);
         expect(answers.every((answer) => answer.botId === 'brick-1')).toBe(true);
         expect(spawn).toHaveBeenCalledTimes(1);
@@ -293,7 +294,7 @@ describe('putting the Brick on the map', () => {
     it('takes a Brick off the map when only taking off is allowed, and never puts one on (Sentry on #2023)', async () => {
         const { botManager, orbit, spawn, despawn } = manager();
         orbit.answer = [visitingConfig('brick-1', ROOM_A)];
-        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID });
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT);
         expect(spawn).toHaveBeenCalledTimes(1);
         orbit.answer = [];
         await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, undefined, false);
@@ -307,21 +308,21 @@ describe('putting the Brick on the map', () => {
     it('takes it off the map when the visit has ended', async () => {
         const { botManager, orbit, despawn } = manager();
         orbit.answer = [visitingConfig('brick-1', ROOM_A)];
-        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID });
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT);
         orbit.answer = [];
-        expect(await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID })).toEqual({ botId: null });
+        expect(await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT)).toEqual({ botId: null });
         expect(despawn).toHaveBeenCalledWith('brick-1');
     });
 
     it('forgets a Brick whose despawn failed, and drops its visitor, and still says it failed (Sentry on #2023)', async () => {
         const { botManager, orbit, despawn, internals } = manager();
         orbit.answer = [visitingConfig('brick-1', ROOM_A)];
-        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID });
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT);
         despawn.mockImplementationOnce(async () => {
             throw new Error('registry unreachable');
         });
         orbit.answer = [];
-        await expect(botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID })).rejects.toThrow('registry unreachable');
+        await expect(botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT)).rejects.toThrow('registry unreachable');
         expect(internals.bots.has('brick-1')).toBe(false);
         expect((botManager as unknown as { visitors: Map<string, unknown> }).visitors.has(KHALID)).toBe(false);
     });
@@ -329,14 +330,14 @@ describe('putting the Brick on the map', () => {
     it('keeps its visitor listed until the despawn is done', async () => {
         const { botManager, orbit, despawn } = manager();
         orbit.answer = [visitingConfig('brick-1', ROOM_A)];
-        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID });
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT);
         const visitors = (botManager as unknown as { visitors: Map<string, unknown> }).visitors;
         let listedDuringDespawn: boolean | null = null;
         despawn.mockImplementationOnce(async () => {
             listedDuringDespawn = visitors.has(KHALID);
         });
         orbit.answer = [];
-        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID });
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT);
         expect(listedDuringDespawn).toBe(true);
         expect(visitors.has(KHALID)).toBe(false);
     });
@@ -344,7 +345,7 @@ describe('putting the Brick on the map', () => {
     it('counts a visiting Brick as no person when it checks whether a room is empty (Sentry on #2023)', async () => {
         const { botManager, orbit, despawn, internals } = manager();
         orbit.answer = [visitingConfig('brick-1', ROOM_A)];
-        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID });
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT);
         internals.bots.set('room-bot', { botId: 'room-bot', client: { setFullConfig: () => undefined }, config: visitingConfig('room-bot', ROOM_A), status: 'connected', lastHeartbeat: 0 });
         const rooms = (botManager as unknown as { roomsWithBots: Map<string, { botIds: Set<string>; lastActivity: number }> }).roomsWithBots;
         rooms.set(ROOM_A, { botIds: new Set(['room-bot']), lastActivity: Date.now() });
@@ -361,7 +362,7 @@ describe('putting the Brick on the map', () => {
     it('does not take a room with a person in it for empty because a visiting Brick is there', async () => {
         const { botManager, orbit, despawn, internals } = manager();
         orbit.answer = [visitingConfig('brick-1', ROOM_A)];
-        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID });
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT);
         internals.bots.set('room-bot', { botId: 'room-bot', client: { setFullConfig: () => undefined }, config: visitingConfig('room-bot', ROOM_A), status: 'connected', lastHeartbeat: 0 });
         const rooms = (botManager as unknown as { roomsWithBots: Map<string, { botIds: Set<string>; lastActivity: number }> }).roomsWithBots;
         rooms.set(ROOM_A, { botIds: new Set(['room-bot']), lastActivity: Date.now() });
@@ -375,8 +376,8 @@ describe('putting the Brick on the map', () => {
     it('follows its person to the next room: off the old map, on the new one', async () => {
         const { botManager, orbit, spawn, despawn } = manager();
         orbit.answer = [visitingConfig('brick-1', ROOM_A), visitingConfig('brick-1', ROOM_B)];
-        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID });
-        await botManager.syncVisitingBrick(ROOM_B, { uuid: KHALID });
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT);
+        await botManager.syncVisitingBrick(ROOM_B, { uuid: KHALID }, AT);
         expect(despawn).toHaveBeenCalledWith('brick-1');
         expect(spawn).toHaveBeenCalledTimes(2);
         expect(spawn.mock.calls[1][1].roomUrl).toBe(ROOM_B);
@@ -385,9 +386,9 @@ describe('putting the Brick on the map', () => {
     it('swaps one Brick for another the person brings along', async () => {
         const { botManager, orbit, despawn, internals } = manager();
         orbit.answer = [visitingConfig('brick-1', ROOM_A)];
-        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID });
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT);
         orbit.answer = [visitingConfig('brick-2', ROOM_A)];
-        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID });
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT);
         expect(despawn).toHaveBeenCalledWith('brick-1');
         expect([...internals.bots.keys()]).toEqual(['brick-2']);
     });
@@ -395,10 +396,10 @@ describe('putting the Brick on the map', () => {
     it('leaves the map as it is when Orbit cannot answer', async () => {
         const { botManager, orbit, despawn, internals } = manager();
         orbit.answer = [visitingConfig('brick-1', ROOM_A)];
-        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID });
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT);
         orbit.fail = true;
         vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-        expect(await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID })).toEqual({ botId: 'brick-1' });
+        expect(await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT)).toEqual({ botId: 'brick-1' });
         expect(despawn).not.toHaveBeenCalled();
         expect(internals.bots.has('brick-1')).toBe(true);
     });
@@ -406,11 +407,11 @@ describe('putting the Brick on the map', () => {
     it("never takes off someone else's Brick, and each person has their own", async () => {
         const { botManager, orbit, despawn, internals } = manager();
         orbit.answer = [visitingConfig('brick-1', ROOM_A, KHALID), visitingConfig('brick-9', ROOM_A, NOURA)];
-        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID });
-        await botManager.syncVisitingBrick(ROOM_A, { uuid: NOURA });
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT);
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: NOURA }, AT);
         expect([...internals.bots.keys()].sort()).toEqual(['brick-1', 'brick-9']);
         orbit.answer = [visitingConfig('brick-9', ROOM_A, NOURA)];
-        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID });
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT);
         expect(despawn).toHaveBeenCalledTimes(1);
         expect(despawn).toHaveBeenCalledWith('brick-1');
         expect(internals.bots.has('brick-9')).toBe(true);
@@ -435,5 +436,29 @@ describe('a Brick in a room and the person talking to it', () => {
         expect(others).toContain("never use Khalid's apps, files or computer");
         expect(others).toContain('never repeat or hint at anything Khalid told you');
         expect(visitingRule('Khalid', false)).not.toContain('never use');
+    });
+});
+
+describe('a Brick with no place to start from (Sentry on #2023)', () => {
+    function manager() {
+        const admin = { isConfigured: () => true, getVisitingBricks: vi.fn(async () => [visitingConfig('brick-1', ROOM_A)]) };
+        const botManager = new BotManager(admin as never, {} as never);
+        const spawn = vi.spyOn(botManager, 'spawnBot').mockResolvedValue({} as never);
+        return { botManager, spawn };
+    }
+
+    it('is not put on the map at all, never at the map corner, and says there was no position', async () => {
+        const { botManager, spawn } = manager();
+        expect(await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID })).toEqual({ botId: null, reason: 'no_position' });
+        expect(await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, { x: Number.NaN, y: 3 })).toEqual({ botId: null, reason: 'no_position' });
+        expect(spawn).not.toHaveBeenCalled();
+    });
+
+    it('is put on the map beside its person once the next try has one', async () => {
+        const { botManager, spawn } = manager();
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID });
+        expect(await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT)).toEqual({ botId: 'brick-1' });
+        expect(spawn).toHaveBeenCalledTimes(1);
+        expect(spawn.mock.calls[0][2]).toEqual({ position: AT });
     });
 });

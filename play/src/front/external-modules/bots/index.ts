@@ -805,7 +805,7 @@ function putVisitingBrickBeside(): void {
     provideOwnPosition(ownPlace);
     const sync = () => {
         // The player's sprite is made a moment after the room loads: the Brick appears where they stand, once the game knows
-        // where that is (it goes ahead without a place only after a long wait)
+        // where that is. Never without it: the bot server would not put the Brick on the map
         stopWaitingForPlace?.();
         stopWaitingForPlace = waitForPlace(ownPlace, (place) => {
             stopWaitingForPlace = undefined;

@@ -1003,7 +1003,7 @@ export class BotAPI {
                 // One Brick per person, in a room that exists and whose universe takes visits (Orbit says), and it goes by
                 // itself when its person is not seen in the room: so there is no wait here, and ending a visit is at once
                 const answer = await this.botManager.syncVisitingBrick(roomId, { uuid: req.sessionUuid }, ending ? undefined : position, !ending);
-                res.json({ present: answer.botId !== null });
+                res.json({ present: answer.botId !== null, ...(answer.reason ? { reason: answer.reason } : {}) });
             } catch (error) {
                 console.error('[BotAPI] Error syncing a visiting Brick:', error instanceof Error ? error.message : error);
                 res.status(500).json({ error: 'Could not put the Brick on the map' });

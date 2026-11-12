@@ -55,6 +55,11 @@ describe('POST /api/bricks/visit/sync', () => {
         expect(await (await sync()).json()).toEqual({ present: false });
     });
 
+    it('says why when there was no place to put the Brick from, so the front tries again with one', async () => {
+        botManager.syncVisitingBrick.mockResolvedValue({ botId: null, reason: 'no_position' });
+        expect(await (await sync()).json()).toEqual({ present: false, reason: 'no_position' });
+    });
+
     it('puts nothing in a room nobody is really in, whatever room the caller names', async () => {
         botManager.hasPlayersIn.mockResolvedValue(false);
         const answer = await sync({ roomId: 'http://play.test/@/someone/else/private' });

@@ -31,6 +31,7 @@ vi.mock('../client/BotClient', () => ({
 import { BotManager } from '../server/BotManager';
 import type { BotConfiguration } from '../server/AdminApiService';
 
+const AT = { x: 100, y: 200 };
 const ROOM = 'https://play.test/_/acme/hq/lobby.tmj';
 const config = {
     botId: 'brick-1',
@@ -65,7 +66,7 @@ describe('a Brick whose start fails part-way', () => {
             if (down) throw new Error('registry down');
         });
 
-        await expect(botManager.syncVisitingBrick(ROOM, { uuid: 'uuid-khalid' })).rejects.toThrow('registry down');
+        await expect(botManager.syncVisitingBrick(ROOM, { uuid: 'uuid-khalid' }, AT)).rejects.toThrow('registry down');
         expect(clients).toHaveLength(1);
         expect(clients[0].disconnect).toHaveBeenCalledTimes(1);
         expect(internals.bots.has('brick-1')).toBe(false);
@@ -73,7 +74,7 @@ describe('a Brick whose start fails part-way', () => {
 
         // Nothing connected-looking is left to be found and skipped: the next sync puts the Brick on the map
         down = false;
-        expect(await botManager.syncVisitingBrick(ROOM, { uuid: 'uuid-khalid' })).toEqual({ botId: 'brick-1' });
+        expect(await botManager.syncVisitingBrick(ROOM, { uuid: 'uuid-khalid' }, AT)).toEqual({ botId: 'brick-1' });
         expect(clients).toHaveLength(2);
         expect(internals.bots.has('brick-1')).toBe(true);
         expect(internals.visitors.has('uuid-khalid')).toBe(true);

@@ -110,6 +110,13 @@ function instantiateBehavior(kind: LegacyBehaviorType, cfg: Record<string, unkno
     }
 }
 
+/** What a visit sync answers: the Brick now on the map, or why none was put there. */
+export interface VisitSyncAnswer {
+    botId: string | null;
+    /** Set when a Brick was to be put on the map and there was no place for it to start from */
+    reason?: 'no_position';
+}
+
 export class BotManager {
     /**
      * The Brick that walks beside each signed-in person on this server (#2005), by their game uuid: which Brick, and in
@@ -947,7 +954,7 @@ export class BotManager {
      * room, brings a Brick along, or ends the visit. The Brick of an earlier room, or a Brick they swapped it for, is
      * taken off the map first. Never throws for a person Orbit has nothing for: it only takes the Brick off.
      */
-    async syncVisitingBrick(roomUrl: string, person: { uuid: string }, position?: { x: number; y: number }, mayPlace = true): Promise<{ botId: string | null }> {
+    async syncVisitingBrick(roomUrl: string, person: { uuid: string }, position?: { x: number; y: number }, mayPlace = true): Promise<VisitSyncAnswer> {
         const uuid = person.uuid;
         // One sync at a time per person, so two calls together never put the Brick on the map twice
         // (a loop: calls that queued behind the same sync wake together, and only one of them may go next)
@@ -965,9 +972,9 @@ export class BotManager {
         }
     }
 
-    private visitSyncs: Map<string, Promise<{ botId: string | null }>> = new Map();
+    private visitSyncs: Map<string, Promise<VisitSyncAnswer>> = new Map();
 
-    private async runVisitSync(roomUrl: string, uuid: string, position?: { x: number; y: number }, mayPlace = true): Promise<{ botId: string | null }> {
+    private async runVisitSync(roomUrl: string, uuid: string, position?: { x: number; y: number }, mayPlace = true): Promise<VisitSyncAnswer> {
         let configs: BotConfiguration[];
         try {
             configs = await this.adminApiService.getVisitingBricks(roomUrl, [uuid]);
@@ -996,7 +1003,10 @@ export class BotManager {
         // and is one bot with one name, so a Brick that already runs is not started a second time
         if (running && running.status === 'connected') return { botId: mine.botId };
         const start = position && Number.isFinite(position.x) && Number.isFinite(position.y) ? { x: position.x, y: position.y } : undefined;
-        await this.spawnBot(mine.botId, mine, start ? { position: start } : {});
+        // Where its person stands is where it first appears. Without it the Brick is not put on the map at all (never at the
+        // map's corner, to walk across the whole room): the caller says "no position yet" and tries again with one
+        if (!start) return { botId: null, reason: 'no_position' };
+        await this.spawnBot(mine.botId, mine, { position: start });
         this.visitors.set(uuid, { botId: mine.botId, roomUrl });
         return { botId: mine.botId };
     }
