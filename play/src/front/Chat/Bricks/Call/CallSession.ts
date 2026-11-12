@@ -145,8 +145,15 @@ export function callReducer(state: CallState, event: CallEvent): CallState {
             if (state.phase !== "hold") return state;
             return { ...state, phase: "on", hold: undefined, doing: "listening", lastHeardAt: event.now };
         case "tick":
-            // A quiet stretch ends a call that is on. A call on hold is never ended by quiet: only the person ends it.
-            if (state.phase === "on" && event.quietMs > 0 && event.now - state.lastHeardAt >= event.quietMs) {
+            // A quiet stretch ends a call that is on and nothing is happening in. While the bot speaks, works or waits for
+            // the person's OK the call is not quiet, however long that takes. A call on hold is never ended by quiet: only
+            // the person ends it.
+            if (
+                state.phase === "on" &&
+                state.doing === "listening" &&
+                event.quietMs > 0 &&
+                event.now - state.lastHeardAt >= event.quietMs
+            ) {
                 return { ...state, phase: "ended", endedBy: "quiet", walkUp: undefined };
             }
             return state;

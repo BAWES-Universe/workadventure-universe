@@ -134,6 +134,22 @@ describe("a quiet stretch (check 65)", () => {
         expect(run(on, { type: "tick", now: T0 + 100_000, quietMs: 60_000 }).phase).toBe("on");
     });
 
+    it("is not quiet while the bot speaks, works or waits for the person's OK, however long that takes", () => {
+        const doings: CallEvent[] = [
+            { type: "bot-speaking", speaking: true, now: T0 + 1000 },
+            { type: "bot-working", work: "search", line: "Looking it up", now: T0 + 1000 },
+            { type: "bot-waiting", waiting: true, now: T0 + 1000 },
+        ];
+        for (const doing of doings) {
+            const busy = run(live(), doing);
+            expect(run(busy, { type: "tick", now: T0 + 9e9, quietMs: 60_000 }).phase).toBe("on");
+            // Once it is done and nothing is said, the stretch starts from the moment it finished
+            const done = run(busy, { type: "bot-working", work: undefined, now: T0 + 5_000_000 });
+            expect(run(done, { type: "tick", now: T0 + 5_059_999, quietMs: 60_000 }).phase).toBe("on");
+            expect(run(done, { type: "tick", now: T0 + 5_060_000, quietMs: 60_000 }).endedBy).toBe("quiet");
+        }
+    });
+
     it("never ends a call on hold, and never counts when no stretch is set", () => {
         const held = run(live(), { type: "meeting-joined" });
         expect(run(held, { type: "tick", now: T0 + 9e9, quietMs: 60_000 }).phase).toBe("hold");
