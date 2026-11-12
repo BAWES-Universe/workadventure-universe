@@ -273,3 +273,77 @@ describe("the time shown", () => {
         expect(clock(-5)).toBe("0:00");
     });
 });
+
+describe("whatever happens, in whatever order (every pairing of connecting, on, hold, meeting, card, speech, work, wait)", () => {
+    const events = (now: number): CallEvent[] => [
+        { type: "connected", now },
+        { type: "heard", now },
+        { type: "bot-speaking", speaking: true, now },
+        { type: "bot-speaking", speaking: false, now },
+        { type: "bot-working", work: "search", line: "Looking it up", now },
+        { type: "bot-working", work: undefined, now },
+        { type: "bot-waiting", waiting: true, now },
+        { type: "bot-waiting", waiting: false, now },
+        { type: "someone-here", id: "u1", name: "Sara" },
+        { type: "someone-here", id: "u2", name: "Omar" },
+        { type: "not-now" },
+        { type: "hold-and-talk" },
+        { type: "meeting-joined" },
+        { type: "resume", now },
+        { type: "tick", now, quietMs: 60_000 },
+        { type: "end", by: "you" },
+    ];
+
+    it("keeps the same truths after every event, over many sequences", () => {
+        // A fixed pseudo-random walk, so a failure can be replayed
+        let seed = 12345;
+        const next = (max: number) => {
+            seed = (seed * 1103515245 + 12345) % 2147483648;
+            return seed % max;
+        };
+        for (let run = 0; run < 300; run++) {
+            let state = startCall(T0);
+            let now = T0;
+            for (let step = 0; step < 40; step++) {
+                now += next(5) * 40_000;
+                const all = events(now);
+                const event = all[next(all.length)];
+                const before = state;
+                state = callReducer(state, event);
+                const where = `run ${run}, step ${step}, ${event.type}`;
+                // The microphone is the bot's only while on, the people's only on hold, never both
+                expect(botMayHear(state) && micOwner(state) === "people", where).toBe(false);
+                expect(botMayHear(state), where).toBe(state.phase === "on");
+                expect(botMaySpeak(state), where).toBe(state.phase === "on");
+                // A hold always has its reason, and only a hold has one
+                expect(state.hold !== undefined, where).toBe(state.phase === "hold");
+                // The bot's doings only exist while the call is on
+                if (state.phase !== "on") {
+                    expect(state.doing, where).toBe("listening");
+                    expect(state.work, where).toBeUndefined();
+                }
+                // The card is only for a call that is on
+                if (state.phase !== "on") expect(state.walkUp, where).toBeUndefined();
+                // What is shown follows the facts, waiting first, then work, then speech
+                if (state.phase === "on") {
+                    const shown = state.waitingNow
+                        ? "waiting"
+                        : state.work
+                        ? "working"
+                        : state.speakingNow
+                        ? "speaking"
+                        : "listening";
+                    expect(state.doing, where).toBe(shown);
+                }
+                // Quiet only ever ends a call that is on and idle
+                if (event.type === "tick" && state.phase === "ended" && before.phase !== "ended") {
+                    expect(before.phase, where).toBe("on");
+                    expect(before.doing, where).toBe("listening");
+                    expect(state.endedBy, where).toBe("quiet");
+                }
+                // An ended call stays ended
+                if (before.phase === "ended") expect(state, where).toBe(before);
+            }
+        }
+    });
+});
