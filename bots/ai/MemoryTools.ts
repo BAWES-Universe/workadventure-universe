@@ -70,19 +70,37 @@ function describe(item: MemoryItem): string {
     }
 }
 
-const WORDS_OF = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter((word) => word.length >= 3);
+/** Words that say nothing about which thing is meant. A phrase like "the thing I said about my birthday" must not match "the beach". */
+const STOP_WORDS = new Set([
+    'the', 'and', 'that', 'this', 'these', 'those', 'with', 'from', 'about', 'what', 'which', 'when', 'where', 'who', 'you', 'your', 'yours', 'for', 'are', 'was', 'were', 'has', 'had', 'have', 'not', 'but', 'any', 'all', 'one', 'ones',
+    'its', 'his', 'her', 'their', 'our', 'mine', 'myself', 'like', 'likes', 'love', 'loves', 'said', 'say', 'says', 'told', 'tell', 'thing', 'things', 'stuff', 'everything', 'something', 'anything', 'remember', 'remembered', 'forget', 'forgot', 'know', 'knew', 'please', 'just', 'also', 'too', 'only',
+]);
 
-/** The things these words are about: the same words in what is remembered, or the kind of thing ("my name", "my birthday"). */
+const WORDS_OF = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter((word) => word.length >= 3);
+const CONTENT_WORDS_OF = (text: string) => WORDS_OF(text).filter((word) => !STOP_WORDS.has(word));
+
+/** The shortest words, said alone, that may be found inside what is remembered. Shorter ones match far too much. */
+const MIN_ASKED = 4;
+
+/**
+ * The things these words are about: the kind of thing ("my name", "my birthday"), the whole of what is remembered said
+ * back, or a word that carries meaning shared with it. Forgetting is for good, so common words never match, and words
+ * that are about nothing the bot holds match nothing.
+ */
 export function itemsAbout(items: MemoryItem[], about: string): MemoryItem[] {
     const asked = about.toLowerCase().trim();
     if (!asked) return [];
-    const words = WORDS_OF(asked);
+    const words = CONTENT_WORDS_OF(asked);
     return items.filter((item) => {
-        const value = item.value.toLowerCase();
+        const value = item.value.toLowerCase().trim();
         if (item.kind === 'name' && /\bname\b/.test(asked)) return true;
         if (item.kind === 'birthday' && /\b(birthday|bday)\b/.test(asked)) return true;
-        if (value.length >= 3 && (asked.includes(value) || value.includes(asked))) return true;
-        const valueWords = WORDS_OF(value);
+        // What is remembered, said back whole (as its own words, not a piece of a longer word)
+        if (value.length >= MIN_ASKED) {
+            const whole = new RegExp(`(^|[^\\p{L}\\p{N}])${value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^\\p{L}\\p{N}])`, 'u');
+            if (whole.test(asked)) return true;
+        }
+        const valueWords = CONTENT_WORDS_OF(value);
         return words.some((word) => valueWords.includes(word));
     });
 }

@@ -69,6 +69,24 @@ describe('the memory tools', () => {
         expect(itemsAbout(items, '')).toEqual([]);
     });
 
+    it('never matches on short or common words, because forgetting is for good', () => {
+        const items = memoryItemsOf(sara());
+        for (const vague of ['i', 'it', 'a', 'the', 'that', 'the thing I said about my cat', 'what I said', 'all of that', 'everything']) {
+            expect(itemsAbout(items, vague), vague).toEqual([]);
+        }
+        // Not a piece of a longer word either
+        expect(itemsAbout(items, 'cof')).toEqual([]);
+        expect(itemsAbout(items, 'tire')).toEqual([]);
+        // Common words next to a real one still find only the real one
+        expect(itemsAbout(items, 'the thing I said about the coffee').map((item) => item.kind)).toEqual(['pref']);
+    });
+
+    it('still finds a thing said back whole, or by its one meaningful word', () => {
+        const items = memoryItemsOf(sara());
+        expect(itemsAbout(items, 'coffee, no sugar').map((item) => item.kind)).toEqual(['pref']);
+        expect(itemsAbout(items, 'forget that I am tired').map((item) => item.kind)).toEqual(['fact']);
+    });
+
     it('answer plainly when forgetting fails', async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => undefined);
         const answer = await runMemoryTool(FORGET_MEMORY_TOOL, { about: 'coffee' }, { memory: sara(), forget: async () => Promise.reject(new Error('down')) });
