@@ -940,6 +940,66 @@ export class AdminApiService {
         });
     }
 
+    /** Is this Brick's computer on for its owner (#2000)? Read only: it never makes or wakes anything. False when Orbit cannot be asked. */
+    async computerIsOn(viaBotId: string, userId: string): Promise<boolean> {
+        try {
+            const response = await this.brickCall<{ on?: unknown; available?: unknown }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`, undefined, { userId });
+            return response.data?.available === true && response.data?.on === true;
+        } catch (error) {
+            console.warn("[AdminApiService] Could not read a Brick's computer:", error instanceof Error ? error.message : error);
+            return false;
+        }
+    }
+
+    /** Starts a job on the Brick's computer for its owner (#2000). Throws when Orbit cannot be reached. */
+    async startComputerJob(
+        viaBotId: string,
+        userId: string,
+        ask: { title: string; writes?: boolean }
+    ): Promise<{ ok: true; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null } | { ok: false; reason: string }> {
+        const response = await this.brickCall<{ ok?: unknown; reason?: unknown; job?: { id?: unknown; status?: unknown; queuedFor?: unknown }; restoredFrom?: unknown }>(
+            'post',
+            `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`,
+            { userId, title: ask.title, ...(ask.writes === undefined ? {} : { writes: ask.writes }) }
+        );
+        const data = response.data;
+        const job = data?.job;
+        if (data?.ok === true && job && typeof job.id === 'string' && typeof job.status === 'string') {
+            return {
+                ok: true,
+                job: { id: job.id, status: job.status, queuedFor: typeof job.queuedFor === 'string' ? job.queuedFor : null },
+                restoredFrom: typeof data.restoredFrom === 'string' ? data.restoredFrom : null,
+            };
+        }
+        return { ok: false, reason: typeof data?.reason === 'string' ? data.reason : 'unknown' };
+    }
+
+    /** A job as it stands (#2000), or null when it is not there. */
+    async getComputerJob(viaBotId: string, jobId: string): Promise<{ id: string; status: string; control: string } | null> {
+        try {
+            const response = await this.brickCall<{ job?: { id?: unknown; status?: unknown; control?: unknown } }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}`);
+            const job = response.data?.job;
+            return job && typeof job.id === 'string' && typeof job.status === 'string' ? { id: job.id, status: job.status, control: typeof job.control === 'string' ? job.control : 'brick' } : null;
+        } catch {
+            return null;
+        }
+    }
+
+    /** What a running job tells Orbit (#2000): steps, renewing its room, handing over, finishing. Throws when Orbit says no. */
+    async computerJobAction(viaBotId: string, jobId: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+        const response = await this.brickCall<Record<string, unknown>>('post', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}`, body);
+        return response.data ?? {};
+    }
+
+    /** Has Orbit stop jobs that stopped renewing and try the ones in line again (#2000). Never throws. */
+    async sweepComputers(): Promise<void> {
+        try {
+            await this.brickCall('post', 'api/computer/sweep', {});
+        } catch (error) {
+            console.warn('[AdminApiService] Could not sweep computers:', error instanceof Error ? error.message : error);
+        }
+    }
+
     /** Has Orbit remove every deleted Brick whose days are over (#1996), and names them. Empty when Orbit cannot be asked. */
     async sweepBricks(): Promise<string[]> {
         try {
