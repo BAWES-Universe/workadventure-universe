@@ -47,6 +47,7 @@ async function load(): Promise<void> {
     const first = parseBrickCard(own?.brick);
     // The Bricks they made come with the list; when it can't be read, the one everyone gets still shows.
     const list = await botApiService.listMyBricks().catch(() => undefined);
+    refreshMyChatId();
     bricks.set(list === undefined ? (first ? [first] : []) : parseBrickCards(list));
     if (list !== undefined) {
         deleted.set(parseDeletedBricks(list));
@@ -174,8 +175,19 @@ export function forgetMyBricks(): void {
     settled.set(false);
 }
 
+/**
+ * The person's own chat address, which a Brick's chat address is made from. It is known only once the chat has signed
+ * in, which can be after the Bricks were read: the chat says so (refreshMyChatId), and the addresses below follow.
+ */
+const myChatIdNow = writable<string | null>(null);
+
+/** Reads the person's chat address again: called when the chat comes online and whenever the Bricks are read. */
+export function refreshMyChatId(): void {
+    myChatIdNow.set(localUserStore.getChatId());
+}
+
 /** The chat addresses of the Bricks that wait under Deleted: their chats are out of Chats until Undo. */
-export const myDeletedBrickChatIds: Readable<ReadonlySet<string>> = derived(deleted, ($deleted) => {
+export const myDeletedBrickChatIds: Readable<ReadonlySet<string>> = derived([deleted, myChatIdNow], ([$deleted]) => {
     const myChatId = localUserStore.getChatId();
     const chatIds = new Set<string>();
     for (const brick of $deleted) {
@@ -186,7 +198,7 @@ export const myDeletedBrickChatIds: Readable<ReadonlySet<string>> = derived(dele
 });
 
 /** The person's Bricks by chat address, so the chat knows which of its direct chats are with one of them. */
-export const myBricksByChatId: Readable<Map<string, BrickCard>> = derived(bricks, ($bricks) => {
+export const myBricksByChatId: Readable<Map<string, BrickCard>> = derived([bricks, myChatIdNow], ([$bricks]) => {
     const byChatId = new Map<string, BrickCard>();
     const myChatId = localUserStore.getChatId();
     for (const brick of $bricks ?? []) {
