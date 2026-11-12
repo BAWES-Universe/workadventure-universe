@@ -76,7 +76,7 @@ describe('the memory tools', () => {
         }
         // Unusual wording is not clearly theirs: nothing goes, and the tool sends the model to the ids
         expect(itemsAbout(items, 'the name I gave you').map((item) => item.kind)).toEqual([]);
-        for (const own of ['my name', 'name', 'forget my name now', 'forget that my name is Sara', 'when is my birthday']) {
+        for (const own of ['my name', 'name', 'forget everything about my name', 'forget my name now', 'forget that my name is Sara', 'when is my birthday']) {
             expect(itemsAbout(items, own).map((item) => item.kind), own).toEqual([own.includes('birthday') ? 'birthday' : 'name']);
         }
         for (const other of ['the name of my dog', "my dog's name", 'her birthday', 'the name I gave my cat', 'my birthday cake', 'birthday party for Sam']) {

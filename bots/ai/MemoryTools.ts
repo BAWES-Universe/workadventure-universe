@@ -102,7 +102,7 @@ const SOMEONE_ELSES = new Set(['his', 'her', 'their', 'its', 'our', 'dog', 'cat'
 const OWN_FILLER = new Set([
     'my', 'me', 'i', 'mine', 'myself', 'the', 'a', 'an', 'that', 'this', 'is', 'was', 'are', 'to', 'of', 'and', 'it', 'about',
     'forget', 'delete', 'remove', 'erase', 'clear', 'drop', 'please', 'pls', 'you', 'do', 'does', 'can', 'could', 'will', 'would',
-    'what', 'whats', "what's", 'when', 'whens', "when's", 'remember', 'know', 'tell',
+    'what', 'whats', "what's", 'when', 'whens', "when's", 'remember', 'know', 'tell', 'everything', 'all', 'anything',
 ]);
 
 /**
