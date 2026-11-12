@@ -89,6 +89,9 @@ const MAX_CHAT_IDS = 2000;
 /** The space everyone in the world is in. */
 const WORLD_SPACE = 'allWorldUser';
 
+/** A view wide enough for any map: the whole room. */
+const WHOLE_ROOM_RADIUS = 100_000;
+
 export class BotClient {
     // Static set of all bot user IDs - shared across all bot instances
     private static botUserIds: Set<number> = new Set();
@@ -4223,12 +4226,21 @@ export class BotClient {
         }
     }
 
-    public sendPosition(position: PositionInterface, direction: PositionMessage_Direction, moving: boolean): void {
+    /**
+     * Asks to be told about everyone in the room, wherever they stand, until the next move narrows the view again. A
+     * visiting Brick does it before it decides its person has left: a person can go further than the usual view in one
+     * hop on a large map, and is still in the room.
+     */
+    public lookAcrossTheRoom(): void {
+        const state = this.getState();
+        this.sendPosition(state.getPosition(), state.getDirection(), false, WHOLE_ROOM_RADIUS);
+    }
+
+    public sendPosition(position: PositionInterface, direction: PositionMessage_Direction, moving: boolean, viewportRadius = 2000): void {
         // Safety checks for undefined values
         const x = position?.x ?? 0;
         const y = position?.y ?? 0;
         // Update viewport to be centered on current position with large radius
-        const viewportRadius = 2000;
         const top = Math.max(0, y - viewportRadius);
         const bottom = y + viewportRadius;
         const left = Math.max(0, x - viewportRadius);

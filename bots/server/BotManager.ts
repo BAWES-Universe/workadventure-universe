@@ -939,8 +939,12 @@ export class BotManager {
     async syncVisitingBrick(roomUrl: string, person: { uuid: string }, position?: { x: number; y: number }): Promise<{ botId: string | null }> {
         const uuid = person.uuid;
         // One sync at a time per person, so two calls together never put the Brick on the map twice
-        const pending = this.visitSyncs.get(uuid);
-        if (pending) await pending.catch(() => undefined);
+        // (a loop: calls that queued behind the same sync wake together, and only one of them may go next)
+        let pending = this.visitSyncs.get(uuid);
+        while (pending) {
+            await pending.catch(() => undefined);
+            pending = this.visitSyncs.get(uuid);
+        }
         const run = this.runVisitSync(roomUrl, uuid, position);
         this.visitSyncs.set(uuid, run);
         try {

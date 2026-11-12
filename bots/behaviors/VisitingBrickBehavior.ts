@@ -22,8 +22,14 @@ export const VISIT_REST_DISTANCE = 56;
 export const VISIT_WALK_AFTER = 110;
 /** While someone is talking to it, it follows only when its person is really leaving (about six tiles). */
 export const VISIT_WALK_AFTER_WHEN_BUSY = 200;
-/** How long its person may go unseen in the room before it leaves too. */
+/**
+ * How long its person may go unseen in the room before it leaves too. This is only a short debounce for the moments a
+ * person is between rooms or the connection blinks, not a limit: how long a visit lasts after the person has left is
+ * Orbit's (Limits, "Bricks", visit survive time).
+ */
 export const VISIT_GONE_AFTER_MS = 20_000;
+/** Unseen this long, it first asks to see the whole room: its usual view ends a few thousand pixels away. */
+export const VISIT_LOOK_ACROSS_AFTER_MS = 4_000;
 const LOOK_EVERY_MS = 700;
 
 /** Where it should stand: beside the person, on the side it already is, never on top of them. */
@@ -42,6 +48,7 @@ export class VisitingBrickBehavior extends IdleBehavior {
     private lookedAt = 0;
     private told = false;
     private walking = false;
+    private lookedAcross = false;
 
     constructor(config: VisitingBrickConfig) {
         super(config);
@@ -68,6 +75,11 @@ export class VisitingBrickBehavior extends IdleBehavior {
 
         const person = bot.getPlayerPositionByUuid(this.ownerUuid);
         if (!person) {
+            // Out of its view is not out of the room: on a large map its person may be further than it can see
+            if (!this.lookedAcross && now - this.ownerSeenAt >= VISIT_LOOK_ACROSS_AFTER_MS) {
+                this.lookedAcross = true;
+                bot.lookAcrossTheRoom();
+            }
             if (now - this.ownerSeenAt >= VISIT_GONE_AFTER_MS) {
                 this.told = true;
                 this.onOwnerGone();
@@ -75,6 +87,7 @@ export class VisitingBrickBehavior extends IdleBehavior {
             return;
         }
         this.ownerSeenAt = now;
+        this.lookedAcross = false;
 
         const here = bot.getState().getPosition();
         const distance = Math.hypot(person.x - here.x, person.y - here.y);
