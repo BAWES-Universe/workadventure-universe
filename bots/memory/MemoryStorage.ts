@@ -11,8 +11,8 @@ import { parseForgetNotice, parseItemForgets, type ItemForgetHandler, type Memor
 
 export type { MemoryForgetNotice, MemoryForgetHandler, ItemForgetNotice, ItemForgetHandler } from './ForgetNotice';
 
-/** Answers from Orbit that no retry will change. A busy or unreachable Orbit, or a refused token, is tried again. */
-const PERMANENT_REFUSALS = new Set([400, 404, 410, 422]);
+/** Answers from Orbit that no retry will change. A busy or unreachable Orbit, a refused token or an Orbit not yet updated (400) is tried again. */
+const PERMANENT_REFUSALS = new Set([404, 410, 422]);
 
 /** A failed save in words, without the request it carried. */
 function describeSaveError(error: unknown): string {
@@ -230,12 +230,12 @@ export class MemoryStorage {
      * Tell Orbit one thing a person asked this bot to forget in the chat ("forget that"), by its key. Orbit keeps it as
      * forgotten whether or not it has saved the thing yet. True when Orbit took it.
      */
-    async reportForgottenItem(botId: string, userUuid: string, itemKey: string, kind: string): Promise<boolean> {
+    async reportForgottenItem(botId: string, userUuid: string, itemKey: string, kind: string, at?: number): Promise<boolean> {
         if (!this.isConfigured() || !this.botServiceToken || !botId || !userUuid || !itemKey) return false;
         try {
             await axios.post(
                 `${this.adminApiUrl}/api/bots/memory/${encodeURIComponent(botId)}/items`,
-                { userUuid, itemKey, kind },
+                { userUuid, itemKey, kind, ...(at ? { at } : {}) },
                 { headers: { Authorization: `Bearer ${this.botServiceToken}`, 'Content-Type': 'application/json' }, timeout: 10000 }
             );
             return true;

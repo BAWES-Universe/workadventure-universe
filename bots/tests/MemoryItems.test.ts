@@ -261,7 +261,7 @@ describe('PersistentMemory: Forget of one thing', () => {
         expect(memory.loadedMemoriesByUuid.get(`${BOT}_uuid-sara`).personalInfo.preferences).toEqual([]);
         const [url, body, config] = hoisted.axios.post.mock.calls.find((call) => String(call[0]).endsWith('/items'))!;
         expect(url).toBe('http://orbit.local/api/bots/memory/bot-1/items');
-        expect(body).toEqual({ userUuid: 'uuid-sara', itemKey: lofi, kind: 'pref' });
+        expect(body).toEqual({ userUuid: 'uuid-sara', itemKey: lofi, kind: 'pref', at: expect.any(Number) });
         expect(config.headers.Authorization).toBe('Bearer service-secret');
     });
 
@@ -293,7 +293,7 @@ describe('PersistentMemory: Forget of one thing', () => {
         await memory.reportUnreportedForgets(BOT);
         const told = hoisted.axios.post.mock.calls.filter((call) => String(call[0]).endsWith('/items'));
         expect(told).toHaveLength(2);
-        expect(told[1][1]).toEqual({ userUuid: 'uuid-sara', itemKey: lofi, kind: 'pref' });
+        expect(told[1][1]).toEqual({ userUuid: 'uuid-sara', itemKey: lofi, kind: 'pref', at: expect.any(Number) });
         expect(memory.unreportedItemForgets.size).toBe(0);
     });
 
@@ -319,6 +319,20 @@ describe('PersistentMemory: Forget of one thing', () => {
         hoisted.axios.post.mockReset().mockRejectedValue({ isAxiosError: true, message: 'gone', response: { status: 404 } });
         await memory.reportUnreportedForgets(BOT);
         expect(memory.unreportedItemForgets.size).toBe(0);
+        clearTimeout(memory.unreportedRetryTimer);
+    });
+
+    it('tells Orbit when the person asked, also on a retry, so a late report does not make the forget newer', async () => {
+        const memory = held();
+        vi.spyOn(Date, 'now').mockReturnValue(7000);
+        hoisted.axios.post.mockReset().mockRejectedValue(new Error('Orbit is down'));
+        await memory.forgetThings(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]));
+        expect(hoisted.axios.post.mock.calls[0][1]).toEqual({ userUuid: 'uuid-sara', itemKey: lofi, kind: 'pref', at: 7000 });
+        vi.mocked(Date.now).mockReturnValue(9000);
+        hoisted.axios.post.mockReset().mockResolvedValue({ data: {} });
+        await memory.reportUnreportedForgets(BOT);
+        vi.mocked(Date.now).mockRestore();
+        expect(hoisted.axios.post.mock.calls[0][1]).toEqual({ userUuid: 'uuid-sara', itemKey: lofi, kind: 'pref', at: 7000 });
         clearTimeout(memory.unreportedRetryTimer);
     });
 

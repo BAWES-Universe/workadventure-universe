@@ -167,11 +167,12 @@ export class PersistentMemory extends ConversationMemory {
         }
         // A person who is not known to Orbit yet (no uuid) has nothing there to forget
         if (!userUuid.startsWith('temp-')) {
+            const askedAt = Date.now();
             const reported = await Promise.all(
-                [...keys].map((itemKey) => this.memoryStorage.reportForgottenItem(botId, userUuid, itemKey, kinds.get(itemKey) ?? 'fact'))
+                [...keys].map((itemKey) => this.memoryStorage.reportForgottenItem(botId, userUuid, itemKey, kinds.get(itemKey) ?? 'fact', askedAt))
             );
             [...keys].forEach((itemKey, index) => {
-                if (!reported[index]) this.keepToReport({ botId, userUuid, itemKey, kind: kinds.get(itemKey) ?? 'fact' });
+                if (!reported[index]) this.keepToReport({ botId, userUuid, itemKey, kind: kinds.get(itemKey) ?? 'fact', since: askedAt });
             });
         }
         if (removed > 0) this.scheduleDebouncedSave(botId, playerId);
@@ -196,7 +197,7 @@ export class PersistentMemory extends ConversationMemory {
         const waiting = [...this.unreportedItemForgets].filter(([, entry]) => !botId || entry.botId === botId);
         await Promise.all(
             waiting.map(async ([mapKey, entry]) => {
-                if (await this.memoryStorage.reportForgottenItem(entry.botId, entry.userUuid, entry.itemKey, entry.kind)) this.unreportedItemForgets.delete(mapKey);
+                if (await this.memoryStorage.reportForgottenItem(entry.botId, entry.userUuid, entry.itemKey, entry.kind, entry.since)) this.unreportedItemForgets.delete(mapKey);
                 else if (Date.now() - entry.since > PersistentMemory.UNREPORTED_GIVE_UP_MS) {
                     console.warn(`[PersistentMemory] Orbit has not taken a forget for bot ${entry.botId} in a day; letting it go`);
                     this.unreportedItemForgets.delete(mapKey);
