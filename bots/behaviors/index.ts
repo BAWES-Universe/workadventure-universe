@@ -8,3 +8,4 @@ export { SocialBehavior, type SocialBehaviorConfig } from './SocialBehavior';
 export { PatrolBehavior, type PatrolBehaviorConfig } from './PatrolBehavior';
 
 export { VisitingBrickBehavior, type VisitingBrickConfig } from './VisitingBrickBehavior';
+export { HomedBrickBehavior } from './HomedBrickBehavior';

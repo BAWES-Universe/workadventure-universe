@@ -26,6 +26,7 @@ import * as Sentry from '@sentry/node';
 import { resolveWsUrl } from '../utils/resolveWsUrl';
 import { BotUnavailableError } from '../utils/summonErrors';
 import { VisitingBrickBehavior } from '../behaviors/VisitingBrickBehavior';
+import { HomedBrickBehavior } from '../behaviors/HomedBrickBehavior';
 import { hasPlayersInRoom } from './roomOccupancy';
 import {
     buildBehaviorConfig,
@@ -319,8 +320,8 @@ export class BotManager {
      */
     async spawnBot(botId: string, config: BotConfiguration, options: { position?: { x: number; y: number } } = {}): Promise<BotClient> {
         // A Brick (#1995) lives in its owner's chats: it stands in no room, so it is never put on a map. One that walks
-        // beside its person (#2005) is put on the map of the room it visits, and only that one
-        if ((config.brick && !config.brick.visiting) || !config.roomUrl) throw new Error(`Bot ${botId} has no room, so it cannot be put on a map`);
+        // beside its person (#2005) is put on the map of the room it visits, and one that has a home (#2005) in its room
+        if ((config.brick && !config.brick.visiting && !config.brick.home) || !config.roomUrl) throw new Error(`Bot ${botId} has no room, so it cannot be put on a map`);
 
         // Check if bot already exists
         const existingInstance = this.bots.get(botId);
@@ -364,6 +365,7 @@ export class BotManager {
         // Get position from assignedSpace.center (required field). A visiting Brick starts beside its person
         const position = options.position ?? config.assignedSpace?.center ?? { x: 0, y: 0 };
         const visiting = config.brick?.visiting;
+        const home = config.brick?.home;
 
         const botConfig = {
             botId,
@@ -399,7 +401,9 @@ export class BotManager {
         }
         const behavior = visiting
             ? this.visitingBehavior(visiting.ownerUuid, botId, config.roomUrl, built.config)
-            : instantiateBehavior(built.kind, built.config, { IdleBehavior, PatrolBehavior, SocialBehavior });
+            : home
+              ? new HomedBrickBehavior(built.config as unknown as ConstructorParameters<typeof HomedBrickBehavior>[0])
+              : instantiateBehavior(built.kind, built.config, { IdleBehavior, PatrolBehavior, SocialBehavior });
         
         // Set services for behavior (including response processor and metrics collector for metrics)
         behavior.setServices(this.aiService, this.adminApiService, this.conversationStorage, this.responseProcessor, this.metricsCollector);
@@ -470,7 +474,8 @@ export class BotManager {
 
             this.bots.set(botId, instance);
             // A Brick that stands in a room is answered by who is asking, and never uses its owner's things for others (#2005)
-            if (visiting) this.aiService.noteRoomBrick(botId, { ownerUuid: visiting.ownerUuid, ownerName: visiting.ownerName, roomUrl: config.roomUrl });
+            const company = visiting ?? home;
+            if (company) this.aiService.noteRoomBrick(botId, { ownerUuid: company.ownerUuid, ownerName: company.ownerName, roomUrl: config.roomUrl });
 
             // Register in bot registry
             await this.botRegistry.assignBot(botId);
@@ -774,9 +779,12 @@ export class BotManager {
             }
             // A Brick that walks beside its person (#2005) keeps walking beside them: an edit never turns it into a room bot
             const visiting = instance.config.brick?.visiting;
+            const lives = instance.config.brick?.home;
             const behavior = visiting
             ? this.visitingBehavior(visiting.ownerUuid, botId, instance.config.roomUrl, built.config)
-            : instantiateBehavior(built.kind, built.config, { IdleBehavior, PatrolBehavior, SocialBehavior });
+            : lives
+              ? new HomedBrickBehavior(built.config as unknown as ConstructorParameters<typeof HomedBrickBehavior>[0])
+              : instantiateBehavior(built.kind, built.config, { IdleBehavior, PatrolBehavior, SocialBehavior });
             // Set services for behavior (required for AI responses)
             behavior.setServices(this.aiService, this.adminApiService, this.conversationStorage, this.responseProcessor, this.metricsCollector);
             if (behavior.setConversationMemory) {
@@ -1135,7 +1143,14 @@ export class BotManager {
 
         try {
             // Always load bot configs from Admin API to catch new/deleted bots
-            const bots = await this.adminApiService.getBotConfigurations({ roomUrl: roomId });
+            const roomBots = await this.adminApiService.getBotConfigurations({ roomUrl: roomId });
+            // The Bricks that live in this room (#2005) stand here like room bots. When Orbit cannot say, the ones already
+            // here stay: a failed read must not clear them off the map
+            const homed = await this.adminApiService.getHomedBricks(roomId).catch((error) => {
+                console.warn('[BotManager] Could not ask Orbit for the Bricks that live in the room:', error instanceof Error ? error.message : error);
+                return undefined;
+            });
+            const bots = [...roomBots, ...(homed ?? [])];
             
             // Filter to only enabled bots (if enabled field exists)
             const enabledBots = bots.filter(bot => {
@@ -1160,6 +1175,9 @@ export class BotManager {
 
             // Get set of enabled bot IDs from Admin API
             const enabledBotIds = new Set(enabledBots.map(b => b.botId));
+            if (!homed) {
+                for (const botId of targetRoom.botIds) if (this.bots.get(botId)?.config.brick?.home) enabledBotIds.add(botId);
+            }
             
             // Despawn bots that are no longer in Admin API (deleted)
             for (const botId of targetRoom.botIds) {
