@@ -608,7 +608,7 @@ describe("the Bricks page (#1995)", () => {
             game.getBot.mockRejectedValueOnce(new Error("offline"));
             await open();
             await openPage();
-            expect(byId("brickPageFailed")).not.toBeNull();
+            expect(byId("brickPageFailed")?.textContent?.trim()).toBe("Couldn't load this Brick.");
             await click("brickPageTryAgain");
             expect(byId("brickPageFailed")).toBeNull();
             expect(target.querySelector<HTMLInputElement>('[data-testid="bot-name"]')?.value).toBe("Recipe Brick");
