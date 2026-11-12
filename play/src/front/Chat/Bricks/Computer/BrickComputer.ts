@@ -129,6 +129,10 @@ export function fileSize(bytes: number): string {
     return `${(bytes / 1_000_000_000).toFixed(1)} GB`;
 }
 
+/** A line that starts a sentence starts with a capital, whatever case Brick named it in ("your name" shows as "Your name"). */
+export const sentenceStart = (text: string): string =>
+    text ? text.charAt(0).toLocaleUpperCase() + text.slice(1) : text;
+
 /** A job holds the computer while it runs or waits for its person. */
 export const holdsComputer = (job: ComputerJob | null | undefined): job is ComputerJob =>
     !!job && (job.status === "running" || job.status === "waiting");

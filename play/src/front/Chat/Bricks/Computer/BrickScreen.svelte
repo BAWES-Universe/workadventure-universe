@@ -10,7 +10,7 @@
     import { botApiService } from "../../../external-modules/bots/services/BotApiService";
     import { warningMessageStore } from "../../../Stores/ErrorStore";
     import { brickComputerAction, brickComputers, followBrickComputer } from "./BrickComputerStore";
-    import { canWatch, holdsComputer } from "./BrickComputer";
+    import { canWatch, holdsComputer, sentenceStart } from "./BrickComputer";
     import type { BrickRef } from "./BrickScreenStore";
     import { IconCircleCheck, IconHandFinger, IconId, IconLoader2 } from "@wa-icons";
 
@@ -112,7 +112,10 @@
             <span class="bs-ic"><IconId font-size="22" /></span>
             <span class="bs-tx"
                 ><span class="bs-h">{$LL.chat.brick.computer.readyFor()}</span><span class="bs-l"
-                    >{$LL.chat.brick.computer.readyLine({ what: job.ready.what, where: job.ready.where })}</span
+                    >{$LL.chat.brick.computer.readyLine({
+                        what: sentenceStart(job.ready.what),
+                        where: job.ready.where,
+                    })}</span
                 ></span
             >
         </div>

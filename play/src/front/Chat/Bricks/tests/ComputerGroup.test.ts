@@ -176,7 +176,9 @@ describe("a Brick's computer on screen (#2000)", () => {
         piece = new BrickScreen({ target, props: { brick, onClose: () => undefined } });
         await settle();
         expect(byId("brickScreenFrame")?.getAttribute("src")).toBe("https://screen.test/abc");
-        expect(byId("brickScreenReady")?.textContent).toContain("your name and phone");
+        expect(byId("brickScreenReady")?.textContent).toContain(
+            "Your name and phone. One tap sends them to the booking form."
+        );
         game.brickComputerAction.mockResolvedValue({ job: job({ control: "person" }) });
         byId("brickScreenFill")?.click();
         await settle();

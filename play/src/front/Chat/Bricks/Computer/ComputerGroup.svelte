@@ -304,7 +304,8 @@
     }
     .bp-mtx {
         display: flex;
-        flex: 1;
+        /* On a very narrow phone the buttons drop under the words instead of squeezing them into a thin column */
+        flex: 1 1 7rem;
         flex-direction: column;
         gap: 2px;
         min-width: 0;
@@ -320,6 +321,7 @@
     }
     .bp-model {
         display: flex;
+        flex-wrap: wrap;
         align-items: center;
         gap: 10px;
         padding: 12px;

@@ -8,6 +8,7 @@ import {
     parseBrickComputer,
     parseComputerJob,
     parseJobAnswer,
+    sentenceStart,
     type BrickComputerView,
 } from "../Computer/BrickComputer";
 
@@ -114,5 +115,11 @@ describe("a Brick's computer as the game reads it (#2000)", () => {
         expect(barState(view({ job: null }))).toBeNull();
         expect(barState(view({ on: false }))).toBeNull();
         expect(barState(undefined)).toBeNull();
+    });
+
+    it("starts a named line with a capital, whatever case Brick named it in", () => {
+        expect(sentenceStart("your name and passport number")).toBe("Your name and passport number");
+        expect(sentenceStart("Your name")).toBe("Your name");
+        expect(sentenceStart("")).toBe("");
     });
 });
