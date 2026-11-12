@@ -20,16 +20,20 @@ const failed = writable(false);
 export const myUsageFailed: Readable<boolean> = { subscribe: failed.subscribe };
 
 let loading: Promise<void> | undefined;
+// Counts what changed the usage after it was read: a read that began before "Ask for more" went through must not undo it
+let changes = 0;
 
 /** Reads the person's usage. One request at a time; resolves either way. */
 export function loadMyUsage(): Promise<void> {
     if (!get(userIsConnected)) return Promise.resolve();
     if (!loading) {
+        const startedAt = changes;
         loading = botApiService
             .getMyUsage()
             .then((answer) => {
                 const parsed = parseUsage(answer);
-                if (parsed) usage.set(parsed);
+                // Orbit's answer is older than what the person did meanwhile: keep what they did
+                if (parsed && changes === startedAt) usage.set(parsed);
                 failed.set(!parsed);
             })
             .catch((error: unknown) => {
@@ -55,6 +59,7 @@ export async function askMyUsageForMore(): Promise<boolean> {
         console.warn("Could not ask for more", error);
         return false;
     }
+    changes++;
     usage.update((current) =>
         current?.computer
             ? { ...current, computer: { ...current.computer, asked: true, canAskForMore: false } }
@@ -69,4 +74,5 @@ export function forgetMyUsage(): void {
     settled.set(false);
     failed.set(false);
     loading = undefined;
+    changes = 0;
 }

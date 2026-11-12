@@ -84,6 +84,22 @@ describe("a person's usage in the game (#1999)", () => {
         expect(get(myUsageStore)?.computer).toMatchObject({ asked: true, canAskForMore: false });
     });
 
+    it("keeps the request as sent when a read that began before it comes back after it", async () => {
+        await loadMyUsage();
+        let late: (value: unknown) => void = () => undefined;
+        api.getMyUsage.mockReturnValue(
+            new Promise((resolve) => {
+                late = resolve;
+            })
+        );
+        const reading = loadMyUsage();
+        expect(await askMyUsageForMore()).toBe(true);
+        // Orbit's answer was made before the request, so it still says the button is there
+        late(out);
+        await reading;
+        expect(get(myUsageStore)?.computer).toMatchObject({ asked: true, canAskForMore: false });
+    });
+
     it("leaves the button when Orbit refused", async () => {
         await loadMyUsage();
         api.askForMoreUsage.mockRejectedValue(new Error("409"));
