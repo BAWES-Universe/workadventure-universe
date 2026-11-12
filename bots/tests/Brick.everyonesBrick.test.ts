@@ -609,6 +609,18 @@ describe('BotRegistry: one turn to make a chat, across bot servers', () => {
         expect(await registry.claimDirectChat(BRICK, ALICE, 20_000)).toBeNull();
     });
 
+    it('counts Redis as in use from the moment it connected, before any request can come in', async () => {
+        const registry = Object.create(BotRegistry.prototype) as BotRegistry;
+        const redis = { isOpen: false, connect: vi.fn(async () => { redis.isOpen = true; }) };
+        Object.assign(registry, { redis, serverId: 'server-1', sharedStoreSeen: false });
+        // Configured but never connected: there is no server taking requests yet, and no claim is shared
+        expect(await registry.claimDirectChat(BRICK, ALICE, 20_000)).toBeNull();
+        await registry.connect();
+        // The connection drops later: the claim fails rather than fall back to a claim of this server alone
+        redis.isOpen = false;
+        await expect(registry.claimDirectChat(BRICK, ALICE, 20_000)).rejects.toThrow('The shared store is down');
+    });
+
     it('fails the claim while a Redis it was using is down, so nobody makes the chat on their own', async () => {
         const registry = Object.create(BotRegistry.prototype) as BotRegistry;
         Object.assign(registry, { redis: { isOpen: false }, serverId: 'server-1', sharedStoreSeen: true });

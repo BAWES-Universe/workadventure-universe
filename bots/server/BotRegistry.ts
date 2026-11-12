@@ -99,6 +99,9 @@ export class BotRegistry {
         if (this.redis && !this.redis.isOpen) {
             await this.redis.connect();
         }
+        // Connected: from now on a closed connection is an outage, whether or not 'ready' was heard yet. The bot server
+        // starts taking requests only after this (BotManager.initialize), and does not start when it throws.
+        if (this.redis?.isOpen) this.sharedStoreSeen = true;
     }
 
     async disconnect(): Promise<void> {
