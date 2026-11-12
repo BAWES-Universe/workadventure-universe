@@ -29,9 +29,11 @@ describe('FileRemovalSweeper', () => {
         expect(hoisted.axios.post).toHaveBeenCalledWith('http://orbit.local/api/bot-files/removals', { ids: ['r1', 'r2'] }, expect.anything());
     });
 
-    it('counts a file the uploader no longer has as done, and keeps one it could not remove for the next round', async () => {
-        hoisted.axios.get.mockResolvedValue({ data: { removals: [{ id: 'r1', bucket: 'b', fileId: 'f1' }, { id: 'r2', bucket: 'b', fileId: 'f2' }] } });
-        hoisted.axios.delete.mockRejectedValueOnce(gone).mockRejectedValueOnce(down);
+    it('counts a removal as done only when the uploader took it, and keeps a failed one, also a 404, for the next round', async () => {
+        // The uploader answers 200 for a file that is not there, so a 404 means a wrong address, not a file already gone
+        hoisted.axios.get.mockResolvedValue({ data: { removals: [{ id: 'r1', bucket: 'b', fileId: 'f1' }, { id: 'r2', bucket: 'b', fileId: 'f2' }, { id: 'r3', bucket: 'b', fileId: 'f3' }] } });
+        hoisted.axios.delete.mockResolvedValueOnce({ data: { message: 'ok' } }).mockRejectedValueOnce(gone).mockRejectedValueOnce(down);
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
         expect(await new FileRemovalSweeper(config).sweep()).toBe(1);
         expect(hoisted.axios.post.mock.calls[0][1]).toEqual({ ids: ['r1'] });
     });

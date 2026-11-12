@@ -245,6 +245,24 @@ describe('PersistentMemory: Forget of one thing', () => {
         expect(config.headers.Authorization).toBe('Bearer service-secret');
     });
 
+    it('takes out every line a thing was said in, not only the last, and leaves longer words alone', () => {
+        const memory = held();
+        const record = memory.getMemory(BOT, SARA)!;
+        // Said twice: only the later line is noted, the earlier one is found by its words
+        record.conversationHistory.unshift({ sender: 'person', message: 'I really love lo-fi', timestamp: 500 } as any);
+        record.conversationHistory.push({ sender: 'bot', message: 'Lo-fi is great, noted.', timestamp: 1500 } as any);
+        record.conversationHistory.push({ sender: 'bot', message: 'That was a remarkable bookmark of a day', timestamp: 1600 } as any);
+        const named = memory.getMemory(BOT, SARA)!;
+        named.personalInfo.name = 'Mark';
+        named.personalInfo.drawnFrom = { ...(named.personalInfo.drawnFrom ?? {}), name: 1000 };
+        record.conversationHistory.push({ sender: 'bot', message: 'Bookmark saved, remarkable.', timestamp: 1700 } as any);
+        dropItems(record, new Set([lofi, memoryItemKey('name', null, 'Mark')]));
+        const left = record.conversationHistory.map((line) => line.message);
+        expect(left.some((line) => /lo-fi/i.test(line))).toBe(false);
+        expect(left).toContain('That was a remarkable bookmark of a day');
+        expect(left).toContain('Bookmark saved, remarkable.');
+    });
+
     // A forget Orbit did not take
     it('is told again before the next save, so it is not left for want of one failed call', async () => {
         const memory = held();

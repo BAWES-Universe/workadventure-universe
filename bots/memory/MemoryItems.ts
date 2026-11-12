@@ -101,6 +101,11 @@ export function visibleItems(memory: BotPlayerMemory, view: MemoryView): MemoryI
 /** The shortest a phrase may be for lines of the chat to be taken out by the words they hold, when no line was noted. */
 const MIN_PHRASE = 4;
 
+/** These words as their own words, not a piece of a longer one. */
+function wholeWords(text: string): RegExp {
+    return new RegExp(`(^|[^\\p{L}\\p{N}])${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^\\p{L}\\p{N}])`, 'u');
+}
+
 /**
  * Takes these things out of a person's memory, with what was built from them. Changes the memory it is given and returns
  * how many things went. With `forgotAt`, a thing the person said again after they forgot it (it carries when it was
@@ -111,7 +116,7 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
     const info = memory.personalInfo;
     const history = memory.conversationHistory;
     const doomedLines = new Set<object>();
-    const phrases: { text: string; anySender: boolean }[] = [];
+    const phrases: RegExp[] = [];
     let removed = 0;
 
     const goes = (id: string, at: number | null) => {
@@ -125,8 +130,9 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
     };
     const takeLines = (at: number | null, phrase: string) => {
         if (at !== null) for (const line of history) if (line.timestamp === at && line.sender === 'person') doomedLines.add(line);
-        // The bot's lines that say it back go too. With no line noted (what was kept before this) the person's lines that hold its words go as well.
-        if (phrase.trim().length >= MIN_PHRASE) phrases.push({ text: phrase.trim().toLowerCase(), anySender: at === null });
+        // The lines that say it back go too, the bot's and the person's: only the last line it was said in is noted, and a thing
+        // said twice would otherwise leave the first. Words are matched whole ("Mark" is not "bookmark").
+        if (phrase.trim().length >= MIN_PHRASE) phrases.push(wholeWords(phrase.trim().toLowerCase()));
     };
 
     if (info.name) {
@@ -178,7 +184,7 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
         memory.conversationHistory = history.filter((line) => {
             if (doomedLines.has(line)) return false;
             const text = line.message.toLowerCase();
-            return !phrases.some((phrase) => (phrase.anySender || line.sender === 'bot') && text.includes(phrase.text));
+            return !phrases.some((phrase) => phrase.test(text));
         });
     }
     if (removed > 0) info.lastInfoUpdate = Date.now();

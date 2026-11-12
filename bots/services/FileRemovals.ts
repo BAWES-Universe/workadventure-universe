@@ -72,7 +72,10 @@ export class FileRemovalSweeper {
         }
     }
 
-    /** True when the file is gone from the uploader (removed now, or not there). */
+    /**
+     * True when the file is gone from the uploader. The uploader answers 200 for a file that is not there, so a 404 is a
+     * wrong address or a service not yet deployed: the removal stays queued and is tried again.
+     */
     private async removeFromUploader(fileId: string): Promise<boolean> {
         try {
             await axios.delete(`${this.config.uploaderUrl}/upload-file/${encodeURIComponent(fileId)}`, {
@@ -81,7 +84,8 @@ export class FileRemovalSweeper {
             });
             return true;
         } catch (error) {
-            return axios.isAxiosError(error) && error.response?.status === 404;
+            console.warn(`[FileRemovals] Could not remove ${fileId} from the uploader: ${axios.isAxiosError(error) ? (error.response?.status ?? error.code ?? 'no answer') : 'failed'}`);
+            return false;
         }
     }
 }
