@@ -1,6 +1,11 @@
 import { createHash } from "crypto";
 import { FilterType } from "@workadventure/messages";
 import { AREA_SPACE_PREFIX, isAreaSpaceName } from "@workadventure/shared-utils/src/Space/areaSpaceName";
+import {
+    BOT_IDENTIFIER_PREFIX,
+    isCallSpaceName,
+    parseCallSpaceName,
+} from "@workadventure/shared-utils/src/Space/callSpaceName";
 import type { SocketData } from "../models/Websocket/SocketData";
 import { isMegaphoneChannelSpace } from "../models/MegaphoneRights";
 import { toGlobalSpaceName } from "./SpaceNames";
@@ -19,6 +24,8 @@ import { toGlobalSpaceName } from "./SpaceNames";
  * - meeting rooms and speaker zones of an area limited to roles ("Who can enter"): only the players with one of those
  *   roles, as the back works out for each player (refusedAreaSpaces). ENFORCE_AREA_SPACE_RIGHTS=false turns this off
  *   (the pusher then keeps the list empty, see SocketManager).
+ * - call spaces (names starting with CALL_SPACE_PREFIX, game #2004): only the person who called and the bot they called,
+ *   as the name says, and never a third (see checkCallSpaceJoin).
  * Map script spaces are unchanged.
  */
 
@@ -56,7 +63,46 @@ export function toServerSpaceName(socketData: Pick<SocketData, "world" | "roomId
 
 /** Bubble spaces are named `${roomId}#${groupId}#${time}` by the back. No other space the front makes has a "#". */
 export function isBubbleSpaceName(localSpaceName: string): boolean {
-    return localSpaceName.includes("#");
+    return !isCallSpaceName(localSpaceName) && localSpaceName.includes("#");
+}
+
+/** How many sockets a call space ever holds: the person and the bot. */
+export const CALL_SPACE_MEMBERS = 2;
+
+/**
+ * A call space is for the person who called and the bot they called, as its name says. The name is only trusted when
+ * it is exactly the one callSpaceName makes, and each side is who its own sign-in says it is: the person by their uuid,
+ * the bot by the identifier its token carries ("bot-" and its id). Nobody else gets in, whatever name they ask for.
+ */
+export function checkCallSpaceJoin(
+    request: SpaceJoinRequest,
+    socketData: Partial<Pick<SocketData, "userUuid" | "userIdentifier" | "tags">>
+): void {
+    const { localSpaceName, filterType } = request;
+    const call = parseCallSpaceName(localSpaceName);
+    if (!call) {
+        throw new SpaceJoinRefusedError(localSpaceName, "this is not a call");
+    }
+    if (filterType !== FilterType.ALL_USERS) {
+        throw new SpaceJoinRefusedError(localSpaceName, "a call lists all its users");
+    }
+    const isBot = socketData.tags?.includes("bot") === true;
+    if (isBot) {
+        if (socketData.userIdentifier !== `${BOT_IDENTIFIER_PREFIX}${call.botId}`) {
+            throw new SpaceJoinRefusedError(localSpaceName, "this call is with another bot");
+        }
+        return;
+    }
+    if (!socketData.userUuid || socketData.userUuid !== call.callerUuid) {
+        throw new SpaceJoinRefusedError(localSpaceName, "this call is for someone else");
+    }
+}
+
+/** A call space already holding its two members takes no more. */
+export function checkCallSpaceRoom(localSpaceName: string, membersNow: number): void {
+    if (isCallSpaceName(localSpaceName) && membersNow >= CALL_SPACE_MEMBERS) {
+        throw new SpaceJoinRefusedError(localSpaceName, "this call already has its two members");
+    }
 }
 
 export interface SpaceJoinRequest {
@@ -73,7 +119,8 @@ export function checkSpaceJoin(
     socketData: Pick<
         SocketData,
         "grantedBubbleSpaces" | "megaphoneChannels" | "refusedAreaSpaces" | "areaSpacePolicyUnknown"
-    >
+    > &
+        Partial<Pick<SocketData, "userUuid" | "userIdentifier" | "tags">>
 ): void {
     const { localSpaceName, filterType, propertiesToSync } = request;
 
@@ -84,6 +131,11 @@ export function checkSpaceJoin(
 
     if (socketData.refusedAreaSpaces?.has(localSpaceName)) {
         throw new SpaceJoinRefusedError(localSpaceName, "this area is limited to other roles");
+    }
+
+    if (isCallSpaceName(localSpaceName)) {
+        checkCallSpaceJoin(request, socketData);
+        return;
     }
 
     if (isBubbleSpaceName(localSpaceName)) {

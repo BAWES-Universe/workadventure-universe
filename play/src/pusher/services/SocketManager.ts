@@ -90,7 +90,7 @@ import { chatIdVerifier, verifyChatId, withoutChatIdUpdate, withoutUncheckedChat
 import type { ShortMapDescription } from "./ShortMapDescription";
 import { matrixProvider } from "./MatrixProvider";
 import { MatrixAreaMembership } from "./MatrixAreaMembership";
-import { checkSpaceJoin } from "./SpaceJoinPolicy";
+import { checkCallSpaceRoom, checkSpaceJoin } from "./SpaceJoinPolicy";
 import { toGlobalSpaceName } from "./SpaceNames";
 import { SocketsByIdentifier } from "./SocketsByIdentifier";
 import { BubbleSpaceGrants } from "./BubbleSpaceGrants";
@@ -496,6 +496,9 @@ export class SocketManager implements ZoneEventListener {
 
         let space: SpaceInterface | undefined = this.spaces.get(spaceName);
 
+        // A call has its two members and no more, whoever else could name it
+        checkCallSpaceRoom(localSpaceName, space ? space.users.size : 0);
+
         if (!space) {
             const onSpaceEmpty = (space: SpaceInterface) => {
                 this.spaces.delete(space.name);
@@ -599,15 +602,20 @@ export class SocketManager implements ZoneEventListener {
             socketData.keepAliveInterval = undefined;
         }
 
+        // A call-only connection never joined the room, so there is nothing to leave or to untrack
+        const roomless = socketData.callOnly === true;
+
         try {
-            this.leaveRoom(client);
+            if (!roomless) this.leaveRoom(client);
         } catch (e) {
             Sentry.captureException(e);
             console.error("Error while leaving room", e);
         }
         try {
-            this.socketsByIdentifier.remove(client.getUserData().userIdentifier, client);
-            this.friendsPresence.untrack(client);
+            if (!roomless) {
+                this.socketsByIdentifier.remove(client.getUserData().userIdentifier, client);
+                this.friendsPresence.untrack(client);
+            }
         } catch (e) {
             Sentry.captureException(e);
             console.error("Error while removing the friends presence", e);

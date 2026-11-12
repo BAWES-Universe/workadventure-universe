@@ -1,7 +1,9 @@
 import { FilterType } from "@workadventure/messages";
 import { describe, expect, it } from "vitest";
 import { areaSpaceName } from "@workadventure/shared-utils/src/Space/areaSpaceName";
+import { callSpaceName, parseCallSpaceName } from "@workadventure/shared-utils/src/Space/callSpaceName";
 import {
+    checkCallSpaceRoom,
     checkSpaceJoin,
     SpaceJoinRefusedError,
     toServerSpaceName,
@@ -186,5 +188,77 @@ describe("toServerSpaceName", () => {
         const localPart = serverName.slice("team~world.".length);
         // Sending the server name's own local part does not reach the same space: the room is added again.
         expect(toServerSpaceName(inRoom, localPart)).not.toBe(serverName);
+    });
+});
+
+describe("call spaces (game #2004)", () => {
+    const call = { botId: "b1", callerUuid: "user-7", callId: "c1" };
+    const CALL = callSpaceName(call);
+    const person = { userUuid: "user-7", userIdentifier: "user-7", tags: [] as string[] };
+    const bot = { userUuid: "bot-b1", userIdentifier: "bot-b1", tags: ["bot", "voice-bot"] };
+
+    it("lets the person who called and the bot they called in", () => {
+        expect(() =>
+            checkSpaceJoin(join(CALL, FilterType.ALL_USERS, MEDIA), { ...socketData(), ...person })
+        ).not.toThrow();
+        expect(() =>
+            checkSpaceJoin(join(CALL, FilterType.ALL_USERS, MEDIA), { ...socketData(), ...bot })
+        ).not.toThrow();
+    });
+
+    it("refuses another person, even one who knows the name", () => {
+        const other = { userUuid: "user-8", userIdentifier: "user-8", tags: [] as string[] };
+        expect(() => checkSpaceJoin(join(CALL), { ...socketData(), ...other })).toThrow(SpaceJoinRefusedError);
+    });
+
+    it("refuses another bot, and a person who only claims to be a bot by name", () => {
+        const otherBot = { userUuid: "bot-b2", userIdentifier: "bot-b2", tags: ["bot"] };
+        expect(() => checkSpaceJoin(join(CALL), { ...socketData(), ...otherBot })).toThrow(SpaceJoinRefusedError);
+        const fakeBot = { userUuid: "bot-b1", userIdentifier: "bot-b1", tags: [] as string[] };
+        expect(() => checkSpaceJoin(join(CALL), { ...socketData(), ...fakeBot })).toThrow(SpaceJoinRefusedError);
+    });
+
+    it("refuses a bot standing in for the person, and the person standing in for the bot", () => {
+        const botAsCaller = { userUuid: "user-7", userIdentifier: "bot-b9", tags: ["bot"] };
+        expect(() => checkSpaceJoin(join(CALL), { ...socketData(), ...botAsCaller })).toThrow(SpaceJoinRefusedError);
+    });
+
+    it("refuses a call that is not exactly the name callSpaceName makes", () => {
+        expect(() => checkSpaceJoin(join("call__zz_zz_zz"), { ...socketData(), ...person })).toThrow(
+            SpaceJoinRefusedError
+        );
+        expect(() => checkSpaceJoin(join(`${CALL}_00`), { ...socketData(), ...person })).toThrow(SpaceJoinRefusedError);
+    });
+
+    it("is a space that lists all its users, nothing else", () => {
+        expect(() =>
+            checkSpaceJoin(join(CALL, FilterType.LIVE_STREAMING_USERS), { ...socketData(), ...person })
+        ).toThrow(SpaceJoinRefusedError);
+    });
+
+    it("is never mistaken for a bubble, so a bubble grant does not open it and its name needs no #", () => {
+        expect(CALL.includes("#")).toBe(false);
+        expect(() =>
+            checkSpaceJoin(join(CALL), {
+                ...socketData([CALL]),
+                userUuid: "user-8",
+                userIdentifier: "user-8",
+                tags: [],
+            })
+        ).toThrow(SpaceJoinRefusedError);
+    });
+
+    it("keeps the call between the same two, call after call, and tells calls apart", () => {
+        expect(callSpaceName({ ...call, callId: "c2" })).not.toBe(CALL);
+        expect(parseCallSpaceName(CALL)).toEqual(call);
+        const odd = { botId: "bot with # and _", callerUuid: "a_b#c@d.e", callId: "é" };
+        expect(parseCallSpaceName(callSpaceName(odd))).toEqual(odd);
+    });
+
+    it("holds two members and no third", () => {
+        expect(() => checkCallSpaceRoom(CALL, 0)).not.toThrow();
+        expect(() => checkCallSpaceRoom(CALL, 1)).not.toThrow();
+        expect(() => checkCallSpaceRoom(CALL, 2)).toThrow(SpaceJoinRefusedError);
+        expect(() => checkCallSpaceRoom("some-room-space", 50)).not.toThrow();
     });
 });
