@@ -398,7 +398,7 @@ export class BotManager {
             console.log(`[BotManager] Bot ${botId} behaviour: ${built.kind} (moves=${built.model.moves}, goesToPeople=${built.model.goesToPeople})`);
         }
         const behavior = visiting
-            ? this.visitingBehavior(visiting.ownerUuid, botId, config.roomUrl, built.config)
+            ? this.visitingBehavior(visiting.ownerUuid, botId, config.roomUrl, built.config, client)
             : instantiateBehavior(built.kind, built.config, { IdleBehavior, PatrolBehavior, SocialBehavior });
         
         // Set services for behavior (including response processor and metrics collector for metrics)
@@ -775,7 +775,7 @@ export class BotManager {
             // A Brick that walks beside its person (#2005) keeps walking beside them: an edit never turns it into a room bot
             const visiting = instance.config.brick?.visiting;
             const behavior = visiting
-            ? this.visitingBehavior(visiting.ownerUuid, botId, instance.config.roomUrl, built.config)
+            ? this.visitingBehavior(visiting.ownerUuid, botId, instance.config.roomUrl, built.config, instance.client)
             : instantiateBehavior(built.kind, built.config, { IdleBehavior, PatrolBehavior, SocialBehavior });
             // Set services for behavior (required for AI responses)
             behavior.setServices(this.aiService, this.adminApiService, this.conversationStorage, this.responseProcessor, this.metricsCollector);
@@ -1004,35 +1004,40 @@ export class BotManager {
     }
 
     /** The behaviour of a Brick that walks beside its person, with what it tells the manager. */
-    private visitingBehavior(ownerUuid: string, botId: string, roomUrl: string | undefined, built: unknown): VisitingBrickBehavior {
+    private visitingBehavior(ownerUuid: string, botId: string, roomUrl: string | undefined, built: unknown, client: BotClient): VisitingBrickBehavior {
         return new VisitingBrickBehavior({
             ...(built as ConstructorParameters<typeof VisitingBrickBehavior>[0]),
             ownerUuid,
             // Its person has left the room: the Brick leaves the map with them. Orbit keeps the visit until it ends
             onOwnerGone: () => {
-                this.inVisitLine(ownerUuid, () => this.endVisitor(ownerUuid, botId)).catch((error) => console.warn(`[BotManager] Could not take ${botId} off the map:`, error));
+                this.inVisitLine(ownerUuid, () => this.endVisitor(ownerUuid, botId, client)).catch((error) => console.warn(`[BotManager] Could not take ${botId} off the map:`, error));
             },
             // Its own client sees its person: Orbit is told, and says when the visit is over (ended, switched, ran out, the Brick
             // switched off or deleted, the place stopped taking visits, or the person may no longer open the room)
             onOwnerSeen: () => {
-                if (roomUrl) void this.keepVisitSeen(ownerUuid, botId, roomUrl);
+                if (roomUrl) void this.keepVisitSeen(ownerUuid, botId, roomUrl, client);
             },
         });
     }
 
-    private async keepVisitSeen(ownerUuid: string, botId: string, roomUrl: string): Promise<void> {
+    private async keepVisitSeen(ownerUuid: string, botId: string, roomUrl: string, client: BotClient): Promise<void> {
         try {
             const alive = await this.adminApiService.keepVisitAlive(botId, ownerUuid, roomUrl);
-            if (alive === false) await this.inVisitLine(ownerUuid, () => this.endVisitor(ownerUuid, botId));
+            if (alive === false) await this.inVisitLine(ownerUuid, () => this.endVisitor(ownerUuid, botId, client));
         } catch (error) {
             // Orbit cannot answer: the Brick stays as it is and is asked again at the next sighting
             console.warn(`[BotManager] Could not tell Orbit ${botId} is still with its person:`, error instanceof Error ? error.message : error);
         }
     }
 
-    /** Takes a person's visiting Brick off the map. Only the one it is asked about, and only while it is still theirs. */
-    private async endVisitor(uuid: string, botId: string): Promise<void> {
+    /**
+     * Takes a person's visiting Brick off the map. Only the one it is asked about, and only while it is still theirs.
+     * `client` is the stand the caller spoke for: a late report from a room the person has already left (its answer comes
+     * after the sync that put the Brick in the next room) finds another client on the map and takes down nothing.
+     */
+    private async endVisitor(uuid: string, botId: string, client?: BotClient): Promise<void> {
         const instance = this.bots.get(botId);
+        if (client && instance?.client !== client) return;
         let despawned = false;
         try {
             if (instance?.config.brick?.visiting?.ownerUuid === uuid) await this.despawnBot(botId);

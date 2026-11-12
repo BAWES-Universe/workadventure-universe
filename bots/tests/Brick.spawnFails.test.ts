@@ -164,6 +164,24 @@ describe('a Brick that tells Orbit it still sees its person (review on #927)', (
         expect(clients[0].disconnect).toHaveBeenCalled();
     });
 
+    it('does not take down the Brick standing in the next room when the answer for the room the person left comes late', async () => {
+        const { botManager, internals, seen } = await placed();
+        let answer!: (alive: boolean) => void;
+        keepVisitAlive.mockReturnValueOnce(new Promise<boolean>((resolve) => (answer = resolve)));
+        seen();
+        await vi.waitFor(() => expect(keepVisitAlive).toHaveBeenCalledTimes(1));
+        // Meanwhile the person walks on: the Brick leaves the first room and is put beside them in the next (a new client)
+        await (internals as unknown as { endVisitor: (uuid: string, botId: string) => Promise<void> }).endVisitor('uuid-khalid', 'brick-1');
+        await botManager.syncVisitingBrick(ROOM, { uuid: 'uuid-khalid' }, AT);
+        expect(clients).toHaveLength(2);
+        // Orbit's answer for the first room arrives now, and says that visit is over
+        answer(false);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(internals.bots.has('brick-1')).toBe(true);
+        expect(clients[1].disconnect).not.toHaveBeenCalled();
+        expect(internals.visitors.has('uuid-khalid')).toBe(true);
+    });
+
     it('leaves the Brick as it is when Orbit cannot answer or says nothing', async () => {
         const { internals, seen } = await placed();
         keepVisitAlive.mockRejectedValueOnce(new Error('orbit down'));
