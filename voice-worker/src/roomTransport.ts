@@ -18,12 +18,17 @@ import type { RemoteParticipant, RemoteTrack, RemoteTrackPublication } from '@li
 import type { Counters } from './counters.ts';
 import { TTS_RATE } from './audioFormat.ts';
 import { type Mode, modeListens, modePlays } from './protocol.ts';
-import type { InputSink, OutputFrame, OutputTarget } from './transport.ts';
+import type { InputSink, OutputFrame, OutputTarget, Reach } from './transport.ts';
 
 const CONNECT_TIMEOUT_MS = 15000;
 /** Audio the media stack may hold for the bot's track. Short, so a stop leaves little to play out. */
 const OUTPUT_QUEUE_MS = 200;
 const INPUT_RATE = 16000;
+/**
+ * How long after the last frame of a reply for one person alone some of it may still be on its way out: what the bot's
+ * track holds (`OUTPUT_QUEUE_MS`) and a moment more for the media stack.
+ */
+const PRIVATE_TAIL_MS = OUTPUT_QUEUE_MS + 300;
 /**
  * Asking again for a microphone the bot was subscribed to before. The media server this repository runs (livekit-server
  * 1.8.4) may never deliver a subscription asked for again more than about a second after it was dropped; dropping the
@@ -53,6 +58,9 @@ export class RoomTransport implements OutputTarget {
     private readonly people = new Map<string, Mode>();
     private source?: AudioSource;
     private readonly readers = new Map<string, AudioStream>();
+    /** The person the last frames of a reply for one person alone were for, and until when some may still be on the way out. */
+    private privateFor?: string;
+    private privateUntil = 0;
     /** Publications the bot has been subscribed to at some point, by track sid: asking for them again is watched. */
     private readonly heardBefore = new Set<string>();
     /** A watched ask again, by track sid: its timer and how many times it has been made again. */
@@ -65,6 +73,9 @@ export class RoomTransport implements OutputTarget {
         room.on(RoomEvent.TrackPublished, (publication, participant) => this.consider(participant, publication));
         room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => this.onSubscribed(track, publication, participant));
         room.on(RoomEvent.TrackUnsubscribed, (track) => this.stopReading(track.sid ?? ''));
+        // Someone connected to the room: whatever is still held of a reply that was for another person alone is dropped
+        // at once (#1993). The game has named them before this (see `setPeople`), so this is the second guard
+        room.on(RoomEvent.ParticipantConnected, (participant) => this.keepPrivateFrom(participant.identity));
         room.on(RoomEvent.Disconnected, () => {
             if (!this.gone) this.deps.onGone(this, 'closed');
         });
@@ -98,10 +109,15 @@ export class RoomTransport implements OutputTarget {
         this.deps.onConnected(this);
     }
 
-    /** Replaces who the bot may hear. Tracks of anyone no longer named are dropped at once. */
+    /**
+     * Replaces who the bot may hear: the people the game says are in the bubble. Tracks of anyone no longer named are
+     * dropped at once. Someone newly named is in the bubble from now on, whether or not they have connected to the
+     * room yet: what is still held of a reply for another person alone is dropped before they can take any of it.
+     */
     setPeople(people: { participantId: string; mode: Mode }[]): void {
         this.people.clear();
         for (const person of people) this.people.set(person.participantId, person.mode);
+        for (const person of people) this.keepPrivateFrom(person.participantId);
         this.reconcile();
     }
 
@@ -225,6 +241,11 @@ export class RoomTransport implements OutputTarget {
         this.readers.delete(sid);
     }
 
+    /** Who the media server has told the bot is connected to the room besides itself, for tests and status. */
+    participants(): string[] {
+        return [...this.room.remoteParticipants.values()].map((participant) => participant.identity);
+    }
+
     /** What the bot is subscribed to right now, for tests and status. */
     subscriptions(): { identity: string; source: TrackSource | undefined; kind: TrackKind | undefined }[] {
         const out: { identity: string; source: TrackSource | undefined; kind: TrackKind | undefined }[] = [];
@@ -238,14 +259,53 @@ export class RoomTransport implements OutputTarget {
 
     // ---- outbound ----
 
-    plays(): boolean {
+    plays(onlyFor?: string): boolean {
         if (this.gone || !this.connected || !this.deps.voiceActive()) return false;
+        if (onlyFor !== undefined) {
+            const mode = this.people.get(onlyFor);
+            return mode !== undefined && modePlays(mode);
+        }
         for (const mode of this.people.values()) if (modePlays(mode)) return true;
         return false;
     }
 
-    sendFrame(frame: OutputFrame): void {
-        if (!this.plays() || !this.source) return;
+    /**
+     * The bot has one track here, and everyone connected to the room can take it. So what goes into it reaches a person
+     * alone only while nobody else is in the bubble and nobody else is connected to the room.
+     *
+     * Who is in the bubble is what the game says (`setPeople`), and it comes first: the game names a newcomer before
+     * they can connect to the room. The room's own list is asked too (another bot, anyone the game did not name), but
+     * it cannot be the only guard: the media server tells the bot about someone who sends nothing a few seconds late.
+     * With that person not connected, the room reaches them not at all.
+     */
+    reach(participantId: string): Reach {
+        for (const named of this.people.keys()) if (named !== participantId) return 'shared';
+        let there = false;
+        for (const participant of this.room.remoteParticipants.values()) {
+            if (participant.identity !== participantId) return 'shared';
+            there = true;
+        }
+        return there ? 'alone' : 'elsewhere';
+    }
+
+    /** Someone else is here now (named by the game, or connected to the room): nothing of a reply for another person alone is left to be sent out. */
+    private keepPrivateFrom(identity: string): void {
+        if (this.privateFor === undefined || identity === this.privateFor || performance.now() > this.privateUntil) return;
+        this.source?.clearQueue();
+        this.deps.counters.inc('room_private_cleared');
+    }
+
+    sendFrame(frame: OutputFrame, onlyFor?: string): void {
+        if (!this.plays(onlyFor) || !this.source) return;
+        if (onlyFor !== undefined) {
+            // Checked here again, at the moment the frame is handed over, whatever the caller saw a moment ago
+            if (this.reach(onlyFor) !== 'alone') {
+                this.deps.counters.inc('private_frames_refused');
+                return;
+            }
+            this.privateFor = onlyFor;
+            this.privateUntil = performance.now() + PRIVATE_TAIL_MS;
+        }
         const samples = new Int16Array(frame.pcm24k);
         this.source.captureFrame(new AudioFrame(samples, TTS_RATE, 1, samples.length)).catch(() => this.deps.counters.inc('room_out_errors'));
         this.deps.counters.inc('room_frames_out');

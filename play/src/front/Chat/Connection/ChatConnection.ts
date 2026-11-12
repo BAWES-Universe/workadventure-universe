@@ -182,6 +182,12 @@ export interface ChatRoomModeration {
 }
 
 //Readonly attributes
+/**
+ * Why a voice bot's reply for one person alone was not heard to its end (#1993): `unsaid` when it was not said out loud
+ * at all, `stopped` when its voice stopped part-way. Empty when there is nothing to say about it.
+ */
+export type KeptQuiet = "" | "unsaid" | "stopped";
+
 export interface ChatMessage {
     id: string;
     sender: AnyKindOfUser | undefined;
@@ -210,10 +216,17 @@ export interface ChatMessage {
     spoken?: boolean;
     /** Set on a voice bot's reply whose voice stopped part-way because someone spoke over it (#1665): a quiet line under it. */
     stoppedBySpeech?: Readable<boolean>;
+    /**
+     * Set on a voice bot's reply written for this person alone (#1993), when its voice would have reached someone else
+     * too: it was not said out loud, or it stopped part-way. A quiet line under it says which.
+     */
+    keptQuiet?: Readable<KeptQuiet>;
     /** Set on a voice bot's reply in nearby chat (round 8): which reply it is, so it can show Stop speaking while it is heard. */
     voiceReply?: { responseId: string; botSpaceUserId: string };
     /** Set when a bot's direct message carries an artifact it made: drawn as a card the person taps to open. */
     artifact?: ArtifactCard;
+    /** Set on a bot's direct message that is the one copy of an answer it gave this person alone in nearby chat (#1993): a quiet line under it says so. */
+    answeredNearby?: boolean;
     /** Set when a bot's direct message is a card that waits for one answer (#1657): pinned above the message box while
      * it waits, then drawn in the chat as it ended. The bot server edits the same notice. */
     ask?: Readable<BotAsk | undefined>;

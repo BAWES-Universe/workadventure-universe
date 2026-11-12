@@ -11,7 +11,7 @@ import { Latency } from './latency.ts';
 import { DEEPGRAM_ADAPTER, DEFAULT_DEEPGRAM_FINAL_TIMEOUT_MS, DeepgramRecognition } from './deepgram.ts';
 import { FAKE_ADAPTER, FakeSpeech } from './fakeSpeech.ts';
 import type { IceConfig } from './lane.ts';
-import type { BotToWorker } from './protocol.ts';
+import { FEATURES, type BotToWorker } from './protocol.ts';
 import type { RecognizerFactory } from './recognizer.ts';
 import type { RoomTransport } from './roomTransport.ts';
 import { type OutgoingMessage, Session } from './session.ts';
@@ -338,6 +338,11 @@ export class VoiceWorker {
         return [...this.connections].flatMap((c) => c.roomSubscriptions());
     }
 
+    /** Who the media server has told the worker is connected to its rooms, besides the bot. */
+    roomParticipants(): string[] {
+        return [...this.connections].flatMap((c) => c.roomParticipants());
+    }
+
     sessionCount(): number {
         let n = 0;
         for (const c of this.connections) n += c.sessionCount();
@@ -557,6 +562,10 @@ class BridgeConnection {
         return [...this.sessions.values()].flatMap((s) => s.room?.subscriptions() ?? []);
     }
 
+    roomParticipants(): string[] {
+        return [...this.sessions.values()].flatMap((s) => s.room?.participants() ?? []);
+    }
+
     ping(): void {
         if (!this.alive) {
             this.worker.counters.inc('bridge_ping_timeouts');
@@ -635,7 +644,7 @@ class BridgeConnection {
                 this.sessions.set(msg.sessionId, session);
                 this.worker.counters.inc('sessions_opened');
             }
-            this.send(msg.sessionId, { type: 'session.start', bubbleId: session.bubbleId, mode: session.defaultMode, engine: { id: this.worker.engineId, kind: 'ts' } });
+            this.send(msg.sessionId, { type: 'session.start', bubbleId: session.bubbleId, mode: session.defaultMode, engine: { id: this.worker.engineId, kind: 'ts' }, features: [...FEATURES] });
             return;
         }
         const session = this.sessions.get(msg.sessionId);
@@ -666,7 +675,7 @@ class BridgeConnection {
                 session.setMode(msg.mode, msg.participantId, msg.requestId);
                 break;
             case 'bot.say':
-                session.say(msg.segmentId, msg.text, msg.maxMs, msg.lang);
+                session.say(msg.segmentId, msg.text, msg.maxMs, msg.lang, msg.onlyFor);
                 break;
             case 'bot.retract':
                 session.retract(msg.segmentId);

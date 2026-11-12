@@ -5,8 +5,9 @@
  * so a person with thousands of files never fills the prompt. What a tool returns never holds the address of a file,
  * so the media interceptors leave it alone.
  */
-import type { AdminApiService, ArtifactCall, BotFileView, BotFilesFound } from '../server/AdminApiService';
-import { ArtifactCallError } from '../server/AdminApiService';
+import type { AdminApiService, BotFileView, BotFilesFound, FileReachCall } from '../server/AdminApiService';
+import { ArtifactCallError, isUnknownField } from '../server/AdminApiService';
+import { ASK_IN_PRIVATE } from './PrivateAnswers';
 import { fileNote, type FileKind, type FileStore } from '../services/ChatFiles';
 import { isArtifactId } from './ArtifactReferences';
 import type { BotLimits } from './types';
@@ -102,7 +103,10 @@ export function fileToolDefinitions(options: { artifacts: boolean }): Array<{ ty
 /** Who is asking and where, and how this bot reads and sends files, for one turn. */
 export interface FileToolContext {
     admin: Pick<AdminApiService, 'findBotFiles' | 'getBotFile' | 'readBotFile'>;
-    call: ArtifactCall;
+    /** Who and where; for a reply other people read (#1993), also that it is one and who else is there. */
+    call: FileReachCall;
+    /** Other people read this reply (#1993): only files all of them were there for are found, read or sent. */
+    everyoneHere?: boolean;
     limits: Pick<BotLimits, 'findResults' | 'partChars' | 'fileTextChars'>;
     /** Artifacts are on here, so a search finds them too. */
     artifacts: boolean;
@@ -125,10 +129,13 @@ function argPlace(value: unknown): number | null {
 }
 
 /** What the model hears when Orbit says no, in words it can pass on. Never a file's content. */
-export function describeFileError(error: unknown): string {
+export function describeFileError(error: unknown, everyoneHere = false): string {
     if (error instanceof ArtifactCallError) {
+        // An Orbit from before it kept who was there for a file (#1993): nothing is used in front of other people
+        if (everyoneHere && isUnknownField(error)) return "Files can't be looked up while other people are here yet. Say so in one short line.";
         switch (error.code) {
             case 'not_found':
+                if (everyoneHere) return `There's no file with that id that everyone here was shown. ${ASK_IN_PRIVATE}`;
                 return "There's no file with that id that this person can use here. find_files lists the ones they can.";
             case 'not_available':
                 return "Earlier files can't be looked up here yet. Say so simply, and answer from the conversation.";
@@ -170,7 +177,7 @@ export async function runFileTool(name: string, args: Record<string, unknown>, c
                 return { error: `Unknown tool ${name}` };
         }
     } catch (error) {
-        return { error: describeFileError(error) };
+        return { error: describeFileError(error, context.everyoneHere === true) };
     }
 }
 
@@ -197,7 +204,7 @@ async function findFiles(args: Record<string, unknown>, context: FileToolContext
         ...(page && page >= 1 ? { page } : {}),
     });
     const items = context.artifacts ? found.items : found.items.filter((item) => item.type === 'file');
-    return { items, total: found.total, page: found.page, pages: found.pages, matched: found.matched, words: words || null };
+    return { items, total: found.total, page: found.page, pages: found.pages, matched: found.matched, words: words || null, ...(context.everyoneHere ? { everyoneHere: true } : {}) };
 }
 
 async function openFile(args: Record<string, unknown>, context: FileToolContext): Promise<Record<string, unknown>> {
@@ -295,7 +302,7 @@ export function formatFileResult(name: string, result: Record<string, unknown>):
                 return `${name}: There are ${result.total} in all, on ${result.pages} pages; page ${result.page} is past the last one.`;
             }
             if (items.length === 0) {
-                return `${name}: Nothing found${result.words ? ` for "${oneLine(String(result.words))}"` : ''}. Try fewer or other words, or no type.`;
+                return `${name}: Nothing found${result.words ? ` for "${oneLine(String(result.words))}"` : ''}. Try fewer or other words, or no type.${result.everyoneHere ? ` ${ASK_IN_PRIVATE}` : ''}`;
             }
             const lines = items.map((item) => {
                 if (item.type === 'artifact') {

@@ -9,6 +9,7 @@
  */
 
 import { withoutFileNotes } from '../services/ChatFiles';
+import { copyHeard, heardAlso, heardByBoth, mayUse, nothingSaid, type Heard, type MemoryView } from './Heard';
 
 /** Recent messages a reply reads until Orbit serves the bot's own number: the recommended "Messages it remembers". */
 const DEFAULT_HISTORY_WINDOW = 20;
@@ -23,6 +24,8 @@ export interface ConversationMessage {
     mediaType?: string;
     /** MIME type of the attached file */
     mimeType?: string;
+    /** Where it was said and who else was there (#1993). None: from before this was kept, so private. */
+    heard?: Heard;
 }
 
 export interface EmotionalWound {
@@ -31,6 +34,8 @@ export interface EmotionalWound {
     timestamp: number;
     trigger: string;        // The message that caused it
     healed: number;         // 0-100, how much it has healed (100 = fully healed)
+    /** Where the person said what hurt (#1993): a reply other people read knows of it only if they were there. */
+    heard?: Heard;
 }
 
 export interface EmotionalState {
@@ -61,6 +66,11 @@ export interface PersonalInfo {
     preferences?: string[];     // Likes, dislikes, interests
     facts: Map<string, string>; // Key-value facts (e.g., "favorite_color" -> "blue")
     lastInfoUpdate: number;
+    /**
+     * Where each thing above was said (#1993), by `name`, `birthday`, `pref:<what>` and `fact:<key>`. A thing with no
+     * entry is from before this was kept, or its place is not known: private.
+     */
+    heard?: Record<string, Heard>;
 }
 
 export interface RelationshipContext {
@@ -72,6 +82,8 @@ export interface RelationshipContext {
         event: string;
         timestamp: number;
         description: string;
+        /** Where what it is about was said (#1993). None: private. */
+        heard?: Heard;
     }>;
 }
 
@@ -176,6 +188,44 @@ export class ConversationMemory {
     }
 
     /**
+     * Tells where a line is being said and who else is there (#1993). Until it is set nothing is stamped, so all of it is
+     * private. `sender` says whose line it is: the bot's own reply may have gone to its person alone.
+     */
+    /** By memory: where the line the reply being made answers was heard (see `turnStarts`). */
+    private readonly turns = new WeakMap<BotPlayerMemory, { heard: Heard | undefined; told?: true }>();
+    private whoHeard?: (botId: string, playerId: number, spaceName: string, sender?: 'bot' | 'person') => Heard | undefined;
+
+    /** Set once by the bot server: the one place that knows a direct message from a bubble, and who is in the bubble. */
+    useHeard(whoHeard: (botId: string, playerId: number, spaceName: string, sender?: 'bot' | 'person') => Heard | undefined): void {
+        this.whoHeard = whoHeard;
+    }
+
+    /**
+     * Where something said in this space right now is heard, and by whom. Undefined when that cannot be told: what is
+     * kept then counts as private. Never throws.
+     */
+    heardIn(botId: string, playerId: number, spaceName: string | undefined, sender?: 'bot' | 'person'): Heard | undefined {
+        if (!spaceName || !this.whoHeard) return undefined;
+        try {
+            return copyHeard(this.whoHeard(botId, playerId, spaceName, sender));
+        } catch (error) {
+            console.warn('[ConversationMemory] Could not tell who heard a line, so it is kept as private:', error instanceof Error ? error.message : error);
+            return undefined;
+        }
+    }
+
+    /**
+     * Stamps one thing known about a person with where it was said. A new value takes the new place (or none). The same
+     * value said again adds whoever heard it this time: they have all heard it now.
+     */
+    private stampInfo(info: PersonalInfo, key: string, heard: Heard | undefined, changed: boolean): void {
+        const stamps = (info.heard ??= {});
+        const next = changed ? copyHeard(heard) : heardAlso(stamps[key], heard);
+        if (next) stamps[key] = next;
+        else delete stamps[key];
+    }
+
+    /**
      * Clean bot message before storing (remove think tags, tool markers, etc.)
      */
     private cleanBotMessage(message: string): string {
@@ -234,7 +284,9 @@ export class ConversationMemory {
         sender: 'bot' | 'person',
         spaceName?: string,
         /** False for a line the system wrote in the person's turn (about a card they tapped): nothing is learned about them from it. */
-        learn = true
+        learn = true,
+        /** Who heard it when it was said, for a line kept a while after (its files were read first). Otherwise asked now. */
+        arrived?: { heard: Heard | undefined }
     ): void {
         const memory = this.getOrCreateMemory(botId, playerId);
         const now = Date.now();
@@ -245,12 +297,16 @@ export class ConversationMemory {
             cleanedMessage = this.cleanBotMessage(message);
         }
 
+        // Where it is said and who else is there (#1993): kept with the line, and with what is learned from it
+        const heard = arrived ? copyHeard(arrived.heard) : this.heardIn(botId, playerId, spaceName, sender);
+
         // Add message to history
         memory.conversationHistory.push({
             message: cleanedMessage,
             sender,
             timestamp: now,
             spaceName,
+            ...(heard ? { heard } : {}),
         });
 
         // Trim history if too long: never below what this bot's replies read
@@ -271,8 +327,19 @@ export class ConversationMemory {
         
         // Extract personal information (birthday, name, preferences, facts)
         if (sender === 'person' && learn) {
-            this.extractPersonalInfo(botId, playerId, withoutFileNotes(message));
+            this.extractPersonalInfo(botId, playerId, withoutFileNotes(message), heard);
         }
+    }
+
+    /**
+     * A reply only this person read, in a space where other people were (#1993): kept as said with nobody else there,
+     * so it is never part of an answer anyone else reads.
+     */
+    addPrivateReply(botId: string, playerId: number, message: string, spaceName: string): void {
+        this.addMessage(botId, playerId, message, 'bot', spaceName);
+        const history = this.getMemory(botId, playerId)?.conversationHistory;
+        const line = history?.[history.length - 1];
+        if (line?.sender === 'bot') line.heard = { place: 'nearby', with: [] };
     }
 
     /**
@@ -381,11 +448,16 @@ export class ConversationMemory {
     }
 
     /**
-     * Extract and store personal information from message
+     * Extract and store personal information from message.
+     *
+     * `where` is the space the message was said in (or where it was heard, when the caller already knows): each thing
+     * learned is stamped with it (#1993). Without it, what is learned counts as private.
      */
-    extractPersonalInfo(botId: string, playerId: number, message: string): void {
+    extractPersonalInfo(botId: string, playerId: number, message: string, where?: string | Heard): void {
         const memory = this.getOrCreateMemory(botId, playerId);
         const lowerMessage = message.toLowerCase();
+        const heard = typeof where === 'string' ? this.heardIn(botId, playerId, where) : copyHeard(where);
+        const info = memory.personalInfo;
 
         // Extract birthday - check for simple "its my birthday" first
         // Only trigger once per conversation (check if already set today)
@@ -396,11 +468,12 @@ export class ConversationMemory {
             /(?:my )?birthday (?:is )?today/i.test(lowerMessage))) {
             // Today is their birthday!
             const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+            this.stampInfo(info, 'birthday', heard, memory.personalInfo.birthday !== today);
             memory.personalInfo.birthday = today;
             memory.personalInfo.lastInfoUpdate = Date.now();
             memory.personalInfo.facts.set('birthday_today', 'true');
             memory.personalInfo.facts.set('birthday_mentioned_at', Date.now().toString());
-            this.addImportantEvent(memory, 'birthday_today', `Player said today is their birthday!`);
+            this.addImportantEvent(memory, 'birthday_today', `Player said today is their birthday!`, heard);
         } else if (!alreadyKnowsBirthdayToday) {
             // Check for specific date mentions
             const birthdayPatterns = [
@@ -411,9 +484,10 @@ export class ConversationMemory {
             for (const pattern of birthdayPatterns) {
                 const match = message.match(pattern);
                 if (match && match[1]) {
+                    this.stampInfo(info, 'birthday', heard, memory.personalInfo.birthday !== match[1]);
                     memory.personalInfo.birthday = match[1];
                     memory.personalInfo.lastInfoUpdate = Date.now();
-                    this.addImportantEvent(memory, 'birthday_mentioned', `Player mentioned birthday: ${match[1]}`);
+                    this.addImportantEvent(memory, 'birthday_mentioned', `Player mentioned birthday: ${match[1]}`, heard);
                     break;
                 }
             }
@@ -428,6 +502,7 @@ export class ConversationMemory {
         for (const pattern of namePatterns) {
             const match = message.match(pattern);
             if (match && match[1] && match[1].length > 1 && match[1].length < 20) {
+                this.stampInfo(info, 'name', heard, memory.personalInfo.name !== match[1]);
                 memory.personalInfo.name = match[1];
                 memory.personalInfo.lastInfoUpdate = Date.now();
                 break;
@@ -443,7 +518,9 @@ export class ConversationMemory {
                     memory.personalInfo.preferences = [];
                 }
                 const preference = likeMatch[1].trim();
-                if (!memory.personalInfo.preferences.includes(preference)) {
+                const known = memory.personalInfo.preferences.includes(preference);
+                this.stampInfo(info, `pref:${preference}`, heard, !known);
+                if (!known) {
                     memory.personalInfo.preferences.push(preference);
                     memory.personalInfo.lastInfoUpdate = Date.now();
                 }
@@ -461,6 +538,7 @@ export class ConversationMemory {
             const match = message.match(pattern);
             if (match && match[1]) {
                 const state = match[1].toLowerCase();
+                this.stampInfo(info, 'fact:current_state', heard, memory.personalInfo.facts.get('current_state') !== state);
                 memory.personalInfo.facts.set('current_state', state);
                 memory.personalInfo.facts.set(`${state}_mentioned_at`, Date.now().toString());
                 memory.personalInfo.lastInfoUpdate = Date.now();
@@ -472,11 +550,13 @@ export class ConversationMemory {
     /**
      * Add an important event to relationship history
      */
-    addImportantEvent(memory: BotPlayerMemory, eventType: string, description: string): void {
+    addImportantEvent(memory: BotPlayerMemory, eventType: string, description: string, heard?: Heard): void {
+        const stamp = copyHeard(heard);
         memory.relationship.importantEvents.push({
             event: eventType,
             timestamp: Date.now(),
             description,
+            ...(stamp ? { heard: stamp } : {}),
         });
 
         // Keep only last 20 events
@@ -514,6 +594,15 @@ export class ConversationMemory {
     /**
      * Get personal information for a player
      */
+    /**
+     * The name this person gave the bot, when a reply for this view may use it (#1993): a name given privately is not
+     * said in front of other people.
+     */
+    nameFor(botId: string, playerId: number, view: MemoryView = 'all'): string | undefined {
+        const info = this.getMemory(botId, playerId)?.personalInfo;
+        return info?.name && mayUse(info.heard?.name, view) ? info.name : undefined;
+    }
+
     getPersonalInfo(botId: string, playerId: number): PersonalInfo | null {
         const memory = this.getMemory(botId, playerId);
         return memory?.personalInfo || null;
@@ -751,22 +840,70 @@ export class ConversationMemory {
             woundType = 'betrayal';
         }
 
+        // What hurt is something the person said since the bot last spoke: the wound is heard where that was (#1993).
+        // With more than one such line (they wrote again while the answer was being made), it cannot be told which
+        // one hurt, so only the people who heard every one of them heard the wound, and nobody if any was private.
+        let heard: Heard | undefined;
+        let lines = 0;
+        for (let i = memory.conversationHistory.length - 1; i >= 0; i--) {
+            const line = memory.conversationHistory[i];
+            if (line.sender !== 'person') {
+                if (lines > 0) break;
+                continue;
+            }
+            const stamp = copyHeard(line.heard);
+            heard = lines++ === 0 ? stamp : heardByBoth(heard, stamp);
+            if (!heard) break;
+        }
+        // The line the reply now ending was started for counts too, wherever it is in the history by now: an answer
+        // to an earlier message may have been kept after it, and a later line may have come in front of other people
+        const turn = this.turns.get(memory);
+        if (turn) heard = lines === 0 ? copyHeard(turn.heard) : heardByBoth(heard, turn.heard);
+
         const wound: EmotionalWound = {
             type: woundType,
             severity: Math.min(10, severity),
             timestamp: Date.now(),
             trigger: `AI-detected ${context} insult (severity: ${severity})`,
             healed: 0,
+            ...(heard ? { heard } : {}),
         };
 
         memory.emotions.wounds.push(wound);
         
         this.addImportantEvent(memory, `emotional_wound_${woundType}`, 
-            `AI detected ${woundType} (severity: ${severity})`);
+            `AI detected ${woundType} (severity: ${severity})`, heard);
 
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[ConversationMemory] ⚠️ AI emotional wound created: ${woundType} (severity: ${severity})`);
         }
+    }
+
+    /**
+     * A reply to this person starts now: the newest thing they said is what it answers, and where that was heard is
+     * kept until the next reply starts, for a wound the reply's analysis finds (#1993).
+     */
+    turnStarts(botId: string, playerId: number): void {
+        const memory = this.getMemory(botId, playerId);
+        if (!memory) return;
+        // The behaviour said which line this reply answers (see `turnAnswers`): that holds, whatever was said since
+        if (this.turns.get(memory)?.told) return;
+        this.turns.set(memory, { heard: copyHeard(this.lastPersonLine(botId, playerId)?.heard) });
+    }
+
+    /**
+     * The reply now starting answers these lines, heard by these people when each came (#1993). A line that waited in
+     * line is no longer the newest by the time it is answered, so the one who kept it in line says where it was heard.
+     * Several lines answered as one: only the people who heard every one of them, and nobody if any was private.
+     */
+    turnAnswers(botId: string, playerId: number, lines: ReadonlyArray<Heard | undefined>): void {
+        const memory = this.getMemory(botId, playerId);
+        if (!memory) return;
+        let heard: Heard | undefined;
+        lines.forEach((line, index) => {
+            heard = index === 0 ? copyHeard(line) : heardByBoth(heard, line);
+        });
+        this.turns.set(memory, { heard, told: true });
     }
 
     /**
@@ -778,7 +915,7 @@ export class ConversationMemory {
 
         if (memory.relationship.totalConversations === 0) {
             memory.relationship.firstMet = now;
-            this.addImportantEvent(memory, 'first_meeting', 'First conversation with player');
+            this.addImportantEvent(memory, 'first_meeting', 'First conversation with player', nothingSaid());
         }
 
         memory.relationship.totalConversations++;
@@ -817,20 +954,54 @@ export class ConversationMemory {
     }
 
     /**
+     * Whether a reply for this view would be built without something the bot knows about this person (#1993): only then
+     * can a question need more than everyone here may read.
+     */
+    leavesOut(botId: string, playerId: number, view: MemoryView): boolean {
+        // The mood line is rendered the same for both views here: what it says of the person's mood is kept out of a
+        // group on purpose (see getConversationContext), and that must not count as "something was left out".
+        return (
+            view !== 'all' &&
+            this.buildConversationContext(botId, playerId, 'all', true) !== this.buildConversationContext(botId, playerId, view, true)
+        );
+    }
+
+    /**
      * Get conversation context for AI (formatted for prompt)
      * Returns natural, human-like context that feels like remembering a friend
+     *
+     * This is the one place memory becomes words a model reads. `view` says who will read the reply (#1993): 'all' is
+     * the person alone (a direct message, or nobody else in the bubble), and everything is there. With other people
+     * present, only what all of them were there for is: a line said in a direct message or alone with the bot, a fact
+     * learned there and anything kept before places were kept is left out entirely, so the reply holds no secret to keep.
      */
-    getConversationContext(botId: string, playerId: number): string {
+    getConversationContext(botId: string, playerId: number, view: MemoryView = 'all'): string {
+        return this.buildConversationContext(botId, playerId, view, false);
+    }
+
+    /**
+     * `comparing` is for leavesOut only: it renders the mood line the same for every view (the bot's own feeling, nothing
+     * about the person's mood, no extra sentence), so two views differ only by what was heard.
+     */
+    private buildConversationContext(botId: string, playerId: number, view: MemoryView, comparing: boolean): string {
         const memory = this.getMemory(botId, playerId);
         if (!memory) {
             return '';
         }
 
         const context: string[] = [];
-        const playerName = memory.personalInfo.name || `this person`;
         const emotions = memory.emotions;
         const relationship = memory.relationship;
-        const personalInfo = memory.personalInfo;
+        const stamps = memory.personalInfo.heard ?? {};
+        const known = (key: string) => mayUse(stamps[key], view);
+        // What the reply may use of what is known about them
+        const personalInfo = {
+            name: memory.personalInfo.name && known('name') ? memory.personalInfo.name : undefined,
+            birthday: memory.personalInfo.birthday && known('birthday') ? memory.personalInfo.birthday : undefined,
+            preferences: (memory.personalInfo.preferences ?? []).filter((preference) => known(`pref:${preference}`)),
+            facts: new Map([...memory.personalInfo.facts.entries()].filter(([key]) => known(`fact:${key}`))),
+        };
+        const playerName = personalInfo.name || `this person`;
 
         // Build natural relationship narrative
         const daysSinceFirstMet = Math.floor((Date.now() - relationship.firstMet) / (1000 * 60 * 60 * 24));
@@ -895,25 +1066,35 @@ export class ConversationMemory {
         }
 
         // Natural emotion expression
+        // With other people here, how the person seemed is left out: the bot reads it from private talks too, so saying
+        // it in front of others could give a private moment away. The bot keeps its own feeling, and keeps the reason to
+        // itself, so it does not turn flat the moment a third person walks up.
+        const inGroup = view !== 'all';
         const botFeelingsDesc = this.describeEmotionNatural(emotions.botEmotion);
-        const personFeelingsDesc = this.describeEmotionNatural(emotions.personEmotion);
-        
-        if (botFeelingsDesc || personFeelingsDesc) {
+        const personFeelingsDesc = inGroup ? '' : this.describeEmotionNatural(emotions.personEmotion);
+        const groupFeelingNote = inGroup && !comparing && botFeelingsDesc;
+
+        if (botFeelingsDesc || (personFeelingsDesc && !comparing)) {
             const emotionParts: string[] = [];
             if (botFeelingsDesc) {
                 emotionParts.push(`You feel ${botFeelingsDesc}`);
             }
-            if (personFeelingsDesc) {
+            if (personFeelingsDesc && !comparing) {
                 emotionParts.push(`They seem ${personFeelingsDesc}`);
             }
             if (emotionParts.length > 0) {
                 context.push(`\nEmotional context: ${emotionParts.join(', ')}.`);
             }
+            if (groupFeelingNote) {
+                context.push(
+                    `Other people are here: keep the reason for how you feel to yourself, and do not bring up anything from your private talks.`
+                );
+            }
         }
 
         // Emotional wounds - persistent negative experiences that affect behavior
         if (emotions.wounds && emotions.wounds.length > 0) {
-            const activeWounds = emotions.wounds.filter(w => w.healed < 50);
+            const activeWounds = emotions.wounds.filter(w => w.healed < 50 && mayUse(w.heard, view));
             if (activeWounds.length > 0) {
                 context.push(`\n⚠️ EMOTIONAL WOUNDS (These deeply affect how you feel about this person):`);
                 for (const wound of activeWounds) {
@@ -953,7 +1134,8 @@ export class ConversationMemory {
         }
 
         // Recent conversation (natural flow with timestamps for context)
-        const recentHistory = memory.conversationHistory.slice(-this.windowFor(botId)); // "Messages it remembers" (Orbit #666)
+        // "Messages it remembers" (Orbit #666), then what this reply may read of them: never further back than the bot reads alone
+        const recentHistory = memory.conversationHistory.slice(-this.windowFor(botId)).filter((msg) => mayUse(msg.heard, view));
         if (recentHistory.length > 0) {
             context.push(`\nRecent conversation:`);
             recentHistory.forEach((msg, index) => {
@@ -969,7 +1151,7 @@ export class ConversationMemory {
 
         // Important events (natural memory)
         if (memory.relationship.importantEvents.length > 0) {
-            const recentEvents = memory.relationship.importantEvents.slice(-3); // Last 3 events
+            const recentEvents = memory.relationship.importantEvents.slice(-3).filter((event) => mayUse(event.heard, view)); // Last 3 events
             if (recentEvents.length > 0) {
                 context.push(`\nNotable moments: ${recentEvents.map(e => e.description).join('; ')}.`);
             }

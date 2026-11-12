@@ -1567,6 +1567,7 @@ message SpaceMessage {
   optional SpaceMessageSpoken spoken = 12; // Set on the line made from a person's own speech to a voice bot
   optional uint32 voiceDurationMs = 13; // A voice note's length, measured by its sender
   repeated uint32 voiceWaveform = 14;   // A voice note's shape, 0 to 1024 per point (as Matrix writes it)
+  optional string onlyFor = 15;         // What a bot sends in a reply to someone who was alone with it (#1993): the space user id of that person. The pusher delivers it to nobody else. Not set: everyone in the space, as before
 }
 
 /**
@@ -1638,6 +1639,8 @@ message SpaceStreamMessage {
   optional bool stoppedBySpeech = 9; // A voice bot's voice stopped part-way through responseId because someone spoke over it (#1665): the message is marked, nothing else changes
   optional string mood = 10;   // On a bot's final reply: the emoji for how the bot feels as it says it (#1667), drawn beside its Woka while it talks
   optional bool speaking = 11; // A voice bot started (true) or stopped (false) saying responseId out loud (round 8): the reply shows Stop speaking meanwhile; nothing else changes
+  optional string onlyFor = 12; // A bot's reply to someone who was alone with it (#1993): the space user id of that person. The pusher delivers it to nobody else, so someone who walks up while it is written never receives any of it. Not set: everyone in the space, as before
+  optional string keptQuiet = 13; // A voice bot did not say responseId out loud ("unsaid"), or stopped saying it part-way ("stopped"), because it was written for one person and others would have heard it (#1993): the message is marked for that person, nothing else changes
 }
 
 message PrivateEvent {

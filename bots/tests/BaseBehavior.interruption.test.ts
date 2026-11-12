@@ -246,6 +246,33 @@ describe('BaseBehavior interruption routing', () => {
         expect(state.messageQueue.map((m: any) => m.originalMessage)).toEqual(['after']);
     });
 
+    it('a line that waits in line is answered with who heard it when it came, not who hears the newest line (#1993)', async () => {
+        const alone = { place: 'nearby', with: [] };
+        const withSara = { place: 'nearby', with: ['uuid-sara'] };
+        const last: { heard: unknown } = { heard: alone };
+        const turnAnswers = vi.fn();
+        (behavior as any).conversationMemory = { lastPersonLine: () => last, turnAnswers };
+        behavior.testStartGeneration(SENDER, SPACE);
+        ai.quickClassify.mockResolvedValue({ action: 'queue', message: 'one moment' });
+        const state = behavior.getState(SENDER);
+
+        // Said alone with a file, then two lines in front of Sara: all three wait for the answer being written
+        await (behavior as any).safeGenerateResponse(SPACE, SENDER, 'look', 'look', 'bot-1', async () => {}, 'https://x/a.png', 'image');
+        last.heard = withSara;
+        await (behavior as any).safeGenerateResponse(SPACE, SENDER, 'and', 'and', 'bot-1', async () => {});
+        await (behavior as any).safeGenerateResponse(SPACE, SENDER, 'also', 'also', 'bot-1', async () => {});
+        expect(state.messageQueue.map((m: any) => m.heard)).toEqual([[alone], [withSara], [withSara]]);
+        expect(turnAnswers).not.toHaveBeenCalled();
+
+        // The file is answered on its own, as heard by nobody else, though the newest line was heard by Sara
+        state.isGenerating = false;
+        behavior.testFlushMessageQueue(SENDER);
+        // The two words that waited are then answered as one
+        await vi.waitFor(() => expect(turnAnswers).toHaveBeenCalledTimes(2));
+        expect(turnAnswers.mock.calls[0]).toEqual(['bot-1', SENDER, [alone]]);
+        expect(turnAnswers.mock.calls[1]).toEqual(['bot-1', SENDER, [withSara, withSara]]);
+    });
+
     it('abortCurrentStream: finalizes the active bubble id, not a phantom (fix C1)', () => {
         behavior.testStartGeneration(SENDER, SPACE);
         behavior.testTrackActiveResponseId(SENDER, 'resp-123');

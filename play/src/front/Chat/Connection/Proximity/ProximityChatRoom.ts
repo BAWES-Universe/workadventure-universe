@@ -18,6 +18,7 @@ import type {
     ChatMessageReaction,
     ChatMessageType,
     ChatRoom,
+    KeptQuiet,
     SharedFileInfo,
 } from "../ChatConnection";
 import { TYPING_STOP_GRACE_MS } from "../ChatConnection";
@@ -40,6 +41,7 @@ import { parseNoteTranscript, type NoteTranscript } from "../../Bots/BotTranscri
 import { fileNameOfLink } from "../../../FileViewer/fileKinds";
 import { parseBotReplyLimit, type BotReplyLimit } from "../../Bots/BotReplyLimit";
 import { botAskTapJson, readNearbyBotAsk, type BotAsk, type BotAskTap } from "../../Bots/BotAsk";
+import { continuePrivatelyTapJson } from "../../Bots/PrivateAnswer";
 import {
     afterTypedSend,
     applyDraftEvent,
@@ -211,6 +213,8 @@ export class ProximityChatMessage implements ChatMessage {
     readonly fromSpaceUserId?: string;
     /** Whether a voice bot's voice stopped part-way through this reply because someone spoke over it (#1665). */
     readonly stoppedBySpeech: Writable<boolean> = writable(false);
+    /** Whether a voice bot kept this reply, written for this person alone, from being heard by someone else too (#1993). */
+    readonly keptQuiet: Writable<KeptQuiet> = writable("");
     /** Set on a bot's streamed reply: which reply it is, so its voice can be stopped while it is being heard (round 8). */
     voiceReply?: { responseId: string; botSpaceUserId: string };
     constructor(
@@ -1086,6 +1090,17 @@ export class ProximityChatRoom implements ChatRoom {
         if (reply && reply.sender === sender) reply.message.stoppedBySpeech.set(true);
     }
 
+    /**
+     * A voice bot did not say one of its replies out loud, or stopped saying it, because it was written for this person
+     * alone and someone else would have heard it (#1993). Only the bot that wrote the reply can say so: the line is
+     * drawn under it, and the text is untouched. Anything but the two words the bot may send is ignored.
+     */
+    private markKeptQuiet(sender: string, responseId: string, how: string): void {
+        if (how !== "unsaid" && how !== "stopped") return;
+        const reply = this.botReplies.get(responseId);
+        if (reply && reply.sender === sender) reply.message.keptQuiet.set(how);
+    }
+
     /** What a voice bot says it hears. A finished stretch whose every word came through goes out as this person's own line. */
     private onVoiceDraft(event: NonNullable<ReturnType<typeof parseBotVoiceDraft>>): void {
         const change = applyDraftEvent(get(this.voiceDrafts), event);
@@ -1243,6 +1258,24 @@ export class ProximityChatRoom implements ChatRoom {
             shown.botSpaceUserId
         );
         return Promise.resolve();
+    }
+
+    /**
+     * "Continue privately" on a reply a bot wrote for this person alone (#1993): tells that bot, and nobody else, which
+     * direct chat they opened with it, so the same answer is there for them to carry on from. Says nothing when the
+     * bot is no longer here: the answer then reaches that chat with their next message there.
+     */
+    continuedPrivately(reply: Pick<ChatMessage, "id" | "sender">, directRoomId: string): void {
+        const space = this._space;
+        const botSpaceUserId = reply.sender?.spaceUserId;
+        if (!space || space.destroyed || !botSpaceUserId || !this.users?.has(botSpaceUserId)) return;
+        space.emitPrivateMessage(
+            {
+                $case: "botAskAnswer",
+                botAskAnswer: { askId: reply.id, revision: 0, tap: continuePrivatelyTapJson(directRoomId) },
+            },
+            botSpaceUserId
+        );
     }
 
     /**
@@ -1916,6 +1949,10 @@ export class ProximityChatRoom implements ChatRoom {
                 const stream = event.spaceStreamMessage;
                 if (stream.stoppedBySpeech) {
                     this.markStoppedBySpeech(event.sender, stream.responseId);
+                    return;
+                }
+                if (stream.keptQuiet !== undefined) {
+                    this.markKeptQuiet(event.sender, stream.responseId, stream.keptQuiet);
                     return;
                 }
                 // Whether a reply is being heard is for its Stop speaking button (see VoiceBots): the chat has nothing to add

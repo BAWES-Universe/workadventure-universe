@@ -107,17 +107,21 @@ function showRoom(room: ChatRoom): void {
     openChat("person");
 }
 
-export const openDirectChatRoom = async (chatID: string) => {
+/** Opens the direct chat with this person or bot, and answers with it (nothing when it could not be opened). */
+export const openDirectChatRoom = async (chatID: string): Promise<ChatRoom | undefined> => {
     try {
         if (!get(userIsConnected)) {
             openModal(RequiresLoginForChatModal);
-            return;
+            return undefined;
         }
         // There is no chat with yourself (another of your tabs or devices has your chat id).
-        if (chatID === localUserStore.getChatId()) return;
-        showRoom(await findDirectChatRoom(chatID, false));
+        if (chatID === localUserStore.getChatId()) return undefined;
+        const room = await findDirectChatRoom(chatID, false);
+        showRoom(room);
+        return room;
     } catch (error) {
         showDirectChatFailure(error, chatID);
+        return undefined;
     }
 };
 

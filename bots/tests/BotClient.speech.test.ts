@@ -8,12 +8,24 @@ import { BotClient } from '../client/BotClient';
 import type { BotConfiguration } from '../server/AdminApiService';
 
 const links: { options: any; send: ReturnType<typeof vi.fn> }[] = [];
+/**
+ * What the worker says it can do when it accepts a session. `say.onlyFor`: it sends a reply for one person to that
+ * person only (#1993). Undefined: a worker from before, which says nothing of the kind and speaks to the whole bubble.
+ */
+const worker: { features: string[] | undefined } = { features: ['say.onlyFor'] };
 vi.mock('../voice/VoiceLink', () => ({
     WorkerLink: class {
         options: any;
         start = vi.fn();
         isUp = () => true;
-        send = vi.fn(() => true);
+        // The worker answers a session it accepted, as the real one does
+        send = vi.fn((m: any) => {
+            if (m.type === 'session.open') {
+                const features = worker.features;
+                queueMicrotask(() => this.options.onMessage({ type: 'session.start', sessionId: m.sessionId, bubbleId: m.bubbleId, mode: 'talk', engine: { id: 'e', kind: 'ts' }, ...(features ? { features } : {}) }));
+            }
+            return true;
+        });
         close = vi.fn();
         constructor(options: any) {
             this.options = options;
@@ -68,8 +80,10 @@ async function voiceBot(botId = 'voice-1') {
         },
     });
     const sessionId = links[0].send.mock.calls[0][0].sessionId as string;
-    const worker = (m: object) => links[0].options.onMessage({ sessionId, participantId: 'room_3', epoch: 1, ...m });
-    return { ...t, worker };
+    // The worker's answer to the session has arrived
+    await Promise.resolve();
+    const fromWorker = (m: object) => links[0].options.onMessage({ sessionId, participantId: 'room_3', epoch: 1, ...m });
+    return { ...t, worker: fromWorker };
 }
 
 beforeEach(() => {
@@ -79,6 +93,7 @@ beforeEach(() => {
 
 afterEach(() => {
     links.length = 0;
+    worker.features = ['say.onlyFor'];
     vi.restoreAllMocks();
 });
 
@@ -107,7 +122,8 @@ describe('a voice bot says the words it writes', () => {
         t.bot.sendStreamMessage(SPACE, 'bot-voice-1-player-3-aaa', 'there.', false);
         expect(says()).toEqual([]);
         t.bot.sendStreamMessage(SPACE, 'bot-voice-1-player-3-aaa', '', true, 'Hello there.');
-        expect(says()).toEqual([{ type: 'bot.say', sessionId: expect.any(String), segmentId: 's1', text: 'Hello there.', committed: true, maxMs: 60000 }]);
+        // Khalid is alone with the bot, so the reply is his alone: the worker is given him with it, and sends it to nobody else (#1993)
+        expect(says()).toEqual([{ type: 'bot.say', sessionId: expect.any(String), segmentId: 's1', text: 'Hello there.', committed: true, maxMs: 60000, onlyFor: 'room_3' }]);
         // The chat had it first
         expect(streamed(t.send).at(-1)).toEqual(['bot-voice-1-player-3-aaa', true, 'Hello there.', false]);
     });
@@ -292,5 +308,107 @@ describe('Stop speaking (round 8)', () => {
         await tapStop(t, 'bot-voice-1-player-3-aaa');
         await tapStop(t, 'bot-voice-1-player-3-zzz');
         expect(streamed(t.send)).toEqual([]);
+    });
+});
+
+describe('a reply for one person alone is said to that person and nobody else (#1993)', () => {
+    const REPLY = 'bot-voice-1-player-3-aaa';
+    const SARA = { spaceUserId: 'room_4', uuid: 'u4', tags: [], name: 'Sara' };
+    const walksUp = (t: Awaited<ReturnType<typeof voiceBot>>) => t.receive({ $case: 'addSpaceUserMessage', addSpaceUserMessage: { spaceName: SPACE, user: SARA } });
+    const toWorker = (type: string) => links[0].send.mock.calls.map(([m]) => m).filter((m) => m.type === type);
+    /** The lines the bot sent about a reply's voice, as [responseId, what, who it is for]. */
+    const notes = (send: ReturnType<typeof vi.fn>) =>
+        send.mock.calls
+            .map(([m]) => m.message?.publicEvent?.spaceEvent?.event?.spaceStreamMessage)
+            .filter((s) => s && (s.keptQuiet !== undefined || s.stoppedBySpeech !== undefined))
+            .map((s) => [s.responseId, s.keptQuiet ?? 'talked over', s.onlyFor]);
+
+    it('goes on being said when someone walks up: nothing is taken back, and nothing is marked', async () => {
+        const t = await voiceBot();
+        t.worker({ type: 'participant.join' });
+        t.bot.replyStarts(SPACE, 3, true);
+        t.bot.sendStreamMessage(SPACE, REPLY, '', true, 'Your interview is at 10.');
+        t.worker({ type: 'playback.progress', segmentId: 's1', playedMs: 300, totalMs: 3000, finished: false, interrupted: false });
+        expect(toWorker('bot.say')[0]).toMatchObject({ segmentId: 's1', onlyFor: 'room_3' });
+        t.send.mockClear();
+
+        await walksUp(t);
+        expect(toWorker('bot.retract')).toEqual([]);
+        expect(notes(t.send)).toEqual([]);
+
+        // Its audio ends as any reply's does, and what it told about being heard went to its person alone
+        t.worker({ type: 'playback.progress', segmentId: 's1', playedMs: 3000, totalMs: 3000, finished: true, interrupted: false, reason: 'completed' });
+        const speaking = t.send.mock.calls.map(([m]) => m.message?.publicEvent?.spaceEvent?.event?.spaceStreamMessage).filter((s) => s && s.speaking !== undefined);
+        expect(speaking.map((s) => [s.speaking, s.onlyFor])).toEqual([[false, 'room_3']]);
+    });
+
+    it('is still said to its person when someone walked up while it was being written', async () => {
+        const t = await voiceBot();
+        t.worker({ type: 'participant.join' });
+        t.bot.replyStarts(SPACE, 3, true);
+        t.bot.sendStreamMessage(SPACE, REPLY, 'Your interview ', false);
+        await walksUp(t);
+        t.bot.sendStreamMessage(SPACE, REPLY, '', true, 'Your interview is at 10.');
+
+        expect(toWorker('bot.say')).toEqual([expect.objectContaining({ text: 'Your interview is at 10.', onlyFor: 'room_3' })]);
+        expect(notes(t.send)).toEqual([]);
+    });
+
+    it('is marked for its person when the worker could not keep it to them: not said at all, or stopped part-way', async () => {
+        const t = await voiceBot();
+        t.worker({ type: 'participant.join' });
+        t.bot.replyStarts(SPACE, 3, true);
+        t.bot.sendStreamMessage(SPACE, REPLY, '', true, 'Your interview is at 10.');
+        t.send.mockClear();
+        t.worker({ type: 'playback.progress', segmentId: 's1', playedMs: 0, totalMs: 0, finished: true, interrupted: true, reason: 'private' });
+        expect(notes(t.send)).toEqual([[REPLY, 'unsaid', 'room_3']]);
+
+        t.bot.replyStarts(SPACE, 3, true);
+        t.bot.sendStreamMessage(SPACE, 'bot-voice-1-player-3-bbb', '', true, 'And your salary is 1,200.');
+        t.worker({ type: 'playback.progress', segmentId: 's2', playedMs: 300, totalMs: 3000, finished: false, interrupted: false });
+        t.send.mockClear();
+        t.worker({ type: 'playback.progress', segmentId: 's2', playedMs: 900, totalMs: 3000, finished: true, interrupted: true, reason: 'private' });
+        expect(notes(t.send)).toEqual([['bot-voice-1-player-3-bbb', 'stopped', 'room_3']]);
+    });
+
+    describe('with a worker from before, which speaks to the whole bubble', () => {
+        it('is said while its person is alone, with nobody named on it', async () => {
+            worker.features = undefined;
+            const t = await voiceBot();
+            t.worker({ type: 'participant.join' });
+            t.bot.replyStarts(SPACE, 3, true);
+            t.bot.sendStreamMessage(SPACE, REPLY, '', true, 'Your interview is at 10.');
+
+            expect(toWorker('bot.say')).toHaveLength(1);
+            expect(toWorker('bot.say')[0]).not.toHaveProperty('onlyFor');
+        });
+
+        it('stops when someone walks up, and its person is told why: not that someone spoke over it', async () => {
+            worker.features = undefined;
+            const t = await voiceBot();
+            t.worker({ type: 'participant.join' });
+            t.bot.replyStarts(SPACE, 3, true);
+            t.bot.sendStreamMessage(SPACE, REPLY, '', true, 'Your interview is at 10.');
+            t.worker({ type: 'playback.progress', segmentId: 's1', playedMs: 300, totalMs: 3000, finished: false, interrupted: false });
+            t.send.mockClear();
+
+            await walksUp(t);
+            expect(toWorker('bot.retract')).toEqual([{ type: 'bot.retract', sessionId: expect.any(String), segmentId: 's1' }]);
+            expect(notes(t.send)).toEqual([[REPLY, 'stopped', 'room_3']]);
+        });
+
+        it('is not said when someone walked up while it was being written, and its person is told why', async () => {
+            worker.features = undefined;
+            const t = await voiceBot();
+            t.worker({ type: 'participant.join' });
+            t.bot.replyStarts(SPACE, 3, true);
+            t.bot.sendStreamMessage(SPACE, REPLY, 'Your interview ', false);
+            await walksUp(t);
+            t.send.mockClear();
+            t.bot.sendStreamMessage(SPACE, REPLY, '', true, 'Your interview is at 10.');
+
+            expect(toWorker('bot.say')).toEqual([]);
+            expect(notes(t.send)).toEqual([[REPLY, 'unsaid', 'room_3']]);
+        });
     });
 });

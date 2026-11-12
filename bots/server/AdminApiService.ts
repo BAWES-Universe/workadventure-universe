@@ -7,6 +7,7 @@
 import axios, { type AxiosResponse } from 'axios';
 import * as Sentry from '@sentry/node';
 import { parseForgetNotice, type MemoryForgetHandler } from '../memory/ForgetNotice';
+import { SOMEONE_UNKNOWN } from '../memory/Heard';
 import type { WokaList } from '../matrix/wokaPicture';
 import type { VoiceActiveAnswer, VoiceCredentialsAnswer, VoiceHealthReport, VoiceLimits } from '../voice/VoiceSettings';
 
@@ -88,8 +89,48 @@ export interface ArtifactCall {
  * Read and change also carry the artifacts the person pointed at (game #1781): the one way a bot opens another bot's work.
  * Only these two routes take it; the list and the search refuse a body with fields they do not know.
  */
-export interface ArtifactReachCall extends ArtifactCall {
+export interface ArtifactReachCall extends ArtifactCall, ForEveryoneHere {
     referencedArtifactIds?: string[];
+}
+
+/**
+ * A call for a reply that other people in the bubble or meeting room read too (game #1993). Orbit then answers with only
+ * what all of them may see: of the artifacts what the chat shares, and of the files those every one of them was there for.
+ * Only the routes that read, change, list and find take it; the ones that make or add refuse a body with it.
+ */
+export interface ForEveryoneHere {
+    everyoneHere?: boolean;
+}
+
+/** For files, also everyone else who is there now, by who they are (their uuid): a file goes by who was there for it. */
+export interface FileReachCall extends ArtifactCall, ForEveryoneHere {
+    others?: string[];
+}
+
+/** What Orbit's file routes take as "everyone else who is there": at most this many people, each id at most this long. */
+const MAX_OTHERS_NAMED = 200;
+const MAX_PERSON_ID_CHARS = 320;
+
+/** Only who and where, for the routes that take nothing else. */
+function plainCall(call: ArtifactCall): ArtifactCall {
+    return { botId: call.botId, person: call.person, chat: call.chat };
+}
+
+/**
+ * Who reads a reply, as the file and artifact routes take it: nothing when the person is alone with the bot, and for a
+ * reply other people read, that it is one and who else is there.
+ */
+export function reachFor(present: readonly string[] | undefined): { everyoneHere?: boolean; others?: string[] } {
+    if (!present) return {};
+    // More people, or a longer id, than Orbit takes in one call: then someone there cannot be named to it, and it uses
+    // no file, as for anyone the bot cannot name
+    const named = present.length <= MAX_OTHERS_NAMED && present.every((id) => id.length <= MAX_PERSON_ID_CHARS);
+    return { everyoneHere: true, others: named ? [...present] : [SOMEONE_UNKNOWN] };
+}
+
+/** The answer of an Orbit from before a field in the body existed: its routes refuse a body they do not know. */
+export function isUnknownField(error: unknown): boolean {
+    return error instanceof ArtifactCallError && error.status === 400 && error.code === 'Invalid request data';
 }
 
 export interface ArtifactEdit {
@@ -154,6 +195,11 @@ export interface BotFileAdd {
     madePrompt?: string | null;
     lengthSeconds?: number | null;
     pages?: number | null;
+    /**
+     * Everyone else who was in the bubble or meeting room when it was put in the chat (game #1993), by who they are. Orbit
+     * keeps them with the person: a reply other people read uses the file only when all of them were there.
+     */
+    others?: string[];
 }
 
 /** A file in the bot's list as Orbit answers it. */
@@ -1429,7 +1475,7 @@ export class AdminApiService {
         timeoutMs?: number,
         media: ArtifactMediaUpload[] = []
     ): Promise<{ artifact: ArtifactSummary; version: ArtifactVersionSummary; hidden: boolean }> {
-        return this.artifactCall('api/artifacts', { ...call, ...artifact }, timeoutMs, media);
+        return this.artifactCall('api/artifacts', { ...plainCall(call), ...artifact }, timeoutMs, media);
     }
 
     /** Change one with small edits (or the whole new file). Every change is a new version. */
@@ -1452,9 +1498,12 @@ export class AdminApiService {
         return this.artifactCall(`api/artifacts/${encodeURIComponent(id)}/read`, { ...call, ...(version ? { version } : {}) });
     }
 
-    /** The artifacts made in this chat that the person may open, plus the ones this bot made for them in other chats, the most recently changed first. */
-    listArtifactsInChat(call: ArtifactCall): Promise<{ artifacts: ArtifactSummary[]; hidden: boolean }> {
-        return this.artifactCall('api/artifacts/in-chat', call);
+    /**
+     * The artifacts made in this chat that the person may open, plus the ones this bot made for them in other chats, the
+     * most recently changed first. For a reply other people read (`everyoneHere`), only this chat's that all of them may open.
+     */
+    listArtifactsInChat(call: ArtifactCall & ForEveryoneHere): Promise<{ artifacts: ArtifactSummary[]; hidden: boolean }> {
+        return this.artifactCall('api/artifacts/in-chat', { ...plainCall(call), ...(call.everyoneHere ? { everyoneHere: true } : {}) });
     }
 
     /**
@@ -1488,9 +1537,19 @@ export class AdminApiService {
         }
     }
 
-    /** Add a file someone sent the bot, or the bot sent them. Orbit gives it its short id. */
-    addBotFile(call: ArtifactCall, file: BotFileAdd, timeoutMs = BOT_FILE_TIMEOUT_MS): Promise<{ file: BotFileSummary; hidden: boolean }> {
-        return this.botFileCall('api/bot-files', { ...call, ...file }, timeoutMs);
+    /**
+     * Add a file someone sent the bot, or the bot sent them. Orbit gives it its short id. An Orbit from before it kept
+     * who was there (game #1993) refuses the body: the file is then added without them, and so stays with its person.
+     */
+    async addBotFile(call: ArtifactCall, file: BotFileAdd, timeoutMs = BOT_FILE_TIMEOUT_MS): Promise<{ file: BotFileSummary; hidden: boolean }> {
+        const { others, ...rest } = file;
+        if (!others || others.length === 0) return this.botFileCall('api/bot-files', { ...plainCall(call), ...rest }, timeoutMs);
+        try {
+            return await this.botFileCall('api/bot-files', { ...plainCall(call), ...rest, others }, timeoutMs);
+        } catch (error) {
+            if (!isUnknownField(error)) throw error;
+            return this.botFileCall('api/bot-files', { ...plainCall(call), ...rest }, timeoutMs);
+        }
     }
 
     /** Keep one piece of a file's text (or that it could not be read). Pieces go in order, each from where the last ended. */
@@ -1500,22 +1559,22 @@ export class AdminApiService {
         piece: { text: string; from: number; last: boolean } | { failed: true },
         timeoutMs = BOT_FILE_TIMEOUT_MS
     ): Promise<{ file: BotFileSummary; hidden: boolean }> {
-        return this.botFileCall('api/bot-files/text', { ...call, ref, ...piece }, timeoutMs);
+        return this.botFileCall('api/bot-files/text', { ...plainCall(call), ref, ...piece }, timeoutMs);
     }
 
-    /** One file by its short id, if this person may use it here. */
-    getBotFile(call: ArtifactCall, ref: string, timeoutMs = BOT_FILE_TIMEOUT_MS): Promise<{ file: BotFileView; hidden: boolean }> {
+    /** One file by its short id, if this person may use it here (and, for a reply other people read, all of them were there for it). */
+    getBotFile(call: FileReachCall, ref: string, timeoutMs = BOT_FILE_TIMEOUT_MS): Promise<{ file: BotFileView; hidden: boolean }> {
         return this.botFileCall('api/bot-files/get', { ...call, ref }, timeoutMs);
     }
 
     /** A piece of a file's kept text, `chars` long from `at` (a search hit's place, or the last read's `next`). */
-    readBotFile(call: ArtifactCall, read: { ref: string; at?: number | null; chars: number }, timeoutMs = BOT_FILE_TIMEOUT_MS): Promise<BotFileRead> {
+    readBotFile(call: FileReachCall, read: { ref: string; at?: number | null; chars: number }, timeoutMs = BOT_FILE_TIMEOUT_MS): Promise<BotFileRead> {
         return this.botFileCall('api/bot-files/read', { ...call, ...read }, timeoutMs);
     }
 
     /** Files and artifacts this person may use with the bot, newest first (or those that match `words`). */
     findBotFiles(
-        call: ArtifactCall,
+        call: FileReachCall,
         find: {
             limit: number;
             words?: string | null;

@@ -960,6 +960,9 @@ const chat: BaseTranslation = {
         // Nearby chat and voice (#1658): the card comes to the person who asked and nobody else
         onlyYouSeeCard: "Only you see this card",
         onlyYouSeeReply: "Only you see this reply",
+        // A private answer in a group (#1993): carry on in the bot's direct messages, where the same answer is once
+        continuePrivately: "Continue privately",
+        answeredNearby: "Answered in nearby chat, only for you",
         saidSomethingElse: "You said something else, so nothing was done",
     },
     voiceDraft: {
@@ -970,6 +973,9 @@ const chat: BaseTranslation = {
         discard: "Discard",
         said: "Said out loud",
         stopped: "Stopped when you spoke",
+        // A reply a voice bot wrote for this person alone (#1993), when its voice would have reached someone else too
+        unsaidForOthers: "Not said out loud, so nobody else hears it",
+        stoppedForOthers: "Stopped, so nobody else hears it",
     },
     artifacts: {
         kindApp: "Mini app",
