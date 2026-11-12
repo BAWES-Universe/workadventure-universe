@@ -47,12 +47,6 @@ export function parseMyMemory(value: unknown): MemoryItem[] {
     return items;
 }
 
-/** "favorite_color" reads "Favorite color". */
-function tidyLabel(label: string | null): string {
-    const words = (label ?? "").replace(/[_-]+/g, " ").trim();
-    return words ? words[0].toUpperCase() + words.slice(1) : "";
-}
-
 export interface SaidItem {
     /** What it is, in plain words: "Likes lo-fi". */
     text: string;
@@ -76,12 +70,7 @@ export function sayItem(item: MemoryItem, ll: TranslationFunctions, locale?: str
             text = m.likes({ value });
             break;
         default:
-            text =
-                item.label === "current_state"
-                    ? m.feeling({ value })
-                    : tidyLabel(item.label)
-                    ? m.fact({ label: tidyLabel(item.label), value })
-                    : value;
+            text = item.label === "current_state" ? m.feeling({ value }) : value;
     }
     const day = item.at !== null ? shortDay(item.at, locale) : "";
     const note = item.private ? m.private() : day ? m.fromChat({ date: day }) : m.fromChatUndated();
