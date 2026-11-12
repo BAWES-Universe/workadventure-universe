@@ -46,6 +46,25 @@ describe("a call starts and connects", () => {
         expect(run(speaking, { type: "bot-waiting", waiting: false, now: T0 + 2000 }).doing).toBe("speaking");
     });
 
+    it("the end of speech or of work only leaves its own state, so a quiet stretch never ends a busy call", () => {
+        const working = run(live(), { type: "bot-working", work: "search", line: "Looking it up", now: T0 + 1000 });
+        expect(run(working, { type: "bot-speaking", speaking: false, now: T0 + 2000 })).toMatchObject({
+            doing: "working",
+            work: "search",
+        });
+        const waiting = run(live(), { type: "bot-waiting", waiting: true, now: T0 + 1000 });
+        expect(run(waiting, { type: "bot-speaking", speaking: false, now: T0 + 2000 }).doing).toBe("waiting");
+        expect(run(waiting, { type: "bot-working", work: undefined, now: T0 + 2000 }).doing).toBe("waiting");
+        const speaking = run(live(), { type: "bot-speaking", speaking: true, now: T0 + 1000 });
+        expect(run(speaking, { type: "bot-working", work: undefined, now: T0 + 2000 }).doing).toBe("speaking");
+        const ticked = run(
+            working,
+            { type: "bot-speaking", speaking: false, now: T0 + 2000 },
+            { type: "tick", now: T0 + 900_000, quietMs: 60_000 }
+        );
+        expect(ticked.phase).toBe("on");
+    });
+
     it("ignores the bot's doings before it is on, and after the call is over", () => {
         const connecting = startCall(T0);
         expect(run(connecting, { type: "bot-speaking", speaking: true, now: T0 })).toBe(connecting);
@@ -170,16 +189,25 @@ describe("a quiet stretch (check 65)", () => {
     });
 
     it("is not quiet while the bot speaks, works or waits for the person's OK, however long that takes", () => {
-        const doings: CallEvent[] = [
-            { type: "bot-speaking", speaking: true, now: T0 + 1000 },
-            { type: "bot-working", work: "search", line: "Looking it up", now: T0 + 1000 },
-            { type: "bot-waiting", waiting: true, now: T0 + 1000 },
+        const doings: Array<[CallEvent, CallEvent]> = [
+            [
+                { type: "bot-speaking", speaking: true, now: T0 + 1000 },
+                { type: "bot-speaking", speaking: false, now: T0 + 5_000_000 },
+            ],
+            [
+                { type: "bot-working", work: "search", line: "Looking it up", now: T0 + 1000 },
+                { type: "bot-working", work: undefined, now: T0 + 5_000_000 },
+            ],
+            [
+                { type: "bot-waiting", waiting: true, now: T0 + 1000 },
+                { type: "bot-waiting", waiting: false, now: T0 + 5_000_000 },
+            ],
         ];
-        for (const doing of doings) {
+        for (const [doing, finish] of doings) {
             const busy = run(live(), doing);
             expect(run(busy, { type: "tick", now: T0 + 9e9, quietMs: 60_000 }).phase).toBe("on");
             // Once it is done and nothing is said, the stretch starts from the moment it finished
-            const done = run(busy, { type: "bot-working", work: undefined, now: T0 + 5_000_000 });
+            const done = run(busy, finish);
             expect(run(done, { type: "tick", now: T0 + 5_059_999, quietMs: 60_000 }).phase).toBe("on");
             expect(run(done, { type: "tick", now: T0 + 5_060_000, quietMs: 60_000 }).endedBy).toBe("quiet");
         }

@@ -107,17 +107,17 @@ export function callReducer(state: CallState, event: CallEvent): CallState {
             return state.phase === "on" ? { ...state, lastHeardAt: event.now } : state;
         case "bot-speaking":
             if (state.phase !== "on") return state;
-            return {
-                ...state,
-                doing: event.speaking ? "speaking" : "listening",
-                work: event.speaking ? undefined : state.work,
-                workLine: event.speaking ? undefined : state.workLine,
-                lastHeardAt: event.now,
-            };
+            if (event.speaking)
+                return { ...state, doing: "speaking", work: undefined, workLine: undefined, lastHeardAt: event.now };
+            // The end of speech only leaves "speaking": it never cuts short work or the wait for the person's OK
+            return { ...state, doing: state.doing === "speaking" ? "listening" : state.doing, lastHeardAt: event.now };
         case "bot-working":
             if (state.phase !== "on") return state;
-            if (!event.work)
+            if (!event.work) {
+                // The end of work only leaves "working": it never cuts short speech or the wait for the person's OK
+                if (state.doing !== "working") return { ...state, lastHeardAt: event.now };
                 return { ...state, doing: "listening", work: undefined, workLine: undefined, lastHeardAt: event.now };
+            }
             return { ...state, doing: "working", work: event.work, workLine: event.line, lastHeardAt: event.now };
         case "bot-waiting":
             if (state.phase !== "on") return state;
