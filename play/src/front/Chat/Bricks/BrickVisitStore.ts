@@ -17,6 +17,12 @@ export const brickVisitStore: Readable<BrickVisit | undefined> = { subscribe: vi
 /** The Brick the stored answer is about, so a page opened on another Brick never shows the last one's. */
 let forBrick: string | undefined;
 
+/**
+ * Which write to the stored answer is the newest. A read that was slow, and answers after a newer one (another read, or the
+ * visit this person just began) wrote, would put an older state back over it, so it is dropped.
+ */
+let newest = 0;
+
 type Position = { x: number; y: number };
 
 /** Where the person stands now (the game gives it, so this file stays free of the scene): undefined without a scene yet. */
@@ -35,9 +41,10 @@ export async function loadBrickVisit(brickId: string): Promise<void> {
     }
     const roomUrl = botApiService.getRoomId();
     if (!roomUrl) return;
+    const mine = ++newest;
     try {
         const answer = parseBrickVisit(await botApiService.getBrickVisit(brickId, roomUrl));
-        if (forBrick === brickId) visit.set(answer);
+        if (forBrick === brickId && mine === newest) visit.set(answer);
     } catch (error) {
         console.warn("Could not read whether a Brick visits", error);
     }
@@ -54,7 +61,10 @@ export async function bringBrickAlong(brickId: string): Promise<BringAlongOutcom
     try {
         const answer = parseBrickVisit(await botApiService.startBrickVisit(brickId, roomUrl));
         if (!answer) return "failed";
-        if (forBrick === brickId) visit.set(answer);
+        if (forBrick === brickId) {
+            newest++;
+            visit.set(answer);
+        }
         // Said only once the bot server says the Brick is on the map; asked once more, as it may be a moment behind
         let present = await botApiService.syncVisitingBrick(ownPosition());
         if (present !== true) {
@@ -96,5 +106,6 @@ export async function endBrickVisit(brickId: string): Promise<boolean> {
 /** For tests and for a person who signs out without a reload. */
 export function forgetBrickVisit(): void {
     forBrick = undefined;
+    newest++;
     visit.set(undefined);
 }

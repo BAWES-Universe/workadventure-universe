@@ -41,6 +41,39 @@ describe("what the Brick page knows about visiting (#2005)", () => {
         expect(get(brickVisitStore)).toEqual({ state: "none", place: "Universe" });
     });
 
+    it("never lets a slow read put an older state back over the visit just begun (Sentry on #2023)", async () => {
+        let answerLate: (value: unknown) => void = () => undefined;
+        api.getBrickVisit.mockReturnValueOnce(
+            new Promise((resolve) => {
+                answerLate = resolve;
+            })
+        );
+        const slow = loadBrickVisit(A);
+        api.startBrickVisit.mockResolvedValue({ state: "visiting", place: "Universe" });
+        expect(await bringBrickAlong(A)).toBeUndefined();
+        expect(get(brickVisitStore)?.state).toBe("visiting");
+        answerLate({ state: "none", place: "Universe" });
+        await slow;
+        expect(get(brickVisitStore)?.state).toBe("visiting");
+    });
+
+    it("keeps the newest read when two reads answer out of order", async () => {
+        const answers: Array<(value: unknown) => void> = [];
+        api.getBrickVisit.mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    answers.push(resolve);
+                })
+        );
+        const first = loadBrickVisit(A);
+        const second = loadBrickVisit(A);
+        answers[1]({ state: "visiting", place: "Universe" });
+        await second;
+        answers[0]({ state: "none", place: "Universe" });
+        await first;
+        expect(get(brickVisitStore)?.state).toBe("visiting");
+    });
+
     it("knows nothing without a room, and keeps quiet when Orbit can't be reached", async () => {
         api.getRoomId.mockReturnValue(undefined);
         await loadBrickVisit(A);
