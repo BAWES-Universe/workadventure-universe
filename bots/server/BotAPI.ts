@@ -1005,12 +1005,16 @@ export class BotAPI {
                 // When the person's game saw them come into the room: Orbit moves a visit only on a sighting newer than the last move, so a
                 // late sync from a room they left moves nothing. Whatever is not a plain time is left out (Orbit reads that as now)
                 const entered = req.body?.enteredAt;
-                const enteredAt = !ending && typeof entered === 'number' && Number.isSafeInteger(entered) && entered > 0 ? entered : undefined;
+                const client = req.body?.clientId;
+                const since =
+                    !ending && typeof entered === 'number' && Number.isSafeInteger(entered) && entered > 0 && typeof client === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(client)
+                        ? { at: entered, clientId: client }
+                        : undefined;
                 const person = { uuid: req.sessionUuid };
                 const answer =
-                    enteredAt === undefined
+                    since === undefined
                         ? await this.botManager.syncVisitingBrick(roomId, person, ending ? undefined : position, !ending)
-                        : await this.botManager.syncVisitingBrick(roomId, person, position, true, enteredAt);
+                        : await this.botManager.syncVisitingBrick(roomId, person, position, true, since);
                 res.json({ present: answer.botId !== null, ...(answer.reason ? { reason: answer.reason } : {}) });
             } catch (error) {
                 console.error('[BotAPI] Error syncing a visiting Brick:', error instanceof Error ? error.message : error);

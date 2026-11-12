@@ -77,10 +77,10 @@ describe('what Orbit says about visiting Bricks', () => {
         expect(configs[0].brick?.visiting).toEqual({ ownerUuid: KHALID, ownerName: 'Khalid' });
     });
 
-    it('says when the person\'s game saw them come into the room, only when it is known (Orbit reads a missing time as now)', async () => {
+    it('says when the person\'s game saw them come into the room and which page load said so, only when known (Orbit reads a missing time as now)', async () => {
         const T = Date.now() - 5_000;
-        await service.getVisitingBricks(ROOM_A, [KHALID], T);
-        expect(last).toMatchObject({ body: { roomUrl: ROOM_A, people: [KHALID], enteredAt: T } });
+        await service.getVisitingBricks(ROOM_A, [KHALID], { at: T, clientId: 'page-laptop-0001' });
+        expect(last).toMatchObject({ body: { roomUrl: ROOM_A, people: [KHALID], enteredAt: T, clientId: 'page-laptop-0001' } });
         await service.getVisitingBricks(ROOM_A, [KHALID]);
         expect((last as { body: Record<string, unknown> }).body).toEqual({ roomUrl: ROOM_A, people: [KHALID] });
     });
@@ -302,15 +302,15 @@ describe('putting the Brick on the map', () => {
         const T = Date.now() - 5_000;
         // The getVisitingBricks stub in this helper only takes the room; look at the full call
         const admin = (botManager as unknown as { adminApiService: { getVisitingBricks: ReturnType<typeof vi.fn> } }).adminApiService;
-        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT, true, T);
-        expect(admin.getVisitingBricks).toHaveBeenLastCalledWith(ROOM_A, [KHALID], T);
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT, true, { at: T, clientId: 'page-laptop-0001' });
+        expect(admin.getVisitingBricks).toHaveBeenLastCalledWith(ROOM_A, [KHALID], { at: T, clientId: 'page-laptop-0001' });
         await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT);
         expect(admin.getVisitingBricks).toHaveBeenLastCalledWith(ROOM_A, [KHALID]);
         expect(spawn).toHaveBeenCalledTimes(1);
         // Orbit answers 409 for a late sync from a room the person left: it reaches the bot server as an error, and the Brick
         // standing on the map stays exactly as it is
         orbit.fail = true;
-        expect(await botManager.syncVisitingBrick(ROOM_B, { uuid: KHALID }, AT, true, T - 1_000)).toEqual({ botId: 'brick-1' });
+        expect(await botManager.syncVisitingBrick(ROOM_B, { uuid: KHALID }, AT, true, { at: T - 1_000, clientId: 'page-laptop-0001' })).toEqual({ botId: 'brick-1' });
         expect(despawn).not.toHaveBeenCalled();
         expect(internals.bots.has('brick-1')).toBe(true);
     });

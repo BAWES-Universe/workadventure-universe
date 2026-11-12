@@ -132,6 +132,12 @@ export interface MembershipButton {
     label: string;
 }
 
+/** A random name for this page load: letters, digits and dashes, long enough never to meet another. */
+function randomPageLoadId(): string {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
 export class BotApiService {
     private accessToken: string | null = null;
     /** The game's token this service signs in with; renewed in place when its OIDC access token runs out. */
@@ -142,6 +148,8 @@ export class BotApiService {
     private roomId: string | null = null;
     // When the game saw the player come into this room: sent with each Brick sync so Orbit can tell a late sync from a room they left
     private enteredRoomAt: number | null = null;
+    // Which page load of the game says so: Orbit compares these times only when the same one said both, since another device has a clock of its own
+    private readonly pageLoadId: string = randomPageLoadId();
     private botServerUrl: string | null = null;
     private sessionTokenPromise: Promise<string | null> | null = null; // Cache login attempt to avoid multiple simultaneous calls
     private readonly initializeListeners = new Set<() => void>();
@@ -1253,7 +1261,11 @@ export class BotApiService {
                 body: JSON.stringify({
                     roomId,
                     ...(position ?? {}),
-                    ...(options?.ending ? { ending: true } : this.enteredRoomAt !== null ? { enteredAt: this.enteredRoomAt } : {}),
+                    ...(options?.ending
+                        ? { ending: true }
+                        : this.enteredRoomAt !== null
+                          ? { enteredAt: this.enteredRoomAt, clientId: this.pageLoadId }
+                          : {}),
                 }),
             });
             const answer = (await response.json()) as { present?: unknown } | null;

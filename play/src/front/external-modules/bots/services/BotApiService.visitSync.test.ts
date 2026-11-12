@@ -47,23 +47,30 @@ describe("BotApiService.syncVisitingBrick tells the bot server when the player c
         return api;
     }
 
-    it("sends the moment the player came into this room with every sync, and the moment of the next room after they walk on", async () => {
+    it("sends the moment the player came into this room, and which page load says so, with every sync, and the moment of the next room after they walk on", async () => {
         const api = signedIn();
         const inA = Date.now();
         vi.setSystemTime(new Date(inA + 60_000));
         await api.syncVisitingBrick({ x: 10, y: 20 });
         expect(bodyOfLastCall()).toMatchObject({ roomId: ROOM_A, x: 10, y: 20, enteredAt: inA });
+        const pageLoad = bodyOfLastCall().clientId as string;
+        expect(pageLoad).toMatch(/^[A-Za-z0-9_-]{8,64}$/);
 
         // Initialising again for the same room (a re-sign-in, a token refresh) is not coming in again
         enter(api, ROOM_A);
         await api.syncVisitingBrick({ x: 10, y: 20 });
-        expect(bodyOfLastCall().enteredAt).toBe(inA);
+        expect(bodyOfLastCall()).toMatchObject({ enteredAt: inA, clientId: pageLoad });
 
         // Walking into another room is
         vi.setSystemTime(new Date(inA + 120_000));
         enter(api, ROOM_B);
         await api.syncVisitingBrick({ x: 1, y: 2 });
-        expect(bodyOfLastCall()).toMatchObject({ roomId: ROOM_B, enteredAt: inA + 120_000 });
+        expect(bodyOfLastCall()).toMatchObject({ roomId: ROOM_B, enteredAt: inA + 120_000, clientId: pageLoad });
+
+        // Another page load (another tab, another device) names itself differently
+        const other = signedIn();
+        await other.syncVisitingBrick({ x: 1, y: 2 });
+        expect(bodyOfLastCall().clientId).not.toBe(pageLoad);
     });
 
     it("sends no time when ending a visit: it only takes the Brick off, wherever the player stands", async () => {

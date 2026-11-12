@@ -110,6 +110,12 @@ function instantiateBehavior(kind: LegacyBehaviorType, cfg: Record<string, unkno
     }
 }
 
+/** When the person's game saw them come into the room (ms), and which page load of it said so. */
+export interface VisitSince {
+    at: number;
+    clientId: string;
+}
+
 /** What a visit sync answers: the Brick now on the map, or why none was put there. */
 export interface VisitSyncAnswer {
     botId: string | null;
@@ -940,8 +946,8 @@ export class BotManager {
      * room, brings a Brick along, or ends the visit. The Brick of an earlier room, or a Brick they swapped it for, is
      * taken off the map first. Never throws for a person Orbit has nothing for: it only takes the Brick off.
      */
-    async syncVisitingBrick(roomUrl: string, person: { uuid: string }, position?: { x: number; y: number }, mayPlace = true, enteredAt?: number): Promise<VisitSyncAnswer> {
-        return this.inVisitLine(person.uuid, () => this.runVisitSync(roomUrl, person.uuid, position, mayPlace, enteredAt));
+    async syncVisitingBrick(roomUrl: string, person: { uuid: string }, position?: { x: number; y: number }, mayPlace = true, since?: VisitSince): Promise<VisitSyncAnswer> {
+        return this.inVisitLine(person.uuid, () => this.runVisitSync(roomUrl, person.uuid, position, mayPlace, since));
     }
 
     /**
@@ -966,10 +972,10 @@ export class BotManager {
 
     private visitSyncs: Map<string, Promise<VisitSyncAnswer | void>> = new Map();
 
-    private async runVisitSync(roomUrl: string, uuid: string, position?: { x: number; y: number }, mayPlace = true, enteredAt?: number): Promise<VisitSyncAnswer> {
+    private async runVisitSync(roomUrl: string, uuid: string, position?: { x: number; y: number }, mayPlace = true, since?: VisitSince): Promise<VisitSyncAnswer> {
         let configs: BotConfiguration[];
         try {
-            configs = await (enteredAt === undefined ? this.adminApiService.getVisitingBricks(roomUrl, [uuid]) : this.adminApiService.getVisitingBricks(roomUrl, [uuid], enteredAt));
+            configs = await (since === undefined ? this.adminApiService.getVisitingBricks(roomUrl, [uuid]) : this.adminApiService.getVisitingBricks(roomUrl, [uuid], since));
         } catch (error) {
             // Orbit cannot answer: what is on the map stays as it is
             console.warn('[BotManager] Could not ask Orbit for the visiting Brick:', error instanceof Error ? error.message : error);
