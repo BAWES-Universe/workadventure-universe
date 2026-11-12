@@ -1,7 +1,10 @@
 import { get, writable } from "svelte/store";
 import type { Readable } from "svelte/store";
 import { botApiService } from "../../external-modules/bots/services/BotApiService";
-import { parseBrickVisit, type BrickVisit, type BringAlongRefusal } from "./BrickVisit";
+import { parseBrickVisit, type BrickVisit, type BringAlongOutcome } from "./BrickVisit";
+
+/** How long the bot server gets before it is asked again whether the Brick is on the map. */
+const RETRY_SYNC_MS = 1000;
 
 /**
  * What the Brick page shows about visiting (game #2005): for the Brick it is open on, in the room the person is in now.
@@ -42,17 +45,25 @@ export async function loadBrickVisit(brickId: string): Promise<void> {
 
 /**
  * "Bring along": Orbit swaps whichever Brick walked with the person for this one, then the bot server puts it beside
- * them on the map. Undefined when it worked; otherwise why not, so the page can say it.
+ * them on the map. Undefined when it worked; otherwise why not, so the page can say it. "not_yet" is a visit that began
+ * (it is Orbit's, and the Brick joins on the next room) while the bot server did not put the Brick on this map.
  */
-export async function bringBrickAlong(brickId: string): Promise<BringAlongRefusal | undefined> {
+export async function bringBrickAlong(brickId: string): Promise<BringAlongOutcome | undefined> {
     const roomUrl = botApiService.getRoomId();
     if (!roomUrl) return "failed";
     try {
         const answer = parseBrickVisit(await botApiService.startBrickVisit(brickId, roomUrl));
         if (!answer) return "failed";
         if (forBrick === brickId) visit.set(answer);
-        await botApiService.syncVisitingBrick(ownPosition());
-        return undefined;
+        // Said only once the bot server says the Brick is on the map; asked once more, as it may be a moment behind
+        let present = await botApiService.syncVisitingBrick(ownPosition());
+        if (present !== true) {
+            await new Promise<void>((resolve) => {
+                setTimeout(resolve, RETRY_SYNC_MS);
+            });
+            present = await botApiService.syncVisitingBrick(ownPosition());
+        }
+        return present === true ? undefined : "not_yet";
     } catch (error) {
         const status = (error as { status?: number } | undefined)?.status;
         if (status === 409) {

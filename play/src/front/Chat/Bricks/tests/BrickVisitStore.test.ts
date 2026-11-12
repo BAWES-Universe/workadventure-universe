@@ -6,7 +6,7 @@ const api = vi.hoisted(() => ({
     getBrickVisit: vi.fn<(brickId: string, roomUrl: string) => Promise<unknown>>(),
     startBrickVisit: vi.fn<(brickId: string, roomUrl: string) => Promise<unknown>>(),
     endBrickVisit: vi.fn<(brickId: string) => Promise<unknown>>(),
-    syncVisitingBrick: vi.fn<(position?: { x: number; y: number }) => Promise<void>>(),
+    syncVisitingBrick: vi.fn<(position?: { x: number; y: number }) => Promise<boolean | undefined>>(),
 }));
 vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService: api }));
 
@@ -30,7 +30,7 @@ describe("what the Brick page knows about visiting (#2005)", () => {
         forgetBrickVisit();
         provideOwnPosition(() => ({ x: 100, y: 200 }));
         api.getRoomId.mockReturnValue(ROOM);
-        api.syncVisitingBrick.mockResolvedValue(undefined);
+        api.syncVisitingBrick.mockResolvedValue(true);
     });
 
     it("reads Orbit's answer for the room the person is in", async () => {
@@ -93,6 +93,43 @@ describe("what the Brick page knows about visiting (#2005)", () => {
         expect(api.startBrickVisit).toHaveBeenCalledWith(A, ROOM);
         expect(api.syncVisitingBrick).toHaveBeenCalledWith({ x: 100, y: 200 });
         expect(get(brickVisitStore)).toEqual({ state: "visiting", place: "Universe" });
+    });
+
+    it("says the Brick is not on the map yet when the bot server does not put it there, after asking twice (Sentry on #2023)", async () => {
+        vi.useFakeTimers();
+        try {
+            api.startBrickVisit.mockResolvedValue({ state: "visiting", place: "Universe" });
+            api.syncVisitingBrick.mockResolvedValue(false);
+            api.getBrickVisit.mockResolvedValue({ state: "none", place: "Universe" });
+            await loadBrickVisit(A);
+            const outcome = bringBrickAlong(A);
+            await vi.advanceTimersByTimeAsync(1500);
+            await expect(outcome).resolves.toBe("not_yet");
+            expect(api.syncVisitingBrick).toHaveBeenCalledTimes(2);
+            // The visit itself is Orbit's and stands: the Brick joins on the next room
+            expect(get(brickVisitStore)).toEqual({ state: "visiting", place: "Universe" });
+
+            api.syncVisitingBrick.mockReset();
+            api.syncVisitingBrick.mockResolvedValue(undefined);
+            const unsure = bringBrickAlong(A);
+            await vi.advanceTimersByTimeAsync(1500);
+            await expect(unsure).resolves.toBe("not_yet");
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("is satisfied when the bot server puts the Brick on the map the second time it is asked", async () => {
+        vi.useFakeTimers();
+        try {
+            api.startBrickVisit.mockResolvedValue({ state: "visiting", place: "Universe" });
+            api.syncVisitingBrick.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+            const outcome = bringBrickAlong(A);
+            await vi.advanceTimersByTimeAsync(1500);
+            await expect(outcome).resolves.toBeUndefined();
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it("says why when the place does not take visits or the Brick is off", async () => {

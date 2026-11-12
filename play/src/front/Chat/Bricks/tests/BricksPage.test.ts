@@ -28,7 +28,7 @@ const game = vi.hoisted(() => ({
     getBrickVisit: vi.fn<(brickId: string, roomUrl: string) => Promise<unknown>>(),
     startBrickVisit: vi.fn<(brickId: string, roomUrl: string) => Promise<unknown>>(),
     endBrickVisit: vi.fn<(brickId: string) => Promise<unknown>>(),
-    syncVisitingBrick: vi.fn<(position?: { x: number; y: number }) => Promise<void>>(),
+    syncVisitingBrick: vi.fn<(position?: { x: number; y: number }) => Promise<boolean | undefined>>(),
 }));
 const looks = vi.hoisted(() => {
     // A tiny store, made before the modules load: the WOKAs the game offers a bot
@@ -173,7 +173,7 @@ describe("the Bricks page (#1995)", () => {
         // A room, and a place that has not heard of visits yet: nothing about visiting is shown until Orbit says so
         game.getRoomId.mockReturnValue("/@/team/universe/room");
         game.getBrickVisit.mockResolvedValue({ state: "none", place: "Universe" });
-        game.syncVisitingBrick.mockResolvedValue(undefined);
+        game.syncVisitingBrick.mockResolvedValue(true);
         bricksPageOpenStore.set(true);
         game.ensureMyBrick.mockResolvedValue({ brick: card(), made: false, deleted: false });
         game.listMyBricks.mockResolvedValue({ bricks: [card(), made()] });
@@ -634,6 +634,21 @@ describe("the Bricks page (#1995)", () => {
             expect(byId("brickEndVisit")?.textContent?.trim()).toBe("End visit");
             expect(text()).toContain("It walks with you from room to room, and goes when you leave or end the visit.");
             expect(game.warn).not.toHaveBeenCalled();
+        });
+
+        it("says so when the Brick is not on the map yet, and keeps the visit (Sentry on #2023)", async () => {
+            game.startBrickVisit.mockResolvedValue({ state: "visiting", place: "Universe" });
+            game.syncVisitingBrick.mockResolvedValue(false);
+            await openMade();
+            byId("brickBringAlong")?.click();
+            await new Promise<void>((resolve) => {
+                setTimeout(resolve, 1300);
+            });
+            await settle();
+            expect(game.warn).toHaveBeenCalledWith(
+                "Recipe Brick isn't on the map yet. It joins you when you walk into the next room."
+            );
+            expect(byId("brickEndVisit")).not.toBeNull();
         });
 
         it("ends the visit and goes back to offering Bring along", async () => {

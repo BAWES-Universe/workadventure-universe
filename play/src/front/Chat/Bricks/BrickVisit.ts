@@ -32,6 +32,9 @@ export function parseBrickVisit(value: unknown): BrickVisit | undefined {
 /** What Orbit refuses a "Bring along" with: the place does not take visits, or the Brick is switched off. */
 export type BringAlongRefusal = "not_taken" | "off" | "failed";
 
+/** What a "Bring along" can end in besides working: the visit began, but the Brick is not on this map (yet). */
+export type BringAlongOutcome = BringAlongRefusal | "not_yet";
+
 /** Whether the "Bring along" button is there: a Brick that is off cannot walk anywhere, and no room means no "here". */
 export function canOfferBringAlong(brick: { enabled: boolean }, visit: BrickVisit | undefined): boolean {
     return brick.enabled && visit?.state === "none";

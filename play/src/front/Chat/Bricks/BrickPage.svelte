@@ -68,7 +68,9 @@
         visitBusy = true;
         bringBrickAlong(brick.id)
             .then((refusal) => {
-                if (refusal)
+                if (refusal === "not_yet")
+                    warningMessageStore.addWarningMessage($LL.chat.brick.bringAlongNotYet({ name: brick.name }));
+                else if (refusal)
                     warningMessageStore.addWarningMessage($LL.chat.brick.bringAlongFailed({ name: brick.name }));
             })
             .catch((error) => console.error(error))

@@ -1234,18 +1234,22 @@ export class BotApiService {
     /**
      * Tells the bot server the person walked into a room, brought a Brick along or ended the visit, so the Brick they
      * walk with is put beside them on this room's map or taken off it (game #2005). `position` is only where it first
-     * appears. Never throws: without it the Brick is put on the map the next time the person walks into a room.
+     * appears. Never throws: without it the Brick is put on the map the next time the person walks into a room. Answers
+     * whether the Brick is on the map now; undefined when the bot server could not be asked.
      */
-    async syncVisitingBrick(position?: { x: number; y: number }): Promise<void> {
+    async syncVisitingBrick(position?: { x: number; y: number }): Promise<boolean | undefined> {
         const roomId = this.roomId;
-        if (!this.botServerUrl || !roomId) return;
+        if (!this.botServerUrl || !roomId) return undefined;
         try {
-            await this.fetchBotServer("/api/bricks/visit/sync", {
+            const response = await this.fetchBotServer("/api/bricks/visit/sync", {
                 method: "POST",
                 body: JSON.stringify({ roomId, ...(position ?? {}) }),
             });
+            const answer = (await response.json()) as { present?: unknown } | null;
+            return typeof answer?.present === "boolean" ? answer.present : undefined;
         } catch (error) {
             console.warn("Could not put the Brick beside you", error);
+            return undefined;
         }
     }
 
