@@ -182,6 +182,24 @@ describe("a Brick's computer on screen (#2000)", () => {
         expect(game.brickComputerAction).toHaveBeenCalledWith(BRICK, "fill-details");
     });
 
+    it("lets go of the screen link when the computer rests, and asks for a fresh one when it works again", async () => {
+        game.watchBrickComputer.mockResolvedValueOnce({ url: "https://screen.test/old" });
+        game.getBrickComputer.mockResolvedValue(computer({ machine: "working", job: job() }));
+        await loadBrickComputer(BRICK);
+        piece = new BrickScreen({ target, props: { brick, onClose: () => undefined } });
+        await settle();
+        expect(byId("brickScreenFrame")?.getAttribute("src")).toBe("https://screen.test/old");
+        game.getBrickComputer.mockResolvedValue(computer());
+        await loadBrickComputer(BRICK);
+        await settle();
+        expect(byId("brickScreenFrame")).toBeNull();
+        game.watchBrickComputer.mockResolvedValueOnce({ url: "https://screen.test/new" });
+        game.getBrickComputer.mockResolvedValue(computer({ machine: "working", job: job({ id: "j2" }) }));
+        await loadBrickComputer(BRICK);
+        await settle();
+        expect(byId("brickScreenFrame")?.getAttribute("src")).toBe("https://screen.test/new");
+    });
+
     it("shows no screen for a computer that is resting, and does not ask for one to be woken", async () => {
         game.watchBrickComputer.mockResolvedValue(undefined);
         game.getBrickComputer.mockResolvedValue(computer());

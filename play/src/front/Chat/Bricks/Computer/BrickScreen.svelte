@@ -57,7 +57,9 @@
         };
     });
 
-    // The job ended or the computer rested while the screen was open: there is nothing to watch, and nothing is woken
+    // The job ended or the computer rested while the screen was open: there is nothing to watch, and nothing is woken.
+    // The link is let go too, so a job that starts later asks for a fresh one instead of showing one that may have run out.
+    $: if (!watching) url = undefined;
     $: shownUrl = watching ? url : undefined;
 
     function act(action: "stop" | "take-over" | "hand-back" | "fill-details") {
