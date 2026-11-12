@@ -283,8 +283,10 @@ export class YieldControl implements Interruptions {
 
     /**
      * The episode ends without proof either way. The reply went away by itself (finished, retracted, stopped, replaced):
-     * nothing is stopped; stretches it was still paused for count as speaking as today, and stretches only being watched
-     * after a provisional continuation are let go quietly. A person is no longer heard while paused: the paused reply
+     * nothing is stopped, and the stretches still open count as speaking, as today (they hold back the next reply until
+     * they end). That includes stretches only being watched after a provisional continuation: once the reply they were
+     * watched for is gone, nothing watches them, so they fall back to today's rule, and an old stretch never stops a
+     * replacement reply. A person is no longer heard while paused: the paused reply
      * stops as today (it is not resumed on no evidence), and the others' open stretches count as speaking.
      */
     private finish(episode: Episode, why: 'reply_gone' | 'person_gone', gone?: Candidate): void {
@@ -299,10 +301,7 @@ export class YieldControl implements Interruptions {
             this.stopHeld();
         }
         if (policy === 'dip') speaker.setGain(1);
-        if (continuing) {
-            this.count('continuing_released', open.length);
-            return;
-        }
+        if (continuing) this.count('continuing_released', open.length);
         for (const candidate of open) candidate.speech(false);
     }
 

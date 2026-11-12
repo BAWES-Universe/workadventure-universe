@@ -14,7 +14,10 @@
 //     how a real provider rescues a missed interruption need recorded provider timing.
 //   - The speaker: a recorder of what the bot's voice did (paused, turned down, stopped, went on).
 // Clips are followed by 8 s of silence so every stretch can end.
-//   tsx src/yield-replay.ts <data dir> <raw.jsonl.gz> <out dir> [report|all]
+// Splits: `tune` picks settings (the quiet window), `report` is run once, after the pick is frozen. They are checked to be
+// disjoint (no clip, recording or contributor on both sides) before anything runs.
+//   tsx src/yield-replay.ts <data dir> <raw.jsonl.gz> <out dir> <tune|report|all> [quiet window ms, default the worker's]
+// Writes <out>/yield-replay-<split>-<window>.jsonl: one row per clip and provider, with each behaviour's timeline.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
@@ -85,8 +88,6 @@ const OFF = 0.35;
 const MIN_MS = 64;
 const GAP_MS = 96;
 
-export type Policy = 'today' | 'confirm' | 'hold' | 'dip';
-const POLICIES: Policy[] = ['today', 'confirm', 'hold', 'dip'];
 type Provider = 'empty' | 'words';
 
 /** The detector, answering from precomputed probabilities as simulated time passes. */
@@ -134,14 +135,18 @@ class ReplayDetector implements SessionObserver {
         this.asks.push(ask);
         return () => (ask.live = false);
     }
-    heard(): { ageMs: number; quietMs: number; speech: boolean } | undefined {
+    heard(): { ageMs: number; quietMs: number; speech: boolean; stream: number; droppedMs: number } | undefined {
         if (this.answeredAt === -Infinity) return undefined;
-        return { ageMs: sim.now - this.answeredAt, quietMs: this.quiet, speech: this.evidence >= MIN_MS };
+        // One unbroken view for the whole clip: nothing is dropped in the replay
+        return { ageMs: sim.now - this.answeredAt, quietMs: this.quiet, speech: this.evidence >= MIN_MS, stream: 1, droppedMs: 0 };
     }
 }
 
-/** A scripted provider: words (one per 300 ms of audio sent, `word` for a command clip) or nothing at all. */
-function provider(kind: Provider, word: string | undefined): RecognizerFactory {
+/**
+ * A scripted provider: words (one per 300 ms of audio sent, `word` for a command clip) or nothing at all. On a speech clip
+ * it counts only audio from the person's onset on: background before they start never turns into their words.
+ */
+function provider(kind: Provider, word: string | undefined, fromMs: number): RecognizerFactory {
     return (events) => {
         let heardMs = 0;
         let shown = 0;
@@ -149,7 +154,7 @@ function provider(kind: Provider, word: string | undefined): RecognizerFactory {
         return {
             pauseMs: PROVIDER_PAUSE_MS,
             push: (pcm) => {
-                if (kind === 'empty') return;
+                if (kind === 'empty' || sim.now < fromMs) return;
                 heardMs += pcm.length / 16;
                 const n = Math.floor(heardMs / 300);
                 if (n > shown) {
@@ -165,6 +170,8 @@ function provider(kind: Provider, word: string | undefined): RecognizerFactory {
     };
 }
 
+/** What the bot's voice did, and how each watched stretch ended, ms into the clip. */
+export type Event = [number, 'pause' | 'dip' | 'up' | 'resume' | 'continue' | 'stop' | `ended_${string}`];
 interface Outcome {
     /** When the bot's voice first changed for the person (stopped, paused or turned down), ms into the clip. */
     yieldAt?: number;
@@ -173,26 +180,37 @@ interface Outcome {
     pauses: number;
     heldMs: number;
     resumes: number;
-    /** What ended each pause: the control's own counters (confirmed_detector, watchdog ...). */
+    continues: number;
+    /** Simulated time covered: the clip and its silent tail. */
+    spanMs: number;
+    events: Event[];
+    /** What ended it: the control's own counters (confirmed_detector, watchdog ...). */
     why: Record<string, number>;
 }
 
-function replay(pcm: Int16Array, probs: Float32Array, policy: Policy, kind: Provider, word: string | undefined): Outcome {
+/** today: the gate stops at once. strict: pause, go on only after an empty result. hold: strict plus going on, watched, over steady noise. */
+export type Behaviour = 'today' | 'confirm' | 'dip' | 'strict' | 'hold';
+export const BEHAVIOURS: Behaviour[] = ['today', 'confirm', 'dip', 'strict', 'hold'];
+
+function replay(pcm: Int16Array, probs: Float32Array, behaviour: Behaviour, kind: Provider, word: string | undefined, onsetMs: number, silenceMs: number | undefined): Outcome {
     sim.reset();
-    const outcome: Outcome = { pauses: 0, heldMs: 0, resumes: 0, why: {} };
+    const outcome: Outcome = { pauses: 0, heldMs: 0, resumes: 0, continues: 0, spanMs: 0, events: [], why: {} };
     let state: 'playing' | 'held' | 'dipped' | 'stopped' = 'playing';
     let heldFrom = 0;
+    const log = (what: Event[1]) => outcome.events.push([Math.round(sim.now), what]);
     const yielded = () => (outcome.yieldAt ??= sim.now);
     const stop = (): boolean => {
         if (state === 'stopped') return false;
         if (state === 'held') outcome.heldMs += sim.now - heldFrom;
         state = 'stopped';
         outcome.stopAt = sim.now;
+        log('stop');
         yielded();
         return true;
     };
     const detector = new ReplayDetector(probs);
     const counters = new Counters();
+    const policy = behaviour === 'strict' ? 'hold' : behaviour;
     const control =
         policy === 'today'
             ? undefined
@@ -200,6 +218,8 @@ function replay(pcm: Int16Array, probs: Float32Array, policy: Policy, kind: Prov
                   policy,
                   counters,
                   observer: detector,
+                  ...(silenceMs !== undefined ? { silenceMs } : {}),
+                  provisional: behaviour === 'hold',
                   speaker: {
                       get playingId() {
                           return state === 'stopped' ? undefined : 'r1';
@@ -209,6 +229,7 @@ function replay(pcm: Int16Array, probs: Float32Array, policy: Policy, kind: Prov
                               state = 'held';
                               heldFrom = sim.now;
                               outcome.pauses++;
+                              log('pause');
                               yielded();
                           }
                           return 'r1';
@@ -216,7 +237,11 @@ function replay(pcm: Int16Array, probs: Float32Array, policy: Policy, kind: Prov
                       resume: () => {
                           if (state !== 'held') return false;
                           outcome.heldMs += sim.now - heldFrom;
-                          outcome.resumes++;
+                          // The control counts which it is just before it lets the voice go on
+                          const going = counters.get('yield_continues') > outcome.continues;
+                          if (going) outcome.continues++;
+                          else outcome.resumes++;
+                          log(going ? 'continue' : 'resume');
                           state = 'playing';
                           return true;
                       },
@@ -225,21 +250,34 @@ function replay(pcm: Int16Array, probs: Float32Array, policy: Policy, kind: Prov
                           if (gain < 1 && state === 'playing') {
                               state = 'dipped';
                               outcome.pauses++;
+                              log('dip');
                               yielded();
                           } else if (gain >= 1 && state === 'dipped') {
+                              outcome.resumes++;
+                              log('up');
                               state = 'playing';
                           }
                       },
                   },
               });
     if (control) control.onStopHeld = () => void stop();
+    // The worker's control, with how each watched stretch ended noted on the timeline
+    const watched = control && {
+        owns: (participantId: string) => control.owns(participantId),
+        loud: (turn: Parameters<typeof control.loud>[0], speech: Parameters<typeof control.loud>[1]) => control.loud(turn, speech),
+        words: (turnId: string, text: string) => control.words(turnId, text),
+        ended: (turnId: string, how: Parameters<typeof control.ended>[1]) => {
+            log(`ended_${how}`);
+            control.ended(turnId, how);
+        },
+    };
     const recognition = new Recognition({
-        factory: provider(kind, word),
+        factory: provider(kind, word, onsetMs),
         maxUtteranceMs: 180000,
         counters,
         send: () => undefined,
         bargeInMs: 100,
-        ...(control ? { interruptions: control } : {}),
+        ...(watched ? { interruptions: watched } : {}),
         onSpeaking: (_, stopVoice) => {
             if (stopVoice) stop();
         },
@@ -254,19 +292,22 @@ function replay(pcm: Int16Array, probs: Float32Array, policy: Policy, kind: Prov
         detector.catchUp(end);
     }
     sim.advanceTo(sim.now + 1);
+    outcome.spanMs = Math.round(sim.now);
     if (state === 'held') outcome.heldMs += sim.now - heldFrom;
     control?.close();
     recognition.dispose();
     sim.reset();
     for (const [name, value] of Object.entries(counters.snapshot() as Record<string, number>)) {
-        if (/^yield_(confirmed_|watchdog|reply_gone|person_gone|stops_held)/.test(name) && value) outcome.why[name.slice(6)] = value;
+        if (/^yield_(confirmed_|watchdog|reply_gone|person_gone|stops_held|continuing_|repauses)/.test(name) && value) outcome.why[name.slice(6)] = value;
     }
     return outcome;
 }
 
 // ---- Run ----
-const [data, rawPath, out, which = 'report'] = process.argv.slice(2);
-if (!data || !rawPath || !out) throw new Error('usage: yield-replay.ts <data dir> <raw.jsonl.gz> <out dir> [report|all]');
+const [data, rawPath, out, which, windowArg] = process.argv.slice(2);
+if (!data || !rawPath || !out || !['tune', 'report', 'all'].includes(which ?? '')) throw new Error('usage: yield-replay.ts <data dir> <raw.jsonl.gz> <out dir> <tune|report|all> [quiet window ms]');
+const silenceMs = windowArg === undefined ? undefined : Number(windowArg);
+if (silenceMs !== undefined && !(silenceMs > 0)) throw new Error(`not a quiet window: ${windowArg}`);
 mkdirSync(out, { recursive: true });
 const probsById = new Map<string, Float32Array>();
 for (const line of gunzipSync(readFileSync(rawPath)).toString('utf8').split('\n')) {
@@ -275,9 +316,25 @@ for (const line of gunzipSync(readFileSync(rawPath)).toString('utf8').split('\n'
     const bytes = Buffer.from(raw.probs, 'base64');
     probsById.set(raw.id, new Float32Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)));
 }
-const manifest = buildManifest(data)
-    .filter((item) => which === 'all' || item.split === 'report')
+const everything = buildManifest(data);
+// The halves must not share a clip, a recording, or (commands) a contributor
+const sides = new Map<string, Set<string>>();
+const side = (key: string, split: string) => sides.set(key, (sides.get(key) ?? new Set()).add(split));
+for (const item of everything) {
+    side(`id:${item.id}`, item.split);
+    side(`source:${item.source}`, item.split);
+    if (item.speaker) side(`speaker:${item.set}/${item.speaker}`, item.split);
+}
+const crossing = [...sides].filter(([, s]) => s.size > 1).map(([k]) => k);
+if (crossing.length) throw new Error(`the tune and report halves overlap: ${crossing.slice(0, 5).join(', ')}`);
+if (new Set(everything.map((i) => i.id)).size !== everything.length) throw new Error('duplicate clip ids');
+const stride = Number(process.env.REPLAY_STRIDE ?? 1);
+const manifest = everything
+    .filter((item) => which === 'all' || item.split === which)
+    .filter((_, i) => i % stride === 0)
     .slice(0, Number(process.env.REPLAY_LIMIT ?? Infinity));
+const counts = (split: string) => everything.filter((i) => i.split === split).length;
+console.error(`halves: tune ${counts('tune')}, report ${counts('report')}, disjoint; replaying ${which}: ${manifest.length} clips, quiet window ${silenceMs ?? 'default'}`);
 const ARABIC: Record<string, string> = { stop: 'توقف', cancel: 'الغاء', close: 'اغلق', ok: 'تمام', yes: 'نعم', no: 'لا' };
 const wordOf = (item: Item): string | undefined => (item.set === 'en-command' ? item.label : item.set === 'ar-command' ? ARABIC[item.label] : undefined);
 
@@ -287,10 +344,12 @@ for (const item of manifest) {
     const probs = probsById.get(item.id);
     if (!probs) throw new Error(`no probabilities for ${item.id}`);
     const built = item.build();
+    const onsetMs = built.onset !== undefined ? Math.round(built.onset * 1000) : undefined;
+    const offsetMs = built.offset !== undefined ? Math.round(built.offset * 1000) : undefined;
     const providers: Provider[] = item.kind === 'speech' ? ['words'] : ['empty', 'words'];
     for (const kind of providers) {
         const result: Record<string, Outcome> = {};
-        for (const policy of POLICIES) result[policy] = replay(built.pcm, probs, policy, kind, wordOf(item));
+        for (const behaviour of BEHAVIOURS) result[behaviour] = replay(built.pcm, probs, behaviour, kind, wordOf(item), onsetMs ?? 0, silenceMs);
         rows.push(
             JSON.stringify({
                 id: item.id,
@@ -298,14 +357,17 @@ for (const item of manifest) {
                 set: item.set,
                 label: item.label,
                 condition: item.condition,
+                split: item.split,
                 provider: kind,
                 seconds: built.pcm.length / RATE,
-                onsetMs: built.onset !== undefined ? Math.round(built.onset * 1000) : undefined,
+                onsetMs,
+                offsetMs,
                 result,
             })
         );
     }
     if (++done % 500 === 0) console.error(`${done}/${manifest.length}`);
 }
-writeFileSync(join(out, 'yield-replay.jsonl'), rows.join('\n') + '\n');
-console.error(`done: ${done} clips, ${rows.length} rows`);
+const name = `yield-replay-${which}-${silenceMs ?? 'default'}.jsonl`;
+writeFileSync(join(out, name), rows.join('\n') + '\n');
+console.error(`done: ${done} clips, ${rows.length} rows -> ${name}`);

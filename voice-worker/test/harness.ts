@@ -36,6 +36,8 @@ export class FakeHuman {
     /** RTP packets of audio that arrived from the other side, and how many decoded to something loud. */
     audioPackets = 0;
     loudFrames = 0;
+    /** Called for every audio packet from the other side as it arrives, with whether it decoded to something loud. */
+    onAudio?: (loud: boolean) => void;
     videoPackets = 0;
     /** Messages the bot sent on the data channel. */
     dataMessages: unknown[] = [];
@@ -75,7 +77,9 @@ export class FakeHuman {
                 this.audioPackets++;
                 try {
                     const pcm = new Int16Array(this.decoder.decode(rtp.payload).slice().buffer);
-                    if (rms(pcm) > 300) this.loudFrames++;
+                    const loud = rms(pcm) > 300;
+                    if (loud) this.loudFrames++;
+                    this.onAudio?.(loud);
                 } catch {
                     /* undecodable */
                 }
@@ -161,7 +165,8 @@ export interface Rig {
 export class FakeGame implements GameSide {
     humans = new Map<string, FakeHuman>();
     disconnects: string[] = [];
-    readonly spaceName = 'proximity-1';
+    /** Also the LiveKit room's name: a test file whose rooms may run beside another file's gives its own (startRig). */
+    spaceName = 'proximity-1';
     readonly botId = 'room_bot';
 
     botSpaceUserId(spaceName: string): string | undefined {
@@ -221,7 +226,7 @@ function observerFromEnv(): SpeechObserverSettings | undefined {
 }
 
 export async function startRig(
-    options: { secret?: string; maxLanes?: number; input?: InputSink; recognizer?: RecognizerFactory; maxUtteranceSeconds?: number; maxReplySeconds?: number; speechObserver?: SpeechObserverSettings | false; yieldBots?: WorkerOptions['yieldBots'] } = {}
+    options: { secret?: string; maxLanes?: number; input?: InputSink; recognizer?: RecognizerFactory; maxUtteranceSeconds?: number; maxReplySeconds?: number; speechObserver?: SpeechObserverSettings | false; yieldBots?: WorkerOptions['yieldBots']; spaceName?: string } = {}
 ): Promise<Rig> {
     // false: without it even in a run of the whole suite with it on (the test that compares with and without)
     const speechObserver = options.speechObserver === false ? undefined : (options.speechObserver ?? observerFromEnv());
@@ -272,6 +277,7 @@ export async function startRig(
         };
     }
     const game = new FakeGame();
+    if (options.spaceName) game.spaceName = options.spaceName;
     const violations: string[] = [];
     const fromWorker: FromWorker[] = [];
     const toWorker: ToWorker[] = [];

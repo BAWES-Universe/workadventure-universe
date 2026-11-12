@@ -702,7 +702,7 @@ describe('steady noise: the voice goes on provisionally while the open stretch i
         }
     });
 
-    it('a new sound pauses again; the reply going away lets the watched stretch go without stopping or announcing anything', async () => {
+    it('a new sound pauses again; the reply going away hands the watched stretch back to today\'s rule: speaking, nothing stopped', async () => {
         const c = await continuing();
         c.fresh('p2');
         c.loud('p2');
@@ -712,10 +712,15 @@ describe('steady noise: the voice goes on provisionally while the open stretch i
         const d = await continuing();
         d.speaker.playing = 'r2';
         await waitFor('it to be let go', () => d.counters.get('yield_reply_gone') === 1, 500);
-        expect(d.spoke).toEqual([]);
-        // A late answer for the old reply never stops the new one
+        // Counted as speaking (announced, holding back the next reply as today), and nothing is stopped
+        expect(d.spoke).toEqual([['p1', false]]);
+        expect(d.counters.get('yield_continuing_released')).toBe(1);
+        // A late answer, words or an end for the old reply never stop the new one
         d.asks.get('p1')!.go(false);
-        expect(d.spoke).toEqual([]);
+        d.control.words('t-p1', 'stop');
+        d.control.ended('t-p1', 'text');
+        expect(d.spoke).toEqual([['p1', false]]);
+        expect(d.calls.filter((x) => x.startsWith('stop') || x === 'bargeIn')).toEqual([]);
     });
 
     it('two people: it goes on only when both qualify', async () => {
@@ -924,6 +929,25 @@ describe("end to end over a person's own connection (proximity), the bot speakin
         expect(r.violations).toEqual([]);
     }, 30_000);
 
+    it('a steady fan that outlasts the reply: the reply ends normally, then the open stretch counts as speaking, as today', async () => {
+        const { r, alice, mic, finished } = await bubble(true);
+        const n = r.worker.counters;
+        await waitFor('the detector to hear her', () => n.get('observer_windows_accepted') > 10, 5000);
+        r.calls.say(r.game.spaceName, 'seg-1', LONG);
+        await waitFor('the bot to be heard', () => alice.loudFrames >= 25);
+        mic(NOISE_HZ);
+        await waitFor('the bot to go on over the fan', () => n.get('yield_continues') === 1, 4000);
+        await waitFor('the end of the reply', () => finished('seg-1').length > 0, 15_000);
+        expect(finished('seg-1')[0]).toMatchObject({ interrupted: false, reason: 'completed' });
+        await waitFor('the open stretch to count as speaking', () => r.fromWorker.some((m) => m.type === 'user.speech_started'), 1000);
+        expect(n.get('yield_continuing_released')).toBe(1);
+        mic(0);
+        await waitFor('the stretch to end', () => r.fromWorker.some((m) => m.type === 'user.turn'), 6000);
+        const order = r.fromWorker.filter((m) => m.type === 'user.speech_started' || m.type === 'user.turn').map((m) => m.type);
+        expect(order).toEqual(['user.speech_started', 'user.turn']);
+        expect(r.violations).toEqual([]);
+    }, 40_000);
+
     it('a soft voice the detector misses, inside the same fan-held stretch: its words, when they come, stop the bot', async () => {
         // The fan's stretch carries words that only show up after 3 s of its audio: someone speaking under the fan
         const { r, alice, mic, finished } = await bubble(true, [{ text: 'so anyway', wordMs: 3000 }]);
@@ -965,10 +989,12 @@ const serverUp = await fetch(HTTP_URL, { signal: AbortSignal.timeout(1500) }).th
     () => false
 );
 
+let roomCount = 0;
 describe.skipIf(!serverUp)('end to end in a LiveKit room, the bot speaking', () => {
     async function room() {
         const d = detector();
-        const r = await startRig({ recognizer: new FakeEars([]).factory, speechObserver: { load: async () => d.model }, yieldBots: { botIds: new Set(['bot1']), policy: 'hold' } });
+        // A room of its own: other files' LiveKit tests use the default room on the same server at the same time
+        const r = await startRig({ recognizer: new FakeEars([]).factory, speechObserver: { load: async () => d.model }, yieldBots: { botIds: new Set(['bot1']), policy: 'hold' }, spaceName: `yield-${++roomCount}-${process.pid}` });
         rigs.push(r);
         r.calls.spaceUsers(r.game.spaceName, [{ spaceUserId: 'carol', uuid: 'uuid-carol', tags: [], name: 'carol' } as never]);
         const invitation = new AccessToken(API_KEY, API_SECRET, { identity: r.game.botId, name: r.game.botId });
