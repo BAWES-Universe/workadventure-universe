@@ -1090,6 +1090,18 @@ const mapEditor: BaseTranslation = {
                     universeAiPeople: "People use their own voice replies",
                     universeAiListens: "Free for people talking with it",
                     keyYouPay: "You pay · lent to this universe",
+                    // A Brick's page: its keys are its owner's own, lent to no universe
+                    brick: {
+                        keyYouPay: "You pay",
+                        pausedGone: "Paused · {key:string} isn’t there",
+                        keyGoneTitle: "{key:string} isn’t there any more",
+                        keyGoneLine:
+                            "{bot:string} answers in text. Add the key again in AI keys, or pick a Universe AI voice.",
+                        noServiceLine:
+                            "Universe AI has no voice here yet. Add a voice key in AI keys: one key from a company that listens and speaks is enough, or use two companies. {bot:string} keeps chatting in text until then.",
+                        moreVoicesLine:
+                            "Add a voice key from any company this server offers in AI keys. You pay for {bot:string}’s voice on it; nobody’s replies are used.",
+                    },
                     keyOwnerPays: "{owner:string} pays · lent to this universe",
                     language: "Language",
                     languageFollow: "Each person’s language",
@@ -1365,6 +1377,11 @@ const mapEditor: BaseTranslation = {
                     briefOpenRules: "Public · own rules for {names:string}",
                     briefPrivateRules: "Private · own rules for {names:string}",
                     briefOpen: "Public",
+                    // A Brick not on a map: nobody but its owner can reach it (roles and rules come once it is brought along)
+                    brickBrief: "Only you",
+                    brickTitle: "Only you for now",
+                    brickLine:
+                        "{name:string} talks with you and nobody else. When you bring it along on a map, people there can talk to it too, and the roles and rules for them show here.",
                     briefPrivate: "Private",
                     briefMore: "{first:string}, {second:string} and {count:number} more",
                     briefLoading: "…",

@@ -27,6 +27,9 @@ const game = vi.hoisted(() => ({
     getBotAiOptions: vi.fn<(target: { botId?: string }) => Promise<unknown>>(),
     getAvailableAIProviders: vi.fn<(all?: boolean) => Promise<unknown[]>>(),
     getMyAiKeys: vi.fn<() => Promise<unknown>>(),
+    getBotVoice: vi.fn<(brickId: string) => Promise<unknown>>(),
+    getMyVoiceKeys: vi.fn<() => Promise<unknown>>(),
+    getBotPermissions: vi.fn<(brickId: string) => Promise<unknown>>(),
 }));
 const looks = vi.hoisted(() => {
     // A tiny store, made before the modules load: the WOKAs the game offers a bot
@@ -63,6 +66,9 @@ vi.mock("../../../external-modules/bots/services/BotApiService", () => ({
         getBotAiOptions: game.getBotAiOptions,
         getAvailableAIProviders: game.getAvailableAIProviders,
         getMyAiKeys: game.getMyAiKeys,
+        getBotVoice: game.getBotVoice,
+        getMyVoiceKeys: game.getMyVoiceKeys,
+        getBotPermissions: game.getBotPermissions,
         isInitialized: () => true,
     },
 }));
@@ -135,6 +141,7 @@ vi.mock("../BrickChat", async () => {
     return { openBrickChat: game.openBrickChat, openingBrickChats: store.writable(new Set<string>()) };
 });
 
+import { readBotVoice } from "../../../external-modules/bots/voiceModel";
 import { loadLocale } from "../../../../i18n/i18n-util.sync";
 import { setLocale } from "../../../../i18n/i18n-svelte";
 import { bricksPageOpenStore } from "../../Stores/ChatStore";
@@ -233,6 +240,46 @@ describe("the Bricks page (#1995)", () => {
         });
         game.getAvailableAIProviders.mockResolvedValue([]);
         game.getMyAiKeys.mockResolvedValue([{ id: "key-1", name: "My Claude" }]);
+        // Its Voice: off, on Universe AI, with no key of the owner's yet
+        game.getBotVoice.mockResolvedValue(
+            readBotVoice({
+                enabled: false,
+                universeAllows: true,
+                paidBy: "universe-ai",
+                parts: { recognition: "universe-ai", speech: "universe-ai" },
+                revision: null,
+                draft: { profile: {}, updatedAt: null },
+                revisions: [],
+                lentKeys: [],
+                universeAi: {
+                    recognition: {
+                        providerId: "uai-listen",
+                        adapter: "soniox",
+                        name: "Soniox",
+                        model: "m",
+                        models: [{ id: "m", label: "M" }],
+                    },
+                    speech: {
+                        providerId: "uai-speak",
+                        adapter: "elevenlabs",
+                        name: "ElevenLabs",
+                        model: "v",
+                        models: [{ id: "v", label: "V" }],
+                        defaultVoice: { voiceId: "v-river", voiceName: "River" },
+                    },
+                },
+                voiceLimits: {
+                    revision: 1,
+                    limits: { turnSeconds: 30, replyCharacters: 600, replySeconds: 60, listenMinutesPerDay: 60 },
+                    window: {
+                        hours: 5,
+                        signedIn: { replies: 30, voiceReplies: 25 },
+                        guest: { replies: 10, voiceReplies: 3 },
+                    },
+                },
+            })
+        );
+        game.getMyVoiceKeys.mockResolvedValue([]);
         target = document.createElement("div");
         document.body.appendChild(target);
     });
@@ -487,13 +534,17 @@ describe("the Bricks page (#1995)", () => {
             expect(groups).toEqual([
                 "bot-page-group-mind",
                 "bot-page-group-say",
+                "bot-page-group-voice",
                 "bot-page-group-behavior",
+                "bot-page-group-access",
                 "bot-page-group-companion",
                 "bot-page-group-advanced",
             ]);
             // The rows say what the mock's say: Universe AI, none yet, stays put and waits, none yet
             expect(byId("bot-page-group-mind")?.textContent).toContain("Universe AI");
+            expect(byId("bot-page-group-voice")?.textContent).toContain("Off · Give Recipe Brick a voice");
             expect(byId("bot-page-group-behavior")?.textContent).toContain("Stays put · waits for people");
+            expect(byId("bot-page-group-access")?.textContent).toContain("Only you");
             expect(byId("bot-page-group-companion")?.textContent).toContain("None yet");
             expect(byId("bot-page-group-advanced")?.textContent).toContain("Bot chat telemetry off");
             expect(target.querySelector(".bp-meta")?.textContent).toMatch(/^Made by Omar · .+ · Changed .+$/);
@@ -586,7 +637,9 @@ describe("the Bricks page (#1995)", () => {
 
             it("offers the WOKAs the game offers a bot on a second pill, and saves one the same way", async () => {
                 looks.catalog.set({
-                    woka: { collections: [{ name: "Heroes", textures: [{ id: "woka-1", name: "Hero", url: "hero.png" }] }] },
+                    woka: {
+                        collections: [{ name: "Heroes", textures: [{ id: "woka-1", name: "Hero", url: "hero.png" }] }],
+                    },
                 });
                 game.changeMyBrick.mockImplementation((_id, change) => Promise.resolve({ brick: made(change) }));
                 await open();
@@ -651,7 +704,10 @@ describe("the Bricks page (#1995)", () => {
                 expect(byId("bot-moves-route")).toBeNull();
                 await click("bot-moves-wander");
                 expect(game.changeMyBrick).toHaveBeenCalledTimes(1);
-                const change = game.changeMyBrick.mock.calls[0][1] as { behaviorType: string; behaviorConfig: Record<string, unknown> };
+                const change = game.changeMyBrick.mock.calls[0][1] as {
+                    behaviorType: string;
+                    behaviorConfig: Record<string, unknown>;
+                };
                 expect(change.behaviorType).toBe("social");
                 expect(change.behaviorConfig).toMatchObject({ moves: "wander", goesToPeople: false });
                 expect(Object.keys(change.behaviorConfig).sort()).toEqual(
@@ -686,6 +742,32 @@ describe("the Bricks page (#1995)", () => {
                 await click("bot-companion-save");
                 expect(game.changeMyBrick).toHaveBeenLastCalledWith(MADE, { companionTextureId: null });
                 expect(byId("bot-page-group-companion")?.textContent).toContain("None yet");
+            });
+        });
+
+        describe("Voice and Permissions (Slice 13)", () => {
+            it("reads its voice from Orbit, runs on its owner's own keys, and never says a key is lent to a universe", async () => {
+                await open();
+                await openPage();
+                expect(game.getBotVoice).toHaveBeenCalledWith(MADE);
+                await openGroup("voice");
+                expect(byId("bot-voice-switch")).not.toBeNull();
+                expect(text()).not.toContain("lent");
+                expect(text()).not.toContain("this universe");
+            });
+
+            it("says 'Only you' for Permissions, because it is on no map, and asks Orbit for no roles or rules", async () => {
+                await open();
+                await openPage();
+                expect(game.getBotPermissions).not.toHaveBeenCalled();
+                await openGroup("access");
+                expect(byId("brick-access")?.textContent).toContain("Only you for now");
+                expect(byId("brick-access")?.textContent).toContain("talks with you and nobody else");
+                // No Private switch, no rows to add, no refused line: those are for people it can reach
+                expect(byId("bot-visibility")).toBeNull();
+                expect(byId("bot-access-add")).toBeNull();
+                expect(byId("bot-access-reply")).toBeNull();
+                expect(game.getBotPermissions).not.toHaveBeenCalled();
             });
         });
 

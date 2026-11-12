@@ -850,8 +850,8 @@
 
         <div class="bp-groups">
             {#if brick}
-                <!-- A Brick's page, in the mock's order: Mind, Personality, Behavior and Companion are here. Usage, Voice,
-                     Apps, Computer, Goals and tasks, Memory, Files, Permissions and Template come with their own issues -->
+                <!-- A Brick's page, in the mock's order: Mind, Personality, Voice, Behavior, Permissions and Companion are
+                     here. Usage, Apps, Computer, Goals and tasks, Memory, Files and Template come with their own issues -->
                 <MindGroup
                     bot={currentBot}
                     open={openGroup === "mind"}
@@ -861,12 +861,21 @@
                     brick
                 />
                 <SayGroup bot={currentBot} open={openGroup === "say"} onToggle={toggleGroup} onChange={apply} />
+                <VoiceGroup bot={currentBot} open={openGroup === "voice"} onToggle={toggleGroup} brick />
                 <BehaviorGroup
                     bot={currentBot}
                     open={openGroup === "behavior"}
                     onToggle={toggleGroup}
                     onChange={(next) => apply(next)}
                     onEditRoute={editRoute}
+                    brick
+                />
+                <PermissionsGroup
+                    bot={currentBot}
+                    open={openGroup === "access"}
+                    onToggle={toggleGroup}
+                    onOpenRule={() => {}}
+                    onAdd={() => {}}
                     brick
                 />
                 <PageGroup
