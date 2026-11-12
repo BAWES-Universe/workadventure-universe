@@ -2,7 +2,10 @@ import { tick } from "svelte";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The person's own Bricks, as the chat knows them: undefined until Orbit has answered
-const bricks = vi.hoisted(() => ({ subscribers: new Set<(value: unknown) => void>(), value: undefined as { id: string }[] | undefined }));
+const bricks = vi.hoisted(() => ({
+    subscribers: new Set<(value: unknown) => void>(),
+    value: undefined as { id: string }[] | undefined,
+}));
 const game = vi.hoisted(() => ({
     getMyMemory: vi.fn<(botId: string) => Promise<unknown>>(),
     forgetMyMemory: vi.fn<(botId: string, what: unknown) => Promise<unknown>>(),

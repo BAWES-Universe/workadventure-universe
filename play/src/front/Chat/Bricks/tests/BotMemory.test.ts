@@ -120,7 +120,9 @@ describe("what a bot remembers about the person (#2003)", () => {
         });
 
         it("brings back each thing that fails, in any order, and keeps one that is forgotten", async () => {
-            orbit.getMyMemory.mockResolvedValue({ items: [thing(), thing({ id: "k2", value: "jazz" }), thing({ id: "k3", value: "tea" })] });
+            orbit.getMyMemory.mockResolvedValue({
+                items: [thing(), thing({ id: "k2", value: "jazz" }), thing({ id: "k3", value: "tea" })],
+            });
             const answers: { resolve: () => void; reject: (error: Error) => void }[] = [];
             orbit.forgetMyMemory.mockImplementation(
                 () =>
