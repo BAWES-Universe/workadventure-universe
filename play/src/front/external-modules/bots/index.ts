@@ -13,6 +13,7 @@ import { wokaMenuStore, type WokaMenuData, type WokaMenuAction } from "../../Sto
 import { warningMessageStore } from "../../Stores/ErrorStore";
 import { refreshThisDeviceOnce } from "../../Notification/Push/PushDevice";
 import { provideOwnPosition } from "../../Chat/Bricks/BrickVisitStore";
+import { provideBrickLocator } from "../../Chat/Bricks/BrickHomeStore";
 import { getBotServerUrl } from "./services/BotServerUrl";
 import { botApiService } from "./services/BotApiService";
 import { summonFailureLine, type SummonFailure } from "./services/summonFailure";
@@ -800,9 +801,22 @@ function ownPlace(): { x: number; y: number } | undefined {
     return player ? { x: player.x, y: player.y } : undefined;
 }
 
+/** Points the camera at a Brick standing on this room's map (the Brick page's "Show on map"); false when it is not there. */
+function showBrick(brickId: string): boolean {
+    const scene = gameManager.getCurrentGameScene();
+    if (!scene) return false;
+    for (const player of scene.MapPlayersByKey.values()) {
+        if (player.userUuid !== `bot-${brickId}`) continue;
+        scene.getCameraManager().setPosition({ x: player.x, y: player.y }, 500);
+        return true;
+    }
+    return false;
+}
+
 function putVisitingBrickBeside(): void {
-    // The Brick page brings a Brick along from where the person stands
+    // The Brick page brings a Brick along from where the person stands, and shows one that lives here
     provideOwnPosition(ownPlace);
+    provideBrickLocator(showBrick);
     const sync = () => {
         // The player's sprite is made a moment after the room loads: the Brick appears where they stand, once the game knows
         // where that is. Never without it: the bot server would not put the Brick on the map

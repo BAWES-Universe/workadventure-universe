@@ -1232,6 +1232,43 @@ export class BotApiService {
     }
 
     /**
+     * The Bricks that live in this room and the person's own Bricks that can be added to it (game #2005), for the map
+     * editor's list: `{ here: [...], mine: [...] }`. Orbit answers only someone who can manage bots here. Throws when it
+     * refuses or can't be reached.
+     */
+    async getRoomBricks(roomUrl: string): Promise<unknown> {
+        const response = await this.fetch(`/api/brick-homes?roomUrl=${encodeURIComponent(roomUrl)}`);
+        return response.json();
+    }
+
+    /**
+     * "Add here" (game #2005): the person's Brick gets a home in this room, standing at the spot they picked. Placing it
+     * again moves it. Answers `{ home, keyNote }`. Throws with `status` 403 when they cannot manage bots here.
+     */
+    async placeBrickHome(
+        brickId: string,
+        roomUrl: string,
+        spot: { behaviorType?: string; behaviorConfig?: unknown }
+    ): Promise<unknown> {
+        const response = await this.fetch(`/api/bricks/${encodeURIComponent(brickId)}/home`, {
+            method: "PUT",
+            body: JSON.stringify({ roomUrl, ...spot }),
+        });
+        return response.json();
+    }
+
+    /** Where a Brick lives, for its page (game #2005): `{ home }`, with `home` null when it has none. */
+    async getBrickHome(brickId: string): Promise<unknown> {
+        const response = await this.fetch(`/api/bricks/${encodeURIComponent(brickId)}/home`);
+        return response.json();
+    }
+
+    /** "Take out" / "Take it out of this room" (game #2005): the Brick goes back to its owner's Bricks, nothing is deleted. */
+    async takeBrickOut(brickId: string): Promise<void> {
+        await this.fetch(`/api/bricks/${encodeURIComponent(brickId)}/home`, { method: "DELETE" });
+    }
+
+    /**
      * Tells the bot server the person walked into a room, brought a Brick along or ended the visit, so the Brick they
      * walk with is put beside them on this room's map or taken off it (game #2005). `position` is only where it first
      * appears. Never throws: without it the Brick is put on the map the next time the person walks into a room. Answers

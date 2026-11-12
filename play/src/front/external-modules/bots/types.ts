@@ -39,6 +39,8 @@ export interface BotData {
     characterTexture?: string;
     characterTextureIds?: string[];
     behaviorType?: "idle" | "patrol" | "social";
+    /** One of the person's own Bricks being given a home in this room (game #2005): it is placed on the map, not made. */
+    brickHome?: boolean;
     behaviorConfig: {
         // Behavior type (redundant with behaviorType for flexibility)
         behaviorType?: "idle" | "patrol" | "social";
