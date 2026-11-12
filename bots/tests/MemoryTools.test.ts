@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { ConversationMemory } from '../memory/ConversationMemory';
 import { heardInDm } from '../memory/Heard';
 import { memoryItemKey, memoryItemsOf } from '../memory/MemoryItems';
-import { FORGET_MEMORY_TOOL, WHAT_I_REMEMBER_TOOL, isMemoryTool, itemsAbout, memoryToolDefinitions, memoryToolsNote, runMemoryTool } from '../ai/MemoryTools';
+import { FORGET_MEMORY_TOOL, WHAT_I_REMEMBER_TOOL, isMemoryTool, itemsAbout, resolveForgetting, memoryToolDefinitions, memoryToolsNote, runMemoryTool } from '../ai/MemoryTools';
 import { describeStep } from '../ai/ToolSteps';
 
 function sara() {
@@ -140,8 +140,8 @@ describe('the memory tools', () => {
             { id: 'dough', kind: 'pref', label: null, value: 'pizza dough recipe' },
             { id: 'coffee', kind: 'pref', label: null, value: 'coffee, no sugar' },
         ];
-        // The false match: only "pizza" is shared with the dough recipe
-        expect(itemsAbout(items, 'my favourite pizza place').map((item) => item.id)).toEqual(['place']);
+        // A pizza place and liking pizza are different memories: one shared word takes neither
+        expect(itemsAbout(items, 'my favourite pizza place').map((item) => item.id)).toEqual([]);
         // What must still work: the whole thing said back among other words, a part of it, and a part of a longer one
         expect(itemsAbout(items, 'forget that I like pizza').map((item) => item.id)).toEqual(['place']);
         expect(itemsAbout(items, 'the dough recipe').map((item) => item.id)).toEqual(['dough']);
@@ -176,5 +176,189 @@ describe('the memory tools', () => {
     it('show as one step, "Forgot", with their own words under it', () => {
         const step = describeStep({ id: '1', name: FORGET_MEMORY_TOOL, arguments: JSON.stringify({ about: 'coffee' }) });
         expect(step).toMatchObject({ doing: 'Forgetting', done: 'Forgot', detail: 'coffee' });
+    });
+});
+
+const thing = (kind: string, value: string, label: string | null = null, id = `${kind}:${label ?? ''}:${value}`) => ({ id, kind, label, value, at: null, private: true }) as any;
+const ids = (found: any[]) => found.map((item) => item.id);
+
+describe('forgetting that keeps kind, label, owner, "not" and what is said to keep (GPT B1)', () => {
+    it('keeps a fact with another label when the words name one', () => {
+        const items = [thing('fact', 'Paris', 'home_city'), thing('fact', 'Paris', 'next_trip')];
+        expect(ids(itemsAbout(items, 'forget my next trip to Paris'))).toEqual(['fact:next_trip:Paris']);
+        expect(ids(itemsAbout(items, 'my home city'))).toEqual(['fact:home_city:Paris']);
+        // Only the value, and two things hold it: nothing goes, and both are offered
+        expect(itemsAbout(items, 'Paris')).toEqual([]);
+        expect(ids(resolveForgetting(items, 'Paris').unsure).sort()).toEqual(['fact:home_city:Paris', 'fact:next_trip:Paris']);
+    });
+
+    it("never takes the person's own thing for somebody else's", () => {
+        const items = [thing('pref', 'coffee'), thing('pref', 'tea')];
+        for (const other of ['forget that my sister likes coffee', "my friend's coffee", 'he likes coffee', 'forget that they love coffee']) {
+            expect(itemsAbout(items, other), other).toEqual([]);
+        }
+        expect(ids(itemsAbout(items, 'forget that I like coffee'))).toEqual(['pref::coffee']);
+    });
+
+    it('keeps what is said to be kept', () => {
+        const items = [thing('pref', 'coffee'), thing('pref', 'tea')];
+        expect(ids(itemsAbout(items, 'forget coffee but not tea'))).toEqual(['pref::coffee']);
+        expect(ids(itemsAbout(items, 'forget coffee, not tea'))).toEqual(['pref::coffee']);
+        expect(ids(itemsAbout(items, 'forget coffee except tea'))).toEqual(['pref::coffee']);
+        expect(ids(itemsAbout(items, 'forget coffee and tea')).sort()).toEqual(['pref::coffee', 'pref::tea']);
+        const named = [thing('name', 'Mark'), thing('birthday', '12 June')];
+        expect(ids(itemsAbout(named, 'forget my name and remember my birthday'))).toEqual(['name::Mark']);
+        expect(ids(itemsAbout(named, 'forget my name, remember my birthday'))).toEqual(['name::Mark']);
+        // Two kinds with nothing between them are two requests said as one: nothing goes
+        expect(itemsAbout(named, 'forget my name remember my birthday')).toEqual([]);
+        // Asking to keep is never asking to forget
+        for (const keep of ["don't forget my name", 'do not forget my birthday', 'remember my name', 'keep my birthday', 'never forget my name']) {
+            const result = resolveForgetting(named, keep);
+            expect(result.chosen, keep).toEqual([]);
+            expect(result.keepOnly, keep).toBe(true);
+        }
+    });
+
+    it('does not mix "tired" and "not tired"', () => {
+        const items = [thing('fact', 'tired', 'current_state', 'a'), thing('fact', 'not tired', 'current_state', 'b')];
+        expect(ids(itemsAbout(items, 'tired'))).toEqual(['a']);
+        expect(ids(itemsAbout(items, 'forget that I am tired'))).toEqual(['a']);
+        expect(ids(itemsAbout(items, 'forget that I am not tired'))).toEqual(['b']);
+        // "sugar" is only what comes after "no" in "coffee, no sugar"; "coffee" is the start of it
+        const coffee = [thing('pref', 'coffee, no sugar')];
+        expect(ids(itemsAbout(coffee, 'sugar'))).toEqual([]);
+        expect(ids(itemsAbout(coffee, 'coffee'))).toEqual(['pref::coffee, no sugar']);
+    });
+
+    it('keeps the pizza preference when the recipe or the place is asked for', () => {
+        const items = [thing('pref', 'pizza'), thing('fact', 'pizza dough recipe', 'recipe')];
+        expect(ids(itemsAbout(items, 'pizza dough recipe'))).toEqual(['fact:recipe:pizza dough recipe']);
+        expect(ids(itemsAbout(items, 'my favourite pizza place'))).toEqual([]);
+        expect(ids(itemsAbout(items, 'I like pizza'))).toEqual(['pref::pizza']);
+        expect(ids(itemsAbout(items, 'the dough recipe'))).toEqual(['fact:recipe:pizza dough recipe']);
+    });
+
+    it('does not take a name because the name of someone is the stored value', () => {
+        const items = [thing('name', 'Mark')];
+        for (const other of ['the name of Mark', 'forget Mark', 'the name for Mark', 'my friend Mark']) expect(itemsAbout(items, other), other).toEqual([]);
+        expect(ids(itemsAbout(items, 'forget that my name is Mark'))).toEqual(['name::Mark']);
+    });
+
+    it('takes natural ways of asking for a name or a birthday', () => {
+        const items = [thing('name', 'Zoë Müller-O’Brien'), thing('birthday', '12 June')];
+        for (const own of ['please forget my name for now', 'forget my full name', 'erase my first name', 'my name']) expect(ids(itemsAbout(items, own)), own).toEqual(['name:' + ':Zoë Müller-O’Brien']);
+        for (const own of ['erase my date of birth', 'forget my bday', 'forget my b-day', 'delete my birthday please']) expect(ids(itemsAbout(items, own)), own).toEqual(['birthday::12 June']);
+        // The stored name with an apostrophe, a hyphen and an accent, said after "is" in either spelling of the same letters
+        expect(ids(itemsAbout(items, 'forget that my name is Zoë Müller-O’Brien'))).toEqual(['name::Zoë Müller-O’Brien']);
+        expect(ids(itemsAbout(items, "forget that my name is zoë müller-o'brien"))).toEqual(['name::Zoë Müller-O’Brien']);
+        expect(ids(itemsAbout(items, 'forget that my name is Zoe'))).toEqual([]);
+        // Somebody else's, with the same marks
+        expect(itemsAbout(items, "my dog's full name")).toEqual([]);
+        expect(itemsAbout(items, "forget O’Brien's birthday")).toEqual([]);
+    });
+});
+
+describe('forget_memory as the model calls it (GPT B2, B3, B4)', () => {
+    const run = (args: Record<string, unknown>, forget = vi.fn(async (keys: ReadonlySet<string>) => keys.size), memory = sara()) => runMemoryTool(FORGET_MEMORY_TOOL, args, { memory, forget }).then((answer) => ({ answer: answer as any, forget }));
+    const keysOf = (forget: any) => [...(forget.mock.calls[0] as [Set<string>])[0]];
+
+    it('acts only on the ids when ids are given, and never widens them with words (B2)', async () => {
+        const name = memoryItemKey('name', null, 'Sara');
+        const { forget } = await run({ ids: [name], about: 'coffee' });
+        expect(keysOf(forget)).toEqual([name]);
+    });
+
+    it('does not fall back to the words when an id is stale (B2)', async () => {
+        const { answer, forget } = await run({ ids: ['not-a-thing'], about: 'my name' });
+        expect(forget).not.toHaveBeenCalled();
+        expect(answer.unclear).toBe(true);
+        expect(answer.things.length).toBe(4);
+        // The ones that are there still go, and the stale one is said
+        const name = memoryItemKey('name', null, 'Sara');
+        const mixed = await run({ ids: [name, 'stale'], about: 'coffee' });
+        expect(keysOf(mixed.forget)).toEqual([name]);
+        expect(mixed.answer.note).toContain('1 of the ids');
+    });
+
+    it('rejects a request too long to be weighed instead of cutting it (B3)', async () => {
+        const padded = `my name${' '.repeat(200 - 'my name'.length)} and my dog's name`;
+        expect(padded.length).toBeGreaterThan(200);
+        const { answer, forget } = await run({ about: padded });
+        expect(forget).not.toHaveBeenCalled();
+        expect(answer).toMatchObject({ forgotten: [], unclear: true });
+        expect(answer.note).toContain('Nothing was forgotten');
+        // Words at the limit are still weighed
+        const { forget: ok } = await run({ about: `my name${' '.repeat(193)}` });
+        expect(ok).toHaveBeenCalledTimes(1);
+    });
+
+    it('says it has not forgotten anything yet, and offers the list, when the words settle nothing (B4)', async () => {
+        const { answer, forget } = await run({ about: 'forget Sara' });
+        expect(forget).not.toHaveBeenCalled();
+        expect(answer).toMatchObject({ forgotten: [], unclear: true });
+        expect(answer.note).toContain("I haven't forgotten anything yet. Which memory do you mean?");
+        expect(answer.note).not.toContain('do not remember anything like that');
+        expect(answer.things.map((one: any) => one.what).sort()).toEqual(['Their birthday is June 5', 'Their name is Sara', 'They like coffee, no sugar', 'They said they were tired']);
+        // Only the ones the words could mean, when they say
+        const two = new ConversationMemory();
+        two.useHeard(() => heardInDm());
+        two.addMessage('bot', 2, 'I love coffee, no sugar', 'person', 'dm');
+        two.addMessage('bot', 2, 'I love coffee with milk', 'person', 'dm');
+        two.addMessage('bot', 2, 'I love tea', 'person', 'dm');
+        const asked = await run({ about: 'coffee' }, undefined, two.getMemory('bot', 2)!);
+        expect(asked.forget).not.toHaveBeenCalled();
+        expect(asked.answer.things.map((one: any) => one.what).sort()).toEqual(['They like coffee with milk', 'They like coffee, no sugar']);
+    });
+
+    it('says plainly that there is nothing to forget when nothing is remembered', async () => {
+        const { answer, forget } = await run({ about: 'coffee' }, undefined, (() => { const empty = new ConversationMemory(); empty.useHeard(() => heardInDm()); empty.addMessage('bot', 3, 'hello', 'person', 'dm'); return empty.getMemory('bot', 3)!; })());
+        expect(forget).not.toHaveBeenCalled();
+        expect(answer.note).toContain('nothing');
+    });
+
+    it('does not report success when nothing went, or only some went (B4)', async () => {
+        const none = await run({ about: 'my name' }, vi.fn(async () => 0));
+        expect(none.answer.forgotten).toEqual([]);
+        expect(none.answer.note).toContain('already gone');
+        expect(none.answer.note).not.toContain('It is forgotten');
+        const name = memoryItemKey('name', null, 'Sara');
+        const birthday = memoryItemKey('birthday', null, 'June 5');
+        const some = await run({ ids: [name, birthday] }, vi.fn(async () => 1));
+        expect(some.answer.forgotten).toBeUndefined();
+        expect(some.answer).toMatchObject({ count: 1, asked: 2 });
+        expect(some.answer.note).toContain('do not say all of it');
+        const all = await run({ ids: [name, birthday] });
+        expect(all.answer.forgotten.sort()).toEqual(['Their birthday is June 5', 'Their name is Sara']);
+    });
+
+    it('forgets nothing for a question or for a request to keep', async () => {
+        for (const about of ['when is my birthday', "when's my birthday", 'what is my name?', 'do you know my name', 'my name?']) {
+            const { answer, forget } = await run({ about });
+            expect(forget, about).not.toHaveBeenCalled();
+            expect(answer.note, about).toContain('question');
+        }
+        for (const about of ["don't forget my name", 'remember my birthday']) {
+            const { answer, forget } = await run({ about });
+            expect(forget, about).not.toHaveBeenCalled();
+            expect(answer.note, about).toContain('keep');
+        }
+        // A polite request that starts like a question is still a request
+        expect((await run({ about: 'can you forget my name' })).forget).toHaveBeenCalledTimes(1);
+    });
+
+    it('forgets at once what is clearly meant, and asks nothing', async () => {
+        const { answer, forget } = await run({ about: 'please forget my name for now' });
+        expect(keysOf(forget)).toEqual([memoryItemKey('name', null, 'Sara')]);
+        expect(answer.forgotten).toEqual(['Their name is Sara']);
+        expect((await run({ about: 'forget my name and my birthday' })).forget).toHaveBeenCalledTimes(1);
+        expect(keysOf((await run({ about: 'forget coffee' })).forget)).toEqual([memoryItemKey('pref', null, 'coffee, no sugar')]);
+    });
+
+    it('tells the model to ask when it is not clear, and never to confirm what is clear', () => {
+        const text = memoryToolDefinitions().find((tool) => tool.function.name === FORGET_MEMORY_TOOL)!.function.description;
+        expect(text).toContain('without asking them to confirm');
+        expect(text).toContain('not clear which memory');
+        expect(text).toContain('Never use it for a question');
+        expect(text).not.toContain('Never ask them to confirm first');
     });
 });
