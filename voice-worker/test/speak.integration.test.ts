@@ -41,7 +41,9 @@ afterEach(async () => {
     }
 });
 
-describe('a person talks over a voice bot', () => {
+// Each test waits on real connections and real time for up to 6 s inside (3.98 s alone on a quiet machine for the longest),
+// more than vitest's default 5 s for a whole test: on a loaded CI runner that default, not the voice, was what failed
+describe('a person talks over a voice bot', { timeout: 20_000 }, () => {
     it('stops its voice within 300 ms of the person speaking, and tells the bot server it was cut', async () => {
         const { r, people, progress } = await bubble();
         r.calls.say(r.game.spaceName, 'seg-1', LONG);
@@ -131,7 +133,7 @@ describe('a person talks over a voice bot', () => {
     });
 });
 
-describe('the longest a reply plays', () => {
+describe('the longest a reply plays', { timeout: 20_000 }, () => {
     it('stops at the time the bot server asks for, and says why', async () => {
         const { r, people, progress } = await bubble();
         r.calls.say(r.game.spaceName, 'seg-1', LONG, 1500);
