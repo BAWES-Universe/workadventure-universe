@@ -6,12 +6,12 @@ describe("waiting for the person's place before a Brick is put beside them", () 
     afterEach(() => vi.useRealTimers());
 
     it("syncs once with the place when the player is there, and not before", () => {
-        let place: { x: number; y: number } | undefined;
+        const where: { place?: { x: number; y: number } } = {};
         const done = vi.fn();
-        waitForPlace(() => place, done);
+        waitForPlace(() => where.place, done);
         vi.advanceTimersByTime(PLACE_FIRST_LOOK_MS + PLACE_LOOK_EVERY_MS * 3);
         expect(done).not.toHaveBeenCalled();
-        place = { x: 320, y: 480 };
+        where.place = { x: 320, y: 480 };
         vi.advanceTimersByTime(PLACE_LOOK_EVERY_MS);
         expect(done).toHaveBeenCalledTimes(1);
         expect(done).toHaveBeenCalledWith({ x: 320, y: 480 });
