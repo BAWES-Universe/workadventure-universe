@@ -230,7 +230,7 @@ describe("a call holds its two members through the server, and no third", () => 
             socketManager.handleJoinSpace(socket, `w.${name}`, name, FilterType.ALL_USERS, [], {
                 signal: new AbortController().signal,
             });
-        return { join, leave };
+        return { join, leave, socketManager };
     }
 
     it("refuses a third account, from the back's list of users", async () => {
@@ -290,5 +290,20 @@ describe("a call holds its two members through the server, and no third", () => 
         expect(leave).toHaveBeenCalledWith(lostBot, `w.${name}`);
         expect(leave).not.toHaveBeenCalledWith(person, expect.anything());
         expect(registerUser).toHaveBeenCalledTimes(1);
+    });
+
+    it("joins the space there is after replacing the last socket, never the one that closed with it", async () => {
+        const lost = heldSocket("user-7");
+        const closing = spaceWith([], [["u_1", lost]]);
+        const fresh = spaceWith([], []);
+        const { join, leave, socketManager } = manager(closing.space);
+        // Leaving the only member closes the space and forgets it; someone has opened it again by the time we go on
+        leave.mockImplementation(() => {
+            (socketManager as unknown as { spaces: Map<string, unknown> }).spaces.set(`w.${name}`, fresh.space);
+            return Promise.resolve();
+        });
+        await join(joiner("user-7").socket);
+        expect(closing.registerUser).not.toHaveBeenCalled();
+        expect(fresh.registerUser).toHaveBeenCalledTimes(1);
     });
 });

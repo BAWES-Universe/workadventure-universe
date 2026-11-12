@@ -481,6 +481,38 @@ export class SocketManager implements ZoneEventListener {
         });
     }
 
+    /**
+     * Before someone joins a call space: a new socket of an account already in the call replaces its old one (a dropped
+     * connection must not lock the person out of their own call), and what is left is counted as accounts besides the
+     * one joining, including the sockets this pusher has just taken in because the back's list of users lags a join by a
+     * round trip. Throws a SpaceJoinRefusedError when the call already has its two members.
+     */
+    private async makeRoomInCall(client: Socket, spaceName: string, localSpaceName: string): Promise<void> {
+        const account = client.getUserData().userUuid;
+        const held = this.spaces.get(spaceName);
+        const replaced = (held instanceof Space ? [...held._localConnectedUser.values()] : []).filter(
+            (other) => other !== client && other.getUserData().userUuid === account
+        );
+        await Promise.all(replaced.map((old) => this.handleLeaveSpace(old, spaceName)));
+        // Leaving may have emptied the space, which then closes and is forgotten: look again, never count in the one
+        // that was just closed
+        const space = this.spaces.get(spaceName);
+        if (!space) {
+            return;
+        }
+        const localSockets = space instanceof Space ? [...space._localConnectedUser.values()] : [];
+        checkCallSpaceRoom(
+            localSpaceName,
+            otherCallAccounts(
+                [
+                    ...[...space.users.values()].map((user) => user.uuid),
+                    ...localSockets.filter((other) => other !== client).map((other) => other.getUserData().userUuid),
+                ],
+                account
+            )
+        );
+    }
+
     public async handleJoinSpace(
         client: Socket,
 
@@ -495,33 +527,12 @@ export class SocketManager implements ZoneEventListener {
 
         checkSpaceJoin({ localSpaceName, filterType, propertiesToSync }, socketData);
 
-        let space: SpaceInterface | undefined = this.spaces.get(spaceName);
-
-        // A call has its two members and no more, whoever else could name it. Members are counted as accounts: a new
-        // socket of an account already in the call replaces its old one (a dropped connection must not lock the person
-        // out of their own call), and what is counted includes the sockets this pusher has just taken in, because the
-        // back's list of users lags a join by a round trip.
-        if (space && isCallSpaceName(localSpaceName)) {
-            const account = socketData.userUuid;
-            const localSockets = space instanceof Space ? [...space._localConnectedUser.values()] : [];
-            await Promise.all(
-                localSockets
-                    .filter((other) => other !== client && other.getUserData().userUuid === account)
-                    .map((old) => this.handleLeaveSpace(old, spaceName))
-            );
-            checkCallSpaceRoom(
-                localSpaceName,
-                otherCallAccounts(
-                    [
-                        ...[...space.users.values()].map((user) => user.uuid),
-                        ...localSockets
-                            .filter((other) => other !== client)
-                            .map((other) => other.getUserData().userUuid),
-                    ],
-                    account
-                )
-            );
+        // A call has its two members and no more, whoever else could name it (see makeRoomInCall)
+        if (isCallSpaceName(localSpaceName)) {
+            await this.makeRoomInCall(client, spaceName, localSpaceName);
         }
+
+        let space: SpaceInterface | undefined = this.spaces.get(spaceName);
 
         if (!space) {
             const onSpaceEmpty = (space: SpaceInterface) => {
