@@ -307,6 +307,17 @@
             flex: none;
             width: 440px;
         }
+        /* In control, the buttons stack at the same compact width on the right, as in the mock */
+        .bs > .bs-go {
+            align-self: flex-end;
+            width: 440px;
+        }
+        .bs-actions:not(.watch) {
+            align-items: flex-end;
+        }
+        .bs-actions:not(.watch) .bs-btns {
+            width: 440px;
+        }
     }
     .bs-go,
     .bs-quiet,
