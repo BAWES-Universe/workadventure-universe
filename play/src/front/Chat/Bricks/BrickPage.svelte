@@ -183,33 +183,36 @@
         align-items: center;
         justify-content: space-between;
         gap: 12px;
-        padding: 2px 0 0;
     }
     .bkp-visit-state {
         display: inline-flex;
         align-items: center;
         gap: 8px;
         min-width: 0;
-        font-size: 15px;
+        font-size: 14px;
         font-weight: 650;
         color: #c4b5fd;
     }
     .bkp-dot {
         flex: none;
-        width: 9px;
-        height: 9px;
+        width: 8px;
+        height: 8px;
         border-radius: 50%;
         background: #34d399;
     }
     .bkp-visit-line {
-        margin: 0;
-        padding: 4px 2px 10px;
-        font-size: 13px;
-        line-height: 1.4;
+        margin: -5px 0 0;
+        padding: 0 4px 12px;
+        font-size: 12.5px;
+        line-height: 1.45;
         color: rgba(244, 242, 250, 0.64);
     }
     .bkp-blocked {
-        padding-top: 8px;
+        margin-top: 0;
+        padding-top: 4px;
+        font-size: 13.5px;
+        line-height: 1.4;
+        color: rgba(244, 242, 250, 0.78);
     }
     .bkp-pill {
         align-self: flex-start;

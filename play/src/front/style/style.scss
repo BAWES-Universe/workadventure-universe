@@ -2244,11 +2244,11 @@ button[data-testid="actionBarLogin"]:hover {
     left: 50%;
     top: calc(100% + 2px * var(--username-dom-scale, 1));
     transform: translateX(-50%);
-    padding: calc(3px * var(--username-dom-scale, 1)) calc(7px * var(--username-dom-scale, 1));
+    padding: calc(2.5px * var(--username-dom-scale, 1)) calc(7px * var(--username-dom-scale, 1));
     border-radius: 999px;
     background: rgb(20 18 30 / 0.78);
     color: rgb(255 255 255 / 0.74);
-    font-size: calc(9px * var(--username-dom-scale, 1));
+    font-size: calc(8.5px * var(--username-dom-scale, 1));
     font-weight: 500;
     line-height: 1;
     white-space: nowrap;

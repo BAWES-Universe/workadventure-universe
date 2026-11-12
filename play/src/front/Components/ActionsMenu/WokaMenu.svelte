@@ -254,7 +254,7 @@
 <style lang="scss">
     .bot-visiting {
         margin: 0 18px 10px;
-        font-size: 14px;
+        font-size: 14.5px;
         line-height: 1.45;
         color: rgb(255 255 255 / 0.62);
     }
