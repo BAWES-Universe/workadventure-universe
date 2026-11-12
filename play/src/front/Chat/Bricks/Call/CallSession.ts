@@ -42,6 +42,8 @@ export interface CallState {
     /** The last moment anyone said or did something in the call, in ms: a quiet stretch counts from here. */
     lastHeardAt: number;
     hold?: HoldWhy;
+    /** The person joined a meeting while the call was still connecting: the call goes on hold the moment it connects. */
+    meetingWhileConnecting?: boolean;
     walkUp?: WalkUp;
     endedBy?: CallEnd;
 }
@@ -89,9 +91,18 @@ export function callReducer(state: CallState, event: CallEvent): CallState {
     if (state.phase === "ended") return state;
     switch (event.type) {
         case "connected":
-            return state.phase === "connecting"
-                ? { ...state, phase: "on", doing: "listening", lastHeardAt: event.now }
-                : state;
+            if (state.phase !== "connecting") return state;
+            // Never "on" while a meeting has the microphone: the microphone never goes to both (check 64)
+            if (state.meetingWhileConnecting)
+                return {
+                    ...state,
+                    phase: "hold",
+                    hold: { kind: "meeting" },
+                    meetingWhileConnecting: undefined,
+                    doing: "listening",
+                    lastHeardAt: event.now,
+                };
+            return { ...state, phase: "on", doing: "listening", lastHeardAt: event.now };
         case "heard":
             return state.phase === "on" ? { ...state, lastHeardAt: event.now } : state;
         case "bot-speaking":
@@ -134,7 +145,7 @@ export function callReducer(state: CallState, event: CallEvent): CallState {
                 workLine: undefined,
             };
         case "meeting-joined":
-            if (state.phase === "connecting") return state;
+            if (state.phase === "connecting") return { ...state, meetingWhileConnecting: true };
             return {
                 ...state,
                 phase: "hold",

@@ -127,6 +127,19 @@ describe("hold and resume (check 64)", () => {
         expect(botMayHear(back)).toBe(true);
     });
 
+    it("a meeting joined while the call is still connecting puts it on hold the moment it connects", () => {
+        const connecting = run(startCall(T0), { type: "meeting-joined" });
+        expect(connecting.phase).toBe("connecting");
+        expect(botMayHear(connecting)).toBe(false);
+        const connected = run(connecting, { type: "connected", now: T0 + 1000 });
+        expect(connected.phase).toBe("hold");
+        expect(connected.hold).toEqual({ kind: "meeting" });
+        expect(connected.meetingWhileConnecting).toBeUndefined();
+        expect(botMayHear(connected)).toBe(false);
+        expect(botMaySpeak(connected)).toBe(false);
+        expect(run(connected, { type: "resume", now: T0 + 2000 }).phase).toBe("on");
+    });
+
     it("resume does nothing when the call is not on hold", () => {
         const on = live();
         expect(run(on, { type: "resume", now: T0 + 5 })).toBe(on);
