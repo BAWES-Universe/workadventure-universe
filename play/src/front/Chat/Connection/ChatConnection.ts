@@ -1,8 +1,8 @@
-import type { BrickOffer, MadeBrick } from "../Bricks/Brick";
 import type { Readable, Writable } from "svelte/store";
 import type { AvailabilityStatus } from "@workadventure/messages";
 import type { MapStore } from "@workadventure/store-utils";
 import type { StateEvents } from "matrix-js-sdk";
+import type { BrickOffer, MadeBrick } from "../Bricks/Brick";
 import type { BotStatusNote } from "../Bots/BotChatStatus";
 import type { BotRoomLink } from "../Bots/BotRoomLink";
 import type { BotReplyLimit } from "../Bots/BotReplyLimit";
