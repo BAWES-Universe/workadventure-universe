@@ -29,6 +29,11 @@ export class ReplyStream {
         void this.pump(open);
     }
 
+    /** No more audio is coming and every frame has been taken. */
+    get usedUp(): boolean {
+        return this.ended && this.buffered === 0;
+    }
+
     get receivedMs(): number {
         return (this.received / TTS_FRAME_SAMPLES) * FRAME_MS;
     }

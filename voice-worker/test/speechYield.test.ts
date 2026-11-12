@@ -789,6 +789,46 @@ describe('the speaker, held and let go', () => {
         await s.speaker.shutdown();
     });
 
+    it('a hold that comes after the last frame was sent does not keep the reply: it ends as completed', async () => {
+        const s = numbered(10);
+        s.speaker.enqueue('r1', 'x');
+        await waitFor('every frame sent', () => s.sent.length === 10, 2000);
+        s.speaker.hold();
+        await waitFor('the end', () => s.progress.some((m) => (m as { finished: boolean }).finished), 500);
+        expect(s.progress.at(-1)).toMatchObject({ finished: true, interrupted: false, reason: 'completed', playedMs: 200 });
+        expect(s.speaker.playingId).toBeUndefined();
+        await s.speaker.shutdown();
+    });
+
+    it('a hold while waiting for audio that then runs out: the reply ends as completed, not kept', async () => {
+        let finish!: () => void;
+        const sent: number[] = [];
+        const progress: { finished: boolean; reason?: string; interrupted?: boolean }[] = [];
+        const target: OutputTarget = { participantId: 'p', epoch: 1, plays: () => true, sendFrame: (f) => sent.push(f.pcm24k[0]), clear: () => undefined };
+        const speaker = new Speaker({
+            counters: new Counters(),
+            voice: {
+                async *speak() {
+                    for (let i = 1; i <= 5; i++) yield new Int16Array(480).fill(i);
+                    await new Promise<void>((resolve) => (finish = resolve));
+                },
+            },
+            maxReplyMs: 60000,
+            speechTimeoutMs: 5000,
+            targets: () => [target],
+            active: () => true,
+            progress: (m) => progress.push(m as never),
+        });
+        speaker.enqueue('r1', 'x');
+        await waitFor('the audio so far', () => sent.length === 5, 2000);
+        speaker.hold();
+        await sleep(50);
+        finish();
+        await waitFor('the end', () => progress.some((m) => m.finished), 500);
+        expect(progress.at(-1)).toMatchObject({ finished: true, interrupted: false, reason: 'completed' });
+        await speaker.shutdown();
+    });
+
     it('a stop, a retract or closing during a hold ends it for good: never resumed', async () => {
         for (const how of ['bargeIn', 'retract', 'shutdown'] as const) {
             const s = numbered(40);

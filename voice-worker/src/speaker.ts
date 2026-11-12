@@ -224,10 +224,13 @@ export class Speaker {
                 reason = 'limit';
                 break;
             }
-            if (this.holding) {
-                // Held: time stands still for the reply, as while waiting for the provider, so nothing comes out in a burst after
+            // A reply with nothing left to send is never kept by a hold: it ends as it would have
+            if (this.holding && !stream.usedUp) {
+                // Held: time stands still for the reply, as while waiting for the provider, so nothing comes out in a burst after.
+                // Let go by a resume or a stop; also woken if the reply runs out of audio meanwhile, to end it as above.
                 const heldFrom = performance.now();
-                await new Promise<void>((resolve) => (this.release = resolve));
+                const letGo = new Promise<void>((resolve) => (this.release = resolve));
+                await (stream.ended ? letGo : Promise.race([letGo, stream.changed()]));
                 const heldMs = performance.now() - heldFrom;
                 counters.inc('playback_held_ms', Math.round(heldMs));
                 if (started) startedAt += heldMs;
