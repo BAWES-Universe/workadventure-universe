@@ -471,8 +471,8 @@ describe('One chat for a person and their Brick, however many devices open it', 
 
             const taking = bridge.onEvent(invite());
             await vi.advanceTimersByTimeAsync(45_000);
-            // Renewed every 10 seconds for 45 seconds, the failed one included: never left to lapse
-            expect((deps.rooms.holdDirectChat as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(5);
+            // Renewed every 5 seconds for 45 seconds, the failed one included: never left to lapse
+            expect((deps.rooms.holdDirectChat as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(9);
             expect(await bridge.directChatFor(BRICK, ALICE)).toEqual({ wait: true });
             configRead();
             await taking;
@@ -481,6 +481,64 @@ describe('One chat for a person and their Brick, however many devices open it', 
             await vi.advanceTimersByTimeAsync(30_000);
             // Once the bot has the chat, nothing renews it
             expect((deps.rooms.holdDirectChat as ReturnType<typeof vi.fn>).mock.calls.length).toBe(renewals);
+            warn.mockRestore();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('never lets a second bot server make the chat while this one takes it, even across a failed renewal', async () => {
+        vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setTimeout', 'clearTimeout', 'Date'] });
+        try {
+            // One Redis for both servers: a key with its expiry, as SET NX PX and SET PX keep it
+            const store = new Map<string, { owner: string; until: number }>();
+            const live = (key: string) => {
+                const entry = store.get(key);
+                return entry && entry.until > Date.now() ? entry : undefined;
+            };
+            const shared = (server: string) => ({
+                claimDirectChat: vi.fn(async (botId: string, user: string, forMs: number) => {
+                    const key = `${botId}|${user}`;
+                    if (live(key)) return false;
+                    store.set(key, { owner: server, until: Date.now() + forMs });
+                    return true;
+                }),
+                holdDirectChat: vi.fn(async (botId: string, user: string, forMs: number) => {
+                    store.set(`${botId}|${user}`, { owner: server, until: Date.now() + forMs });
+                }),
+                releaseDirectChat: vi.fn(async (botId: string, user: string) => {
+                    store.delete(`${botId}|${user}`);
+                }),
+            });
+            const first = makeBridge();
+            const second = makeBridge();
+            Object.assign(first.deps.rooms, shared('server-1'));
+            Object.assign(second.deps.rooms, shared('server-2'));
+            // The first server's second renewal does not reach Redis
+            const hold = first.deps.rooms.holdDirectChat as ReturnType<typeof vi.fn>;
+            const realHold = hold.getMockImplementation()!;
+            let renewals = 0;
+            // and the ones after it take half a second to reach it
+            hold.mockImplementation(async (...args: [string, string, number]) => {
+                const renewal = ++renewals;
+                if (renewal === 2) throw new Error('redis timeout');
+                if (renewal > 2) await new Promise((resolve) => setTimeout(resolve, 500));
+                return realHold(...args);
+            });
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            let configRead: () => void = () => undefined;
+            const config = first.deps.getBotConfig.getMockImplementation();
+            first.deps.getBotConfig.mockImplementationOnce(() => new Promise((resolve) => (configRead = () => resolve(config()))));
+
+            const taking = first.bridge.onEvent(invite());
+            // Four times a second for 45 seconds, the person's other device asks the other server
+            for (let tick = 0; tick < 180; tick++) {
+                await vi.advanceTimersByTimeAsync(250);
+                expect(await second.bridge.directChatFor(BRICK, ALICE)).toEqual({ wait: true });
+            }
+            configRead();
+            await taking;
+            expect(store.size).toBe(0);
             warn.mockRestore();
         } finally {
             vi.useRealTimers();

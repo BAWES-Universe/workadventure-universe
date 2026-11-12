@@ -546,7 +546,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
             });
         };
         hold();
-        const timer = setInterval(hold, DIRECT_CHAT_CLAIM_MS / 2);
+        // Renewed four times a claim: one renewal that fails still leaves two more before the claim runs out
+        const timer = setInterval(hold, DIRECT_CHAT_CLAIM_MS / 4);
         timer.unref?.();
         return () => {
             clearInterval(timer);
