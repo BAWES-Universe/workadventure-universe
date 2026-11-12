@@ -288,6 +288,30 @@ describe('PersistentMemory: Forget of one thing', () => {
         expect(memory.unreportedItemForgets.size).toBe(0);
         clearTimeout(memory.unreportedRetryTimer);
     });
+
+    it('lets go a forget that Orbit refuses for good, but keeps one it only could not take yet', async () => {
+        const memory = held();
+        // A busy Orbit or a refused token is tried again
+        hoisted.axios.post.mockReset().mockRejectedValue({ isAxiosError: true, message: 'busy', response: { status: 503 } });
+        await memory.forgetThings(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]));
+        expect(memory.unreportedItemForgets.size).toBe(1);
+        // A Brick that is gone (404) can never take it: nothing left to tell
+        hoisted.axios.post.mockReset().mockRejectedValue({ isAxiosError: true, message: 'gone', response: { status: 404 } });
+        await memory.reportUnreportedForgets(BOT);
+        expect(memory.unreportedItemForgets.size).toBe(0);
+        clearTimeout(memory.unreportedRetryTimer);
+    });
+
+    it('gives up on a forget Orbit has not taken in a day', async () => {
+        const memory = held();
+        hoisted.axios.post.mockReset().mockRejectedValue(new Error('Orbit is down'));
+        await memory.forgetThings(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]));
+        const [entry] = [...memory.unreportedItemForgets.values()];
+        entry.since = Date.now() - 25 * 60 * 60 * 1000;
+        await memory.reportUnreportedForgets(BOT);
+        expect(memory.unreportedItemForgets.size).toBe(0);
+        clearTimeout(memory.unreportedRetryTimer);
+    });
 });
 
 describe('BotPlayerMemory copies', () => {

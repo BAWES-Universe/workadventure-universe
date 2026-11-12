@@ -12,6 +12,9 @@ import { parseForgetNotice, parseItemForgets, type ItemForgetHandler, type Memor
 export type { MemoryForgetNotice, MemoryForgetHandler, ItemForgetNotice, ItemForgetHandler } from './ForgetNotice';
 
 /** A failed save in words, without the request it carried. */
+/** Answers from Orbit that no retry will change. A busy or unreachable Orbit, or a refused token, is tried again. */
+const PERMANENT_REFUSALS = new Set([400, 404, 410, 422]);
+
 function describeSaveError(error: unknown): string {
     if (axios.isAxiosError(error)) {
         return error.response ? `status=${error.response.status} ${error.message}` : `${error.code || 'no response'} ${error.message}`;
@@ -238,7 +241,9 @@ export class MemoryStorage {
             return true;
         } catch (error) {
             console.warn(`[MemoryStorage] Could not tell Orbit what was forgotten for bot ${botId}: ${describeSaveError(error)}`);
-            return false;
+            // Orbit answered that this can never be taken (no such Brick, a bad request): telling it again changes nothing, so it is let go
+            const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+            return status !== undefined && PERMANENT_REFUSALS.has(status);
         }
     }
 

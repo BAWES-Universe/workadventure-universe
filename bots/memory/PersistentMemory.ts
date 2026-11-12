@@ -42,9 +42,10 @@ export class PersistentMemory extends ConversationMemory {
      * Things a person asked us to forget that Orbit has not yet taken (it was unreachable), by "botId|uuid|key". Each is
      * told again before the next save and by a timer, so a thing never comes back for want of one failed call.
      */
-    private unreportedItemForgets: Map<string, { botId: string; userUuid: string; itemKey: string; kind: string }> = new Map();
+    private unreportedItemForgets: Map<string, { botId: string; userUuid: string; itemKey: string; kind: string; since: number }> = new Map();
     private unreportedRetryTimer: NodeJS.Timeout | null = null;
     private static readonly UNREPORTED_RETRY_MS = 30 * 1000;
+    private static readonly UNREPORTED_GIVE_UP_MS = 24 * 60 * 60 * 1000;
     /** An older Orbit repeats a Forget for a minute: longer than that plus one 30-second privacy check */
     private static readonly FORGET_REPEAT_WINDOW_MS = 2 * 60 * 1000;
     /**
@@ -176,8 +177,10 @@ export class PersistentMemory extends ConversationMemory {
     }
 
     /** Orbit did not take this forget: keep it, and tell Orbit again soon. */
-    private keepToReport(entry: { botId: string; userUuid: string; itemKey: string; kind: string }): void {
-        this.unreportedItemForgets.set(`${entry.botId}|${entry.userUuid}|${entry.itemKey}`, entry);
+    private keepToReport(entry: { botId: string; userUuid: string; itemKey: string; kind: string; since?: number }): void {
+        const mapKey = `${entry.botId}|${entry.userUuid}|${entry.itemKey}`;
+        // Keep when it first failed, so one that Orbit never takes is let go after a day rather than tried for ever
+        this.unreportedItemForgets.set(mapKey, { ...entry, since: this.unreportedItemForgets.get(mapKey)?.since ?? entry.since ?? Date.now() });
         if (this.unreportedRetryTimer) return;
         this.unreportedRetryTimer = setTimeout(() => {
             this.unreportedRetryTimer = null;
@@ -192,6 +195,10 @@ export class PersistentMemory extends ConversationMemory {
         await Promise.all(
             waiting.map(async ([mapKey, entry]) => {
                 if (await this.memoryStorage.reportForgottenItem(entry.botId, entry.userUuid, entry.itemKey, entry.kind)) this.unreportedItemForgets.delete(mapKey);
+                else if (Date.now() - entry.since > PersistentMemory.UNREPORTED_GIVE_UP_MS) {
+                    console.warn(`[PersistentMemory] Orbit has not taken a forget for bot ${entry.botId} in a day; letting it go`);
+                    this.unreportedItemForgets.delete(mapKey);
+                }
             })
         );
         if (this.unreportedItemForgets.size > 0) this.keepToReport([...this.unreportedItemForgets.values()][0]);
