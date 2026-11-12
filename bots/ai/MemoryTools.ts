@@ -95,25 +95,33 @@ const MAY_FOLLOW = new Set([
 const SOMEONE_ELSES = new Set(['his', 'her', 'their', 'its', 'our', 'dog', 'cat', 'pet', 'friend', 'mom', 'mum', 'dad', 'boss', 'wife', 'husband', 'brother', 'sister', 'kid', 'son', 'daughter', 'partner', 'child']);
 
 /**
- * Whether "name" or "birthday" in these words is the person's own. "My dog's name", "her birthday" and "Sam's name" are
- * somebody else's, and forgetting is for good, so they never take the person's own name or birthday with them. One
- * mention that is the person's own is enough ("my name", "the name I gave you", "birthday").
+ * The only other words a request may hold for "name" or "birthday" to be clearly the person's own: who it belongs to ("my",
+ * "me"), the plain words around a request ("forget that my name please"), and the question words ("when's my birthday").
+ * Anything else in the phrase ("dog", "friend", "Sam's", "cake", "gave", "of Sam") makes it not clearly theirs.
  */
-function isAboutThem(asked: string, words: readonly string[]): boolean {
+const OWN_FILLER = new Set([
+    'my', 'me', 'i', 'mine', 'myself', 'the', 'a', 'an', 'that', 'this', 'is', 'was', 'are', 'to', 'of', 'and', 'it', 'about',
+    'forget', 'delete', 'remove', 'erase', 'clear', 'drop', 'please', 'pls', 'you', 'do', 'does', 'can', 'could', 'will', 'would',
+    'what', 'whats', "what's", 'when', 'whens', "when's", 'remember', 'know', 'tell',
+]);
+
+/**
+ * Whether "name" or "birthday" in these words is the person's own, decided from the whole phrase and always on the side of
+ * keeping it: "my dog's name", "her birthday", "the name of my dog" and "Sam's birthday" are somebody else's, and forgetting is
+ * for good. It is theirs only when the target word is there and every other word is who it belongs to, a plain word around a
+ * request, or the remembered value itself ("forget that my name is Mark"). A person who says it any other way is sent to the
+ * ids from what_i_remember.
+ */
+function isAboutThem(asked: string, words: readonly string[], ownValue: string): boolean {
     const tokens = asked.split(/[^\p{L}\p{N}'\u2019]+/u).filter(Boolean);
-    return tokens.some((token, index) => {
-        if (!words.includes(token)) return false;
-        const before = tokens[index - 1];
-        if (before !== undefined && (/['\u2019]s$/u.test(before) || SOMEONE_ELSES.has(before))) return false;
-        // "my birthday cake" and "a name tag" are about the next word, not about the person's birthday or name
-        // (time and polite words may follow: "my name now", "my birthday please")
-        const after = tokens[index + 1];
-        // "the name of my dog" and "the birthday for Sam" name someone else after the word; only "of me" or "of mine" is theirs
-        if (after === 'of' || after === 'for') {
-            const rest = tokens.slice(index + 2);
-            return rest.length === 0 || (rest.length === 1 && ['me', 'mine', 'myself', 'i'].includes(rest[0]));
+    if (!tokens.some((token) => words.includes(token))) return false;
+    const valueTokens = new Set(ownValue.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean));
+    return tokens.every((token, index) => {
+        if (words.includes(token) || KIND_WORDS.has(token)) {
+            const before = tokens[index - 1];
+            return !(before !== undefined && (/['\u2019]s$/u.test(before) || SOMEONE_ELSES.has(before)));
         }
-        return !(after !== undefined && CONTENT_WORDS_OF(after).length > 0 && !MAY_FOLLOW.has(after));
+        return OWN_FILLER.has(token) || MAY_FOLLOW.has(token) || valueTokens.has(token);
     });
 }
 
@@ -137,8 +145,8 @@ export function itemsAbout(items: MemoryItem[], about: string): MemoryItem[] {
         // The person's own name and birthday are decided only by whether they were asked for as theirs ("my name", "birthday").
         // Their value inside a longer phrase ("my friend Mark", "Mark's birthday", "the party on 12 June") is about someone or
         // something else, and forgetting is for good. Someone who says only the value is sent to what_i_remember for its id.
-        if (item.kind === 'name') return isAboutThem(asked, ['name']);
-        if (item.kind === 'birthday') return isAboutThem(asked, ['birthday', 'bday']);
+        if (item.kind === 'name') return isAboutThem(asked, ['name'], item.value);
+        if (item.kind === 'birthday') return isAboutThem(asked, ['birthday', 'bday'], item.value);
         // What is remembered, said back whole (as its own words, not a piece of a longer word)
         if (value.length >= MIN_ASKED) {
             const whole = new RegExp(`(^|[^\\p{L}\\p{N}])${value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^\\p{L}\\p{N}])`, 'u');

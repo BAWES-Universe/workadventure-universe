@@ -74,7 +74,14 @@ describe('the memory tools', () => {
         for (const other of ["my dog's name", "my friend's birthday", 'her birthday', "Sam's name", 'their name', 'my dog name']) {
             expect(itemsAbout(items, other).map((item) => item.kind), other).not.toContain(other.includes('birthday') ? 'birthday' : 'name');
         }
-        expect(itemsAbout(items, 'the name I gave you').map((item) => item.kind)).toEqual(['name']);
+        // Unusual wording is not clearly theirs: nothing goes, and the tool sends the model to the ids
+        expect(itemsAbout(items, 'the name I gave you').map((item) => item.kind)).toEqual([]);
+        for (const own of ['my name', 'name', 'forget my name now', 'forget that my name is Sara', 'when is my birthday']) {
+            expect(itemsAbout(items, own).map((item) => item.kind), own).toEqual([own.includes('birthday') ? 'birthday' : 'name']);
+        }
+        for (const other of ['the name of my dog', "my dog's name", 'her birthday', 'the name I gave my cat', 'my birthday cake', 'birthday party for Sam']) {
+            expect(itemsAbout(items, other).map((item) => item.kind), other).not.toContain(other.includes('birthday') ? 'birthday' : 'name');
+        }
         // Time and polite words after it do not make it someone else's: a person asking to be forgotten is not refused
         for (const own of ['forget my name now', 'forget my name again', 'forget my name please', 'forget my name, thanks']) {
             expect(itemsAbout(items, own).map((item) => item.kind), own).toEqual(['name']);
@@ -82,7 +89,9 @@ describe('the memory tools', () => {
         for (const own of ['forget my birthday please', 'forget my birthday today', 'forget my birthday again, thanks']) {
             expect(itemsAbout(items, own).map((item) => item.kind), own).toEqual(['birthday']);
         }
-        expect(itemsAbout(items, "my name and my dog's name").map((item) => item.kind)).toEqual(['name']);
+        // Mixed with someone else's, it is not clearly theirs: nothing goes
+        expect(itemsAbout(items, "my name and my dog's name").map((item) => item.kind)).toEqual([]);
+        expect(itemsAbout(items, 'my name and my birthday').map((item) => item.kind)).toEqual(['name', 'birthday']);
     });
 
     it("does not take the person's own name or birthday because other words hold its value", () => {
