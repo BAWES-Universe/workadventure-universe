@@ -11,7 +11,7 @@
 import { pointedArtifactIds } from './ArtifactReferences';
 import type { ConversationMemory } from '../memory/ConversationMemory';
 import type { AdminApiService, AIProviderCredentials, BotAccessPerson, BotAiCredentialsAnswer } from '../server/AdminApiService';
-import { reachFor } from '../server/AdminApiService';
+import { KEY_NOT_LENT_LINE, reachFor } from '../server/AdminApiService';
 import { BotAccessGate } from '../server/BotAccessGate';
 import { BotClient } from '../client/BotClient';
 import type { AIProviderConfig, AIStreamChunk, AIUsageMetadata, BotLimits, ToolCall } from './types';
@@ -183,7 +183,7 @@ function sentOnlyTo(options: TurnOptions | undefined, playerId: number | undefin
 type UsageTalker = { channel: 'dm' | 'nearby'; userId?: string; isGuest?: boolean; greeting?: boolean };
 
 type ResolvedProvider =
-    | { resting: false; config: AIProviderConfig; source: 'provider' | 'universe-ai' | 'own-key' }
+    | { resting: false; config: AIProviderConfig; source: 'provider' | 'universe-ai' | 'own-key'; forOthers?: boolean }
     | { resting: true; line: string };
 
 /** Refs that only Orbit can resolve for a bot: Universe AI (follows the Default) and a person's own key (`key-…`). */
@@ -469,8 +469,9 @@ export class AIService {
      * provider, and every call without a bot id, is fetched by provider id exactly as before. A bot that is resting
      * has no provider to give, so this throws for it: the quick helper paths treat that as "unavailable".
      */
-    private async getProviderCredentials(providerId: string, botId?: string): Promise<AIProviderConfig> {
-        const resolved = await this.resolveProvider(providerId, botId);
+    private async getProviderCredentials(providerId: string, botId?: string, asker?: string): Promise<AIProviderConfig> {
+        // A small call for a named person on a Brick is answered for them, as a reply is (#2005): never on its owner's key for someone else
+        const resolved = await this.resolveProvider(providerId, botId, this.brickAsk(botId, asker));
         if (resolved.resting) {
             throw new Error(`Bot ${botId} is resting: its AI key is down`);
         }
@@ -481,7 +482,7 @@ export class AIService {
      * Resolve a bot's provider. Orbit is asked by bot id only for Universe AI and a person's own key; if it does not
      * know the bot (or is an older Orbit without the route) the provider is fetched by id as before.
      */
-    private async resolveProvider(providerId: string, botId?: string, forOthers?: { asker: string; roomUrl: string }): Promise<ResolvedProvider> {
+    private async resolveProvider(providerId: string, botId?: string, forOthers?: { asker: string; roomUrl?: string }): Promise<ResolvedProvider> {
         if (botId && needsBotRoute(providerId)) {
             // A Brick that stands in a room (#2005) is answered by who is asking, so each asker has their own answer
             const cacheKey = `${botId}:${providerId}${forOthers ? `:${forOthers.asker}` : ''}`;
@@ -501,6 +502,9 @@ export class AIService {
                 }
                 throw error;
             }
+            // A Brick asked about for someone, and Orbit has nobody to serve (it is not visiting, or not anywhere that takes visits):
+            // it never falls back to a provider found by id, which could be its owner's. It cannot answer them, and says so.
+            if (!answer && forOthers) return { resting: true, line: KEY_NOT_LENT_LINE };
             if (answer) {
                 const resolved = this.resolvedFromAnswer(answer);
                 this.botCredentialCache.set(cacheKey, {
@@ -561,7 +565,7 @@ export class AIService {
             // Orbit always says; if it ever didn't, the safe reading is that the person typed the address
             config.ownKey = { addressTyped: answer.keyAddressTyped !== false };
         }
-        return { resting: false, config, source: answer.source };
+        return { resting: false, config, source: answer.source, ...(answer.forOthers ? { forOthers: true } : {}) };
     }
 
     private buildProviderConfig(credentialsData: AIProviderCredentials): AIProviderConfig {
@@ -1091,7 +1095,9 @@ export class AIService {
             const talker = this.whoTalked(botId, playerId, channel);
             const visit = this.roomBrickFor(botId, talker.userId);
             // Get provider credentials. A bot on Universe AI or a person's own key is resolved by Orbit for this bot (#374).
-            const resolved = await this.resolveProvider(providerId, botId, visit ? { asker: visit.asker, roomUrl: visit.roomUrl } : undefined);
+            // Every reply of a Brick asks Orbit who it is for, whether or not this server has it on a map (a direct message, a restart,
+            // a Brick that was moved): the owner's key and things never serve anyone else on what this server happens to remember
+            const resolved = await this.resolveProvider(providerId, botId, this.brickAsk(botId, talker.userId, visit?.roomUrl));
             if (resolved.resting) {
                 // The key is down and its owner chose Stop replying: say the one fixed line, call no AI, track nothing
                 this.restingLines.add(resolved.line.trim());
@@ -1335,7 +1341,8 @@ export class AIService {
                       this.gatePerson(botId, playerId, botClient, spaceName)
                   );
             // A Brick standing in a room never uses its owner's apps, files or computer for anyone else (#2005)
-            if (visit?.forOthers) {
+            const forOthers = visit?.forOthers === true || (resolved as { forOthers?: boolean }).forOthers === true;
+            if (forOthers) {
                 for (let at = tools.length - 1; at >= 0; at--) {
                     const name: string = tools[at]?.function?.name ?? '';
                     if (toolServerMap.has(name) || isArtifactTool(name) || isFileTool(name)) tools.splice(at, 1);
@@ -1347,7 +1354,7 @@ export class AIService {
             const nearbyRule = channel === 'world' && botClient && this.approvals && toolServerMap.size > 0 ? NEARBY_ASK_RULE : '';
             // With "Asks which way to go" on Never the bot says its pick and starts (#1661)
             const neverAsk = botId && this.approvals?.asksQuestions && (await this.approvals.settings(botId)).askWhichWay === 'never' ? NEVER_ASK_RULE : '';
-            const systemPrompt = [basePrompt, nearbyRule, neverAsk, visit ? visitingRule(visit.ownerName, visit.forOthers) : '', ...(options?.rules ?? [])].filter(Boolean).join('\n\n');
+            const systemPrompt = [basePrompt, nearbyRule, neverAsk, visit || forOthers ? visitingRule(visit?.ownerName ?? null, forOthers) : '', ...(options?.rules ?? [])].filter(Boolean).join('\n\n');
             if (turn) turn.artifactTools = tools.some((tool) => writesArtifact(tool?.function?.name ?? ''));
 
             // Generate stream with tools
@@ -3417,6 +3424,19 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         return MCPConnector.refreshServerTools(botId, serverId, this.adminApiUrl, admin['adminApiToken'], this.toolSuggesterFor(providerId, botId));
     }
 
+    /** Every Brick this server has seen (a direct message, a map): a reply or a small call for one is always asked about by who it is for (#2005). */
+    private knownBricks = new Set<string>();
+
+    /**
+     * Who Orbit is asked about for a Brick's reply or small call: the person being answered, by their WorkAdventure id, or
+     * 'unknown' for someone who cannot be named (never taken for its owner). Undefined for a bot that is no Brick, and for a
+     * small call with nobody named (what it always was).
+     */
+    private brickAsk(botId: string | undefined, asker: string | undefined, roomUrl?: string): { asker: string; roomUrl?: string } | undefined {
+        if (!botId || !(this.knownBricks.has(botId) || this.roomBricks.has(botId))) return undefined;
+        return { asker: asker ?? 'unknown', ...(roomUrl ? { roomUrl } : {}) };
+    }
+
     /** The Bricks that stand in a room right now (#2005), with whose they are: set when one is put on a map, cleared when it leaves. */
     private roomBricks = new Map<string, { ownerUuid: string; ownerName: string | null; roomUrl: string }>();
 
@@ -3447,6 +3467,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     private helperBricks = new Set<string>();
 
     noteBrick(botId: string, brick: { isDefault: boolean; deleted?: boolean } | undefined): void {
+        if (brick && !brick.deleted) this.knownBricks.add(botId);
+        else this.knownBricks.delete(botId);
         if (brick?.isDefault && !brick.deleted) this.helperBricks.add(botId);
         else this.helperBricks.delete(botId);
     }
@@ -4257,7 +4279,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             if (!label) return false;
             let yes = false;
             try {
-                yes = isConfirm(await this.quickGenerate(providerId, CONFIRM_SYSTEM, message.slice(0, 300), botId, CONFIRM_TIMEOUT_MS));
+                yes = isConfirm(await this.quickGenerate(providerId, CONFIRM_SYSTEM, message.slice(0, 300), botId, CONFIRM_TIMEOUT_MS, person.uuid));
             } catch {
                 // Not knowing is not a yes: the card closes and the person asks again
             }
@@ -5432,7 +5454,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         providerId: string,
         call: (provider: AIProvider, config: AIProviderConfig, signal: AbortSignal) => Promise<T>,
         botId?: string,
-        timeoutMs: number = QUICK_LLM_TIMEOUT_MS
+        timeoutMs: number = QUICK_LLM_TIMEOUT_MS,
+        asker?: string
     ): Promise<T | undefined> {
         let timeoutId: ReturnType<typeof setTimeout> | undefined;
         let lookupTimeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -5442,7 +5465,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             // own deadline: the provider call below then still has its full time, instead of
             // starting already aborted after a slow lookup.
             const config = await Promise.race([
-                this.getProviderCredentials(providerId, botId),
+                this.getProviderCredentials(providerId, botId, asker),
                 new Promise<never>((_resolve, reject) => {
                     lookupTimeoutId = setTimeout(() => reject(new Error("credential lookup timed out")), QUICK_LLM_TIMEOUT_MS);
                 }),
@@ -5469,7 +5492,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
      * interruption feature works for bots on any provider.
      * Returns the action and a message to say as a followup.
      */
-    async quickClassify(providerId: string, currentTask: string, newMessage: string, botId?: string): Promise<{ action: InterruptionAction; message: string }> {
+    async quickClassify(providerId: string, currentTask: string, newMessage: string, botId?: string, asker?: string): Promise<{ action: InterruptionAction; message: string }> {
         const prompt = `Current task: "${currentTask}"
 New message: "${newMessage}"
 
@@ -5496,7 +5519,9 @@ Return JSON: { "action": "...", "message": "what to say as a followup" }`;
                 undefined,
                 signal
             ),
-            botId
+            botId,
+            undefined,
+            asker
         );
         if (!result) return { action: 'queue', message: '' };
 
@@ -5518,7 +5543,7 @@ Return JSON: { "action": "...", "message": "what to say as a followup" }`;
      * Returns '' on failure so callers stay silent rather than fall back to
      * hardcoded text.
      */
-    async quickGenerate(providerId: string, systemPrompt: string, userPrompt: string, botId?: string, timeoutMs?: number): Promise<string> {
+    async quickGenerate(providerId: string, systemPrompt: string, userPrompt: string, botId?: string, timeoutMs?: number, asker?: string): Promise<string> {
         // Same bounded-abort pattern as quickClassify: the overflow ack runs in
         // the interruption-routing path — a slow provider must not delay it for
         // the provider's own (30s+) timeout, and the call must actually be
@@ -5526,7 +5551,8 @@ Return JSON: { "action": "...", "message": "what to say as a followup" }`;
         const result = await this.runBoundedProviderCall(providerId, (provider, config, signal) =>
             provider.generate(systemPrompt, userPrompt, config, undefined, signal),
             botId,
-            timeoutMs
+            timeoutMs,
+            asker
         );
         return (result?.content || '').trim();
     }

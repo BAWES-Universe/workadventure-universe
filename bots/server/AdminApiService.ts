@@ -467,6 +467,8 @@ export type BotAiCredentialsAnswer =
           keyAddressTyped?: boolean;
           standingInFor?: string;
           movedFromKey?: string;
+          /** Orbit says the answer is for someone the Brick does not belong to (#2005): its owner's apps, files and computer stay out of the reply. */
+          forOthers?: boolean;
       })
     | { source: 'resting'; keyOwnerId: string; restingLine: string };
 
@@ -998,7 +1000,7 @@ export class AdminApiService {
      * or (when the owner chose "Stop replying" for a key that is down) with a resting line and no provider at all.
      * Returns null when Orbit does not know the bot or has no such route yet.
      */
-    async getBotAiCredentials(botId: string, forOthers?: { asker: string; roomUrl: string }): Promise<BotAiCredentialsAnswer | null> {
+    async getBotAiCredentials(botId: string, forOthers?: { asker: string; roomUrl?: string }): Promise<BotAiCredentialsAnswer | null> {
         if (!this.isConfigured()) {
             return null;
         }
@@ -1015,7 +1017,7 @@ export class AdminApiService {
                     headers: { Authorization: `Bearer ${botServiceToken}` },
                     timeout: 15000,
                     // A Brick that walks beside its owner (#2005) is asked about who is about to be answered, and where
-                    ...(forOthers ? { params: { asker: forOthers.asker, roomUrl: forOthers.roomUrl } } : {}),
+                    ...(forOthers ? { params: { asker: forOthers.asker, ...(forOthers.roomUrl ? { roomUrl: forOthers.roomUrl } : {}) } } : {}),
                 }
             );
             return response.data;
