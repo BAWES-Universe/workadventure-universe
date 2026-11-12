@@ -145,6 +145,12 @@ describe('dropItems: a forgotten thing goes, with what was built from it', () =>
         expect(dropItems(mine(), new Set([key]), new Map([[key, 2500]]))).toBe(1);
     });
 
+    it('drops a thing whose forget carries no time, whenever it was said', () => {
+        const key = memoryItemKey('pref', null, 'lo-fi');
+        // Orbit sent no time (0): it cannot say what came after, so the thing goes
+        expect(dropItems(mine(), new Set([key]), new Map([[key, 0]]))).toBe(1);
+    });
+
     it('drops by the words when no line was noted (what was kept before this), the person\'s lines too', () => {
         const old = mine();
         delete old.personalInfo.drawnFrom;

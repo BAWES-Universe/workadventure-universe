@@ -122,7 +122,8 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
     const goes = (id: string, at: number | null) => {
         if (!keys.has(id)) return false;
         const forgot = forgotAt?.get(id);
-        return !(forgot !== undefined && at !== null && at > forgot);
+        // A forget that carries no time (0) cannot say what was said after it, so it takes the thing whenever it was said
+        return !(forgot !== undefined && forgot > 0 && at !== null && at > forgot);
     };
     const forgetPlace = (key: string) => {
         if (info.heard) delete info.heard[key];

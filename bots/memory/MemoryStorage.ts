@@ -11,10 +11,10 @@ import { parseForgetNotice, parseItemForgets, type ItemForgetHandler, type Memor
 
 export type { MemoryForgetNotice, MemoryForgetHandler, ItemForgetNotice, ItemForgetHandler } from './ForgetNotice';
 
-/** A failed save in words, without the request it carried. */
 /** Answers from Orbit that no retry will change. A busy or unreachable Orbit, or a refused token, is tried again. */
 const PERMANENT_REFUSALS = new Set([400, 404, 410, 422]);
 
+/** A failed save in words, without the request it carried. */
 function describeSaveError(error: unknown): string {
     if (axios.isAxiosError(error)) {
         return error.response ? `status=${error.response.status} ${error.message}` : `${error.code || 'no response'} ${error.message}`;
