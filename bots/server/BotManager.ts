@@ -992,10 +992,23 @@ export class BotManager {
 
     /** Takes a person's visiting Brick off the map. Only the one it is asked about, and only while it is still theirs. */
     private async endVisitor(uuid: string, botId: string): Promise<void> {
-        const visitor = this.visitors.get(uuid);
-        if (visitor?.botId === botId) this.visitors.delete(uuid);
         const instance = this.bots.get(botId);
-        if (instance?.config.brick?.visiting?.ownerUuid === uuid) await this.despawnBot(botId);
+        let despawned = false;
+        try {
+            if (instance?.config.brick?.visiting?.ownerUuid === uuid) await this.despawnBot(botId);
+            despawned = true;
+        } finally {
+            // The visitor is dropped after the despawn, not before: dropped first, a Brick whose despawn then failed (the
+            // registry could not be reached) would stand on the map with nobody to end it. And a failed despawn must not
+            // leave a connected-looking instance behind (it would be counted as present and be found again by the next sync):
+            // its client is already disconnected, so it is forgotten here and the error still goes on.
+            if (!despawned && instance && this.bots.get(botId) === instance) {
+                this.bots.delete(botId);
+                this.aiService.noteRoomBrick(botId, undefined);
+            }
+            const visitor = this.visitors.get(uuid);
+            if (visitor?.botId === botId) this.visitors.delete(uuid);
+        }
     }
 
     /**
@@ -1293,7 +1306,16 @@ export class BotManager {
                 connected++;
             }
         }
-        // A Brick that walks beside its person (#2005) is in the room's list as well, and is no person
+        return connected + this.visitingBrickCount(roomId);
+    }
+
+    /**
+     * The Bricks walking beside their person (#2005) that are connected in this room. They are in the game's list of the
+     * room like any bot, are no person, and are not in `roomsWithBots` (a room's own bots only), so every count of who is
+     * a person has to add them.
+     */
+    private visitingBrickCount(roomId: string): number {
+        let connected = 0;
         for (const visitor of this.visitors.values()) {
             if (visitor.roomUrl === roomId && this.bots.get(visitor.botId)?.status === 'connected') connected++;
         }
@@ -1370,13 +1392,15 @@ export class BotManager {
 
         for (const [roomId, roomState] of this.roomsWithBots.entries()) {
             const waUserCount = waRooms.get(roomId) || 0;
-            const ourBotCount = roomState.botIds.size;
+            // A visiting Brick is in the game's count of the room too, and is no person
+            const visiting = this.visitingBrickCount(roomId);
+            const ourBotCount = roomState.botIds.size + visiting;
 
             // If WA reports at or below our bot count, room is empty of real players
             // WA user count includes bots, so waUserCount <= ourBotCount means no real players present
             if (waUserCount <= ourBotCount) {
                 // Double-check: are any bots actually connected?
-                let connectedBots = 0;
+                let connectedBots = visiting;
                 for (const botId of roomState.botIds) {
                     const instance = this.bots.get(botId);
                     if (instance && instance.status === 'connected') {

@@ -313,6 +313,65 @@ describe('putting the Brick on the map', () => {
         expect(despawn).toHaveBeenCalledWith('brick-1');
     });
 
+    it('forgets a Brick whose despawn failed, and drops its visitor, and still says it failed (Sentry on #2023)', async () => {
+        const { botManager, orbit, despawn, internals } = manager();
+        orbit.answer = [visitingConfig('brick-1', ROOM_A)];
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID });
+        despawn.mockImplementationOnce(async () => {
+            throw new Error('registry unreachable');
+        });
+        orbit.answer = [];
+        await expect(botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID })).rejects.toThrow('registry unreachable');
+        expect(internals.bots.has('brick-1')).toBe(false);
+        expect((botManager as unknown as { visitors: Map<string, unknown> }).visitors.has(KHALID)).toBe(false);
+    });
+
+    it('keeps its visitor listed until the despawn is done', async () => {
+        const { botManager, orbit, despawn } = manager();
+        orbit.answer = [visitingConfig('brick-1', ROOM_A)];
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID });
+        const visitors = (botManager as unknown as { visitors: Map<string, unknown> }).visitors;
+        let listedDuringDespawn: boolean | null = null;
+        despawn.mockImplementationOnce(async () => {
+            listedDuringDespawn = visitors.has(KHALID);
+        });
+        orbit.answer = [];
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID });
+        expect(listedDuringDespawn).toBe(true);
+        expect(visitors.has(KHALID)).toBe(false);
+    });
+
+    it('counts a visiting Brick as no person when it checks whether a room is empty (Sentry on #2023)', async () => {
+        const { botManager, orbit, despawn, internals } = manager();
+        orbit.answer = [visitingConfig('brick-1', ROOM_A)];
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID });
+        internals.bots.set('room-bot', { botId: 'room-bot', client: { setFullConfig: () => undefined }, config: visitingConfig('room-bot', ROOM_A), status: 'connected', lastHeartbeat: 0 });
+        const rooms = (botManager as unknown as { roomsWithBots: Map<string, { botIds: Set<string>; lastActivity: number }> }).roomsWithBots;
+        rooms.set(ROOM_A, { botIds: new Set(['room-bot']), lastActivity: Date.now() });
+        const query = vi.spyOn(botManager as unknown as { queryWorkAdventureRooms: () => Promise<Map<string, number>> }, 'queryWorkAdventureRooms');
+        vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+        // The game counts the room bot and the visiting Brick, and no person: the room is empty
+        query.mockResolvedValue(new Map([[ROOM_A, 2]]));
+        await botManager.verifyRoomOccupancy();
+        expect(despawn).toHaveBeenCalledWith('room-bot');
+        expect(rooms.has(ROOM_A)).toBe(false);
+    });
+
+    it('does not take a room with a person in it for empty because a visiting Brick is there', async () => {
+        const { botManager, orbit, despawn, internals } = manager();
+        orbit.answer = [visitingConfig('brick-1', ROOM_A)];
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID });
+        internals.bots.set('room-bot', { botId: 'room-bot', client: { setFullConfig: () => undefined }, config: visitingConfig('room-bot', ROOM_A), status: 'connected', lastHeartbeat: 0 });
+        const rooms = (botManager as unknown as { roomsWithBots: Map<string, { botIds: Set<string>; lastActivity: number }> }).roomsWithBots;
+        rooms.set(ROOM_A, { botIds: new Set(['room-bot']), lastActivity: Date.now() });
+        vi.spyOn(botManager as unknown as { queryWorkAdventureRooms: () => Promise<Map<string, number>> }, 'queryWorkAdventureRooms').mockResolvedValue(new Map([[ROOM_A, 3]]));
+        vi.spyOn(console, 'log').mockImplementation(() => undefined);
+        await botManager.verifyRoomOccupancy();
+        expect(despawn).not.toHaveBeenCalledWith('room-bot');
+        expect(rooms.has(ROOM_A)).toBe(true);
+    });
+
     it('follows its person to the next room: off the old map, on the new one', async () => {
         const { botManager, orbit, spawn, despawn } = manager();
         orbit.answer = [visitingConfig('brick-1', ROOM_A), visitingConfig('brick-1', ROOM_B)];
