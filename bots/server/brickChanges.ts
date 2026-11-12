@@ -21,16 +21,18 @@ export function brickChangedEverywhere(
 /**
  * Hears Brick changes from the other bot servers (#1996). When listening cannot start (Redis busy at startup, say), it
  * is tried again, less often each time, until it starts or the server stops: meanwhile a Brick changed through another
- * server is read again here within the minute its copy lasts. Resolves after the first try; the stop ends the retries.
+ * server is read again here within the minute its copy lasts. The stop is there at once, so a server that stops while
+ * the first try is still out tries nothing more; firstTry ends with that first try.
  */
-export async function listenForBrickChanges(
+export function listenForBrickChanges(
     registry: Pick<BotRegistry, 'onBrickChanged'>,
     heard: (botId: string, ownerId: string) => void,
     { firstRetryMs = 1_000, maxRetryMs = 60_000 }: { firstRetryMs?: number; maxRetryMs?: number } = {}
-): Promise<() => void> {
+): { stop: () => void; firstTry: Promise<void> } {
     let stopped = false;
     let timer: NodeJS.Timeout | undefined;
     const attempt = async (retryMs: number): Promise<void> => {
+        if (stopped) return;
         try {
             await registry.onBrickChanged(heard);
         } catch (error) {
@@ -40,9 +42,13 @@ export async function listenForBrickChanges(
             timer.unref?.();
         }
     };
-    await attempt(firstRetryMs);
-    return () => {
-        stopped = true;
-        if (timer) clearTimeout(timer);
+    const firstTry = attempt(firstRetryMs);
+    return {
+        stop: () => {
+            stopped = true;
+            if (timer) clearTimeout(timer);
+            timer = undefined;
+        },
+        firstTry,
     };
 }

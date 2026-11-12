@@ -232,6 +232,8 @@ async function shutdown(signal: string) {
     try {
         // Stop game loop
         stopGameLoop();
+        // No more tries at hearing Brick changes, even when the game loop never started
+        stopBrickListening?.();
         
         // Stop movement analysis
         stopMovementAnalysis();
@@ -277,7 +279,12 @@ async function start() {
         await botManager.initialize();
         // A Brick deleted through another bot server stops here at once too (#1996). Without it, within the minute.
         const replies = dmReplies;
-        if (replies) stopBrickListening = await listenForBrickChanges(botRegistry, (botId, ownerId) => void replies.forgetBrickOf(botId, ownerId));
+        if (replies) {
+            // The stop is kept before the first try ends, so a shutdown meanwhile ends the retries too
+            const listening = listenForBrickChanges(botRegistry, (botId, ownerId) => void replies.forgetBrickOf(botId, ownerId));
+            stopBrickListening = listening.stop;
+            await listening.firstTry;
+        }
 
         // Start API server
         botAPI.start(BOT_SERVER_PORT);
@@ -408,7 +415,6 @@ function stopGameLoop(): void {
     if (gameLoopInterval) {
         clearInterval(gameLoopInterval);
         if (brickSweepInterval) clearInterval(brickSweepInterval);
-        stopBrickListening?.();
         gameLoopInterval = null;
         console.log('[BotServer] Game loop stopped');
     }

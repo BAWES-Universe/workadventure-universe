@@ -187,6 +187,37 @@ describe("a person's own Bricks", () => {
         expect(api.listMyBricks).toHaveBeenCalledTimes(3);
     });
 
+    it("never answer an Undo with a list read from before it, when Orbit's answer does not say the Brick", async () => {
+        api.listMyBricks.mockResolvedValue({
+            bricks: [card()],
+            deleted: [{ ...made, enabled: false, deletedAt: "2026-11-12T09:00:00Z", goneAt: "2026-11-19T09:00:00Z" }],
+        });
+        await loadMyBricks();
+        // A read starts while the Brick is still deleted, and Undo is done before Orbit's list arrives
+        let answerOld: (value: unknown) => void = () => undefined;
+        api.listMyBricks.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    answerOld = resolve;
+                })
+        );
+        const reading = loadMyBricks();
+        await vi.waitFor(() => expect(api.listMyBricks).toHaveBeenCalledTimes(2));
+        api.undoMyBrick.mockResolvedValue({});
+        const undoing = undoMyBrick(MADE);
+        // Orbit's newer list has it back
+        api.listMyBricks.mockResolvedValue({ bricks: [card(), made], deleted: [] });
+        await vi.waitFor(() => expect(api.undoMyBrick).toHaveBeenCalled());
+        answerOld({
+            bricks: [card()],
+            deleted: [{ ...made, enabled: false, deletedAt: "2026-11-12T09:00:00Z", goneAt: "2026-11-19T09:00:00Z" }],
+        });
+        expect(await undoing).toBe(true);
+        await reading;
+        expect(get(myBricksStore)?.map((brick) => brick.id)).toEqual([BRICK, MADE]);
+        expect(api.listMyBricks).toHaveBeenCalledTimes(3);
+    });
+
     it("never let a change answered after a sign-out reach whoever signs in next", async () => {
         await loadMyBricks();
         api.listMyBricks.mockResolvedValue({

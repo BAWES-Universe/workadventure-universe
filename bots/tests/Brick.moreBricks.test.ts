@@ -800,7 +800,8 @@ describe('Hearing Brick changes from other bot servers', () => {
                 .mockResolvedValue(undefined),
         };
         const heard = vi.fn();
-        const stop = await listenForBrickChanges(registry, heard, { firstRetryMs: 1_000, maxRetryMs: 60_000 });
+        const { stop, firstTry } = listenForBrickChanges(registry, heard, { firstRetryMs: 1_000, maxRetryMs: 60_000 });
+        await firstTry;
         expect(registry.onBrickChanged).toHaveBeenCalledTimes(1);
         await vi.advanceTimersByTimeAsync(999);
         expect(registry.onBrickChanged).toHaveBeenCalledTimes(1);
@@ -823,11 +824,33 @@ describe('Hearing Brick changes from other bot servers', () => {
         vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
         vi.spyOn(console, 'warn').mockImplementation(() => undefined);
         const registry = { onBrickChanged: vi.fn().mockRejectedValue(new Error('redis down')) };
-        const stop = await listenForBrickChanges(registry, vi.fn(), { firstRetryMs: 1_000, maxRetryMs: 4_000 });
+        const { stop, firstTry } = listenForBrickChanges(registry, vi.fn(), { firstRetryMs: 1_000, maxRetryMs: 4_000 });
+        await firstTry;
         await vi.advanceTimersByTimeAsync(1_000);
         expect(registry.onBrickChanged).toHaveBeenCalledTimes(2);
         stop();
         await vi.advanceTimersByTimeAsync(60_000);
         expect(registry.onBrickChanged).toHaveBeenCalledTimes(2);
+    });
+
+    it('tries no more when the server stops while the first try is still out', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        let fail: (error: Error) => void = () => undefined;
+        const registry = {
+            onBrickChanged: vi.fn().mockImplementation(
+                () =>
+                    new Promise<void>((_resolve, reject) => {
+                        fail = reject;
+                    })
+            ),
+        };
+        const { stop, firstTry } = listenForBrickChanges(registry, vi.fn(), { firstRetryMs: 1_000, maxRetryMs: 4_000 });
+        // Shutdown comes while Redis has not answered the first try yet
+        stop();
+        fail(new Error('redis down'));
+        await firstTry;
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(registry.onBrickChanged).toHaveBeenCalledTimes(1);
     });
 });

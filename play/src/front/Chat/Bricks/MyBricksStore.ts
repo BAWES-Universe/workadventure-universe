@@ -231,7 +231,9 @@ export async function undoMyBrick(brickId: string): Promise<boolean> {
         bricks.update((list) => [...(list ?? []).filter((brick) => brick.id !== card.id), card]);
         return true;
     }
-    // The answer did not say the Brick: the list says whether it is back, and Undo stays until it does
+    // The answer did not say the Brick: the list says whether it is back, and Undo stays until it does. A list read
+    // still out from before the Undo is older than it, so it reads again rather than answer for it.
+    changed();
     await loadMyBricks();
     if (asked !== generation) return false;
     return (get(bricks) ?? []).some((brick) => brick.id === brickId);
