@@ -12,6 +12,7 @@
     import BrickPicture from "./BrickPicture.svelte";
     import {
         loadMyBricks,
+        myBricksListFailed,
         myBricksSettled,
         myBricksStore,
         myDeletedBricksStore,
@@ -123,7 +124,12 @@
             <button type="button" class="bk-new" data-testid="bricksNew" on:click={() => openModal(NewBrickDialog)}>
                 <IconPlus font-size="20" />{$LL.chat.brick.newBrick()}
             </button>
-            {#if bricks.length === 0 && deletedBricks.length === 0}
+            {#if $myBricksListFailed && !loading}
+                <p class="bk-note bk-bad" data-testid="bricksLoadFailed">{$LL.chat.brick.loadFailed()}</p>
+                <button type="button" class="bk-pill" data-testid="bricksTryAgain" on:click={load}>
+                    {$LL.chat.brick.tryAgain()}
+                </button>
+            {:else if bricks.length === 0 && deletedBricks.length === 0}
                 <p class="bk-note" data-testid="bricksNone">{$LL.chat.brick.none()}</p>
             {/if}
             <div class="bk-scroll">

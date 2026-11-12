@@ -2,6 +2,7 @@
     import LL, { locale } from "../../../i18n/i18n-svelte";
     import PanelHeader from "../../Components/MapEditor/EditMode/PanelHeader.svelte";
     import BotDetailView from "../../external-modules/bots/components/BotDetailView.svelte";
+    import BotFooter from "../../external-modules/bots/components/page/BotFooter.svelte";
     import { botApiService } from "../../external-modules/bots/services/BotApiService";
     import type { BotData, BrickChange, BrickPageWay } from "../../external-modules/bots/types";
     import { warningMessageStore } from "../../Stores/ErrorStore";
@@ -81,6 +82,8 @@
             <button type="button" class="bkp-pill" data-testid="brickPageTryAgain" on:click={() => load(brick)}>
                 {$LL.chat.brick.tryAgain()}
             </button>
+            <!-- What the card knows is enough to delete it: a Brick that can't be read can still go -->
+            <BotFooter bot={brickPageBot(undefined, brick)} brick={way} {deleting} {onDelete} />
         {:else}
             <p class="bkp-note" data-testid="brickPageLoading">{$LL.chat.brick.loading()}</p>
         {/if}

@@ -121,6 +121,9 @@ export interface MatrixDmBridgeDeps {
          * lasts, false for the others. Null when there is no shared store, and the bridge keeps its own claim.
          */
         claimDirectChat?(botId: string, matrixUserId: string, forMs: number): Promise<boolean | null>;
+        /** Holds that claim for a while longer, whoever has it, while the bot takes a chat the person just made. */
+        holdDirectChat?(botId: string, matrixUserId: string, forMs: number): Promise<void>;
+        releaseDirectChat?(botId: string, matrixUserId: string): Promise<void>;
     };
     /** The cards of tools that ask first (#1657). Without it taps are ignored and nothing waits. */
     approvals?: MatrixDmApprovals;
@@ -509,7 +512,15 @@ export class MatrixDmBridge implements MatrixEventHandler {
     }
 
     private async claimDirectChat(botId: string, matrixUserId: string): Promise<boolean> {
-        const shared = await this.deps.rooms?.claimDirectChat?.(botId, matrixUserId, DIRECT_CHAT_CLAIM_MS).catch(() => null);
+        let shared: boolean | null | undefined;
+        try {
+            shared = await this.deps.rooms?.claimDirectChat?.(botId, matrixUserId, DIRECT_CHAT_CLAIM_MS);
+        } catch (error: any) {
+            // The shared claim could not be asked: another bot server may hold it, so nobody makes the chat just now
+            console.warn(`[MatrixDmBridge] Could not claim the direct chat of bot ${botId}:`, error?.message ?? error);
+            return false;
+        }
+        // Null only without a shared store: one bot server, which keeps its own claim
         if (shared !== null && shared !== undefined) return shared;
         const key = MatrixDmBridge.pair(botId, matrixUserId);
         const now = Date.now();
@@ -519,6 +530,31 @@ export class MatrixDmBridge implements MatrixEventHandler {
         }
         this.directChatClaims.set(key, now + DIRECT_CHAT_CLAIM_MS);
         return true;
+    }
+
+    /**
+     * While the bot takes a direct chat a person just made (the invite), no other device of theirs is told to make one:
+     * the claim is held, here and on every bot server, until the bot has joined and noted the chat, or turned it down.
+     * The stop lets the claim go: the chat is known from then on, and one that was turned down may be made again.
+     */
+    private holdDirectChat(botId: string, matrixUserId: string): () => void {
+        const key = MatrixDmBridge.pair(botId, matrixUserId);
+        const hold = () => {
+            this.directChatClaims.set(key, Date.now() + DIRECT_CHAT_CLAIM_MS);
+            this.deps.rooms?.holdDirectChat?.(botId, matrixUserId, DIRECT_CHAT_CLAIM_MS).catch((error: any) => {
+                console.warn(`[MatrixDmBridge] Could not hold the direct chat of bot ${botId}:`, error?.message ?? error);
+            });
+        };
+        hold();
+        const timer = setInterval(hold, DIRECT_CHAT_CLAIM_MS / 2);
+        timer.unref?.();
+        return () => {
+            clearInterval(timer);
+            this.directChatClaims.delete(key);
+            this.deps.rooms?.releaseDirectChat?.(botId, matrixUserId).catch((error: any) => {
+                console.warn(`[MatrixDmBridge] Could not let go of the direct chat of bot ${botId}:`, error?.message ?? error);
+            });
+        };
     }
 
     /**
@@ -736,6 +772,16 @@ export class MatrixDmBridge implements MatrixEventHandler {
             await this.client.leaveRoom(botUserId, event.room_id, ONLY_DIRECT).catch(() => undefined);
             return;
         }
+        // Until the bot has joined and noted this chat, no other device of the person's makes a second one
+        const stopHolding = this.holdDirectChat(botId, event.sender);
+        try {
+            await this.takeInvite(event, botId, botUserId);
+        } finally {
+            stopHolding();
+        }
+    }
+
+    private async takeInvite(event: MatrixEvent, botId: string, botUserId: string): Promise<void> {
         let config: BotConfiguration | null;
         try {
             config = await this.deps.getBotConfig(botId);
@@ -1083,8 +1129,11 @@ export class MatrixDmBridge implements MatrixEventHandler {
             const offer = reply.text ? reply.bricks?.find((note) => note.kind === 'offer') : undefined;
             if (offer && offer.kind === 'offer') {
                 const { topic, ask, name, line, instructions } = offer;
+                const content = { msgtype: 'm.text', body: ask, [BRICK_OFFER_KEY]: { topic, ask, name, line, instructions } };
+                // Orbit counted it as shown when it allowed it, so a send that fails once is tried again before it is lost
                 await this.client
-                    .sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body: ask, [BRICK_OFFER_KEY]: { topic, ask, name, line, instructions } })
+                    .sendMessage(botUserId, event.room_id, content)
+                    .catch(() => this.client.sendMessage(botUserId, event.room_id, content))
                     .catch((error) => console.warn(`[MatrixDmBridge] Could not send a Brick suggestion from bot ${botId}:`, error?.message ?? error));
             }
             for (const card of reply.artifacts ?? []) {

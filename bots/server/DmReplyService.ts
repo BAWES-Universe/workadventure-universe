@@ -72,8 +72,13 @@ export interface OfferedBrick {
 
 /** A Brick's words once it made the Brick it suggested (#1996): fixed, so no model is asked. For memory and other chat apps; the game shows its own. */
 /** With the Brick's id, "Open its chat" is the link the game opens that chat from; without, the same words plain. */
-export const brickMadeText = (name: string, id?: string): string =>
-    `Done. ${name} is ready and knows its job. ${id ? `[Open its chat](${BRICK_CHAT_LINK}${id})` : 'Open its chat'}, or find it in Chats any time.`;
+/** `made` false: they already had a Brick of that name, so nothing new was made and the words do not say "Done". */
+export const brickMadeText = (name: string, id?: string, made = true): string => {
+    const open = id ? `[Open its chat](${BRICK_CHAT_LINK}${id})` : 'Open its chat';
+    return made
+        ? `Done. ${name} is ready and knows its job. ${open}, or find it in Chats any time.`
+        : `You already have ${name}, so I didn't make another. ${open}, or find it in Chats any time.`;
+};
 export const BRICK_NOT_MADE_TEXT = "I couldn't make it just now. Ask me again in a moment.";
 /** A direct message after this long counts as a new conversation, like walking up to the bot again. */
 const NEW_CONVERSATION_AFTER_MS = 30 * 60 * 1000;
@@ -413,7 +418,7 @@ export class DmReplyService extends BaseBehavior {
                 });
                 void admin.answerBrickOffer(botId, person.uuid, offered.topic, 'made');
                 // Remembered in plain words: the link is for the game, not something to repeat later
-                return { text: brickMadeText(brick.name, brick.id), media: [], keep: keepAs(brickMadeText(brick.name)), bricks: [{ kind: 'made', id: brick.id, name: brick.name, line: brick.description, look: brick.characterTextureId, made }] };
+                return { text: brickMadeText(brick.name, brick.id, made), media: [], keep: keepAs(brickMadeText(brick.name, undefined, made)), bricks: [{ kind: 'made', id: brick.id, name: brick.name, line: brick.description, look: brick.characterTextureId, made }] };
             } catch (error) {
                 console.warn(`[DmReplyService] Bot ${botId} could not make the Brick it suggested:`, error instanceof Error ? error.message : error);
                 return { text: BRICK_NOT_MADE_TEXT, media: [], keep: keepAs(BRICK_NOT_MADE_TEXT) };
@@ -661,6 +666,10 @@ export class DmReplyService extends BaseBehavior {
         const media = playerMemory?.pendingMedia?.splice(0) ?? [];
         const artifacts = playerMemory?.pendingArtifacts?.splice(0) ?? [];
         const bricks = playerMemory?.pendingBricks?.splice(0) ?? [];
+        // A Brick it made with no words around it (the model said nothing else): the fixed line, so the person still gets
+        // its chat one tap away instead of a "couldn't answer" note
+        const madeOne = bricks.find((note) => note.kind === 'made');
+        if (!replyText.trim() && madeOne?.kind === 'made') replyText = brickMadeText(madeOne.name, madeOne.id, madeOne.made);
         // Someone already standing in the bot's room gets no card asking them to come visit it
         const roomLink = this.isInBotRoom(botId, person.uuid)
             ? undefined

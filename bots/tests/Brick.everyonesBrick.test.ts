@@ -426,6 +426,32 @@ describe('One chat for a person and their Brick, however many devices open it', 
         expect(await bridge.directChatFor(BRICK, ALICE)).toEqual({ wait: true });
     });
 
+    it('has nobody make the chat while the shared claim cannot be asked, instead of keeping its own turn', async () => {
+        const { bridge, deps } = makeBridge();
+        deps.rooms.claimDirectChat = vi.fn().mockRejectedValue(new Error('redis timeout'));
+        expect(await bridge.directChatFor(BRICK, ALICE)).toEqual({ wait: true });
+        expect(await bridge.directChatFor(BRICK, ALICE)).toEqual({ wait: true });
+    });
+
+    it('holds the turn while the bot takes the chat a device just made, however long that takes, then lets it go', async () => {
+        const { bridge, deps } = makeBridge();
+        deps.rooms.claimDirectChat = vi.fn().mockResolvedValue(null);
+        deps.rooms.holdDirectChat = vi.fn(async () => undefined);
+        deps.rooms.releaseDirectChat = vi.fn(async () => undefined);
+        let configRead: () => void = () => undefined;
+        const config = deps.getBotConfig.getMockImplementation();
+        deps.getBotConfig.mockImplementationOnce(() => new Promise((resolve) => (configRead = () => resolve(config()))));
+
+        const taking = bridge.onEvent(invite());
+        await vi.waitFor(() => expect(deps.rooms.holdDirectChat).toHaveBeenCalledWith(BRICK, ALICE, 20_000));
+        // Another device asks while the bot is still taking it: it waits (the turn is renewed until the bot is done)
+        expect(await bridge.directChatFor(BRICK, ALICE)).toEqual({ wait: true });
+        configRead();
+        await taking;
+        expect(deps.rooms.releaseDirectChat).toHaveBeenCalledWith(BRICK, ALICE);
+        expect(await bridge.directChatFor(BRICK, ALICE)).toEqual({ roomId: ROOM });
+    });
+
     it('never has a second chat made while the one they have could not be looked at', async () => {
         const { bridge, client } = makeBridge();
         await bridge.onEvent(invite());
@@ -471,6 +497,17 @@ describe('BotRegistry: one turn to make a chat, across bot servers', () => {
         expect(await registry.claimDirectChat(BRICK, ALICE, 20_000)).toBe(true);
         expect(await registry.claimDirectChat(BRICK, ALICE, 20_000)).toBe(false);
         expect(set).toHaveBeenCalledWith(`bots:matrix:dm-claim:${BRICK}|${ALICE}`, 'server-1', { NX: true, PX: 20_000 });
+    });
+
+    it('holds and lets go of the claim for whoever has it', async () => {
+        const registry = Object.create(BotRegistry.prototype) as BotRegistry;
+        const set = vi.fn().mockResolvedValue('OK');
+        const del = vi.fn().mockResolvedValue(1);
+        Object.assign(registry, { redis: { isOpen: true, set, del }, serverId: 'server-2' });
+        await registry.holdDirectChat(BRICK, ALICE, 20_000);
+        expect(set).toHaveBeenCalledWith(`bots:matrix:dm-claim:${BRICK}|${ALICE}`, 'server-2', { PX: 20_000 });
+        await registry.releaseDirectChat(BRICK, ALICE);
+        expect(del).toHaveBeenCalledWith(`bots:matrix:dm-claim:${BRICK}|${ALICE}`);
     });
 
     it('says it cannot tell without Redis, so the caller keeps its own', async () => {

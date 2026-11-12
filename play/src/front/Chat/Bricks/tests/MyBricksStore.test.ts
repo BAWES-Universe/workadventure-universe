@@ -63,6 +63,7 @@ import {
     loadMyBricks,
     makeMyBrick,
     myBricksByChatId,
+    myBricksListFailed,
     myBricksSettled,
     myBricksStore,
     myDeletedBrickChatIds,
@@ -147,6 +148,52 @@ describe("a person's own Bricks", () => {
         await loadMyBricks();
         expect(get(myBricksStore)).toHaveLength(2);
         warn.mockRestore();
+    });
+
+    it("say the list failed, rather than none, when it can't be read and Orbit gave no Brick", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        api.ensureMyBrick.mockResolvedValue({ brick: null, made: false, deleted: true });
+        api.listMyBricks.mockRejectedValue(new Error("offline"));
+        await loadMyBricks();
+        // Unknown, so the page says it couldn't load them and offers Try again
+        expect(get(myBricksStore)).toBeUndefined();
+        expect(get(myBricksSettled)).toBe(true);
+        warn.mockRestore();
+    });
+
+    it("say the list failed when only the one everyone gets could be read, and stop saying so once it is read", async () => {
+        api.listMyBricks.mockRejectedValueOnce(new Error("offline"));
+        await loadMyBricks();
+        expect(get(myBricksStore)?.map((brick) => brick.id)).toEqual([BRICK]);
+        expect(get(myBricksListFailed)).toBe(true);
+        await loadMyBricks();
+        expect(get(myBricksStore)).toHaveLength(2);
+        expect(get(myBricksListFailed)).toBe(false);
+    });
+
+    it("keep the Bricks they made when a later list can't be read", async () => {
+        await loadMyBricks();
+        api.listMyBricks.mockRejectedValueOnce(new Error("offline"));
+        await loadMyBricks();
+        expect(get(myBricksStore)?.map((brick) => brick.id)).toEqual([BRICK, MADE]);
+    });
+
+    it("change nothing when a read that was on its way ends after the person signed out", async () => {
+        let answer: (value: unknown) => void = () => undefined;
+        api.ensureMyBrick.mockReturnValueOnce(
+            new Promise((resolve) => {
+                answer = resolve;
+            })
+        );
+        const reading = loadMyBricks();
+        forgetMyBricks();
+        answer({ brick: card() });
+        await reading;
+        expect(get(myBricksStore)).toBeUndefined();
+        expect(get(myBricksSettled)).toBe(false);
+        // A read asked for after signing in again is a new one
+        await loadMyBricks();
+        expect(get(myBricksStore)).toHaveLength(2);
     });
 
     it("keep what was known when a later read fails", async () => {
@@ -370,6 +417,32 @@ describe("how the chat draws a person's own Bricks", () => {
             api.undoMyBrick.mockRejectedValue(new Error("404"));
             expect(await undoMyBrick(STUDIO)).toBe(false);
             expect(get(myDeletedBricksStore)).toHaveLength(1);
+        });
+
+        it("keeps Undo until the list says the Brick is back, when Orbit's answer does not say it", async () => {
+            api.listMyBricks.mockResolvedValue({ bricks: [card()], deleted: [gone], undoDays: 7 });
+            await loadMyBricks();
+            api.undoMyBrick.mockResolvedValue({});
+            expect(await undoMyBrick(STUDIO)).toBe(false);
+            expect(get(myDeletedBricksStore)).toHaveLength(1);
+            api.listMyBricks.mockResolvedValue({
+                bricks: [card(), card({ id: STUDIO, isDefault: false })],
+                deleted: [],
+            });
+            expect(await undoMyBrick(STUDIO)).toBe(true);
+            expect(get(myDeletedBricksStore)).toHaveLength(0);
+        });
+
+        it("does not wait for the bot server: Undo is done when Orbit brought the Brick back", async () => {
+            api.listMyBricks.mockResolvedValue({ bricks: [card()], deleted: [gone], undoDays: 7 });
+            await loadMyBricks();
+            api.tellBrickChanged.mockReturnValueOnce(
+                new Promise<void>(() => {
+                    // never answers
+                })
+            );
+            api.undoMyBrick.mockResolvedValue({ brick: card({ id: STUDIO, isDefault: false }) });
+            expect(await undoMyBrick(STUDIO)).toBe(true);
         });
 
         it("draws a Brick that wears a WOKA from the WOKAs the game offers, once they are read", () => {
