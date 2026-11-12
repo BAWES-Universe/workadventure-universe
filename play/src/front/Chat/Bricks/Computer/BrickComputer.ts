@@ -22,6 +22,13 @@ export interface ComputerJob {
     ready: { what: string; where: string } | null;
 }
 
+/** How the last job ended, when the person should hear it: nobody answered its handover, or this month's computer time ran out. */
+export type NoticeHow = "unanswered" | "month";
+export interface ComputerNotice {
+    jobId: string;
+    how: NoticeHow;
+}
+
 export interface BrickComputerView {
     /** False on a server with no computers: the page says they are not open yet. */
     available: boolean;
@@ -35,6 +42,8 @@ export interface BrickComputerView {
     month: { leftFraction: number; unlimited: boolean; endsAt: string } | null;
     files: { bytes: number; savedAt: string | null };
     restoredFrom: string | null;
+    /** Told once: it is only the Brick's latest job, and a new job or Dismiss takes it away. Null when there is nothing to say. */
+    notice: ComputerNotice | null;
 }
 
 const MACHINES: readonly string[] = ["none", "waking", "resting", "working", "cold", "broken", "restoring", "stopped"];
@@ -102,7 +111,15 @@ export function parseBrickComputer(value: unknown): BrickComputerView | undefine
             savedAt: typeof files.savedAt === "string" ? files.savedAt : null,
         },
         restoredFrom: typeof row.restoredFrom === "string" ? row.restoredFrom : null,
+        notice: parseNotice(row.notice),
     };
+}
+
+function parseNotice(value: unknown): ComputerNotice | null {
+    const row = value as Record<string, unknown> | null | undefined;
+    if (!row || typeof row !== "object") return null;
+    if (typeof row.jobId !== "string" || !row.jobId) return null;
+    return row.how === "unanswered" || row.how === "month" ? { jobId: row.jobId, how: row.how } : null;
 }
 
 /** What a job's answer from Orbit carries (`{ job }`), for take over, hand back and the one tap. */
@@ -140,6 +157,10 @@ export const holdsComputer = (job: ComputerJob | null | undefined): job is Compu
 /** True when the computer is doing something the person can watch. */
 export const canWatch = (view: BrickComputerView | undefined): boolean =>
     !!view && view.on && view.machine === "working" && holdsComputer(view.job);
+
+/** The notice is told only while the computer is on and nothing else is happening: a job that runs or waits has the screen's words. */
+export const noticeToTell = (view: BrickComputerView | undefined): ComputerNotice | null =>
+    view && view.on && view.notice && !holdsComputer(view.job) && view.queued.length === 0 ? view.notice : null;
 
 /** What the bar says is true now: "waking" while the machine starts, otherwise the job. Null when nothing is happening. */
 export type BarState = "waking" | "working" | "waiting" | "queued";

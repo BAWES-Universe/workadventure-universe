@@ -57,6 +57,20 @@ export async function brickComputerAction(
     }
 }
 
+/** "Dismiss" on the notice of how a job ended: Orbit forgets that ending, so neither the page nor the chat says it again. True when it did. */
+export async function dismissComputerNotice(brickId: string, jobId: string): Promise<boolean> {
+    try {
+        const view = parseBrickComputer(await botApiService.dismissBrickComputerNotice(brickId, jobId));
+        if (!view) return false;
+        put(brickId, view);
+        return true;
+    } catch (error) {
+        console.warn("Could not dismiss a Brick's computer notice", error);
+        await loadBrickComputer(brickId);
+        return false;
+    }
+}
+
 const POLL_MS = 4000;
 
 /**

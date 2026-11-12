@@ -5,6 +5,7 @@ import {
     fileSize,
     holdsComputer,
     monthWord,
+    noticeToTell,
     parseBrickComputer,
     parseComputerJob,
     parseJobAnswer,
@@ -34,6 +35,7 @@ const view = (over: Partial<BrickComputerView> = {}): BrickComputerView => ({
     month: { leftFraction: 0.8, unlimited: false, endsAt: "2026-12-01T00:00:00.000Z" },
     files: { bytes: 0, savedAt: null },
     restoredFrom: null,
+    notice: null,
     ...over,
 });
 
@@ -121,5 +123,31 @@ describe("a Brick's computer as the game reads it (#2000)", () => {
         expect(sentenceStart("your name and passport number")).toBe("Your name and passport number");
         expect(sentenceStart("Your name")).toBe("Your name");
         expect(sentenceStart("")).toBe("");
+    });
+
+    it("reads how the last job ended, and nothing for an ending it does not know", () => {
+        const read = (notice: unknown) =>
+            parseBrickComputer({ computer: { available: true, on: true, notice } })?.notice;
+        expect(read({ jobId: "j9", how: "unanswered", endedAt: "2026-11-15T12:00:00.000Z" })).toEqual({
+            jobId: "j9",
+            how: "unanswered",
+        });
+        expect(read({ jobId: "j9", how: "month" })).toEqual({ jobId: "j9", how: "month" });
+        expect(read({ jobId: "j9", how: "failed" })).toBeNull();
+        expect(read({ how: "month" })).toBeNull();
+        expect(read(null)).toBeNull();
+        expect(read(undefined)).toBeNull();
+    });
+
+    it("tells the notice only when nothing else is happening on a computer that is on", () => {
+        const notice = { jobId: "j9", how: "month" as const };
+        expect(noticeToTell(view({ job: null, machine: "resting", notice }))).toEqual(notice);
+        expect(noticeToTell(view({ notice }))).toBeNull();
+        expect(noticeToTell(view({ job: null, machine: "resting", notice, on: false }))).toBeNull();
+        expect(
+            noticeToTell(view({ job: null, machine: "resting", notice, queued: [parseComputerJob(job())!] }))
+        ).toBeNull();
+        expect(noticeToTell(view({ job: null, machine: "resting" }))).toBeNull();
+        expect(noticeToTell(undefined)).toBeNull();
     });
 });

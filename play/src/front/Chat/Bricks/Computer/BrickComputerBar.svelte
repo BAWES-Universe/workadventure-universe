@@ -5,8 +5,13 @@
     import { onMount } from "svelte";
     import LL from "../../../../i18n/i18n-svelte";
     import { warningMessageStore } from "../../../Stores/ErrorStore";
-    import { brickComputerAction, brickComputers, followBrickComputer } from "./BrickComputerStore";
-    import { barState, canWatch, type WaitingFor } from "./BrickComputer";
+    import {
+        brickComputerAction,
+        brickComputers,
+        dismissComputerNotice,
+        followBrickComputer,
+    } from "./BrickComputerStore";
+    import { barState, canWatch, noticeToTell, type WaitingFor } from "./BrickComputer";
     import { openBrickScreen, type BrickRef } from "./BrickScreenStore";
     import { IconDeviceDesktop } from "@wa-icons";
 
@@ -16,6 +21,13 @@
     $: state = barState(view);
     $: job = view?.job ?? null;
     $: queued = view?.queued.length ?? 0;
+    // Nothing is happening, and the last job ended in a way the person should hear about: said once, until dismissed or a new job starts
+    $: notice = state ? null : noticeToTell(view);
+    $: noticeLine = !notice
+        ? ""
+        : notice.how === "unanswered"
+        ? $LL.chat.brick.computer.noticeUnanswered({ name: brick.name })
+        : $LL.chat.brick.computer.noticeMonth({ name: brick.name });
 
     function waitingWhat(waitingFor: WaitingFor | null): string {
         switch (waitingFor) {
@@ -66,6 +78,15 @@
     onMount(() => followBrickComputer(brick.id));
 
     let busy = false;
+    function dismiss() {
+        if (busy || !notice) return;
+        busy = true;
+        dismissComputerNotice(brick.id, notice.jobId)
+            .catch((error) => console.error(error))
+            .finally(() => {
+                busy = false;
+            });
+    }
     function stop() {
         if (busy) return;
         busy = true;
@@ -100,6 +121,18 @@
                 >{state === "waiting" ? $LL.chat.brick.computer.takeOver() : $LL.chat.brick.computer.watch()}</button
             >
         {/if}
+    </div>
+{:else if notice}
+    <div class="cb" data-testid="brickComputerBarNotice">
+        <span class="cb-ic"><IconDeviceDesktop font-size="24" /></span>
+        <span class="cb-tx"><span class="cb-l cb-n">{noticeLine}</span></span>
+        <button
+            type="button"
+            class="cb-quiet"
+            disabled={busy}
+            data-testid="brickComputerBarNoticeDismiss"
+            on:click={dismiss}>{$LL.chat.brick.computer.noticeDismiss()}</button
+        >
     </div>
 {/if}
 
@@ -136,6 +169,11 @@
         font-size: 12px;
         line-height: 1.3;
         color: rgba(244, 242, 250, 0.64);
+    }
+    /* A notice is a sentence, not a title and a line: it reads as the main text */
+    .cb-n {
+        font-size: 13px;
+        color: rgba(244, 242, 250, 0.9);
     }
     .cb-quiet,
     .cb-go {

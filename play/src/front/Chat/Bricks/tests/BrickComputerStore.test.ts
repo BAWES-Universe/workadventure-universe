@@ -5,6 +5,7 @@ const game = vi.hoisted(() => ({
     getBrickComputer: vi.fn<(brickId: string) => Promise<unknown>>(),
     brickComputerAction:
         vi.fn<(brickId: string, action: string, shown?: { what: string; where: string }) => Promise<unknown>>(),
+    dismissBrickComputerNotice: vi.fn<(brickId: string, jobId: string) => Promise<unknown>>(),
 }));
 vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService: game }));
 
@@ -12,6 +13,7 @@ import {
     brickComputerAction,
     brickComputerOf,
     brickComputers,
+    dismissComputerNotice,
     followBrickComputer,
     loadBrickComputer,
 } from "../Computer/BrickComputerStore";
@@ -102,5 +104,24 @@ describe("the Bricks' computers store (#2000)", () => {
         stop();
         await vi.advanceTimersByTimeAsync(60000);
         expect(game.getBrickComputer).toHaveBeenCalledTimes(4);
+    });
+
+    it("dismisses the notice of one named ending, and keeps what Orbit answers with", async () => {
+        game.dismissBrickComputerNotice.mockResolvedValue(computer({ notice: null }));
+        expect(await dismissComputerNotice(BRICK, "j9")).toBe(true);
+        expect(game.dismissBrickComputerNotice).toHaveBeenCalledWith(BRICK, "j9");
+        expect(brickComputerOf(BRICK)?.notice).toBeNull();
+    });
+
+    it("reads the computer again when a dismiss fails, and says it did not work", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        game.dismissBrickComputerNotice.mockRejectedValue(new Error("offline"));
+        game.getBrickComputer.mockResolvedValue(computer({ notice: { jobId: "j9", how: "month" } }));
+        expect(await dismissComputerNotice(BRICK, "j9")).toBe(false);
+        expect(game.getBrickComputer).toHaveBeenCalledTimes(1);
+        expect(brickComputerOf(BRICK)?.notice).toEqual({ jobId: "j9", how: "month" });
+        game.dismissBrickComputerNotice.mockResolvedValue({ nothing: true });
+        expect(await dismissComputerNotice(BRICK, "j9")).toBe(false);
+        warn.mockRestore();
     });
 });

@@ -6,6 +6,7 @@ const game = vi.hoisted(() => ({
     brickComputerAction:
         vi.fn<(brickId: string, action: string, shown?: { what: string; where: string }) => Promise<unknown>>(),
     watchBrickComputer: vi.fn<(brickId: string) => Promise<unknown>>(),
+    dismissBrickComputerNotice: vi.fn<(brickId: string, jobId: string) => Promise<unknown>>(),
     warn: vi.fn<(message: string) => void>(),
 }));
 // The tests run Svelte's server build, where onMount does nothing; the pieces read the computer on mount.
@@ -159,6 +160,54 @@ describe("a Brick's computer on screen (#2000)", () => {
         second.$destroy();
     });
 
+    it("tells the person, on the page and in the chat, that a handover ended because nobody answered, and Dismiss clears both", async () => {
+        const ended = computer({ notice: { jobId: "j9", how: "unanswered" } });
+        await showGroup(ended);
+        const bar = new BrickComputerBar({ target: document.body, props: { brick } });
+        await settle();
+        const inChat = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+        expect(byId("brickComputerNotice")?.textContent).toContain("Recipe Brick's computer stopped waiting for you.");
+        expect(byId("brickComputerNotice")?.textContent).toContain("Its files are kept.");
+        expect(inChat("brickComputerBarNotice")?.textContent).toContain("stopped waiting for you");
+        game.dismissBrickComputerNotice.mockResolvedValue(computer({ notice: null }));
+        byId("brickComputerNoticeDismiss")?.click();
+        await settle();
+        expect(game.dismissBrickComputerNotice).toHaveBeenCalledWith(BRICK, "j9");
+        // One dismiss: Orbit forgot that ending, so both lines go
+        expect(byId("brickComputerNotice")).toBeNull();
+        expect(inChat("brickComputerBarNotice")).toBeNull();
+        bar.$destroy();
+    });
+
+    it("says in words that this month's computer time ran out, with no number, and never while a job runs", async () => {
+        await showGroup(computer({ notice: { jobId: "j9", how: "month" } }));
+        expect(byId("brickComputerNotice")?.textContent).toContain("This month's computer time ran out");
+        expect(text()).not.toMatch(/\d+ ?(min|hour|%)|\$/);
+        piece?.$destroy();
+        // A job that runs has the card's own words, not the ending of an older one
+        await showGroup(computer({ machine: "working", job: job(), notice: { jobId: "j9", how: "month" } }));
+        expect(byId("brickComputerNotice")).toBeNull();
+    });
+
+    it("has the notice in the chat only when nothing is happening, and a dismiss that fails says so", async () => {
+        game.getBrickComputer.mockResolvedValue(computer({ notice: { jobId: "j9", how: "unanswered" } }));
+        await loadBrickComputer(BRICK);
+        piece = new BrickComputerBar({ target, props: { brick } });
+        await settle();
+        expect(byId("brickComputerBarNotice")?.textContent).toContain("stopped waiting for you");
+        expect(byId("brickComputerBar")).toBeNull();
+        game.dismissBrickComputerNotice.mockResolvedValue({ nothing: true });
+        byId("brickComputerBarNoticeDismiss")?.click();
+        await settle();
+        // Orbit did not accept it: the notice stays, and is read again rather than guessed
+        expect(byId("brickComputerBarNotice")).not.toBeNull();
+        game.getBrickComputer.mockResolvedValue(computer({ machine: "working", job: job() }));
+        await loadBrickComputer(BRICK);
+        await settle();
+        expect(byId("brickComputerBarNotice")).toBeNull();
+        expect(byId("brickComputerBar")).not.toBeNull();
+    });
+
     it("shows the screen only for a working computer, and the one tap names exactly what goes in", async () => {
         game.watchBrickComputer.mockResolvedValue({ url: "https://screen.test/abc" });
         game.getBrickComputer.mockResolvedValue(
@@ -209,7 +258,11 @@ describe("a Brick's computer on screen (#2000)", () => {
 
     it("drops a screen link that arrives after the job ended, and asks again when the next job works", async () => {
         let late: (answer: unknown) => void = () => undefined;
-        game.watchBrickComputer.mockReturnValueOnce(new Promise((resolve) => (late = resolve)));
+        game.watchBrickComputer.mockReturnValueOnce(
+            new Promise((resolve) => {
+                late = resolve;
+            })
+        );
         game.getBrickComputer.mockResolvedValue(computer({ machine: "working", job: job() }));
         await loadBrickComputer(BRICK);
         piece = new BrickScreen({ target, props: { brick, onClose: () => undefined } });

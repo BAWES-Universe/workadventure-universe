@@ -8,8 +8,13 @@
     import PageButton from "../../../external-modules/bots/components/page/PageButton.svelte";
     import { warningMessageStore } from "../../../Stores/ErrorStore";
     import { shortDay } from "../Brick";
-    import { brickComputerAction, brickComputers, followBrickComputer } from "./BrickComputerStore";
-    import { canWatch, fileSize, holdsComputer, monthWord } from "./BrickComputer";
+    import {
+        brickComputerAction,
+        brickComputers,
+        dismissComputerNotice,
+        followBrickComputer,
+    } from "./BrickComputerStore";
+    import { canWatch, fileSize, holdsComputer, monthWord, noticeToTell } from "./BrickComputer";
     import { openBrickScreen, type BrickRef } from "./BrickScreenStore";
     import {
         IconDeviceDesktop,
@@ -71,7 +76,24 @@
         ? $LL.chat.brick.computer.stepOf({ done: active.stepDone, total: active.stepTotal })
         : active.stepLabel ?? $LL.chat.brick.computer.gettingReady();
 
+    $: notice = noticeToTell(view);
+    $: noticeLine = !notice
+        ? ""
+        : notice.how === "unanswered"
+        ? $LL.chat.brick.computer.noticeUnanswered({ name })
+        : $LL.chat.brick.computer.noticeMonth({ name });
+
     onMount(() => followBrickComputer(brick.id));
+
+    function dismiss() {
+        if (busy || !notice) return;
+        busy = true;
+        dismissComputerNotice(brick.id, notice.jobId)
+            .catch((error) => console.error(error))
+            .finally(() => {
+                busy = false;
+            });
+    }
 
     function act(action: "give" | "turn-off" | "stop") {
         if (busy) return;
@@ -149,6 +171,16 @@
                 </p>
             {:else}
                 <p class="lead">{$LL.chat.brick.computer.leadOn({ name })}</p>
+                {#if notice}
+                    <div class="bp-model" data-testid="brickComputerNotice">
+                        <div class="bp-mtx">
+                            <span class="bp-cn bp-ask">{noticeLine}</span>
+                        </div>
+                        <PageButton tall disabled={busy} testId="brickComputerNoticeDismiss" on:click={dismiss}
+                            >{$LL.chat.brick.computer.noticeDismiss()}</PageButton
+                        >
+                    </div>
+                {/if}
                 <div class="bp-model" data-testid="brickComputerState">
                     <div class="bp-mtx">
                         <span class="bp-cap">{$LL.chat.brick.computer.machine({ name })}</span>
@@ -318,6 +350,11 @@
         font-size: 12.5px;
         line-height: 1.35;
         color: rgba(244, 242, 250, 0.64);
+    }
+    /* A notice is a sentence that is the point of the card, so it reads brighter than a card's small line */
+    .bp-cn.bp-ask {
+        font-size: 13.5px;
+        color: rgba(244, 242, 250, 0.9);
     }
     .bp-model {
         display: flex;

@@ -1207,6 +1207,15 @@ export class BotApiService {
         return response.json();
     }
 
+    /** Dismisses the notice of how a job ended ("stopped waiting for you", "this month's time ran out"): only the ending it was shown for. */
+    async dismissBrickComputerNotice(brickId: string, jobId: string): Promise<unknown> {
+        const response = await this.fetch(`/api/bricks/${encodeURIComponent(brickId)}/computer/dismiss`, {
+            method: "POST",
+            body: JSON.stringify({ jobId }),
+        });
+        return response.json();
+    }
+
     /** The screen of a computer that is working. Never wakes a machine: a resting one answers 409 and nothing starts. */
     async watchBrickComputer(brickId: string): Promise<{ url: string } | undefined> {
         try {
