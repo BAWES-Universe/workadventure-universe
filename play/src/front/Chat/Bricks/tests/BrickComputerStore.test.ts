@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const game = vi.hoisted(() => ({
     getBrickComputer: vi.fn<(brickId: string) => Promise<unknown>>(),
-    brickComputerAction: vi.fn<(brickId: string, action: string) => Promise<unknown>>(),
+    brickComputerAction:
+        vi.fn<(brickId: string, action: string, shown?: { what: string; where: string }) => Promise<unknown>>(),
 }));
 vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService: game }));
 

@@ -3,7 +3,8 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 
 const game = vi.hoisted(() => ({
     getBrickComputer: vi.fn<(brickId: string) => Promise<unknown>>(),
-    brickComputerAction: vi.fn<(brickId: string, action: string) => Promise<unknown>>(),
+    brickComputerAction:
+        vi.fn<(brickId: string, action: string, shown?: { what: string; where: string }) => Promise<unknown>>(),
     watchBrickComputer: vi.fn<(brickId: string) => Promise<unknown>>(),
     warn: vi.fn<(message: string) => void>(),
 }));
@@ -179,7 +180,11 @@ describe("a Brick's computer on screen (#2000)", () => {
         game.brickComputerAction.mockResolvedValue({ job: job({ control: "person" }) });
         byId("brickScreenFill")?.click();
         await settle();
-        expect(game.brickComputerAction).toHaveBeenCalledWith(BRICK, "fill-details");
+        // What the screen showed goes with the tap, so Orbit refuses it if Brick named something else since
+        expect(game.brickComputerAction).toHaveBeenCalledWith(BRICK, "fill-details", {
+            what: "your name and phone",
+            where: "the booking form",
+        });
     });
 
     it("lets go of the screen link when the computer rests, and asks for a fresh one when it works again", async () => {

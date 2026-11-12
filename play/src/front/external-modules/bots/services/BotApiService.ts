@@ -1188,7 +1188,9 @@ export class BotApiService {
     /** One of the owner's calls on a Brick's computer (give, turn off, stop, take over, hand back, fill in details). */
     async brickComputerAction(
         brickId: string,
-        action: "give" | "turn-off" | "stop" | "take-over" | "hand-back" | "fill-details"
+        action: "give" | "turn-off" | "stop" | "take-over" | "hand-back" | "fill-details",
+        /** With "fill-details": what the screen showed Brick is ready to put in, and where. Orbit refuses the tap if Brick named something else since. */
+        shown?: { what: string; where: string }
     ): Promise<unknown> {
         const base = `/api/bricks/${encodeURIComponent(brickId)}/computer`;
         const response =
@@ -1196,6 +1198,11 @@ export class BotApiService {
                 ? await this.fetch(base, { method: "POST" })
                 : action === "turn-off"
                 ? await this.fetch(base, { method: "DELETE" })
+                : action === "fill-details" && shown
+                ? await this.fetch(`${base}/${action}`, {
+                      method: "POST",
+                      body: JSON.stringify({ what: shown.what, where: shown.where }),
+                  })
                 : await this.fetch(`${base}/${action}`, { method: "POST" });
         return response.json();
     }

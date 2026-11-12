@@ -65,7 +65,10 @@
     function act(action: "stop" | "take-over" | "hand-back" | "fill-details") {
         if (busy) return;
         busy = true;
-        brickComputerAction(brick.id, action)
+        // The tap approves what is on screen: what Brick named is sent back, so Orbit refuses it if Brick named something else since
+        const shown =
+            action === "fill-details" && job?.ready ? { what: job.ready.what, where: job.ready.where } : undefined;
+        brickComputerAction(brick.id, action, shown)
             .then((ok) => {
                 if (!ok) warningMessageStore.addWarningMessage($LL.chat.brick.computer.failed());
                 else if (action === "fill-details") tapped = true;

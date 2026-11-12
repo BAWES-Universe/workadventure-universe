@@ -35,9 +35,15 @@ export type ComputerAction = "give" | "turn-off" | "stop" | "take-over" | "hand-
  * One of the owner's calls. Orbit answers with the computer (give, turn off, stop) or with the job (take over, hand back, the
  * one tap): either way the computer is read again so the page and the bar agree. True when Orbit accepted it.
  */
-export async function brickComputerAction(brickId: string, action: ComputerAction): Promise<boolean> {
+export async function brickComputerAction(
+    brickId: string,
+    action: ComputerAction,
+    shown?: { what: string; where: string }
+): Promise<boolean> {
     try {
-        const answer = await botApiService.brickComputerAction(brickId, action);
+        const answer = shown
+            ? await botApiService.brickComputerAction(brickId, action, shown)
+            : await botApiService.brickComputerAction(brickId, action);
         const view = parseBrickComputer(answer);
         if (view) put(brickId, view);
         else if (parseJobAnswer(answer)) await loadBrickComputer(brickId);
