@@ -5,8 +5,8 @@
     import { botApiService } from "../../external-modules/bots/services/BotApiService";
     import type { BotData, BrickChange, BrickPageWay } from "../../external-modules/bots/types";
     import { warningMessageStore } from "../../Stores/ErrorStore";
-    import { brickPageBot, shortDay, type BrickCard } from "./Brick";
     import PageButton from "../../external-modules/bots/components/page/PageButton.svelte";
+    import { brickPageBot, shortDay, type BrickCard } from "./Brick";
     import BrickPicture from "./BrickPicture.svelte";
     import { canOfferBringAlong } from "./BrickVisit";
     import { bringBrickAlong, brickVisitStore, endBrickVisit, loadBrickVisit } from "./BrickVisitStore";
