@@ -471,7 +471,9 @@ export class AIService {
      */
     private async getProviderCredentials(providerId: string, botId?: string, asker?: string): Promise<AIProviderConfig> {
         // A small call for a named person on a Brick is answered for them, as a reply is (#2005): never on its owner's key for someone else
-        const resolved = await this.resolveProvider(providerId, botId, this.brickAsk(botId, asker));
+        // With nobody named it is the Brick's own business (its owner setting up its tools, a heading for them): asked as it always was.
+        // Everything that is for a person names them, and a person present but not named is asked about as 'unknown'.
+        const resolved = await this.resolveProvider(providerId, botId, asker ? this.brickAsk(botId, asker) : undefined);
         if (resolved.resting) {
             throw new Error(`Bot ${botId} is resting: its AI key is down`);
         }
@@ -3429,8 +3431,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
     /**
      * Who Orbit is asked about for a Brick's reply or small call: the person being answered, by their WorkAdventure id, or
-     * 'unknown' for someone who cannot be named (never taken for its owner). Undefined for a bot that is no Brick, and for a
-     * small call with nobody named (what it always was).
+     * 'unknown' for someone who cannot be named (never taken for its owner). Undefined for a bot that is no Brick. A small call
+     * with nobody named never comes here (see getProviderCredentials).
      */
     private brickAsk(botId: string | undefined, asker: string | undefined, roomUrl?: string): { asker: string; roomUrl?: string } | undefined {
         if (!botId || !(this.knownBricks.has(botId) || this.roomBricks.has(botId))) return undefined;

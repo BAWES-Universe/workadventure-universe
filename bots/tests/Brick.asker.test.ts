@@ -173,6 +173,20 @@ describe("a Brick's reply is asked about by who it is for, wherever this server 
         expect(toolNamesSent()).toContain("generate_music");
     });
 
+    it("a small call that names nobody is the Brick's own business: asked as it always was (the owner's tool headings), never as a stranger", async () => {
+        const { admin, memory } = build(OWNER, (_botId, asker) => (asker ? null : served()));
+        mockGetOrCreateProvider.mockReturnValue({ generate: vi.fn(async () => ({ content: "a heading" })) });
+        const service = new AIService(memory, admin, "http://admin.local");
+        service.noteBrick("brick-1", ownersBrick);
+        expect(await service.quickGenerate("universe-ai", "sys", "prompt", "brick-1")).toBe("a heading");
+        expect(admin.getBotAiCredentials).toHaveBeenCalledWith("brick-1");
+        // A person who is named but cannot be told from a stranger is a stranger: Orbit is asked about 'unknown'
+        const stranger = new AIService(memory, admin, "http://admin.local");
+        stranger.noteBrick("brick-1", ownersBrick);
+        expect(await stranger.quickGenerate("universe-ai", "sys", "prompt", "brick-1", undefined, "unknown")).toBe("");
+        expect(admin.getBotAiCredentials).toHaveBeenCalledWith("brick-1", { asker: "unknown" });
+    });
+
     it("the small calls (a quick line, a classification) name who they are for, so they never run on the owner's key for someone else", async () => {
         const { admin, memory } = build(OTHER, () => served({ forOthers: true }));
         mockGetOrCreateProvider.mockReturnValue({ generate: vi.fn(async () => ({ content: "ok" })) });

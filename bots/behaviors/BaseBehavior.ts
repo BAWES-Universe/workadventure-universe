@@ -1944,7 +1944,7 @@ export abstract class BaseBehavior {
                     `Say one short, natural line that genuinely moves the conversation forward — ` +
                     `a new thought, a question, or a fresh angle. Do NOT repeat anything you already said. ` +
                     `No emojis, no apologies for repeating.`;
-                const fallbackMessage = await this.aiService.quickGenerate(aiProviderRef, chatInstructions, fallbackPrompt, botId, undefined, this.userIdToUuid.get(playerId));
+                const fallbackMessage = await this.aiService.quickGenerate(aiProviderRef, chatInstructions, fallbackPrompt, botId, undefined, this.userIdToUuid.get(playerId) ?? 'unknown');
                 if (fallbackMessage.trim()) {
                     processedMessage = fallbackMessage.trim();
                 }
@@ -2261,7 +2261,7 @@ export abstract class BaseBehavior {
         const botConfig = this.bot?.getFullConfig();
         const providerId = botConfig?.aiProviderRef;
         if (!providerId) return { action: 'queue', message: '' };
-        return this.aiService.quickClassify(providerId, currentTask, newMessage, botConfig?.botId, senderId !== undefined ? this.userIdToUuid.get(senderId) : undefined);
+        return this.aiService.quickClassify(providerId, currentTask, newMessage, botConfig?.botId, senderId !== undefined ? (this.userIdToUuid.get(senderId) ?? 'unknown') : undefined);
     }
 
     private async enqueueMessage(
