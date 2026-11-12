@@ -25,7 +25,14 @@ describe("BotApiService.syncVisitingBrick tells the bot server when the player c
     beforeEach(() => {
         sessionStorage.clear();
         fetchMock.mockReset();
-        fetchMock.mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ present: true }), { status: 200, headers: { "Content-Type": "application/json" } })));
+        fetchMock.mockImplementation(() =>
+            Promise.resolve(
+                new Response(JSON.stringify({ present: true }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                })
+            )
+        );
         vi.stubGlobal("fetch", fetchMock);
         vi.useFakeTimers();
         vi.setSystemTime(new Date("2026-11-12T10:00:00Z"));
@@ -36,8 +43,10 @@ describe("BotApiService.syncVisitingBrick tells the bot server when the player c
         vi.unstubAllGlobals();
     });
 
-    const enter = (api: BotApiService, room: string) => api.initialize(jwtWith({ identifier: "u" }), "https://orbit.example.com", room, "https://bots.example.com");
-    const bodyOfLastCall = () => JSON.parse(fetchMock.mock.calls.at(-1)?.[1]?.body as string) as Record<string, unknown>;
+    const enter = (api: BotApiService, room: string) =>
+        api.initialize(jwtWith({ identifier: "u" }), "https://orbit.example.com", room, "https://bots.example.com");
+    const bodyOfLastCall = () =>
+        JSON.parse(fetchMock.mock.calls.at(-1)?.[1]?.body as string) as Record<string, unknown>;
 
     function signedIn(): BotApiService {
         const api = new BotApiService();

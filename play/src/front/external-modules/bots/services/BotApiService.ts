@@ -1264,8 +1264,8 @@ export class BotApiService {
                     ...(options?.ending
                         ? { ending: true }
                         : this.enteredRoomAt !== null
-                          ? { enteredAt: this.enteredRoomAt, clientId: this.pageLoadId }
-                          : {}),
+                        ? { enteredAt: this.enteredRoomAt, clientId: this.pageLoadId }
+                        : {}),
                 }),
             });
             const answer = (await response.json()) as { present?: unknown } | null;
