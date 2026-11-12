@@ -297,7 +297,7 @@ describe("A guest's chat, brought along when they sign in", () => {
     ] as const;
 
     function bridgeWithChat(hasChat: boolean) {
-        const client = { sendMessage: vi.fn(async () => '$evt'), getJoinedMembers: vi.fn(async () => [ALICE, BRICK_USER]) };
+        const client = { sendMessage: vi.fn(async (..._args: unknown[]) => '$evt'), getJoinedMembers: vi.fn(async () => [ALICE, BRICK_USER]) };
         const deps: any = {
             getBotConfig: vi.fn(),
             checkAccess: vi.fn(),
@@ -321,7 +321,21 @@ describe("A guest's chat, brought along when they sign in", () => {
             msgtype: 'm.text',
             body: "You: Where's the coffee here?\nBrick: Second row.",
             [GUEST_CHAT_KEY]: LINES,
-        });
+        }, expect.stringMatching(/^[0-9a-f]{64}$/));
+    });
+
+    it('tries again with the same transaction id, so a message the homeserver took before it timed out is sent once', async () => {
+        const { bridge, client } = bridgeWithChat(true);
+        client.sendMessage.mockRejectedValueOnce(new Error('timed out'));
+        await expect(bridge.carryGuestChat(BRICK, ALICE, GUEST, [...LINES])).rejects.toThrow('timed out');
+        await bridge.carryGuestChat(BRICK, ALICE, GUEST, [...LINES]);
+
+        const [first, second] = client.sendMessage.mock.calls.map((call: unknown[]) => call[3]);
+        expect(first).toBeTruthy();
+        expect(second).toBe(first);
+        // Another hand-over, or another person, is a message of its own
+        await bridge.carryGuestChat(BRICK, ALICE, 'another-guest', [...LINES]);
+        expect((client.sendMessage.mock.calls[2] as unknown[])[3]).not.toBe(first);
     });
 
     it('brings one hand-over once, however many times a device or a second tab asks, even all at once', async () => {

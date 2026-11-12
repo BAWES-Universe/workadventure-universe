@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import axios from 'axios';
 import type { MatrixAppServiceClient } from './MatrixAppServiceClient';
 import type { MatrixEvent, MatrixEventHandler } from './MatrixAppServiceRouter';
@@ -544,7 +545,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 return 'wait';
             }
             const body = lines.map((line) => `${line.from === 'guest' ? 'You' : 'Brick'}: ${line.text}`).join('\n');
-            await this.client.sendMessage(this.botUserId(botId), known.roomId, { msgtype: 'm.text', body, [GUEST_CHAT_KEY]: lines });
+            // The same transaction id for every try of this hand-over: a try that failed after the homeserver had taken the message is not sent twice
+            const txnId = createHash('sha256').update(`guest-chat|${botId}|${matrixUserId}|${carryId}`).digest('hex');
+            await this.client.sendMessage(this.botUserId(botId), known.roomId, { msgtype: 'm.text', body, [GUEST_CHAT_KEY]: lines }, txnId);
             return 'sent';
         } catch (error: any) {
             this.carriedChats.delete(key);
