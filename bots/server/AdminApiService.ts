@@ -284,6 +284,9 @@ export interface BotAccessAnswer {
 const DM_ACCESS_REPORT_EVERY_MS = 60_000;
 let lastDmAccessReportAt = 0;
 
+/** What a Brick that cannot answer people where it visits says to them (#2005): its owner's own key is not lent to this place. */
+export const KEY_NOT_LENT_LINE = "I can't answer here right now. Ask the person I came with.";
+
 /** How long a bot waits for Orbit's access answer before it counts as "could not check". */
 const BOT_ACCESS_TIMEOUT_MS = 4_000;
 
@@ -297,7 +300,8 @@ export interface BotConfiguration {
     // Set only for a Brick: whose it is, and whether it is the one every account gets. A config with it is answered in
     // direct messages only and is never put on a map.
     // `deleted` (#1996): its owner deleted it and Undo can still give it back. It answers nobody and keeps its chat.
-    brick?: { ownerId: string; isDefault: boolean; deleted?: boolean };
+    // `visiting` (#2005): it walks beside this person (their game uuid) in the room `roomUrl`, and goes when they do.
+    brick?: { ownerId: string; isDefault: boolean; deleted?: boolean; visiting?: BrickCompany };
     userId?: string; // User who created the bot
     behaviorType: 'idle' | 'patrol' | 'social';
     behaviorConfig: Record<string, any>;
@@ -337,12 +341,27 @@ export interface BotConfiguration {
     updatedAt: Date;
 }
 
+/** Whose a Brick that stands in a room is (#2005): the person it walks beside, by their game uuid, and their name for the card. */
+export interface BrickCompany {
+    ownerUuid: string;
+    ownerName: string | null;
+}
+
+function companyOf(value: unknown): BrickCompany | undefined {
+    if (!value || typeof value !== 'object') return undefined;
+    const { ownerUuid, ownerName } = value as { ownerUuid?: unknown; ownerName?: unknown };
+    if (typeof ownerUuid !== 'string' || !ownerUuid) return undefined;
+    return { ownerUuid, ownerName: typeof ownerName === 'string' && ownerName.trim() ? ownerName.trim().slice(0, 100) : null };
+}
+
 /** Whose Brick a configuration from Orbit is (#1995), or null for a room bot and for anything that isn't shaped like one. */
-function brickOf(data: unknown): { ownerId: string; isDefault: boolean; deleted?: boolean } | null {
+function brickOf(data: unknown): { ownerId: string; isDefault: boolean; deleted?: boolean; visiting?: BrickCompany } | null {
     const brick = (data as { brick?: unknown } | null)?.brick;
     if (!brick || typeof brick !== 'object') return null;
-    const { ownerId, isDefault, deleted } = brick as { ownerId?: unknown; isDefault?: unknown; deleted?: unknown };
-    return typeof ownerId === 'string' && ownerId ? { ownerId, isDefault: isDefault === true, ...(deleted === true ? { deleted: true } : {}) } : null;
+    const { ownerId, isDefault, deleted, visiting } = brick as { ownerId?: unknown; isDefault?: unknown; deleted?: unknown; visiting?: unknown };
+    if (typeof ownerId !== 'string' || !ownerId) return null;
+    const company = companyOf(visiting);
+    return { ownerId, isDefault: isDefault === true, ...(deleted === true ? { deleted: true } : {}), ...(company ? { visiting: company } : {}) };
 }
 
 /** A person's Brick as Orbit lists it (#1996): what the game needs to show it, nothing that steers it. */
@@ -643,6 +662,25 @@ export class AdminApiService {
             captureException(error);
             throw error;
         }
+    }
+
+    /**
+     * The Bricks that walk beside the given people in this room (#2005), each in the Brick shape with `brick.visiting`.
+     * Asking is also how Orbit learns the person is here, which is how a Brick follows them room to room. Orbit answers
+     * nothing where the universe does not take visits. Throws when Orbit cannot answer: the caller leaves what it has.
+     */
+    async getVisitingBricks(roomUrl: string, people: string[]): Promise<BotConfiguration[]> {
+        if (!this.isConfigured() || people.length === 0) return [];
+        const response = await this.brickCall<BotConfiguration[]>('post', 'api/brick-visits/room', { roomUrl, people });
+        const list = Array.isArray(response.data) ? response.data : [];
+        const configs: BotConfiguration[] = [];
+        for (const config of list) {
+            const brick = brickOf(config);
+            // Only a Brick that names the person it walks beside is a visitor
+            if (!brick?.visiting || typeof config.botId !== 'string') continue;
+            configs.push({ ...config, brick, createdAt: new Date(config.createdAt), updatedAt: new Date(config.updatedAt) });
+        }
+        return configs;
     }
 
     /**
@@ -960,7 +998,7 @@ export class AdminApiService {
      * or (when the owner chose "Stop replying" for a key that is down) with a resting line and no provider at all.
      * Returns null when Orbit does not know the bot or has no such route yet.
      */
-    async getBotAiCredentials(botId: string): Promise<BotAiCredentialsAnswer | null> {
+    async getBotAiCredentials(botId: string, forOthers?: { asker: string; roomUrl: string }): Promise<BotAiCredentialsAnswer | null> {
         if (!this.isConfigured()) {
             return null;
         }
@@ -973,12 +1011,22 @@ export class AdminApiService {
         try {
             const response: AxiosResponse = await axios.get(
                 `${this.adminApiUrl}/api/bots/${encodeURIComponent(botId)}/ai-credentials`,
-                { headers: { Authorization: `Bearer ${botServiceToken}` }, timeout: 15000 }
+                {
+                    headers: { Authorization: `Bearer ${botServiceToken}` },
+                    timeout: 15000,
+                    // A Brick that walks beside its owner (#2005) is asked about who is about to be answered, and where
+                    ...(forOthers ? { params: { asker: forOthers.asker, roomUrl: forOthers.roomUrl } } : {}),
+                }
             );
             return response.data;
         } catch (error) {
             if (axios.isAxiosError(error) && error.response?.status === 404) {
                 return null;
+            }
+            // A Brick that runs on its owner's own key, where the key is not lent to this universe (#2005): it is not
+            // moved off its key, it just cannot answer this person here
+            if (axios.isAxiosError(error) && error.response?.status === 403 && error.response.data?.code === 'key_not_lent') {
+                return { source: 'resting', keyOwnerId: '', restingLine: KEY_NOT_LENT_LINE } as BotAiCredentialsAnswer;
             }
             console.error('[AdminApiService] Error getting bot AI credentials:', error);
             captureException(error as Error);
@@ -1488,7 +1536,8 @@ export class AdminApiService {
     async checkBotAccess(
         botId: string,
         action: BotAccessAction,
-        person: BotAccessPerson
+        person: BotAccessPerson,
+        roomUrl?: string
     ): Promise<BotAccessAnswer> {
         const botServiceToken = process.env.BOT_SERVICE_TOKEN;
         if (!botServiceToken) {
@@ -1499,6 +1548,8 @@ export class AdminApiService {
             resolveAdminApiEndpoint(this.adminApiUrl, `api/bots/${encodeURIComponent(botId)}/access`),
             {
                 action,
+                // A Brick that walks beside its owner (#2005) is reached only from the room it is in
+                ...(roomUrl ? { roomUrl } : {}),
                 person: {
                     signedIn: person.signedIn,
                     ...(person.identifier ? { identifier: person.identifier } : {}),

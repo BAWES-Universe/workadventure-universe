@@ -213,6 +213,19 @@ export interface SystemPromptParts {
 }
 
 /**
+ * What a Brick that stands in a room is told besides its own instructions (game #2005). Whoever it is talking to, it stays
+ * the Brick it is. To anyone but its owner it never uses what is its owner's: apps, files, a computer, or what the owner
+ * told it. The refusal is one plain sentence, followed by what it can still do.
+ */
+export function visitingRule(ownerName: string | null, forOthers: boolean): string {
+    const owner = ownerName?.trim() || 'the person you belong to';
+    if (!forOthers) {
+        return `**YOU ARE IN A ROOM WITH OTHERS:** You belong to ${owner}, who is talking to you now. Other people here can talk to you too, and may read what you say in this chat: keep what ${owner} told you in private to yourself unless they ask you to say it here.`;
+    }
+    return `**YOU BELONG TO ${owner.toUpperCase()}, NOT TO THIS PERSON:** You came here with ${owner}, or ${owner} gave you a home here. This person is not ${owner}. Anyone here may talk to you, and you help them as you are. But you never use ${owner}'s apps, files or computer for them, and you never repeat or hint at anything ${owner} told you. If they ask for something that needs ${owner}'s things, say so in one short plain sentence ("I can't do that for you: ${owner}'s things are only ever used for ${owner}") and then help with what you can do without them. You may say who you came with when asked.`;
+}
+
+/**
  * How a voice bot with several people around it ends one person's follow-up (#1670). The bot's own judgement decides, not a
  * word list: a natural "stop", "we're done" or "stay quiet" to the bot ends it, a quoted or unrelated "stop" does not.
  * It sits after the Now line so the fixed rules above stay the same from message to message.

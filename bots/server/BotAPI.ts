@@ -935,6 +935,28 @@ export class BotAPI {
             res.status(204).end();
         });
 
+        // A person walks into a room, brings their Brick along or ends the visit (game #2005): put the Brick beside them on
+        // this room's map, or take it off. Orbit decides which Brick, if any; the person is the one the Orbit session names, so
+        // nobody can bring anyone else's Brick. Their spot is only where it first appears: it then walks to them.
+        this.app.post('/api/bricks/visit/sync', requireSession, async (req: BotAPIRequest, res: Response) => {
+            const roomId = req.body?.roomId;
+            if (typeof roomId !== 'string' || !roomId.trim() || roomId.length > 2000 || !req.sessionUuid) {
+                res.status(400).json({ error: 'Missing roomId' });
+                return;
+            }
+            const { x, y } = req.body ?? {};
+            const position = typeof x === 'number' && typeof y === 'number' && Number.isFinite(x) && Number.isFinite(y) ? { x, y } : undefined;
+            try {
+                // One Brick per person, in a room that exists and whose universe takes visits (Orbit says), and it goes by
+                // itself when its person is not seen in the room: so there is no wait here, and ending a visit is at once
+                const answer = await this.botManager.syncVisitingBrick(roomId, { uuid: req.sessionUuid }, position);
+                res.json({ present: answer.botId !== null });
+            } catch (error) {
+                console.error('[BotAPI] Error syncing a visiting Brick:', error instanceof Error ? error.message : error);
+                res.status(500).json({ error: 'Could not put the Brick on the map' });
+            }
+        });
+
         // "Not now" on a Brick's suggestion (game #1996). Orbit closed the topic when the card was shown; this keeps what
         // the person tapped. The person is the one the Orbit session names, and Orbit keeps it only for the Brick's owner.
         this.app.post('/api/bots/:botId/brick-offer', requireSession, async (req: BotAPIRequest, res: Response) => {

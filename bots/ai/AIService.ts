@@ -102,7 +102,7 @@ const sentrySetSpan: ((scope: any, span: any) => void) | undefined =
 import { captureAiGeneration, captureAiTrace, flushPostHog } from './PostHogClient';
 import { priceCall } from './pricing/costing';
 import { UsageLedger, priceMetadata, type TurnCost } from './pricing/ledger';
-import { buildRecentFilesLine, buildSystemPromptWithEnds } from './systemPrompt';
+import { buildRecentFilesLine, buildSystemPromptWithEnds, visitingRule } from './systemPrompt';
 import type { FileStore, MadeWith } from '../services/ChatFiles';
 import { replyProblem } from './replyProblem';
 import { providerErrorText } from './providers/ownKeyHttp';
@@ -481,16 +481,17 @@ export class AIService {
      * Resolve a bot's provider. Orbit is asked by bot id only for Universe AI and a person's own key; if it does not
      * know the bot (or is an older Orbit without the route) the provider is fetched by id as before.
      */
-    private async resolveProvider(providerId: string, botId?: string): Promise<ResolvedProvider> {
+    private async resolveProvider(providerId: string, botId?: string, forOthers?: { asker: string; roomUrl: string }): Promise<ResolvedProvider> {
         if (botId && needsBotRoute(providerId)) {
-            const cacheKey = `${botId}:${providerId}`;
+            // A Brick that stands in a room (#2005) is answered by who is asking, so each asker has their own answer
+            const cacheKey = `${botId}:${providerId}${forOthers ? `:${forOthers.asker}` : ''}`;
             const cached = this.botCredentialCache.get(cacheKey);
             if (cached && Date.now() < cached.expiresAt) {
                 return cached.resolved;
             }
             let answer: BotAiCredentialsAnswer | null;
             try {
-                answer = await this.adminApiService.getBotAiCredentials(botId);
+                answer = forOthers ? await this.adminApiService.getBotAiCredentials(botId, forOthers) : await this.adminApiService.getBotAiCredentials(botId);
             } catch (error) {
                 // Orbit could not be reached: carry on with its last answer for a while, trying again soon, rather than
                 // failing every reply (and waiting out its timeout each time) for as long as the outage lasts
@@ -1086,8 +1087,11 @@ export class AIService {
         let privateTurn = true;
 
         try {
+            // Who is talking comes first: a Brick that stands in a room (#2005) is served by who is asking
+            const talker = this.whoTalked(botId, playerId, channel);
+            const visit = this.roomBrickFor(botId, talker.userId);
             // Get provider credentials. A bot on Universe AI or a person's own key is resolved by Orbit for this bot (#374).
-            const resolved = await this.resolveProvider(providerId, botId);
+            const resolved = await this.resolveProvider(providerId, botId, visit ? { asker: visit.asker, roomUrl: visit.roomUrl } : undefined);
             if (resolved.resting) {
                 // The key is down and its owner chose Stop replying: say the one fixed line, call no AI, track nothing
                 this.restingLines.add(resolved.line.trim());
@@ -1098,7 +1102,6 @@ export class AIService {
             // Reply limits (#1159): asked before any AI call, once the bot knows who is talking and what the reply
             // would run on. At a limit nothing is called and nothing is tracked; the caller shows the fixed card. A retry
             // makes the same reply again, already allowed, so it is never asked twice.
-            const talker = this.whoTalked(botId, playerId, channel);
             if (talker.userId && !isRetry && !greeting) {
                 const allowance = await (adminApiService || this.adminApiService).checkReplyAllowance?.(botId, {
                     userId: talker.userId,
@@ -1331,12 +1334,20 @@ export class AIService {
                       providerId,
                       this.gatePerson(botId, playerId, botClient, spaceName)
                   );
+            // A Brick standing in a room never uses its owner's apps, files or computer for anyone else (#2005)
+            if (visit?.forOthers) {
+                for (let at = tools.length - 1; at >= 0; at--) {
+                    const name: string = tools[at]?.function?.name ?? '';
+                    if (toolServerMap.has(name) || isArtifactTool(name) || isFileTool(name)) tools.splice(at, 1);
+                }
+                toolServerMap.clear();
+            }
             // In a bubble, what is on an approval card is for one person only: nothing is said before a tool that asks, and
             // nothing from a card is repeated in the chat (#1658). Added at the end, after what the provider caches.
             const nearbyRule = channel === 'world' && botClient && this.approvals && toolServerMap.size > 0 ? NEARBY_ASK_RULE : '';
             // With "Asks which way to go" on Never the bot says its pick and starts (#1661)
             const neverAsk = botId && this.approvals?.asksQuestions && (await this.approvals.settings(botId)).askWhichWay === 'never' ? NEVER_ASK_RULE : '';
-            const systemPrompt = [basePrompt, nearbyRule, neverAsk, ...(options?.rules ?? [])].filter(Boolean).join('\n\n');
+            const systemPrompt = [basePrompt, nearbyRule, neverAsk, visit ? visitingRule(visit.ownerName, visit.forOthers) : '', ...(options?.rules ?? [])].filter(Boolean).join('\n\n');
             if (turn) turn.artifactTools = tools.some((tool) => writesArtifact(tool?.function?.name ?? ''));
 
             // Generate stream with tools
@@ -3404,6 +3415,28 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const admin = adminApiService || this.adminApiService;
         if (!admin) return Promise.resolve(null);
         return MCPConnector.refreshServerTools(botId, serverId, this.adminApiUrl, admin['adminApiToken'], this.toolSuggesterFor(providerId, botId));
+    }
+
+    /** The Bricks that stand in a room right now (#2005), with whose they are: set when one is put on a map, cleared when it leaves. */
+    private roomBricks = new Map<string, { ownerUuid: string; ownerName: string | null; roomUrl: string }>();
+
+    noteRoomBrick(botId: string, brick: { ownerUuid: string; ownerName: string | null; roomUrl: string } | undefined): void {
+        const known = this.roomBricks.get(botId);
+        if (known?.ownerUuid === brick?.ownerUuid && known?.roomUrl === brick?.roomUrl && known?.ownerName === brick?.ownerName) return;
+        if (brick) this.roomBricks.set(botId, brick);
+        else this.roomBricks.delete(botId);
+        // What Orbit answered for one asker is not the answer for the next
+        for (const key of [...this.botCredentialCache.keys()]) if (key.startsWith(`${botId}:`)) this.botCredentialCache.delete(key);
+    }
+
+    /**
+     * A Brick that stands in a room, with who is talking to it: `asker` is who Orbit is asked about (a person it cannot
+     * name is never taken for its owner), `forOthers` whether it is anyone but its owner. Undefined for every other bot.
+     */
+    private roomBrickFor(botId: string | undefined, talkerId: string | undefined): { asker: string; roomUrl: string; ownerName: string | null; forOthers: boolean } | undefined {
+        const brick = botId ? this.roomBricks.get(botId) : undefined;
+        if (!brick) return undefined;
+        return { asker: talkerId ?? 'unknown', roomUrl: brick.roomUrl, ownerName: brick.ownerName, forOthers: talkerId !== brick.ownerUuid };
     }
 
     /** Orbit keeps files in this bot's chats (it served their limits), so the file tools can be offered and run. */

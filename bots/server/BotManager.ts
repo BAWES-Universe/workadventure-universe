@@ -25,6 +25,7 @@ import type { AutoPilotImprovement } from '../services/AutoPilotImprovement';
 import * as Sentry from '@sentry/node';
 import { resolveWsUrl } from '../utils/resolveWsUrl';
 import { BotUnavailableError } from '../utils/summonErrors';
+import { VisitingBrickBehavior } from '../behaviors/VisitingBrickBehavior';
 import { hasPlayersInRoom } from './roomOccupancy';
 import {
     buildBehaviorConfig,
@@ -110,6 +111,11 @@ function instantiateBehavior(kind: LegacyBehaviorType, cfg: Record<string, unkno
 }
 
 export class BotManager {
+    /**
+     * The Brick that walks beside each signed-in person on this server (#2005), by their game uuid: which Brick, and in
+     * which room it was put on the map. One per person: bringing another along swaps them.
+     */
+    private visitors: Map<string, { botId: string; roomUrl: string }> = new Map();
     private bots: Map<string, BotInstance> = new Map();
     /**
      * Every bot spawned since this server started. Its memory stays held here after it despawns (to come back when it
@@ -304,9 +310,10 @@ export class BotManager {
      * If bot already exists and is connected, returns existing instance
      * If bot exists but is disconnected, despawns it first and spawns a new one
      */
-    async spawnBot(botId: string, config: BotConfiguration): Promise<BotClient> {
-        // A Brick (#1995) lives in its owner's chats: it stands in no room, so it is never put on a map
-        if (config.brick || !config.roomUrl) throw new Error(`Bot ${botId} has no room, so it cannot be put on a map`);
+    async spawnBot(botId: string, config: BotConfiguration, options: { position?: { x: number; y: number } } = {}): Promise<BotClient> {
+        // A Brick (#1995) lives in its owner's chats: it stands in no room, so it is never put on a map. One that walks
+        // beside its person (#2005) is put on the map of the room it visits, and only that one
+        if ((config.brick && !config.brick.visiting) || !config.roomUrl) throw new Error(`Bot ${botId} has no room, so it cannot be put on a map`);
 
         // Check if bot already exists
         const existingInstance = this.bots.get(botId);
@@ -347,8 +354,9 @@ export class BotManager {
         // unless the operator sets WS_URL explicitly.
         const wsUrl = resolveWsUrl(process.env.WS_URL, pusherUrl);
 
-        // Get position from assignedSpace.center (required field)
-        const position = config.assignedSpace?.center || { x: 0, y: 0 };
+        // Get position from assignedSpace.center (required field). A visiting Brick starts beside its person
+        const position = options.position ?? config.assignedSpace?.center ?? { x: 0, y: 0 };
+        const visiting = config.brick?.visiting;
 
         const botConfig = {
             botId,
@@ -376,11 +384,22 @@ export class BotManager {
         
         // Pick the behaviour from the bot's model (where it moves, whether it goes to people), filling in
         // every default. The same helper runs on live edits, so spawn and edit can't disagree.
-        const built = buildBehaviorConfig(config.behaviorType, config.behaviorConfig, config.assignedSpace);
+        const built = visiting
+            ? buildBehaviorConfig('idle', {}, undefined)
+            : buildBehaviorConfig(config.behaviorType, config.behaviorConfig, config.assignedSpace);
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[BotManager] Bot ${botId} behaviour: ${built.kind} (moves=${built.model.moves}, goesToPeople=${built.model.goesToPeople})`);
         }
-        const behavior = instantiateBehavior(built.kind, built.config, { IdleBehavior, PatrolBehavior, SocialBehavior });
+        const behavior = visiting
+            ? new VisitingBrickBehavior({
+                  ...(built.config as unknown as ConstructorParameters<typeof VisitingBrickBehavior>[0]),
+                  ownerUuid: visiting.ownerUuid,
+                  // Its person has left the room: the Brick leaves the map with them. Orbit keeps the visit until it ends
+                  onOwnerGone: () => {
+                      this.endVisitor(visiting.ownerUuid, botId).catch((error) => console.warn(`[BotManager] Could not take ${botId} off the map:`, error));
+                  },
+              })
+            : instantiateBehavior(built.kind, built.config, { IdleBehavior, PatrolBehavior, SocialBehavior });
         
         // Set services for behavior (including response processor and metrics collector for metrics)
         behavior.setServices(this.aiService, this.adminApiService, this.conversationStorage, this.responseProcessor, this.metricsCollector);
@@ -450,6 +469,8 @@ export class BotManager {
             };
 
             this.bots.set(botId, instance);
+            // A Brick that stands in a room is answered by who is asking, and never uses its owner's things for others (#2005)
+            if (visiting) this.aiService.noteRoomBrick(botId, { ownerUuid: visiting.ownerUuid, ownerName: visiting.ownerName, roomUrl: config.roomUrl });
 
             // Register in bot registry
             await this.botRegistry.assignBot(botId);
@@ -489,6 +510,7 @@ export class BotManager {
 
             // Remove from map
             this.bots.delete(botId);
+            this.aiService.noteRoomBrick(botId, undefined);
 
             // Remove from room tracking
             for (const [roomId, roomState] of this.roomsWithBots.entries()) {
@@ -739,7 +761,18 @@ export class BotManager {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[BotManager] Live update for ${botId}: ${built.kind} (moves=${built.model.moves}, goesToPeople=${built.model.goesToPeople})`);
             }
-            const behavior = instantiateBehavior(built.kind, built.config, { IdleBehavior, PatrolBehavior, SocialBehavior });
+            // A Brick that walks beside its person (#2005) keeps walking beside them: an edit never turns it into a room bot
+            const visiting = instance.config.brick?.visiting;
+            const behavior = visiting
+            ? new VisitingBrickBehavior({
+                  ...(built.config as unknown as ConstructorParameters<typeof VisitingBrickBehavior>[0]),
+                  ownerUuid: visiting.ownerUuid,
+                  // Its person has left the room: the Brick leaves the map with them. Orbit keeps the visit until it ends
+                  onOwnerGone: () => {
+                      this.endVisitor(visiting.ownerUuid, botId).catch((error) => console.warn(`[BotManager] Could not take ${botId} off the map:`, error));
+                  },
+              })
+            : instantiateBehavior(built.kind, built.config, { IdleBehavior, PatrolBehavior, SocialBehavior });
             // Set services for behavior (required for AI responses)
             behavior.setServices(this.aiService, this.adminApiService, this.conversationStorage, this.responseProcessor, this.metricsCollector);
             if (behavior.setConversationMemory) {
@@ -894,6 +927,68 @@ export class BotManager {
             console.log(`[BotManager] Bot ${botId} summoned to player ${options.playerUuid} at (${targetPosition.x}, ${targetPosition.y})`);
         }
         return targetPosition;
+    }
+
+    /**
+     * Puts the Brick a person brought along on the map of the room they are in, or takes it off (game #2005). Orbit
+     * decides: the person is asked about there, by their own uuid, and Orbit says which Brick (if any) walks beside them
+     * in this room, and nothing at all where the universe does not take visits. Called when the person walks into a
+     * room, brings a Brick along, or ends the visit. The Brick of an earlier room, or a Brick they swapped it for, is
+     * taken off the map first. Never throws for a person Orbit has nothing for: it only takes the Brick off.
+     */
+    async syncVisitingBrick(roomUrl: string, person: { uuid: string }, position?: { x: number; y: number }): Promise<{ botId: string | null }> {
+        const uuid = person.uuid;
+        // One sync at a time per person, so two calls together never put the Brick on the map twice
+        const pending = this.visitSyncs.get(uuid);
+        if (pending) await pending.catch(() => undefined);
+        const run = this.runVisitSync(roomUrl, uuid, position);
+        this.visitSyncs.set(uuid, run);
+        try {
+            return await run;
+        } finally {
+            if (this.visitSyncs.get(uuid) === run) this.visitSyncs.delete(uuid);
+        }
+    }
+
+    private visitSyncs: Map<string, Promise<{ botId: string | null }>> = new Map();
+
+    private async runVisitSync(roomUrl: string, uuid: string, position?: { x: number; y: number }): Promise<{ botId: string | null }> {
+        let configs: BotConfiguration[];
+        try {
+            configs = await this.adminApiService.getVisitingBricks(roomUrl, [uuid]);
+        } catch (error) {
+            // Orbit cannot answer: what is on the map stays as it is
+            console.warn('[BotManager] Could not ask Orbit for the visiting Brick:', error instanceof Error ? error.message : error);
+            return { botId: this.visitors.get(uuid)?.botId ?? null };
+        }
+        const mine = configs.find((config) => config.brick?.visiting?.ownerUuid === uuid);
+        const current = this.visitors.get(uuid);
+        if (current && (!mine || mine.botId !== current.botId || current.roomUrl !== roomUrl)) {
+            await this.endVisitor(uuid, current.botId);
+        }
+        if (!mine) return { botId: null };
+
+        const running = this.bots.get(mine.botId);
+        if (running && running.status === 'connected' && this.visitors.get(uuid)?.botId === mine.botId) {
+            running.config = { ...running.config, ...mine };
+            running.client.setFullConfig(running.config);
+            return { botId: mine.botId };
+        }
+        // Its own chat is the owner's: a Brick that is also somewhere else as a room Brick (#2005, home) stands there too
+        // and is one bot with one name, so a Brick that already runs is not started a second time
+        if (running && running.status === 'connected') return { botId: mine.botId };
+        const start = position && Number.isFinite(position.x) && Number.isFinite(position.y) ? { x: position.x, y: position.y } : undefined;
+        await this.spawnBot(mine.botId, mine, start ? { position: start } : {});
+        this.visitors.set(uuid, { botId: mine.botId, roomUrl });
+        return { botId: mine.botId };
+    }
+
+    /** Takes a person's visiting Brick off the map. Only the one it is asked about, and only while it is still theirs. */
+    private async endVisitor(uuid: string, botId: string): Promise<void> {
+        const visitor = this.visitors.get(uuid);
+        if (visitor?.botId === botId) this.visitors.delete(uuid);
+        const instance = this.bots.get(botId);
+        if (instance?.config.brick?.visiting?.ownerUuid === uuid) await this.despawnBot(botId);
     }
 
     /**
@@ -1190,6 +1285,10 @@ export class BotManager {
             if (this.bots.get(botId)?.status === 'connected') {
                 connected++;
             }
+        }
+        // A Brick that walks beside its person (#2005) is in the room's list as well, and is no person
+        for (const visitor of this.visitors.values()) {
+            if (visitor.roomUrl === roomId && this.bots.get(visitor.botId)?.status === 'connected') connected++;
         }
         return connected;
     }

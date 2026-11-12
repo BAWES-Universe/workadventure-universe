@@ -450,6 +450,8 @@ export class BotClient {
         person: Parameters<BotAccessGate['check']>[2]
     ): Promise<BotAccessVerdict> {
         try {
+            // A Brick that walks beside its owner (#2005) is asked about from the room it is in
+            if (this.fullConfig?.brick?.visiting) return await gate.check(this.config.botId, 'chat', person, this.config.name, this.config.roomUrl);
             return await gate.check(this.config.botId, 'chat', person, this.config.name);
         } catch (error) {
             // The gate does not throw; if that ever changes, a failed check must not let a chat through

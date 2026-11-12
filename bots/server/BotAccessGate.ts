@@ -58,19 +58,21 @@ export class BotAccessGate {
         botId: string,
         action: BotAccessAction,
         person: BotAccessPerson,
-        botName?: string
+        botName?: string,
+        roomUrl?: string
     ): Promise<BotAccessVerdict> {
         // Without an Orbit to ask (a self-hosted bot server on its own) there is nothing to limit who uses a bot.
         if (!this.orbit.isConfigured()) return { allowed: true, kind: 'allowed' };
 
-        const key = `${botId}|${action}|${person.signedIn && person.identifier ? `user:${person.identifier}` : 'guest'}`;
+        // A Brick that walks beside its owner (#2005) is judged by the room it is in, so the room is part of the answer
+        const key = `${botId}|${action}|${person.signedIn && person.identifier ? `user:${person.identifier}` : 'guest'}${roomUrl ? `|${roomUrl}` : ''}`;
         const known = this.answers.get(key);
         let answer: BotAccessAnswer | undefined;
         if (known && this.now() - known.at < ACCESS_CACHE_TTL_MS) {
             answer = known.answer;
         } else {
             try {
-                answer = await this.ask(key, botId, action, person);
+                answer = await this.ask(key, botId, action, person, roomUrl);
             } catch (error) {
                 this.report(error);
                 // Orbit cannot answer: the last answer for this person stands, however old.
@@ -84,12 +86,13 @@ export class BotAccessGate {
     }
 
     /** One question to Orbit at a time for the same person and bot: messages sent together share the answer. */
-    private ask(key: string, botId: string, action: BotAccessAction, person: BotAccessPerson): Promise<BotAccessAnswer> {
+    private ask(key: string, botId: string, action: BotAccessAction, person: BotAccessPerson, roomUrl?: string): Promise<BotAccessAnswer> {
         const pending = this.asking.get(key);
         if (pending) return pending;
 
-        const question = this.orbit
-            .checkBotAccess(botId, action, person)
+        // The room is sent only for a Brick that walks beside its owner (#2005); every other bot is asked as before
+        const asked = roomUrl ? this.orbit.checkBotAccess(botId, action, person, roomUrl) : this.orbit.checkBotAccess(botId, action, person);
+        const question = asked
             .then((answer) => {
                 this.remember(key, answer);
                 return answer;

@@ -1,0 +1,99 @@
+/**
+ * VisitingBrickBehavior (game #2005): a Brick that walks beside the person who brought it along.
+ *
+ * It stands where it is until its person moves off, then walks to a spot beside them again. It has no space of its own,
+ * no roaming and no greeting: a Brick that visits does not welcome people, it answers them when they talk to it. When its
+ * person has left the room (or is no longer seen) it tells its manager, which takes it off the map: the visit itself is
+ * Orbit's and goes on or ends there.
+ */
+import { IdleBehavior, type IdleBehaviorConfig } from './IdleBehavior';
+import type { SpaceUser } from '@workadventure/messages';
+
+export interface VisitingBrickConfig extends IdleBehaviorConfig {
+    /** The person it walks beside, by their game uuid. */
+    ownerUuid: string;
+    /** Their person is gone from the room: take this Brick off the map. */
+    onOwnerGone: () => void;
+}
+
+/** How far from its person it rests: a little over one tile. */
+export const VISIT_REST_DISTANCE = 56;
+/** It walks to them again once they are further than this (about three tiles). */
+export const VISIT_WALK_AFTER = 110;
+/** While someone is talking to it, it follows only when its person is really leaving (about six tiles). */
+export const VISIT_WALK_AFTER_WHEN_BUSY = 200;
+/** How long its person may go unseen in the room before it leaves too. */
+export const VISIT_GONE_AFTER_MS = 20_000;
+const LOOK_EVERY_MS = 700;
+
+/** Where it should stand: beside the person, on the side it already is, never on top of them. */
+export function spotBeside(person: { x: number; y: number }, from: { x: number; y: number }, rest = VISIT_REST_DISTANCE): { x: number; y: number } {
+    const dx = from.x - person.x;
+    const dy = from.y - person.y;
+    const length = Math.hypot(dx, dy);
+    if (length < 1) return { x: person.x + rest, y: person.y };
+    return { x: Math.round(person.x + (dx / length) * rest), y: Math.round(person.y + (dy / length) * rest) };
+}
+
+export class VisitingBrickBehavior extends IdleBehavior {
+    private readonly ownerUuid: string;
+    private readonly onOwnerGone: () => void;
+    private ownerSeenAt = Date.now();
+    private lookedAt = 0;
+    private told = false;
+    private walking = false;
+
+    constructor(config: VisitingBrickConfig) {
+        super(config);
+        this.ownerUuid = config.ownerUuid;
+        this.onOwnerGone = config.onOwnerGone;
+    }
+
+    /** A visiting Brick greets nobody: whoever speaks to it is answered. */
+    protected onMemoryReady(_spaceName: string, _user: SpaceUser & { id: number }): void {
+        // Nothing: no greeting, and so nothing for its owner's key to pay for
+    }
+
+    update(deltaTime: number): void {
+        super.update(deltaTime);
+        this.follow();
+    }
+
+    private follow(): void {
+        const bot = this.bot;
+        if (!bot || this.told) return;
+        const now = Date.now();
+        if (now - this.lookedAt < LOOK_EVERY_MS) return;
+        this.lookedAt = now;
+
+        const person = bot.getPlayerPositionByUuid(this.ownerUuid);
+        if (!person) {
+            if (now - this.ownerSeenAt >= VISIT_GONE_AFTER_MS) {
+                this.told = true;
+                this.onOwnerGone();
+            }
+            return;
+        }
+        this.ownerSeenAt = now;
+
+        const here = bot.getState().getPosition();
+        const distance = Math.hypot(person.x - here.x, person.y - here.y);
+        // While someone is talking to it, it stays unless its person is really leaving
+        const limit = this.engagedWithUsers.size > 0 ? VISIT_WALK_AFTER_WHEN_BUSY : VISIT_WALK_AFTER;
+        if (distance <= limit) {
+            this.walking = false;
+            return;
+        }
+        // It is already on its way: the path is worked out again only when the person is well past where it was heading
+        if (this.walking && bot.getIsFollowingPath()) return;
+        const spot = spotBeside(person, here);
+        this.walking = true;
+        bot.moveToWithPathfinding(spot.x, spot.y)
+            .then((started) => {
+                if (!started) this.walking = false;
+            })
+            .catch(() => {
+                this.walking = false;
+            });
+    }
+}
