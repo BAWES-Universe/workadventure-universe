@@ -496,8 +496,13 @@ export class SocketManager implements ZoneEventListener {
 
         let space: SpaceInterface | undefined = this.spaces.get(spaceName);
 
-        // A call has its two members and no more, whoever else could name it
-        checkCallSpaceRoom(localSpaceName, space ? space.users.size : 0);
+        // A call has its two members and no more, whoever else could name it. The back's list of users lags behind a join
+        // by a round trip, so the sockets this pusher has already taken in (counted at once) are counted too: two joins
+        // arriving together cannot both find room.
+        checkCallSpaceRoom(
+            localSpaceName,
+            space ? Math.max(space.users.size, space instanceof Space ? space._localConnectedUser.size : 0) : 0
+        );
 
         if (!space) {
             const onSpaceEmpty = (space: SpaceInterface) => {
