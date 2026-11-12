@@ -447,6 +447,15 @@ describe("A guest's chat, brought along when they sign in", () => {
             expect(carryGuestChat).toHaveBeenCalledTimes(1);
         });
 
+        it('says "try again" and not "refused" when Orbit cannot be asked, so the device keeps the chat', async () => {
+            adminApiService.checkDmAccess.mockResolvedValueOnce({ allowed: false, reason: 'admin_api_error', user: null });
+            const response = await carry(body);
+
+            expect(response.status).toBe(503);
+            expect(await response.json()).toMatchObject({ code: 'cannot_check' });
+            expect(carryGuestChat).not.toHaveBeenCalled();
+        });
+
         it('takes a chat address, an id of the hand-over, and lines', async () => {
             for (const bad of [{ ...body, chatId: 'alice' }, { ...body, carryId: undefined }, { ...body, lines: 'no' }, { ...body, lines: [] }, { ...body, lines: [{ from: 'x', text: 'y' }] }]) {
                 expect((await carry(bad)).status).toBe(400);

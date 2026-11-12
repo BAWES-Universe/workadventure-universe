@@ -1001,6 +1001,11 @@ export class BotAPI {
             }
             try {
                 const access = await this.adminApiService.checkDmAccess(botId, chatId);
+                // Orbit could not say: not a refusal, so the device keeps the chat and asks again
+                if (!access.allowed && (access.reason ?? '').startsWith('admin_api_')) {
+                    res.status(503).json({ error: 'Could not check right now', code: 'cannot_check' });
+                    return;
+                }
                 if (!access.allowed || !access.user || !req.sessionUuid || access.user.uuid !== req.sessionUuid) {
                     res.status(403).json({ error: 'Not your chat', code: 'not_allowed' });
                     return;
