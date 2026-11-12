@@ -366,6 +366,15 @@ export interface NewBrickAsk {
     evenIfThere?: boolean;
 }
 
+/** What Orbit serves the bot server to run the Brick for guests in one room (game #1997). Universe AI's own credentials. */
+export interface GuestBrickSetup {
+    brick: { name: string; description: string; characterTextureId: string; chatInstructions: string };
+    credentials: Record<string, any> & { maxTokens?: number; limits?: Partial<import('../ai/types').BotLimits> };
+}
+
+/** May a guest get one more reply from the Brick for guests: yes, or which allowance is used up and when it opens again. */
+export type GuestBrickAllowance = { allowed: true } | { allowed: false; limit: 'guest' | 'universe'; resetsAt: string };
+
 const BRICK_CALL_TIMEOUT_MS = 8_000;
 
 function brickCardOf(data: unknown): BrickCard | null {
@@ -892,7 +901,7 @@ export class AdminApiService {
         };
     }
 
-    private brickCall<T>(method: 'get' | 'post' | 'put', path: string, body?: unknown, params?: Record<string, string>): Promise<AxiosResponse<T>> {
+    private brickCall<T>(method: 'get' | 'post' | 'put' | 'patch', path: string, body?: unknown, params?: Record<string, string>): Promise<AxiosResponse<T>> {
         const botServiceToken = process.env.BOT_SERVICE_TOKEN;
         if (!this.isConfigured() || !botServiceToken) throw new Error('Orbit is not set up for Bricks');
         return axios.request<T>({
@@ -941,6 +950,46 @@ export class AdminApiService {
         } catch (error) {
             console.warn('[AdminApiService] Could not keep the answer to a Brick suggestion:', error instanceof Error ? error.message : error);
         }
+    }
+
+    /**
+     * The Brick for guests (game #1997) for the room a guest is in: what steers it, with the place added, and how it talks
+     * to its AI (Universe AI's, never a host's). Throws when Orbit says it is not available or cannot be reached.
+     */
+    async getGuestBrick(roomUrl: string): Promise<GuestBrickSetup> {
+        const response = await this.brickCall<Partial<GuestBrickSetup>>('get', 'api/guest-brick', undefined, { roomUrl });
+        const brick = response.data?.brick;
+        const credentials = response.data?.credentials;
+        if (!brick || typeof brick.chatInstructions !== 'string' || !brick.chatInstructions || !credentials || typeof credentials !== 'object') {
+            throw new Error('Orbit answered without the Brick for guests');
+        }
+        return { brick, credentials } as GuestBrickSetup;
+    }
+
+    /**
+     * May this guest get one more reply from the Brick for guests now (game #1997)? Orbit counts it at once, against the guest's
+     * own allowance and the universe's pool for guests, and never against a host's bot. Throws when it cannot say: no reply
+     * is made without an answer, so nothing is spent that is not counted.
+     */
+    async claimGuestBrickReply(input: { guestId: string; turnId: string; roomUrl: string }): Promise<GuestBrickAllowance> {
+        const body = (await this.brickCall<Partial<{ allowed: boolean; limit: string; resetsAt: string }>>('post', 'api/guest-brick/replies', input)).data;
+        if (body?.allowed === true) return { allowed: true };
+        const limit = body?.limit === 'guest' || body?.limit === 'universe' ? body.limit : null;
+        if (body?.allowed === false && limit && typeof body.resetsAt === 'string' && !Number.isNaN(Date.parse(body.resetsAt))) {
+            return { allowed: false, limit, resetsAt: body.resetsAt };
+        }
+        throw new Error('Orbit answered the guest allowance in a way that cannot be read');
+    }
+
+    /** Closes a counted turn: a reply that failed is given back, and what it took is kept as totals. Never throws. */
+    async finishGuestBrickReply(turnId: string, result: { failed?: boolean; tokensUsed?: number; costMicros?: number | null }): Promise<void> {
+        const body: Record<string, unknown> = {};
+        if (result.failed) body.failed = true;
+        if (typeof result.tokensUsed === 'number' && Number.isInteger(result.tokensUsed) && result.tokensUsed >= 0) body.tokensUsed = result.tokensUsed;
+        if (typeof result.costMicros === 'number' && Number.isInteger(result.costMicros) && result.costMicros >= 0) body.costMicros = result.costMicros;
+        await this.brickCall('patch', `api/guest-brick/replies/${encodeURIComponent(turnId)}`, body).catch((error) => {
+            console.warn('[AdminApiService] Could not close a turn of the Brick for guests:', error instanceof Error ? error.message : error);
+        });
     }
 
     /** Has Orbit remove every deleted Brick whose days are over (#1996), and names them. Empty when Orbit cannot be asked. */

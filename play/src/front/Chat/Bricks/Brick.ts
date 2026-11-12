@@ -191,6 +191,38 @@ export function readBrickIdeas(sender: string | null | undefined, content: Recor
     return botIdFromChatId(sender) !== undefined && content.msgtype === "m.text" && content[BRICK_IDEAS_KEY] === true;
 }
 
+/** On the one message a Brick leaves in its owner's chat with the chat they had with the Brick for guests (#1997). */
+export const GUEST_CHAT_KEY = "universe.guest_chat";
+
+/** One line of a chat a guest had with the Brick for guests, as it comes along when they sign in. */
+export interface GuestChatLine {
+    from: "guest" | "brick";
+    text: string;
+    /** When it was said (ms), on the guest's device. */
+    at: number;
+}
+
+const GUEST_CHAT_LINES_MAX = 500;
+const GUEST_LINE_MAX = 4000;
+
+/** The lines of a guest's chat a bot's message carries; none for anyone else's message or anything malformed. */
+export function readGuestChat(sender: string | null | undefined, content: Record<string, unknown>): GuestChatLine[] {
+    const list = content[GUEST_CHAT_KEY];
+    if (botIdFromChatId(sender) === undefined || content.msgtype !== "m.text" || !Array.isArray(list)) return [];
+    const lines: GuestChatLine[] = [];
+    for (const one of list.slice(-GUEST_CHAT_LINES_MAX)) {
+        if (!one || typeof one !== "object") continue;
+        const { from, text: said, at } = one as Record<string, unknown>;
+        if ((from !== "guest" && from !== "brick") || typeof said !== "string" || !said.trim()) continue;
+        lines.push({
+            from,
+            text: said.trim().slice(0, GUEST_LINE_MAX),
+            at: typeof at === "number" && Number.isFinite(at) && at > 0 ? Math.floor(at) : 0,
+        });
+    }
+    return lines;
+}
+
 /** On a Brick's answer: the Bricks it made while answering (#1996). The chat shows a line for each, one tap from its chat. */
 export const BRICK_MADE_KEY = "universe.brick_made";
 /** A Brick's suggestion of a Brick for a job that keeps coming back (#1996): its own message, right after an answer. */

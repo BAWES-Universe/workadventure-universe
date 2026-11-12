@@ -1,0 +1,321 @@
+import { get, readable } from "svelte/store";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../BrickLookPicture", async () => {
+    const store = await import("svelte/store");
+    return { brickPicture: () => store.readable<string | undefined>("/static/images/bricks/brick-orange.png") };
+});
+
+import { i18nObject } from "../../../../i18n/i18n-util";
+import { loadLocale } from "../../../../i18n/i18n-util.sync";
+import type { TranslationFunctions } from "../../../../i18n/i18n-types";
+import { GuestBrickChatRoom, type GuestBrickDeps, type GuestBrickRequest } from "../GuestBrickChatRoom";
+
+const GUEST = "4f1d2c3b-aaaa-4bbb-8ccc-0123456789ab";
+const HOUR = 60 * 60 * 1000;
+const ROOM = "/@/bawes/universe/hq";
+
+/** What a device holds, and what the bot server is asked, with the answers each test gives. */
+function setup(over: Partial<GuestBrickDeps> = {}) {
+    const device = { saved: null as string | null, clock: 1_000_000, turns: 0 };
+    const asked: GuestBrickRequest[] = [];
+    const answers: Array<() => Promise<unknown>> = [];
+    const deps: GuestBrickDeps = {
+        ll: readable<TranslationFunctions>(i18nObject("en-US")),
+        guestId: () => GUEST,
+        roomUrl: () => ROOM,
+        ask: (request) => {
+            asked.push(request);
+            const answer = answers.shift();
+            return answer ? answer() : Promise.reject(new Error("no answer"));
+        },
+        readSaved: () => device.saved,
+        save: (raw) => {
+            device.saved = raw;
+        },
+        drop: () => {
+            device.saved = null;
+        },
+        now: () => device.clock,
+        newTurnId: () => `turn-${++device.turns}`,
+        keepMs: HOUR,
+        ...over,
+    };
+    const room = new GuestBrickChatRoom(deps);
+    const said = () =>
+        get(room.messages).map((message) => (message.isMyMessage ? "me" : "brick") + ": " + get(message.content).body);
+    /** Lets what a message set going finish. */
+    const settle = async () => {
+        await Array.from({ length: 10 }).reduce<Promise<void>>((turn) => turn.then(() => undefined), Promise.resolve());
+    };
+    return { room, device, asked, answers, said, settle, deps };
+}
+
+describe("a guest's chat with the Brick for guests (#1997)", () => {
+    beforeAll(() => {
+        loadLocale("en-US");
+    });
+    beforeEach(() => {
+        vi.restoreAllMocks();
+        vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    });
+
+    it("starts empty and asks nobody: the hello is the game's own words, never a model's, and never comes first", async () => {
+        const { room, asked, settle } = setup();
+        await settle();
+        expect(get(room.messages)).toEqual([]);
+        expect(asked).toEqual([]);
+    });
+
+    it("is its own chat: no chat address, no members, nothing on any chat server", () => {
+        const { room } = setup();
+        expect(room.id).toBe("guest-brick");
+        expect(room.id.startsWith("@")).toBe(false);
+        expect("members" in room).toBe(false);
+        expect(get(room.isEncrypted)).toBe(false);
+        expect(get(room.name)).toBe("Brick");
+    });
+
+    it("asks once for each message the guest writes, with the chat so far, the place and one id for the try", async () => {
+        const { room, asked, answers, said, settle } = setup();
+        answers.push(() =>
+            Promise.resolve({ kind: "reply", text: "Second row, next to Zaatar & Co.", needsAccount: false })
+        );
+        room.sendMessage("  Where's the coffee here?  ");
+        await settle();
+        expect(asked).toEqual([
+            {
+                turnId: "turn-1",
+                roomUrl: ROOM,
+                message: "Where's the coffee here?",
+                history: [],
+                saidNeedsAccount: false,
+            },
+        ]);
+        expect(said()).toEqual(["me: Where's the coffee here?", "brick: Second row, next to Zaatar & Co."]);
+
+        answers.push(() => Promise.resolve({ kind: "reply", text: "Yes.", needsAccount: false }));
+        room.sendMessage("Thanks");
+        await settle();
+        expect(asked[1]).toMatchObject({
+            turnId: "turn-2",
+            message: "Thanks",
+            history: [
+                { from: "guest", text: "Where's the coffee here?" },
+                { from: "brick", text: "Second row, next to Zaatar & Co." },
+            ],
+        });
+        // The request names no guest and no time: the game's token says who, and what was said stays what it was
+        expect(Object.keys(asked[1]).sort()).toEqual(["history", "message", "roomUrl", "saidNeedsAccount", "turnId"]);
+    });
+
+    it("sends nothing for words that are only space", async () => {
+        const { room, asked, said, settle } = setup();
+        room.sendMessage("   ");
+        room.sendMessage("");
+        await settle();
+        expect(asked).toEqual([]);
+        expect(said()).toEqual([]);
+    });
+
+    it("answers one message at a time: a second waits for the first and reads the chat as it stands then", async () => {
+        const { room, asked, answers, said, settle } = setup();
+        let finish: (value: unknown) => void = () => undefined;
+        answers.push(
+            () =>
+                new Promise((resolve) => {
+                    finish = resolve;
+                })
+        );
+        answers.push(() => Promise.resolve({ kind: "reply", text: "Second answer", needsAccount: false }));
+        room.sendMessage("first");
+        room.sendMessage("second");
+        await settle();
+        // The second is on screen at once, but not asked for yet
+        expect(asked).toHaveLength(1);
+        expect(said()).toEqual(["me: first", "me: second"]);
+        finish({ kind: "reply", text: "First answer", needsAccount: false });
+        await settle();
+        expect(asked).toHaveLength(2);
+        expect(asked[1].history).toEqual([
+            { from: "guest", text: "first" },
+            { from: "brick", text: "First answer" },
+        ]);
+        // As they arrive: both of the guest's, then the answers in the order they were asked
+        expect(said()).toEqual(["me: first", "me: second", "brick: First answer", "brick: Second answer"]);
+    });
+
+    it("shows the Brick typing while it answers, and no longer once it has", async () => {
+        const { room, answers, settle } = setup();
+        let finish: (value: unknown) => void = () => undefined;
+        answers.push(
+            () =>
+                new Promise((resolve) => {
+                    finish = resolve;
+                })
+        );
+        room.sendMessage("hi");
+        await settle();
+        expect(get(room.typingMembers).map((one) => one.name)).toEqual(["Brick"]);
+        finish({ kind: "reply", text: "Hello", needsAccount: false });
+        await settle();
+        expect(get(room.typingMembers)).toEqual([]);
+    });
+
+    it("says a thing needs an account once: the answer that does is marked for the card, and the Brick is told it was said", async () => {
+        const { room, asked, answers, settle } = setup();
+        answers.push(() =>
+            Promise.resolve({ kind: "reply", text: "I can only remember once I'm yours.", needsAccount: true })
+        );
+        room.sendMessage("Remember I take it without sugar");
+        await settle();
+        const messages = get(room.messages);
+        expect(messages[1].guestKeep).toBe(true);
+        expect(messages[0].guestKeep).toBeUndefined();
+        expect(room.current()?.saidNeedsAccount).toBe(true);
+
+        answers.push(() => Promise.resolve({ kind: "reply", text: "Sure.", needsAccount: false }));
+        room.sendMessage("And no milk");
+        await settle();
+        expect(asked[1].saidNeedsAccount).toBe(true);
+        expect(get(room.messages)[3].guestKeep).toBeUndefined();
+    });
+
+    it("keeps the chat on the device only, and brings it back when the page opens again", async () => {
+        const { room, device, answers, settle, deps } = setup();
+        answers.push(() => Promise.resolve({ kind: "reply", text: "Second row.", needsAccount: false }));
+        room.sendMessage("Where's the coffee?");
+        await settle();
+        expect(device.saved).not.toBeNull();
+        const saved = JSON.parse(device.saved ?? "{}");
+        expect(saved.guestId).toBe(GUEST);
+        expect(saved.lines.map((line: { text: string }) => line.text)).toEqual(["Where's the coffee?", "Second row."]);
+
+        device.clock += 5 * 60 * 1000;
+        const again = new GuestBrickChatRoom(deps);
+        expect(get(again.messages).map((message) => get(message.content).body)).toEqual([
+            "Where's the coffee?",
+            "Second row.",
+        ]);
+    });
+
+    it("lets a chat go once it was last touched longer ago than the device keeps one, and starts a new one", async () => {
+        const { room, device, answers, settle, said } = setup();
+        answers.push(() => Promise.resolve({ kind: "reply", text: "Second row.", needsAccount: false }));
+        room.sendMessage("Where's the coffee?");
+        await settle();
+        const first = room.current()?.startedAt;
+        device.clock += HOUR + 1;
+        room.refresh();
+        expect(said()).toEqual([]);
+        expect(device.saved).toBeNull();
+        answers.push(() => Promise.resolve({ kind: "reply", text: "Hi!", needsAccount: false }));
+        room.sendMessage("Hello again");
+        await settle();
+        expect(room.current()?.startedAt).toBeGreaterThan(first ?? 0);
+        expect(said()).toEqual(["me: Hello again", "brick: Hi!"]);
+    });
+
+    it("does not read a chat that was kept for another guest, and takes it off the device", () => {
+        const first = setup();
+        first.answers.push(() => Promise.resolve({ kind: "reply", text: "x", needsAccount: false }));
+        first.room.sendMessage("mine");
+        const other = setup({
+            guestId: () => "9d9d9d9d-aaaa-4bbb-8ccc-0123456789ab",
+            readSaved: () => first.device.saved,
+            drop: first.deps.drop,
+        });
+        expect(get(other.room.messages)).toEqual([]);
+        expect(first.device.saved).toBeNull();
+    });
+
+    it.each(["guest", "universe"] as const)(
+        "tells a guest who reached the %s allowance, with the fixed card and no reply",
+        async (limit) => {
+            const { room, answers, said, settle } = setup();
+            answers.push(() => Promise.resolve({ kind: "limit", limit, resetsAt: "2026-11-12T20:00:00.000Z" }));
+            room.sendMessage("One more thing");
+            await settle();
+            const [mine, note] = get(room.messages);
+            expect(mine.isMyMessage).toBe(true);
+            expect(note.replyLimit).toEqual({
+                limit: limit === "guest" ? "guest" : "guests",
+                resetsAt: "2026-11-12T20:00:00.000Z",
+                who: "guest",
+                botId: "guest-brick",
+                botName: "Brick",
+            });
+            // The card is the game's own: the Brick says no words of its own, and the limit is never part of the chat
+            expect(said()).toEqual(["me: One more thing", "brick: "]);
+            expect(room.current()?.lines).toHaveLength(1);
+        }
+    );
+
+    it.each([
+        ["the AI failed", () => Promise.resolve({ kind: "failed" })],
+        ["the bot server was busy", () => Promise.resolve({ kind: "busy" })],
+        ["nothing answered", () => Promise.reject(new Error("offline"))],
+        ["it answered with something else", () => Promise.resolve({ nonsense: true })],
+    ])("says it could not answer when %s, and never makes up an answer", async (_why, answer) => {
+        const { room, answers, said, settle } = setup();
+        answers.push(answer);
+        room.sendMessage("Hello?");
+        await settle();
+        expect(said()).toEqual(["me: Hello?", "brick: I couldn't answer that one. Send it again in a moment."]);
+        // Nothing the Brick did not say is kept: the line is the game's, so the next try reads the chat without it
+        expect(room.current()?.lines).toHaveLength(1);
+    });
+
+    it("takes the game's note away when the guest writes again, and asks again for the same words", async () => {
+        const { room, asked, answers, said, settle } = setup();
+        answers.push(() => Promise.resolve({ kind: "failed" }));
+        answers.push(() => Promise.resolve({ kind: "reply", text: "Here you go.", needsAccount: false }));
+        room.sendMessage("Hello?");
+        await settle();
+        room.sendMessage("Hello?");
+        await settle();
+        expect(said()).toEqual(["me: Hello?", "me: Hello?", "brick: Here you go."]);
+        expect(asked.map((request) => request.turnId)).toEqual(["turn-1", "turn-2"]);
+    });
+
+    it("cannot answer without a guest id or a place, and asks nobody then", async () => {
+        const noGuest = setup({ guestId: () => null });
+        noGuest.room.sendMessage("hi");
+        await noGuest.settle();
+        expect(noGuest.asked).toEqual([]);
+        expect(noGuest.said()).toEqual(["me: hi", "brick: I couldn't answer that one. Send it again in a moment."]);
+        // And what it holds is not kept: there is no guest to keep it for
+        expect(noGuest.device.saved).toBeNull();
+
+        const noPlace = setup({ roomUrl: () => null });
+        noPlace.room.sendMessage("hi");
+        await noPlace.settle();
+        expect(noPlace.asked).toEqual([]);
+    });
+
+    it("takes no files, and has nothing unread or older to load", async () => {
+        const { room } = setup();
+        await expect(room.sendFiles()).resolves.toBeUndefined();
+        await expect(room.loadMorePreviousMessages()).resolves.toBeUndefined();
+        expect(get(room.hasUnreadMessages)).toBe(false);
+        expect(get(room.unreadNotificationCount)).toBe(0);
+        expect(get(room.hasPreviousMessage)).toBe(false);
+    });
+
+    it("draws each message with nothing to react to, reply to, edit or delete: nothing was sent anywhere", async () => {
+        const { room, answers, settle } = setup();
+        answers.push(() => Promise.resolve({ kind: "reply", text: "Hi", needsAccount: false }));
+        room.sendMessage("hello");
+        await settle();
+        for (const message of get(room.messages)) {
+            expect(message.local).toBe(true);
+            expect(get(message.canReact)).toBe(false);
+            expect(get(message.canReply)).toBe(false);
+            expect(get(message.canDelete)).toBe(false);
+        }
+        const [mine, brick] = get(room.messages);
+        expect(mine.sender).toBeUndefined();
+        expect(brick.sender?.username).toBe("Brick");
+        expect(brick.sender?.chatId).toBe("guest-brick");
+    });
+});

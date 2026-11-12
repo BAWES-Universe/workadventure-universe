@@ -25,7 +25,7 @@ import { NearbyAsks } from '../mcp/NearbyAsks';
 import { QuestionCards } from '../mcp/QuestionCards';
 import { verifyMatrixRegistration } from '../matrix/verifyMatrixRegistration';
 import { MatrixAppServiceClient } from '../matrix/MatrixAppServiceClient';
-import { MatrixDmBridge, type DirectChatAnswer } from '../matrix/MatrixDmBridge';
+import { MatrixDmBridge, type DirectChatAnswer, type GuestChatNote } from '../matrix/MatrixDmBridge';
 import { createMatrixAppServiceRouter, type MatrixAppServiceRouter } from '../matrix/MatrixAppServiceRouter';
 import { uploadAttachment } from '../matrix/uploadAttachment';
 import { botWokaPicture } from '../matrix/wokaPicture';
@@ -128,6 +128,7 @@ aiService.useNearbyAsks(nearbyAsks);
 let dmRoom: ((botId: string) => Promise<DmRoomLink | undefined>) | undefined;
 let directChat: ((botId: string, chatId: string) => Promise<DirectChatAnswer>) | undefined;
 let brickChanged: ((botId: string) => void) | undefined;
+let carryGuestChat: ((botId: string, chatId: string, carryId: string, lines: GuestChatNote[]) => Promise<'sent' | 'already' | 'wait' | 'not_brick'>) | undefined;
 /** How often Orbit is asked to remove deleted Bricks whose days are over (#1996). Nothing depends on when it runs. */
 const BRICK_SWEEP_EVERY_MS = 60 * 60 * 1000;
 let brickSweepInterval: NodeJS.Timeout | undefined;
@@ -185,6 +186,12 @@ async function setupMatrix(): Promise<void> {
     directChat = (botId, chatId) => bridge.directChatFor(botId, chatId);
     // A Brick that was just deleted, or taken back with Undo, is read again before its next message (#1996)
     brickChanged = (botId) => dmReplyService.forgetConfig(botId);
+    // A guest's chat is brought into the Brick they now have (#1997), and only into the one Brick everyone gets
+    carryGuestChat = async (botId, chatId, carryId, lines) => {
+        const config = await dmReplyService.getBotConfig(botId);
+        if (!config?.brick?.isDefault || config.brick.deleted) return 'not_brick';
+        return bridge.carryGuestChat(botId, chatId, carryId, lines);
+    };
     brickSweepInterval = setInterval(() => void adminApiService.sweepBricks(), BRICK_SWEEP_EVERY_MS);
     brickSweepInterval.unref?.();
     console.log(`[BotServer] Matrix direct messages on for ${matrixConfig.domain}`);
@@ -267,7 +274,7 @@ async function start() {
 
         // Before any bot connects: a bot shows Message only when Synapse accepted the registration
         await setupMatrix();
-        botAPI = new BotAPI(botManager, adminApiService, botRegistry, preRouters, { dmStatus, dmRoom, directChat, brickChanged, noteHearing: noteHearing ?? undefined });
+        botAPI = new BotAPI(botManager, adminApiService, botRegistry, preRouters, { dmStatus, dmRoom, directChat, brickChanged, carryGuestChat, noteHearing: noteHearing ?? undefined });
 
         // Initialize bot manager
         await botManager.initialize();

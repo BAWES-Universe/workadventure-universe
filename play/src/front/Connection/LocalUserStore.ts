@@ -40,7 +40,9 @@ const lastRoomUrl = "lastRoomUrl";
 const authToken = "authToken";
 const guestTokenAsideKey = "guestTokenAside";
 /** How long a guest's token kept aside for sign-in stays good: long enough to sign in, not for the next person on a shared device. */
-const GUEST_TOKEN_ASIDE_MS = 30 * 60 * 1000;
+export const GUEST_TOKEN_ASIDE_MS = 30 * 60 * 1000;
+/** Where a guest's chat with the Brick is kept, on this device only (#1997). */
+const guestBrickChatKey = "guestBrickChat";
 const notification = "notificationPermission";
 const allowPictureInPicture = "allowPictureInPicture";
 const chatSounds = "chatSounds";
@@ -513,6 +515,38 @@ class LocalUserStore {
 
     dropGuestTokenAside(): void {
         localStorage.removeItem(guestTokenAsideKey);
+    }
+
+    /**
+     * The id the game gives this device as a guest: the one the bot server and Orbit know them by. Null for an account
+     * (whose token names an email or an account) and when there is no token.
+     */
+    guestId(): string | null {
+        const token = localStorage.getItem(authToken);
+        if (!token || this.storedTokenIsAccounts()) return null;
+        try {
+            const identifier = (LocalUserStore.parseJwt(token) as { identifier?: unknown }).identifier;
+            return typeof identifier === "string" && identifier ? identifier : null;
+        } catch {
+            return null;
+        }
+    }
+
+    /** A guest's chat with the Brick as this device kept it (#1997), text as it was saved; never sent anywhere by itself. */
+    getGuestBrickChat(): string | null {
+        return localStorage.getItem(guestBrickChatKey);
+    }
+
+    setGuestBrickChat(value: string): void {
+        try {
+            localStorage.setItem(guestBrickChatKey, value);
+        } catch {
+            // No room to keep it: the chat lasts until the page reloads
+        }
+    }
+
+    dropGuestBrickChat(): void {
+        localStorage.removeItem(guestBrickChatKey);
     }
 
     isLogged(): boolean {

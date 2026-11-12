@@ -45,6 +45,11 @@ export const BRICK_MADE_KEY = 'universe.brick_made';
  * `{ topic, ask, name, line, instructions }`. The game shows it as a card with "Make it" and "Not now".
  */
 export const BRICK_OFFER_KEY = 'universe.brick_offer';
+/**
+ * A guest's chat with the Brick for guests, brought along when they signed in (game #1997): `[{ from, text, at }]`, on one
+ * message of the Brick in their own Brick's chat. The game draws each line as it was said and ends with the Brick's welcome.
+ */
+export const GUEST_CHAT_KEY = 'universe.guest_chat';
 /** On a person's message: they tapped "Make it" on that card, and this is the Brick it described (game #1996). */
 export const BRICK_MAKE_KEY = 'universe.brick_make';
 
@@ -179,6 +184,15 @@ const TYPING_DELAY_MS = 800;
 /** Matrix drops "typing" after its timeout (30 s), so a long answer renews it. */
 const TYPING_REFRESH_MS = 20 * 1000;
 const ONLY_DIRECT = 'I only take direct messages.';
+/** One line of a guest's chat that is brought along when they sign in. */
+export interface GuestChatNote {
+    from: 'guest' | 'brick';
+    text: string;
+    /** When it was said (ms), on the guest's device. */
+    at: number;
+}
+/** How many hand-overs of a guest's chat are remembered as brought, so one is never brought twice. */
+const CARRIED_CHATS_MAX = 5000;
 /** An answer made in nearby chat waits this long for its person's direct chat to be known, and no more than these at once (#1993). */
 const NEARBY_ANSWER_WAIT_MS = 2 * 60 * 60 * 1000;
 const NEARBY_ANSWERS_PER_CHAT = 10;
@@ -232,6 +246,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
     private lookingAgain = new Set<string>();
     /** By bot and person, when there is no shared store: until when one device is making their chat (#1995). */
     private directChatClaims = new Map<string, number>();
+    /** The hand-overs of a guest's chat already brought into a chat (#1997), so one is never brought twice. */
+    private carriedChats = new Set<string>();
     /** Bots Orbit last said don't exist: how many times in a row, and when that was last counted. */
     private botNotFound = new Map<string, { inARow: number; at: number }>();
     /** When each chat last got a live answer: a message left there while the bot rested, older than that, is passed. */
@@ -506,6 +522,34 @@ export class MatrixDmBridge implements MatrixEventHandler {
         // A bot whose id cannot be a chat address has no chat to make
         if (!botChatId) return { wait: true };
         return (await this.claimDirectChat(botId, matrixUserId)) ? { create: true, botChatId } : { wait: true };
+    }
+
+    /**
+     * Brings a guest's chat with the Brick for guests into the Brick they now have (game #1997): one message of the Brick, in the
+     * person's own direct chat with it, that the game draws as the lines it holds. The caller has checked that the chat is this
+     * person's and that the bot is their own Brick. `carryId` is the guest id Orbit handed over, so one hand-over is brought once
+     * however many times a device asks. `wait` when the chat is not there yet: the device asks again in a moment.
+     */
+    async carryGuestChat(botId: string, matrixUserId: string, carryId: string, lines: GuestChatNote[]): Promise<'sent' | 'already' | 'wait'> {
+        if (botIdFromMatrixId(this.config.domain, matrixUserId)) return 'wait';
+        const key = `${MatrixDmBridge.pair(botId, matrixUserId)}|${carryId}`;
+        if (this.carriedChats.has(key)) return 'already';
+        // Taken before anything is looked at or sent, so two asks at once bring it once
+        this.carriedChats.add(key);
+        if (this.carriedChats.size > CARRIED_CHATS_MAX) this.carriedChats.delete(this.carriedChats.values().next().value!);
+        try {
+            const known = await this.lookUpDirectRoom(botId, matrixUserId);
+            if (!known.roomId) {
+                this.carriedChats.delete(key);
+                return 'wait';
+            }
+            const body = lines.map((line) => `${line.from === 'guest' ? 'You' : 'Brick'}: ${line.text}`).join('\n');
+            await this.client.sendMessage(this.botUserId(botId), known.roomId, { msgtype: 'm.text', body, [GUEST_CHAT_KEY]: lines });
+            return 'sent';
+        } catch (error: any) {
+            this.carriedChats.delete(key);
+            throw error;
+        }
     }
 
     private async claimDirectChat(botId: string, matrixUserId: string): Promise<boolean> {
