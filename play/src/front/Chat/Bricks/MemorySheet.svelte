@@ -7,6 +7,7 @@
     import { warningMessageStore } from "../../Stores/ErrorStore";
     import { botMemoryList, type MemoryItem } from "./BotMemory";
     import { keepFocusInside } from "./keepFocusInside";
+    import { myBricksStore } from "./MyBricksStore";
     import MemoryRows from "./MemoryRows.svelte";
     import { IconX } from "@wa-icons";
     import "./BrickGroups.css";
@@ -21,8 +22,13 @@
     export let name: string;
     /** Who made the bot, when the chat knows. */
     export let owner: string | undefined = undefined;
-    /** The bot is the person's own Brick: nobody else made it. */
+    /** The bot is the person's own Brick: nobody else made it. The sheet also reads this from the person's Bricks. */
     export let own = false;
+
+    // The person's Bricks may still be loading when the sheet opens. Until they have, the sheet cannot tell whose bot
+    // this is, so it says only what is true either way.
+    $: bricksKnown = $myBricksStore !== undefined;
+    $: mine = own || ($myBricksStore ?? []).some((brick) => brick.id === botId);
 
     const list = botMemoryList(botId);
     const { items, state } = list;
@@ -79,7 +85,7 @@
             </button>
             <h2 id="memory-sheet-title" class="u-display ms-title">{$LL.chat.brick.memory.sheetTitle({ name })}</h2>
             <p class="ms-sub">
-                {own
+                {mine || !bricksKnown
                     ? $LL.chat.brick.memory.sheetOnlyYouOwn()
                     : owner
                     ? $LL.chat.brick.memory.sheetOnlyYou({ owner, name })

@@ -1,6 +1,8 @@
 import { tick } from "svelte";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+// The person's own Bricks, as the chat knows them: undefined until Orbit has answered
+const bricks = vi.hoisted(() => ({ subscribers: new Set<(value: unknown) => void>(), value: undefined as { id: string }[] | undefined }));
 const game = vi.hoisted(() => ({
     getMyMemory: vi.fn<(botId: string) => Promise<unknown>>(),
     forgetMyMemory: vi.fn<(botId: string, what: unknown) => Promise<unknown>>(),
@@ -20,6 +22,15 @@ vi.mock("../../../external-modules/bots/services/BotApiService", () => ({
         forgetMyMemory: game.forgetMyMemory,
         getBrickFiles: game.getBrickFiles,
         deleteBrickFile: game.deleteBrickFile,
+    },
+}));
+vi.mock("../MyBricksStore", () => ({
+    myBricksStore: {
+        subscribe: (run: (value: unknown) => void) => {
+            bricks.subscribers.add(run);
+            run(bricks.value);
+            return () => bricks.subscribers.delete(run);
+        },
     },
 }));
 vi.mock("../../../Enum/EnvironmentVariable", () => ({ UPLOADER_URL: "http://uploader.test" }));
@@ -83,6 +94,7 @@ describe("Memory and Files on a Brick's page (#2003)", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        bricks.value = [];
         game.getMyMemory.mockResolvedValue({ items: FIVE });
         game.forgetMyMemory.mockResolvedValue({ forgotten: 1 });
         target = document.createElement("div");
@@ -205,6 +217,19 @@ describe("Memory and Files on a Brick's page (#2003)", () => {
             expect(text()).toContain("Only you see this. Whoever made Melody can't.");
             part?.$destroy();
             await openSheet({ owner: undefined, own: true });
+            expect(text()).toContain("Only you see this.");
+            expect(text()).not.toContain("Whoever made");
+        });
+
+        it("knows a Brick of your own from the person's Bricks, and says nothing about a maker while they are still loading", async () => {
+            bricks.value = [{ id: BOT }];
+            await openSheet({ owner: "Omar" });
+            expect(text()).toContain("Only you see this.");
+            expect(text()).not.toContain("who made");
+            part?.$destroy();
+            // Not read yet: it cannot tell whose bot this is, so it claims neither
+            bricks.value = undefined;
+            await openSheet({ owner: undefined });
             expect(text()).toContain("Only you see this.");
             expect(text()).not.toContain("Whoever made");
         });
