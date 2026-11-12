@@ -104,11 +104,12 @@ export interface BotMemoryList {
 export function botMemoryList(botId: string): BotMemoryList {
     const items = writable<MemoryItem[]>([]);
     const state = writable<MemoryState>("loading");
-    let current: MemoryItem[] = [];
-    const put = (next: MemoryItem[]) => {
-        current = next;
-        items.set(next);
-    };
+    // What Orbit last said, and what the person has asked to forget that Orbit has not answered yet. What is shown is
+    // the first without the second, so a Forget that fails brings back only its own thing, whatever else is in flight.
+    let known: MemoryItem[] = [];
+    const pending = new Set<string>();
+    let everything = false;
+    const show = () => items.set(everything ? [] : known.filter((item) => !pending.has(item.id)));
 
     return {
         items: { subscribe: items.subscribe },
@@ -116,7 +117,8 @@ export function botMemoryList(botId: string): BotMemoryList {
         async load() {
             state.set("loading");
             try {
-                put(parseMyMemory(await botApiService.getMyMemory(botId)));
+                known = parseMyMemory(await botApiService.getMyMemory(botId));
+                show();
                 state.set("ready");
             } catch (error) {
                 console.warn("Could not read what a bot remembers", error);
@@ -124,28 +126,33 @@ export function botMemoryList(botId: string): BotMemoryList {
             }
         },
         async forget(itemId) {
-            const before = current;
-            put(before.filter((item) => item.id !== itemId));
+            pending.add(itemId);
+            show();
             try {
                 await botApiService.forgetMyMemory(botId, { itemId });
+                known = known.filter((item) => item.id !== itemId);
                 return true;
             } catch (error) {
                 console.warn("Could not forget a thing", error);
-                // Things said while the call was out are kept; the one that did not go comes back where it was
-                put(before.filter((item) => item.id === itemId || current.some((one) => one.id === item.id)));
                 return false;
+            } finally {
+                pending.delete(itemId);
+                show();
             }
         },
         async forgetEverything() {
-            const before = current;
-            put([]);
+            everything = true;
+            show();
             try {
                 await botApiService.forgetMyMemory(botId, { everything: true });
+                known = [];
                 return true;
             } catch (error) {
                 console.warn("Could not forget everything", error);
-                put(before);
                 return false;
+            } finally {
+                everything = false;
+                show();
             }
         },
     };

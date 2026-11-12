@@ -119,6 +119,32 @@ describe("what a bot remembers about the person (#2003)", () => {
             expect(get(list.items).map((item) => item.id)).toEqual(["k1", "k2"]);
         });
 
+        it("brings back each thing that fails, in any order, and keeps one that is forgotten", async () => {
+            orbit.getMyMemory.mockResolvedValue({ items: [thing(), thing({ id: "k2", value: "jazz" }), thing({ id: "k3", value: "tea" })] });
+            const answers: { resolve: () => void; reject: (error: Error) => void }[] = [];
+            orbit.forgetMyMemory.mockImplementation(
+                () =>
+                    new Promise((resolve, reject) => {
+                        answers.push({ resolve: () => resolve({ forgotten: 1 }), reject });
+                    })
+            );
+            const list = botMemoryList(BOT);
+            await list.load();
+            const first = list.forget("k1");
+            const second = list.forget("k2");
+            const third = list.forget("k3");
+            expect(get(list.items)).toEqual([]);
+            // The first fails before the second does: the second goes on being gone
+            answers[0].reject(new Error("offline"));
+            expect(await first).toBe(false);
+            expect(get(list.items).map((item) => item.id)).toEqual(["k1"]);
+            answers[2].resolve();
+            expect(await third).toBe(true);
+            answers[1].reject(new Error("offline"));
+            expect(await second).toBe(false);
+            expect(get(list.items).map((item) => item.id)).toEqual(["k1", "k2"]);
+        });
+
         it("forgets everything, and brings it all back when Orbit refuses", async () => {
             orbit.getMyMemory.mockResolvedValue({ items: [thing(), thing({ id: "k2" })] });
             orbit.forgetMyMemory.mockResolvedValueOnce({ forgotten: 2, everything: true });
