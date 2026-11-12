@@ -1146,7 +1146,7 @@ export class BotApiService {
      * A change to one of the person's Bricks, with a deadline: past it the request is dropped and this throws, so the
      * caller's usual failure shows instead of a switch or button that waits for good.
      */
-    private async brickWrite(endpoint: string, options: RequestInit): Promise<Response> {
+    private async brickWrite(endpoint: string, options: RequestInit): Promise<unknown> {
         const stop = new AbortController();
         let timer: ReturnType<typeof setTimeout> | undefined;
         // Raced as well as aborted: the Orbit sign-in that comes first in a request does not listen for the abort
@@ -1157,7 +1157,13 @@ export class BotApiService {
             }, BRICK_WRITE_TIMEOUT_MS);
         });
         try {
-            return await Promise.race([this.fetch(endpoint, { ...options, signal: stop.signal }), late]);
+            // The answer's body is read inside the same deadline: headers that come in time with a body that never
+            // ends would otherwise hold the switch as long as the connection lives
+            const answer = (async () => {
+                const response = await this.fetch(endpoint, { ...options, signal: stop.signal });
+                return (await response.json()) as unknown;
+            })();
+            return await Promise.race([answer, late]);
         } finally {
             clearTimeout(timer);
         }
@@ -1171,11 +1177,10 @@ export class BotApiService {
 
     /** Turns one of the person's own Bricks on or off. Answers with the Brick as it is now. */
     async setBrickEnabled(brickId: string, enabled: boolean): Promise<unknown> {
-        const response = await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}`, {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}`, {
             method: "PATCH",
             body: JSON.stringify({ enabled }),
         });
-        return response.json();
     }
 
     /**
@@ -1183,11 +1188,10 @@ export class BotApiService {
      * switch. Answers with `{ brick }`, its card as it is now. Throws when Orbit refuses or can't be reached.
      */
     async changeMyBrick(brickId: string, change: BrickChange): Promise<unknown> {
-        const response = await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}`, {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}`, {
             method: "PATCH",
             body: JSON.stringify(change),
         });
-        return response.json();
     }
 
     /**
@@ -1195,20 +1199,17 @@ export class BotApiService {
      * `{ brick }`. Throws when Orbit refuses or can't be reached.
      */
     async makeMyBrick(brick: { name: string; characterTextureId?: string }): Promise<unknown> {
-        const response = await this.brickWrite("/api/bricks", { method: "POST", body: JSON.stringify(brick) });
-        return response.json();
+        return await this.brickWrite("/api/bricks", { method: "POST", body: JSON.stringify(brick) });
     }
 
     /** Deletes one of the person's own Bricks: it stops at once and waits under Deleted, with Undo. */
     async deleteMyBrick(brickId: string): Promise<unknown> {
-        const response = await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}`, { method: "DELETE" });
-        return response.json();
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}`, { method: "DELETE" });
     }
 
     /** Brings a deleted Brick back while it still waits. Answers with the Brick as it is now. */
     async undoMyBrick(brickId: string): Promise<unknown> {
-        const response = await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/undo`, { method: "POST" });
-        return response.json();
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/undo`, { method: "POST" });
     }
 
     /**

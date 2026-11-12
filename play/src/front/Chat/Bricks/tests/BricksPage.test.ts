@@ -508,6 +508,46 @@ describe("the Bricks page (#1995)", () => {
             expect(text).toContain("Keeps the family recipes, and Mum's.");
         });
 
+        it("keeps saying a line was not saved while a later save of another field goes through", async () => {
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+            await open();
+            await openPage();
+            const type = (selector: string, value: string) => {
+                const field = target.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector);
+                if (!field) throw new Error(`no ${selector}`);
+                field.value = value;
+                field.dispatchEvent(new Event("input", { bubbles: true }));
+            };
+            game.changeMyBrick.mockRejectedValueOnce(new Error("offline"));
+            type('[data-testid="bot-description"]', "Keeps the family recipes, and Mum's.");
+            await new Promise<void>((resolve) => {
+                setTimeout(resolve, 600);
+            });
+            await settle();
+            expect(byId("brick-save-error")).not.toBeNull();
+
+            game.changeMyBrick.mockImplementation((_id, change) => Promise.resolve({ brick: made(change) }));
+            type('[data-testid="bot-name"]', "Mum's Recipes");
+            await new Promise<void>((resolve) => {
+                setTimeout(resolve, 1100);
+            });
+            await settle();
+            expect(game.changeMyBrick).toHaveBeenLastCalledWith(MADE, { name: "Mum's Recipes" });
+            // The line is still not saved, and the page still says so
+            expect(byId("brick-save-error")).not.toBeNull();
+
+            // Once the line is saved, it stops saying so
+            type('[data-testid="bot-description"]', "Keeps the family recipes, and Mum's!");
+            await new Promise<void>((resolve) => {
+                setTimeout(resolve, 600);
+            });
+            await settle();
+            expect(byId("brick-save-error")).toBeNull();
+            warn.mockRestore();
+            error.mockRestore();
+        });
+
         it("says so when the Brick could not be read, and reads it again on a tap", async () => {
             const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
             game.getBot.mockRejectedValueOnce(new Error("offline"));

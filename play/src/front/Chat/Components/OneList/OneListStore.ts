@@ -49,47 +49,90 @@ export function directRoomsWith(rooms: readonly ChatRoom[], chatIds: ReadonlySet
 }
 
 /**
- * The same as directRoomsWith, kept current: it also follows each direct chat's members, which can arrive after the
- * chat itself, so a deleted Brick's chat leaves Chats as soon as it is known to be that Brick's.
+ * The same as directRoomsWith, kept current: it also follows each chat's members, which can arrive after the chat
+ * itself, so a deleted Brick's chat leaves Chats as soon as it is known to be that Brick's. A chat someone put in a
+ * folder is looked for there too, in folders inside folders as well.
  */
 export function directRoomsWithStore(
     directRooms: Readable<ChatRoom[]>,
-    chatIds: Readable<ReadonlySet<string>>
+    chatIds: Readable<ReadonlySet<string>>,
+    folders?: Readable<RoomFolder[]>
 ): Readable<string[]> {
     return readable<string[]>([], (set) => {
         let rooms: ChatRoom[] = [];
+        let topFolders: RoomFolder[] = [];
         let ids: ReadonlySet<string> = new Set();
-        let memberWatches: Unsubscriber[] = [];
+        let watches: Unsubscriber[] = [];
         let started = false;
-        const update = () => {
-            if (started) set(directRoomsWith(rooms, ids));
+        let building = false;
+        let last = "";
+        const allRooms = (): ChatRoom[] => {
+            const all = [...rooms];
+            const seen = new Set<string>();
+            const walk = (folder: RoomFolder) => {
+                if (seen.has(folder.id)) return;
+                seen.add(folder.id);
+                all.push(...get(folder.rooms));
+                get(folder.folders).forEach(walk);
+            };
+            topFolders.forEach(walk);
+            return all;
         };
-        const watchMembers = () => {
-            memberWatches.forEach((unsubscribe) => unsubscribe());
-            memberWatches = [];
+        const update = () => {
+            if (!started || building) return;
+            const next = [...new Set(directRoomsWith(allRooms(), ids))];
+            const key = next.join("|");
+            if (key === last) return;
+            last = key;
+            set(next);
+        };
+        // What is watched follows what there is: a chat or folder that arrives is watched, one that left is not
+        const rewatch = () => {
+            watches.forEach((unsubscribe) => unsubscribe());
+            watches = [];
             if (ids.size === 0) return;
-            for (const room of rooms) {
-                const members = (room as Partial<{ members: Readable<unknown> }>).members;
-                if (members) memberWatches.push(members.subscribe(update));
+            building = true;
+            try {
+                const seen = new Set<string>();
+                const watchFolder = (folder: RoomFolder) => {
+                    if (seen.has(folder.id)) return;
+                    seen.add(folder.id);
+                    watches.push(folder.rooms.subscribe(rewatchSoon), folder.folders.subscribe(rewatchSoon));
+                    get(folder.folders).forEach(watchFolder);
+                };
+                topFolders.forEach(watchFolder);
+                for (const room of allRooms()) {
+                    const members = (room as Partial<{ members: Readable<unknown> }>).members;
+                    if (members) watches.push(members.subscribe(update));
+                }
+            } finally {
+                building = false;
             }
+        };
+        const rewatchSoon = () => {
+            if (building) return;
+            rewatch();
+            update();
         };
         const stopRooms = directRooms.subscribe((value) => {
             rooms = value;
-            watchMembers();
-            update();
+            rewatchSoon();
+        });
+        const stopFolders = folders?.subscribe((value) => {
+            topFolders = value;
+            rewatchSoon();
         });
         const stopIds = chatIds.subscribe((value) => {
-            const watchingBefore = ids.size > 0;
             ids = value;
-            if (watchingBefore !== ids.size > 0) watchMembers();
-            update();
+            rewatchSoon();
         });
         started = true;
         update();
         return () => {
             stopRooms();
+            stopFolders?.();
             stopIds();
-            memberWatches.forEach((unsubscribe) => unsubscribe());
+            watches.forEach((unsubscribe) => unsubscribe());
         };
     });
 }

@@ -187,6 +187,17 @@ describe('The two Brick tools', () => {
         expect(notes).toHaveLength(1);
     });
 
+    it('asks Orbit again when the model retries a Brick that could not be made earlier in the same answer', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        admin.makeBrickFor.mockRejectedValueOnce(new Error('Orbit down'));
+        const notes: BrickNote[] = [];
+        expect(await runBrickTool(MAKE_BRICK_TOOL, ASK, context(notes))).toHaveProperty('error');
+        expect(await runBrickTool(MAKE_BRICK_TOOL, ASK, context(notes))).toMatchObject({ made: true, name: 'Recipe Brick' });
+        expect(admin.makeBrickFor).toHaveBeenCalledTimes(2);
+        expect(notes).toHaveLength(1);
+        warn.mockRestore();
+    });
+
     it('neither make nor offer a Brick without its line and instructions, so no offer is used up', async () => {
         const notes: BrickNote[] = [];
         expect(await runBrickTool(MAKE_BRICK_TOOL, { ...ASK, instructions: ' ' }, context(notes))).toHaveProperty('error');

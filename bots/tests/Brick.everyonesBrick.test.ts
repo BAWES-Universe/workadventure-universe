@@ -420,7 +420,7 @@ describe('One chat for a person and their Brick, however many devices open it', 
         expect(await bridge.directChatFor(BRICK, ALICE)).toEqual({ wait: true });
         expect(deps.rooms.claimDirectChat).toHaveBeenCalledWith(BRICK, ALICE, 20_000);
 
-        // The store is down: the bridge keeps its own turn
+        // No shared store at all (one bot server): the bridge keeps its own turn
         deps.rooms.claimDirectChat = vi.fn().mockResolvedValue(null);
         expect(await bridge.directChatFor(BRICK, ALICE)).toMatchObject({ create: true });
         expect(await bridge.directChatFor(BRICK, ALICE)).toEqual({ wait: true });
@@ -549,6 +549,17 @@ describe('BotRegistry: one turn to make a chat, across bot servers', () => {
         const registry = Object.create(BotRegistry.prototype) as BotRegistry;
         Object.assign(registry, { redis: { isOpen: false }, serverId: 'server-1' });
         expect(await registry.claimDirectChat(BRICK, ALICE, 20_000)).toBeNull();
+    });
+
+    it('fails the claim while a Redis it was using is down, so nobody makes the chat on their own', async () => {
+        const registry = Object.create(BotRegistry.prototype) as BotRegistry;
+        Object.assign(registry, { redis: { isOpen: false }, serverId: 'server-1', sharedStoreSeen: true });
+        await expect(registry.claimDirectChat(BRICK, ALICE, 20_000)).rejects.toThrow('The shared store is down');
+
+        // And the bridge waits on that, rather than use its own claim
+        const { bridge, deps } = makeBridge();
+        deps.rooms.claimDirectChat = (botId: string, user: string, forMs: number) => registry.claimDirectChat(botId, user, forMs);
+        expect(await bridge.directChatFor(BRICK, ALICE)).toEqual({ wait: true });
     });
 });
 

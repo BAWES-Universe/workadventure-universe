@@ -31,6 +31,11 @@ export interface BotAssignment {
 
 export class BotRegistry {
     private redis: RedisClientType | null = null;
+    /**
+     * Whether Redis was ever ready on this server: from then on other bot servers may be sharing it, and a connection
+     * that drops is an outage, not a server on its own.
+     */
+    private sharedStoreSeen = false;
     private serverId: string;
     private heartbeatInterval: NodeJS.Timeout | null = null;
     private readonly HEARTBEAT_INTERVAL = 5000; // 5 seconds
@@ -75,6 +80,7 @@ export class BotRegistry {
             });
 
             this.redis.on('ready', async () => {
+                this.sharedStoreSeen = true;
                 // Select database
                 try {
                     await this.redis!.select(db);
@@ -156,10 +162,14 @@ export class BotRegistry {
     /**
      * One device at a time makes the direct chat of a bot and a person (game #1995), across every bot server: true for
      * the first to ask, false for anyone who asks while that claim lasts. Null without Redis, and the caller keeps its
-     * own in-process claim.
+     * own in-process claim. Throws while a Redis that was in use is down: another server may hold the claim, so the
+     * caller waits rather than claim on its own.
      */
     async claimDirectChat(botId: string, matrixUserId: string, forMs: number): Promise<boolean | null> {
-        if (!this.redis?.isOpen) return null;
+        if (!this.redis?.isOpen) {
+            if (this.sharedStoreSeen) throw new Error('The shared store is down');
+            return null;
+        }
         return (await this.redis.set(`bots:matrix:dm-claim:${botId}|${matrixUserId}`, this.serverId, { NX: true, PX: forMs })) === 'OK';
     }
 

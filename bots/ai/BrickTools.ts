@@ -186,7 +186,12 @@ export async function runBrickTool(name: string, args: Record<string, unknown>, 
             const result = await first;
             return 'error' in result ? result : { made: result.made, name: result.name, note: 'Already done in this reply.' };
         }
-        const run = makeBrick(brickName, line, instructions, args, context);
+        const run = makeBrick(brickName, line, instructions, args, context).then((result) => {
+            // Only a Brick that was made is shared: after a failure the model may try again in this reply, and that
+            // try asks Orbit again
+            if ('error' in result) making.delete(key);
+            return result;
+        });
         making.set(key, run);
         return run;
     }
