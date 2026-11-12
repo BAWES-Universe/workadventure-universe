@@ -69,6 +69,15 @@ describe('the memory tools', () => {
         expect(itemsAbout(items, '')).toEqual([]);
     });
 
+    it("never takes the person's own name or birthday for someone else's", () => {
+        const items = memoryItemsOf(sara());
+        for (const other of ["my dog's name", "my friend's birthday", 'her birthday', "Sam's name", 'their name', 'my dog name']) {
+            expect(itemsAbout(items, other).map((item) => item.kind), other).not.toContain(other.includes('birthday') ? 'birthday' : 'name');
+        }
+        expect(itemsAbout(items, 'the name I gave you').map((item) => item.kind)).toEqual(['name']);
+        expect(itemsAbout(items, "my name and my dog's name").map((item) => item.kind)).toEqual(['name']);
+    });
+
     it('never matches on short or common words, because forgetting is for good', () => {
         const items = memoryItemsOf(sara());
         for (const vague of ['i', 'it', 'a', 'the', 'that', 'the thing I said about my cat', 'what I said', 'all of that', 'everything']) {

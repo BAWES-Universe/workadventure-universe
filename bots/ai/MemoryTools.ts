@@ -82,6 +82,25 @@ const CONTENT_WORDS_OF = (text: string) => WORDS_OF(text).filter((word) => !STOP
 /** The shortest words, said alone, that may be found inside what is remembered. Shorter ones match far too much. */
 const MIN_ASKED = 4;
 
+/** Words that put "name" or "birthday" in someone else's hands: "her birthday", "my dog name". */
+const SOMEONE_ELSES = new Set(['his', 'her', 'their', 'its', 'our', 'dog', 'cat', 'pet', 'friend', 'mom', 'mum', 'dad', 'boss', 'wife', 'husband', 'brother', 'sister', 'kid', 'son', 'daughter', 'partner', 'child']);
+
+/**
+ * Whether "name" or "birthday" in these words is the person's own. "My dog's name", "her birthday" and "Sam's name" are
+ * somebody else's, and forgetting is for good, so they never take the person's own name or birthday with them. One
+ * mention that is the person's own is enough ("my name", "the name I gave you", "birthday").
+ */
+function isAboutThem(asked: string, words: readonly string[]): boolean {
+    const tokens = asked.split(/[^\p{L}\p{N}'\u2019]+/u).filter(Boolean);
+    return tokens.some((token, index) => {
+        if (!words.includes(token)) return false;
+        const before = tokens[index - 1];
+        if (before === undefined) return true;
+        if (/['\u2019]s$/u.test(before)) return false;
+        return !SOMEONE_ELSES.has(before);
+    });
+}
+
 /**
  * The things these words are about: the kind of thing ("my name", "my birthday"), the whole of what is remembered said
  * back, or a word that carries meaning shared with it. Forgetting is for good, so common words never match, and words
@@ -93,8 +112,8 @@ export function itemsAbout(items: MemoryItem[], about: string): MemoryItem[] {
     const words = CONTENT_WORDS_OF(asked);
     return items.filter((item) => {
         const value = item.value.toLowerCase().trim();
-        if (item.kind === 'name' && /\bname\b/.test(asked)) return true;
-        if (item.kind === 'birthday' && /\b(birthday|bday)\b/.test(asked)) return true;
+        if (item.kind === 'name' && isAboutThem(asked, ['name'])) return true;
+        if (item.kind === 'birthday' && isAboutThem(asked, ['birthday', 'bday'])) return true;
         // What is remembered, said back whole (as its own words, not a piece of a longer word)
         if (value.length >= MIN_ASKED) {
             const whole = new RegExp(`(^|[^\\p{L}\\p{N}])${value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^\\p{L}\\p{N}])`, 'u');

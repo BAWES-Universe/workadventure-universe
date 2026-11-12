@@ -38,6 +38,13 @@ export class PersistentMemory extends ConversationMemory {
     private appliedForgets: Map<string, number> = new Map();
     /** Forgets being reported to Orbit right now, by "botId|<id>" */
     private reporting: Set<string> = new Set();
+    /**
+     * Things a person asked us to forget that Orbit has not yet taken (it was unreachable), by "botId|uuid|key". Each is
+     * told again before the next save and by a timer, so a thing never comes back for want of one failed call.
+     */
+    private unreportedItemForgets: Map<string, { botId: string; userUuid: string; itemKey: string; kind: string }> = new Map();
+    private unreportedRetryTimer: NodeJS.Timeout | null = null;
+    private static readonly UNREPORTED_RETRY_MS = 30 * 1000;
     /** An older Orbit repeats a Forget for a minute: longer than that plus one 30-second privacy check */
     private static readonly FORGET_REPEAT_WINDOW_MS = 2 * 60 * 1000;
     /**
@@ -157,10 +164,37 @@ export class PersistentMemory extends ConversationMemory {
         }
         // A person who is not known to Orbit yet (no uuid) has nothing there to forget
         if (!userUuid.startsWith('temp-')) {
-            await Promise.all([...keys].map((itemKey) => this.memoryStorage.reportForgottenItem(botId, userUuid, itemKey, kinds.get(itemKey) ?? 'fact')));
+            const reported = await Promise.all(
+                [...keys].map((itemKey) => this.memoryStorage.reportForgottenItem(botId, userUuid, itemKey, kinds.get(itemKey) ?? 'fact'))
+            );
+            [...keys].forEach((itemKey, index) => {
+                if (!reported[index]) this.keepToReport({ botId, userUuid, itemKey, kind: kinds.get(itemKey) ?? 'fact' });
+            });
         }
         if (removed > 0) this.scheduleDebouncedSave(botId, playerId);
         return removed;
+    }
+
+    /** Orbit did not take this forget: keep it, and tell Orbit again soon. */
+    private keepToReport(entry: { botId: string; userUuid: string; itemKey: string; kind: string }): void {
+        this.unreportedItemForgets.set(`${entry.botId}|${entry.userUuid}|${entry.itemKey}`, entry);
+        if (this.unreportedRetryTimer) return;
+        this.unreportedRetryTimer = setTimeout(() => {
+            this.unreportedRetryTimer = null;
+            void this.reportUnreportedForgets();
+        }, PersistentMemory.UNREPORTED_RETRY_MS);
+        this.unreportedRetryTimer.unref?.();
+    }
+
+    /** Tell Orbit again every forget it has not yet taken (for one bot, or for all). Those it takes now are let go. */
+    private async reportUnreportedForgets(botId?: string): Promise<void> {
+        const waiting = [...this.unreportedItemForgets].filter(([, entry]) => !botId || entry.botId === botId);
+        await Promise.all(
+            waiting.map(async ([mapKey, entry]) => {
+                if (await this.memoryStorage.reportForgottenItem(entry.botId, entry.userUuid, entry.itemKey, entry.kind)) this.unreportedItemForgets.delete(mapKey);
+            })
+        );
+        if (this.unreportedItemForgets.size > 0) this.keepToReport([...this.unreportedItemForgets.values()][0]);
     }
 
     private dropForgotten(botId: string, notice: MemoryForgetNotice): void {
@@ -714,6 +748,7 @@ export class PersistentMemory extends ConversationMemory {
 
         // Save to storage (periodic save for conversation history)
         try {
+            await this.reportUnreportedForgets(botId);
             await this.memoryStorage.saveMemory(botId, memory, 'periodic');
             
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -747,6 +782,7 @@ export class PersistentMemory extends ConversationMemory {
             }
             
             // Use "immediate" saveType for emotion-only updates
+            await this.reportUnreportedForgets(botId);
             await this.memoryStorage.saveMemory(botId, memory, 'immediate');
             
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {

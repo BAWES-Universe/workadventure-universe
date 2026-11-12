@@ -244,6 +244,32 @@ describe('PersistentMemory: Forget of one thing', () => {
         expect(body).toEqual({ userUuid: 'uuid-sara', itemKey: lofi, kind: 'pref' });
         expect(config.headers.Authorization).toBe('Bearer service-secret');
     });
+
+    // A forget Orbit did not take
+    it('is told again before the next save, so it is not left for want of one failed call', async () => {
+        const memory = held();
+        hoisted.axios.post.mockClear();
+        hoisted.axios.post.mockRejectedValueOnce(new Error('Orbit is down'));
+        await memory.forgetThings(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]));
+        expect(memory.unreportedItemForgets.size).toBe(1);
+        await memory.reportUnreportedForgets(BOT);
+        const told = hoisted.axios.post.mock.calls.filter((call) => String(call[0]).endsWith('/items'));
+        expect(told).toHaveLength(2);
+        expect(told[1][1]).toEqual({ userUuid: 'uuid-sara', itemKey: lofi, kind: 'pref' });
+        expect(memory.unreportedItemForgets.size).toBe(0);
+    });
+
+    it('keeps trying while Orbit stays down, and lets it go once Orbit takes it', async () => {
+        const memory = held();
+        hoisted.axios.post.mockRejectedValue(new Error('Orbit is down'));
+        await memory.forgetThings(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]));
+        await memory.reportUnreportedForgets(BOT);
+        expect(memory.unreportedItemForgets.size).toBe(1);
+        hoisted.axios.post.mockReset().mockResolvedValue({ data: {} });
+        await memory.reportUnreportedForgets(BOT);
+        expect(memory.unreportedItemForgets.size).toBe(0);
+        clearTimeout(memory.unreportedRetryTimer);
+    });
 });
 
 describe('BotPlayerMemory copies', () => {
