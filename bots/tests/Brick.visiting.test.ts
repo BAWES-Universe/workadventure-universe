@@ -15,7 +15,7 @@ import { BotAccessGate } from '../server/BotAccessGate';
 import { BotManager } from '../server/BotManager';
 import { AIService } from '../ai/AIService';
 import { visitingRule } from '../ai/systemPrompt';
-import { VisitingBrickBehavior, spotBeside, VISIT_GONE_AFTER_MS, VISIT_LOOK_ACROSS_AFTER_MS, VISIT_WALK_AFTER } from '../behaviors/VisitingBrickBehavior';
+import { VisitingBrickBehavior, spotBeside, VISIT_GONE_AFTER_MS, VISIT_LOOK_ACROSS_AFTER_MS, VISIT_SEEN_EVERY_MS, VISIT_WALK_AFTER } from '../behaviors/VisitingBrickBehavior';
 
 const KHALID = 'uuid-khalid';
 const NOURA = 'uuid-noura';
@@ -137,10 +137,10 @@ describe('where a visiting Brick stands', () => {
 });
 
 describe('a visiting Brick on the map', () => {
-    const config = (onOwnerGone: () => void) =>
-        ({ type: 'idle', responseRadius: 0, greetingMessages: [], ownerUuid: KHALID, onOwnerGone }) as unknown as ConstructorParameters<typeof VisitingBrickBehavior>[0];
+    const config = (onOwnerGone: () => void, onOwnerSeen?: () => void) =>
+        ({ type: 'idle', responseRadius: 0, greetingMessages: [], ownerUuid: KHALID, onOwnerGone, onOwnerSeen }) as unknown as ConstructorParameters<typeof VisitingBrickBehavior>[0];
 
-    function brickAt(position: { x: number; y: number }, person: { x: number; y: number } | undefined) {
+    function brickAt(position: { x: number; y: number }, person: { x: number; y: number } | undefined, onOwnerSeen?: () => void) {
         const walks: { x: number; y: number }[] = [];
         const bot = {
             getPlayerPositionByUuid: vi.fn(() => person),
@@ -157,10 +157,32 @@ describe('a visiting Brick on the map', () => {
             stop: vi.fn(),
         };
         const gone = vi.fn();
-        const behavior = new VisitingBrickBehavior(config(gone));
+        const behavior = new VisitingBrickBehavior(config(gone, onOwnerSeen));
         (behavior as unknown as { bot: unknown }).bot = bot;
         return { behavior, bot, walks, gone };
     }
+
+    it('tells the manager it sees its person, at most every half minute, and never while they are not seen (it keeps the visit alive)', () => {
+        vi.useFakeTimers();
+        const seen = vi.fn();
+        const near = brickAt({ x: 100, y: 100 }, { x: 110, y: 100 }, seen);
+        near.behavior.update(16);
+        expect(seen).toHaveBeenCalledTimes(1);
+        vi.advanceTimersByTime(VISIT_SEEN_EVERY_MS - 2000);
+        near.behavior.update(16);
+        expect(seen).toHaveBeenCalledTimes(1);
+        vi.advanceTimersByTime(3000);
+        near.behavior.update(16);
+        expect(seen).toHaveBeenCalledTimes(2);
+
+        const away = vi.fn();
+        const nobody = brickAt({ x: 100, y: 100 }, undefined, away);
+        nobody.behavior.update(16);
+        vi.advanceTimersByTime(60_000);
+        nobody.behavior.update(16);
+        expect(away).not.toHaveBeenCalled();
+        vi.useRealTimers();
+    });
 
     it('stays put while its person is near', () => {
         vi.useFakeTimers();

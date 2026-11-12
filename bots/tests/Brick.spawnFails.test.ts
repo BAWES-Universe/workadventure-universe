@@ -45,8 +45,10 @@ const config = {
     characterTextureIds: [],
 } as unknown as BotConfiguration;
 
+const keepVisitAlive = vi.fn<(botId: string, ownerUuid: string, roomUrl: string) => Promise<boolean | undefined>>();
+
 function manager(assign: () => Promise<void>) {
-    const botManager = new BotManager({ isConfigured: () => true, getVisitingBricks: vi.fn(async () => [config]) } as never, {} as never);
+    const botManager = new BotManager({ isConfigured: () => true, getVisitingBricks: vi.fn(async () => [config]), keepVisitAlive } as never, {} as never);
     const internals = botManager as unknown as {
         bots: Map<string, unknown>;
         visitors: Map<string, unknown>;
@@ -129,6 +131,48 @@ describe('a Brick leaving because its person did (Sentry on #2023)', () => {
         expect(order).toEqual(['taking off', 'taken off', 'sync done']);
         // and it was put on the map again, a new client, not the one that was going
         expect(clients).toHaveLength(2);
+        expect(internals.bots.has('brick-1')).toBe(true);
+    });
+});
+
+describe('a Brick that tells Orbit it still sees its person (review on #927)', () => {
+    async function placed() {
+        clients.length = 0;
+        keepVisitAlive.mockReset();
+        const made = manager(async () => undefined);
+        await made.botManager.syncVisitingBrick(ROOM, { uuid: 'uuid-khalid' }, AT);
+        const behavior = clients[0].setBehavior.mock.calls[0][0] as { onOwnerSeen: () => void };
+        return { ...made, seen: behavior.onOwnerSeen };
+    }
+
+    it('names the Brick, its owner and the room it is in, and stays while Orbit says the visit is alive', async () => {
+        const { internals, seen } = await placed();
+        keepVisitAlive.mockResolvedValue(true);
+        seen();
+        await vi.waitFor(() => expect(keepVisitAlive).toHaveBeenCalledWith('brick-1', 'uuid-khalid', ROOM));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(internals.bots.has('brick-1')).toBe(true);
+        expect(internals.visitors.has('uuid-khalid')).toBe(true);
+    });
+
+    it('takes the Brick off the map when Orbit says the visit is over (ended, switched, ran out, switched off, place closed, access gone)', async () => {
+        const { internals, seen } = await placed();
+        keepVisitAlive.mockResolvedValue(false);
+        seen();
+        await vi.waitFor(() => expect(internals.bots.has('brick-1')).toBe(false));
+        expect(internals.visitors.has('uuid-khalid')).toBe(false);
+        expect(clients[0].disconnect).toHaveBeenCalled();
+    });
+
+    it('leaves the Brick as it is when Orbit cannot answer or says nothing', async () => {
+        const { internals, seen } = await placed();
+        keepVisitAlive.mockRejectedValueOnce(new Error('orbit down'));
+        seen();
+        await vi.waitFor(() => expect(keepVisitAlive).toHaveBeenCalledTimes(1));
+        keepVisitAlive.mockResolvedValueOnce(undefined);
+        seen();
+        await vi.waitFor(() => expect(keepVisitAlive).toHaveBeenCalledTimes(2));
+        await new Promise((resolve) => setTimeout(resolve, 20));
         expect(internals.bots.has('brick-1')).toBe(true);
     });
 });

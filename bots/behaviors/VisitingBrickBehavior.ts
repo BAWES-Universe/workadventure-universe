@@ -14,6 +14,11 @@ export interface VisitingBrickConfig extends IdleBehaviorConfig {
     ownerUuid: string;
     /** Their person is gone from the room: take this Brick off the map. */
     onOwnerGone: () => void;
+    /**
+     * This Brick's own client sees its person. Said every `VISIT_SEEN_EVERY_MS` at most: it is how Orbit knows the visit is
+     * alive, so it ends only after the person is gone for the time Limits gives, and not while they are still here.
+     */
+    onOwnerSeen?: () => void;
 }
 
 /** How far from its person it rests: a little over one tile. */
@@ -31,6 +36,8 @@ export const VISIT_GONE_AFTER_MS = 20_000;
 /** Unseen this long, it first asks to see the whole room: its usual view ends a few thousand pixels away. */
 export const VISIT_LOOK_ACROSS_AFTER_MS = 4_000;
 const LOOK_EVERY_MS = 700;
+/** How often Orbit is told the person is still seen (its shortest visit time is minutes). */
+export const VISIT_SEEN_EVERY_MS = 30_000;
 
 /** Where it should stand: beside the person, on the side it already is, never on top of them. */
 export function spotBeside(person: { x: number; y: number }, from: { x: number; y: number }, rest = VISIT_REST_DISTANCE): { x: number; y: number } {
@@ -44,7 +51,9 @@ export function spotBeside(person: { x: number; y: number }, from: { x: number; 
 export class VisitingBrickBehavior extends IdleBehavior {
     private readonly ownerUuid: string;
     private readonly onOwnerGone: () => void;
+    private readonly onOwnerSeen?: () => void;
     private ownerSeenAt = Date.now();
+    private toldSeenAt = 0;
     private lookedAt = 0;
     private told = false;
     private walking = false;
@@ -54,6 +63,7 @@ export class VisitingBrickBehavior extends IdleBehavior {
         super(config);
         this.ownerUuid = config.ownerUuid;
         this.onOwnerGone = config.onOwnerGone;
+        this.onOwnerSeen = config.onOwnerSeen;
     }
 
     /** A visiting Brick greets nobody: whoever speaks to it is answered. */
@@ -88,6 +98,10 @@ export class VisitingBrickBehavior extends IdleBehavior {
         }
         this.ownerSeenAt = now;
         this.lookedAcross = false;
+        if (this.onOwnerSeen && now - this.toldSeenAt >= VISIT_SEEN_EVERY_MS) {
+            this.toldSeenAt = now;
+            this.onOwnerSeen();
+        }
 
         const here = bot.getState().getPosition();
         const distance = Math.hypot(person.x - here.x, person.y - here.y);

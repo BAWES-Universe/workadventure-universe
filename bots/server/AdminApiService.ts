@@ -686,6 +686,17 @@ export class AdminApiService {
     }
 
     /**
+     * This Brick's own client sees its owner in this room (#2005): Orbit sees the visit now. Answers whether the visit is still
+     * alive (false: it ended, ran out, the Brick is off, or the place no longer takes it) or undefined when Orbit did not say.
+     * Throws when Orbit cannot answer: the caller leaves the Brick as it is.
+     */
+    async keepVisitAlive(botId: string, ownerUuid: string, roomUrl: string): Promise<boolean | undefined> {
+        if (!this.isConfigured()) return undefined;
+        const response = await this.brickCall<{ alive?: unknown }>('post', 'api/brick-visits/seen', { botId, ownerUuid, roomUrl });
+        return typeof response.data?.alive === 'boolean' ? response.data.alive : undefined;
+    }
+
+    /**
      * Delete bot configuration
      */
     async deleteBotConfiguration(botId: string): Promise<void> {

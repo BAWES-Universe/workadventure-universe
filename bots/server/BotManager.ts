@@ -398,16 +398,7 @@ export class BotManager {
             console.log(`[BotManager] Bot ${botId} behaviour: ${built.kind} (moves=${built.model.moves}, goesToPeople=${built.model.goesToPeople})`);
         }
         const behavior = visiting
-            ? new VisitingBrickBehavior({
-                  ...(built.config as unknown as ConstructorParameters<typeof VisitingBrickBehavior>[0]),
-                  ownerUuid: visiting.ownerUuid,
-                  // Its person has left the room: the Brick leaves the map with them. Orbit keeps the visit until it ends
-                  onOwnerGone: () => {
-                      this.inVisitLine(visiting.ownerUuid, () => this.endVisitor(visiting.ownerUuid, botId)).catch((error) =>
-                        console.warn(`[BotManager] Could not take ${botId} off the map:`, error)
-                    );
-                  },
-              })
+            ? this.visitingBehavior(visiting.ownerUuid, botId, config.roomUrl, built.config)
             : instantiateBehavior(built.kind, built.config, { IdleBehavior, PatrolBehavior, SocialBehavior });
         
         // Set services for behavior (including response processor and metrics collector for metrics)
@@ -784,16 +775,7 @@ export class BotManager {
             // A Brick that walks beside its person (#2005) keeps walking beside them: an edit never turns it into a room bot
             const visiting = instance.config.brick?.visiting;
             const behavior = visiting
-            ? new VisitingBrickBehavior({
-                  ...(built.config as unknown as ConstructorParameters<typeof VisitingBrickBehavior>[0]),
-                  ownerUuid: visiting.ownerUuid,
-                  // Its person has left the room: the Brick leaves the map with them. Orbit keeps the visit until it ends
-                  onOwnerGone: () => {
-                      this.inVisitLine(visiting.ownerUuid, () => this.endVisitor(visiting.ownerUuid, botId)).catch((error) =>
-                        console.warn(`[BotManager] Could not take ${botId} off the map:`, error)
-                    );
-                  },
-              })
+            ? this.visitingBehavior(visiting.ownerUuid, botId, instance.config.roomUrl, built.config)
             : instantiateBehavior(built.kind, built.config, { IdleBehavior, PatrolBehavior, SocialBehavior });
             // Set services for behavior (required for AI responses)
             behavior.setServices(this.aiService, this.adminApiService, this.conversationStorage, this.responseProcessor, this.metricsCollector);
@@ -1019,6 +1001,33 @@ export class BotManager {
         await this.spawnBot(mine.botId, mine, { position: start });
         this.visitors.set(uuid, { botId: mine.botId, roomUrl });
         return { botId: mine.botId };
+    }
+
+    /** The behaviour of a Brick that walks beside its person, with what it tells the manager. */
+    private visitingBehavior(ownerUuid: string, botId: string, roomUrl: string | undefined, built: unknown): VisitingBrickBehavior {
+        return new VisitingBrickBehavior({
+            ...(built as ConstructorParameters<typeof VisitingBrickBehavior>[0]),
+            ownerUuid,
+            // Its person has left the room: the Brick leaves the map with them. Orbit keeps the visit until it ends
+            onOwnerGone: () => {
+                this.inVisitLine(ownerUuid, () => this.endVisitor(ownerUuid, botId)).catch((error) => console.warn(`[BotManager] Could not take ${botId} off the map:`, error));
+            },
+            // Its own client sees its person: Orbit is told, and says when the visit is over (ended, switched, ran out, the Brick
+            // switched off or deleted, the place stopped taking visits, or the person may no longer open the room)
+            onOwnerSeen: () => {
+                if (roomUrl) void this.keepVisitSeen(ownerUuid, botId, roomUrl);
+            },
+        });
+    }
+
+    private async keepVisitSeen(ownerUuid: string, botId: string, roomUrl: string): Promise<void> {
+        try {
+            const alive = await this.adminApiService.keepVisitAlive(botId, ownerUuid, roomUrl);
+            if (alive === false) await this.inVisitLine(ownerUuid, () => this.endVisitor(ownerUuid, botId));
+        } catch (error) {
+            // Orbit cannot answer: the Brick stays as it is and is asked again at the next sighting
+            console.warn(`[BotManager] Could not tell Orbit ${botId} is still with its person:`, error instanceof Error ? error.message : error);
+        }
     }
 
     /** Takes a person's visiting Brick off the map. Only the one it is asked about, and only while it is still theirs. */
