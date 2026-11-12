@@ -234,11 +234,24 @@ export interface BrickFilesList {
 export function brickFilesList(brickId: string): BrickFilesList {
     const files = writable<BrickFiles>(EMPTY);
     const state = writable<FilesState>("loading");
-    let current = EMPTY;
-    const put = (next: BrickFiles) => {
-        current = next;
-        files.set(next);
+    // What Orbit last said, and the files the person has asked to delete that Orbit has not answered yet. What is shown
+    // is the first without the second, so a Delete that fails brings back only its own file, whatever else is in flight.
+    let known = EMPTY;
+    const pending = new Set<string>();
+    const without = (from: BrickFiles, ids: ReadonlySet<string>): BrickFiles => {
+        const going = from.sent.files.filter((file) => ids.has(file.id));
+        if (going.length === 0) return from;
+        return {
+            ...from,
+            sent: {
+                files: from.sent.files.filter((file) => !ids.has(file.id)),
+                total: Math.max(0, from.sent.total - going.length),
+            },
+            count: Math.max(0, from.count - going.length),
+            bytes: Math.max(0, from.bytes - going.reduce((total, file) => total + (file.sizeBytes ?? 0), 0)),
+        };
     };
+    const show = () => files.set(without(known, pending));
 
     return {
         files: { subscribe: files.subscribe },
@@ -246,7 +259,8 @@ export function brickFilesList(brickId: string): BrickFilesList {
         async load() {
             state.set("loading");
             try {
-                put(parseBrickFiles(await botApiService.getBrickFiles(brickId)));
+                known = parseBrickFiles(await botApiService.getBrickFiles(brickId));
+                show();
                 state.set("ready");
             } catch (error) {
                 console.warn("Could not read a Brick's files", error);
@@ -254,24 +268,18 @@ export function brickFilesList(brickId: string): BrickFilesList {
             }
         },
         async deleteSent(fileId) {
-            const before = current;
-            const gone = before.sent.files.find((file) => file.id === fileId);
-            put({
-                ...before,
-                sent: {
-                    files: before.sent.files.filter((file) => file.id !== fileId),
-                    total: Math.max(0, before.sent.total - 1),
-                },
-                count: Math.max(0, before.count - 1),
-                bytes: Math.max(0, before.bytes - (gone?.sizeBytes ?? 0)),
-            });
+            pending.add(fileId);
+            show();
             try {
                 await botApiService.deleteBrickFile(brickId, fileId);
+                known = without(known, new Set([fileId]));
                 return true;
             } catch (error) {
                 console.warn("Could not delete a file", error);
-                put(before);
                 return false;
+            } finally {
+                pending.delete(fileId);
+                show();
             }
         },
     };

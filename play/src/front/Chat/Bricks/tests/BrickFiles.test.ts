@@ -200,5 +200,46 @@ describe("a Brick's files (#2003)", () => {
             expect(await list.deleteSent("f2")).toBe(false);
             expect(get(list.files).sent.files.map((one) => one.id)).toEqual(["f2"]);
         });
+
+        it("brings back each file that fails to delete, in any order, and keeps one that is gone", async () => {
+            orbit.getBrickFiles.mockResolvedValue(
+                answer({
+                    sent: {
+                        files: [
+                            file({ id: "f1", name: "a.pdf", sizeBytes: 100 }),
+                            file({ id: "f2", name: "b.pdf", sizeBytes: 200 }),
+                            file({ id: "f3", name: "c.pdf", sizeBytes: 300 }),
+                        ],
+                        total: 3,
+                    },
+                    count: 5,
+                    bytes: 1000,
+                })
+            );
+            const answers: { resolve: () => void; reject: (error: Error) => void }[] = [];
+            orbit.deleteBrickFile.mockImplementation(
+                () =>
+                    new Promise((resolve, reject) => {
+                        answers.push({ resolve: () => resolve({ deleted: true }), reject });
+                    })
+            );
+            const list = brickFilesList(BRICK);
+            await list.load();
+            const first = list.deleteSent("f1");
+            const second = list.deleteSent("f2");
+            const third = list.deleteSent("f3");
+            expect(get(list.files).sent.files).toEqual([]);
+            expect(get(list.files)).toMatchObject({ count: 2, bytes: 400 });
+            answers[0].reject(new Error("offline"));
+            expect(await first).toBe(false);
+            expect(get(list.files).sent.files.map((one) => one.id)).toEqual(["f1"]);
+            answers[2].resolve();
+            expect(await third).toBe(true);
+            answers[1].reject(new Error("offline"));
+            expect(await second).toBe(false);
+            expect(get(list.files).sent.files.map((one) => one.id)).toEqual(["f1", "f2"]);
+            expect(get(list.files)).toMatchObject({ count: 4, bytes: 700 });
+            expect(get(list.files).sent.total).toBe(2);
+        });
     });
 });
