@@ -50,6 +50,21 @@ describe('POST /api/bricks/visit/sync', () => {
         expect(botManager.syncVisitingBrick).toHaveBeenCalledWith(ROOM, { uuid: 'uuid-alice' }, { x: 40, y: 50 }, true);
     });
 
+    it('passes on when the person\'s game saw them come into the room, and nothing that is not a plain time', async () => {
+        const T = Date.now() - 5_000;
+        await sync({ roomId: ROOM, x: 40, y: 50, enteredAt: T });
+        expect(botManager.syncVisitingBrick).toHaveBeenLastCalledWith(ROOM, { uuid: 'uuid-alice' }, { x: 40, y: 50 }, true, T);
+        for (const bad of ['yesterday', -1, 0, 1.5, null, Number.NaN, {}]) {
+            botManager.syncVisitingBrick.mockClear();
+            await sync({ roomId: ROOM, x: 40, y: 50, enteredAt: bad });
+            expect(botManager.syncVisitingBrick).toHaveBeenLastCalledWith(ROOM, { uuid: 'uuid-alice' }, { x: 40, y: 50 }, true);
+        }
+        // Ending a visit takes the Brick off wherever the person stands: no time is passed on
+        botManager.syncVisitingBrick.mockClear();
+        await sync({ roomId: ROOM, ending: true, enteredAt: T });
+        expect(botManager.syncVisitingBrick).toHaveBeenLastCalledWith(ROOM, { uuid: 'uuid-alice' }, undefined, false);
+    });
+
     it('says the Brick is not on the map when there is none for this person', async () => {
         botManager.syncVisitingBrick.mockResolvedValue({ botId: null });
         expect(await (await sync()).json()).toEqual({ present: false });

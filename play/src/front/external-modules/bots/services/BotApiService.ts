@@ -140,6 +140,8 @@ export class BotApiService {
     /** Set up by a room yet: until then a missing Orbit address says nothing about the server */
     private initialized = false;
     private roomId: string | null = null;
+    // When the game saw the player come into this room: sent with each Brick sync so Orbit can tell a late sync from a room they left
+    private enteredRoomAt: number | null = null;
     private botServerUrl: string | null = null;
     private sessionTokenPromise: Promise<string | null> | null = null; // Cache login attempt to avoid multiple simultaneous calls
     private readonly initializeListeners = new Set<() => void>();
@@ -187,6 +189,7 @@ export class BotApiService {
             console.error("[BotApiService] Refusing insecure bot-server credential target:", error);
             this.botServerUrl = null;
         }
+        if (this.roomId !== roomId) this.enteredRoomAt = Date.now();
         this.roomId = roomId;
         this.initializeListeners.forEach((listener) => listener());
         return roomIdChanged;
@@ -1247,7 +1250,11 @@ export class BotApiService {
         try {
             const response = await this.fetchBotServer("/api/bricks/visit/sync", {
                 method: "POST",
-                body: JSON.stringify({ roomId, ...(position ?? {}), ...(options?.ending ? { ending: true } : {}) }),
+                body: JSON.stringify({
+                    roomId,
+                    ...(position ?? {}),
+                    ...(options?.ending ? { ending: true } : this.enteredRoomAt !== null ? { enteredAt: this.enteredRoomAt } : {}),
+                }),
             });
             const answer = (await response.json()) as { present?: unknown } | null;
             return typeof answer?.present === "boolean" ? answer.present : undefined;

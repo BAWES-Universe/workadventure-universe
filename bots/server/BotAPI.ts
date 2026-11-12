@@ -1002,7 +1002,15 @@ export class BotAPI {
                 }
                 // One Brick per person, in a room that exists and whose universe takes visits (Orbit says), and it goes by
                 // itself when its person is not seen in the room: so there is no wait here, and ending a visit is at once
-                const answer = await this.botManager.syncVisitingBrick(roomId, { uuid: req.sessionUuid }, ending ? undefined : position, !ending);
+                // When the person's game saw them come into the room: Orbit moves a visit only on a sighting newer than the last move, so a
+                // late sync from a room they left moves nothing. Whatever is not a plain time is left out (Orbit reads that as now)
+                const entered = req.body?.enteredAt;
+                const enteredAt = !ending && typeof entered === 'number' && Number.isSafeInteger(entered) && entered > 0 ? entered : undefined;
+                const person = { uuid: req.sessionUuid };
+                const answer =
+                    enteredAt === undefined
+                        ? await this.botManager.syncVisitingBrick(roomId, person, ending ? undefined : position, !ending)
+                        : await this.botManager.syncVisitingBrick(roomId, person, position, true, enteredAt);
                 res.json({ present: answer.botId !== null, ...(answer.reason ? { reason: answer.reason } : {}) });
             } catch (error) {
                 console.error('[BotAPI] Error syncing a visiting Brick:', error instanceof Error ? error.message : error);

@@ -940,8 +940,8 @@ export class BotManager {
      * room, brings a Brick along, or ends the visit. The Brick of an earlier room, or a Brick they swapped it for, is
      * taken off the map first. Never throws for a person Orbit has nothing for: it only takes the Brick off.
      */
-    async syncVisitingBrick(roomUrl: string, person: { uuid: string }, position?: { x: number; y: number }, mayPlace = true): Promise<VisitSyncAnswer> {
-        return this.inVisitLine(person.uuid, () => this.runVisitSync(roomUrl, person.uuid, position, mayPlace));
+    async syncVisitingBrick(roomUrl: string, person: { uuid: string }, position?: { x: number; y: number }, mayPlace = true, enteredAt?: number): Promise<VisitSyncAnswer> {
+        return this.inVisitLine(person.uuid, () => this.runVisitSync(roomUrl, person.uuid, position, mayPlace, enteredAt));
     }
 
     /**
@@ -966,10 +966,10 @@ export class BotManager {
 
     private visitSyncs: Map<string, Promise<VisitSyncAnswer | void>> = new Map();
 
-    private async runVisitSync(roomUrl: string, uuid: string, position?: { x: number; y: number }, mayPlace = true): Promise<VisitSyncAnswer> {
+    private async runVisitSync(roomUrl: string, uuid: string, position?: { x: number; y: number }, mayPlace = true, enteredAt?: number): Promise<VisitSyncAnswer> {
         let configs: BotConfiguration[];
         try {
-            configs = await this.adminApiService.getVisitingBricks(roomUrl, [uuid]);
+            configs = await (enteredAt === undefined ? this.adminApiService.getVisitingBricks(roomUrl, [uuid]) : this.adminApiService.getVisitingBricks(roomUrl, [uuid], enteredAt));
         } catch (error) {
             // Orbit cannot answer: what is on the map stays as it is
             console.warn('[BotManager] Could not ask Orbit for the visiting Brick:', error instanceof Error ? error.message : error);

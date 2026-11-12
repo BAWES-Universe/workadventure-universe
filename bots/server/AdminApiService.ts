@@ -671,9 +671,9 @@ export class AdminApiService {
      * Asking is also how Orbit learns the person is here, which is how a Brick follows them room to room. Orbit answers
      * nothing where the universe does not take visits. Throws when Orbit cannot answer: the caller leaves what it has.
      */
-    async getVisitingBricks(roomUrl: string, people: string[]): Promise<BotConfiguration[]> {
+    async getVisitingBricks(roomUrl: string, people: string[], enteredAt?: number): Promise<BotConfiguration[]> {
         if (!this.isConfigured() || people.length === 0) return [];
-        const response = await this.brickCall<BotConfiguration[]>('post', 'api/brick-visits/room', { roomUrl, people });
+        const response = await this.brickCall<BotConfiguration[]>('post', 'api/brick-visits/room', { roomUrl, people, ...(enteredAt === undefined ? {} : { enteredAt }) });
         const list = Array.isArray(response.data) ? response.data : [];
         const configs: BotConfiguration[] = [];
         for (const config of list) {
