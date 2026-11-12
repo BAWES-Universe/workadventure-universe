@@ -98,6 +98,7 @@
     } from "../../Bricks/ClosedBrickCards";
     import { loadMyBricks, myBricksByChatId, myBricksStore, withMyBricks } from "../../Bricks/MyBricksStore";
     import { openDirectChatRoom } from "../../Utils";
+    import BrickComputerBar from "../../Bricks/Computer/BrickComputerBar.svelte";
     import Message from "./Message.svelte";
     import StoppedBySpeechNote from "./StoppedBySpeechNote.svelte";
     import KeptQuietNote from "./KeptQuietNote.svelte";
@@ -1303,6 +1304,9 @@
                             directPartner ? openProfileRoomIdStore.set(room.id) : openRoomDetailsIdStore.set(room.id)}
                     />
                 {/key}
+            {/if}
+            {#if ownBrick}
+                <BrickComputerBar brick={ownBrick} />
             {/if}
             {#if liveElsewhere && proximityRoom}
                 <div

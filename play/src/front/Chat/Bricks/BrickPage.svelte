@@ -6,6 +6,7 @@
     import { shortDay, type BrickCard } from "./Brick";
     import { openBrickChat } from "./BrickChat";
     import BrickPicture from "./BrickPicture.svelte";
+    import ComputerGroup from "./Computer/ComputerGroup.svelte";
     import { brickUndoDays, deleteMyBrick } from "./MyBricksStore";
     import { IconChevronRight, IconMessage, IconTrash } from "@wa-icons";
 
@@ -23,6 +24,11 @@
 
     let asking = false;
     let deleting = false;
+    // The Computer group opens and closes on its own, one at a time like the groups of today's bot page.
+    let openGroup = "";
+    function toggleGroup(id: string) {
+        openGroup = openGroup === id ? "" : id;
+    }
 
     $: made = shortDay(brick.createdAt, $locale);
     $: undoUntil = $brickUndoDays ? shortDay(Date.now() + $brickUndoDays * DAY_MS, $locale) : "";
@@ -61,6 +67,7 @@
             <span class="bkp-row-t">{$LL.chat.brick.openItsChat()}</span>
             <span class="bkp-go"><IconChevronRight font-size="18" /></span>
         </button>
+        <ComputerGroup {brick} open={openGroup === "computer"} onToggle={toggleGroup} />
 
         <footer class="bkp-foot">
             {#if made}<p class="bkp-meta">{$LL.mapEditor.edit.bots.page.about.created({ date: made })}</p>{/if}

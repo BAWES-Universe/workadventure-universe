@@ -1164,6 +1164,43 @@ export class BotApiService {
         return response.json();
     }
 
+    /**
+     * A Brick's computer as its owner sees it (game #2000): whether it is on, what it is doing, how much of the month is
+     * left. Only reads; it never makes or wakes anything. `{ computer }`.
+     */
+    async getBrickComputer(brickId: string): Promise<unknown> {
+        const response = await this.fetch(`/api/bricks/${encodeURIComponent(brickId)}/computer`);
+        return response.json();
+    }
+
+    /** One of the owner's calls on a Brick's computer (give, turn off, stop, take over, hand back, fill in details). */
+    async brickComputerAction(
+        brickId: string,
+        action: "give" | "turn-off" | "stop" | "take-over" | "hand-back" | "fill-details"
+    ): Promise<unknown> {
+        const base = `/api/bricks/${encodeURIComponent(brickId)}/computer`;
+        const response =
+            action === "give"
+                ? await this.fetch(base, { method: "POST" })
+                : action === "turn-off"
+                ? await this.fetch(base, { method: "DELETE" })
+                : await this.fetch(`${base}/${action}`, { method: "POST" });
+        return response.json();
+    }
+
+    /** The screen of a computer that is working. Never wakes a machine: a resting one answers 409 and nothing starts. */
+    async watchBrickComputer(brickId: string): Promise<{ url: string } | undefined> {
+        try {
+            const response = await this.fetch(`/api/bricks/${encodeURIComponent(brickId)}/computer/watch`, {
+                method: "POST",
+            });
+            const data = (await response.json()) as { url?: unknown };
+            return typeof data.url === "string" ? { url: data.url } : undefined;
+        } catch {
+            return undefined;
+        }
+    }
+
     /** Deletes one of the person's own Bricks: it stops at once and waits under Deleted, with Undo. */
     async deleteMyBrick(brickId: string): Promise<unknown> {
         const response = await this.fetch(`/api/bricks/${encodeURIComponent(brickId)}`, { method: "DELETE" });
