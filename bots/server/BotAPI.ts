@@ -944,8 +944,13 @@ export class BotAPI {
                 res.status(400).json({ error: 'Not a suggestion' });
                 return;
             }
-            await this.adminApiService.answerBrickOffer(botId, req.sessionUuid, topic, 'not_now');
-            res.status(204).end();
+            try {
+                await this.adminApiService.answerBrickOffer(botId, req.sessionUuid, topic, 'not_now');
+                res.status(204).end();
+            } catch (error) {
+                console.error(`[BotAPI] Error keeping "Not now" for bot ${botId}:`, error);
+                res.status(502).json({ error: 'Could not keep that' });
+            }
         });
 
         // Whether a bot hears voice notes, for the mic in its chat: shown only on a yes. Only for someone who may message it, the same

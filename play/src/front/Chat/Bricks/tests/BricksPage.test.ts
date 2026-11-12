@@ -478,7 +478,9 @@ describe("the Bricks page (#1995)", () => {
                 setTimeout(resolve, 1100);
             });
             await settle();
-            expect(game.changeMyBrick).toHaveBeenCalledWith(MADE, { description: "Keeps the family recipes, and Mum's." });
+            expect(game.changeMyBrick).toHaveBeenCalledWith(MADE, {
+                description: "Keeps the family recipes, and Mum's.",
+            });
             expect(game.changeMyBrick).toHaveBeenCalledWith(MADE, { name: "Mum's Recipes" });
             expect(game.changeMyBrick).toHaveBeenCalledTimes(2);
         });

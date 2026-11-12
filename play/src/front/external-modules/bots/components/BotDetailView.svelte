@@ -740,24 +740,24 @@
             {#if brick}
                 <span class="bp-woka bp-look" data-testid="brick-look"><slot name="look" /></span>
             {:else}
-            <button
-                type="button"
-                class="bp-woka"
-                aria-label={page.changeLooks()}
-                title={page.changeLooks()}
-                data-testid="bot-change-looks"
-                on:click={() => (editingTexture = true)}
-            >
-                {#if currentBot.characterTexture && $botWokaCatalogStore}
-                    <WokaImage
-                        selectedTextures={{ woka: currentBot.characterTexture }}
-                        wokaData={$botWokaCatalogStore}
-                        {getTextureUrl}
-                        canvasSize={44}
-                        direction={0}
-                    />
-                {/if}
-            </button>
+                <button
+                    type="button"
+                    class="bp-woka"
+                    aria-label={page.changeLooks()}
+                    title={page.changeLooks()}
+                    data-testid="bot-change-looks"
+                    on:click={() => (editingTexture = true)}
+                >
+                    {#if currentBot.characterTexture && $botWokaCatalogStore}
+                        <WokaImage
+                            selectedTextures={{ woka: currentBot.characterTexture }}
+                            wokaData={$botWokaCatalogStore}
+                            {getTextureUrl}
+                            canvasSize={44}
+                            direction={0}
+                        />
+                    {/if}
+                </button>
             {/if}
             <div class="bp-hd-tx">
                 <label class="bp-name-wrap">
@@ -821,64 +821,64 @@
                     />
                 {/if}
             {:else}
-            {#if askedUsage && currentBot}
-                <MakerAskedCard name={currentBot.name || "Bot"} usage={askedUsage} onUseKey={openMind} />
-            {/if}
-            <UsageGroup
-                bot={currentBot}
-                open={openGroup === "usage"}
-                onToggle={toggleGroup}
-                onOpenScreen={(screen) => (usageScreen = screen)}
-            />
-            <MindGroup
-                bot={currentBot}
-                open={openGroup === "mind"}
-                onToggle={toggleGroup}
-                onChange={(next) => apply(next)}
-                onOptions={takeAiOptions}
-            />
-            <SayGroup bot={currentBot} open={openGroup === "say"} onToggle={toggleGroup} onChange={apply} />
-            <VoiceGroup bot={currentBot} open={openGroup === "voice"} onToggle={toggleGroup} />
-            <BehaviorGroup
-                bot={currentBot}
-                open={openGroup === "behavior"}
-                onToggle={toggleGroup}
-                onChange={(next) => apply(next)}
-                onEditRoute={editRoute}
-            />
-            <ToolsGroup
-                bot={currentBot}
-                open={openGroup === "tools"}
-                onToggle={toggleGroup}
-                onChange={(next) => apply(next)}
-                wide={!$mobileLayoutStore}
-                {onToolCount}
-                {aiOptions}
-                onOpenScreen={(screen) => (toolsScreen = screen)}
-            />
-            {#if askLimit && currentBot}
-                <LimitSuggestion
-                    name={currentBot.name || "Bot"}
-                    onChoose={() => answerLimit(true)}
-                    onKeep={() => answerLimit(false)}
+                {#if askedUsage && currentBot}
+                    <MakerAskedCard name={currentBot.name || "Bot"} usage={askedUsage} onUseKey={openMind} />
+                {/if}
+                <UsageGroup
+                    bot={currentBot}
+                    open={openGroup === "usage"}
+                    onToggle={toggleGroup}
+                    onOpenScreen={(screen) => (usageScreen = screen)}
                 />
-            {/if}
-            <PermissionsGroup
-                bot={currentBot}
-                open={openGroup === "access"}
-                onToggle={toggleGroup}
-                onOpenRule={(rule) => (editingRuleId = rule.id)}
-                onAdd={() => (addingRule = true)}
-            />
-            <!-- An extra, after the bot's own parts: the pet that walks with it -->
-            <PageGroup
-                id="companion"
-                icon={IconPaw}
-                title={page.companion.title()}
-                brief={companionLine}
-                link
-                onToggle={() => (editingCompanion = true)}
-            />
+                <MindGroup
+                    bot={currentBot}
+                    open={openGroup === "mind"}
+                    onToggle={toggleGroup}
+                    onChange={(next) => apply(next)}
+                    onOptions={takeAiOptions}
+                />
+                <SayGroup bot={currentBot} open={openGroup === "say"} onToggle={toggleGroup} onChange={apply} />
+                <VoiceGroup bot={currentBot} open={openGroup === "voice"} onToggle={toggleGroup} />
+                <BehaviorGroup
+                    bot={currentBot}
+                    open={openGroup === "behavior"}
+                    onToggle={toggleGroup}
+                    onChange={(next) => apply(next)}
+                    onEditRoute={editRoute}
+                />
+                <ToolsGroup
+                    bot={currentBot}
+                    open={openGroup === "tools"}
+                    onToggle={toggleGroup}
+                    onChange={(next) => apply(next)}
+                    wide={!$mobileLayoutStore}
+                    {onToolCount}
+                    {aiOptions}
+                    onOpenScreen={(screen) => (toolsScreen = screen)}
+                />
+                {#if askLimit && currentBot}
+                    <LimitSuggestion
+                        name={currentBot.name || "Bot"}
+                        onChoose={() => answerLimit(true)}
+                        onKeep={() => answerLimit(false)}
+                    />
+                {/if}
+                <PermissionsGroup
+                    bot={currentBot}
+                    open={openGroup === "access"}
+                    onToggle={toggleGroup}
+                    onOpenRule={(rule) => (editingRuleId = rule.id)}
+                    onAdd={() => (addingRule = true)}
+                />
+                <!-- An extra, after the bot's own parts: the pet that walks with it -->
+                <PageGroup
+                    id="companion"
+                    icon={IconPaw}
+                    title={page.companion.title()}
+                    brief={companionLine}
+                    link
+                    onToggle={() => (editingCompanion = true)}
+                />
             {/if}
             <!-- Settings most owners never need, on a screen of their own -->
             <PageGroup
