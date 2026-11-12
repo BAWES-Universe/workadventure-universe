@@ -50,6 +50,8 @@ let generation = 0;
 let changes = 0;
 /** How many times a read is tried when changes keep coming meanwhile; then what the page shows stays. */
 const READS_WHILE_CHANGING = 3;
+// Switches Orbit has not answered yet: the page already shows them, and a list read meanwhile may not have them yet.
+let switching = 0;
 
 async function load(asked: number, read = 1): Promise<void> {
     const seen = changes;
@@ -64,7 +66,7 @@ async function load(asked: number, read = 1): Promise<void> {
     // The Bricks they made come with the list; when it can't be read, the one everyone gets still shows.
     const list = await botApiService.listMyBricks().catch(() => undefined);
     if (asked !== generation) return;
-    if (seen !== changes) {
+    if (seen !== changes || switching > 0) {
         if (read < READS_WHILE_CHANGING) await load(asked, read + 1);
         return;
     }
@@ -137,13 +139,15 @@ export async function setMyBrickEnabled(brickId: string, enabled: boolean): Prom
         bricks.update((list) => list?.map((brick) => (brick.id === brickId ? change(brick) : brick)));
     };
     put((brick) => ({ ...brick, enabled }));
+    switching++;
     try {
         const saved = parseBrickCard(
             ((await botApiService.setBrickEnabled(brickId, enabled)) as { brick?: unknown })?.brick
         );
         // Signed out meanwhile: what Orbit said belongs to the person before, and goes nowhere
         if (asked !== generation) return false;
-        if (saved) put(() => saved);
+        // Orbit's card when it sent one; otherwise the switch stays where it was put, over any list read meanwhile
+        put(saved ? () => saved : (brick) => ({ ...brick, enabled }));
         return true;
     } catch (error) {
         console.warn("Could not turn a Brick on or off", error);
@@ -151,6 +155,9 @@ export async function setMyBrickEnabled(brickId: string, enabled: boolean): Prom
         const was = before?.find((brick) => brick.id === brickId);
         if (was) put((brick) => ({ ...brick, enabled: was.enabled }));
         return false;
+    } finally {
+        // A sign-out meanwhile started the count again for whoever is here now
+        if (asked === generation) switching--;
     }
 }
 
@@ -258,6 +265,7 @@ function tellBrickChanged(brickId: string): void {
 export function forgetMyBricks(): void {
     generation++;
     loading = undefined;
+    switching = 0;
     bricks.set(undefined);
     listFailed.set(false);
     deleted.set([]);

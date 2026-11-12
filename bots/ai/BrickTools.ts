@@ -28,7 +28,10 @@ export interface MadeBrickNote {
     made: boolean;
 }
 
-/** A suggestion Orbit allowed: the game shows it as a card once the answer is done. */
+/**
+ * A suggestion the Brick made this turn. Orbit is asked whether it may be shown only once the answer is ready to go
+ * (DmReplyService), so a turn that fails or comes back empty never uses up the topic.
+ */
 export interface BrickOfferNote {
     kind: 'offer';
     topic: string;
@@ -121,11 +124,16 @@ export function brickToolsNote(offers: { after: number; topics: string[] } | nul
     return lines.join('\n');
 }
 
+/** Two topics are the same job when their words match, whatever the case or punctuation ("Recipes!" and "recipes"). */
+const sameTopic = (a: string, b: string): boolean => {
+    const words = (topic: string) => topic.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+    return words(a) === words(b);
+};
 const text = (value: unknown, max: number): string => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, max) : '');
 const longText = (value: unknown, max: number): string => (typeof value === 'string' ? value.trim().slice(0, max) : '');
 
 export interface BrickToolContext {
-    admin: Pick<AdminApiService, 'makeBrickFor' | 'claimBrickOffer'>;
+    admin: Pick<AdminApiService, 'makeBrickFor' | 'brickOffersFor'>;
     /** The Brick that asks, and the person it belongs to (their game uuid). */
     botId: string;
     userId: string;
@@ -201,15 +209,14 @@ export async function runBrickTool(name: string, args: Record<string, unknown>, 
         const ask = text(args.ask, ASK_MAX);
         if (!topic || !ask) return { shown: false, note: 'Nothing was suggested. Do not mention it.' };
         if (context.notes.some((note) => note.kind === 'offer')) return { shown: false, note: 'One suggestion in a reply is enough. Do not mention it.' };
-        try {
-            const claim = await context.admin.claimBrickOffer(context.botId, context.userId, topic);
-            if (!claim.show) return { shown: false, note: 'This was already suggested to them once. Never suggest it again, and do not mention it.' };
-            context.notes.push({ kind: 'offer', topic: claim.topic, ask, name: brickName, line, instructions });
-            return { shown: true, note: 'The card is under your answer. Do not mention it in your words.' };
-        } catch (error) {
-            console.warn('[BrickTools] Could not suggest a Brick:', error instanceof Error ? error.message : error);
-            return { shown: false, note: 'Nothing was suggested. Do not mention it.' };
+        // Only looked up here: Orbit is asked to allow the card right before it is sent, so a turn that fails or comes back
+        // empty never uses up the topic. A card turned down then is simply not shown; the words never mention it.
+        const offered = await context.admin.brickOffersFor(context.botId, context.userId).catch(() => null);
+        if (offered?.topics.some((one) => sameTopic(one, topic))) {
+            return { shown: false, note: 'This was already suggested to them once. Never suggest it again, and do not mention it.' };
         }
+        context.notes.push({ kind: 'offer', topic, ask, name: brickName, line, instructions });
+        return { shown: true, note: 'The card goes under your answer. Do not mention it in your words.' };
     }
     return { error: 'Unknown tool.' };
 }

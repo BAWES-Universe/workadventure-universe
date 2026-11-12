@@ -125,14 +125,14 @@ describe('What the bot server asks Orbit about Bricks', () => {
 });
 
 describe('The two Brick tools', () => {
-    const admin = { makeBrickFor: vi.fn(), claimBrickOffer: vi.fn() };
+    const admin = { makeBrickFor: vi.fn(), brickOffersFor: vi.fn() };
     const context = (notes: BrickNote[] = []) => ({ admin, botId: BRICK, userId: 'uuid-alice', notes });
 
     beforeEach(() => {
         vi.clearAllMocks();
         vi.spyOn(console, 'warn').mockImplementation(() => undefined);
         admin.makeBrickFor.mockResolvedValue({ made: true, brick: MADE });
-        admin.claimBrickOffer.mockResolvedValue({ show: true, topic: 'recipes' });
+        admin.brickOffersFor.mockResolvedValue({ after: 3, topics: [] });
     });
 
     it('are make_brick and suggest_brick, and nothing else answers to those names', () => {
@@ -205,7 +205,6 @@ describe('The two Brick tools', () => {
         expect(await runBrickTool(MAKE_BRICK_TOOL, { ...ASK, instructions: ' ' }, context(notes))).toHaveProperty('error');
         expect(await runBrickTool(SUGGEST_BRICK_TOOL, { topic: 'recipes', ask: 'Want one?', ...ASK, instructions: '' }, context(notes))).toHaveProperty('error');
         expect(admin.makeBrickFor).not.toHaveBeenCalled();
-        expect(admin.claimBrickOffer).not.toHaveBeenCalled();
         expect(notes).toEqual([]);
     });
 
@@ -217,31 +216,36 @@ describe('The two Brick tools', () => {
         expect(notes).toEqual([]);
     });
 
-    it('suggest only when Orbit says the card may be shown, and then leave it for after the answer', async () => {
+    it('suggest by leaving the card for after the answer, without asking Orbit yet', async () => {
         const notes: BrickNote[] = [];
         const result = await runBrickTool(SUGGEST_BRICK_TOOL, { topic: 'Recipes', ask: 'You cook a lot. Want a Brick just for recipes?', ...ASK }, context(notes));
 
-        expect(admin.claimBrickOffer).toHaveBeenCalledWith(BRICK, 'uuid-alice', 'Recipes');
         expect(result).toMatchObject({ shown: true });
-        expect(notes).toEqual([{ kind: 'offer', topic: 'recipes', ask: 'You cook a lot. Want a Brick just for recipes?', name: 'Recipe Brick', line: "Keeps your mum's recipes", instructions: 'You keep recipes.' }]);
+        expect(notes).toEqual([{ kind: 'offer', topic: 'Recipes', ask: 'You cook a lot. Want a Brick just for recipes?', name: 'Recipe Brick', line: "Keeps your mum's recipes", instructions: 'You keep recipes.' }]);
         expect(admin.makeBrickFor).not.toHaveBeenCalled();
     });
 
-    it('suggest nothing a second time: not a topic Orbit already has, not twice in one reply, and not when Orbit cannot be asked', async () => {
-        const offer = { topic: 'recipes', ask: 'Want a Brick for recipes?', ...ASK };
-        admin.claimBrickOffer.mockResolvedValueOnce({ show: false, topic: 'recipes' });
+    it('suggest nothing Orbit already has as offered, whatever its case, and still suggest when Orbit cannot be asked yet', async () => {
+        const offer = { topic: 'Recipes!', ask: 'Want a Brick for recipes?', ...ASK };
+        admin.brickOffersFor.mockResolvedValueOnce({ after: 3, topics: ['recipes'] });
         const notes: BrickNote[] = [];
         expect(await runBrickTool(SUGGEST_BRICK_TOOL, offer, context(notes))).toMatchObject({ shown: false });
         expect(notes).toEqual([]);
+        // Orbit decides again right before the card is sent, so a lookup that failed here is no reason to say nothing
+        admin.brickOffersFor.mockRejectedValueOnce(new Error('down'));
+        expect(await runBrickTool(SUGGEST_BRICK_TOOL, offer, context(notes))).toMatchObject({ shown: true });
+        expect(notes).toHaveLength(1);
+    });
 
+    it('suggest nothing twice in one reply, nor without a topic and a question', async () => {
+        const offer = { topic: 'recipes', ask: 'Want a Brick for recipes?', ...ASK };
+        const notes: BrickNote[] = [];
         await runBrickTool(SUGGEST_BRICK_TOOL, offer, context(notes));
         expect(await runBrickTool(SUGGEST_BRICK_TOOL, { ...offer, topic: 'workouts' }, context(notes))).toMatchObject({ shown: false });
         expect(notes).toHaveLength(1);
-        expect(admin.claimBrickOffer).toHaveBeenCalledTimes(2);
 
-        admin.claimBrickOffer.mockRejectedValueOnce(new Error('down'));
-        expect(await runBrickTool(SUGGEST_BRICK_TOOL, offer, context())).toMatchObject({ shown: false });
         expect(await runBrickTool(SUGGEST_BRICK_TOOL, { ...offer, ask: '' }, context())).toMatchObject({ shown: false });
+        expect(await runBrickTool(SUGGEST_BRICK_TOOL, { ...offer, topic: '' }, context())).toMatchObject({ shown: false });
     });
 
     it('tell the Brick how often counts, and which topics it must never bring up again', () => {
@@ -298,7 +302,11 @@ describe('A reply that made a Brick, or suggests one', () => {
             yield { content: '', done: true, metadata: {} };
         });
         const noteBrick = vi.fn();
-        const admin = { makeBrickFor: vi.fn(async () => ({ made: true, brick: MADE })), answerBrickOffer: vi.fn(async () => undefined) };
+        const admin = {
+            makeBrickFor: vi.fn(async () => ({ made: true, brick: MADE })),
+            answerBrickOffer: vi.fn(async () => undefined),
+            claimBrickOffer: vi.fn(async (_botId: string, _userId: string, topic: string) => ({ show: true, topic: topic.toLowerCase() })),
+        };
         Object.assign(service, {
             queues: new Map(),
             waiting: new Map(),
@@ -336,6 +344,48 @@ describe('A reply that made a Brick, or suggests one', () => {
         const plain = makeReplies(brickConfig);
         const first = await plain.service.reply(BRICK, person, 'hello', [], { roomId: ROOM });
         expect(first).not.toHaveProperty('bricks');
+    });
+
+    it('asks Orbit about a suggestion only when its card is about to go out, once, and says when to leave it out', async () => {
+        const offer: BrickNote = { kind: 'offer', topic: 'Recipes', ask: 'Want a Brick just for recipes?', name: 'Recipe Brick', line: 'Keeps recipes', instructions: 'You keep recipes.' };
+        const suggest = (memory: ConversationMemory, playerId: number) => void (memory.getMemory(BRICK, playerId)!.pendingBricks ??= []).push({ ...offer });
+        const { service, admin } = makeReplies(brickConfig, suggest);
+        const reply = (await service.reply(BRICK, person, 'pasta again?', [], { roomId: ROOM }))!;
+        expect(reply.bricks).toEqual([offer]);
+        // Nothing is asked until the card is about to be sent
+        expect(admin.claimBrickOffer).not.toHaveBeenCalled();
+        expect(await reply.claimOffer!()).toBe('recipes');
+        expect(await reply.claimOffer!()).toBe('recipes');
+        expect(admin.claimBrickOffer).toHaveBeenCalledTimes(1);
+        expect(admin.claimBrickOffer).toHaveBeenCalledWith(BRICK, 'uuid-alice', 'Recipes');
+
+        // Already shown once, or Orbit can't be asked: no card
+        admin.claimBrickOffer.mockResolvedValueOnce({ show: false, topic: 'recipes' });
+        expect(await (await service.reply(BRICK, person, 'pasta again?', [], { roomId: ROOM }))!.claimOffer!()).toBeNull();
+        admin.claimBrickOffer.mockRejectedValueOnce(new Error('down'));
+        expect(await (await service.reply(BRICK, person, 'pasta again?', [], { roomId: ROOM }))!.claimOffer!()).toBeNull();
+    });
+
+    it('never uses up a suggestion on a turn that failed or came back empty', async () => {
+        const offer: BrickNote = { kind: 'offer', topic: 'recipes', ask: 'Want a Brick just for recipes?', name: 'Recipe Brick', line: 'Keeps recipes', instructions: 'You keep recipes.' };
+        const { service, generate, admin } = makeReplies(brickConfig);
+        const memory = (service as any).conversationMemory as ConversationMemory;
+        const suggest = () => void (memory.getMemory(BRICK, service.playerIdFor(ALICE))!.pendingBricks ??= []).push({ ...offer });
+        generate.mockImplementationOnce(async function* () {
+            suggest();
+            yield { content: '', done: true, metadata: {} };
+        });
+        const empty = await service.reply(BRICK, person, 'pasta again?', [], { roomId: ROOM });
+        expect(empty).not.toHaveProperty('bricks');
+        expect(empty).not.toHaveProperty('claimOffer');
+        generate.mockImplementationOnce(async function* () {
+            suggest();
+            yield { content: 'Here is', done: false };
+            throw new Error('provider down');
+        });
+        const failed = await service.reply(BRICK, person, 'pasta again?', [], { roomId: ROOM }).catch(() => null);
+        expect(failed?.claimOffer).toBeUndefined();
+        expect(admin.claimBrickOffer).not.toHaveBeenCalled();
     });
 
     it('makes the suggested Brick at the tap of "Make it", with fixed words and no model, and keeps that it was made', async () => {
@@ -491,20 +541,52 @@ describe("More Bricks in a Brick's chat", () => {
         const order: string[] = [];
         client.sendText.mockImplementation(async () => void order.push('answer'));
         client.sendMessage.mockImplementation(async () => void order.push('card'));
-        deps.reply.mockResolvedValue({ text: 'Here is the pasta recipe.', media: [], bricks: [offer] });
+        const claimOffer = vi.fn(async () => 'recipes');
+        deps.reply.mockResolvedValue({ text: 'Here is the pasta recipe.', media: [], bricks: [offer], claimOffer });
         await bridge.onEvent(invite());
 
         await bridge.onEvent(message('how do I make pasta again?'));
 
         expect(order).toEqual(['answer', 'card']);
+        expect(claimOffer).toHaveBeenCalledTimes(1);
         const { kind: _kind, ...card } = offer;
         expect(client.sendMessage.mock.calls[0]).toEqual([BRICK_USER, ROOM, { msgtype: 'm.text', body: offer.ask, [BRICK_OFFER_KEY]: card }, expect.any(String)]);
 
         client.sendMessage.mockClear();
-        deps.reply.mockResolvedValue({ text: '', media: [], bricks: [offer] });
+        claimOffer.mockClear();
+        deps.reply.mockResolvedValue({ text: '', media: [], bricks: [offer], claimOffer });
         await bridge.onEvent(message('again'));
-        // An empty answer gets the chat's own "could not answer" note, and no card
+        // An empty answer gets the chat's own "could not answer" note, no card, and Orbit is not asked
         expect(client.sendMessage.mock.calls.some(([, , content]) => BRICK_OFFER_KEY in content)).toBe(false);
+        expect(claimOffer).not.toHaveBeenCalled();
+
+        // Orbit says it was already shown: the answer goes out alone
+        client.sendMessage.mockClear();
+        deps.reply.mockResolvedValue({ text: 'Here is the pasta recipe.', media: [], bricks: [offer], claimOffer: vi.fn(async () => null) });
+        await bridge.onEvent(message('pasta?'));
+        expect(client.sendMessage.mock.calls.some(([, , content]) => BRICK_OFFER_KEY in content)).toBe(false);
+    });
+
+    it('sends one suggestion card when two devices race it: Orbit allows the topic once', async () => {
+        const offer = { kind: 'offer', topic: 'recipes', ask: 'Want a Brick just for recipes?', name: 'Recipe Brick', line: 'Keeps recipes', instructions: 'You keep recipes.' };
+        const one = makeBridge();
+        const two = makeBridge();
+        await one.bridge.onEvent(invite());
+        await two.bridge.onEvent(invite());
+        let allowed = false;
+        const claimOffer = vi.fn(async () => {
+            if (allowed) return null;
+            allowed = true;
+            return 'recipes';
+        });
+        one.deps.reply.mockResolvedValue({ text: 'Here is the pasta recipe.', media: [], bricks: [offer], claimOffer });
+        two.deps.reply.mockResolvedValue({ text: 'Here it is again.', media: [], bricks: [offer], claimOffer });
+
+        await Promise.all([one.bridge.onEvent(message('pasta?')), two.bridge.onEvent(message('pasta?'))]);
+
+        const cards = [...one.client.sendMessage.mock.calls, ...two.client.sendMessage.mock.calls].filter(([, , content]: any[]) => BRICK_OFFER_KEY in content);
+        expect(cards).toHaveLength(1);
+        expect(claimOffer).toHaveBeenCalledTimes(2);
     });
 
     it('tries the suggestion card once more when sending it fails, since Orbit already counted it as shown', async () => {
@@ -512,8 +594,11 @@ describe("More Bricks in a Brick's chat", () => {
         const { bridge, client, deps } = makeBridge();
         await bridge.onEvent(invite());
         client.sendMessage.mockRejectedValueOnce(new Error('homeserver busy'));
-        deps.reply.mockResolvedValue({ text: 'Here is the pasta recipe.', media: [], bricks: [offer] });
+        const claimOffer = vi.fn(async () => 'recipes');
+        deps.reply.mockResolvedValue({ text: 'Here is the pasta recipe.', media: [], bricks: [offer], claimOffer });
         await bridge.onEvent(message('pasta again?'));
+        // Orbit is asked once: the second try sends, it does not claim again
+        expect(claimOffer).toHaveBeenCalledTimes(1);
         const cards = client.sendMessage.mock.calls.filter(([, , content]: any[]) => BRICK_OFFER_KEY in content);
         expect(cards).toHaveLength(2);
         // One message to Matrix: a first try that arrived but whose answer was lost is not posted twice

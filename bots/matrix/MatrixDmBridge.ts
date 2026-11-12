@@ -1157,10 +1157,12 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 await this.client.sendText(botUserId, event.room_id, reply.text);
             }
             reply.keep?.();
-            // The gentle offer, after the answer and never in the middle of it (#1996). Orbit already said it may be shown.
+            // The gentle offer, after the answer and never in the middle of it (#1996). Orbit is asked now, right before
+            // the card goes out: once per person and topic on every device, so a second device racing it sends none.
             const offer = reply.text ? reply.bricks?.find((note) => note.kind === 'offer') : undefined;
-            if (offer && offer.kind === 'offer') {
-                const { topic, ask, name, line, instructions } = offer;
+            const topic = offer && offer.kind === 'offer' && reply.claimOffer ? await reply.claimOffer() : null;
+            if (offer && offer.kind === 'offer' && topic) {
+                const { ask, name, line, instructions } = offer;
                 const content = { msgtype: 'm.text', body: ask, [BRICK_OFFER_KEY]: { topic, ask, name, line, instructions } };
                 // Orbit counted it as shown when it allowed it, so a send that fails once is tried again before it is lost.
                 // Both tries are one message to Matrix: a first try that arrived but whose answer was lost is not sent twice.

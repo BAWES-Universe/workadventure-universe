@@ -417,6 +417,26 @@ describe("turning a Brick on or off", () => {
         warn.mockRestore();
     });
 
+    it("never flips the switch back with a list read while Orbit has not answered the switch yet", async () => {
+        await loadMyBricks();
+        let answer: (value: unknown) => void = () => undefined;
+        api.setBrickEnabled.mockReturnValue(
+            new Promise((resolve) => {
+                answer = resolve;
+            })
+        );
+        const saving = setMyBrickEnabled(BRICK, false);
+        // A read starts after the switch moved, and Orbit's list still has it on
+        const reading = loadMyBricks();
+        await reading;
+        expect(enabled(BRICK)).toBe(false);
+        // Orbit's answer carries no card: the switch stays where it was put
+        api.listMyBricks.mockResolvedValue({ bricks: [card({ enabled: false }), made] });
+        answer({ ok: true });
+        await expect(saving).resolves.toBe(true);
+        expect(enabled(BRICK)).toBe(false);
+    });
+
     it("keeps the switch where the person put it when Orbit's answer cannot be read", async () => {
         api.setBrickEnabled.mockResolvedValue({ ok: true });
         await expect(setMyBrickEnabled(BRICK, false)).resolves.toBe(true);
