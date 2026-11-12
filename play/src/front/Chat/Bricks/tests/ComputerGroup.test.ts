@@ -207,6 +207,28 @@ describe("a Brick's computer on screen (#2000)", () => {
         expect(byId("brickScreenFrame")?.getAttribute("src")).toBe("https://screen.test/new");
     });
 
+    it("drops a screen link that arrives after the job ended, and asks again when the next job works", async () => {
+        let late: (answer: unknown) => void = () => undefined;
+        game.watchBrickComputer.mockReturnValueOnce(new Promise((resolve) => (late = resolve)));
+        game.getBrickComputer.mockResolvedValue(computer({ machine: "working", job: job() }));
+        await loadBrickComputer(BRICK);
+        piece = new BrickScreen({ target, props: { brick, onClose: () => undefined } });
+        await settle();
+        // The job ends while the link is still on its way
+        game.getBrickComputer.mockResolvedValue(computer());
+        await loadBrickComputer(BRICK);
+        await settle();
+        late({ url: "https://screen.test/late" });
+        await settle();
+        expect(byId("brickScreenFrame")).toBeNull();
+        // The next job gets its own link, never the late one
+        game.watchBrickComputer.mockResolvedValueOnce({ url: "https://screen.test/next" });
+        game.getBrickComputer.mockResolvedValue(computer({ machine: "working", job: job({ id: "j2" }) }));
+        await loadBrickComputer(BRICK);
+        await settle();
+        expect(byId("brickScreenFrame")?.getAttribute("src")).toBe("https://screen.test/next");
+    });
+
     it("shows no screen for a computer that is resting, and does not ask for one to be woken", async () => {
         game.watchBrickComputer.mockResolvedValue(undefined);
         game.getBrickComputer.mockResolvedValue(computer());

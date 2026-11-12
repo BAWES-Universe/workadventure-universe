@@ -32,14 +32,24 @@
     // The person tapped "Fill in my details" for what Brick named: once Brick has put it in, the tray says so
     let tapped = false;
 
+    // Counts the times the screen was let go. A link that was asked for before that, and arrives after, belongs to a job that
+    // is over: it is dropped, so the next job never shows it.
+    let letGo = 0;
+
     function look() {
+        const asked = letGo;
         botApiService
             .watchBrickComputer(brick.id)
             .then((answer) => {
-                url = answer?.url;
                 looked = true;
+                if (asked === letGo) url = answer?.url;
             })
             .catch((error) => console.error(error));
+    }
+
+    function forget() {
+        url = undefined;
+        letGo += 1;
     }
 
     onMount(() => {
@@ -59,7 +69,7 @@
 
     // The job ended or the computer rested while the screen was open: there is nothing to watch, and nothing is woken.
     // The link is let go too, so a job that starts later asks for a fresh one instead of showing one that may have run out.
-    $: if (!watching) url = undefined;
+    $: if (!watching) forget();
     $: shownUrl = watching ? url : undefined;
 
     function act(action: "stop" | "take-over" | "hand-back" | "fill-details") {
