@@ -334,18 +334,24 @@
     function flushBrickFields() {
         if (!currentBot || !brick) return;
         const botId = currentBot.id;
-        const now = brickSavedOf(currentBot);
-        const change = brickChangeBetween(brickSaved, now);
-        if (Object.keys(change).length === 0) return;
-        void saveBrick(change).then((saved) => {
+        // One save at a time: each one works out what changed when its turn comes, after the one before it has landed, so
+        // a late answer never undoes what the person did while it was on its way
+        brickQueue = brickQueue.then(async () => {
+            if (!currentBot || currentBot.id !== botId) return;
+            const now = brickSavedOf(currentBot);
+            const change = brickChangeBetween(brickSaved, now);
+            if (Object.keys(change).length === 0) return;
+            const saved = await saveBrick(change);
             if (currentBot?.id !== botId) return;
             if (saved) {
                 brickSaved = brickSavedAfter(brickSaved, now, change);
             } else {
-                currentBot = brickPutBack(currentBot, brickSaved, change);
+                currentBot = brickPutBack(currentBot, brickSaved, change, now);
             }
         });
     }
+    /** The Brick's field saves, in the order they were asked for */
+    let brickQueue: Promise<void> = Promise.resolve();
 
     // Auto-save when currentBot changes (debounced) - for AI config and behavior config only
     function autoSave() {

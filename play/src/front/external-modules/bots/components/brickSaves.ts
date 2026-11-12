@@ -24,6 +24,8 @@ export const BRICK_BEHAVIOR_KEYS = [
     "minTimeBetweenConversations",
     "facing",
     "assignedSpace",
+    "loop",
+    "pauseAtWaypoints",
     "vision",
 ] as const;
 
@@ -92,18 +94,34 @@ export function brickSavedAfter(saved: BrickSaved, now: BrickSaved, change: Bric
     return after;
 }
 
-/** The page after Orbit refused `change`: those parts go back to what was saved, and the rest stays as it is. */
-export function brickPutBack(bot: BotData, saved: BrickSaved, change: BrickChange): BotData {
+/**
+ * The page after Orbit refused `change`: those parts go back to what was saved, and the rest stays as it is. `sent` is what
+ * the page showed when the change was sent: a part the person has edited since (it no longer equals what was sent) is
+ * theirs to keep, so a late refusal never wipes what they typed or picked meanwhile.
+ */
+export function brickPutBack(
+    bot: BotData,
+    saved: BrickSaved,
+    change: BrickChange,
+    sent: BrickSaved = brickSavedOf(bot)
+): BotData {
+    const now = brickSavedOf(bot);
     const back: BotData = { ...bot };
-    if (change.description !== undefined) back.description = saved.description ?? "";
-    if (change.chatInstructions !== undefined) back.chatInstructions = saved.chatInstructions ?? "";
-    if (change.aiProviderRef !== undefined) back.aiProviderRef = saved.aiProviderRef ?? undefined;
-    if (change.aiModel !== undefined) back.aiModel = saved.aiModel;
-    if (change.behaviorType !== undefined) back.behaviorType = saved.behaviorType;
-    if (change.companionTextureId !== undefined) back.companionTextureId = saved.companionTextureId;
+    if (change.description !== undefined && same(now.description, sent.description))
+        back.description = saved.description ?? "";
+    if (change.chatInstructions !== undefined && same(now.chatInstructions, sent.chatInstructions))
+        back.chatInstructions = saved.chatInstructions ?? "";
+    if (change.aiProviderRef !== undefined && same(now.aiProviderRef, sent.aiProviderRef))
+        back.aiProviderRef = saved.aiProviderRef ?? undefined;
+    if (change.aiModel !== undefined && same(now.aiModel, sent.aiModel)) back.aiModel = saved.aiModel;
+    if (change.behaviorType !== undefined && now.behaviorType === sent.behaviorType)
+        back.behaviorType = saved.behaviorType;
+    if (change.companionTextureId !== undefined && same(now.companionTextureId, sent.companionTextureId))
+        back.companionTextureId = saved.companionTextureId;
     if (change.behaviorConfig) {
         const config: BotData["behaviorConfig"] = { ...bot.behaviorConfig };
         for (const key of Object.keys(change.behaviorConfig)) {
+            if (!same(now.behavior[key], sent.behavior[key])) continue;
             if (saved.behavior[key] === undefined) delete config[key];
             else config[key] = saved.behavior[key];
         }

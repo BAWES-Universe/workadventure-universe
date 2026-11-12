@@ -88,4 +88,21 @@ describe("what a Brick's page saves (Slice 13)", () => {
         expect(back.behaviorConfig.showToolCalls).toBe(true);
         expect(back.description).toBe("Typed after");
     });
+    it("keeps a part the person edited while the refused change was on its way", () => {
+        const saved = brickSavedOf(bot());
+        const sent = brickSavedOf(bot({ aiProviderRef: "key-1", description: "First" }));
+        // Meanwhile the person picked another key and typed more: only the description still matches what was sent
+        const shown = bot({ aiProviderRef: "key-2", description: "First" });
+        const back = brickPutBack(shown, saved, { aiProviderRef: "key-1", description: "First" }, sent);
+        expect(back.aiProviderRef).toBe("key-2");
+        expect(back.description).toBe(saved.description ?? "");
+    });
+
+    it("sends a route's direction and pause, which the Behavior group changes for a Brick saved with a route", () => {
+        const saved = brickSavedOf(bot());
+        const now = brickSavedOf(
+            bot({ behaviorConfig: { ...bot().behaviorConfig, loop: false, pauseAtWaypoints: 5 } })
+        );
+        expect(brickChangeBetween(saved, now)).toEqual({ behaviorConfig: { loop: false, pauseAtWaypoints: 5 } });
+    });
 });
