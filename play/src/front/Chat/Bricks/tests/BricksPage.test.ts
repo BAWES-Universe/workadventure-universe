@@ -657,8 +657,11 @@ describe("the Bricks page (#1995)", () => {
                 await open();
                 await openPage();
                 await click("brick-look");
+                expect(byId("brickLookError")).toBeNull();
                 await click("brickLookTile", 1);
                 expect(byId("brickLookPicker")).not.toBeNull();
+                // It says so, instead of staying quiet
+                expect(byId("brickLookError")?.textContent).toContain("Could not save this");
                 // The one it wears: nothing to save, back to the page
                 await click("brickLookTile", 0);
                 expect(game.changeMyBrick).toHaveBeenCalledTimes(1);
@@ -704,6 +707,7 @@ describe("the Bricks page (#1995)", () => {
                 expect(byId("bot-moves-route")).toBeNull();
                 // A Brick stands on no map, so nothing tells it to drag the bot on the map.
                 expect(byId("bot-page-group-behavior")?.textContent).not.toContain("on the map");
+                expect(byId("bot-page-group-behavior")?.textContent).not.toContain("facing direction");
                 await click("bot-moves-wander");
                 expect(byId("bot-page-group-behavior")?.textContent).not.toContain("circle");
                 expect(game.changeMyBrick).toHaveBeenCalledTimes(1);
@@ -766,6 +770,8 @@ describe("the Bricks page (#1995)", () => {
                 await openGroup("access");
                 expect(byId("brick-access")?.textContent).toContain("Only you for now");
                 expect(byId("brick-access")?.textContent).toContain("talks with you and nobody else");
+                // A visiting Brick has no rules of its own (Orbit #927): nothing promises roles or rules here
+                expect(byId("brick-access")?.textContent).not.toContain("rules");
                 // No Private switch, no rows to add, no refused line: those are for people it can reach
                 expect(byId("bot-visibility")).toBeNull();
                 expect(byId("bot-access-add")).toBeNull();

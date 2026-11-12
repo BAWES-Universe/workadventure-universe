@@ -24,6 +24,8 @@
     const looks: readonly BrickLook[] = BRICK_LOOKS;
     let tab: Tab = isBrickLook(look) ? "bricks" : "wokas";
     let busy = false;
+    /** The last tap was not saved: say so, the picker stays open so a tap can be tried again */
+    let failed = false;
     $: wokas = ($botWokaCatalogStore?.woka?.collections ?? []).flatMap((collection) => collection.textures);
 
     function pick(next: string) {
@@ -33,10 +35,12 @@
             return;
         }
         busy = true;
+        failed = false;
         onPick(next)
             .catch(() => false)
             .then((saved) => {
                 busy = false;
+                failed = !saved;
                 if (saved) onBack();
             })
             .catch((error) => console.error(error));
@@ -72,6 +76,11 @@
                 on:click={() => (tab = "wokas")}>{$LL.chat.brick.wokas()} <b>{wokas.length}</b></button
             >
         </div>
+    {/if}
+    {#if failed}
+        <p class="blp-error" role="alert" data-testid="brickLookError">
+            {$LL.mapEditor.edit.bots.page.telemetry.saveFailed()}
+        </p>
     {/if}
     <div class="blp-grid" data-testid="brickLookTiles">
         {#if tab === "bricks" || wokas.length === 0}
@@ -121,6 +130,11 @@
 </div>
 
 <style>
+    .blp-error {
+        margin: 0;
+        font-size: 12.5px;
+        color: #ff8a7a;
+    }
     .blp {
         display: flex;
         flex-direction: column;

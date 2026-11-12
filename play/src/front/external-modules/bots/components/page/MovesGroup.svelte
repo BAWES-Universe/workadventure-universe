@@ -107,10 +107,8 @@
             <PageRow icon={IconCircleDashed} on title={page.moves.area()} hint={page.moves.areaHint()} />
             <PageNote>{page.moves.areaNote()}</PageNote>
         {/if}
-    {:else}
-        {#if !brick}
-            <PageRow icon={IconMapPin} on title={page.moves.spot()} hint={page.moves.spotHint()} />
-        {/if}
+    {:else if !brick}
+        <PageRow icon={IconMapPin} on title={page.moves.spot()} hint={page.moves.spotHint()} />
         <PageField title={page.moves.facing()} hint={page.moves.facingHint()}>
             <PageChips
                 label={page.moves.facing()}
@@ -124,7 +122,7 @@
                 onPick={(picked) => setConfig({ facing: picked })}
             />
         </PageField>
-        {#if model.goesToPeople && !brick}
+        {#if model.goesToPeople}
             <PageNote>{page.moves.spotNote()}</PageNote>
         {/if}
     {/if}

@@ -1377,11 +1377,11 @@ const mapEditor: BaseTranslation = {
                     briefOpenRules: "Public · own rules for {names:string}",
                     briefPrivateRules: "Private · own rules for {names:string}",
                     briefOpen: "Public",
-                    // A Brick not on a map: nobody but its owner can reach it (roles and rules come once it is brought along)
+                    // A Brick not on a map: nobody but its owner can reach it (a visiting Brick has no rules of its own, Orbit #927)
                     brickBrief: "Only you",
                     brickTitle: "Only you for now",
                     brickLine:
-                        "{name:string} talks with you and nobody else. When you bring it along on a map, people there can talk to it too, and the roles and rules for them show here.",
+                        "{name:string} talks with you and nobody else. When you bring it along on a map, people there can talk to it too.",
                     briefPrivate: "Private",
                     briefMore: "{first:string}, {second:string} and {count:number} more",
                     briefLoading: "…",
