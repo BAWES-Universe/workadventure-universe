@@ -163,6 +163,18 @@ export class BotRegistry {
         return (await this.redis.set(`bots:matrix:dm-claim:${botId}|${matrixUserId}`, this.serverId, { NX: true, PX: forMs })) === 'OK';
     }
 
+    /** Holds that claim for a while longer, whoever has it: the bot is still taking a chat this person just made. */
+    async holdDirectChat(botId: string, matrixUserId: string, forMs: number): Promise<void> {
+        if (!this.redis?.isOpen) return;
+        await this.redis.set(`bots:matrix:dm-claim:${botId}|${matrixUserId}`, this.serverId, { PX: forMs });
+    }
+
+    /** Lets the next device make the chat again: the bot has taken (or turned down) the one just made. */
+    async releaseDirectChat(botId: string, matrixUserId: string): Promise<void> {
+        if (!this.redis?.isOpen) return;
+        await this.redis.del(`bots:matrix:dm-claim:${botId}|${matrixUserId}`);
+    }
+
     /** Whether Redis is up, so messages waiting for a resting bot survive a restart and reach every bot server. */
     hasSharedStore(): boolean {
         return !!this.redis?.isOpen;

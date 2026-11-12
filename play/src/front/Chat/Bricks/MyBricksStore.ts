@@ -38,21 +38,36 @@ export const myDeletedBricksStore: Readable<DeletedBrickCard[]> = { subscribe: d
 const undoDays = writable<number | undefined>(undefined);
 export const brickUndoDays: Readable<number | undefined> = { subscribe: undoDays.subscribe };
 
-let loading: Promise<void> | undefined;
+/** True when the last read could not list the Bricks they made: the page says so, with Try again, instead of "none". */
+const listFailed = writable(false);
+export const myBricksListFailed: Readable<boolean> = { subscribe: listFailed.subscribe };
 
-async function load(): Promise<void> {
+let loading: Promise<void> | undefined;
+// Counts sign-outs: a read that was asked for before the person signed out changes nothing when it ends.
+let generation = 0;
+
+async function load(asked: number): Promise<void> {
     // Orbit makes the Brick everyone gets the first time this account asks, and never again: asking is safe from every
     // device, as often as the chat opens. An account whose owner deleted it gets none.
     const own = (await botApiService.ensureMyBrick()) as { brick?: unknown } | null;
     const first = parseBrickCard(own?.brick);
     // The Bricks they made come with the list; when it can't be read, the one everyone gets still shows.
     const list = await botApiService.listMyBricks().catch(() => undefined);
+    if (asked !== generation) return;
     refreshMyChatId();
-    bricks.set(list === undefined ? (first ? [first] : []) : parseBrickCards(list));
     if (list !== undefined) {
+        bricks.set(parseBrickCards(list));
         deleted.set(parseDeletedBricks(list));
         undoDays.set(parseUndoDays(list));
+        listFailed.set(false);
+        return;
     }
+    // What was already known stays: a list that could not be read again does not take Bricks out of Chats
+    const known = get(bricks);
+    if (known === undefined && !first) throw new Error("Could not list the Bricks");
+    if (known === undefined) bricks.set(first ? [first] : []);
+    else if (first && !known.some((brick) => brick.id === first.id)) bricks.set([first, ...known]);
+    listFailed.set(true);
 }
 
 /**
@@ -62,12 +77,16 @@ async function load(): Promise<void> {
 export function loadMyBricks(): Promise<void> {
     if (!get(userIsConnected)) return Promise.resolve();
     if (!loading) {
-        loading = load()
-            .catch((error: unknown) => console.warn("Could not read your Bricks", error))
+        const asked = generation;
+        const run: Promise<void> = load(asked)
+            .catch((error: unknown) => {
+                if (asked === generation) console.warn("Could not read your Bricks", error);
+            })
             .finally(() => {
-                loading = undefined;
-                settled.set(true);
+                if (loading === run) loading = undefined;
+                if (asked === generation) settled.set(true);
             });
+        loading = run;
     }
     return loading;
 }
@@ -105,7 +124,7 @@ export async function changeMyBrick(brickId: string, change: BrickChange): Promi
             ((await botApiService.changeMyBrick(brickId, change)) as { brick?: unknown })?.brick
         );
         if (saved) bricks.update((list) => list?.map((brick) => (brick.id === brickId ? saved : brick)));
-        await botApiService.tellBrickChanged(brickId);
+        tellBrickChanged(brickId);
         return true;
     } catch (error) {
         console.warn("Could not save a change to a Brick", error);
@@ -142,7 +161,7 @@ export async function deleteMyBrick(brickId: string): Promise<boolean> {
         bricks.update((list) => list?.filter((brick) => brick.id !== brickId));
         if (gone) deleted.update((list) => [...list.filter((brick) => brick.id !== brickId), gone]);
         // The bot server stops the Brick now, not within the minute
-        await botApiService.tellBrickChanged(brickId);
+        tellBrickChanged(brickId);
         // The answer says the Brick but not always the day: the list does
         if (!gone) loadMyBricks().catch((error: unknown) => console.warn(error));
         return true;
@@ -154,22 +173,38 @@ export async function deleteMyBrick(brickId: string): Promise<boolean> {
 
 /** Brings a deleted Brick back (#1996), with its chat and what it remembers. False when it could not be. */
 export async function undoMyBrick(brickId: string): Promise<boolean> {
+    let back: BrickCard | undefined;
     try {
-        const back = parseBrickCard(((await botApiService.undoMyBrick(brickId)) as { brick?: unknown })?.brick);
-        deleted.update((list) => list.filter((brick) => brick.id !== brickId));
-        if (back) bricks.update((list) => [...(list ?? []).filter((brick) => brick.id !== back.id), back]);
-        await botApiService.tellBrickChanged(brickId);
-        if (!back) loadMyBricks().catch((error: unknown) => console.warn(error));
-        return true;
+        back = parseBrickCard(((await botApiService.undoMyBrick(brickId)) as { brick?: unknown })?.brick);
     } catch (error) {
         console.warn("Could not bring a Brick back", error);
         return false;
     }
+    tellBrickChanged(brickId);
+    if (back) {
+        const card = back;
+        deleted.update((list) => list.filter((brick) => brick.id !== brickId));
+        bricks.update((list) => [...(list ?? []).filter((brick) => brick.id !== card.id), card]);
+        return true;
+    }
+    // The answer did not say the Brick: the list says whether it is back, and Undo stays until it does
+    await loadMyBricks();
+    return (get(bricks) ?? []).some((brick) => brick.id === brickId);
+}
+
+/** Tells the bot server a Brick changed so it reads it again now. Best effort: the operation is done either way. */
+function tellBrickChanged(brickId: string): void {
+    Promise.resolve(botApiService.tellBrickChanged(brickId)).catch((error: unknown) =>
+        console.warn("Could not tell the bot server a Brick changed", error)
+    );
 }
 
 /** For tests and for a person who signs out without a reload. */
 export function forgetMyBricks(): void {
+    generation++;
+    loading = undefined;
     bricks.set(undefined);
+    listFailed.set(false);
     deleted.set([]);
     undoDays.set(undefined);
     settled.set(false);

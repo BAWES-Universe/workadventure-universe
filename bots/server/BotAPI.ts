@@ -972,8 +972,8 @@ export class BotAPI {
                 return;
             }
             try {
-                await this.adminApiService.answerBrickOffer(botId, req.sessionUuid, topic, 'not_now');
-                res.status(204).end();
+                if (await this.adminApiService.answerBrickOffer(botId, req.sessionUuid, topic, 'not_now')) res.status(204).end();
+                else res.status(502).json({ error: 'Could not keep that' });
             } catch (error) {
                 console.error(`[BotAPI] Error keeping "Not now" for bot ${botId}:`, error);
                 res.status(502).json({ error: 'Could not keep that' });

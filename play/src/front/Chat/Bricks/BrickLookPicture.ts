@@ -39,7 +39,17 @@ function wokaPicture(look: string): PictureStore {
         );
         const stopCatalog = botWokaCatalogStore.subscribe((catalog) => {
             const texture = findWokaTexture(catalog, look);
-            if (!texture || texture.url === drawnUrl) return;
+            if (!texture) {
+                // The WOKAs were read and this one is no longer offered: no picture rather than the last one drawn
+                if (catalog && drawnUrl !== undefined) {
+                    stopPicture?.();
+                    stopPicture = undefined;
+                    drawnUrl = undefined;
+                    set(undefined);
+                }
+                return;
+            }
+            if (texture.url === drawnUrl) return;
             drawnUrl = texture.url;
             stopPicture?.();
             stopPicture = storedWokaStore([texture])?.subscribe((picture) => {

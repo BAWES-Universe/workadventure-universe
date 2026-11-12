@@ -316,6 +316,18 @@ describe("the Bricks page (#1995)", () => {
         warn.mockRestore();
     });
 
+    it("says the list failed, never that they have none, when only the Brick everyone gets could be read", async () => {
+        game.listMyBricks.mockRejectedValueOnce(new Error("offline"));
+        await open();
+        expect(rows()).toHaveLength(1);
+        expect(byId("bricksNone")).toBeNull();
+        expect(byId("bricksLoadFailed")?.textContent).toBe("Couldn't load your Bricks.");
+        byId("bricksTryAgain")?.click();
+        await settle();
+        expect(byId("bricksLoadFailed")).toBeNull();
+        expect(rows()).toHaveLength(2);
+    });
+
     it("says so to someone who has no Brick", async () => {
         game.ensureMyBrick.mockResolvedValue({ brick: null, made: false, deleted: true });
         game.listMyBricks.mockResolvedValue({ bricks: [] });
@@ -463,7 +475,12 @@ describe("the Bricks page (#1995)", () => {
         });
 
         it("saves its name, line and Personality through the Brick's own route once typing stops, only what changed", async () => {
-            game.changeMyBrick.mockImplementation((_id, change) => Promise.resolve({ brick: made(change) }));
+            // Orbit keeps every change: each answer is the Brick with all of them so far
+            let kept: Record<string, unknown> = {};
+            game.changeMyBrick.mockImplementation((_id, change) => {
+                kept = { ...kept, ...change };
+                return Promise.resolve({ brick: made(kept) });
+            });
             await open();
             await openPage();
             const type = (selector: string, value: string) => {
@@ -483,6 +500,12 @@ describe("the Bricks page (#1995)", () => {
             });
             expect(game.changeMyBrick).toHaveBeenCalledWith(MADE, { name: "Mum's Recipes" });
             expect(game.changeMyBrick).toHaveBeenCalledTimes(2);
+            // Back on the list, its row shows both: neither answer took back the other change
+            await click("edit-panel-back");
+            const row = target.querySelectorAll<HTMLElement>('[data-testid="bricksRow"]');
+            const text = [...row].map((one) => one.textContent ?? "").join(" | ");
+            expect(text).toContain("Mum's Recipes");
+            expect(text).toContain("Keeps the family recipes, and Mum's.");
         });
 
         it("says so when the Brick could not be read, and reads it again on a tap", async () => {
@@ -494,6 +517,17 @@ describe("the Bricks page (#1995)", () => {
             await click("brickPageTryAgain");
             expect(byId("brickPageFailed")).toBeNull();
             expect(target.querySelector<HTMLInputElement>('[data-testid="bot-name"]')?.value).toBe("Recipe Brick");
+            warn.mockRestore();
+        });
+
+        it("can still delete a Brick that could not be read, from what its row knows", async () => {
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            game.getBot.mockRejectedValueOnce(new Error("offline"));
+            await open();
+            await openPage();
+            expect(byId("brickPageFailed")).not.toBeNull();
+            await click("brickDelete");
+            expect(byId("brickDeleteAsk")?.textContent).toContain("Recipe Brick");
             warn.mockRestore();
         });
 
