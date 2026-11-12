@@ -6,6 +6,7 @@ import {
     ROOM_WAIT_MS,
     brickChatId,
     brickMadeAt,
+    brickPageBot,
     brickPictureUrl,
     openBrickChatWith,
     parseBrickCard,
@@ -270,5 +271,54 @@ describe("opening the one chat of a person and their Brick", () => {
         await expect(openBrickChatWith(BRICK, steps)).resolves.toBeUndefined();
         expect(steps.ask).not.toHaveBeenCalled();
         expect(steps.openChatWith).not.toHaveBeenCalled();
+    });
+});
+
+describe("a Brick on its page (#1996)", () => {
+    const brickCard = parseBrickCard(card({ description: "Your everyday helper" }))!;
+
+    it("is the bot page's own data, from Orbit's read of the bot", () => {
+        const bot = brickPageBot(
+            {
+                ...card(),
+                name: "  Brick  ",
+                description: "Plans and reminds",
+                chatInstructions: "Short answers.",
+                aiProviderRef: "universe-ai",
+                enabled: false,
+                updatedAt: "2026-11-11T12:00:00.000Z",
+                createdBy: { id: "u-omar", name: "Omar", email: "omar@example.com" },
+                updatedBy: { id: "u-omar", name: null },
+                roomId: null,
+            },
+            brickCard
+        );
+        expect(bot).toMatchObject({
+            id: BRICK,
+            name: "Brick",
+            description: "Plans and reminds",
+            characterTexture: "brick-orange",
+            characterTextureIds: ["brick-orange"],
+            chatInstructions: "Short answers.",
+            aiProviderRef: "universe-ai",
+            enabled: false,
+            updatedAt: "2026-11-11T12:00:00.000Z",
+            createdBy: { id: "u-omar", name: "Omar", email: "omar@example.com" },
+            updatedBy: { id: "u-omar", name: null, email: null },
+            behaviorType: "idle",
+        });
+    });
+
+    it("takes from its card what the read does not say, so it always has a name", () => {
+        const bot = brickPageBot({ name: "", createdBy: "someone" }, brickCard);
+        expect(bot).toMatchObject({
+            name: "Brick",
+            description: "Your everyday helper",
+            characterTexture: "brick-orange",
+            enabled: true,
+            createdBy: null,
+            chatInstructions: "",
+        });
+        expect(brickPageBot(null, brickCard).name).toBe("Brick");
     });
 });

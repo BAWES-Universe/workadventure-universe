@@ -3,6 +3,7 @@ import type { Readable } from "svelte/store";
 import { localUserStore } from "../../Connection/LocalUserStore";
 import { botApiService } from "../../external-modules/bots/services/BotApiService";
 import { userIsConnected } from "../../Stores/MenuStore";
+import type { BrickChange } from "../../external-modules/bots/types";
 import type { ChatPerson } from "../Stores/ChatPeopleStore";
 import {
     brickChatId,
@@ -89,6 +90,22 @@ export async function setMyBrickEnabled(brickId: string, enabled: boolean): Prom
         console.warn("Could not turn a Brick on or off", error);
         const was = before?.find((brick) => brick.id === brickId);
         if (was) put((brick) => ({ ...brick, enabled: was.enabled }));
+        return false;
+    }
+}
+
+/**
+ * Saves a change from a Brick's own page (#1996): its name, line, Personality or switch. Its card in the list and in
+ * Chats follows at once when Orbit saved it, and the bot server reads the Brick again now. False when it was not saved.
+ */
+export async function changeMyBrick(brickId: string, change: BrickChange): Promise<boolean> {
+    try {
+        const saved = parseBrickCard(((await botApiService.changeMyBrick(brickId, change)) as { brick?: unknown })?.brick);
+        if (saved) bricks.update((list) => list?.map((brick) => (brick.id === brickId ? saved : brick)));
+        await botApiService.tellBrickChanged(brickId);
+        return true;
+    } catch (error) {
+        console.warn("Could not save a change to a Brick", error);
         return false;
     }
 }

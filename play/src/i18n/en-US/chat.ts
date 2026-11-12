@@ -1007,7 +1007,7 @@ const chat: BaseTranslation = {
         tryAgain: "Try again",
         none: "You have no Brick.",
         switchFailed: "Couldn't change that. Try again.",
-        openChat: "Open the chat with {name}",
+        openPage: "Open {name}'s page",
         // More Bricks (#1996): New Brick on the Bricks page, in the game's own dialog
         newBrick: "New Brick",
         pickLook: "Pick its look",
@@ -1031,13 +1031,19 @@ const chat: BaseTranslation = {
             charcoal: "Charcoal",
         },
         // A Brick's own page, and deleting it with Undo
-        more: "More about {name}",
         backToBricks: "Back to Bricks",
         openItsChat: "Open its chat",
         openChatOf: "Open {name}",
         deleteBrick: "Delete Brick",
         deleteAsk: "Delete {name}?",
-        deleteWhat: "Its chat and what it remembers go. Everything it made stays in Your artifacts.",
+        deleteWhat:
+            "Its chat, what it remembers, its goals and tasks and its computer's files go. Everything it made stays in Your artifacts.",
+        // Its computer's files, offered before they go
+        itsFiles: "Its files",
+        itsFilesSize: "{size} on its computer",
+        download: "Download",
+        // A Brick's Advanced settings: its chats are its owner's, so they never go to analytics or the admin pages
+        telemetryOff: "A Brick's chats are yours, so they stay out of analytics, error reports and the admin pages.",
         undoUntil: "You can undo this until {day}, on the Bricks page.",
         undoLater: "You can undo this on the Bricks page.",
         deleteFailed: "Couldn't delete the Brick. Try again.",

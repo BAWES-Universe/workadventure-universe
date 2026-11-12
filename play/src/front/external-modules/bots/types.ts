@@ -6,6 +6,31 @@ export interface BotUser {
     email: string | null;
 }
 
+/** What a Brick's owner may change on its page (game #1996), through the Brick's own route: a Brick has no room. */
+export interface BrickChange {
+    name?: string;
+    description?: string | null;
+    chatInstructions?: string | null;
+    enabled?: boolean;
+}
+
+/** What Delete asks on a Brick's page (game #1996), beside the words every Brick's question has. */
+export interface BrickDeleteAsk {
+    /** Until when Undo on the Bricks page gives it back, as a line. */
+    undoLine: string;
+    /** Its computer's files, offered for download before they go. None while it has none. */
+    files?: { size: string; download: () => void };
+}
+
+/**
+ * The bot page opened for a Brick (game #1996). Its changes are saved through the Brick's own route, and only the
+ * parts a Brick has so far are shown; the others come with their own issues.
+ */
+export interface BrickPageWay extends BrickDeleteAsk {
+    /** Saves one change. False when Orbit refused it or could not be reached: the page goes back to what was saved. */
+    save: (change: BrickChange) => Promise<boolean>;
+}
+
 export interface BotData {
     id: string; // Unique identifier (required for stores/phaser)
     botId?: string; // Legacy/API identifier
