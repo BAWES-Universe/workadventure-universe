@@ -108,6 +108,11 @@ function isAboutThem(asked: string, words: readonly string[]): boolean {
         // "my birthday cake" and "a name tag" are about the next word, not about the person's birthday or name
         // (time and polite words may follow: "my name now", "my birthday please")
         const after = tokens[index + 1];
+        // "the name of my dog" and "the birthday for Sam" name someone else after the word; only "of me" or "of mine" is theirs
+        if (after === 'of' || after === 'for') {
+            const rest = tokens.slice(index + 2);
+            return rest.length === 0 || (rest.length === 1 && ['me', 'mine', 'myself', 'i'].includes(rest[0]));
+        }
         return !(after !== undefined && CONTENT_WORDS_OF(after).length > 0 && !MAY_FOLLOW.has(after));
     });
 }

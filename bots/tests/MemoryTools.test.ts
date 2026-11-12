@@ -99,6 +99,12 @@ describe('the memory tools', () => {
         expect(kinds(mark, 'the party on 12 June')).not.toContain('birthday');
         expect(kinds(mark, 'my birthday')).toEqual(['birthday']);
         expect(kinds(mark, 'forget June')).not.toContain('birthday');
+        // Someone else's named after the word, not before it
+        for (const other of ['the name of my dog', 'the birthday of my friend', 'the name for my cat', "the birthday of Sam"]) {
+            expect(kinds(mark, other), other).toEqual([]);
+        }
+        expect(kinds(mark, 'the name of me')).toEqual(['name']);
+        expect(kinds(mark, 'the birthday of mine')).toEqual(['birthday']);
         // A normal thing still matches by its words
         expect(kinds(mark, 'coffee')).toEqual(['pref']);
         const sam = [name('Sam'), birthday('June 5')];
