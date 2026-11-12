@@ -620,7 +620,7 @@ describe("the Bricks page (#1995)", () => {
             await openMade();
             expect(byId("brickBringAlong")).toBeNull();
             expect(byId("brickVisitBlocked")?.textContent?.trim()).toBe(
-                "Studio doesn't take visiting Bricks. Recipe Brick still answers your direct messages here."
+                "Studio doesn't take visiting Bricks. Recipe Brick still answers in your direct messages here."
             );
         });
 

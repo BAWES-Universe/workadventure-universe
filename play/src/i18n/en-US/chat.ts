@@ -1065,7 +1065,7 @@ const chat: BaseTranslation = {
         visiting: "Visiting with you",
         endVisit: "End visit",
         endVisitLine: "It walks with you from room to room, and goes when you leave or end the visit.",
-        notTaken: "{place} doesn't take visiting Bricks. {name} still answers your direct messages here.",
+        notTaken: "{place} doesn't take visiting Bricks. {name} still answers in your direct messages here.",
         bringAlongFailed: "Couldn't bring {name} along. Try again.",
         bringAlongNotYet: "{name} isn't on the map yet. It joins you when you walk into the next room.",
         endVisitFailed: "Couldn't end the visit. Try again.",
