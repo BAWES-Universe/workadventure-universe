@@ -85,16 +85,25 @@ describe('the memory tools', () => {
         expect(itemsAbout(items, "my name and my dog's name").map((item) => item.kind)).toEqual(['name']);
     });
 
-    it("does not take the person's own name or birthday because someone else's words hold its value", () => {
-        const items = memoryItemsOf(sara());
-        // The person is Sara: "my friend Sara" and "Sara's dog" are about someone else, and forgetting is for good
-        for (const other of ['my friend Sara', "Sara's dog", 'forget that my sister Sara likes tea', 'the other Sara']) {
-            expect(itemsAbout(items, other).map((item) => item.kind), other).not.toContain('name');
-        }
-        expect(itemsAbout(items, 'my friend June').map((item) => item.kind)).not.toContain('birthday');
-        // Their own value said alone is theirs
-        expect(itemsAbout(items, 'Sara').map((item) => item.kind)).toEqual(['name']);
-        expect(itemsAbout(items, 'forget Sara').map((item) => item.kind)).toEqual(['name']);
+    it("does not take the person's own name or birthday because other words hold its value", () => {
+        const name = (value: string) => ({ id: 'n', kind: 'name', label: null, value }) as any;
+        const birthday = (value: string) => ({ id: 'b', kind: 'birthday', label: null, value }) as any;
+        const kinds = (items: any[], about: string) => itemsAbout(items, about).map((item) => item.kind);
+        // The person is Mark and Sam's birthday is someone else's: forgetting is for good
+        const mark = [name('Mark'), birthday('12 June'), { id: 'p', kind: 'pref', label: null, value: 'coffee' }] as any[];
+        expect(kinds(mark, 'my friend Mark')).toEqual([]);
+        expect(kinds(mark, "Mark's birthday")).not.toContain('name');
+        expect(kinds(mark, 'forget that my sister Mark likes tea')).not.toContain('name');
+        expect(kinds(mark, 'my name')).toEqual(['name']);
+        expect(kinds(mark, 'forget that my name is Mark')).toEqual(['name']);
+        expect(kinds(mark, 'the party on 12 June')).not.toContain('birthday');
+        expect(kinds(mark, 'my birthday')).toEqual(['birthday']);
+        expect(kinds(mark, 'forget June')).not.toContain('birthday');
+        // A normal thing still matches by its words
+        expect(kinds(mark, 'coffee')).toEqual(['pref']);
+        const sam = [name('Sam'), birthday('June 5')];
+        expect(kinds(sam, "Sam's birthday")).not.toContain('name');
+        expect(kinds(sam, "Sam's birthday")).not.toContain('birthday');
     });
 
     it('does not let the word "birthday" or "name" pick out another thing that shares it', () => {
