@@ -352,6 +352,20 @@ describe('A reply that made a Brick, or suggests one', () => {
         await replies.getBotConfig(BRICK);
         expect(admin.getBotConfiguration).toHaveBeenCalledTimes(2);
     });
+
+    it('reads a Brick again only when its own owner says it changed', async () => {
+        const admin = { isConfigured: () => true, getBotConfiguration: vi.fn(async () => ({ botId: BRICK, brick: { ownerId: 'user-alice', isDefault: false } })) };
+        const replies = Object.create(DmReplyService.prototype) as DmReplyService;
+        Object.assign(replies, { botManager: { getBot: () => null, getAdminApiService: () => admin }, configCache: new Map(), missingCache: new Map() });
+        await replies.getBotConfig(BRICK);
+        expect(replies.forgetBrickOf(BRICK, 'user-bob')).toBe(false);
+        expect(replies.forgetBrickOf('not-held', 'user-alice')).toBe(false);
+        await replies.getBotConfig(BRICK);
+        expect(admin.getBotConfiguration).toHaveBeenCalledTimes(1);
+        expect(replies.forgetBrickOf(BRICK, 'user-alice')).toBe(true);
+        await replies.getBotConfig(BRICK);
+        expect(admin.getBotConfiguration).toHaveBeenCalledTimes(2);
+    });
 });
 
 function makeClient(): any {
@@ -500,7 +514,17 @@ describe('POST /api/bots/:botId/brick-changed and /brick-offer', () => {
 
     it('has a Brick read again at once when the game says it was deleted or taken back', async () => {
         expect((await post(`${BRICK}/brick-changed`)).status).toBe(204);
-        expect(brickChanged).toHaveBeenCalledWith(BRICK);
+        // For the person the Orbit session names: only a Brick of theirs is read again
+        expect(brickChanged).toHaveBeenCalledWith(BRICK, 'u1');
+    });
+
+    it('lets one person say it only so often, so nobody can keep the bot server asking Orbit', async () => {
+        adminApiService.validateSessionToken.mockResolvedValue({ userId: 'u-busy', uuid: 'uuid-busy', email: null });
+        const answers = [];
+        for (let i = 0; i < 31; i++) answers.push((await post(`${BRICK}/brick-changed`)).status);
+        expect(answers.slice(0, 30).every((status) => status === 204)).toBe(true);
+        expect(answers[30]).toBe(429);
+        expect(brickChanged).toHaveBeenCalledTimes(30);
     });
 
     it('keeps "Not now" for the person the session names, never for a name in the request', async () => {
