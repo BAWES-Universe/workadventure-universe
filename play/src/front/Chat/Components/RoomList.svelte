@@ -19,7 +19,7 @@
     import WokaFromUserId from "../../Components/Woka/WokaFromUserId.svelte";
     import { readHadProximityChat, shouldShowSayHiCard } from "../Stores/SayHiCardStore";
     import { bricksWithoutChat } from "../Bricks/BrickChat";
-    import { loadMyBricks, myBricksByChatId, myBricksSettled } from "../Bricks/MyBricksStore";
+    import { loadMyBricks, myBricksByChatId, myBricksSettled, refreshMyChatId } from "../Bricks/MyBricksStore";
     import BricksPage from "../Bricks/BricksPage.svelte";
     import RoomTimeline from "./Room/RoomTimeline.svelte";
     import ChatLoader from "./ChatLoader.svelte";
@@ -109,6 +109,8 @@
     onMount(() => {
         loadMyBricks().catch((error) => console.error(error));
     });
+    // The chat signs in after the list can show: the Bricks' chat addresses are made from the person's own, known then.
+    $: if ($chatConnectionStatus === "ONLINE") refreshMyChatId();
     const brickEntries: Readable<OneListEntry[]> = derived(
         [bricksWithoutChat(chat, myBricksByChatId), chatSearchBarValue],
         ([$bricks, $search]) => $bricks.map((brick) => brickEntry(brick, $search))
