@@ -210,3 +210,5 @@ export { default as IconRewindForward10 } from "~icons/tabler/rewind-forward-10"
 export { default as IconVolume } from "~icons/tabler/volume";
 export { default as IconVolume2 } from "~icons/tabler/volume-2";
 export { default as IconVolumeOff } from "~icons/tabler/volume-off";
+export { default as IconBrain } from "~icons/tabler/brain";
+export { default as IconFileText } from "~icons/tabler/file-text";

@@ -58,11 +58,16 @@ vi.mock("../../../external-modules/bots/services/BotApiService", () => ({
         getBot: game.getBot,
         changeMyBrick: game.changeMyBrick,
         isInitialized: () => true,
+        getMyMemory: () => Promise.resolve({ items: [] }),
+        getBrickFiles: () => Promise.resolve({}),
     },
 }));
 vi.mock("../../../Phaser/Game/GameManager", () => ({ gameManager: {} }));
 vi.mock("../../../external-modules/admin-api/index", () => ({ canOpenOrbit: () => false, openOrbitPage: () => {} }));
 vi.mock("../../../Enum/ComputedConst", () => ({ ABSOLUTE_PUSHER_URL: "http://pusher.test/" }));
+vi.mock("../../../Enum/EnvironmentVariable", () => ({ UPLOADER_URL: "http://uploader.test" }));
+// A Brick's page has Memory and Files groups (#2003); they have their own tests
+vi.mock("../../../Artifacts/openYourArtifacts", () => ({ openYourArtifacts: vi.fn() }));
 vi.mock("../../../external-modules/bots/stores/BotWokaCatalogStore", () => ({
     botWokaCatalogStore: looks.catalog,
     ensureBotWokaCatalog: looks.ensure,

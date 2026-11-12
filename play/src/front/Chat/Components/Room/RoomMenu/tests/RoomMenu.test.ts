@@ -13,21 +13,31 @@ const partnerActions = vi.hoisted(() => ({
     walkToPartner: vi.fn(),
 }));
 vi.mock("../../DirectChat/PartnerActions", () => partnerActions);
+// Who the chat is with: a person by default; a test can make it a bot
+const partner = vi.hoisted(() => ({ chatId: "@ada:chat.example.com", isBot: false }));
+const sheet = vi.hoisted(() => ({ openModal: vi.fn(), own: [] as { id: string }[] }));
 vi.mock("../../DirectChat/DirectPartnerStore", async () => {
     const { readable: store } = await import("svelte/store");
     return {
         directPartnerStore: () =>
             store({
-                chatId: "@ada:chat.example.com",
+                chatId: partner.chatId,
+                isBot: partner.isBot,
                 actions: { walkTo: true, locate: true },
             }),
     };
+});
+// What a bot remembers about the person has its own tests; here only that the chat menu offers it
+vi.mock("../../../../Bricks/MemorySheet.svelte", () => ({ default: {} }));
+vi.mock("../../../../Bricks/MyBricksStore", async () => {
+    const { readable: store } = await import("svelte/store");
+    return { myBricksStore: store(sheet.own) };
 });
 vi.mock("../../DirectChat/partnerStillInChat", async () => {
     const { readable: store } = await import("svelte/store");
     return { partnerStillInChat: () => store(true) };
 });
-vi.mock("svelte-modals", () => ({ openModal: vi.fn() }));
+vi.mock("svelte-modals", () => ({ openModal: sheet.openModal }));
 vi.mock("../../ManageParticipantsModal.svelte", () => ({ default: {} }));
 vi.mock("../../../../../Connection/LocalUserStore", () => ({
     localUserStore: { getChatId: () => "@me:chat.example.com" },
@@ -115,6 +125,10 @@ describe("a direct chat's ⋯ menu", () => {
         target = document.createElement("div");
         document.body.append(target);
         for (const mock of Object.values(partnerActions)) mock.mockClear();
+        sheet.openModal.mockClear();
+        partner.chatId = "@ada:chat.example.com";
+        partner.isBot = false;
+        sheet.own.length = 0;
     });
 
     afterEach(() => {
@@ -185,5 +199,43 @@ describe("a direct chat's ⋯ menu", () => {
 
         expect(room.leaveRoom).toHaveBeenCalledWith(undefined);
         expect(shownNote()).toBe("chat.roomMenu.leaveRoom.notification:Design team");
+    });
+
+    describe("what a bot remembers about the person (#2003)", () => {
+        const BOT = "0b7c1d2e-1111-4222-8333-944455556666";
+
+        it("offers nothing of the kind in a chat with a person", async () => {
+            await open(new Map());
+            expect(target.querySelector('[data-testid="botMemoryOption"]')).toBeNull();
+        });
+
+        it("offers it in a chat with someone else's bot, and opens the sheet for that bot", async () => {
+            partner.chatId = `@bot_${BOT}:chat.example.com`;
+            partner.isBot = true;
+            await open(new Map([[partner.chatId, "Melody"]]));
+
+            expect(target.querySelector('[data-testid="botMemoryOption"]')?.textContent).toContain(
+                "chat.brick.memory.menu"
+            );
+            click('[data-testid="botMemoryOption"]');
+            expect(sheet.openModal).toHaveBeenCalledWith(expect.anything(), { botId: BOT, name: "Melody", own: false });
+        });
+
+        it("knows a bot that is the person's own Brick", async () => {
+            partner.chatId = `@bot_${BOT}:chat.example.com`;
+            partner.isBot = true;
+            sheet.own.push({ id: BOT });
+            await open(new Map([[partner.chatId, "Brick"]]));
+
+            click('[data-testid="botMemoryOption"]');
+            expect(sheet.openModal).toHaveBeenCalledWith(expect.anything(), { botId: BOT, name: "Brick", own: true });
+        });
+
+        it("is not offered for a bot whose id cannot be read", async () => {
+            partner.chatId = "@someone:chat.example.com";
+            partner.isBot = true;
+            await open(new Map());
+            expect(target.querySelector('[data-testid="botMemoryOption"]')).toBeNull();
+        });
     });
 });

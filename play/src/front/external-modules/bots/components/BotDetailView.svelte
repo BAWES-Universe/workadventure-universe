@@ -30,6 +30,8 @@
     import { UNIVERSE_AI_REF } from "../mindModel";
     import type { UsageScreen } from "../usageModel";
     import type { ToolsScreen } from "../toolsModel";
+    import BrickFilesGroup from "../../../Chat/Bricks/BrickFilesGroup.svelte";
+    import BrickMemoryGroup from "../../../Chat/Bricks/BrickMemoryGroup.svelte";
     import BotWokaPicker from "./BotWokaPicker.svelte";
     import BotCompanionPicker from "./BotCompanionPicker.svelte";
     import BotRuleScreen from "./BotRuleScreen.svelte";
@@ -811,6 +813,19 @@
                 <!-- A Brick's page so far: the parts a Brick has. Usage, Mind, Voice, Behavior, Apps, Computer, Goals and
                      tasks, Memory, Files, Permissions, Companion and Template come with their own issues -->
                 <SayGroup bot={currentBot} open={openGroup === "say"} onToggle={toggleGroup} onChange={apply} />
+                <!-- What it remembers about its owner, and its files (game #2003) -->
+                <BrickMemoryGroup
+                    botId={currentBot.id}
+                    name={currentBot.name || "Brick"}
+                    open={openGroup === "memory"}
+                    onToggle={toggleGroup}
+                />
+                <BrickFilesGroup
+                    brickId={currentBot.id}
+                    name={currentBot.name || "Brick"}
+                    open={openGroup === "files"}
+                    onToggle={toggleGroup}
+                />
             {:else}
                 {#if askedUsage && currentBot}
                     <MakerAskedCard name={currentBot.name || "Bot"} usage={askedUsage} onUseKey={openMind} />
