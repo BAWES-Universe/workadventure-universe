@@ -97,6 +97,14 @@ describe('What the bot server asks Orbit about Bricks', () => {
         expect(request.mock.calls[2][0]).toMatchObject({ method: 'put', data: { userId: 'uuid-alice', topic: 'recipes', answer: 'not_now' } });
     });
 
+    it('never fails over a kept answer when Orbit is not set up for Bricks, so nothing waits on it', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        delete process.env.BOT_SERVICE_TOKEN;
+        await expect(service.answerBrickOffer(BRICK, 'uuid-alice', 'recipes', 'made')).resolves.toBeUndefined();
+        expect(request).not.toHaveBeenCalled();
+        warn.mockRestore();
+    });
+
     it('has Orbit remove what waited long enough, and takes "could not ask" as nothing removed', async () => {
         request.mockResolvedValueOnce({ status: 200, data: { removed: ['a', 7, 'b'] } });
         expect(await service.sweepBricks()).toEqual(['a', 'b']);
@@ -498,6 +506,14 @@ describe('POST /api/bots/:botId/brick-changed and /brick-offer', () => {
     it('keeps "Not now" for the person the session names, never for a name in the request', async () => {
         expect((await post(`${BRICK}/brick-offer`, { topic: 'recipes', userId: 'uuid-bob' })).status).toBe(204);
         expect(adminApiService.answerBrickOffer).toHaveBeenCalledWith(BRICK, 'uuid-alice', 'recipes', 'not_now');
+    });
+
+    it('answers the game even when "Not now" could not be kept, instead of leaving it waiting', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        adminApiService.answerBrickOffer.mockRejectedValueOnce(new Error('Orbit is not set up for Bricks'));
+        const answer = await post(`${BRICK}/brick-offer`, { topic: 'recipes' });
+        expect(answer.status).toBe(502);
+        expect(await answer.json()).toEqual({ error: 'Could not keep that' });
     });
 
     it('needs an Orbit session, a bot id and a topic', async () => {

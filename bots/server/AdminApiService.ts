@@ -935,9 +935,12 @@ export class AdminApiService {
 
     /** What the person tapped on the suggestion (#1996). Kept for the record; never throws, the topic is closed either way. */
     async answerBrickOffer(viaBotId: string, userId: string, topic: string, answer: 'made' | 'not_now'): Promise<void> {
-        await this.brickCall('put', `api/bots/${encodeURIComponent(viaBotId)}/brick-offers`, { userId, topic, answer }).catch((error) => {
+        // Never fails: brickCall throws before it asks when Orbit is not set up for Bricks, so that is caught here too
+        try {
+            await this.brickCall('put', `api/bots/${encodeURIComponent(viaBotId)}/brick-offers`, { userId, topic, answer });
+        } catch (error) {
             console.warn('[AdminApiService] Could not keep the answer to a Brick suggestion:', error instanceof Error ? error.message : error);
-        });
+        }
     }
 
     /** Has Orbit remove every deleted Brick whose days are over (#1996), and names them. Empty when Orbit cannot be asked. */
