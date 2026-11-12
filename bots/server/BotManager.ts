@@ -403,7 +403,9 @@ export class BotManager {
                   ownerUuid: visiting.ownerUuid,
                   // Its person has left the room: the Brick leaves the map with them. Orbit keeps the visit until it ends
                   onOwnerGone: () => {
-                      this.endVisitor(visiting.ownerUuid, botId).catch((error) => console.warn(`[BotManager] Could not take ${botId} off the map:`, error));
+                      this.inVisitLine(visiting.ownerUuid, () => this.endVisitor(visiting.ownerUuid, botId)).catch((error) =>
+                        console.warn(`[BotManager] Could not take ${botId} off the map:`, error)
+                    );
                   },
               })
             : instantiateBehavior(built.kind, built.config, { IdleBehavior, PatrolBehavior, SocialBehavior });
@@ -787,7 +789,9 @@ export class BotManager {
                   ownerUuid: visiting.ownerUuid,
                   // Its person has left the room: the Brick leaves the map with them. Orbit keeps the visit until it ends
                   onOwnerGone: () => {
-                      this.endVisitor(visiting.ownerUuid, botId).catch((error) => console.warn(`[BotManager] Could not take ${botId} off the map:`, error));
+                      this.inVisitLine(visiting.ownerUuid, () => this.endVisitor(visiting.ownerUuid, botId)).catch((error) =>
+                        console.warn(`[BotManager] Could not take ${botId} off the map:`, error)
+                    );
                   },
               })
             : instantiateBehavior(built.kind, built.config, { IdleBehavior, PatrolBehavior, SocialBehavior });
@@ -955,16 +959,22 @@ export class BotManager {
      * taken off the map first. Never throws for a person Orbit has nothing for: it only takes the Brick off.
      */
     async syncVisitingBrick(roomUrl: string, person: { uuid: string }, position?: { x: number; y: number }, mayPlace = true): Promise<VisitSyncAnswer> {
-        const uuid = person.uuid;
-        // One sync at a time per person, so two calls together never put the Brick on the map twice
-        // (a loop: calls that queued behind the same sync wake together, and only one of them may go next)
+        return this.inVisitLine(person.uuid, () => this.runVisitSync(roomUrl, person.uuid, position, mayPlace));
+    }
+
+    /**
+     * One thing at a time per person for their visiting Brick: a sync that puts it on the map, one that takes it off, and the
+     * Brick leaving because its person did. Calls that queue behind the same one wake together, so each goes only when none
+     * is left in front of it (a loop), and two never put the Brick on the map twice or find one that is being taken off.
+     */
+    private async inVisitLine<T extends VisitSyncAnswer | void>(uuid: string, work: () => Promise<T>): Promise<T> {
         let pending = this.visitSyncs.get(uuid);
         while (pending) {
             await pending.catch(() => undefined);
             pending = this.visitSyncs.get(uuid);
         }
-        const run = this.runVisitSync(roomUrl, uuid, position, mayPlace);
-        this.visitSyncs.set(uuid, run);
+        const run = work();
+        this.visitSyncs.set(uuid, run as Promise<VisitSyncAnswer | void>);
         try {
             return await run;
         } finally {
@@ -972,7 +982,7 @@ export class BotManager {
         }
     }
 
-    private visitSyncs: Map<string, Promise<VisitSyncAnswer>> = new Map();
+    private visitSyncs: Map<string, Promise<VisitSyncAnswer | void>> = new Map();
 
     private async runVisitSync(roomUrl: string, uuid: string, position?: { x: number; y: number }, mayPlace = true): Promise<VisitSyncAnswer> {
         let configs: BotConfiguration[];

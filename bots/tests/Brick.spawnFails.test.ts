@@ -8,7 +8,7 @@ vi.mock('@sentry/node', () => ({ captureException: vi.fn() }));
 vi.mock('../utils/MovementLogger', () => ({ movementLogger: {} }));
 
 let disconnectFails = false;
-const clients: Array<{ connect: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> }> = [];
+const clients: Array<{ connect: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn>; setBehavior: ReturnType<typeof vi.fn> }> = [];
 vi.mock('../client/BotClient', () => ({
     BotClient: vi.fn().mockImplementation(() => {
         const client = {
@@ -20,7 +20,7 @@ vi.mock('../client/BotClient', () => ({
             setAsks: () => undefined,
             setAccessGate: () => undefined,
             setFullConfig: () => undefined,
-            setBehavior: () => undefined,
+            setBehavior: vi.fn(),
             onDisconnect: undefined,
         };
         clients.push(client);
@@ -50,9 +50,9 @@ function manager(assign: () => Promise<void>) {
     const internals = botManager as unknown as {
         bots: Map<string, unknown>;
         visitors: Map<string, unknown>;
-        botRegistry: { assignBot: () => Promise<void> };
+        botRegistry: { assignBot: () => Promise<void>; unassignBot?: () => Promise<void> };
     };
-    internals.botRegistry = { assignBot: assign } as never;
+    internals.botRegistry = { assignBot: assign, unassignBot: async () => undefined } as never;
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     return { botManager, internals };
@@ -89,5 +89,46 @@ describe('a Brick whose start fails part-way', () => {
         await expect(botManager.spawnBot('brick-1', config)).rejects.toThrow('registry down');
         expect(internals.bots.has('brick-1')).toBe(false);
         disconnectFails = false;
+    });
+});
+
+describe('a Brick leaving because its person did (Sentry on #2023)', () => {
+    it('goes through the same one-at-a-time line as a sync, so a sync never finds it half taken off', async () => {
+        clients.length = 0;
+        const { botManager, internals } = manager(async () => undefined);
+        await botManager.syncVisitingBrick(ROOM, { uuid: 'uuid-khalid' }, AT);
+        expect(internals.bots.has('brick-1')).toBe(true);
+
+        // Its person is gone: the Brick's own behaviour says so
+        const behavior = clients[0].setBehavior.mock.calls[0][0] as { onOwnerGone: () => void };
+        const order: string[] = [];
+        let finishUnassign: () => void = () => undefined;
+        internals.botRegistry = {
+            assignBot: async () => undefined,
+            unassignBot: () =>
+                new Promise<void>((resolve) => {
+                    order.push('taking off');
+                    finishUnassign = () => {
+                        order.push('taken off');
+                        resolve();
+                    };
+                }),
+        } as never;
+        behavior.onOwnerGone();
+        await vi.waitFor(() => expect(order).toEqual(['taking off']));
+
+        // The person is back and a sync arrives while the Brick is being taken off: it waits for that to finish
+        const sync = botManager.syncVisitingBrick(ROOM, { uuid: 'uuid-khalid' }, AT).then((answer) => {
+            order.push('sync done');
+            return answer;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(order).toEqual(['taking off']);
+        finishUnassign();
+        expect(await sync).toEqual({ botId: 'brick-1' });
+        expect(order).toEqual(['taking off', 'taken off', 'sync done']);
+        // and it was put on the map again, a new client, not the one that was going
+        expect(clients).toHaveLength(2);
+        expect(internals.bots.has('brick-1')).toBe(true);
     });
 });
