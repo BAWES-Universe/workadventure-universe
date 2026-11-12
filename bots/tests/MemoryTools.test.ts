@@ -85,6 +85,18 @@ describe('the memory tools', () => {
         expect(itemsAbout(items, "my name and my dog's name").map((item) => item.kind)).toEqual(['name']);
     });
 
+    it("does not take the person's own name or birthday because someone else's words hold its value", () => {
+        const items = memoryItemsOf(sara());
+        // The person is Sara: "my friend Sara" and "Sara's dog" are about someone else, and forgetting is for good
+        for (const other of ['my friend Sara', "Sara's dog", 'forget that my sister Sara likes tea', 'the other Sara']) {
+            expect(itemsAbout(items, other).map((item) => item.kind), other).not.toContain('name');
+        }
+        expect(itemsAbout(items, 'my friend June').map((item) => item.kind)).not.toContain('birthday');
+        // Their own value said alone is theirs
+        expect(itemsAbout(items, 'Sara').map((item) => item.kind)).toEqual(['name']);
+        expect(itemsAbout(items, 'forget Sara').map((item) => item.kind)).toEqual(['name']);
+    });
+
     it('does not let the word "birthday" or "name" pick out another thing that shares it', () => {
         const items: any[] = [
             ...memoryItemsOf(sara()),

@@ -129,8 +129,13 @@ export function itemsAbout(items: MemoryItem[], about: string): MemoryItem[] {
     const exactly = new Set(items.filter((item) => item.kind !== 'name' && item.kind !== 'birthday' && sameWords(item)));
     const matched = items.filter((item) => {
         const value = item.value.toLowerCase().trim();
-        if (item.kind === 'name' && isAboutThem(asked, ['name'])) return true;
-        if (item.kind === 'birthday' && isAboutThem(asked, ['birthday', 'bday'])) return true;
+        // The person's own name and birthday go only when asked for as theirs ("my name", "birthday") or when nothing but
+        // the value is said ("Sara"). A phrase that merely holds the value ("my friend Mark", "Sam's birthday") is about someone else.
+        if (item.kind === 'name' || item.kind === 'birthday') {
+            if (isAboutThem(asked, item.kind === 'name' ? ['name'] : ['birthday', 'bday'])) return true;
+            const valueWords = CONTENT_WORDS_OF(value);
+            return words.length > 0 && valueWords.length === words.length && valueWords.every((word) => words.includes(word));
+        }
         // What is remembered, said back whole (as its own words, not a piece of a longer word)
         if (value.length >= MIN_ASKED) {
             const whole = new RegExp(`(^|[^\\p{L}\\p{N}])${value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^\\p{L}\\p{N}])`, 'u');
