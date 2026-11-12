@@ -127,7 +127,7 @@ aiService.useApprovals(approvals);
 aiService.useNearbyAsks(nearbyAsks);
 let dmRoom: ((botId: string) => Promise<DmRoomLink | undefined>) | undefined;
 let directChat: ((botId: string, chatId: string) => Promise<DirectChatAnswer>) | undefined;
-let brickChanged: ((botId: string) => void) | undefined;
+let brickChanged: ((botId: string, ownerId: string) => boolean) | undefined;
 /** How often Orbit is asked to remove deleted Bricks whose days are over (#1996). Nothing depends on when it runs. */
 const BRICK_SWEEP_EVERY_MS = 60 * 60 * 1000;
 let brickSweepInterval: NodeJS.Timeout | undefined;
@@ -184,7 +184,7 @@ async function setupMatrix(): Promise<void> {
     // One chat for a person and a bot across their devices (#1995)
     directChat = (botId, chatId) => bridge.directChatFor(botId, chatId);
     // A Brick that was just deleted, or taken back with Undo, is read again before its next message (#1996)
-    brickChanged = (botId) => dmReplyService.forgetConfig(botId);
+    brickChanged = (botId, ownerId) => dmReplyService.forgetBrickOf(botId, ownerId);
     brickSweepInterval = setInterval(() => void adminApiService.sweepBricks(), BRICK_SWEEP_EVERY_MS);
     brickSweepInterval.unref?.();
     console.log(`[BotServer] Matrix direct messages on for ${matrixConfig.domain}`);

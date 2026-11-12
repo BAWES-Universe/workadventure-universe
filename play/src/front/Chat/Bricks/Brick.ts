@@ -348,7 +348,8 @@ export type MakeItMemory = Map<string, { botChatId: string; until: number }>;
 /**
  * Opens the one chat of a person and their Brick (#1995). A device that has the chat opens it. One that has none asks
  * the bot server first, so two devices opening Chats at the same moment never make two: one is told to make it, the
- * others wait for it to arrive. Without an answer the chat opens the way every direct chat does.
+ * others wait for it to arrive. Without an answer the chat opens the way every direct chat does, but never after the
+ * bot server said another device is making it: then the person is told to try again.
  */
 export async function openBrickChatWith<Room>(
     brickId: string,
@@ -366,6 +367,7 @@ export async function openBrickChatWith<Room>(
     // One question at a time, each after the answer to the one before: the waits in these loops are the point.
     /* eslint-disable no-await-in-loop */
     const askUntil = steps.now() + ASK_FOR_MS;
+    let heardWait = false;
     while (steps.now() < askUntil) {
         const answer = parseDirectChatAnswer(await steps.ask(brickId, myChatId));
         if (!answer) break;
@@ -381,9 +383,15 @@ export async function openBrickChatWith<Room>(
             steps.sayStillLoading();
             return undefined;
         }
+        heardWait = true;
         await steps.sleep(ASK_AGAIN_MS);
         if (steps.hasChatWith(ownGuess)) return steps.openChatWith(ownGuess);
     }
     /* eslint-enable no-await-in-loop */
+    // Once the bot server said another device is making the chat, this one never makes a second: the person tries again
+    if (heardWait) {
+        steps.sayStillLoading();
+        return undefined;
+    }
     return steps.openChatWith(ownGuess);
 }
