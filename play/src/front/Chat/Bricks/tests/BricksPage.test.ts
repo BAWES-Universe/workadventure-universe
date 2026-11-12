@@ -702,7 +702,10 @@ describe("the Bricks page (#1995)", () => {
                 await openPage();
                 await openGroup("behavior");
                 expect(byId("bot-moves-route")).toBeNull();
+                // A Brick stands on no map, so nothing tells it to drag the bot on the map.
+                expect(byId("bot-page-group-behavior")?.textContent).not.toContain("on the map");
                 await click("bot-moves-wander");
+                expect(byId("bot-page-group-behavior")?.textContent).not.toContain("circle");
                 expect(game.changeMyBrick).toHaveBeenCalledTimes(1);
                 const change = game.changeMyBrick.mock.calls[0][1] as {
                     behaviorType: string;

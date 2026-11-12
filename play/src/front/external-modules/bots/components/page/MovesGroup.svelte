@@ -103,10 +103,14 @@
             />
         </PageField>
     {:else if model.moves === "wander"}
-        <PageRow icon={IconCircleDashed} on title={page.moves.area()} hint={page.moves.areaHint()} />
-        <PageNote>{page.moves.areaNote()}</PageNote>
+        {#if !brick}
+            <PageRow icon={IconCircleDashed} on title={page.moves.area()} hint={page.moves.areaHint()} />
+            <PageNote>{page.moves.areaNote()}</PageNote>
+        {/if}
     {:else}
-        <PageRow icon={IconMapPin} on title={page.moves.spot()} hint={page.moves.spotHint()} />
+        {#if !brick}
+            <PageRow icon={IconMapPin} on title={page.moves.spot()} hint={page.moves.spotHint()} />
+        {/if}
         <PageField title={page.moves.facing()} hint={page.moves.facingHint()}>
             <PageChips
                 label={page.moves.facing()}
@@ -120,7 +124,7 @@
                 onPick={(picked) => setConfig({ facing: picked })}
             />
         </PageField>
-        {#if model.goesToPeople}
+        {#if model.goesToPeople && !brick}
             <PageNote>{page.moves.spotNote()}</PageNote>
         {/if}
     {/if}
