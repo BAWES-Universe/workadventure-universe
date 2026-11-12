@@ -98,11 +98,24 @@ export function checkCallSpaceJoin(
     }
 }
 
-/** A call space already holding its two members takes no more. */
-export function checkCallSpaceRoom(localSpaceName: string, membersNow: number): void {
-    if (isCallSpaceName(localSpaceName) && membersNow >= CALL_SPACE_MEMBERS) {
+/**
+ * A call space already holding its two members takes no more. `othersNow` counts the accounts in the call besides the
+ * one joining (see otherCallAccounts): a new socket of an account that is already in replaces its old one, so a person
+ * whose connection dropped is never kept out of their own call by the socket they lost.
+ */
+export function checkCallSpaceRoom(localSpaceName: string, othersNow: number): void {
+    if (isCallSpaceName(localSpaceName) && othersNow >= CALL_SPACE_MEMBERS) {
         throw new SpaceJoinRefusedError(localSpaceName, "this call already has its two members");
     }
+}
+
+/** The distinct accounts among those in a call, not counting the joining account (nor accounts we cannot name). */
+export function otherCallAccounts(inCall: Iterable<string | undefined>, joining: string | undefined): number {
+    const others = new Set<string>();
+    for (const account of inCall) {
+        if (account && account !== joining) others.add(account);
+    }
+    return others.size;
 }
 
 export interface SpaceJoinRequest {

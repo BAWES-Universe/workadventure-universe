@@ -60,6 +60,7 @@ import * as Sentry from "@sentry/node";
 import type { WebSocket } from "uWebSockets.js";
 import { AbortError } from "@workadventure/shared-utils/src/Abort/AbortError";
 import { hasPermission, Permission } from "@workadventure/shared-utils/src/Permissions/permissions";
+import { isCallSpaceName } from "@workadventure/shared-utils/src/Space/callSpaceName";
 import { PusherRoom } from "../models/PusherRoom";
 import type { SocketData, BackConnection } from "../models/Websocket/SocketData";
 
@@ -90,7 +91,7 @@ import { chatIdVerifier, verifyChatId, withoutChatIdUpdate, withoutUncheckedChat
 import type { ShortMapDescription } from "./ShortMapDescription";
 import { matrixProvider } from "./MatrixProvider";
 import { MatrixAreaMembership } from "./MatrixAreaMembership";
-import { checkCallSpaceRoom, checkSpaceJoin } from "./SpaceJoinPolicy";
+import { checkCallSpaceRoom, checkSpaceJoin, otherCallAccounts } from "./SpaceJoinPolicy";
 import { toGlobalSpaceName } from "./SpaceNames";
 import { SocketsByIdentifier } from "./SocketsByIdentifier";
 import { BubbleSpaceGrants } from "./BubbleSpaceGrants";
@@ -496,13 +497,31 @@ export class SocketManager implements ZoneEventListener {
 
         let space: SpaceInterface | undefined = this.spaces.get(spaceName);
 
-        // A call has its two members and no more, whoever else could name it. The back's list of users lags behind a join
-        // by a round trip, so the sockets this pusher has already taken in (counted at once) are counted too: two joins
-        // arriving together cannot both find room.
-        checkCallSpaceRoom(
-            localSpaceName,
-            space ? Math.max(space.users.size, space instanceof Space ? space._localConnectedUser.size : 0) : 0
-        );
+        // A call has its two members and no more, whoever else could name it. Members are counted as accounts: a new
+        // socket of an account already in the call replaces its old one (a dropped connection must not lock the person
+        // out of their own call), and what is counted includes the sockets this pusher has just taken in, because the
+        // back's list of users lags a join by a round trip.
+        if (space && isCallSpaceName(localSpaceName)) {
+            const account = socketData.userUuid;
+            const localSockets = space instanceof Space ? [...space._localConnectedUser.values()] : [];
+            await Promise.all(
+                localSockets
+                    .filter((other) => other !== client && other.getUserData().userUuid === account)
+                    .map((old) => this.handleLeaveSpace(old, spaceName))
+            );
+            checkCallSpaceRoom(
+                localSpaceName,
+                otherCallAccounts(
+                    [
+                        ...[...space.users.values()].map((user) => user.uuid),
+                        ...localSockets
+                            .filter((other) => other !== client)
+                            .map((other) => other.getUserData().userUuid),
+                    ],
+                    account
+                )
+            );
+        }
 
         if (!space) {
             const onSpaceEmpty = (space: SpaceInterface) => {

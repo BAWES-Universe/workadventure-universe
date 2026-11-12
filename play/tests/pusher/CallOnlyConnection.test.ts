@@ -188,70 +188,107 @@ describe("the events of a call (the sound is set up with them)", () => {
 });
 
 describe("a call holds its two members through the server, and no third", () => {
-    it("refuses a join to a call space that already has its person and its bot", async () => {
-        const name = callSpaceName({ botId: "b1", callerUuid: "user-7", callId: "c1" });
-        const socketManager = new SocketManager(mock<SpaceConnection>());
-        (socketManager as unknown as { spaces: Map<string, unknown> }).spaces.set(`w.${name}`, {
-            localName: name,
-            filterType: FilterType.ALL_USERS,
-            users: new Map([
-                ["u_1", {}],
-                ["call_1", {}],
-            ]),
-        });
-        // The caller's second tab: allowed by name, but the call is full
+    const name = callSpaceName({ botId: "b1", callerUuid: "user-7", callId: "c1" });
+
+    function joiner(userUuid = "user-7") {
         const data = {
             world: "w",
             disconnecting: false,
-            userUuid: "user-7",
-            userIdentifier: "user-7",
-            tags: [] as string[],
+            userUuid,
+            userIdentifier: userUuid,
+            tags: (userUuid.startsWith("bot-") ? ["bot"] : []) as string[],
             spaceUserId: "u_2",
             spaces: new Set<string>(),
             joinSpacesPromise: new Map<string, Promise<void>>(),
             grantedBubbleSpaces: new Set<string>(),
             megaphoneChannels: new Map<string, boolean>(),
         };
-        const socket = { getUserData: () => data } as unknown as Socket;
-        await expect(
+        return { data, socket: { getUserData: () => data } as unknown as Socket };
+    }
+
+    function heldSocket(userUuid: string) {
+        return { getUserData: () => ({ userUuid }) } as unknown as Socket;
+    }
+
+    /** A space as this pusher holds it: what the back has listed (it lags), and the sockets taken in here. */
+    function spaceWith(listed: string[], local: [string, Socket][]) {
+        const registerUser = vi.fn().mockResolvedValue(undefined);
+        const space = Object.create(Space.prototype, {
+            users: { value: new Map(listed.map((uuid, i) => [`l_${i}`, { uuid }])) },
+            _localConnectedUser: { value: new Map(local) },
+            filterType: { value: FilterType.ALL_USERS },
+            forwarder: { value: { registerUser } },
+        });
+        return { space, registerUser };
+    }
+
+    function manager(space: unknown) {
+        const socketManager = new SocketManager(mock<SpaceConnection>());
+        (socketManager as unknown as { spaces: Map<string, unknown> }).spaces.set(`w.${name}`, space);
+        const leave = vi.spyOn(socketManager, "handleLeaveSpace").mockResolvedValue(undefined);
+        const join = (socket: Socket) =>
             socketManager.handleJoinSpace(socket, `w.${name}`, name, FilterType.ALL_USERS, [], {
                 signal: new AbortController().signal,
-            })
-        ).rejects.toBeInstanceOf(SpaceJoinRefusedError);
+            });
+        return { join, leave };
+    }
+
+    it("refuses a third account, from the back's list of users", async () => {
+        // Two other accounts are in: nothing a person can name gets in as a third
+        const { space, registerUser } = spaceWith(["account-a", "account-b"], []);
+        const { join } = manager(space);
+        const { socket, data } = joiner();
+        await expect(join(socket)).rejects.toBeInstanceOf(SpaceJoinRefusedError);
         expect(data.spaces.size).toBe(0);
+        expect(registerUser).not.toHaveBeenCalled();
     });
 
     it("counts the sockets it has just taken in, before the back's list of users catches up", async () => {
-        const name = callSpaceName({ botId: "b1", callerUuid: "user-7", callId: "c2" });
-        const socketManager = new SocketManager(mock<SpaceConnection>());
-        // The back has not listed anyone yet, but this pusher already holds the two members
-        const space = Object.create(Space.prototype, {
-            users: { value: new Map() },
-            _localConnectedUser: {
-                value: new Map([
-                    ["u_1", {}],
-                    ["call_1", {}],
-                ]),
-            },
-        });
-        (socketManager as unknown as { spaces: Map<string, unknown> }).spaces.set(`w.${name}`, space);
-        const data = {
-            world: "w",
-            disconnecting: false,
-            userUuid: "user-7",
-            userIdentifier: "user-7",
-            tags: [] as string[],
-            spaceUserId: "u_2",
-            spaces: new Set<string>(),
-            joinSpacesPromise: new Map<string, Promise<void>>(),
-            grantedBubbleSpaces: new Set<string>(),
-            megaphoneChannels: new Map<string, boolean>(),
-        };
-        const socket = { getUserData: () => data } as unknown as Socket;
-        await expect(
-            socketManager.handleJoinSpace(socket, `w.${name}`, name, FilterType.ALL_USERS, [], {
-                signal: new AbortController().signal,
-            })
-        ).rejects.toBeInstanceOf(SpaceJoinRefusedError);
+        const { space, registerUser } = spaceWith(
+            [],
+            [
+                ["a_1", heldSocket("account-a")],
+                ["b_1", heldSocket("account-b")],
+            ]
+        );
+        const { join } = manager(space);
+        await expect(join(joiner().socket)).rejects.toBeInstanceOf(SpaceJoinRefusedError);
+        expect(registerUser).not.toHaveBeenCalled();
+    });
+
+    it("lets a person back into their call when the socket they lost is still registered, replacing it", async () => {
+        const lost = heldSocket("user-7");
+        const { space, registerUser } = spaceWith(
+            [],
+            [
+                ["u_1", lost],
+                ["call_1", heldSocket("bot-b1")],
+            ]
+        );
+        const { join, leave } = manager(space);
+        const { socket } = joiner("user-7");
+        await join(socket);
+        expect(leave).toHaveBeenCalledTimes(1);
+        expect(leave).toHaveBeenCalledWith(lost, `w.${name}`);
+        expect(registerUser).toHaveBeenCalledTimes(1);
+    });
+
+    it("does the same for the bot's lost connection, and never replaces another account's socket", async () => {
+        const person = heldSocket("user-7");
+        const lostBot = heldSocket("bot-b1");
+        const { space, registerUser } = spaceWith(
+            [],
+            [
+                ["u_1", person],
+                ["call_1", lostBot],
+            ]
+        );
+        const { join, leave } = manager(space);
+        const bot = joiner("bot-b1");
+        await join(bot.socket);
+        expect(leave).toHaveBeenCalledTimes(1);
+        expect(leave).toHaveBeenCalledWith(lostBot, `w.${name}`);
+        expect(leave).not.toHaveBeenCalledWith(person, expect.anything());
+        expect(registerUser).toHaveBeenCalledTimes(1);
     });
 });

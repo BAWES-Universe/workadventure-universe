@@ -4,6 +4,7 @@ import { areaSpaceName } from "@workadventure/shared-utils/src/Space/areaSpaceNa
 import { callSpaceName, parseCallSpaceName } from "@workadventure/shared-utils/src/Space/callSpaceName";
 import {
     checkCallSpaceRoom,
+    otherCallAccounts,
     checkSpaceJoin,
     SpaceJoinRefusedError,
     toServerSpaceName,
@@ -282,5 +283,13 @@ describe("call spaces (game #2004)", () => {
         expect(() => checkCallSpaceRoom(CALL, 1)).not.toThrow();
         expect(() => checkCallSpaceRoom(CALL, 2)).toThrow(SpaceJoinRefusedError);
         expect(() => checkCallSpaceRoom("some-room-space", 50)).not.toThrow();
+    });
+
+    it("counts accounts besides the one joining, so a second socket of the same account is not a third member", () => {
+        expect(otherCallAccounts(["user-7", "bot-b1"], "user-7")).toBe(1);
+        expect(otherCallAccounts(["user-7", "user-7", "bot-b1"], "user-7")).toBe(1);
+        expect(otherCallAccounts(["user-7", "bot-b1"], "someone")).toBe(2);
+        expect(otherCallAccounts([undefined, "bot-b1"], "user-7")).toBe(1);
+        expect(otherCallAccounts([], undefined)).toBe(0);
     });
 });
