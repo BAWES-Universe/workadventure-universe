@@ -728,7 +728,7 @@ describe("the bot page's Voice group (#1668)", () => {
             mocks.api.getMyVoiceKeys.mockResolvedValue([{ id: "key-old", adapter: "elevenlabs" }]);
             mocks.api.saveBotVoice.mockResolvedValue(turnedOn());
             await mount(true, true);
-            expect(text()).toContain("Paused · your key isn’t there");
+            expect(text()).toContain("Paused · your key is not available");
             expect(text()).toContain("Your ElevenLabs key isn’t there any more");
             expect(text()).toContain("Add the key again in AI keys, or pick a Universe AI voice.");
             expect(text()).not.toContain("lent");

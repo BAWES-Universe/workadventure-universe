@@ -126,4 +126,7 @@
             <PageNote>{page.moves.spotNote()}</PageNote>
         {/if}
     {/if}
+    {#if brick}
+        <PageNote>{page.moves.brickNote({ name: bot.name || page.access.thisBot() })}</PageNote>
+    {/if}
 </PageGroup>

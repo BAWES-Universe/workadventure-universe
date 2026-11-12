@@ -842,6 +842,7 @@ const mapEditor: BaseTranslation = {
                     spot: "Its spot",
                     spotHint: "Drag the bot on the map to move it",
                     spotNote: "After a chat, it walks back to its spot.",
+                    brickNote: "These settings apply when you bring {name:string} along.",
                     facing: "Default facing direction",
                     facingHint: "Where it looks when nobody's around",
                     facingDown: "Down",
@@ -1093,7 +1094,7 @@ const mapEditor: BaseTranslation = {
                     // A Brick's page: its keys are its owner's own, lent to no universe
                     brick: {
                         keyYouPay: "You pay",
-                        pausedGone: "Paused · {key:string} isn’t there",
+                        pausedGone: "Paused · {key:string} is not available",
                         keyGoneTitle: "{key:string} isn’t there any more",
                         keyGoneLine:
                             "{bot:string} answers in text. Add the key again in AI keys, or pick a Universe AI voice.",
@@ -1381,7 +1382,7 @@ const mapEditor: BaseTranslation = {
                     brickBrief: "Only you",
                     brickTitle: "Only you for now",
                     brickLine:
-                        "{name:string} talks with you and nobody else. When you bring it along on a map, people there can talk to it too.",
+                        "{name:string} talks with you and nobody else. When you bring {name:string} along, the place’s rules decide who can talk with {name:string}.",
                     briefPrivate: "Private",
                     briefMore: "{first:string}, {second:string} and {count:number} more",
                     briefLoading: "…",
