@@ -471,9 +471,10 @@ export class AIService {
      */
     private async getProviderCredentials(providerId: string, botId?: string, asker?: string): Promise<AIProviderConfig> {
         // A small call for a named person on a Brick is answered for them, as a reply is (#2005): never on its owner's key for someone else
-        // With nobody named it is the Brick's own business (its owner setting up its tools, a heading for them): asked as it always was.
-        // Everything that is for a person names them, and a person present but not named is asked about as 'unknown'.
-        const resolved = await this.resolveProvider(providerId, botId, asker ? this.brickAsk(botId, asker) : undefined);
+        // Everything that is for a person names them, and a person present but not named is asked about as 'unknown'. With nobody
+        // named it is the Brick's own business (its owner's tool headings): asked as its owner, so Orbit never has to guess.
+        const who = asker ?? this.ownerRefOf(botId);
+        const resolved = await this.resolveProvider(providerId, botId, who ? this.brickAsk(botId, who) : undefined);
         if (resolved.resting) {
             throw new Error(`Bot ${botId} is resting: its AI key is down`);
         }
@@ -536,7 +537,9 @@ export class AIService {
      */
     async replySource(providerId: string, botId: string): Promise<'universe-ai' | 'provider' | 'own-key' | null> {
         try {
-            const resolved = await this.resolveProvider(providerId, botId);
+            // What a reply for its owner would run on (a Brick greets nobody else): asked as its owner
+            const owner = this.ownerRefOf(botId);
+            const resolved = await this.resolveProvider(providerId, botId, owner ? this.brickAsk(botId, owner) : undefined);
             return resolved.resting ? null : resolved.source;
         } catch {
             return null;
@@ -3428,6 +3431,14 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
     /** Every Brick this server has seen (a direct message, a map): a reply or a small call for one is always asked about by who it is for (#2005). */
     private knownBricks = new Set<string>();
+    /** Whose each known Brick is, by their Orbit id (from the Brick's own settings): who its own small calls are asked as. */
+    private brickOwners = new Map<string, string>();
+
+    /** Who a Brick's own business is asked as: its owner, by the WorkAdventure id a map told us, else the Orbit id its settings carry. */
+    private ownerRefOf(botId: string | undefined): string | undefined {
+        if (!botId) return undefined;
+        return this.roomBricks.get(botId)?.ownerUuid ?? this.brickOwners.get(botId);
+    }
 
     /**
      * Who Orbit is asked about for a Brick's reply or small call: the person being answered, by their WorkAdventure id, or
@@ -3468,9 +3479,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
      */
     private helperBricks = new Set<string>();
 
-    noteBrick(botId: string, brick: { isDefault: boolean; deleted?: boolean } | undefined): void {
+    noteBrick(botId: string, brick: { isDefault: boolean; deleted?: boolean; ownerId?: string } | undefined): void {
         if (brick && !brick.deleted) this.knownBricks.add(botId);
         else this.knownBricks.delete(botId);
+        if (brick && !brick.deleted && brick.ownerId) this.brickOwners.set(botId, brick.ownerId);
+        else this.brickOwners.delete(botId);
         if (brick?.isDefault && !brick.deleted) this.helperBricks.add(botId);
         else this.helperBricks.delete(botId);
     }

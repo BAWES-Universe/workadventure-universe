@@ -173,13 +173,20 @@ describe("a Brick's reply is asked about by who it is for, wherever this server 
         expect(toolNamesSent()).toContain("generate_music");
     });
 
-    it("a small call that names nobody is the Brick's own business: asked as it always was (the owner's tool headings), never as a stranger", async () => {
-        const { admin, memory } = build(OWNER, (_botId, asker) => (asker ? null : served()));
+    it("a small call that names nobody is the Brick's own business: asked as its owner, so Orbit never has to guess (the owner's tool headings)", async () => {
+        const { admin, memory } = build(OWNER, (_botId, asker) => (asker?.asker === "orbit-owner-id" ? served() : null));
         mockGetOrCreateProvider.mockReturnValue({ generate: vi.fn(async () => ({ content: "a heading" })) });
         const service = new AIService(memory, admin, "http://admin.local");
-        service.noteBrick("brick-1", ownersBrick);
+        service.noteBrick("brick-1", { isDefault: false, deleted: false, ownerId: "orbit-owner-id" });
         expect(await service.quickGenerate("universe-ai", "sys", "prompt", "brick-1")).toBe("a heading");
-        expect(admin.getBotAiCredentials).toHaveBeenCalledWith("brick-1");
+        expect(admin.getBotAiCredentials).toHaveBeenCalledWith("brick-1", { asker: "orbit-owner-id" });
+        // On the map, its owner is the one the map named
+        const mapped = new AIService(memory, admin, "http://admin.local");
+        mapped.noteRoomBrick("brick-1", { ownerUuid: OWNER, ownerName: "Khalid", roomUrl: "https://play.test/_/a/b/c.tmj" });
+        await mapped.quickGenerate("universe-ai", "sys", "prompt", "brick-1");
+        expect(admin.getBotAiCredentials).toHaveBeenCalledWith("brick-1", { asker: OWNER });
+        // The greeting source check is the owner's too
+        expect(await service.replySource("universe-ai", "brick-1")).toBe("universe-ai");
         // A person who is named but cannot be told from a stranger is a stranger: Orbit is asked about 'unknown'
         const stranger = new AIService(memory, admin, "http://admin.local");
         stranger.noteBrick("brick-1", ownersBrick);
