@@ -38,12 +38,15 @@ function ownCard(id: string, title: string, choices: { id: string; label: string
 }
 
 export const BRICK_STARTERS_CARD = "brick.starters";
+/** The starter that asks the Brick for another Brick (#1996): sent as the person's own words. */
+export const STARTER_MAKE = "make";
 export const BRICK_IDEAS_CARD = "brick.ideas";
 
 /** The ways to start under the hello, on the question card. Only starters that work today. */
 export function brickStartersCard(ll: TranslationFunctions): BotAsk {
     return ownCard(BRICK_STARTERS_CARD, ll.chat.brick.startTitle(), [
         { id: STARTER_IDEAS, label: ll.chat.brick.seeWhatICanDo(), line: ll.chat.brick.seeWhatICanDoLine() },
+        { id: STARTER_MAKE, label: ll.chat.brick.makeAnother(), line: ll.chat.brick.makeAnotherLine() },
     ]);
 }
 

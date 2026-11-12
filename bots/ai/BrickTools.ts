@@ -68,7 +68,8 @@ export function brickToolDefinitions(): ToolDefinition[] {
                 description:
                     'Make another Brick for this person, right now. Use it when they ask you to make, create or set up a bot, a Brick, a helper or an assistant for something ' +
                     '("make me a bot that keeps my mum\'s recipes"). "Bot" and "Brick" mean the same. Do not ask them to confirm and do not ask for details first: make it from what they said, ' +
-                    'they can change it later. If they already have one of that name you get that one back; make a second only when they clearly want a second. ' +
+                    'they can change it later. Only when they have not said what it is for at all ("make me another Brick"), first ask in one short question what job it should do, then make it from their answer. ' +
+                    'If they already have one of that name you get that one back; make a second only when they clearly want a second. ' +
                     'After it, tell them in one or two short sentences that it is ready and that its chat is in Chats.',
                 parameters: {
                     type: 'object',

@@ -35,13 +35,16 @@ describe("the fixed words of a person's own Brick", () => {
         }
     });
 
-    it("offers one way to start, the only one that works today, on a question card that never runs out", () => {
+    it("offers the ways to start that work today, on a question card that never runs out", () => {
         const card = brickStartersCard(i18nObject("en-US"));
         expect(card.id).toBe(BRICK_STARTERS_CARD);
         expect(card.title).toBe("Where shall we start?");
         expect(card.question).toEqual({
             multiple: false,
-            choices: [{ id: STARTER_IDEAS, label: "See what I can do", line: "A few ideas to start with" }],
+            choices: [
+                { id: STARTER_IDEAS, label: "See what I can do", line: "A few ideas to start with" },
+                { id: "make", label: "Make another Brick", line: "One for a single job, like your recipes" },
+            ],
         });
         expect(card.options).toEqual([]);
         expect(card.lines).toEqual([]);

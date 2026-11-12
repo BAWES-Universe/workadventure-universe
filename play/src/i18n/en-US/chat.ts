@@ -974,6 +974,10 @@ const chat: BaseTranslation = {
         startTitle: "Where shall we start?",
         seeWhatICanDo: "See what I can do",
         seeWhatICanDoLine: "A few ideas to start with",
+        makeAnother: "Make another Brick",
+        makeAnotherLine: "One for a single job, like your recipes",
+        // What a tap on "Make another Brick" sends, in the person's words: the Brick asks what the job is
+        makeAnotherAsk: "Make me another Brick.",
         // What a tap on "See what I can do" sends, in the person's words
         whatCanYouDo: "What can you do for me?",
         // The Brick's fixed answer to it, and the ideas under it. Only things it can do today.

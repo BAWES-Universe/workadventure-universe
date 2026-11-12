@@ -517,13 +517,14 @@ describe("a Brick's own suggestions on the question card (#1995)", () => {
         await tick();
     };
 
-    it("offers the one way to start under the hello, as the Brick's suggestion and not as something it needs", async () => {
+    it("offers the ways to start under the hello, as the Brick's suggestion and not as something it needs", async () => {
         await show(brickStartersCard(LL));
         expect(text()).toContain("Brick suggests");
         expect(text()).not.toContain("needs your answer");
         expect(text()).toContain("Where shall we start?");
         expect(choices().map((choice) => choice.textContent?.replace(/\s+/g, " ").trim())).toEqual([
             "See what I can do A few ideas to start with",
+            "Make another Brick One for a single job, like your recipes",
         ]);
         // Nothing to approve, and no clock on it
         expect(byId("botAskOption")).toBeNull();

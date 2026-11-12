@@ -77,6 +77,7 @@
     import {
         BRICK_OFFER_CARD,
         BRICK_STARTERS_CARD,
+        STARTER_MAKE,
         OFFER_MAKE,
         brickHello,
         brickIdeaWords,
@@ -595,6 +596,11 @@
                 return true;
             }
             if (card.id === BRICK_STARTERS_CARD) {
+                if (tap.choices[0] === STARTER_MAKE) {
+                    // Plain words from the person: the Brick asks what the new one is for, and makes it
+                    matrixRoom.sendMessage($LL.chat.brick.makeAnotherAsk());
+                    return true;
+                }
                 // The person's own words, marked as this starter: the Brick answers it with its fixed ideas
                 await matrixRoom.sendStarter($LL.chat.brick.whatCanYouDo(), STARTER_IDEAS);
                 return true;
