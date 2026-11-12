@@ -233,8 +233,12 @@ describe('the detector, asked about one person', () => {
         expect(view.speech).toBe(false);
         expect(view.quietMs).toBeGreaterThanOrEqual(500);
         expect(view.ageMs).toBeLessThan(100);
+        // Age grows with the clock while nothing new is answered (measured, not assumed: a timer may fire a fraction early)
+        const from = performance.now();
         await sleep(250);
-        expect(o.session.heard('p1', 1)!.ageMs).toBeGreaterThanOrEqual(250);
+        const later = o.session.heard('p1', 1)!;
+        expect(later.ageMs - view.ageMs).toBeGreaterThanOrEqual(performance.now() - from - 1);
+        expect(later.ageMs).toBeGreaterThanOrEqual(240);
         expect(o.session.heard('p1', 2)).toBeUndefined();
         o.session.drop(() => true);
         expect(o.session.heard('p1', 1)).toBeUndefined();
