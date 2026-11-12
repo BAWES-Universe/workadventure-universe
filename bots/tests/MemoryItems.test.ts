@@ -315,8 +315,12 @@ describe('PersistentMemory: Forget of one thing', () => {
         hoisted.axios.post.mockReset().mockRejectedValue({ isAxiosError: true, message: 'busy', response: { status: 503 } });
         await memory.forgetThings(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]));
         expect(memory.unreportedItemForgets.size).toBe(1);
-        // A Brick that is gone (404) can never take it: nothing left to tell
-        hoisted.axios.post.mockReset().mockRejectedValue({ isAxiosError: true, message: 'gone', response: { status: 404 } });
+        // A route that is missing for now (404, an Orbit not yet updated) is tried again
+        hoisted.axios.post.mockReset().mockRejectedValue({ isAxiosError: true, message: 'no route', response: { status: 404 } });
+        await memory.reportUnreportedForgets(BOT);
+        expect(memory.unreportedItemForgets.size).toBe(1);
+        // An answer that can never change (410 gone) is let go
+        hoisted.axios.post.mockReset().mockRejectedValue({ isAxiosError: true, message: 'gone', response: { status: 410 } });
         await memory.reportUnreportedForgets(BOT);
         expect(memory.unreportedItemForgets.size).toBe(0);
         clearTimeout(memory.unreportedRetryTimer);

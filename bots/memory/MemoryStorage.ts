@@ -11,8 +11,8 @@ import { parseForgetNotice, parseItemForgets, type ItemForgetHandler, type Memor
 
 export type { MemoryForgetNotice, MemoryForgetHandler, ItemForgetNotice, ItemForgetHandler } from './ForgetNotice';
 
-/** Answers from Orbit that no retry will change. A busy or unreachable Orbit, a refused token or an Orbit not yet updated (400) is tried again. */
-const PERMANENT_REFUSALS = new Set([404, 410, 422]);
+/** Answers from Orbit that no retry will change. A busy or unreachable Orbit, a refused token, or an Orbit that does not have the route yet (400, 404) is tried again. */
+const PERMANENT_REFUSALS = new Set([410, 422]);
 
 /** A failed save in words, without the request it carried. */
 function describeSaveError(error: unknown): string {
@@ -241,7 +241,7 @@ export class MemoryStorage {
             return true;
         } catch (error) {
             console.warn(`[MemoryStorage] Could not tell Orbit what was forgotten for bot ${botId}: ${describeSaveError(error)}`);
-            // Orbit answered that this can never be taken (no such Brick, a bad request): telling it again changes nothing, so it is let go
+            // Orbit answered that this can never be taken (gone, or cannot be processed): telling it again changes nothing, so it is let go
             const status = axios.isAxiosError(error) ? error.response?.status : undefined;
             return status !== undefined && PERMANENT_REFUSALS.has(status);
         }
