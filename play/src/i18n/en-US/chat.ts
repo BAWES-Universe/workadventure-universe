@@ -1233,6 +1233,8 @@ const chat: BaseTranslation = {
             signInNote:
                 "You sign in on the app's own page, so Universe never sees your password. You can also just ask a Brick: “connect my Notion”.",
             connectStopped: "The sign-in didn't finish. Nothing was connected.",
+            connectUnchecked:
+                "The sign-in finished, but we couldn't check it just now. Open Apps again in a moment to see it.",
             connectBlocked: "Couldn't open the sign-in page. Allow pop-ups for this site and try again.",
             connected: "Connected",
             usedBy: "Used by {names:string}",

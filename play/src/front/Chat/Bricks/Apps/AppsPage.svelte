@@ -44,7 +44,7 @@
     let connectListFailed = false;
     let query = "";
     let connectingKey: string | undefined;
-    let connectNote: "stopped" | "blocked" | undefined;
+    let connectNote: "stopped" | "blocked" | "unchecked" | undefined;
     // A card in a chat that opens the Apps page with a word already in Search apps ("calendar"): taken once
     $: if ($appsSearchStart !== undefined) {
         query = $appsSearchStart;
@@ -191,7 +191,11 @@
             {/each}
             {#if connectNote}
                 <p class="ap-bad" data-testid="appsConnectNote">
-                    {connectNote === "blocked" ? text.connectBlocked() : text.connectStopped()}
+                    {connectNote === "blocked"
+                        ? text.connectBlocked()
+                        : connectNote === "unchecked"
+                        ? text.connectUnchecked()
+                        : text.connectStopped()}
                 </p>
             {/if}
             {#if connectListFailed}

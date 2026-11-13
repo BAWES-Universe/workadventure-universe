@@ -108,6 +108,25 @@ describe("Connect on an app (#2001)", () => {
         expect(await result).toEqual({ status: "stopped" });
     });
 
+    it("asks Orbit once more when the first check after the sign-in fails, and connects when it confirms", async () => {
+        game.connectReadyMadeApp.mockResolvedValue({ id: "c9", redirectUrl: "https://provider.test/sign-in" });
+        game.getMyApps.mockRejectedValueOnce(new Error("network")).mockResolvedValue({ apps: [row()], bricks: [] });
+        const result = connectApp(ready);
+        await vi.waitFor(() => expect(popup.location.href).not.toBe(""));
+        tell("oauth-success");
+        expect(await result).toEqual({ status: "connected", appId: "c9" });
+    });
+
+    it("says unchecked, not stopped, when Orbit cannot be asked after a finished sign-in", async () => {
+        game.connectReadyMadeApp.mockResolvedValue({ id: "c9", redirectUrl: "https://provider.test/sign-in" });
+        game.getMyApps.mockRejectedValue(new Error("network"));
+        const result = connectApp(ready);
+        await vi.waitFor(() => expect(popup.location.href).not.toBe(""));
+        tell("oauth-success");
+        expect(await result).toEqual({ status: "unchecked" });
+        expect(game.getMyApps).toHaveBeenCalledTimes(2);
+    });
+
     it("says stopped when a ready-made sign-in fails", async () => {
         game.connectReadyMadeApp.mockResolvedValue({ id: "c9", redirectUrl: "https://provider.test/sign-in" });
         const result = connectApp(ready);
