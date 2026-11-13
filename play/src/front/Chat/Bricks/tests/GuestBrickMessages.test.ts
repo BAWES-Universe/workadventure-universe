@@ -1,4 +1,4 @@
-import { get, readable } from "svelte/store";
+import { get, readable, writable } from "svelte/store";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 vi.mock("../BrickLookPicture", async () => {
@@ -10,7 +10,7 @@ import { i18nObject } from "../../../../i18n/i18n-util";
 import { loadLocale } from "../../../../i18n/i18n-util.sync";
 import type { ChatMessage } from "../../Connection/ChatConnection";
 import { guestBrickCard } from "../GuestBrick";
-import { expandGuestChats, guestBrickSender, localMessage } from "../GuestBrickMessages";
+import { drawnGuestChats, expandGuestChats, guestBrickSender, localMessage } from "../GuestBrickMessages";
 
 const BOT = "@bot_0b7c1d2e-1111-4222-8333-944455556666:chat.test";
 
@@ -40,6 +40,21 @@ describe("the chat a guest brought along, drawn in the Brick's chat (#1997)", ()
         message.isDeleted = readable(true);
         const drawn = expandGuestChats([message], i18nObject("en-US"), "Khalid");
         expect(drawn).toEqual([message]);
+    });
+
+    it("draws a carrier removed while the chat is open as the one removed message, with its lines and welcome gone", () => {
+        const message = carrier([{ from: "guest", text: "Where's the coffee here?", at: 1000 }]);
+        const isDeleted = writable(false);
+        message.isDeleted = isDeleted;
+        const drawn = drawnGuestChats(readable([message]), readable(i18nObject("en-US")), () => "Khalid");
+        const seen: number[] = [];
+        const stop = drawn.subscribe((list) => seen.push(list.length));
+        // Its lines and the welcome are drawn while it stands
+        expect(get(drawn)).toHaveLength(2);
+        isDeleted.set(true);
+        expect(get(drawn)).toEqual([message]);
+        stop();
+        expect(seen).toEqual([2, 1]);
     });
 
     it("draws each line as it was said, then the Brick's welcome to the person by name", () => {

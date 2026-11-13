@@ -1,4 +1,4 @@
-import { get, readable } from "svelte/store";
+import { derived, get, readable, type Readable } from "svelte/store";
 import { MapStore } from "@workadventure/store-utils";
 import { AvailabilityStatus } from "@workadventure/messages";
 import type { TranslationFunctions } from "../../../i18n/i18n-types";
@@ -128,4 +128,33 @@ export function expandGuestChats(
         );
     }
     return expanded;
+}
+
+/**
+ * The same as `expandGuestChats`, as a store that draws again when a carrier is removed while the chat is open: the
+ * lines it brought go with it, and only the removed message stays.
+ */
+export function drawnGuestChats(
+    messages: Readable<readonly ChatMessage[]> | undefined,
+    ll: Readable<TranslationFunctions>,
+    personName: () => string | null | undefined
+): Readable<ChatMessage[]> {
+    if (!messages) return readable([]);
+    return derived([messages, ll], ([$messages, $ll], set: (value: ChatMessage[]) => void) => {
+        const carriers = $messages.filter((message) => message.guestChat?.length);
+        if (carriers.length === 0) {
+            set($messages as ChatMessage[]);
+            return;
+        }
+        const draw = () => set(expandGuestChats($messages, $ll, personName()));
+        let ready = false;
+        const stops = carriers.map((carrier) =>
+            carrier.isDeleted.subscribe(() => {
+                if (ready) draw();
+            })
+        );
+        ready = true;
+        draw();
+        return () => stops.forEach((stop) => stop());
+    });
 }

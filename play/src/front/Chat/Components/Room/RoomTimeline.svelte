@@ -100,7 +100,7 @@
         guestStartersCard,
     } from "../../Bricks/GuestBrick";
     import { guestChatCarrying } from "../../Bricks/GuestBrickCarry";
-    import { expandGuestChats } from "../../Bricks/GuestBrickMessages";
+    import { drawnGuestChats } from "../../Bricks/GuestBrickMessages";
     import { bringGuestChatInto, guestBrickShownAt } from "../../Bricks/GuestBrickStore";
     import { brickChatLinks } from "../../Bricks/BrickChatLink";
     import { botApiService } from "../../../external-modules/bots/services/BotApiService";
@@ -348,7 +348,8 @@
     // What a bot heard in a voice note is shown inside that note's bubble: its notice is no message of the chat, so it
     // takes no place in a run (the bot's answer after it keeps its name and picture).
     // The chat a guest brought along when they signed in is drawn as the lines it holds, then the Brick's welcome (#1997)
-    $: drawnMessages = expandGuestChats($messages, $LL, gameManager.getPlayerName());
+    $: drawnStore = drawnGuestChats(messages, LL, () => gameManager.getPlayerName());
+    $: drawnMessages = $drawnStore;
     $: timelineEntries = (
         shownSession
             ? (shownSession.entries as TimelineEntry<ChatMessage & { session?: ProximitySessionMarker }>[])
