@@ -7,6 +7,9 @@
 
 import { createClient, type RedisClientType, commandOptions } from 'redis';
 
+/** Where bot servers tell each other that a Brick changed (#1996). */
+const BRICK_CHANGED_CHANNEL = 'bots:brick-changed';
+
 export interface BotServerInfo {
     serverId: string;
     capacity: number;
@@ -31,6 +34,13 @@ export interface BotAssignment {
 
 export class BotRegistry {
     private redis: RedisClientType | null = null;
+    /**
+     * Whether Redis was ever ready on this server: from then on other bot servers may be sharing it, and a connection
+     * that drops is an outage, not a server on its own.
+     */
+    private sharedStoreSeen = false;
+    /** The connection that hears Brick changes from other bot servers (#1996), once listening. */
+    private brickListener: RedisClientType | null = null;
     private serverId: string;
     private heartbeatInterval: NodeJS.Timeout | null = null;
     private readonly HEARTBEAT_INTERVAL = 5000; // 5 seconds
@@ -75,6 +85,7 @@ export class BotRegistry {
             });
 
             this.redis.on('ready', async () => {
+                this.sharedStoreSeen = true;
                 // Select database
                 try {
                     await this.redis!.select(db);
@@ -93,6 +104,9 @@ export class BotRegistry {
         if (this.redis && !this.redis.isOpen) {
             await this.redis.connect();
         }
+        // Connected: from now on a closed connection is an outage, whether or not 'ready' was heard yet. The bot server
+        // starts taking requests only after this (BotManager.initialize), and does not start when it throws.
+        if (this.redis?.isOpen) this.sharedStoreSeen = true;
     }
 
     async disconnect(): Promise<void> {
@@ -100,6 +114,9 @@ export class BotRegistry {
             clearInterval(this.heartbeatInterval);
             this.heartbeatInterval = null;
         }
+
+        if (this.brickListener?.isOpen) await this.brickListener.quit().catch(() => undefined);
+        this.brickListener = null;
 
         if (this.redis && this.redis.isOpen) {
             // Mark server as shutting down
@@ -156,23 +173,89 @@ export class BotRegistry {
     /**
      * One device at a time makes the direct chat of a bot and a person (game #1995), across every bot server: true for
      * the first to ask, false for anyone who asks while that claim lasts. Null without Redis, and the caller keeps its
-     * own in-process claim.
+     * own in-process claim. Throws while a Redis that was in use is down: another server may hold the claim, so the
+     * caller waits rather than claim on its own. With a token, the claim is held under it, so letting it go later lets
+     * go of this claim only, never one another device took since.
      */
-    async claimDirectChat(botId: string, matrixUserId: string, forMs: number): Promise<boolean | null> {
-        if (!this.redis?.isOpen) return null;
-        return (await this.redis.set(`bots:matrix:dm-claim:${botId}|${matrixUserId}`, this.serverId, { NX: true, PX: forMs })) === 'OK';
+    async claimDirectChat(botId: string, matrixUserId: string, forMs: number, token?: string): Promise<boolean | null> {
+        if (!this.redis?.isOpen) {
+            if (this.sharedStoreSeen) throw new Error('The shared store is down');
+            return null;
+        }
+        return (await this.redis.set(`bots:matrix:dm-claim:${botId}|${matrixUserId}`, token ?? this.serverId, { NX: true, PX: forMs })) === 'OK';
     }
 
-    /** Holds that claim for a while longer, whoever has it: the bot is still taking a chat this person just made. */
-    async holdDirectChat(botId: string, matrixUserId: string, forMs: number): Promise<void> {
+    /**
+     * Holds that claim for a while longer: the bot is still taking a chat this person just made. The invite holds it
+     * under its own token. The first hold takes the claim over from whoever had it (the device that made this chat).
+     * A renewal keeps it only while it is still this invite's, or nobody's, so an invite that ran past the claim never
+     * takes it back from a device that claimed it since. Without a token, it is held whoever has it.
+     */
+    async holdDirectChat(botId: string, matrixUserId: string, forMs: number, token?: string, takeOver = true): Promise<void> {
         if (!this.redis?.isOpen) return;
-        await this.redis.set(`bots:matrix:dm-claim:${botId}|${matrixUserId}`, this.serverId, { PX: forMs });
+        const key = `bots:matrix:dm-claim:${botId}|${matrixUserId}`;
+        if (!token) {
+            await this.redis.set(key, this.serverId, { PX: forMs });
+            return;
+        }
+        await this.redis.eval(
+            "local held = redis.call('GET', KEYS[1]) if ARGV[3] == '1' or not held or held == ARGV[1] then redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2]) return 1 end return 0",
+            { keys: [key], arguments: [token, String(forMs), takeOver ? '1' : '0'] }
+        );
     }
 
-    /** Lets the next device make the chat again: the bot has taken (or turned down) the one just made. */
-    async releaseDirectChat(botId: string, matrixUserId: string): Promise<void> {
+    /**
+     * Lets the next device make the chat again: the bot has taken (or turned down) the one just made. With a token, only
+     * a claim this invite still holds is let go, never one another device took since.
+     */
+    async releaseDirectChat(botId: string, matrixUserId: string, token?: string): Promise<void> {
         if (!this.redis?.isOpen) return;
-        await this.redis.del(`bots:matrix:dm-claim:${botId}|${matrixUserId}`);
+        const key = `bots:matrix:dm-claim:${botId}|${matrixUserId}`;
+        if (!token) {
+            await this.redis.del(key);
+            return;
+        }
+        await this.redis.eval("if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0", {
+            keys: [key],
+            arguments: [token],
+        });
+    }
+
+    /**
+     * Tell every other bot server that an owner's Brick changed (#1996), so each reads it again before its next message
+     * instead of within the minute its cache lasts. Without Redis this is a no-op: this server is then the only one.
+     */
+    async tellBrickChanged(botId: string, ownerId: string): Promise<void> {
+        if (!this.redis?.isOpen) return;
+        await this.redis.publish(BRICK_CHANGED_CHANNEL, JSON.stringify({ botId, ownerId, from: this.serverId }));
+    }
+
+    /**
+     * Hear what other bot servers say about Bricks that changed. Messages come on a connection of their own, as Redis
+     * asks of one that listens; this server's own messages are skipped, as it already acted on them. Without Redis
+     * there is nothing to hear.
+     */
+    async onBrickChanged(heard: (botId: string, ownerId: string) => void): Promise<void> {
+        if (!this.redis || this.brickListener) return;
+        const listener = this.redis.duplicate();
+        listener.on('error', (err) => console.error('[BotRegistry] Redis error (Brick changes):', err));
+        this.brickListener = listener;
+        try {
+            await listener.connect();
+            await listener.subscribe(BRICK_CHANGED_CHANNEL, (message) => {
+                try {
+                    const said = JSON.parse(message) as { botId?: unknown; ownerId?: unknown; from?: unknown };
+                    if (said.from === this.serverId || typeof said.botId !== 'string' || typeof said.ownerId !== 'string') return;
+                    heard(said.botId, said.ownerId);
+                } catch (err) {
+                    console.warn('[BotRegistry] Ignored a Brick change that could not be read:', err);
+                }
+            });
+        } catch (err) {
+            this.brickListener = null;
+            if (listener.isOpen) await listener.quit().catch(() => undefined);
+            throw err;
+        }
     }
 
     /** Whether Redis is up, so messages waiting for a resting bot survive a restart and reach every bot server. */

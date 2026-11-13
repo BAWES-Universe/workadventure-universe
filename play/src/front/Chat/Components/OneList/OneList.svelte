@@ -60,7 +60,7 @@
 
     const chat = gameManager.chatConnection;
     // Area chat rooms have their own row, and the chat of a Brick its owner deleted waits out of sight for Undo (#1996)
-    const deletedBrickRoomIds = directRoomsWithStore(chat.directRooms, myDeletedBrickChatIds);
+    const deletedBrickRoomIds = directRoomsWithStore(chat.directRooms, myDeletedBrickChatIds, chat.folders);
     const hiddenRoomIds: Readable<ReadonlySet<string>> = derived(
         [areaChatRooms.hiddenRoomIds, deletedBrickRoomIds],
         ([$area, $deleted]) => ($deleted.length === 0 ? $area : new Set([...$area, ...$deleted]))

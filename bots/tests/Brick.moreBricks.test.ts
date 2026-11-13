@@ -19,6 +19,8 @@ vi.mock('../utils/MovementLogger', () => ({ movementLogger: {} }));
 
 import { AdminApiService } from '../server/AdminApiService';
 import { BotAPI } from '../server/BotAPI';
+import { BotRegistry } from '../server/BotRegistry';
+import { brickChangedEverywhere, listenForBrickChanges } from '../server/brickChanges';
 import { BRICK_NOT_MADE_TEXT, DmReplyService, brickMadeText } from '../server/DmReplyService';
 import { ConversationMemory } from '../memory/ConversationMemory';
 import { BRICK_MADE_KEY, BRICK_MAKE_KEY, BRICK_OFFER_KEY, MatrixDmBridge } from '../matrix/MatrixDmBridge';
@@ -123,14 +125,14 @@ describe('What the bot server asks Orbit about Bricks', () => {
 });
 
 describe('The two Brick tools', () => {
-    const admin = { makeBrickFor: vi.fn(), claimBrickOffer: vi.fn() };
+    const admin = { makeBrickFor: vi.fn(), brickOffersFor: vi.fn() };
     const context = (notes: BrickNote[] = []) => ({ admin, botId: BRICK, userId: 'uuid-alice', notes });
 
     beforeEach(() => {
         vi.clearAllMocks();
         vi.spyOn(console, 'warn').mockImplementation(() => undefined);
         admin.makeBrickFor.mockResolvedValue({ made: true, brick: MADE });
-        admin.claimBrickOffer.mockResolvedValue({ show: true, topic: 'recipes' });
+        admin.brickOffersFor.mockResolvedValue({ after: 3, topics: [] });
     });
 
     it('are make_brick and suggest_brick, and nothing else answers to those names', () => {
@@ -187,12 +189,22 @@ describe('The two Brick tools', () => {
         expect(notes).toHaveLength(1);
     });
 
+    it('asks Orbit again when the model retries a Brick that could not be made earlier in the same answer', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        admin.makeBrickFor.mockRejectedValueOnce(new Error('Orbit down'));
+        const notes: BrickNote[] = [];
+        expect(await runBrickTool(MAKE_BRICK_TOOL, ASK, context(notes))).toHaveProperty('error');
+        expect(await runBrickTool(MAKE_BRICK_TOOL, ASK, context(notes))).toMatchObject({ made: true, name: 'Recipe Brick' });
+        expect(admin.makeBrickFor).toHaveBeenCalledTimes(2);
+        expect(notes).toHaveLength(1);
+        warn.mockRestore();
+    });
+
     it('neither make nor offer a Brick without its line and instructions, so no offer is used up', async () => {
         const notes: BrickNote[] = [];
         expect(await runBrickTool(MAKE_BRICK_TOOL, { ...ASK, instructions: ' ' }, context(notes))).toHaveProperty('error');
         expect(await runBrickTool(SUGGEST_BRICK_TOOL, { topic: 'recipes', ask: 'Want one?', ...ASK, instructions: '' }, context(notes))).toHaveProperty('error');
         expect(admin.makeBrickFor).not.toHaveBeenCalled();
-        expect(admin.claimBrickOffer).not.toHaveBeenCalled();
         expect(notes).toEqual([]);
     });
 
@@ -204,31 +216,36 @@ describe('The two Brick tools', () => {
         expect(notes).toEqual([]);
     });
 
-    it('suggest only when Orbit says the card may be shown, and then leave it for after the answer', async () => {
+    it('suggest by leaving the card for after the answer, without asking Orbit yet', async () => {
         const notes: BrickNote[] = [];
         const result = await runBrickTool(SUGGEST_BRICK_TOOL, { topic: 'Recipes', ask: 'You cook a lot. Want a Brick just for recipes?', ...ASK }, context(notes));
 
-        expect(admin.claimBrickOffer).toHaveBeenCalledWith(BRICK, 'uuid-alice', 'Recipes');
         expect(result).toMatchObject({ shown: true });
-        expect(notes).toEqual([{ kind: 'offer', topic: 'recipes', ask: 'You cook a lot. Want a Brick just for recipes?', name: 'Recipe Brick', line: "Keeps your mum's recipes", instructions: 'You keep recipes.' }]);
+        expect(notes).toEqual([{ kind: 'offer', topic: 'Recipes', ask: 'You cook a lot. Want a Brick just for recipes?', name: 'Recipe Brick', line: "Keeps your mum's recipes", instructions: 'You keep recipes.' }]);
         expect(admin.makeBrickFor).not.toHaveBeenCalled();
     });
 
-    it('suggest nothing a second time: not a topic Orbit already has, not twice in one reply, and not when Orbit cannot be asked', async () => {
-        const offer = { topic: 'recipes', ask: 'Want a Brick for recipes?', ...ASK };
-        admin.claimBrickOffer.mockResolvedValueOnce({ show: false, topic: 'recipes' });
+    it('suggest nothing Orbit already has as offered, whatever its case, and still suggest when Orbit cannot be asked yet', async () => {
+        const offer = { topic: 'Recipes!', ask: 'Want a Brick for recipes?', ...ASK };
+        admin.brickOffersFor.mockResolvedValueOnce({ after: 3, topics: ['recipes'] });
         const notes: BrickNote[] = [];
         expect(await runBrickTool(SUGGEST_BRICK_TOOL, offer, context(notes))).toMatchObject({ shown: false });
         expect(notes).toEqual([]);
+        // Orbit decides again right before the card is sent, so a lookup that failed here is no reason to say nothing
+        admin.brickOffersFor.mockRejectedValueOnce(new Error('down'));
+        expect(await runBrickTool(SUGGEST_BRICK_TOOL, offer, context(notes))).toMatchObject({ shown: true });
+        expect(notes).toHaveLength(1);
+    });
 
+    it('suggest nothing twice in one reply, nor without a topic and a question', async () => {
+        const offer = { topic: 'recipes', ask: 'Want a Brick for recipes?', ...ASK };
+        const notes: BrickNote[] = [];
         await runBrickTool(SUGGEST_BRICK_TOOL, offer, context(notes));
         expect(await runBrickTool(SUGGEST_BRICK_TOOL, { ...offer, topic: 'workouts' }, context(notes))).toMatchObject({ shown: false });
         expect(notes).toHaveLength(1);
-        expect(admin.claimBrickOffer).toHaveBeenCalledTimes(2);
 
-        admin.claimBrickOffer.mockRejectedValueOnce(new Error('down'));
-        expect(await runBrickTool(SUGGEST_BRICK_TOOL, offer, context())).toMatchObject({ shown: false });
         expect(await runBrickTool(SUGGEST_BRICK_TOOL, { ...offer, ask: '' }, context())).toMatchObject({ shown: false });
+        expect(await runBrickTool(SUGGEST_BRICK_TOOL, { ...offer, topic: '' }, context())).toMatchObject({ shown: false });
     });
 
     it('tell the Brick how often counts, and which topics it must never bring up again', () => {
@@ -285,7 +302,11 @@ describe('A reply that made a Brick, or suggests one', () => {
             yield { content: '', done: true, metadata: {} };
         });
         const noteBrick = vi.fn();
-        const admin = { makeBrickFor: vi.fn(async () => ({ made: true, brick: MADE })), answerBrickOffer: vi.fn(async () => undefined) };
+        const admin = {
+            makeBrickFor: vi.fn(async () => ({ made: true, brick: MADE })),
+            answerBrickOffer: vi.fn(async () => undefined),
+            claimBrickOffer: vi.fn(async (_botId: string, _userId: string, topic: string) => ({ show: true, topic: topic.toLowerCase() })),
+        };
         Object.assign(service, {
             queues: new Map(),
             waiting: new Map(),
@@ -323,6 +344,48 @@ describe('A reply that made a Brick, or suggests one', () => {
         const plain = makeReplies(brickConfig);
         const first = await plain.service.reply(BRICK, person, 'hello', [], { roomId: ROOM });
         expect(first).not.toHaveProperty('bricks');
+    });
+
+    it('asks Orbit about a suggestion only when its card is about to go out, once, and says when to leave it out', async () => {
+        const offer: BrickNote = { kind: 'offer', topic: 'Recipes', ask: 'Want a Brick just for recipes?', name: 'Recipe Brick', line: 'Keeps recipes', instructions: 'You keep recipes.' };
+        const suggest = (memory: ConversationMemory, playerId: number) => void (memory.getMemory(BRICK, playerId)!.pendingBricks ??= []).push({ ...offer });
+        const { service, admin } = makeReplies(brickConfig, suggest);
+        const reply = (await service.reply(BRICK, person, 'pasta again?', [], { roomId: ROOM }))!;
+        expect(reply.bricks).toEqual([offer]);
+        // Nothing is asked until the card is about to be sent
+        expect(admin.claimBrickOffer).not.toHaveBeenCalled();
+        expect(await reply.claimOffer!()).toBe('recipes');
+        expect(await reply.claimOffer!()).toBe('recipes');
+        expect(admin.claimBrickOffer).toHaveBeenCalledTimes(1);
+        expect(admin.claimBrickOffer).toHaveBeenCalledWith(BRICK, 'uuid-alice', 'Recipes');
+
+        // Already shown once, or Orbit can't be asked: no card
+        admin.claimBrickOffer.mockResolvedValueOnce({ show: false, topic: 'recipes' });
+        expect(await (await service.reply(BRICK, person, 'pasta again?', [], { roomId: ROOM }))!.claimOffer!()).toBeNull();
+        admin.claimBrickOffer.mockRejectedValueOnce(new Error('down'));
+        expect(await (await service.reply(BRICK, person, 'pasta again?', [], { roomId: ROOM }))!.claimOffer!()).toBeNull();
+    });
+
+    it('never uses up a suggestion on a turn that failed or came back empty', async () => {
+        const offer: BrickNote = { kind: 'offer', topic: 'recipes', ask: 'Want a Brick just for recipes?', name: 'Recipe Brick', line: 'Keeps recipes', instructions: 'You keep recipes.' };
+        const { service, generate, admin } = makeReplies(brickConfig);
+        const memory = (service as any).conversationMemory as ConversationMemory;
+        const suggest = () => void (memory.getMemory(BRICK, service.playerIdFor(ALICE))!.pendingBricks ??= []).push({ ...offer });
+        generate.mockImplementationOnce(async function* () {
+            suggest();
+            yield { content: '', done: true, metadata: {} };
+        });
+        const empty = await service.reply(BRICK, person, 'pasta again?', [], { roomId: ROOM });
+        expect(empty).not.toHaveProperty('bricks');
+        expect(empty).not.toHaveProperty('claimOffer');
+        generate.mockImplementationOnce(async function* () {
+            suggest();
+            yield { content: 'Here is', done: false };
+            throw new Error('provider down');
+        });
+        const failed = await service.reply(BRICK, person, 'pasta again?', [], { roomId: ROOM }).catch(() => null);
+        expect(failed?.claimOffer).toBeUndefined();
+        expect(admin.claimBrickOffer).not.toHaveBeenCalled();
     });
 
     it('makes the suggested Brick at the tap of "Make it", with fixed words and no model, and keeps that it was made', async () => {
@@ -478,20 +541,52 @@ describe("More Bricks in a Brick's chat", () => {
         const order: string[] = [];
         client.sendText.mockImplementation(async () => void order.push('answer'));
         client.sendMessage.mockImplementation(async () => void order.push('card'));
-        deps.reply.mockResolvedValue({ text: 'Here is the pasta recipe.', media: [], bricks: [offer] });
+        const claimOffer = vi.fn(async () => 'recipes');
+        deps.reply.mockResolvedValue({ text: 'Here is the pasta recipe.', media: [], bricks: [offer], claimOffer });
         await bridge.onEvent(invite());
 
         await bridge.onEvent(message('how do I make pasta again?'));
 
         expect(order).toEqual(['answer', 'card']);
+        expect(claimOffer).toHaveBeenCalledTimes(1);
         const { kind: _kind, ...card } = offer;
-        expect(client.sendMessage.mock.calls[0]).toEqual([BRICK_USER, ROOM, { msgtype: 'm.text', body: offer.ask, [BRICK_OFFER_KEY]: card }]);
+        expect(client.sendMessage.mock.calls[0]).toEqual([BRICK_USER, ROOM, { msgtype: 'm.text', body: offer.ask, [BRICK_OFFER_KEY]: card }, expect.any(String)]);
 
         client.sendMessage.mockClear();
-        deps.reply.mockResolvedValue({ text: '', media: [], bricks: [offer] });
+        claimOffer.mockClear();
+        deps.reply.mockResolvedValue({ text: '', media: [], bricks: [offer], claimOffer });
         await bridge.onEvent(message('again'));
-        // An empty answer gets the chat's own "could not answer" note, and no card
+        // An empty answer gets the chat's own "could not answer" note, no card, and Orbit is not asked
         expect(client.sendMessage.mock.calls.some(([, , content]) => BRICK_OFFER_KEY in content)).toBe(false);
+        expect(claimOffer).not.toHaveBeenCalled();
+
+        // Orbit says it was already shown: the answer goes out alone
+        client.sendMessage.mockClear();
+        deps.reply.mockResolvedValue({ text: 'Here is the pasta recipe.', media: [], bricks: [offer], claimOffer: vi.fn(async () => null) });
+        await bridge.onEvent(message('pasta?'));
+        expect(client.sendMessage.mock.calls.some(([, , content]) => BRICK_OFFER_KEY in content)).toBe(false);
+    });
+
+    it('sends one suggestion card when two devices race it: Orbit allows the topic once', async () => {
+        const offer = { kind: 'offer', topic: 'recipes', ask: 'Want a Brick just for recipes?', name: 'Recipe Brick', line: 'Keeps recipes', instructions: 'You keep recipes.' };
+        const one = makeBridge();
+        const two = makeBridge();
+        await one.bridge.onEvent(invite());
+        await two.bridge.onEvent(invite());
+        let allowed = false;
+        const claimOffer = vi.fn(async () => {
+            if (allowed) return null;
+            allowed = true;
+            return 'recipes';
+        });
+        one.deps.reply.mockResolvedValue({ text: 'Here is the pasta recipe.', media: [], bricks: [offer], claimOffer });
+        two.deps.reply.mockResolvedValue({ text: 'Here it is again.', media: [], bricks: [offer], claimOffer });
+
+        await Promise.all([one.bridge.onEvent(message('pasta?')), two.bridge.onEvent(message('pasta?'))]);
+
+        const cards = [...one.client.sendMessage.mock.calls, ...two.client.sendMessage.mock.calls].filter(([, , content]: any[]) => BRICK_OFFER_KEY in content);
+        expect(cards).toHaveLength(1);
+        expect(claimOffer).toHaveBeenCalledTimes(2);
     });
 
     it('tries the suggestion card once more when sending it fails, since Orbit already counted it as shown', async () => {
@@ -499,10 +594,16 @@ describe("More Bricks in a Brick's chat", () => {
         const { bridge, client, deps } = makeBridge();
         await bridge.onEvent(invite());
         client.sendMessage.mockRejectedValueOnce(new Error('homeserver busy'));
-        deps.reply.mockResolvedValue({ text: 'Here is the pasta recipe.', media: [], bricks: [offer] });
+        const claimOffer = vi.fn(async () => 'recipes');
+        deps.reply.mockResolvedValue({ text: 'Here is the pasta recipe.', media: [], bricks: [offer], claimOffer });
         await bridge.onEvent(message('pasta again?'));
+        // Orbit is asked once: the second try sends, it does not claim again
+        expect(claimOffer).toHaveBeenCalledTimes(1);
         const cards = client.sendMessage.mock.calls.filter(([, , content]: any[]) => BRICK_OFFER_KEY in content);
         expect(cards).toHaveLength(2);
+        // One message to Matrix: a first try that arrived but whose answer was lost is not posted twice
+        expect(cards[0][3]).toEqual(expect.any(String));
+        expect(cards[1][3]).toBe(cards[0][3]);
     });
 
     it('hands "Make it" on with the Brick the card described, cut to size, and typed words with nothing', async () => {
@@ -622,5 +723,219 @@ describe('Making a Brick as a step of the answer', () => {
         const other = describeStep({ id: 'c2', name: 'make_brick', arguments: JSON.stringify({ name: 'Trip Brick', line: 'Plans trips' }) });
         expect(summaryOf([{ ...step, state: 'done' }])).toBe('Made Recipe Brick');
         expect(summaryOf([{ ...step, state: 'done' }, { ...other, state: 'done' }])).toContain('Made Trip Brick');
+    });
+});
+
+describe('A deleted Brick stops on every bot server, not only the one the owner reached', () => {
+    const SESSION = `orb_sess_v2_${'a'.repeat(64)}`;
+    const adminApiService = { validateSessionToken: vi.fn(async () => ({ userId: 'user-alice', uuid: 'uuid-alice', email: null })) };
+
+    /** One Redis that several bot servers share: what is published reaches every connection listening then. */
+    function sharedStore() {
+        const listening = new Map<string, Set<(message: string) => void>>();
+        const client = (): any => {
+            const redis: any = {
+                isOpen: true,
+                on: vi.fn(),
+                publish: vi.fn(async (channel: string, message: string) => {
+                    const heard = [...(listening.get(channel) ?? [])];
+                    for (const hear of heard) hear(message);
+                    return heard.length;
+                }),
+                duplicate: () => {
+                    const listener: any = {
+                        isOpen: false,
+                        on: vi.fn(),
+                        connect: vi.fn(async () => {
+                            listener.isOpen = true;
+                        }),
+                        subscribe: vi.fn(async (channel: string, hear: (message: string) => void) => {
+                            if (!listening.has(channel)) listening.set(channel, new Set());
+                            listening.get(channel)!.add(hear);
+                        }),
+                        quit: vi.fn(async () => {
+                            listener.isOpen = false;
+                        }),
+                    };
+                    return listener;
+                },
+            };
+            return redis;
+        };
+        return { client };
+    }
+
+    /** A bot server: its registry on the shared store, and its replies with a Brick of Alice's held for the minute. */
+    async function botServer(serverId: string, redis: any) {
+        const registry = Object.create(BotRegistry.prototype) as BotRegistry;
+        Object.assign(registry, { redis, serverId, sharedStoreSeen: true, brickListener: null });
+        let deleted = false;
+        const admin = {
+            isConfigured: () => true,
+            getBotConfiguration: vi.fn(async () =>
+                deleted
+                    ? { botId: BRICK, enabled: false, brick: { ownerId: 'user-alice', isDefault: false, deleted: true } }
+                    : { botId: BRICK, enabled: true, brick: { ownerId: 'user-alice', isDefault: false } }
+            ),
+        };
+        const replies = Object.create(DmReplyService.prototype) as DmReplyService;
+        Object.assign(replies, { botManager: { getBot: () => null, getAdminApiService: () => admin }, configCache: new Map(), missingCache: new Map() });
+        await registry.onBrickChanged((botId, ownerId) => void replies.forgetBrickOf(botId, ownerId));
+        expect((await replies.getBotConfig(BRICK))?.enabled).toBe(true);
+        return { registry, replies, admin, deleteInOrbit: () => (deleted = true) };
+    }
+
+    async function api(brickChanged: (botId: string, ownerId: string) => boolean) {
+        const botApi = new BotAPI({ getAccessGate: vi.fn() } as never, adminApiService as never, {} as never, [], { brickChanged });
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const app = (botApi as any).app;
+        const server = await new Promise<Server>((resolve) => {
+            const started = app.listen(0, () => resolve(started));
+        });
+        const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+        const post = () => fetch(`${base}/api/bots/${BRICK}/brick-changed`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SESSION}` }, body: '{}' });
+        return { post, close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
+    }
+
+    beforeEach(() => {
+        vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    });
+
+    it('deleted through server A, server B reads it again at once and stops answering', async () => {
+        const store = sharedStore();
+        const a = await botServer('server-a', store.client());
+        const b = await botServer('server-b', store.client());
+        const route = await api(brickChangedEverywhere(a.registry, (botId, ownerId) => a.replies.forgetBrickOf(botId, ownerId)));
+        try {
+            a.deleteInOrbit();
+            b.deleteInOrbit();
+            expect((await route.post()).status).toBe(204);
+            await vi.waitFor(() => expect((b.replies as any).configCache.has(BRICK)).toBe(false));
+
+            // Both servers read Orbit again before the minute is up, and both see the Brick deleted
+            expect((await a.replies.getBotConfig(BRICK))?.enabled).toBe(false);
+            expect((await b.replies.getBotConfig(BRICK))?.enabled).toBe(false);
+            expect(a.admin.getBotConfiguration).toHaveBeenCalledTimes(2);
+            expect(b.admin.getBotConfiguration).toHaveBeenCalledTimes(2);
+        } finally {
+            await route.close();
+        }
+    });
+
+    it("drops nothing on another server for someone who is not the Brick's owner", async () => {
+        const store = sharedStore();
+        const a = await botServer('server-a', store.client());
+        const b = await botServer('server-b', store.client());
+        await a.registry.tellBrickChanged(BRICK, 'user-bob');
+        await b.replies.getBotConfig(BRICK);
+        expect(b.admin.getBotConfiguration).toHaveBeenCalledTimes(1);
+    });
+
+    it('skips its own message, and ignores one it cannot read', async () => {
+        const store = sharedStore();
+        const a = await botServer('server-a', store.client());
+        const heard = vi.fn();
+        const registry = Object.create(BotRegistry.prototype) as BotRegistry;
+        const redis = store.client();
+        Object.assign(registry, { redis, serverId: 'server-c', brickListener: null });
+        await registry.onBrickChanged(heard);
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        await redis.publish('bots:brick-changed', 'not json');
+        await redis.publish('bots:brick-changed', JSON.stringify({ botId: BRICK }));
+        await registry.tellBrickChanged(BRICK, 'user-alice');
+        expect(heard).not.toHaveBeenCalled();
+        // Another server's message is heard
+        await a.registry.tellBrickChanged(BRICK, 'user-alice');
+        expect(heard).toHaveBeenCalledWith(BRICK, 'user-alice');
+    });
+
+    it('still answers the owner and drops its own copy when telling the others fails', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const forget = vi.fn(() => true);
+        const registry = { tellBrickChanged: vi.fn(async () => Promise.reject(new Error('redis timeout'))) };
+        const route = await api(brickChangedEverywhere(registry, forget));
+        try {
+            expect((await route.post()).status).toBe(204);
+            expect(forget).toHaveBeenCalledWith(BRICK, 'user-alice');
+            await vi.waitFor(() => expect(warn).toHaveBeenCalledWith(expect.stringContaining('Could not tell the other bot servers'), expect.any(Error)));
+        } finally {
+            await route.close();
+        }
+    });
+
+    it('stays on this server alone without Redis', async () => {
+        const registry = Object.create(BotRegistry.prototype) as BotRegistry;
+        Object.assign(registry, { redis: null, serverId: 'server-a', brickListener: null });
+        await expect(registry.tellBrickChanged(BRICK, 'user-alice')).resolves.toBeUndefined();
+        await expect(registry.onBrickChanged(vi.fn())).resolves.toBeUndefined();
+        Object.assign(registry, { redis: { isOpen: false } });
+        await expect(registry.tellBrickChanged(BRICK, 'user-alice')).resolves.toBeUndefined();
+    });
+});
+
+describe('Hearing Brick changes from other bot servers', () => {
+    it('tries again, less often each time, when listening cannot start, and stops trying once the server stops', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const registry = {
+            onBrickChanged: vi
+                .fn()
+                .mockRejectedValueOnce(new Error('redis busy'))
+                .mockRejectedValueOnce(new Error('redis busy'))
+                .mockResolvedValue(undefined),
+        };
+        const heard = vi.fn();
+        const { stop, firstTry } = listenForBrickChanges(registry, heard, { firstRetryMs: 1_000, maxRetryMs: 60_000 });
+        await firstTry;
+        expect(registry.onBrickChanged).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(999);
+        expect(registry.onBrickChanged).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(registry.onBrickChanged).toHaveBeenCalledTimes(2);
+        // Twice as long the next time
+        await vi.advanceTimersByTimeAsync(1_999);
+        expect(registry.onBrickChanged).toHaveBeenCalledTimes(2);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(registry.onBrickChanged).toHaveBeenCalledTimes(3);
+        expect(registry.onBrickChanged).toHaveBeenLastCalledWith(heard);
+        // Listening now: nothing more is tried
+        await vi.advanceTimersByTimeAsync(120_000);
+        expect(registry.onBrickChanged).toHaveBeenCalledTimes(3);
+        expect(warn).toHaveBeenCalledTimes(2);
+        stop();
+    });
+
+    it('tries no more once the server stops', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const registry = { onBrickChanged: vi.fn().mockRejectedValue(new Error('redis down')) };
+        const { stop, firstTry } = listenForBrickChanges(registry, vi.fn(), { firstRetryMs: 1_000, maxRetryMs: 4_000 });
+        await firstTry;
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(registry.onBrickChanged).toHaveBeenCalledTimes(2);
+        stop();
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(registry.onBrickChanged).toHaveBeenCalledTimes(2);
+    });
+
+    it('tries no more when the server stops while the first try is still out', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        let fail: (error: Error) => void = () => undefined;
+        const registry = {
+            onBrickChanged: vi.fn().mockImplementation(
+                () =>
+                    new Promise<void>((_resolve, reject) => {
+                        fail = reject;
+                    })
+            ),
+        };
+        const { stop, firstTry } = listenForBrickChanges(registry, vi.fn(), { firstRetryMs: 1_000, maxRetryMs: 4_000 });
+        // Shutdown comes while Redis has not answered the first try yet
+        stop();
+        fail(new Error('redis down'));
+        await firstTry;
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(registry.onBrickChanged).toHaveBeenCalledTimes(1);
     });
 });

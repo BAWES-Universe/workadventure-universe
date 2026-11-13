@@ -78,7 +78,7 @@
                 <BrickPicture slot="look" look={bot.characterTexture || brick.characterTextureId} size={44} />
             </BotDetailView>
         {:else if failed}
-            <p class="bkp-note bkp-bad" data-testid="brickPageFailed">{$LL.chat.brick.loadFailed()}</p>
+            <p class="bkp-note bkp-bad" data-testid="brickPageFailed">{$LL.chat.brick.brickLoadFailed()}</p>
             <button type="button" class="bkp-pill" data-testid="brickPageTryAgain" on:click={() => load(brick)}>
                 {$LL.chat.brick.tryAgain()}
             </button>

@@ -41,7 +41,8 @@ function wokaPicture(look: string): PictureStore {
             const texture = findWokaTexture(catalog, look);
             if (!texture) {
                 // The WOKAs were read and this one is no longer offered: no picture rather than the last one drawn
-                if (catalog && drawnUrl !== undefined) {
+                // (also when nothing was drawn yet here: a list that shows it again would get the last picture otherwise)
+                if (catalog) {
                     stopPicture?.();
                     stopPicture = undefined;
                     drawnUrl = undefined;

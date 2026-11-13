@@ -285,6 +285,22 @@ describe("createOneListStore", () => {
         expect(list.ids()).toEqual(["Melody", "Team"]);
     });
 
+    it('lists a folder by "Bot" once a bot joins one of its chats, after the search started', () => {
+        const list = setup();
+        const members = writable([{ id: "@me:chat.test" }, { id: "@sara:chat.test" }]);
+        const inFolder = fakeRoom("Helper", 2, { members } as unknown as Partial<ChatRoom>);
+        list.folders.set([fakeFolder("Team", [inFolder])]);
+        list.search.set("bot");
+        expect(list.ids()).toEqual([]);
+        // Nothing else of the chat changes: only who is in it
+        members.set([
+            { id: "@me:chat.test" },
+            { id: "@sara:chat.test" },
+            { id: "@bot_1c8d2e3f-2222-4333-8444-a55566667777:chat.test" },
+        ]);
+        expect(list.ids()).toEqual(["Team"]);
+    });
+
     it("drops every room subscription when unsubscribed", () => {
         const list = setup();
         const room = fakeRoom("a", 1);
@@ -503,6 +519,22 @@ describe("the chat of a Brick its owner deleted (#1996)", () => {
 
     it("is back as soon as nothing is deleted", () => {
         expect(directRoomsWith(rooms, new Set())).toEqual([]);
+    });
+
+    it("is out of Chats when someone put it in a folder, also in a folder inside one, and back with Undo", () => {
+        const inner = fakeFolder("inner", [withMembers("!nested", "@me:chat.test", studio)]);
+        const outer = fakeFolder("outer", [], []);
+        const folders = writable<RoomFolder[]>([outer]);
+        const deleted = writable<ReadonlySet<string>>(new Set([studio]));
+        let hidden: string[] = [];
+        const stop = directRoomsWithStore(writable([]), deleted, folders).subscribe((ids) => (hidden = ids));
+        expect(hidden).toEqual([]);
+        // The folder gets a folder with the Brick's chat in it after the list was read
+        outer.foldersStore.set([inner]);
+        expect(hidden).toEqual(["!nested"]);
+        deleted.set(new Set());
+        expect(hidden).toEqual([]);
+        stop();
     });
 
     it("is out of Chats as soon as its members arrive, after the chat itself", () => {

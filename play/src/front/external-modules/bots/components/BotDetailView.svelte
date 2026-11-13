@@ -289,6 +289,7 @@
             lastSavedName = bot.name || null;
             brickSaved = { description: bot.description ?? null, chatInstructions: bot.chatInstructions ?? null };
             brickAsked = { ...brickSaved };
+            brickUnsaved.clear();
         }
     } else {
         // Bot prop became null - clear currentBot to prevent errors
@@ -310,6 +311,9 @@
     /** Why a Brick's last change was not saved, in a line for the person; cleared by the next one that is. */
     let brickError: string | null = null;
 
+    /** The typed fields of this Brick whose last save failed: the error line stays until each is saved. */
+    const brickUnsaved = new Set<string>();
+    const TYPED_FIELDS: ReadonlySet<string> = new Set(["description", "chatInstructions"]);
     /** The last save asked for each Brick: the next one waits for it, so changes reach Orbit in the order they were made. */
     const brickSaving = new Map<string, Promise<boolean>>();
 
@@ -328,7 +332,13 @@
             })
             .then((saved) => {
                 if (brickSaving.get(brickId) === run) brickSaving.delete(brickId);
-                brickError = saved ? null : $LL.mapEditor.edit.bots.page.telemetry.saveFailed();
+                // Typed text that failed stays on the page unsaved: the line says so until that text is saved, and a
+                // later save of another field does not clear it. A name or switch that failed goes back on its own.
+                const typed = Object.keys(change).filter((field) => TYPED_FIELDS.has(field));
+                if (saved) typed.forEach((field) => brickUnsaved.delete(field));
+                else typed.forEach((field) => brickUnsaved.add(field));
+                brickError =
+                    !saved || brickUnsaved.size > 0 ? $LL.mapEditor.edit.bots.page.telemetry.saveFailed() : null;
                 return saved;
             });
         brickSaving.set(brickId, run);
