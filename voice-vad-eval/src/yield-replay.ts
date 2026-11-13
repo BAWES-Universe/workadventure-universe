@@ -88,7 +88,13 @@ const OFF = 0.35;
 const MIN_MS = 64;
 const GAP_MS = 96;
 
-type Provider = 'empty' | 'words';
+type Provider = 'empty' | 'words' | 'recorded';
+/** One Soniox stream as the real-provider run recorded it (soniox-record.ts): ms from the start of the clip. */
+interface RecordedStream {
+    openAt: number;
+    finishAt?: number;
+    events: [number, 'partial' | 'endpoint' | 'final' | 'failed', string?, number?][];
+}
 
 /** The detector, answering from precomputed probabilities as simulated time passes. */
 class ReplayDetector implements SessionObserver {
@@ -143,6 +149,43 @@ class ReplayDetector implements SessionObserver {
 }
 
 /**
+ * The recorded provider: the n-th stream the replay opens in a clip says what the n-th recorded stream said, at the same
+ * time after it opened (partials, endpoint, a failure) or after it was told the audio ended (the final words). A stream
+ * the recording has no counterpart for hears nothing.
+ */
+let streamsWithoutRecording = 0;
+function recordedProvider(streams: RecordedStream[]): RecognizerFactory {
+    let n = 0;
+    return (events) => {
+        const rec = streams[n++];
+        if (!rec) streamsWithoutRecording++;
+        const openedAt = sim.now;
+        let done = false;
+        const say = (e: RecordedStream['events'][number]) => {
+            if (done) return;
+            if (e[1] === 'partial') events.partial(e[2] ?? '');
+            else if (e[1] === 'endpoint') events.endpoint?.();
+            else if (e[1] === 'final') (done = true), events.final(e[2] ?? '');
+            else (done = true), events.failed(e[2] ?? '', e[3] === undefined || e[3] === null ? undefined : { status: e[3] });
+        };
+        const afterFinish = (e: RecordedStream['events'][number]) => rec?.finishAt !== undefined && e[0] >= rec.finishAt && (e[1] === 'final' || e[1] === 'failed');
+        if (rec) for (const e of rec.events) if (!afterFinish(e)) setTimeout(() => say(e), Math.max(1, e[0] - rec.openAt));
+        return {
+            pauseMs: PROVIDER_PAUSE_MS,
+            push: () => undefined,
+            finish: () => {
+                const last = rec?.events.filter(afterFinish) ?? [];
+                if (!rec || !last.length) setTimeout(() => say([0, 'final', '']), FINAL_DELAY_MS);
+                for (const e of last) setTimeout(() => say(e), Math.max(1, e[0] - rec.finishAt!));
+            },
+            close: () => {
+                done = true;
+            },
+        };
+    };
+}
+
+/**
  * A scripted provider: words (one per 300 ms of audio sent, `word` for a command clip) or nothing at all. On a speech clip
  * it counts only audio from the person's onset on: background before they start never turns into their words.
  */
@@ -192,7 +235,7 @@ interface Outcome {
 export type Behaviour = 'today' | 'confirm' | 'dip' | 'strict' | 'hold';
 export const BEHAVIOURS: Behaviour[] = ['today', 'confirm', 'dip', 'strict', 'hold'];
 
-function replay(pcm: Int16Array, probs: Float32Array, behaviour: Behaviour, kind: Provider, word: string | undefined, onsetMs: number, silenceMs: number | undefined): Outcome {
+function replay(pcm: Int16Array, probs: Float32Array, behaviour: Behaviour, kind: Provider, word: string | undefined, onsetMs: number, silenceMs: number | undefined, recorded?: RecordedStream[]): Outcome {
     sim.reset();
     const outcome: Outcome = { pauses: 0, heldMs: 0, resumes: 0, continues: 0, spanMs: 0, events: [], why: {} };
     let state: 'playing' | 'held' | 'dipped' | 'stopped' = 'playing';
@@ -273,7 +316,7 @@ function replay(pcm: Int16Array, probs: Float32Array, behaviour: Behaviour, kind
         },
     };
     const recognition = new Recognition({
-        factory: provider(kind, word, onsetMs),
+        factory: kind === 'recorded' ? recordedProvider(recorded ?? []) : provider(kind, word, onsetMs),
         maxUtteranceMs: 180000,
         counters,
         send: () => undefined,
@@ -305,8 +348,9 @@ function replay(pcm: Int16Array, probs: Float32Array, behaviour: Behaviour, kind
 }
 
 // ---- Run ----
-const [data, rawPath, out, which, windowArg] = process.argv.slice(2);
-if (!data || !rawPath || !out || !['tune', 'report', 'all'].includes(which ?? '')) throw new Error('usage: yield-replay.ts <data dir> <raw.jsonl.gz> <out dir> <tune|report|all> [quiet window ms]');
+const [data, rawPath, out, which, windowArg, recordPath] = process.argv.slice(2);
+if (!data || !rawPath || !out || !['tune', 'report', 'all', 'recorded'].includes(which ?? '') || (which === 'recorded' && !recordPath))
+    throw new Error('usage: yield-replay.ts <data dir> <raw.jsonl.gz> <out dir> <tune|report|all> [quiet window ms]\n   or: yield-replay.ts <data dir> <played raw.jsonl.gz> <out dir> recorded <quiet window ms> <soniox-record.jsonl>');
 const silenceMs = windowArg === undefined ? undefined : Number(windowArg);
 if (silenceMs !== undefined && !(silenceMs > 0)) throw new Error(`not a quiet window: ${windowArg}`);
 mkdirSync(out, { recursive: true });
@@ -329,6 +373,26 @@ for (const item of everything) {
 const crossing = [...sides].filter(([, s]) => s.size > 1).map(([k]) => k);
 if (crossing.length) throw new Error(`the tune and report halves overlap: ${crossing.slice(0, 5).join(', ')}`);
 if (new Set(everything.map((i) => i.id)).size !== everything.length) throw new Error('duplicate clip ids');
+if (which === 'recorded') {
+    // The real-provider run: its clips, the audio as it was played, and what Soniox said when
+    const { audioOf } = await import('./played.ts');
+    const records = readFileSync(recordPath!, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as { id: string; group: string; leadExtraMs: number; streams: RecordedStream[] });
+    const byId = new Map(everything.map((i) => [i.id, i]));
+    const rows: string[] = [];
+    for (const rec of records) {
+        const item = byId.get(rec.id);
+        const probs = probsById.get(rec.id);
+        if (!item || !probs) throw new Error(`missing clip or probabilities for ${rec.id}`);
+        if (item.split !== 'report') throw new Error(`not a report-half clip: ${rec.id}`);
+        const played = audioOf(item);
+        const result: Record<string, Outcome> = {};
+        for (const behaviour of BEHAVIOURS) result[behaviour] = replay(played.pcm, probs, behaviour, 'recorded', undefined, played.onsetMs ?? 0, silenceMs, rec.streams);
+        rows.push(JSON.stringify({ id: item.id, kind: item.kind, set: item.set, label: item.label, condition: item.condition, split: item.split, group: rec.group, provider: 'recorded', seconds: played.pcm.length / RATE, onsetMs: played.onsetMs, offsetMs: played.offsetMs, leadExtraMs: played.leadExtraMs, result }));
+    }
+    writeFileSync(join(out, `yield-replay-recorded-${silenceMs ?? 'default'}.jsonl`), rows.join('\n') + '\n');
+    console.error(`done: ${rows.length} recorded clips; streams opened in the replay with no recorded counterpart: ${streamsWithoutRecording} (over all behaviours)`);
+    process.exit(0);
+}
 const stride = Number(process.env.REPLAY_STRIDE ?? 1);
 const manifest = everything
     .filter((item) => which === 'all' || item.split === which)

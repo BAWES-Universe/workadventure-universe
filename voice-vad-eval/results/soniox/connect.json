@@ -1,0 +1,48 @@
+{
+  "streams": 10,
+  "openMsMedian": 162,
+  "openMsMax": 353,
+  "finishedAfterEndMsMedian": 289,
+  "results": [
+    {
+      "openMs": 160,
+      "finishedMs": 256
+    },
+    {
+      "openMs": 353,
+      "finishedMs": 367
+    },
+    {
+      "openMs": 201,
+      "finishedMs": 296
+    },
+    {
+      "openMs": 125,
+      "finishedMs": 273
+    },
+    {
+      "openMs": 162,
+      "finishedMs": 289
+    },
+    {
+      "openMs": 142,
+      "finishedMs": 258
+    },
+    {
+      "openMs": 280,
+      "finishedMs": 376
+    },
+    {
+      "openMs": 256,
+      "finishedMs": 372
+    },
+    {
+      "openMs": 141,
+      "finishedMs": 280
+    },
+    {
+      "openMs": 132,
+      "finishedMs": 258
+    }
+  ]
+}
