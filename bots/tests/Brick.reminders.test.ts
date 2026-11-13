@@ -238,6 +238,18 @@ describe('the Brick speaks in the owner’s own chat, on its own account', () =>
         expect(sendMessage).not.toHaveBeenCalled();
     });
 
+    it('writes a chat the shared store could not take again the next time it is seen, so a restart does not lose it', async () => {
+        const { bridge, deps } = bridgeWith({});
+        const remember = deps.rooms.rememberDmRoomOf as ReturnType<typeof vi.fn>;
+        remember.mockRejectedValueOnce(new Error('redis down'));
+        const note = (bridge as unknown as { noteDirectRoom(b: string, u: string, r: string): Promise<void> }).noteDirectRoom.bind(bridge);
+        await note(BRICK, SARA, '!room:matrix.test');
+        await note(BRICK, SARA, '!room:matrix.test');
+        // The first write failed, so the second sighting wrote it again; a third finds nothing left to do
+        await note(BRICK, SARA, '!room:matrix.test');
+        expect(remember).toHaveBeenCalledTimes(2);
+    });
+
     it('says nothing in a room someone else is in', async () => {
         const { bridge, sendMessage } = bridgeWith({ members: [SARA, BRICK_USER, '@omar:matrix.test'] });
         expect(await bridge.speakInDirectChat(BRICK, SARA, 'x', 't')).toEqual({ ok: false, reason: 'no_chat' });

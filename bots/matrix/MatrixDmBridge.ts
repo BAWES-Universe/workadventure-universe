@@ -469,12 +469,23 @@ export class MatrixDmBridge implements MatrixEventHandler {
 
     private async noteDirectRoom(botId: string, matrixUserId: string, roomId: string): Promise<void> {
         const key = MatrixDmBridge.pair(botId, matrixUserId);
-        if (this.directRooms.get(key) === roomId) return;
+        // Known here and kept in the shared store: nothing to do. A chat the store could not take is written again the next time it is seen,
+        // so a restart does not lose it (and a reminder is not told "no chat" for a chat that is there)
+        if (this.directRooms.get(key) === roomId && !this.unkeptRooms.has(key)) return;
         this.directRooms.delete(key);
         this.directRooms.set(key, roomId);
         if (this.directRooms.size > DIRECT_ROOMS_MAX) this.directRooms.delete(this.directRooms.keys().next().value!);
-        await this.deps.rooms?.rememberDmRoomOf?.(botId, matrixUserId, roomId).catch(() => undefined);
+        try {
+            await this.deps.rooms?.rememberDmRoomOf?.(botId, matrixUserId, roomId);
+            this.unkeptRooms.delete(key);
+        } catch {
+            this.unkeptRooms.add(key);
+            if (this.unkeptRooms.size > DIRECT_ROOMS_MAX) this.unkeptRooms.delete(this.unkeptRooms.keys().next().value!);
+        }
     }
+
+    /** Direct chats the shared store could not take when they were noted: written again the next time they are seen. */
+    private unkeptRooms = new Set<string>();
 
     /** The direct chat of this bot and this person, when one is known and still theirs alone. */
     private async directRoomOf(botId: string, matrixUserId: string): Promise<string | null> {
