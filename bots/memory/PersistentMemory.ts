@@ -13,6 +13,7 @@ import { copyHeard, type Heard } from './Heard';
 import { MemoryStorage } from './MemoryStorage';
 import type { ItemForgetNotice, MemoryForgetNotice } from './ForgetNotice';
 import { dropItems } from './MemoryItems';
+import { ForgetQueueFile, MAX_PENDING_FORGETS } from './ForgetQueueFile';
 
 export type ConversationPurpose = 'navigation' | 'information' | 'social' | 'support' | 'entertainment' | 'unknown';
 
@@ -22,6 +23,8 @@ export interface PersistentMemoryConfig {
     adminApiUrl?: string;
     debounceInterval?: number; // Debounce interval for conversation history saves (default: 30 seconds)
     immediateSaveEnabled?: boolean; // Whether to immediately save emotion changes (default: true)
+    /** Where forgets Orbit has not taken yet are kept across a restart (#2031). Without it they are kept in this process only. */
+    forgetQueueFile?: string;
 }
 
 export class PersistentMemory extends ConversationMemory {
@@ -44,9 +47,8 @@ export class PersistentMemory extends ConversationMemory {
      */
     private unreportedItemForgets: Map<string, { botId: string; userUuid: string; itemKey: string; kind: string; since: number; first: number }> = new Map();
     private unreportedRetryTimer: NodeJS.Timeout | null = null;
+    private forgetQueueFile: ForgetQueueFile | null = null;
     private static readonly UNREPORTED_RETRY_MS = 30 * 1000;
-    /** A retry safety guard, not a limit anyone sees: a forget Orbit has not taken in a day is let go, so a report it will never take is not tried for ever. */
-    private static readonly UNREPORTED_GIVE_UP_MS = 24 * 60 * 60 * 1000;
     /** An older Orbit repeats a Forget for a minute: longer than that plus one 30-second privacy check */
     private static readonly FORGET_REPEAT_WINDOW_MS = 2 * 60 * 1000;
     /**
@@ -72,6 +74,30 @@ export class PersistentMemory extends ConversationMemory {
         // Orbit answers a save with the people a manager asked the bot to forget (#435)
         this.memoryStorage.setForgetHandler((botId, notice) => this.forget(botId, notice));
         this.memoryStorage.setItemForgetHandler((botId, items) => this.forgetItems(botId, items));
+        if (config.forgetQueueFile) {
+            // What Orbit had not taken before the last restart is still owed to it, and is tried again now
+            this.forgetQueueFile = new ForgetQueueFile(config.forgetQueueFile);
+            for (const entry of this.forgetQueueFile.load()) this.unreportedItemForgets.set(`${entry.botId}|${entry.userUuid}|${entry.itemKey}`, entry);
+            if (this.unreportedItemForgets.size > 0) this.armUnreportedRetry();
+        }
+    }
+
+    /** Takes out of a memory just loaded from Orbit the things this person forgot that Orbit has not taken yet (#2031). */
+    private dropWaitingForgets(botId: string, memory: BotPlayerMemory): void {
+        if (this.unreportedItemForgets.size === 0 || !memory.userUuid) return;
+        const keys = new Set<string>();
+        const at = new Map<string, number>();
+        for (const entry of this.unreportedItemForgets.values()) {
+            if (entry.botId !== botId || entry.userUuid !== memory.userUuid) continue;
+            keys.add(entry.itemKey);
+            at.set(entry.itemKey, entry.since);
+        }
+        if (keys.size > 0) dropItems(memory, keys, at);
+    }
+
+    /** Write what is waiting to the file, so a restart does not lose it. */
+    private persistUnreported(): void {
+        this.forgetQueueFile?.save([...this.unreportedItemForgets.values()]);
     }
 
     /**
@@ -198,6 +224,13 @@ export class PersistentMemory extends ConversationMemory {
         // an earlier one, or what they said in between would be kept. "first" is when it first failed, so one that Orbit
         // never takes is let go after a day rather than tried for ever.
         this.unreportedItemForgets.set(mapKey, { ...entry, since: Math.max(entry.since ?? now, before?.since ?? 0), first: before?.first ?? entry.first ?? entry.since ?? now });
+        // A safety limit nobody sees: past it the oldest wait no longer, so the queue cannot grow without end
+        while (this.unreportedItemForgets.size > MAX_PENDING_FORGETS) {
+            const oldest = this.unreportedItemForgets.keys().next().value as string;
+            this.unreportedItemForgets.delete(oldest);
+            console.warn('[PersistentMemory] Too many forgets waiting for Orbit; letting the oldest go');
+        }
+        this.persistUnreported();
         this.armUnreportedRetry();
     }
 
@@ -214,20 +247,21 @@ export class PersistentMemory extends ConversationMemory {
     /** Tell Orbit again every forget it has not yet taken (for one bot, or for all). Those it takes now are let go. */
     private async reportUnreportedForgets(botId?: string): Promise<void> {
         const waiting = [...this.unreportedItemForgets].filter(([, entry]) => !botId || entry.botId === botId);
+        let changed = false;
         await Promise.all(
             waiting.map(async ([mapKey, entry]) => {
                 const taken = await this.memoryStorage.reportForgottenItem(entry.botId, entry.userUuid, entry.itemKey, entry.kind, entry.since);
                 // A later ask for the same thing may have been kept while Orbit was answering (it carries a later time): only the
                 // ask Orbit just answered is let go. Compared by that time, not by the object, which a re-arming may have copied.
-                const ownIt = this.unreportedItemForgets.get(mapKey)?.since === entry.since;
-                if (taken) {
-                    if (ownIt) this.unreportedItemForgets.delete(mapKey);
-                } else if (ownIt && Date.now() - entry.first > PersistentMemory.UNREPORTED_GIVE_UP_MS) {
-                    console.warn(`[PersistentMemory] Orbit has not taken a forget for bot ${entry.botId} in a day; letting it go`);
+                // One Orbit has not taken is kept however long that takes (it is let go only when Orbit refuses it for good, which
+                // reads as taken here), so a long outage never leaves a saved thing free to come back.
+                if (taken && this.unreportedItemForgets.get(mapKey)?.since === entry.since) {
                     this.unreportedItemForgets.delete(mapKey);
+                    changed = true;
                 }
             })
         );
+        if (changed) this.persistUnreported();
         if (this.unreportedItemForgets.size > 0) this.armUnreportedRetry();
     }
 
@@ -868,6 +902,8 @@ export class PersistentMemory extends ConversationMemory {
             for (const memory of memories) {
                 if (memory.userUuid) {
                     const loadedMemoryKey = `${botId}_${memory.userUuid}`;
+                    // What Orbit still has saved may hold a thing the person forgot while it could not be told: it is dropped again
+                    this.dropWaitingForgets(botId, memory);
                     this.loadedMemoriesByUuid.set(loadedMemoryKey, memory);
                     storedCount++;
                 } else {
