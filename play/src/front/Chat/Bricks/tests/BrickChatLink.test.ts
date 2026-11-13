@@ -36,8 +36,8 @@ function listWithLink(href: string): { list: HTMLElement; link: HTMLAnchorElemen
     document.body.appendChild(list);
     return { list, link: list.querySelector("a")! };
 }
-function tap(target: Element, type = "click"): MouseEvent {
-    const event = new MouseEvent(type, { bubbles: true, cancelable: true });
+function tap(target: Element, type = "click", button = type === "auxclick" ? 1 : 0): MouseEvent {
+    const event = new MouseEvent(type, { bubbles: true, cancelable: true, button });
     target.dispatchEvent(event);
     return event;
 }
@@ -79,6 +79,8 @@ describe("a link to a Brick's chat inside an answer", () => {
 
         // A middle click would open the game again in a new tab: it opens the chat too
         expect(tap(link, "auxclick").defaultPrevented).toBe(true);
+        // A right click opens the browser's menu as anywhere else
+        expect(tap(link, "auxclick", 2).defaultPrevented).toBe(false);
 
         action.destroy();
         expect(tap(link).defaultPrevented).toBe(false);

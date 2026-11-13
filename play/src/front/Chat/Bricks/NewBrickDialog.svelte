@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onMount } from "svelte";
+    import { onDestroy, onMount } from "svelte";
     import type { Action } from "svelte/action";
     import { fly } from "svelte/transition";
     import { closeModal } from "svelte-modals";
@@ -31,6 +31,9 @@
     let tab: Tab = "bricks";
     let busy = false;
     let advancedOpen = false;
+    // Closed before Orbit answered: the Brick is still made and listed, but this dialog closes nothing and opens nothing
+    let dismissed = false;
+    onDestroy(() => (dismissed = true));
     // The name follows the colour until the person writes their own
     let name = suggestedName(look);
     let nameIsOurs = true;
@@ -57,6 +60,7 @@
             warningMessageStore.addWarningMessage($LL.chat.brick.makeFailed());
             return;
         }
+        if (dismissed || !isOpen) return;
         closeModal();
         openBrickChat(made.id).catch((error) => console.error(error));
     }

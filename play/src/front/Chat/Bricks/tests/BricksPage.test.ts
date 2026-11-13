@@ -27,6 +27,7 @@ const game = vi.hoisted(() => ({
     deleteMyBrick: vi.fn<(brickId: string) => Promise<unknown>>(),
     undoMyBrick: vi.fn<(brickId: string) => Promise<unknown>>(),
     tellBrickChanged: vi.fn<(brickId: string) => Promise<void>>(),
+    getMyUsage: vi.fn<() => Promise<unknown>>(),
     openModal: vi.fn<(component: unknown) => void>(),
     getBot: vi.fn<(brickId: string) => Promise<unknown>>(),
     changeMyBrick: vi.fn<(brickId: string, change: Record<string, unknown>) => Promise<unknown>>(),
@@ -66,6 +67,7 @@ vi.mock("../../../external-modules/bots/services/BotApiService", () => ({
         isInitialized: () => true,
         getMyMemory: () => Promise.resolve({ items: [] }),
         getBrickFiles: () => Promise.resolve({}),
+        getMyUsage: game.getMyUsage,
     },
 }));
 vi.mock("../../../Phaser/Game/GameManager", () => ({ gameManager: {} }));
@@ -124,6 +126,7 @@ import { loadLocale } from "../../../../i18n/i18n-util.sync";
 import { setLocale } from "../../../../i18n/i18n-svelte";
 import { bricksPageOpenStore } from "../../Stores/ChatStore";
 import { forgetMyBricks } from "../MyBricksStore";
+import { forgetMyUsage } from "../UsageStore";
 import BricksPage from "../BricksPage.svelte";
 
 const BRICK = "0b7c1d2e-1111-4222-8333-944455556666";
@@ -167,6 +170,13 @@ describe("the Bricks page (#1995)", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         forgetMyBricks();
+        forgetMyUsage();
+        game.getMyUsage.mockResolvedValue({
+            chat: { left: 1, words: "plenty", fullAgainAt: null },
+            computer: null,
+            storage: null,
+            extra: null,
+        });
         bricksPageOpenStore.set(true);
         game.ensureMyBrick.mockResolvedValue({ brick: card(), made: false, deleted: false });
         game.listMyBricks.mockResolvedValue({ bricks: [card(), made()] });
@@ -317,6 +327,7 @@ describe("the Bricks page (#1995)", () => {
     it("says when the Bricks could not be loaded, and tries again on a tap", async () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
         game.ensureMyBrick.mockRejectedValueOnce(new Error("offline"));
+        game.listMyBricks.mockRejectedValueOnce(new Error("offline"));
         await open();
         expect(byId("bricksLoadFailed")?.textContent).toBe("Couldn't load your Bricks.");
         byId("bricksTryAgain")?.click();
@@ -324,6 +335,30 @@ describe("the Bricks page (#1995)", () => {
         expect(byId("bricksLoadFailed")).toBeNull();
         expect(rows()).toHaveLength(2);
         warn.mockRestore();
+    });
+
+    it("shows the Bricks the list came with, and the failed line, when the Brick everyone gets could not be asked for", async () => {
+        game.ensureMyBrick.mockRejectedValueOnce(new Error("offline"));
+        await open();
+        expect(rows()).toHaveLength(2);
+        expect(byId("bricksNone")).toBeNull();
+        expect(byId("bricksLoadFailed")?.textContent).toBe("Couldn't load your Bricks.");
+        byId("bricksTryAgain")?.click();
+        await settle();
+        expect(byId("bricksLoadFailed")).toBeNull();
+        expect(rows()).toHaveLength(2);
+    });
+
+    it("says the list failed, never that they have none, when only the Brick everyone gets could be read", async () => {
+        game.listMyBricks.mockRejectedValueOnce(new Error("offline"));
+        await open();
+        expect(rows()).toHaveLength(1);
+        expect(byId("bricksNone")).toBeNull();
+        expect(byId("bricksLoadFailed")?.textContent).toBe("Couldn't load your Bricks.");
+        byId("bricksTryAgain")?.click();
+        await settle();
+        expect(byId("bricksLoadFailed")).toBeNull();
+        expect(rows()).toHaveLength(2);
     });
 
     it("says so to someone who has no Brick", async () => {
@@ -478,7 +513,12 @@ describe("the Bricks page (#1995)", () => {
         });
 
         it("saves its name, line and Personality through the Brick's own route once typing stops, only what changed", async () => {
-            game.changeMyBrick.mockImplementation((_id, change) => Promise.resolve({ brick: made(change) }));
+            // Orbit keeps every change: each answer is the Brick with all of them so far
+            let kept: Record<string, unknown> = {};
+            game.changeMyBrick.mockImplementation((_id, change) => {
+                kept = { ...kept, ...change };
+                return Promise.resolve({ brick: made(kept) });
+            });
             await open();
             await openPage();
             const type = (selector: string, value: string) => {
@@ -498,6 +538,107 @@ describe("the Bricks page (#1995)", () => {
             });
             expect(game.changeMyBrick).toHaveBeenCalledWith(MADE, { name: "Mum's Recipes" });
             expect(game.changeMyBrick).toHaveBeenCalledTimes(2);
+            // Back on the list, its row shows both: neither answer took back the other change
+            await click("edit-panel-back");
+            const row = target.querySelectorAll<HTMLElement>('[data-testid="bricksRow"]');
+            const text = [...row].map((one) => one.textContent ?? "").join(" | ");
+            expect(text).toContain("Mum's Recipes");
+            expect(text).toContain("Keeps the family recipes, and Mum's.");
+        });
+
+        it("keeps saying a line was not saved while a later save of another field goes through", async () => {
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+            await open();
+            await openPage();
+            const type = (selector: string, value: string) => {
+                const field = target.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector);
+                if (!field) throw new Error(`no ${selector}`);
+                field.value = value;
+                field.dispatchEvent(new Event("input", { bubbles: true }));
+            };
+            game.changeMyBrick.mockRejectedValueOnce(new Error("offline"));
+            type('[data-testid="bot-description"]', "Keeps the family recipes, and Mum's.");
+            await new Promise<void>((resolve) => {
+                setTimeout(resolve, 600);
+            });
+            await settle();
+            expect(byId("brick-save-error")).not.toBeNull();
+
+            game.changeMyBrick.mockImplementation((_id, change) => Promise.resolve({ brick: made(change) }));
+            type('[data-testid="bot-name"]', "Mum's Recipes");
+            await new Promise<void>((resolve) => {
+                setTimeout(resolve, 1100);
+            });
+            await settle();
+            expect(game.changeMyBrick).toHaveBeenLastCalledWith(MADE, { name: "Mum's Recipes" });
+            // The line is still not saved, and the page still says so
+            expect(byId("brick-save-error")).not.toBeNull();
+
+            // Once the line is saved, it stops saying so
+            type('[data-testid="bot-description"]', "Keeps the family recipes, and Mum's!");
+            await new Promise<void>((resolve) => {
+                setTimeout(resolve, 600);
+            });
+            await settle();
+            expect(byId("brick-save-error")).toBeNull();
+            warn.mockRestore();
+            error.mockRestore();
+        });
+
+        it("sends a change made while a save is on its way after it, and keeps saying the failed line is unsaved", async () => {
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+            await open();
+            await openPage();
+            const type = (selector: string, value: string) => {
+                const field = target.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector);
+                if (!field) throw new Error(`no ${selector}`);
+                field.value = value;
+                field.dispatchEvent(new Event("input", { bubbles: true }));
+            };
+            const wait = (ms: number) =>
+                new Promise<void>((resolve) => {
+                    setTimeout(resolve, ms);
+                });
+            // The line's save hangs until the test lets it fail
+            let failLine: (error: Error) => void = () => undefined;
+            game.changeMyBrick.mockImplementationOnce(
+                () =>
+                    new Promise((_resolve, reject) => {
+                        failLine = reject;
+                    })
+            );
+            type('[data-testid="bot-description"]', "Keeps the family recipes, and Mum's.");
+            await wait(600);
+            await settle();
+            expect(game.changeMyBrick).toHaveBeenCalledTimes(1);
+
+            // The name changes while the line is still on its way: its save waits for the line's
+            game.changeMyBrick.mockImplementation((_id, change) => Promise.resolve({ brick: made(change) }));
+            type('[data-testid="bot-name"]', "Mum's Recipes");
+            await wait(1100);
+            await settle();
+            expect(game.changeMyBrick).toHaveBeenCalledTimes(1);
+
+            failLine(new Error("offline"));
+            await settle();
+            await settle();
+            expect(game.changeMyBrick).toHaveBeenCalledTimes(2);
+            expect(game.changeMyBrick).toHaveBeenLastCalledWith(MADE, { name: "Mum's Recipes" });
+            // The name was saved, the line was not: the page still says so
+            expect(byId("brick-save-error")).not.toBeNull();
+
+            // The line is sent again with the next edit, and once it is saved the page stops saying so
+            type('[data-testid="bot-description"]', "Keeps the family recipes, and Mum's!");
+            await wait(600);
+            await settle();
+            expect(game.changeMyBrick).toHaveBeenLastCalledWith(MADE, {
+                description: "Keeps the family recipes, and Mum's!",
+            });
+            expect(byId("brick-save-error")).toBeNull();
+            warn.mockRestore();
+            error.mockRestore();
         });
 
         it("says so when the Brick could not be read, and reads it again on a tap", async () => {
@@ -505,10 +646,21 @@ describe("the Bricks page (#1995)", () => {
             game.getBot.mockRejectedValueOnce(new Error("offline"));
             await open();
             await openPage();
-            expect(byId("brickPageFailed")).not.toBeNull();
+            expect(byId("brickPageFailed")?.textContent?.trim()).toBe("Couldn't load this Brick.");
             await click("brickPageTryAgain");
             expect(byId("brickPageFailed")).toBeNull();
             expect(target.querySelector<HTMLInputElement>('[data-testid="bot-name"]')?.value).toBe("Recipe Brick");
+            warn.mockRestore();
+        });
+
+        it("can still delete a Brick that could not be read, from what its row knows", async () => {
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            game.getBot.mockRejectedValueOnce(new Error("offline"));
+            await open();
+            await openPage();
+            expect(byId("brickPageFailed")).not.toBeNull();
+            await click("brickDelete");
+            expect(byId("brickDeleteAsk")?.textContent).toContain("Recipe Brick");
             warn.mockRestore();
         });
 
@@ -570,6 +722,45 @@ describe("the Bricks page (#1995)", () => {
             await click("brickDeleteConfirm");
             expect(game.warn).toHaveBeenCalledWith("Couldn't delete the Brick. Try again.");
             expect(byId("brickPage")).not.toBeNull();
+        });
+    });
+
+    describe("the Usage row (#1999)", () => {
+        it("sits under the list and says in a line where the Universe AI bar is", async () => {
+            await open();
+            const row = byId("bricksUsageRow");
+            expect(row?.textContent?.replace(/\s+/g, " ").trim()).toBe("Usage Universe AI · plenty left");
+        });
+
+        it("says when it is low, and when it is full again", async () => {
+            game.getMyUsage.mockResolvedValue({
+                chat: { left: 0.1, words: "low", fullAgainAt: new Date(Date.now() + 3_600_000).toISOString() },
+                computer: null,
+                storage: null,
+                extra: null,
+            });
+            await open();
+            expect(byId("bricksUsageRow")?.textContent).toMatch(/Universe AI · almost used up · full again at /);
+        });
+
+        it("still works when the usage could not be read", async () => {
+            game.getMyUsage.mockRejectedValue(new Error("down"));
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            await open();
+            warn.mockRestore();
+            expect(byId("bricksUsageRow")?.textContent?.replace(/\s+/g, " ").trim()).toBe("Usage Universe AI");
+        });
+
+        it("opens the Usage page, and Back returns to the Bricks", async () => {
+            await open();
+            byId("bricksUsageRow")?.querySelector<HTMLElement>("button")?.click();
+            await settle();
+            expect(byId("usagePage")).not.toBeNull();
+            expect(byId("bricksPage")).toBeNull();
+            target.querySelector<HTMLElement>('[data-testid="edit-panel-back"]')?.click();
+            await settle();
+            expect(byId("usagePage")).toBeNull();
+            expect(rows()).toHaveLength(2);
         });
     });
 });

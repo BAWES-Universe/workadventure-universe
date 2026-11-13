@@ -54,6 +54,8 @@ const HELLO_TIMEOUT_MS = 60000;
 const DM_STATUS_TIMEOUT_MS = 10000;
 /** How long a device waits to be told who makes a chat (#1995) before it opens the chat the way it always did */
 const DIRECT_CHAT_TIMEOUT_MS = 5000;
+/** How long a change to one of the person's Bricks may take before it counts as failed, so no switch or button hangs. */
+const BRICK_WRITE_TIMEOUT_MS = 20_000;
 
 export function isOrbitSessionResponse(value: unknown): value is { version: 2; sessionId: string; expiresAt: number } {
     if (!value || typeof value !== "object") return false;
@@ -1140,6 +1142,33 @@ export class BotApiService {
         return response.json();
     }
 
+    /**
+     * A change to one of the person's Bricks, with a deadline: past it the request is dropped and this throws, so the
+     * caller's usual failure shows instead of a switch or button that waits for good.
+     */
+    private async brickWrite(endpoint: string, options: RequestInit): Promise<unknown> {
+        const stop = new AbortController();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        // Raced as well as aborted: the Orbit sign-in that comes first in a request does not listen for the abort
+        const late = new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => {
+                stop.abort();
+                reject(new Error("Orbit did not answer in time"));
+            }, BRICK_WRITE_TIMEOUT_MS);
+        });
+        try {
+            // The answer's body is read inside the same deadline: headers that come in time with a body that never
+            // ends would otherwise hold the switch as long as the connection lives
+            const answer = (async () => {
+                const response = await this.fetch(endpoint, { ...options, signal: stop.signal });
+                return (await response.json()) as unknown;
+            })();
+            return await Promise.race([answer, late]);
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
     /** The signed-in person's Bricks, for their Bricks page: the one everyone gets first, then the ones they made. */
     async listMyBricks(): Promise<unknown> {
         const response = await this.fetch("/api/bricks");
@@ -1148,11 +1177,10 @@ export class BotApiService {
 
     /** Turns one of the person's own Bricks on or off. Answers with the Brick as it is now. */
     async setBrickEnabled(brickId: string, enabled: boolean): Promise<unknown> {
-        const response = await this.fetch(`/api/bricks/${encodeURIComponent(brickId)}`, {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}`, {
             method: "PATCH",
             body: JSON.stringify({ enabled }),
         });
-        return response.json();
     }
 
     /**
@@ -1160,11 +1188,10 @@ export class BotApiService {
      * switch. Answers with `{ brick }`, its card as it is now. Throws when Orbit refuses or can't be reached.
      */
     async changeMyBrick(brickId: string, change: BrickChange): Promise<unknown> {
-        const response = await this.fetch(`/api/bricks/${encodeURIComponent(brickId)}`, {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}`, {
             method: "PATCH",
             body: JSON.stringify(change),
         });
-        return response.json();
     }
 
     /**
@@ -1172,14 +1199,30 @@ export class BotApiService {
      * `{ brick }`. Throws when Orbit refuses or can't be reached.
      */
     async makeMyBrick(brick: { name: string; characterTextureId?: string }): Promise<unknown> {
-        const response = await this.fetch("/api/bricks", { method: "POST", body: JSON.stringify(brick) });
+        return await this.brickWrite("/api/bricks", { method: "POST", body: JSON.stringify(brick) });
+    }
+
+    /**
+     * The signed-in person's Usage page (game #1999): one bar and plain words for Universe AI, computer time and storage
+     * for someone whose Brick uses a computer, and one line while they have extra usage. Throws when Orbit can't be reached.
+     */
+    async getMyUsage(): Promise<unknown> {
+        const response = await this.fetch("/api/me/usage");
+        return response.json();
+    }
+
+    /**
+     * "Ask for more" on the Usage page, when computer time is used up. Only a request to the Universe team: no debt.
+     * Throws when Orbit refuses or can't be reached.
+     */
+    async askForMoreUsage(): Promise<unknown> {
+        const response = await this.fetch("/api/me/usage/ask-for-more", { method: "POST" });
         return response.json();
     }
 
     /** Deletes one of the person's own Bricks: it stops at once and waits under Deleted, with Undo. */
     async deleteMyBrick(brickId: string): Promise<unknown> {
-        const response = await this.fetch(`/api/bricks/${encodeURIComponent(brickId)}`, { method: "DELETE" });
-        return response.json();
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}`, { method: "DELETE" });
     }
 
     /**
@@ -1217,8 +1260,7 @@ export class BotApiService {
 
     /** Brings a deleted Brick back while it still waits. Answers with the Brick as it is now. */
     async undoMyBrick(brickId: string): Promise<unknown> {
-        const response = await this.fetch(`/api/bricks/${encodeURIComponent(brickId)}/undo`, { method: "POST" });
-        return response.json();
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/undo`, { method: "POST" });
     }
 
     /**
@@ -1248,18 +1290,19 @@ export class BotApiService {
     /**
      * The one chat of this person and a bot (game #1995), asked by a device that has no chat with it yet, before it
      * makes one: the bot server answers with the chat they already have, "make it" (one device at a time is told so),
-     * or "ask again in a moment". Undefined when it can't say (direct messages off, an older bot server, no answer in
-     * time, any error): the caller then opens the chat the way it always did.
+     * or "ask again in a moment". Undefined when it can't say (direct messages off, an older bot server, any error):
+     * the caller then opens the chat the way it always did. No answer in time is "ask again in a moment": another
+     * device may be making the chat right now, so this one never makes a second.
      */
     async askDirectChat(botId: string, chatId: string): Promise<unknown> {
         if (!this.botServerUrl) return undefined;
         const stop = new AbortController();
         let timer: ReturnType<typeof setTimeout> | undefined;
         // Raced as well as aborted: the Orbit sign-in that comes first in a request does not listen for the abort
-        const late = new Promise<undefined>((resolve) => {
+        const late = new Promise<unknown>((resolve) => {
             timer = setTimeout(() => {
                 stop.abort();
-                resolve(undefined);
+                resolve({ wait: true });
             }, DIRECT_CHAT_TIMEOUT_MS);
         });
         const asking = (async () => {

@@ -7,11 +7,13 @@
     import { warningMessageStore } from "../../Stores/ErrorStore";
     import { bricksPageOpenStore } from "../Stores/ChatStore";
     import PageButton from "../../external-modules/bots/components/page/PageButton.svelte";
+    import PageGroup from "../../external-modules/bots/components/page/PageGroup.svelte";
     import { shortDay, type BrickCard, type DeletedBrickCard } from "./Brick";
     import BrickPage from "./BrickPage.svelte";
     import BrickPicture from "./BrickPicture.svelte";
     import {
         loadMyBricks,
+        myBricksListFailed,
         myBricksSettled,
         myBricksStore,
         myDeletedBricksStore,
@@ -19,14 +21,17 @@
         undoMyBrick,
     } from "./MyBricksStore";
     import NewBrickDialog from "./NewBrickDialog.svelte";
-    import { IconChevronDown, IconPlus } from "@wa-icons";
+    import UsagePage from "./UsagePage.svelte";
+    import { fullAgainWhen } from "./Usage";
+    import { loadMyUsage, myUsageStore } from "./UsageStore";
+    import { IconChartBar, IconChevronDown, IconPlus } from "@wa-icons";
 
     /**
      * The Bricks page (game #1995): the person's own Bricks, each with its switch. The Bricks button in the Chats footer
      * opens it over the chat list, the way "Find a group" opens. A tap on a Brick opens its own page (#1996), as a tap on a
      * bot opens its page in the map editor, and its chat is in Chats. New Brick on top makes another one (#1996); a
-     * deleted Brick waits under Deleted with Undo until the day it is gone for good. Goals and tasks, apps and usage come to this page with
-     * their own issues.
+     * deleted Brick waits under Deleted with Undo until the day it is gone for good. Goals and tasks and apps come to this page with their
+     * own issues. The Usage row at the bottom opens the Usage page (#1999).
      *
      * Drawn like the bots list of the map editor (BotList and BotRow): the same header, sections, rows and switch.
      */
@@ -41,6 +46,8 @@
     // The Brick whose own page is open over the list
     let pageOfId: string | undefined;
     let undoing = new Set<string>();
+    // The Usage page, open over the list
+    let usageOpen = false;
 
     $: list = $LL.mapEditor.edit.bots.page.list;
     $: bricks = $myBricksStore;
@@ -59,6 +66,18 @@
 
     $: pageOf = pageOfId ? (bricks ?? []).find((brick) => brick.id === pageOfId) : undefined;
     $: deletedBricks = $myDeletedBricksStore;
+    // The Usage row says it in a line: the Universe AI bar, in plain words
+    $: usageText = $LL.chat.brick.usage;
+    $: usageChat = $myUsageStore?.chat;
+    $: usageBrief = usageBriefOf(usageChat, $locale);
+
+    function usageBriefOf(chat: typeof usageChat, language: string | undefined): string {
+        if (!chat) return usageText.rowUnknown();
+        if (chat.words === "plenty" || chat.words === "half") return usageText.rowPlenty();
+        const when = fullAgainWhen(chat.fullAgainAt, language);
+        if (chat.words === "low") return when ? usageText.rowLow({ when }) : usageText.rowLowNoTime();
+        return when ? usageText.rowOut({ when }) : usageText.rowOutNoTime();
+    }
 
     async function onUndo(brick: DeletedBrickCard) {
         undoing = new Set([...undoing, brick.id]);
@@ -73,6 +92,8 @@
 
     function load() {
         loading = true;
+        // The Usage row's line; the row works without it
+        loadMyUsage().catch((error) => console.error(error));
         loadMyBricks()
             .catch((error) => console.error(error))
             .finally(() => (loading = false));
@@ -100,7 +121,9 @@
     onMount(load);
 </script>
 
-{#if pageOf}
+{#if usageOpen}
+    <UsagePage onBack={() => (usageOpen = false)} />
+{:else if pageOf}
     <BrickPage brick={pageOf} onBack={() => (pageOfId = undefined)} onDeleted={() => (pageOfId = undefined)} />
 {:else}
     <div class="bk flex h-full min-h-0 flex-col" data-testid="bricksPage">
@@ -123,7 +146,12 @@
             <button type="button" class="bk-new" data-testid="bricksNew" on:click={() => openModal(NewBrickDialog)}>
                 <IconPlus font-size="20" />{$LL.chat.brick.newBrick()}
             </button>
-            {#if bricks.length === 0 && deletedBricks.length === 0}
+            {#if $myBricksListFailed && !loading}
+                <p class="bk-note bk-bad" data-testid="bricksLoadFailed">{$LL.chat.brick.loadFailed()}</p>
+                <button type="button" class="bk-pill" data-testid="bricksTryAgain" on:click={load}>
+                    {$LL.chat.brick.tryAgain()}
+                </button>
+            {:else if bricks.length === 0 && deletedBricks.length === 0}
                 <p class="bk-note" data-testid="bricksNone">{$LL.chat.brick.none()}</p>
             {/if}
             <div class="bk-scroll">
@@ -201,6 +229,16 @@
                     {/each}
                 {/if}
             </div>
+            <div class="bk-use" data-testid="bricksUsageRow">
+                <PageGroup
+                    id="usage"
+                    icon={IconChartBar}
+                    title={usageText.title()}
+                    brief={usageBrief}
+                    link
+                    onToggle={() => (usageOpen = true)}
+                />
+            </div>
         {/if}
     </div>
 {/if}
@@ -219,6 +257,18 @@
         flex: 1;
         min-height: 0;
         overflow-y: auto;
+    }
+    /* The rows that open a page of their own sit under the list, as the bot page's link rows do. */
+    .bk-use {
+        flex: none;
+        padding-top: 6px;
+        border-top: 1px solid rgb(255 255 255 / 0.06);
+    }
+    .bk-use :global(.bp-chev) {
+        transform: rotate(-90deg);
+    }
+    :global([dir="rtl"]) .bk-use :global(.bp-chev) {
+        transform: rotate(90deg);
     }
     .bk-sec {
         display: flex;
