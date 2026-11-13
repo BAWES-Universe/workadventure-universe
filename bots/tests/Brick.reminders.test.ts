@@ -4,15 +4,17 @@
  * Matrix transaction id, kept in Orbit before the run is reported, and never said again when the run is handed out again.
  */
 import { describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
 import { MatrixDmBridge } from '../matrix/MatrixDmBridge';
-import { BrickRunner, dueRunOf, reminderText, transactionIdOfRun, type BrickRunnerApi, type BrickSpeaker, type DueRun, type RunReport } from '../server/BrickRunner';
+import { AdminApiService } from '../server/AdminApiService';
+import { BrickRunner, RUNNABLE_KINDS, dueRunOf, reminderText, transactionIdOfRun, type BrickRunnerApi, type BrickSpeaker, type DueRun, type RunReport } from '../server/BrickRunner';
 
 const run = (over: Partial<DueRun> = {}): DueRun => ({
     runId: 'run-1',
     itemId: 'item-1',
     brickId: 'brick-1',
     userId: 'sara-uuid',
-    chatId: '@sara:matrix.test',
+    matrixUserId: '@sara:matrix.test',
     kind: 'reminder',
     words: 'Pick up the car',
     timeZone: 'Asia/Kuwait',
@@ -91,19 +93,38 @@ describe('the reminder is said once in its owner’s own chat', () => {
         expect(reports).toEqual([]);
     });
 
-    it('reports a failure when the person has no chat or may not message the Brick, and when the message did not go out', async () => {
-        const noChat = setUp([run({ chatId: null })]);
+    it('reports a failure only when it is certain: the person has no chat, or may not message the Brick', async () => {
+        const noChat = setUp([run({ matrixUserId: null })]);
         await noChat.runner.tick();
         expect(noChat.say).not.toHaveBeenCalled();
         expect(noChat.reports[0].report).toMatchObject({ attempt: 1, state: 'failed', error: expect.stringContaining('no chat') });
 
-        for (const reason of ['not_allowed', 'failed'] as const) {
+        for (const reason of ['no_chat', 'not_allowed'] as const) {
             const { runner, reports, api } = setUp([run()], { say: async () => ({ ok: false, reason }) });
             await runner.tick();
             expect(reports).toHaveLength(1);
             expect(reports[0].report.state).toBe('failed');
             expect(api.keepDelivered).not.toHaveBeenCalled();
         }
+    });
+
+    it('reports nothing when it could not tell (a blip), so the lease hands the run out again; the second try says it once, under the same transaction id', async () => {
+        const say = vi
+            .fn()
+            .mockResolvedValueOnce({ ok: false, reason: 'unsure' })
+            .mockResolvedValueOnce({ ok: true, eventId: '$e1' });
+        const first = setUp([run()], { say });
+        expect(await first.runner.tick()).toBe(0);
+        expect(first.reports).toEqual([]);
+        expect(first.api.keepDelivered).not.toHaveBeenCalled();
+        expect(first.warn).toHaveBeenCalled();
+        // Handed out again with a later attempt
+        const second = setUp([run({ attempt: 2 })], { say });
+        expect(await second.runner.tick()).toBe(1);
+        expect(second.reports).toEqual([{ runId: 'run-1', report: { attempt: 2, state: 'done', outcome: 'spoke', result: 'Reminder: Pick up the car' } }]);
+        expect(say.mock.calls[0][3]).toBe('brick-run:run-1');
+        expect(say.mock.calls[1][3]).toBe('brick-run:run-1');
+        expect(say).toHaveBeenCalledTimes(2);
     });
 
     it('still reports a run done when Orbit did not keep where it went: it is said, and the same transaction id covers a second try', async () => {
@@ -155,7 +176,9 @@ describe('what it leaves alone', () => {
 describe('what Orbit hands out is read with care', () => {
     it('keeps a run with what it needs and drops one without', () => {
         expect(dueRunOf({ ...run(), steps: [], extra: 1 })).toEqual(run());
-        expect(dueRunOf({ ...run(), chatId: undefined })?.chatId).toBeNull();
+        expect(dueRunOf({ ...run(), matrixUserId: undefined })?.matrixUserId).toBeNull();
+        // Orbit names the owner's Matrix user id as matrixUserId
+        expect(dueRunOf({ ...run(), matrixUserId: '@omar:matrix.test' })?.matrixUserId).toBe('@omar:matrix.test');
         expect(dueRunOf({ ...run(), kind: 'quest' })).toBeNull();
         expect(dueRunOf({ ...run(), runId: '' })).toBeNull();
         expect(dueRunOf({ ...run(), attempt: '1' })).toBeNull();
@@ -170,13 +193,13 @@ describe('the Brick speaks in the owner’s own chat, on its own account', () =>
     const ROOM = '!dm:matrix.test';
 
     function bridgeWith(opts: { room?: string | null; members?: string[]; access?: any; sendFails?: boolean }) {
-        const sendMessage = vi.fn(async () => {
+        const sendMessage = vi.fn(async (..._args: unknown[]) => {
             if (opts.sendFails) throw new Error('homeserver down');
             return '$said';
         });
         const client = {
             sendMessage,
-            getJoinedMembers: vi.fn(async () => opts.members ?? [SARA, BRICK_USER]),
+            getJoinedMembers: vi.fn(async (..._args: unknown[]) => opts.members ?? [SARA, BRICK_USER]),
         };
         const deps: any = {
             getBotConfig: vi.fn(async () => ({ botId: BRICK, name: 'Brick', enabled: true })),
@@ -192,7 +215,7 @@ describe('the Brick speaks in the owner’s own chat, on its own account', () =>
             },
         };
         const bridge = new MatrixDmBridge({ homeserverUrl: 'http://hs', domain: 'matrix.test', asToken: 'as', hsToken: 'hs' }, client as never, deps);
-        return { bridge, sendMessage, deps };
+        return { bridge, sendMessage, deps, client };
     }
 
     it('sends the text as the Brick into the chat the two share alone, under the run’s transaction id', async () => {
@@ -213,18 +236,80 @@ describe('the Brick speaks in the owner’s own chat, on its own account', () =>
         expect(sendMessage).not.toHaveBeenCalled();
     });
 
-    it('says nothing to someone Orbit says may not message the Brick, or when Orbit cannot say', async () => {
+    it('says not_allowed only when Orbit answered no, and nothing is sent', async () => {
         const denied = bridgeWith({ access: { allowed: false, reason: 'not_allowed', user: null } });
         expect(await denied.bridge.speakInDirectChat(BRICK, SARA, 'x', 't')).toEqual({ ok: false, reason: 'not_allowed' });
         expect(denied.sendMessage).not.toHaveBeenCalled();
-        const unknown = bridgeWith({ access: { allowed: false, reason: 'admin_api_unreachable', user: null } });
-        expect(await unknown.bridge.speakInDirectChat(BRICK, SARA, 'x', 't')).toMatchObject({ ok: false });
-        expect(unknown.sendMessage).not.toHaveBeenCalled();
     });
 
-    it('answers failed, never throws, when the homeserver does not take it', async () => {
-        const { bridge } = bridgeWith({ sendFails: true });
+    it('answers unsure, and sends nothing, when Orbit could not be asked, or its answer failed', async () => {
+        const down = bridgeWith({ access: { allowed: false, reason: 'admin_api_unreachable', user: null } });
+        expect(await down.bridge.speakInDirectChat(BRICK, SARA, 'x', 't')).toEqual({ ok: false, reason: 'unsure' });
+        expect(down.sendMessage).not.toHaveBeenCalled();
+        const throws = bridgeWith({});
+        throws.deps.checkAccess.mockRejectedValueOnce(new Error('boom'));
         vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-        expect(await bridge.speakInDirectChat(BRICK, SARA, 'x', 't')).toEqual({ ok: false, reason: 'failed' });
+        expect(await throws.bridge.speakInDirectChat(BRICK, SARA, 'x', 't')).toEqual({ ok: false, reason: 'unsure' });
+        expect(throws.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('answers unsure, never no_chat, when the stored chat or who is in it could not be looked at', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        // The store of known chats could not be read: "none" is not certain
+        const store = bridgeWith({});
+        store.deps.rooms.getDmRoomOf.mockRejectedValueOnce(new Error('store down'));
+        expect(await store.bridge.speakInDirectChat(BRICK, SARA, 'x', 't')).toEqual({ ok: false, reason: 'unsure' });
+        expect(store.sendMessage).not.toHaveBeenCalled();
+        // Who is in the room could not be read
+        const members = bridgeWith({});
+        members.client.getJoinedMembers.mockRejectedValueOnce(new Error('homeserver down'));
+        expect(await members.bridge.speakInDirectChat(BRICK, SARA, 'x', 't')).toEqual({ ok: false, reason: 'unsure' });
+        expect(members.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('answers unsure, never throws, when the homeserver does not take it; the same transaction id covers a second try', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const failing = bridgeWith({ sendFails: true });
+        expect(await failing.bridge.speakInDirectChat(BRICK, SARA, 'x', 'brick-run:run-1')).toEqual({ ok: false, reason: 'unsure' });
+        // Second try (a lease later): sent under the very same transaction id, which Matrix takes as one message
+        const second = bridgeWith({});
+        expect(await second.bridge.speakInDirectChat(BRICK, SARA, 'x', 'brick-run:run-1')).toEqual({ ok: true, eventId: '$said' });
+        expect(failing.sendMessage.mock.calls[0][3]).toBe(second.sendMessage.mock.calls[0][3]);
+    });
+
+    it('speaks to the owner Orbit names, by the Matrix user id in an Orbit-shaped run, in that user’s direct room, once', async () => {
+        const { bridge, sendMessage, deps } = bridgeWith({});
+        const orbitRun = dueRunOf({ runId: 'run-9', itemId: 'item-9', brickId: BRICK, userId: 'sara-uuid', matrixUserId: SARA, kind: 'reminder', words: 'Pick up the car', timeZone: 'Asia/Kuwait', dueAt: '2026-11-15T13:00:00.000Z', late: false, attempt: 1 })!;
+        const runner = new BrickRunner(
+            {
+                claimDue: async () => [orbitRun],
+                checkRun: async () => ({ ok: true }),
+                keepDelivered: async () => true,
+                report: async () => true,
+            },
+            { say: (brickId, matrixUserId, text, transactionId) => bridge.speakInDirectChat(brickId, matrixUserId, text, transactionId) },
+            { warn: () => undefined }
+        );
+        expect(await runner.tick()).toBe(1);
+        expect(deps.rooms.getDmRoomOf).toHaveBeenCalledWith(BRICK, SARA);
+        expect(sendMessage).toHaveBeenCalledTimes(1);
+        expect(sendMessage).toHaveBeenCalledWith(BRICK_USER, ROOM, { msgtype: 'm.text', body: 'Reminder: Pick up the car' }, 'brick-run:run-9');
+    });
+});
+
+describe('the bot server asks Orbit only for what it can run', () => {
+    it('sends the kinds it runs with the due call, so a watch or a goal is never handed out here', async () => {
+        const request = vi.spyOn(axios, 'request').mockResolvedValue({ data: { runs: [] } } as never);
+        vi.stubEnv('BOT_SERVICE_TOKEN', 'token');
+        const service = new AdminApiService('https://orbit.test/', 'admin-token');
+        await service.claimDueItems();
+        expect(RUNNABLE_KINDS).toEqual(['reminder']);
+        expect(request).toHaveBeenCalledTimes(1);
+        const sent = request.mock.calls[0][0] as { method: string; url: string; data: unknown };
+        expect(sent.method).toBe('post');
+        expect(sent.url).toContain('api/bricks/items/due');
+        expect(sent.data).toEqual({ kinds: ['reminder'] });
+        request.mockRestore();
+        vi.unstubAllEnvs();
     });
 });

@@ -10,7 +10,7 @@ import { parseForgetNotice, type MemoryForgetHandler } from '../memory/ForgetNot
 import { SOMEONE_UNKNOWN } from '../memory/Heard';
 import type { WokaList } from '../matrix/wokaPicture';
 import type { VoiceActiveAnswer, VoiceCredentialsAnswer, VoiceHealthReport, VoiceLimits } from '../voice/VoiceSettings';
-import { dueRunOf, type DueRun, type RunCheck, type RunReport } from './BrickRunner';
+import { RUNNABLE_KINDS, dueRunOf, type DueRun, type RunCheck, type RunReport } from './BrickRunner';
 
 // Optional Sentry integration (uncomment if @sentry/node is installed)
 // import * as Sentry from '@sentry/node';
@@ -953,7 +953,7 @@ export class AdminApiService {
      * be asked: nothing is lost, the runs are handed out again.
      */
     async claimDueItems(): Promise<DueRun[]> {
-        const response = await this.brickCall<{ runs?: unknown }>('post', 'api/bricks/items/due', {});
+        const response = await this.brickCall<{ runs?: unknown }>('post', 'api/bricks/items/due', { kinds: RUNNABLE_KINDS });
         const runs = Array.isArray(response.data?.runs) ? response.data.runs : [];
         return runs.map(dueRunOf).filter((run): run is DueRun => run !== null);
     }

@@ -484,8 +484,13 @@ export class MatrixDmBridge implements MatrixEventHandler {
     /** The same, and whether a chat that is known could not be looked at just now (so "none" is not certain). */
     private async lookUpDirectRoom(botId: string, matrixUserId: string): Promise<{ roomId: string | null; unsure: boolean }> {
         const key = MatrixDmBridge.pair(botId, matrixUserId);
-        const roomId = this.directRooms.get(key) ?? (await this.deps.rooms?.getDmRoomOf?.(botId, matrixUserId).catch(() => null)) ?? null;
-        if (!roomId) return { roomId: null, unsure: false };
+        let roomId = this.directRooms.get(key) ?? null;
+        if (!roomId) {
+            // A store that could not be read says nothing about whether there is a chat, so "none" is not certain then
+            let storeFailed = false;
+            roomId = (await this.deps.rooms?.getDmRoomOf?.(botId, matrixUserId).catch(() => ((storeFailed = true), null))) ?? null;
+            if (!roomId) return { roomId: null, unsure: storeFailed };
+        }
         const theirs = await this.isTheirDirectChat(botId, matrixUserId, roomId);
         if (theirs) {
             await this.noteDirectRoom(botId, matrixUserId, roomId);
@@ -596,16 +601,31 @@ export class MatrixDmBridge implements MatrixEventHandler {
      * second try of the same run is the same message to Matrix. It never makes a chat: a person with none is told so, not given one.
      */
     async speakInDirectChat(botId: string, matrixUserId: string, text: string, transactionId: string): Promise<SpokeAnswer> {
-        const roomId = await this.directRoomOf(botId, matrixUserId).catch(() => null);
-        if (!roomId) return { ok: false, reason: 'no_chat' };
-        const access = await this.access(botId, matrixUserId, true);
-        if (accessCheckFailed(access) || !mayChat(access)) return { ok: false, reason: 'not_allowed' };
+        // "No chat" and "not allowed" are said only when the answer was certain; a look that failed is "could not tell"
+        let looked: { roomId: string | null; unsure: boolean };
         try {
-            const eventId = await this.client.sendMessage(this.botUserId(botId), roomId, { msgtype: 'm.text', body: text }, transactionId);
-            return eventId ? { ok: true, eventId } : { ok: false, reason: 'failed' };
+            looked = await this.lookUpDirectRoom(botId, matrixUserId);
+        } catch (error: any) {
+            console.warn(`[MatrixDmBridge] Could not look for the direct chat of bot ${botId}:`, error?.message ?? error);
+            return { ok: false, reason: 'unsure' };
+        }
+        if (!looked.roomId) return { ok: false, reason: looked.unsure ? 'unsure' : 'no_chat' };
+        let access: DmAccessResult;
+        try {
+            access = await this.access(botId, matrixUserId, true);
+        } catch (error: any) {
+            console.warn(`[MatrixDmBridge] Could not ask Orbit whether a person may message bot ${botId}:`, error?.message ?? error);
+            return { ok: false, reason: 'unsure' };
+        }
+        // Orbit could not answer: that says nothing about the person
+        if (accessCheckFailed(access)) return { ok: false, reason: 'unsure' };
+        if (!mayChat(access)) return { ok: false, reason: 'not_allowed' };
+        try {
+            const eventId = await this.client.sendMessage(this.botUserId(botId), looked.roomId, { msgtype: 'm.text', body: text }, transactionId);
+            return eventId ? { ok: true, eventId } : { ok: false, reason: 'unsure' };
         } catch (error: any) {
             console.warn(`[MatrixDmBridge] Could not speak in the direct chat of bot ${botId}:`, error?.message ?? error);
-            return { ok: false, reason: 'failed' };
+            return { ok: false, reason: 'unsure' };
         }
     }
 

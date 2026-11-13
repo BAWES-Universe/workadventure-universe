@@ -203,7 +203,7 @@ async function setupMatrix(): Promise<void> {
             keepDelivered: (runId, eventId) => adminApiService.keepItemDelivered(runId, eventId),
             report: (runId, report) => adminApiService.reportItemRun(runId, report),
         },
-        { say: (brickId, chatId, text, transactionId) => bridge.speakInDirectChat(brickId, chatId, text, transactionId) }
+        { say: (brickId, matrixUserId, text, transactionId) => bridge.speakInDirectChat(brickId, matrixUserId, text, transactionId) }
     );
     brickRunner.start(BRICK_DUE_EVERY_MS);
     console.log(`[BotServer] Matrix direct messages on for ${matrixConfig.domain}`);

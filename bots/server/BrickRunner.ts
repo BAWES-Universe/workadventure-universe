@@ -12,7 +12,8 @@
  *  - before the send, Orbit is asked whether the run may still go on (paused, finished, deleted or changed means it may not).
  * Never claimed as exactly once outside Universe.
  *
- * Only reminders run here so far; the other kinds wait for the parts that run them (watches, briefings and goals use a model).
+ * Only reminders run here so far; the other kinds wait for the parts that run them (watches, briefings and goals use a model). The due
+ * call asks only for the kinds run here (RUNNABLE_KINDS), so Orbit never hands out, and never burns tries of, a run nothing here will try.
  */
 
 /** A run Orbit handed out, as far as this part needs it (POST /api/bricks/items/due). */
@@ -21,8 +22,8 @@ export interface DueRun {
     itemId: string;
     brickId: string;
     userId: string;
-    /** The owner's chat (Matrix) id; null when they have none, and then nothing can be said. */
-    chatId: string | null;
+    /** The owner's Matrix user id (like @uuid:domain), the person Brick speaks to; null when they have none, and then nothing can be said. */
+    matrixUserId: string | null;
     kind: 'reminder' | 'schedule' | 'watch' | 'goal';
     words: string;
     timeZone: string;
@@ -53,12 +54,19 @@ export interface BrickRunnerApi {
     report(runId: string, report: RunReport): Promise<boolean>;
 }
 
-export type SpokeAnswer = { ok: true; eventId: string } | { ok: false; reason: 'no_chat' | 'not_allowed' | 'failed' };
+/**
+ * What came of saying it. `no_chat` and `not_allowed` are certain answers that will not fix themselves; `unsure` is "could not tell"
+ * (a lookup or Orbit's access check failed, the send threw), which a later try may settle, so it is never reported as a failure.
+ */
+export type SpokeAnswer = { ok: true; eventId: string } | { ok: false; reason: 'no_chat' | 'not_allowed' | 'unsure' };
 
 /** Says something in a person's own chat with a Brick. */
 export interface BrickSpeaker {
-    say(brickId: string, chatId: string, text: string, transactionId: string): Promise<SpokeAnswer>;
+    say(brickId: string, matrixUserId: string, text: string, transactionId: string): Promise<SpokeAnswer>;
 }
+
+/** The kinds of run this server can run, asked of Orbit's due list so it never hands out (and burns) what nothing here will try. */
+export const RUNNABLE_KINDS: readonly DueRun['kind'][] = ['reminder'];
 
 /** One run of Orbit's answer, kept only when it has what a run needs. */
 export function dueRunOf(raw: unknown): DueRun | null {
@@ -73,7 +81,7 @@ export function dueRunOf(raw: unknown): DueRun | null {
         itemId: run.itemId,
         brickId: run.brickId,
         userId: run.userId,
-        chatId: typeof run.chatId === 'string' && run.chatId ? run.chatId : null,
+        matrixUserId: typeof run.matrixUserId === 'string' && run.matrixUserId ? run.matrixUserId : null,
         kind: run.kind as DueRun['kind'],
         words: run.words,
         timeZone: run.timeZone,
@@ -107,10 +115,9 @@ export const transactionIdOfRun = (runId: string) => `brick-run:${runId}`;
 const RESULT_MAX = 1000;
 const ERROR_MAX = 300;
 
-const FAILED_WORDS: Record<'no_chat' | 'not_allowed' | 'failed', string> = {
+const FAILED_WORDS: Record<'no_chat' | 'not_allowed', string> = {
     no_chat: 'The person has no chat with this Brick to say it in',
     not_allowed: 'The person may not message this Brick now',
-    failed: 'The message did not go out',
 };
 
 export class BrickRunner {
@@ -183,9 +190,17 @@ export class BrickRunner {
             // The run may have been paused, finished, deleted or changed since it was claimed, or its Brick switched off or deleted
             const check = await this.api.checkRun(run.runId, run.attempt);
             if (!check.ok) return false;
-            if (!run.chatId) return this.fail(run, 'no_chat');
-            const spoke = await this.speaker.say(run.brickId, run.chatId, text, transactionIdOfRun(run.runId));
-            if (!('eventId' in spoke)) return this.fail(run, spoke.reason);
+            if (!run.matrixUserId) return this.fail(run, 'no_chat');
+            const spoke = await this.speaker.say(run.brickId, run.matrixUserId, text, transactionIdOfRun(run.runId));
+            if (!('eventId' in spoke)) {
+                if (spoke.reason === 'unsure') {
+                    // Could not tell (Matrix or Orbit blipped): not reported, so the lease hands the run out again, and the same
+                    // transaction id makes a second try one message to Matrix however often it is tried
+                    this.log.warn(`[BrickRunner] Could not tell whether run ${run.runId} could be said just now; it is tried again when its lease is over`);
+                    return false;
+                }
+                return this.fail(run, spoke.reason);
+            }
             eventId = spoke.eventId;
             // Right after the send and before the report; a crash between the two leaves the same transaction id to say it again as one message
             if (!(await this.api.keepDelivered(run.runId, eventId))) {
@@ -196,7 +211,7 @@ export class BrickRunner {
         return true;
     }
 
-    private async fail(run: DueRun, reason: 'no_chat' | 'not_allowed' | 'failed'): Promise<boolean> {
+    private async fail(run: DueRun, reason: 'no_chat' | 'not_allowed'): Promise<boolean> {
         // A reminder that fails tells its person on the first failure; when the chat itself is what failed there is no way to tell them
         // here, so Orbit is not told it was told (it asks again at the next failure) and "Everything Brick did" shows it at once
         await this.api.report(run.runId, { attempt: run.attempt, state: 'failed', error: FAILED_WORDS[reason].slice(0, ERROR_MAX) });
