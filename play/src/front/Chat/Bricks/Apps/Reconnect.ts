@@ -8,13 +8,22 @@ import { botApiService } from "../../../external-modules/bots/services/BotApiSer
  */
 export type ReconnectResult = "done" | "stopped" | "blocked";
 
-export async function reconnectApp(appId: string): Promise<ReconnectResult> {
+export function reconnectApp(appId: string): Promise<ReconnectResult> {
+    return signInInPopup(appId);
+}
+
+/**
+ * The same window for connecting an app for the first time (a Brick's card in a chat): the connection may still be being
+ * made when the tap happens, so the window opens first and the app's id may be a promise. A connection that cannot be made
+ * is "blocked", like a sign-in that did not start.
+ */
+export async function signInInPopup(appId: string | Promise<string>): Promise<ReconnectResult> {
     const popup = window.open("", "oauth-popup", "width=600,height=700");
     if (!popup) return "blocked";
     let authorizeUrl: string;
     try {
         authorizeUrl = await botApiService.startAppSignIn(
-            appId,
+            await appId,
             window.location.href.split("?")[0].split("#")[0],
             `${window.location.origin}/api/oauth/mcp-callback`
         );
