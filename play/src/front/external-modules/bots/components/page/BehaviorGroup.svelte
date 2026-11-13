@@ -13,6 +13,8 @@
     export let onToggle: (id: string) => void;
     export let onChange: (bot: BotData) => void;
     export let onEditRoute: () => void;
+    /** A Brick's page: a Brick is on no map of its own, so it has no route to walk. */
+    export let brick = false;
 
     $: page = $LL.mapEditor.edit.bots.page;
     $: model = botModel(bot);
@@ -24,7 +26,7 @@
 
 <PageGroup id="behavior" {icon} title={page.behavior.title()} {brief} {open} {onToggle}>
     <div class="bp-sec">{page.behavior.getsAround()}</div>
-    <MovesGroup {bot} open onToggle={() => {}} {onChange} {onEditRoute} bare />
+    <MovesGroup {bot} open onToggle={() => {}} {onChange} {onEditRoute} {brick} bare />
     <div class="bp-sec bp-sec-gap">{page.behavior.withPeople()}</div>
     <PeopleGroup {bot} open onToggle={() => {}} {onChange} bare />
 </PageGroup>

@@ -37,6 +37,8 @@
     export let onChange: (bot: BotData) => void;
     /** What Orbit offers under "Runs on", each time it loads: the Tools group reads each choice's reply limits from it. */
     export let onOptions: ((options: BotAiOptions | null) => void) | undefined = undefined;
+    /** A Brick's page: its keys are its owner's own, not lent to a universe, so nothing here says "lent" or "this universe". */
+    export let brick = false;
 
     type Provider = Awaited<ReturnType<typeof botApiService.getAvailableAIProviders>>[number];
 
@@ -161,7 +163,7 @@
     $: names = new Map(providers.map((p) => [p.providerId.toLowerCase(), p.name]));
     $: cards = options ? runsOnCards(options, ref || null, names) : [];
     $: runsOnBrief = options ? mindBriefName(options, ref || null, names) : null;
-    $: unlent = options ? unlentKeyNames(options, myKeys) : [];
+    $: unlent = options && !brick ? unlentKeyNames(options, myKeys) : [];
     $: unlentList = listNames(unlent, $locale);
     // The model the bot is on, when it is on one of the person's own keys
     $: rowKey = options ? keyOfRef(options, ref || options.current) : undefined;
@@ -242,6 +244,8 @@
             case "universe-ai":
                 return card.available ? page.mind.universeAiNote() : page.mind.universeAiMissing();
             case "mine":
+                if (brick)
+                    return card.group === "own-computer" ? page.mind.keyComputerBrick() : page.mind.keyHostedBrick();
                 return card.group === "own-computer"
                     ? page.mind.keyComputer({ universe: card.universe })
                     : page.mind.keyHosted({ universe: card.universe });
@@ -411,9 +415,13 @@
             </div>
         {/if}
         {#if myKeys && myKeys.length === 0}
-            <p class="bp-m">{page.mind.noKeysHint({ bot: bot.name ?? "" })}</p>
+            <p class="bp-m">
+                {brick
+                    ? page.mind.noKeysHintBrick({ bot: bot.name ?? "" })
+                    : page.mind.noKeysHint({ bot: bot.name ?? "" })}
+            </p>
         {:else if unlent.length === 0}
-            <p class="bp-m">{page.mind.makerHint()}</p>
+            <p class="bp-m">{brick ? page.mind.makerHintBrick() : page.mind.makerHint()}</p>
         {/if}
     {:else if failed}
         <div class="bp-line">
