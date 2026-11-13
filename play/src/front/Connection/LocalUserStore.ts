@@ -43,6 +43,7 @@ const guestTokenAsideKey = "guestTokenAside";
 export const GUEST_TOKEN_ASIDE_MS = 30 * 60 * 1000;
 /** Where a guest's chat with the Brick is kept, on this device only (#1997). */
 const guestBrickChatKey = "guestBrickChat";
+const guestBrickChatTakenKey = "guestBrickChatTaken";
 const notification = "notificationPermission";
 const allowPictureInPicture = "allowPictureInPicture";
 const chatSounds = "chatSounds";
@@ -545,8 +546,25 @@ class LocalUserStore {
         }
     }
 
+    /**
+     * Which guest's chat Orbit already handed over, kept on its own: Orbit hands a chat over once, so this must survive
+     * even when there is no room left to save the chat again with the mark.
+     */
+    getGuestBrickChatTaken(): string | null {
+        return localStorage.getItem(guestBrickChatTakenKey);
+    }
+
+    setGuestBrickChatTaken(guestId: string): void {
+        try {
+            localStorage.setItem(guestBrickChatTakenKey, guestId);
+        } catch {
+            // No room even for this: the mark is kept for this page only, by the caller
+        }
+    }
+
     dropGuestBrickChat(): void {
         localStorage.removeItem(guestBrickChatKey);
+        localStorage.removeItem(guestBrickChatTakenKey);
     }
 
     isLogged(): boolean {

@@ -76,13 +76,28 @@ export const guestBrickOnline = readable("online" as const);
  * A guest signed in with a chat they had with the Brick for guests (#1997): the first time the chat with their own Brick
  * is open (from its row or from its chat, whichever the person opens), that chat is brought into it. Never for a guest, and only into the one Brick everyone gets.
  */
+/** Hand-overs Orbit made, as this page knows them: for when even the small mark of it could not be saved. */
+const takenThisPage = new Set<string>();
+
 export function bringGuestChatInto(brickId: string): void {
     const myChatId = localUserStore.getChatId();
     const own = get(myBricksStore)?.find((brick) => brick.id === brickId);
     if (!get(userIsConnected) || !myChatId || !own?.isDefault) return;
     bringGuestChat({
-        read: () => parseGuestChat(localUserStore.getGuestBrickChat(), null, Date.now()),
-        keep: (chat) => localUserStore.setGuestBrickChat(serializeGuestChat(chat)),
+        read: () => {
+            const chat = parseGuestChat(localUserStore.getGuestBrickChat(), null, Date.now());
+            // Taken, even when the chat could not be saved again with its mark
+            const taken =
+                chat && (takenThisPage.has(chat.guestId) || localUserStore.getGuestBrickChatTaken() === chat.guestId);
+            return chat && taken ? { ...chat, carryTaken: true as const } : chat;
+        },
+        keep: (chat) => {
+            if (chat.carryTaken) {
+                takenThisPage.add(chat.guestId);
+                localUserStore.setGuestBrickChatTaken(chat.guestId);
+            }
+            localUserStore.setGuestBrickChat(serializeGuestChat(chat));
+        },
         drop: () => localUserStore.dropGuestBrickChat(),
         take: (guestId) => botApiService.takeGuestChat(guestId),
         carry: async (carryId, lines) => {
