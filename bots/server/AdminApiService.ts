@@ -269,6 +269,29 @@ export interface BotAccessPerson {
     chatId?: string | null;
 }
 
+/** Orbit's answer for a goals and tasks call: what it said, or its refusal with a code the Brick can say plainly. */
+export interface ItemRefused {
+    ok: false;
+    status: number;
+    error: string;
+    code?: string;
+    limit?: number;
+}
+export type ItemAnswer<T extends object> = ({ ok: true } & T) | ItemRefused;
+
+/** A reminder, schedule, watch or goal as Orbit shows it (the fields a Brick reads). */
+export interface BrickItemView {
+    id: string;
+    kind: 'reminder' | 'schedule' | 'watch' | 'goal';
+    words: string;
+    cadence: { type: 'once'; at: string } | { type: 'daily'; time: string; days: number[] } | { type: 'every'; minutes: number } | { type: 'none' };
+    timeZone: string;
+    nextDueAt: string | null;
+    state: 'on' | 'paused' | 'done' | 'deleted';
+    setBy: 'you' | 'brick';
+    lastRunAt: string | null;
+}
+
 /** Orbit's answer to "can this person do this with this bot?" (POST /api/bots/:id/access). */
 export interface BotAccessAnswer {
     allowed: boolean;
@@ -893,7 +916,7 @@ export class AdminApiService {
         };
     }
 
-    private brickCall<T>(method: 'get' | 'post' | 'put', path: string, body?: unknown, params?: Record<string, string>): Promise<AxiosResponse<T>> {
+    private brickCall<T>(method: 'get' | 'post' | 'put' | 'patch', path: string, body?: unknown, params?: Record<string, string>): Promise<AxiosResponse<T>> {
         const botServiceToken = process.env.BOT_SERVICE_TOKEN;
         if (!this.isConfigured() || !botServiceToken) throw new Error('Orbit is not set up for Bricks');
         return axios.request<T>({
@@ -945,6 +968,51 @@ export class AdminApiService {
             console.warn('[AdminApiService] Could not keep the answer to a Brick suggestion:', error instanceof Error ? error.message : error);
             return false;
         }
+    }
+
+    /**
+     * One call to Orbit's goals and tasks routes for the owner of a Brick (game #2002). Orbit's own refusals (not the owner, too many,
+     * a time that passed, no time zone kept) come back as an answer the Brick can say plainly; anything else (Orbit down, an error) throws.
+     */
+    private async itemCall<T extends object>(method: 'get' | 'post' | 'put' | 'patch', path: string, body?: unknown, params?: Record<string, string>): Promise<ItemAnswer<T>> {
+        try {
+            const response = await this.brickCall<T>(method, path, body, params);
+            return { ok: true, ...(response.data as T) };
+        } catch (error) {
+            const response = (error as { response?: { status?: number; data?: { error?: unknown; code?: unknown; limit?: unknown } } } | null)?.response;
+            const status = response?.status;
+            if (status && status >= 400 && status < 500) {
+                return {
+                    ok: false,
+                    status,
+                    error: typeof response?.data?.error === 'string' ? response.data.error : 'Refused',
+                    ...(typeof response?.data?.code === 'string' ? { code: response.data.code } : {}),
+                    ...(typeof response?.data?.limit === 'number' ? { limit: response.data.limit } : {}),
+                };
+            }
+            throw error;
+        }
+    }
+
+    /** What a Brick needs to know about its owner before setting a reminder: their time zone, their workdays and the limits. Refused (404) for anyone but the owner. */
+    brickItemSettings(brickId: string, userId: string): Promise<ItemAnswer<{ timeZone: string | null; workdays: number[] | null; limits: Record<string, number> }>> {
+        return this.itemCall('get', `api/bots/${encodeURIComponent(brickId)}/brick-items/settings`, undefined, { userId });
+    }
+
+    keepBrickWorkdays(brickId: string, userId: string, days: number[]): Promise<ItemAnswer<{ workdays: number[] }>> {
+        return this.itemCall('put', `api/bots/${encodeURIComponent(brickId)}/brick-items/settings`, { userId, days });
+    }
+
+    setBrickItem(brickId: string, item: Record<string, unknown>): Promise<ItemAnswer<{ item: BrickItemView }>> {
+        return this.itemCall('post', `api/bots/${encodeURIComponent(brickId)}/brick-items`, item);
+    }
+
+    listBrickItems(brickId: string, userId: string): Promise<ItemAnswer<{ items: BrickItemView[] }>> {
+        return this.itemCall('get', `api/bots/${encodeURIComponent(brickId)}/brick-items`, undefined, { userId });
+    }
+
+    changeBrickItem(brickId: string, itemId: string, body: Record<string, unknown>): Promise<ItemAnswer<{ item: BrickItemView }>> {
+        return this.itemCall('patch', `api/bots/${encodeURIComponent(brickId)}/brick-items/${encodeURIComponent(itemId)}`, body);
     }
 
     /**
