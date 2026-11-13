@@ -896,8 +896,8 @@
 
         <div class="bp-groups">
             {#if brick}
-                <!-- A Brick's page, in the mock's order: Mind, Personality, Voice, Behavior, Memory, Files, Permissions, Companion
-                     and Computer are here. Usage, Apps, Goals and tasks and Template come with their own issues -->
+                <!-- A Brick's page, in the mock's order: Mind, Personality, Voice, Behavior, Computer, Memory, Files, Permissions
+                     and Companion are here. Usage, Apps, Goals and tasks and Template come with their own issues -->
                 <MindGroup
                     bot={currentBot}
                     open={openGroup === "mind"}
@@ -916,6 +916,15 @@
                     onEditRoute={editRoute}
                     brick
                 />
+                <!-- Computer, then Memory and Files, before Permissions and Companion: the mock's order (its Computer, Goals and
+                     tasks, Memory, Files come after Behavior and Apps) -->
+                {#if currentBot?.id}
+                    <ComputerGroup
+                        brick={{ id: currentBot.id, name: currentBot.name || "Brick" }}
+                        open={openGroup === "computer"}
+                        onToggle={toggleGroup}
+                    />
+                {/if}
                 <!-- What it remembers about its owner, and its files (game #2003) -->
                 <BrickMemoryGroup
                     botId={currentBot.id}
@@ -945,14 +954,6 @@
                     link
                     onToggle={() => (editingCompanion = true)}
                 />
-                <!-- Computer comes after Companion, in the mock's order (game #2000) -->
-                {#if currentBot?.id}
-                    <ComputerGroup
-                        brick={{ id: currentBot.id, name: currentBot.name || "Brick" }}
-                        open={openGroup === "computer"}
-                        onToggle={toggleGroup}
-                    />
-                {/if}
             {:else}
                 {#if askedUsage && currentBot}
                     <MakerAskedCard name={currentBot.name || "Bot"} usage={askedUsage} onUseKey={openMind} />
