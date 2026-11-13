@@ -3,7 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const getAttentionCount = vi.hoisted(() => vi.fn<() => Promise<number | null>>());
 const keepTimeZone = vi.hoisted(() => vi.fn<() => Promise<void>>(() => Promise.resolve()));
 
-vi.mock("../external-modules/bots/services/BotApiService", () => ({ botApiService: { getAttentionCount, keepTimeZone } }));
+vi.mock("../external-modules/bots/services/BotApiService", () => ({
+    botApiService: { getAttentionCount, keepTimeZone },
+}));
 vi.mock("./ModalStore", async () => {
     const { writable } = await import("svelte/store");
     return { modalVisibilityStore: writable(false), modalIframeStore: writable<{ title: string } | null>(null) };
