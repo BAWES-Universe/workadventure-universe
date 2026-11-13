@@ -81,6 +81,11 @@ describe("Connect another", () => {
         ]);
     });
 
+    it("keeps an official app whose name an app added by link also has", () => {
+        const own = mine({ id: "c2", name: "Notion", source: "link" });
+        expect(toConnectAnother(all, [own]).map((app) => app.key)).toEqual(["notion", "gmail"]);
+    });
+
     it("leaves out a ready-made app that has the name of one already connected", () => {
         const ready = [
             { kind: "readyMade" as const, key: "google-mail", name: "Gmail", blurb: "", connectionId: null },

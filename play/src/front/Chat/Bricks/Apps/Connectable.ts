@@ -64,7 +64,8 @@ const nameKey = (name: string) => name.trim().toLowerCase();
 export function toConnectAnother(all: Connectable[], mine: MyApp[]): Connectable[] {
     const finished = mine.filter(isConnectedApp);
     const doneIds = new Set(finished.map((app) => app.id));
-    const taken = new Set(finished.map((app) => nameKey(app.name)));
+    // An app the person pasted a link for does not hide an official app of the same name: it is another app
+    const taken = new Set(finished.filter((app) => app.source !== "link").map((app) => nameKey(app.name)));
     const out: Connectable[] = [];
     for (const app of all) {
         if ((app.connectionId && doneIds.has(app.connectionId)) || taken.has(nameKey(app.name))) continue;
