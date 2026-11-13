@@ -448,6 +448,8 @@ describe("pictures, files and voice notes to the Brick for guests (plan v3)", ()
             voiceDuration: 4,
             transcript: { state: "listening" },
         });
+        // The chat draws a message once by its id and keeps reading the content it was given: that content changes
+        const drawn = note()!;
         release({
             kind: "reply",
             text: "The coffee is upstairs.",
@@ -456,7 +458,8 @@ describe("pictures, files and voice notes to the Brick for guests (plan v3)", ()
             delivery: "d-1",
         });
         await settle();
-        expect(get(note()!.content).transcript).toEqual({ state: "heard", text: "where is the coffee" });
+        expect(note()).toBe(drawn);
+        expect(get(drawn.content).transcript).toEqual({ state: "heard", text: "where is the coffee" });
         expect(deps.delivered).toHaveBeenCalledWith("d-1");
         expect(get(room.messages).at(-1) && get(get(room.messages).at(-1)!.content).body).toBe(
             "The coffee is upstairs."

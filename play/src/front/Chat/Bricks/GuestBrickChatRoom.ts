@@ -1,7 +1,7 @@
 import { derived, get, writable } from "svelte/store";
-import type { Readable } from "svelte/store";
+import type { Readable, Writable } from "svelte/store";
 import type { TranslationFunctions } from "../../../i18n/i18n-types";
-import type { ChatMessage, ChatRoom } from "../Connection/ChatConnection";
+import type { ChatMessage, ChatMessageContent, ChatRoom } from "../Connection/ChatConnection";
 import type { VoiceNoteDetails } from "../VoiceNote/VoiceNote";
 import type { BrickCard } from "./Brick";
 import {
@@ -105,7 +105,8 @@ export class GuestBrickChatRoom implements ChatRoom {
     >([]);
     private readonly started = writable<number>(0);
     private readonly lastLine = writable<GuestLine | undefined>(undefined);
-    private readonly made = new Map<string, ChatMessage>();
+    /** Each message drawn, by its id, with its content: the same message each time, so its bubble is never drawn twice. */
+    private readonly made = new Map<string, { message: ChatMessage; content: Writable<ChatMessageContent> }>();
     private notes: ChatMessage[] = [];
     /** The lines the guest wrote that have not had their turn yet: one is answered at a time, the others wait. */
     private waiting = new Set<number>();
@@ -190,20 +191,21 @@ export class GuestBrickChatRoom implements ChatRoom {
         const alive = new Set<string>();
         const messages = lines.flatMap((line, index) => {
             const listening = this.listening.has(index);
-            // A note's bubble is drawn again when what was heard in it changes
-            const shape = line.media
-                ? `|${listening ? "listening" : ""}|${line.media
-                      .map((one) => `${one.heard ?? ""}:${one.unheard ? 1 : 0}`)
-                      .join(",")}`
-                : "";
             return guestLineMessages(brick, line, index, listening ? { state: "listening" } : undefined).map(
                 (message) => {
-                    const key = `${message.id}${shape}`;
-                    alive.add(key);
-                    const kept = this.made.get(key);
-                    if (kept) return kept;
-                    this.made.set(key, message);
-                    return message;
+                    alive.add(message.id);
+                    // The chat draws a message once by its id and reads its words once: a note's bubble keeps its message,
+                    // and what changes in it ("Listening…", then the words heard) changes in its content
+                    const kept = this.made.get(message.id);
+                    const content = get(message.content);
+                    if (kept) {
+                        if (JSON.stringify(get(kept.content)) !== JSON.stringify(content)) kept.content.set(content);
+                        return kept.message;
+                    }
+                    const store = writable(content);
+                    const made = { ...message, content: { subscribe: store.subscribe } };
+                    this.made.set(message.id, { message: made, content: store });
+                    return made;
                 }
             );
         });
