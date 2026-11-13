@@ -159,9 +159,15 @@ export class BotRegistry {
         await this.redis.hSet('bots:matrix:dm-room-of', `${botId}|${matrixUserId}`, roomId);
     }
 
-    /** The direct message room of a bot and a person, or null when unknown. */
+    /**
+     * The direct message room of a bot and a person, or null when unknown. Throws while a Redis that was in use is down:
+     * "unknown" would be a guess then, and a caller that must be certain (a reminder that says it has no chat) waits instead.
+     */
     async getDmRoomOf(botId: string, matrixUserId: string): Promise<string | null> {
-        if (!this.redis?.isOpen) return null;
+        if (!this.redis?.isOpen) {
+            if (this.sharedStoreSeen) throw new Error('The shared store is down');
+            return null;
+        }
         return (await this.redis.hGet('bots:matrix:dm-room-of', `${botId}|${matrixUserId}`)) ?? null;
     }
 

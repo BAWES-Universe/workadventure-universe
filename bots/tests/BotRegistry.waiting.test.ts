@@ -118,4 +118,14 @@ describe('BotRegistry waiting messages', () => {
         const stillWaiting = [...(redis.hashes.get('bots:matrix:dm-waiting:b1')?.values() ?? [])];
         expect([...taken, ...stillWaiting].sort()).toEqual(['first', 'second']);
     });
+
+    it('throws when asked for a direct room while a store that was in use is down, and answers null when there never was one', async () => {
+        const down = Object.create(BotRegistry.prototype) as BotRegistry;
+        Object.assign(down, { redis: { isOpen: false }, sharedStoreSeen: true });
+        await expect(down.getDmRoomOf('b1', '@a:x')).rejects.toThrow('The shared store is down');
+
+        const never = Object.create(BotRegistry.prototype) as BotRegistry;
+        Object.assign(never, { redis: null, sharedStoreSeen: false });
+        await expect(never.getDmRoomOf('b1', '@a:x')).resolves.toBeNull();
+    });
 });

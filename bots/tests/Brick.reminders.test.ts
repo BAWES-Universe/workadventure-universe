@@ -108,6 +108,14 @@ describe('the reminder is said once in its owner’s own chat', () => {
         }
     });
 
+    it('says nothing and reports nothing when the run may not go on (paused, deleted): Orbit closes it at its lease end', async () => {
+        const say = vi.fn();
+        const { runner, reports } = setUp([run()], { check: async () => ({ ok: false }), say });
+        expect(await runner.tick()).toBe(0);
+        expect(say).not.toHaveBeenCalled();
+        expect(reports).toEqual([]);
+    });
+
     it('reports nothing when it could not tell (a blip), so the lease hands the run out again; the second try says it once, under the same transaction id', async () => {
         const say = vi
             .fn()
