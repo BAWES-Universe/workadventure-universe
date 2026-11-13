@@ -100,7 +100,7 @@ export class MatrixAppServiceClient {
         );
     }
 
-    /** `txnId` is left out for a message of its own; a message that may be tried again gives the same one each time, so the homeserver sends it once. */
+    /** Sends a message as this user. A retry passes the first try's `txnId`, so Matrix keeps one message, not two. */
     async sendMessage(userId: string, roomId: string, content: Record<string, unknown>, txnId: string = randomUUID()): Promise<string> {
         const response = await this.http.put(
             `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/send/m.room.message/${encodeURIComponent(txnId)}`,

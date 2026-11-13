@@ -76,7 +76,8 @@ export function brickPageBot(value: unknown, card: BrickCard): BotData {
         id: card.id,
         botId: card.id,
         name: text("name")?.trim() || card.name,
-        description: text("description") ?? card.description ?? undefined,
+        // A read that says null cleared it; only a read that leaves it out falls back to the card
+        description: "description" in bot ? text("description") : card.description ?? undefined,
         characterTexture: look,
         characterTextureIds: look ? [look] : [],
         behaviorType: "idle",

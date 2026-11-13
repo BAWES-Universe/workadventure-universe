@@ -22,7 +22,7 @@ import { withoutNoteIds, type ChatUpload } from '../services/ChatFiles';
 import { chatFileKeeper, sentMediaJob } from '../services/ChatFileKeeper';
 import type { BotConfiguration } from './AdminApiService';
 import { BRICK_CHAT_LINK } from '../ai/BrickTools';
-import type { BrickNote } from '../ai/BrickTools';
+import type { BrickNote, BrickOfferNote } from '../ai/BrickTools';
 import type { BotManager } from './BotManager';
 
 /** Label stored with direct messages in memory and analytics, where bubble messages store their space name. */
@@ -72,8 +72,13 @@ export interface OfferedBrick {
 
 /** A Brick's words once it made the Brick it suggested (#1996): fixed, so no model is asked. For memory and other chat apps; the game shows its own. */
 /** With the Brick's id, "Open its chat" is the link the game opens that chat from; without, the same words plain. */
-export const brickMadeText = (name: string, id?: string): string =>
-    `Done. ${name} is ready and knows its job. ${id ? `[Open its chat](${BRICK_CHAT_LINK}${id})` : 'Open its chat'}, or find it in Chats any time.`;
+/** `made` false: they already had a Brick of that name, so nothing new was made and the words do not say "Done". */
+export const brickMadeText = (name: string, id?: string, made = true): string => {
+    const open = id ? `[Open its chat](${BRICK_CHAT_LINK}${id})` : 'Open its chat';
+    return made
+        ? `Done. ${name} is ready and knows its job. ${open}, or find it in Chats any time.`
+        : `You already have ${name}, so I didn't make another. ${open}, or find it in Chats any time.`;
+};
 export const BRICK_NOT_MADE_TEXT = "I couldn't make it just now. Ask me again in a moment.";
 /** A direct message after this long counts as a new conversation, like walking up to the bot again. */
 const NEW_CONVERSATION_AFTER_MS = 30 * 60 * 1000;
@@ -150,6 +155,11 @@ export interface DmReply {
     ideas?: boolean;
     /** What this turn did about Bricks (#1996): Bricks it made go with the text, a suggestion goes out as a card after it. */
     bricks?: BrickNote[];
+    /**
+     * For a reply with a suggestion: asks Orbit, right before its card is sent, whether it may be shown now. The topic
+     * as Orbit keeps it, or null to leave the card out. Asks once however often it is called.
+     */
+    claimOffer?: () => Promise<string | null>;
     /**
      * This message waited behind an answer in progress and was answered together with the others that waited (#1159):
      * nothing is sent for it. True once that one answer was given, false when it failed or was a reply limit card.
@@ -413,7 +423,7 @@ export class DmReplyService extends BaseBehavior {
                 });
                 void admin.answerBrickOffer(botId, person.uuid, offered.topic, 'made');
                 // Remembered in plain words: the link is for the game, not something to repeat later
-                return { text: brickMadeText(brick.name, brick.id), media: [], keep: keepAs(brickMadeText(brick.name)), bricks: [{ kind: 'made', id: brick.id, name: brick.name, line: brick.description, look: brick.characterTextureId, made }] };
+                return { text: brickMadeText(brick.name, brick.id, made), media: [], keep: keepAs(brickMadeText(brick.name, undefined, made)), bricks: [{ kind: 'made', id: brick.id, name: brick.name, line: brick.description, look: brick.characterTextureId, made }] };
             } catch (error) {
                 console.warn(`[DmReplyService] Bot ${botId} could not make the Brick it suggested:`, error instanceof Error ? error.message : error);
                 return { text: BRICK_NOT_MADE_TEXT, media: [], keep: keepAs(BRICK_NOT_MADE_TEXT) };
@@ -660,7 +670,14 @@ export class DmReplyService extends BaseBehavior {
         const playerMemory = memory.getMemory(botId, playerId);
         const media = playerMemory?.pendingMedia?.splice(0) ?? [];
         const artifacts = playerMemory?.pendingArtifacts?.splice(0) ?? [];
-        const bricks = playerMemory?.pendingBricks?.splice(0) ?? [];
+        let bricks = playerMemory?.pendingBricks?.splice(0) ?? [];
+        // A Brick it made with no words around it (the model said nothing else): the fixed line, so the person still gets
+        // its chat one tap away instead of a "couldn't answer" note
+        const madeOne = bricks.find((note) => note.kind === 'made');
+        if (!replyText.trim() && madeOne?.kind === 'made') replyText = brickMadeText(madeOne.name, madeOne.id, madeOne.made);
+        // A suggestion goes out only with words, and Orbit is asked about it only as its card is sent (claimOffer)
+        if (!replyText.trim()) bricks = bricks.filter((note) => note.kind !== 'offer');
+        const claimOffer = this.offerClaim(bricks, botId, person.uuid);
         // Someone already standing in the bot's room gets no card asking them to come visit it
         const roomLink = this.isInBotRoom(botId, person.uuid)
             ? undefined
@@ -678,7 +695,37 @@ export class DmReplyService extends BaseBehavior {
             const made = this.aiService?.madeFor(item.originalUrl, item.url) ?? null;
             void chatFileKeeper.keepAll(admin, [sentMediaJob({ ...item, mimeType: item.mimeType || null, caption: item.caption || null }, where, made)]);
         };
-        return { text: replyText, media, keep, mediaSent, ...(roomLink ? { roomLink } : {}), ...(artifacts.length ? { artifacts } : {}), ...(bricks.length ? { bricks } : {}) };
+        return {
+            text: replyText,
+            media,
+            keep,
+            mediaSent,
+            ...(roomLink ? { roomLink } : {}),
+            ...(artifacts.length ? { artifacts } : {}),
+            ...(bricks.length ? { bricks } : {}),
+            ...(claimOffer ? { claimOffer } : {}),
+        };
+    }
+
+    /**
+     * Asks Orbit whether this reply's suggestion may be shown now (once per person and topic, on every device), and
+     * says the topic as Orbit keeps it, or null to leave the card out. Called by whoever sends the card, right before
+     * it does, so a turn that failed, came back empty or was never sent never uses up a topic the person was not shown
+     * (#1996). Asks once however often it is called.
+     */
+    private offerClaim(bricks: BrickNote[], botId: string, userId: string): (() => Promise<string | null>) | undefined {
+        const offer = bricks.find((note): note is BrickOfferNote => note.kind === 'offer');
+        const admin = this.adminApiService;
+        if (!offer || !admin) return undefined;
+        let asked: Promise<string | null> | undefined;
+        return () =>
+            (asked ??= admin
+                .claimBrickOffer(botId, userId, offer.topic)
+                .then((claim) => (claim.show ? claim.topic : null))
+                .catch((error: unknown) => {
+                    console.warn('[DmReplyService] Could not ask Orbit about a Brick suggestion:', error instanceof Error ? error.message : error);
+                    return null;
+                }));
     }
 
     /**

@@ -44,13 +44,16 @@ export function brickChatLinks(node: HTMLElement): { destroy: () => void } {
         event.preventDefault();
         if (brickId) openBrickChatLink(brickId).catch((error) => console.error(error));
     };
+    // A middle click would open the link in a new tab too; other buttons (a right click's menu) are left alone
+    const middleTap = (event: MouseEvent) => {
+        if (event.button === 1) tap(event);
+    };
     node.addEventListener("click", tap);
-    // A middle click would open the link in a new tab too
-    node.addEventListener("auxclick", tap);
+    node.addEventListener("auxclick", middleTap);
     return {
         destroy() {
             node.removeEventListener("click", tap);
-            node.removeEventListener("auxclick", tap);
+            node.removeEventListener("auxclick", middleTap);
         },
     };
 }

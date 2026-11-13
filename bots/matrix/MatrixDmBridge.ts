@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import axios from 'axios';
+import { randomUUID } from 'node:crypto';
 import type { MatrixAppServiceClient } from './MatrixAppServiceClient';
 import type { MatrixEvent, MatrixEventHandler } from './MatrixAppServiceRouter';
 import { BOT_LOCALPART_PREFIX, botIdFromMatrixId, botMatrixId, type MatrixAppServiceConfig } from './MatrixConfig';
@@ -124,9 +125,17 @@ export interface MatrixDmBridgeDeps {
         forgetDmRoomOf?(botId: string, matrixUserId: string): Promise<void>;
         /**
          * One device at a time makes the chat of a bot and a person (#1995): true for the first to ask while the claim
-         * lasts, false for the others. Null when there is no shared store, and the bridge keeps its own claim.
+         * lasts, false for the others. Null when there is no shared store, and the bridge keeps its own claim. Held
+         * under the claim's own token, so letting go of it never lets go of a newer claim.
          */
-        claimDirectChat?(botId: string, matrixUserId: string, forMs: number): Promise<boolean | null>;
+        claimDirectChat?(botId: string, matrixUserId: string, forMs: number, token?: string): Promise<boolean | null>;
+        /**
+         * Holds that claim for a while longer while the bot takes a chat the person just made, under the invite's own
+         * token: the first hold takes it over, a renewal keeps it only while it is still the invite's (or nobody's).
+         */
+        holdDirectChat?(botId: string, matrixUserId: string, forMs: number, token?: string, takeOver?: boolean): Promise<void>;
+        /** Lets the claim go, only while it is still the invite's. */
+        releaseDirectChat?(botId: string, matrixUserId: string, token?: string): Promise<void>;
     };
     /** The cards of tools that ask first (#1657). Without it taps are ignored and nothing waits. */
     approvals?: MatrixDmApprovals;
@@ -524,7 +533,16 @@ export class MatrixDmBridge implements MatrixEventHandler {
         const botChatId = botMatrixId(this.config.domain, botId);
         // A bot whose id cannot be a chat address has no chat to make
         if (!botChatId) return { wait: true };
-        return (await this.claimDirectChat(botId, matrixUserId)) ? { create: true, botChatId } : { wait: true };
+        const claim = randomUUID();
+        if (!(await this.claimDirectChat(botId, matrixUserId, claim))) return { wait: true };
+        // Looked at again now the claim is this device's: another device's chat may have been noted, and its claim let
+        // go, between the first look and the claim. Then that chat is the one, and nothing is made a second time.
+        const again = await this.lookUpDirectRoom(botId, matrixUserId);
+        if (again.roomId || again.unsure) {
+            this.letGoOfClaim(botId, matrixUserId, claim);
+            return again.roomId ? { roomId: again.roomId } : { wait: true };
+        }
+        return { create: true, botChatId };
     }
 
     /**
@@ -565,8 +583,27 @@ export class MatrixDmBridge implements MatrixEventHandler {
         return 'sent';
     }
 
-    private async claimDirectChat(botId: string, matrixUserId: string): Promise<boolean> {
-        const shared = await this.deps.rooms?.claimDirectChat?.(botId, matrixUserId, DIRECT_CHAT_CLAIM_MS).catch(() => null);
+    /**
+     * Lets go of a claim this device was given but will not use, here and on every bot server. Only while it is still
+     * this claim: a look that took longer than the claim lasts never lets go of another device's claim made since.
+     */
+    private letGoOfClaim(botId: string, matrixUserId: string, claim: string): void {
+        this.directChatClaims.delete(MatrixDmBridge.pair(botId, matrixUserId));
+        this.deps.rooms?.releaseDirectChat?.(botId, matrixUserId, claim).catch((error: any) => {
+            console.warn(`[MatrixDmBridge] Could not let go of the direct chat of bot ${botId}:`, error?.message ?? error);
+        });
+    }
+
+    private async claimDirectChat(botId: string, matrixUserId: string, claim: string): Promise<boolean> {
+        let shared: boolean | null | undefined;
+        try {
+            shared = await this.deps.rooms?.claimDirectChat?.(botId, matrixUserId, DIRECT_CHAT_CLAIM_MS, claim);
+        } catch (error: any) {
+            // The shared claim could not be asked: another bot server may hold it, so nobody makes the chat just now
+            console.warn(`[MatrixDmBridge] Could not claim the direct chat of bot ${botId}:`, error?.message ?? error);
+            return false;
+        }
+        // Null only without a shared store: one bot server, which keeps its own claim
         if (shared !== null && shared !== undefined) return shared;
         const key = MatrixDmBridge.pair(botId, matrixUserId);
         const now = Date.now();
@@ -576,6 +613,37 @@ export class MatrixDmBridge implements MatrixEventHandler {
         }
         this.directChatClaims.set(key, now + DIRECT_CHAT_CLAIM_MS);
         return true;
+    }
+
+    /**
+     * While the bot takes a direct chat a person just made (the invite), no other device of theirs is told to make one:
+     * the claim is held, here and on every bot server, until the bot has joined and noted the chat, or turned it down.
+     * The stop lets the claim go: the chat is known from then on, and one that was turned down may be made again.
+     */
+    private holdDirectChat(botId: string, matrixUserId: string): () => void {
+        const key = MatrixDmBridge.pair(botId, matrixUserId);
+        // This invite's own token: its renewals and its release never touch a claim another device took since
+        const token = randomUUID();
+        let first = true;
+        const hold = () => {
+            this.directChatClaims.set(key, Date.now() + DIRECT_CHAT_CLAIM_MS);
+            const takeOver = first;
+            first = false;
+            this.deps.rooms?.holdDirectChat?.(botId, matrixUserId, DIRECT_CHAT_CLAIM_MS, token, takeOver).catch((error: any) => {
+                console.warn(`[MatrixDmBridge] Could not hold the direct chat of bot ${botId}:`, error?.message ?? error);
+            });
+        };
+        hold();
+        // Renewed four times a claim: one renewal that fails still leaves two more before the claim runs out
+        const timer = setInterval(hold, DIRECT_CHAT_CLAIM_MS / 4);
+        timer.unref?.();
+        return () => {
+            clearInterval(timer);
+            this.directChatClaims.delete(key);
+            this.deps.rooms?.releaseDirectChat?.(botId, matrixUserId, token).catch((error: any) => {
+                console.warn(`[MatrixDmBridge] Could not let go of the direct chat of bot ${botId}:`, error?.message ?? error);
+            });
+        };
     }
 
     /**
@@ -793,6 +861,16 @@ export class MatrixDmBridge implements MatrixEventHandler {
             await this.client.leaveRoom(botUserId, event.room_id, ONLY_DIRECT).catch(() => undefined);
             return;
         }
+        // Until the bot has joined and noted this chat, no other device of the person's makes a second one
+        const stopHolding = this.holdDirectChat(botId, event.sender);
+        try {
+            await this.takeInvite(event, botId, botUserId);
+        } finally {
+            stopHolding();
+        }
+    }
+
+    private async takeInvite(event: MatrixEvent, botId: string, botUserId: string): Promise<void> {
         let config: BotConfiguration | null;
         try {
             config = await this.deps.getBotConfig(botId);
@@ -1136,12 +1214,19 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 await this.client.sendText(botUserId, event.room_id, reply.text);
             }
             reply.keep?.();
-            // The gentle offer, after the answer and never in the middle of it (#1996). Orbit already said it may be shown.
+            // The gentle offer, after the answer and never in the middle of it (#1996). Orbit is asked now, right before
+            // the card goes out: once per person and topic on every device, so a second device racing it sends none.
             const offer = reply.text ? reply.bricks?.find((note) => note.kind === 'offer') : undefined;
-            if (offer && offer.kind === 'offer') {
-                const { topic, ask, name, line, instructions } = offer;
+            const topic = offer && offer.kind === 'offer' && reply.claimOffer ? await reply.claimOffer() : null;
+            if (offer && offer.kind === 'offer' && topic) {
+                const { ask, name, line, instructions } = offer;
+                const content = { msgtype: 'm.text', body: ask, [BRICK_OFFER_KEY]: { topic, ask, name, line, instructions } };
+                // Orbit counted it as shown when it allowed it, so a send that fails once is tried again before it is lost.
+                // Both tries are one message to Matrix: a first try that arrived but whose answer was lost is not sent twice.
+                const txnId = randomUUID();
                 await this.client
-                    .sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body: ask, [BRICK_OFFER_KEY]: { topic, ask, name, line, instructions } })
+                    .sendMessage(botUserId, event.room_id, content, txnId)
+                    .catch(() => this.client.sendMessage(botUserId, event.room_id, content, txnId))
                     .catch((error) => console.warn(`[MatrixDmBridge] Could not send a Brick suggestion from bot ${botId}:`, error?.message ?? error));
             }
             for (const card of reply.artifacts ?? []) {

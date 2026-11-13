@@ -212,3 +212,5 @@ export { default as IconVolume2 } from "~icons/tabler/volume-2";
 export { default as IconVolumeOff } from "~icons/tabler/volume-off";
 export { default as IconHeart } from "~icons/tabler/heart";
 export { default as IconPlugConnected } from "~icons/tabler/plug-connected";
+export { default as IconPhoneOff } from "~icons/tabler/phone-off";
+export { default as IconPhoneCall } from "~icons/tabler/phone-call";

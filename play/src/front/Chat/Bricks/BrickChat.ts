@@ -5,7 +5,7 @@ import { botApiService } from "../../external-modules/bots/services/BotApiServic
 import { LL } from "../../../i18n/i18n-svelte";
 import { gameManager } from "../../Phaser/Game/GameManager";
 import { warningMessageStore } from "../../Stores/ErrorStore";
-import type { ChatConnectionInterface, ChatRoom } from "../Connection/ChatConnection";
+import type { ChatConnectionInterface, ChatRoom, RoomFolder } from "../Connection/ChatConnection";
 import { openChatRoom, openDirectChatRoom } from "../Utils";
 import { openBrickChatWith, type BrickCard, type MakeItMemory } from "./Brick";
 import { GUEST_BRICK_ID } from "./GuestBrick";
@@ -73,12 +73,12 @@ export function openBrickChat(brickId: string): Promise<ChatRoom | undefined> {
 }
 
 /**
- * The direct chat this device has with someone, kept up to date: found again when the list of chats changes and when
- * the members of a chat arrive (they can load after the chat is listed). Undefined while there is none.
+ * The direct chat this device has with someone, kept up to date: found again when any list of chats changes (direct
+ * chats, rooms, and the rooms in folders, where getDirectRoomFor also looks) and when the members of a chat arrive
+ * (they can load after the chat is listed). Undefined while there is none.
  */
 export function directChatWith(connection: ChatConnectionInterface, chatId: string): Readable<ChatRoom | undefined> {
     return readable<ChatRoom | undefined>(connection.getDirectRoomFor(chatId), (set) => {
-        let memberWatches: (() => void)[] = [];
         let queued = false;
         let stopped = false;
         const look = () => {
@@ -90,19 +90,50 @@ export function directChatWith(connection: ChatConnectionInterface, chatId: stri
             queued = true;
             queueMicrotask(look);
         };
-        const stopList = connection.directRooms.subscribe((rooms) => {
-            memberWatches.forEach((stop) => stop());
-            memberWatches = [];
+        // What each list watches now, by list: a list that changes drops its old watches and takes new ones
+        const watches = new Map<object, (() => void)[]>();
+        const stopWatches = (list: object) => {
+            watches.get(list)?.forEach((stop) => stop());
+            watches.delete(list);
+        };
+        const watchRooms = (list: object, rooms: readonly ChatRoom[]) => {
+            stopWatches(list);
+            const stops: (() => void)[] = [];
             for (const room of rooms) {
                 const members = (room as Partial<{ members: Readable<unknown> }>).members;
-                if (members) memberWatches.push(members.subscribe(lookSoon));
+                if (members) stops.push(members.subscribe(lookSoon));
             }
+            watches.set(list, stops);
             lookSoon();
-        });
+        };
+        const watchFolders = (list: object, folders: readonly RoomFolder[], seen: Set<string>) => {
+            stopWatches(list);
+            const stops: (() => void)[] = [];
+            for (const folder of folders) {
+                if (seen.has(folder.id)) continue;
+                seen.add(folder.id);
+                stops.push(folder.rooms.subscribe((rooms) => watchRooms(folder.rooms, rooms)));
+                stops.push(() => stopWatches(folder.rooms));
+                stops.push(
+                    folder.folders.subscribe((children) => watchFolders(folder.folders, children, new Set(seen)))
+                );
+                stops.push(() => stopWatches(folder.folders));
+            }
+            watches.set(list, stops);
+            lookSoon();
+        };
+        const stopDirect = connection.directRooms.subscribe((rooms) => watchRooms(connection.directRooms, rooms));
+        // A connection without rooms or folders (a test's, or the void one) has only its direct chats
+        const stopRooms = connection.rooms?.subscribe((rooms) => watchRooms(connection.rooms, rooms));
+        const stopFolders = connection.folders?.subscribe((folders) =>
+            watchFolders(connection.folders, folders, new Set())
+        );
         return () => {
             stopped = true;
-            stopList();
-            memberWatches.forEach((stop) => stop());
+            stopDirect();
+            stopRooms?.();
+            stopFolders?.();
+            [...watches.keys()].forEach(stopWatches);
         };
     });
 }
