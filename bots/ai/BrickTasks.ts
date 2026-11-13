@@ -323,7 +323,9 @@ async function setReminder(args: Record<string, unknown>, settings: TaskSettings
     }
     const built = cadenceFrom(args, settings, timeZone, now);
     if ('problem' in built) return built.problem;
-    const key = `${context.botId}|${context.userId}|${words}|${JSON.stringify(built.cadence)}`;
+    // "In 20 minutes" is a moment that moves with the clock, so it is keyed on what was asked, not on the moment it came to
+    const relative = repeatOf(args.repeat) === 'none' && typeof args.in_minutes === 'number' && built.cadence.type === 'once' ? `in ${Math.round(args.in_minutes)} min` : null;
+    const key = `${context.botId}|${context.userId}|${words}|${relative ?? JSON.stringify(built.cadence)}`;
     const before = justSet.get(key);
     if (before && now - before.at < JUST_SET_MS) return { ...before.result, note: 'Already set a moment ago, once. Do not set it again.' };
     const answer = await context.admin.setBrickItem(context.botId, {

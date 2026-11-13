@@ -245,6 +245,17 @@ describe('setting a reminder', () => {
         expect(second).toMatchObject({ set: true, id: 'item-1' });
         expect(String(second.note)).toContain('Do not set it again');
     });
+
+    it('sets one reminder when "in 20 minutes" is asked twice a few seconds apart', async () => {
+        const { admin, context } = setUp();
+        let clock = NOW;
+        context.now = () => clock;
+        await runTaskTool(SET_REMINDER_TOOL, { text: 'Stretch', in_minutes: 20 }, context);
+        clock += 1_700;
+        const second = await runTaskTool(SET_REMINDER_TOOL, { text: 'Stretch', in_minutes: 20 }, context);
+        expect(admin.setBrickItem).toHaveBeenCalledTimes(1);
+        expect(String(second.note)).toContain('Do not set it again');
+    });
 });
 
 describe('seeing and changing what is kept', () => {
