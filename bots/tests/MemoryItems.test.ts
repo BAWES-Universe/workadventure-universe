@@ -133,6 +133,20 @@ describe('dropItems: a forgotten thing goes, with what was built from it', () =>
         expect(lines).toEqual(expect.arrayContaining(['hello there', 'what is the weather', 'my friend Amy is coming']));
     });
 
+    it('finds a name written with a capital only as written, so the word it is also stays (Sentry)', () => {
+        const short = talking();
+        say(short, 'call me Will', 1000);
+        reply(short, 'Nice to meet you, Will!', 1001);
+        say(short, 'I will go to the shop later', 2000);
+        reply(short, 'Sure, I will remind you', 2001);
+        const record = short.getMemory(BOT, SARA)!;
+        expect(dropItems(record, new Set([memoryItemKey('name', null, 'Will')]))).toBe(1);
+        const lines = record.conversationHistory.map((line) => line.message);
+        expect(lines).not.toContain('call me Will');
+        expect(lines).not.toContain('Nice to meet you, Will!');
+        expect(lines).toEqual(expect.arrayContaining(['I will go to the shop later', 'Sure, I will remind you']));
+    });
+
     it('takes only the reply right after the line a short preference came from', () => {
         const short = talking();
         say(short, 'I love tea', 1000);

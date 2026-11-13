@@ -102,8 +102,13 @@ export function visibleItems(memory: BotPlayerMemory, view: MemoryView): MemoryI
 const MIN_PHRASE = 4;
 
 /** These words as their own words, not a piece of a longer one. */
-function wholeWords(text: string): RegExp {
-    return new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRegExp(text)}($|[^\\p{L}\\p{N}])`, 'u');
+function wholeWords(text: string, exactCase = false): RegExp {
+    return new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRegExp(text)}($|[^\\p{L}\\p{N}])`, exactCase ? 'u' : 'iu');
+}
+
+/** A name written with a capital ("Will", "Rose") is found only as written, so the word it is also ("will", "rose") is left alone. */
+function sameCaseAsWritten(name: string): boolean {
+    return name !== name.toLowerCase();
 }
 
 function escapeRegExp(text: string): string {
@@ -116,7 +121,7 @@ function saidBackToThem(text: string): RegExp {
     const person = `(^|[^\\p{L}\\p{N}])(you|your|you're|you've)`;
     const likes = `(like|love|enjoy|prefer|adore|favou?rite|fan of|into|go-to)`;
     // "You love tea" and "Tea is your favorite": the person, a word for liking, and the value, in either order, in one sentence
-    return new RegExp(`${person}[^.!?\\n]{0,40}?${likes}[^.!?\\n]{0,25}?${word}|${word}[^.!?\\n]{0,40}?${person}[^.!?\\n]{0,40}?${likes}`, 'u');
+    return new RegExp(`${person}[^.!?\\n]{0,40}?${likes}[^.!?\\n]{0,25}?${word}|${word}[^.!?\\n]{0,40}?${person}[^.!?\\n]{0,40}?${likes}`, 'iu');
 }
 
 /**
@@ -147,11 +152,11 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
         if (at !== null) for (const line of history) if (line.timestamp === at && line.sender === 'person') doomedLines.add(line);
         // The lines that say it back go too, the bot's and the person's: only the last line it was said in is noted, and a thing
         // said twice would otherwise leave the first. Words are matched whole ("Mark" is not "bookmark").
-        if (phrase.trim().length >= MIN_PHRASE) phrases.push(wholeWords(phrase.trim().toLowerCase()));
+        if (phrase.trim().length >= MIN_PHRASE) phrases.push(wholeWords(phrase.trim(), ownName && sameCaseAsWritten(phrase.trim())));
         // A value too short to match everywhere ("Amy") is still said back in the reply right after the line it came from
         else if (phrase.trim().length > 0) {
-            const short = phrase.trim().toLowerCase();
-            echoes.push({ at, ownName, words: wholeWords(short), toldBack: saidBackToThem(short) });
+            const short = phrase.trim();
+            echoes.push({ at, ownName, words: wholeWords(short, ownName && sameCaseAsWritten(short)), toldBack: saidBackToThem(short) });
         }
     };
 
@@ -203,7 +208,7 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
     if (doomedLines.size > 0 || phrases.length > 0 || echoes.length > 0) {
         memory.conversationHistory = history.filter((line, index) => {
             if (doomedLines.has(line)) return false;
-            const text = line.message.toLowerCase();
+            const text = line.message;
             if (phrases.some((phrase) => phrase.test(text))) return false;
             if (line.sender === 'person') return true;
             // The person's own name is not said back by the bot in any later line either: it is the person who forgot it
