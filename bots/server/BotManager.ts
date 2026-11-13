@@ -143,6 +143,11 @@ export class BotManager {
      * `bots` (the bot standing in a room), so a call never shows on the map or in any count of the room's bots.
      */
     private calls: Map<string, LiveCall> = new Map();
+    /**
+     * Calls being set up (before they are in `calls`): a hang-up or a newer start while the settings are fetched and the
+     * client is built cancels the setup, so a caller who already hung up is never connected afterwards.
+     */
+    private startingCalls: Map<string, { cancelled: boolean }> = new Map();
     private adminApiService: AdminApiService;
     /** Asks Orbit who may chat with a bot nearby or summon it, before the bot's AI is reached. */
     private accessGate: BotAccessGate;
@@ -951,17 +956,41 @@ export class BotManager {
     }
 
     async startCall(botId: string, callerUuid: string): Promise<{ spaceName: string }> {
-        await this.endCall(botId, callerUuid);
+        const key = callKey(botId, callerUuid);
+        // Registered at once, before anything is awaited: a hang-up or a newer start cancels it
+        const starting = { cancelled: false };
+        const earlier = this.startingCalls.get(key);
+        if (earlier) earlier.cancelled = true;
+        this.startingCalls.set(key, starting);
+        await this.endLiveCall(key);
+        if (starting.cancelled) throw new BotUnavailableError('The call was ended before it started');
+        const cancelledError = () => new BotUnavailableError('The call was ended before it started');
+        try {
+            return await this.startCallSetUp(botId, callerUuid, key, starting, cancelledError);
+        } finally {
+            if (this.startingCalls.get(key) === starting) this.startingCalls.delete(key);
+        }
+    }
+
+    private async startCallSetUp(
+        botId: string,
+        callerUuid: string,
+        key: string,
+        starting: { cancelled: boolean },
+        cancelledError: () => Error
+    ): Promise<{ spaceName: string }> {
         const config = await this.adminApiService.getBotConfiguration(botId);
+        if (starting.cancelled) throw cancelledError();
         if (!config || (config as { enabled?: boolean }).enabled === false) {
             throw new BotUnavailableError(`Bot ${botId} not found`);
         }
         if (config.voiceEnabled !== true) {
             throw new BotCannotCallError();
         }
-        const key = callKey(botId, callerUuid);
         const spaceName = callSpaceName({ botId, callerUuid, callId: randomUUID() });
         const client = await this.buildClient(botId, config, { callOnly: true });
+        // Hung up while it was being built: nothing was connected, so nothing is left to end
+        if (starting.cancelled) throw cancelledError();
         const call: LiveCall = { client, spaceName };
         // Two starts for the same person and bot can both be here: the one registered last wins, and the one that
         // was registered first (maybe already connected) is ended, so none is left running with no entry.
@@ -998,6 +1027,10 @@ export class BotManager {
             if (!(await client.acceptCall(spaceName))) {
                 throw new BotUnavailableError(`Bot ${botId} could not take the call`);
             }
+            // Ended or replaced while the bot was joining: the caller must not be told it is on
+            if (this.calls.get(key) !== call) {
+                throw new BotUnavailableError('The call was replaced or ended while the bot was taking it');
+            }
         } catch (error) {
             hangUp();
             throw error;
@@ -1013,6 +1046,16 @@ export class BotManager {
     /** The call is over (the caller hung up): the bot leaves its space and closes its connection. Never throws. */
     async endCall(botId: string, callerUuid: string): Promise<boolean> {
         const key = callKey(botId, callerUuid);
+        const starting = this.startingCalls.get(key);
+        if (starting) {
+            starting.cancelled = true;
+            this.startingCalls.delete(key);
+        }
+        const ended = await this.endLiveCall(key);
+        return ended || starting !== undefined;
+    }
+
+    private async endLiveCall(key: string): Promise<boolean> {
         const call = this.calls.get(key);
         if (!call) return false;
         this.calls.delete(key);
@@ -1498,6 +1541,8 @@ export class BotManager {
         this.stopRoomVerification();
         this.adminApiService.stopPrivacySync?.();
 
+        for (const starting of this.startingCalls.values()) starting.cancelled = true;
+        this.startingCalls.clear();
         for (const call of this.calls.values()) {
             clearJoinTimer(call);
             call.client.disconnect();

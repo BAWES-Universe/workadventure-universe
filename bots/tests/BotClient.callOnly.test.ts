@@ -155,6 +155,31 @@ describe('BotClient call-only connection', () => {
         expect(joined).toHaveBeenCalledWith(SPACE);
     });
 
+    it('never reads a call-only id as a player number when people are listed or join', async () => {
+        const { client, internals } = bot(true);
+        const onSpaceUserJoined = vi.fn();
+        client.setBehavior({ setBot: vi.fn(), onSpaceUserJoined, getConfiguredFacing: vi.fn() } as never);
+        await internals.handleSubMessage({
+            $case: 'initSpaceUsersMessage',
+            initSpaceUsersMessage: { spaceName: SPACE, users: [{ spaceUserId: 'call_12345678-aaaa', name: 'x' }] },
+        });
+        await internals.handleSubMessage({
+            $case: 'addSpaceUserMessage',
+            addSpaceUserMessage: { spaceName: SPACE, user: { spaceUserId: 'call_87654321-bbbb', name: 'y' } },
+        });
+        for (const [, id] of onSpaceUserJoined.mock.calls) expect(id).not.toBe(12345678);
+        for (const [, id] of onSpaceUserJoined.mock.calls) expect(id).not.toBe(87654321);
+    });
+
+    it("addresses a reply meant for the caller alone to the caller's own id, not to one built from the bot's", async () => {
+        const { client, internals } = bot(true);
+        client.setBehavior({ setBot: vi.fn(), onSpaceUserJoined: vi.fn(), getConfiguredFacing: vi.fn() } as never);
+        internals.spaces.set(SPACE, 'call_abc');
+        expect(internals.spaceUserIdOf(SPACE, 7)).toBeUndefined();
+        await internals.handleSubMessage({ $case: 'addSpaceUserMessage', addSpaceUserMessage: { spaceName: SPACE, user: { spaceUserId: 'room_7' } } });
+        expect(internals.spaceUserIdOf(SPACE, 7)).toBe('room_7');
+    });
+
     it('never takes the random id of a call-only connection for a player number', async () => {
         const { client, internals } = bot(true);
         const onSpaceUserLeft = vi.fn();

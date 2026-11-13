@@ -203,10 +203,96 @@ describe('BotManager calls', () => {
     it('keeps exactly one live call when two starts for the same person and bot run together', async () => {
         const { manager, clients } = setup();
         const results = await Promise.allSettled([manager.startCall('b1', 'uuid-1'), manager.startCall('b1', 'uuid-1')]);
-        expect(clients).toHaveLength(2);
         expect(manager.liveCalls()).toBe(1);
-        const ended = clients.filter((c) => c.disconnect.mock.calls.length > 0 || c.endCall.mock.calls.length > 0);
-        expect(ended).toHaveLength(1);
-        expect(results.filter((r) => r.status === 'fulfilled').length).toBeGreaterThanOrEqual(1);
+        expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+        // Whatever was built for the start that lost is not left connected
+        const kept = clients.filter((c) => c.disconnect.mock.calls.length === 0 && c.endCall.mock.calls.length === 0);
+        expect(kept.length).toBeLessThanOrEqual(1);
+    });
+
+    it('does not connect a call the caller hung up on while its settings were still being fetched', async () => {
+        const { manager, admin, clients } = setup();
+        let answer!: (value: unknown) => void;
+        admin.getBotConfiguration.mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    answer = resolve;
+                })
+        );
+        const starting = manager.startCall('b1', 'uuid-1');
+        const rejected = expect(starting).rejects.toBeInstanceOf(BotUnavailableError);
+        await vi.waitFor(() => expect(admin.getBotConfiguration).toHaveBeenCalled());
+        // The hang-up arrives while the settings are still on their way
+        expect(await manager.endCall('b1', 'uuid-1')).toBe(true);
+        answer({ botId: 'b1', name: 'Nora', voiceEnabled: true });
+        await rejected;
+        expect(clients).toHaveLength(0);
+        expect(manager.liveCalls()).toBe(0);
+    });
+
+    it('does not connect a call the caller hung up on while its client was being built', async () => {
+        const { manager, build, clients } = setup();
+        let built!: () => void;
+        build.mockImplementationOnce(
+            (() =>
+                new Promise((resolve) => {
+                    built = () => {
+                        const client = fakeClient();
+                        clients.push(client);
+                        resolve(client);
+                    };
+                })) as never
+        );
+        const starting = manager.startCall('b1', 'uuid-1');
+        const rejected = expect(starting).rejects.toBeInstanceOf(BotUnavailableError);
+        await vi.waitFor(() => expect(build).toHaveBeenCalled());
+        await manager.endCall('b1', 'uuid-1');
+        built();
+        await rejected;
+        expect(clients[0].connect).not.toHaveBeenCalled();
+        expect(manager.liveCalls()).toBe(0);
+    });
+
+    it('cancels a start still being set up when the server shuts down', async () => {
+        const { manager, admin } = setup();
+        let answer!: (value: unknown) => void;
+        admin.getBotConfiguration.mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    answer = resolve;
+                })
+        );
+        const starting = manager.startCall('b1', 'uuid-1');
+        const rejected = expect(starting).rejects.toBeInstanceOf(BotUnavailableError);
+        await vi.waitFor(() => expect(admin.getBotConfiguration).toHaveBeenCalled());
+        (manager as never as { botRegistry: unknown }).botRegistry = { disconnect: vi.fn().mockResolvedValue(undefined) };
+        await manager.shutdown();
+        answer({ botId: 'b1', name: 'Nora', voiceEnabled: true });
+        await rejected;
+        expect(manager.liveCalls()).toBe(0);
+    });
+
+    it('does not say a call is on when it was ended while the bot was taking it', async () => {
+        const { manager, build, clients } = setup();
+        let accepted!: (value: boolean) => void;
+        build.mockImplementationOnce((async () => {
+            const client = fakeClient();
+            client.acceptCall.mockImplementation(
+                () =>
+                    new Promise<boolean>((resolve) => {
+                        accepted = resolve;
+                    })
+            );
+            clients.push(client);
+            return client;
+        }) as never);
+        const starting = manager.startCall('b1', 'uuid-1');
+        const rejected = expect(starting).rejects.toBeInstanceOf(BotUnavailableError);
+        await vi.waitFor(() => expect(clients[0]?.acceptCall).toHaveBeenCalled());
+        await manager.endCall('b1', 'uuid-1');
+        accepted(true);
+        await rejected;
+        expect(manager.liveCalls()).toBe(0);
+        expect(clients[0].disconnect).toHaveBeenCalled();
     });
 });

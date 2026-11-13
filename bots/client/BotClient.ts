@@ -194,6 +194,8 @@ export class BotClient {
     public onCallOver?: (spaceName: string) => void;
     /** A call-only client sees the caller in its call space (they came in, or were already there). */
     public onCallJoined?: (spaceName: string) => void;
+    /** The caller's own space user id in each call space this client is in (#2004). */
+    private callerIds: Map<string, string> = new Map();
 
     /**
      * Who the bot listens to when others are in the bubble (#1220): the person who says its name, who summoned it, or
@@ -2270,6 +2272,8 @@ export class BotClient {
 
     /** A person's id in this space, from the bot's own id there. Undefined when the bot is not in the space. */
     private spaceUserIdOf(spaceName: string, playerId: number): string | undefined {
+        // In a call the bot's own id is a call-only one, which says nothing of the caller's: the caller's own id is used
+        if (this.config.callOnly && isCallSpaceName(spaceName)) return this.callerIds.get(spaceName);
         const mine = this.spaces.get(spaceName);
         const cut = mine?.lastIndexOf('_') ?? -1;
         return mine && cut >= 0 ? `${mine.slice(0, cut)}_${playerId}` : undefined;
@@ -3138,7 +3142,11 @@ export class BotClient {
     /** In a call space, anyone who is not a call-only connection (this bot) is the caller. */
     private noteCallerIn(spaceName: string, users: ReadonlyArray<{ spaceUserId?: string }>): void {
         if (!this.config.callOnly || !isCallSpaceName(spaceName)) return;
-        if (users.some((user) => !user.spaceUserId?.startsWith(CALL_ONLY_SPACE_USER_PREFIX))) this.onCallJoined?.(spaceName);
+        const caller = users.find((user) => user.spaceUserId && !user.spaceUserId.startsWith(CALL_ONLY_SPACE_USER_PREFIX));
+        if (!caller?.spaceUserId) return;
+        // Kept so a reply meant for the caller alone is addressed to the caller's own id (spaceUserIdOf)
+        this.callerIds.set(spaceName, caller.spaceUserId);
+        this.onCallJoined?.(spaceName);
     }
 
     /** The call is over: the bot leaves its space and closes its connection. Never throws. */
@@ -3157,6 +3165,7 @@ export class BotClient {
             console.warn(`[Bot ${this.config.botId}] Could not leave the call ${spaceName}:`, error);
         }
         this.spaces.delete(spaceName);
+        this.callerIds.delete(spaceName);
         this.disconnect();
     }
 
@@ -3642,17 +3651,8 @@ export class BotClient {
                     for (const spaceUser of spaceUsers) {
                         // Extract numeric userId from spaceUserId (format: "roomID_userID")
                         // The last part after the underscore is the numeric userId
-                        let numericUserId: number | null = null;
-                        if (spaceUser.spaceUserId) {
-                            const lastUnderscoreIndex = spaceUser.spaceUserId.lastIndexOf('_');
-                            if (lastUnderscoreIndex !== -1) {
-                                const userIdStr = spaceUser.spaceUserId.substring(lastUnderscoreIndex + 1);
-                                numericUserId = parseInt(userIdStr, 10);
-                                if (isNaN(numericUserId)) {
-                                    numericUserId = null;
-                                }
-                            }
-                        }
+                        // A call-only id is never a player number (playerIdOf)
+                        const numericUserId = BotClient.playerIdOf(spaceUser.spaceUserId) || null;
                         
                         if (numericUserId) {
                             // Skip the bot itself
@@ -3712,17 +3712,8 @@ export class BotClient {
                     }
                     
                     // Extract numeric userId from spaceUserId (format: "roomID_userID" or full URL)
-                    let numericUserId: number | null = null;
-                    if (spaceUser.spaceUserId) {
-                        const lastUnderscoreIndex = spaceUser.spaceUserId.lastIndexOf('_');
-                        if (lastUnderscoreIndex !== -1) {
-                            const userIdStr = spaceUser.spaceUserId.substring(lastUnderscoreIndex + 1);
-                            numericUserId = parseInt(userIdStr, 10);
-                            if (isNaN(numericUserId)) {
-                                numericUserId = null;
-                            }
-                        }
-                    }
+                    // A call-only id is never a player number (playerIdOf)
+                    const numericUserId = BotClient.playerIdOf(spaceUser.spaceUserId) || null;
                     
                     if (!numericUserId) {
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
