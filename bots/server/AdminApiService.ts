@@ -994,8 +994,11 @@ export class AdminApiService {
             const body = (await this.brickCall<{ handed?: unknown }>('post', 'api/guest-brick/handover', { guestId, userUuid })).data;
             return body?.handed === true;
         } catch (error) {
+            // Orbit said no (an Orbit from before has no such route): not handed. Anything else is "can't say now", and throws
+            const status = (error as { response?: { status?: number } })?.response?.status;
+            if (typeof status === 'number' && status >= 400 && status < 500 && status !== 408 && status !== 429) return false;
             console.warn('[AdminApiService] Could not check a hand-over of a guest chat:', error instanceof Error ? error.message : error);
-            return false;
+            throw error;
         }
     }
 

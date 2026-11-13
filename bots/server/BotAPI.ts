@@ -15,7 +15,7 @@ import { BotBusyError, BotUnavailableError } from '../utils/summonErrors';
 import { helloSourceOf, typedVoiceName, type HelloSource, type VoiceHello } from '../voice/VoiceHello';
 import { buildVoiceHello } from '../voice/VoiceHelloWiring';
 import { GuestBrickService, GUEST_FILES_MAX, isGuestBrickId, readCarriedLines, readCarriedPart } from './GuestBrickService';
-import { buildCarryCopy, buildGuestBrickMedia, copyCarriedMedia, type CarryCopy } from './GuestBrickMedia';
+import { buildCarryCopy, buildGuestBrickMedia, CarryNotNowError, copyCarriedMedia, type CarryCopy } from './GuestBrickMedia';
 import type { CarriedPart, GuestChatNote } from '../matrix/MatrixDmBridge';
 
 /** The id the game makes for a guest at their first visit (a uuid): a member's token names an email or an account instead. */
@@ -1113,6 +1113,12 @@ export class BotAPI {
                 }
                 res.json({ result });
             } catch (error) {
+                // The hand-over or the storage can't be asked now: nothing was said, and the device keeps its chat and asks again
+                if (error instanceof CarryNotNowError) {
+                    console.warn(`[BotAPI] Not bringing a guest's chat into ${botId} just now:`, error.message);
+                    res.status(503).json({ error: 'Could not check right now', code: 'cannot_check' });
+                    return;
+                }
                 console.error(`[BotAPI] Error bringing a guest's chat into ${botId}:`, error instanceof Error ? error.message : error);
                 res.status(500).json({ error: 'Could not bring the chat' });
             }

@@ -15,7 +15,7 @@ vi.mock('../utils/MovementLogger', () => ({ movementLogger: {} }));
 
 import { BotAPI } from '../server/BotAPI';
 import { GuestBrickService, readDelivery, signDelivery, type GuestBrickMedia } from '../server/GuestBrickService';
-import { copyCarriedMedia, readGuestUpload, type CarryCopy } from '../server/GuestBrickMedia';
+import { CarryNotNowError, copyCarriedMedia, readGuestUpload, type CarryCopy } from '../server/GuestBrickMedia';
 import { readCarriedLines } from '../server/GuestBrickService';
 import { carriedWords } from '../matrix/MatrixDmBridge';
 import { checkReceipt, readReceiptFile, signReceipt, uploaderPathOf } from '../server/UploadReceipts';
@@ -399,15 +399,19 @@ describe("a guest's pictures, files and notes come along when they sign in (plan
         expect(again[0].media?.[0].url).toBe('https://cdn.test/copy.oga');
     });
 
-    it('tries a copy again when the carry is asked again after the copy failed', async () => {
+    it('says "not now" when storage or the hand-over check fails, and copies when the carry is asked again', async () => {
         const steps = copySteps();
         steps.store.mockRejectedValueOnce(new Error('storage down'));
         const guest = `g-${Math.random()}`;
-        const first = await copyCarriedMedia(guest, readCarriedLines([LINE]), steps);
-        expect(first[0].media?.[0]).toMatchObject({ gone: true });
+        await expect(copyCarriedMedia(guest, readCarriedLines([LINE]), steps)).rejects.toBeInstanceOf(CarryNotNowError);
         const again = await copyCarriedMedia(guest, readCarriedLines([LINE]), steps);
         expect(steps.store).toHaveBeenCalledTimes(2);
         expect(again[0].media?.[0].url).toBe('https://cdn.test/copy.oga');
+
+        // Orbit could not be asked: never taken as "not handed", so nothing is marked gone
+        const offline = copySteps({ handed: vi.fn(async () => Promise.reject(new Error('timeout'))) });
+        await expect(copyCarriedMedia(`g-${Math.random()}`, readCarriedLines([LINE]), offline)).rejects.toBeInstanceOf(CarryNotNowError);
+        expect(offline.read).not.toHaveBeenCalled();
     });
 
     it('keeps the name of each line a device brings in parts', () => {
@@ -452,6 +456,14 @@ describe("a guest's pictures, files and notes come along when they sign in (plan
             expect((await carry([LINE])).status).toBe(200);
             expect(carryCopy).toHaveBeenCalledWith(GUEST, 'uuid-alice');
             expect(carryGuestChat.mock.calls[0][3][0].media[0]).toMatchObject({ url: 'https://cdn.test/copy.oga' });
+        });
+
+        it('says "ask again" and says nothing when Orbit can\'t check the hand-over now', async () => {
+            carryCopy.mockReturnValue(copySteps({ handed: vi.fn(async () => Promise.reject(new Error('timeout'))) }));
+            const response = await carry([LINE]);
+            expect(response.status).toBe(503);
+            expect(await response.json()).toMatchObject({ code: 'cannot_check' });
+            expect(carryGuestChat).not.toHaveBeenCalled();
         });
 
         it('brings media as gone when nothing can copy here, never with a receipt', async () => {

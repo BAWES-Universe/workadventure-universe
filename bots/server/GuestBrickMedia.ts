@@ -51,6 +51,9 @@ const COPIES_MAX = 2000;
 /** Copies made for a hand-over, by guest and file, so a carry asked again (its chat was not there yet) never copies twice. */
 const copies = new Map<string, { at: number; url: string }>();
 
+/** Orbit or the storage could not be asked just now: nothing of this part is said, and the device asks again later. */
+export class CarryNotNowError extends Error {}
+
 export interface CarryCopy {
     /** Whether Orbit handed this guest's chat to the person who asks. */
     handed: () => Promise<boolean>;
@@ -74,7 +77,10 @@ export async function copyCarriedMedia(guestId: string, lines: GuestChatNote[], 
         if (now - entry.at > COPIES_KEPT_MS || copies.size > COPIES_MAX) copies.delete(key);
         else break;
     }
-    const handed = await copy.handed().catch(() => false);
+    // Only a real "no" marks the files gone: a hand-over that can't be checked now is asked again, never taken as a no
+    const handed = await copy.handed().catch((error: unknown) => {
+        throw new CarryNotNowError(`Could not check the hand-over: ${error instanceof Error ? error.message : String(error)}`);
+    });
     let bytes = 0;
     const out: GuestChatNote[] = [];
     for (const line of lines) {
@@ -102,8 +108,10 @@ export async function copyCarriedMedia(guestId: string, lines: GuestChatNote[], 
                 continue;
             }
             bytes += upload.bytes.byteLength;
-            const url = await copy.store(upload.bytes, upload.type, upload.name).catch(() => null);
-            // Only a copy that was made is remembered: one that failed is tried again when the carry is asked again
+            // Storage that fails now fails the part, which the device asks again; a copy made is remembered, so it is made once
+            const url = await copy.store(upload.bytes, upload.type, upload.name).catch((error: unknown) => {
+                throw new CarryNotNowError(`Could not copy a file: ${error instanceof Error ? error.message : String(error)}`);
+            });
             if (url) copies.set(key, { at: now, url });
             media.push(url ? { ...shown, type: upload.type, url } : gone());
         }
