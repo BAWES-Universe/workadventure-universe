@@ -480,6 +480,35 @@ describe("pictures, files and voice notes to the Brick for guests (plan v3)", ()
         expect(get(get(room.messages).at(-1)!.content).body).toBe("Upstairs.");
     });
 
+    it("keeps waiting while the first ask of a note is still running after the connection dropped, with one sent note", async () => {
+        const sleep = vi.fn((_ms: number) => Promise.resolve());
+        const { room, asked, answers, settle } = withMedia({ sleep });
+        answers.push(() => Promise.reject(new Error("network")));
+        answers.push(() => Promise.resolve({ kind: "busy" }));
+        answers.push(() => Promise.resolve({ kind: "busy" }));
+        answers.push(() =>
+            Promise.resolve({ kind: "reply", text: "Upstairs.", needsAccount: false, heard: "coffee?" })
+        );
+        await room.sendVoiceNote(new File(["ogg"], "voice message.oga", { type: "audio/ogg" }), {
+            duration: 2,
+            waveform: [],
+        });
+        await settle();
+        await settle();
+        await settle();
+        await settle();
+        expect(asked).toHaveLength(4);
+        expect(new Set(asked.map((one) => one.turnId)).size).toBe(1);
+        // A little longer each time: 1 s after the lost connection, then 1 s and 2 s while busy
+        expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([1000, 1000, 2000]);
+        const drawn = get(room.messages);
+        expect(drawn.filter((message) => message.type === "audio")).toHaveLength(1);
+        expect(get(drawn.at(-1)!.content).body).toBe("Upstairs.");
+        expect(drawn.map((message) => get(message.content).body)).not.toContain(
+            "Couldn't listen to this note. Type it instead."
+        );
+    });
+
     it.each([
         [{ kind: "unheard", why: "too-long", longestSeconds: 300 }, "This note is over 5 minutes. Send a shorter one."],
         [{ kind: "unheard", why: "failed" }, "Couldn't listen to this note. Type it instead."],

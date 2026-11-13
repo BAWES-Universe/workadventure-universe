@@ -321,16 +321,28 @@ export class GuestBrickChatRoom implements ChatRoom {
         request: GuestBrickRequest,
         index: number,
         startedAt: number,
-        tries = { lost: 0, renewed: false }
+        tries = { lost: 0, renewed: false, waited: 0 }
     ): Promise<GuestAnswer> {
         let answer: GuestAnswer;
+        const sleep = this.deps.sleep ?? waitMs;
         try {
             answer = parseGuestAnswer(await this.deps.ask(request));
         } catch (error) {
             // The answer may have been made and lost: the same turn again gets it back, never a second one
             if (!request.note || tries.lost >= 1) throw error;
-            await (this.deps.sleep ?? waitMs)(1000);
-            return this.ask(request, index, startedAt, { ...tries, lost: tries.lost + 1 });
+            await sleep(1000);
+            return this.ask(request, index, startedAt, { ...tries, lost: tries.lost + 1, waited: tries.waited + 1000 });
+        }
+        // Asked again after a lost connection, the first ask may still be running on the bot server ("busy" for this guest): keep
+        // waiting, a little longer each time, up to as long as one answer may take, and the note stays "Listening…" meanwhile
+        if (answer.kind === "busy" && tries.lost >= 1 && tries.waited < LOST_ANSWER_WAIT_MS) {
+            const delay = Math.min(1000 * 2 ** Math.max(0, tries.lost - 1), 8000);
+            await sleep(delay);
+            return this.ask(request, index, startedAt, {
+                ...tries,
+                lost: tries.lost + 1,
+                waited: tries.waited + delay,
+            });
         }
         if (answer.kind !== "upload" || answer.why !== "expired" || tries.renewed || !this.deps.refreshReceipt) {
             return answer;
@@ -513,6 +525,9 @@ function requestMedia(media: readonly GuestMedia[]): Pick<GuestBrickRequest, "fi
     const files = media.filter((one) => one.kind === "file").map((one) => one.receipt);
     return files.length ? { files } : {};
 }
+
+/** How long a note asked again after a lost connection waits for the first ask to finish: as long as the device waits for one answer. */
+const LOST_ANSWER_WAIT_MS = 130_000;
 
 function waitMs(ms: number): Promise<void> {
     return new Promise((resolve) => {

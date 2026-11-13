@@ -319,7 +319,7 @@ export class GuestBrickService {
         if (allowance.allowed === false) return { kind: 'limit', limit: allowance.limit, resetsAt: allowance.resetsAt };
         // This very try was counted before and did not fail: it is answered or being answered, so the model is not paid for again.
         // A try that failed before is counted again by Orbit (`counted` is true), so it runs. A note's answer is kept at Orbit for a
-        // while, so the same note asked again gets it back below, without running anything.
+        // while, so the same note asked again gets it back below, without running anything; with no kept answer it never runs again.
         if (allowance.counted === false && !uploads.note) {
             console.warn('[GuestBrick] This try was already counted, so no model runs again:', ask.turnId);
             return { kind: 'failed' };
@@ -362,6 +362,13 @@ export class GuestBrickService {
                 await notes.answerFailed(heard.turnId, heard.generation);
                 if (allowance.counted !== false) await this.admin.finishGuestBrickReply(ask.turnId, { failed: true });
                 return { kind: 'unheard', why: 'failed' };
+            }
+            // This try was counted before and never failed, yet the note has no kept answer: an earlier try ran or is running the
+            // model and its answer was not recorded. The model is never run twice for one turn: the words stay for a new send
+            if (allowance.counted === false) {
+                console.warn('[GuestBrick] This note was already answered once, so no model runs again:', ask.turnId);
+                await notes.answerFailed(heard.turnId, heard.generation);
+                return { kind: 'unheard', why: 'uncertain' };
             }
             held = heard;
             message = heard.transcript.trim().slice(0, limits.readChars);
@@ -406,8 +413,8 @@ export class GuestBrickService {
             if (!answer.text.trim()) throw new Error(AI_FAILED);
             // A note's answer is kept at Orbit, encrypted, until the device says it has it, so a lost answer is never run again
             if (held && this.media?.notes) await this.media.notes.answered(held.turnId, held.generation, response.content);
-            // What was said is never kept here: only what it took
-            await this.admin.finishGuestBrickReply(ask.turnId, { tokensUsed: response.tokensUsed, costMicros: priced.cost.micros });
+            // What was said is never kept here: only what it took. Totals go once, for the try Orbit counted
+            if (allowance.counted !== false) await this.admin.finishGuestBrickReply(ask.turnId, { tokensUsed: response.tokensUsed, costMicros: priced.cost.micros });
             return {
                 kind: 'reply',
                 text: answer.text,
