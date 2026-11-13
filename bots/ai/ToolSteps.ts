@@ -5,6 +5,7 @@
  */
 import { CHANGE_ARTIFACT_TOOL, MAKE_ARTIFACT_TOOL } from './ArtifactTools';
 import { MAKE_BRICK_TOOL } from './BrickTools';
+import { COMPUTER_TOOL } from './ComputerTools';
 
 /** What a step is about, for the working emoji beside the bot's Woka (#1667): reading ("📖"), searching ("🔎") or writing ("✍️"). */
 export type StepKind = 'read' | 'search' | 'write';
@@ -90,6 +91,8 @@ const OWN_STEPS: Record<string, (args: Record<string, unknown>) => Omit<ToolStep
         const name = shown(args.name);
         return { doing: name ? `Making ${name}` : 'Making a Brick', done: name ? `Made ${name}` : 'Made a Brick', detail: asDetail(shown(args.line)), group: `make_brick:${name ?? ''}`, kind: 'write' };
     },
+    // A job on the Brick's own computer (game #2000)
+    [COMPUTER_TOOL]: (args) => ({ doing: 'Working on its computer', done: 'Worked on its computer', detail: shown(args.job), group: 'computer', kind: 'write' }),
 };
 
 /** A Brick's line under its step: "Keeps your mum's recipes" reads "keeps your mum's recipes" there. */
