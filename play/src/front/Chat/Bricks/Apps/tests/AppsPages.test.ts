@@ -12,6 +12,8 @@ vi.hoisted(() => {
 
 const game = vi.hoisted(() => ({
     getMyApps: vi.fn<() => Promise<unknown>>(),
+    getAppCatalog: vi.fn<() => Promise<unknown>>(),
+    getReadyMadeApps: vi.fn<() => Promise<unknown>>(),
     getMyApp: vi.fn<(id: string) => Promise<unknown>>(),
     getMyAppUniverses: vi.fn<() => Promise<unknown>>(),
     getUniverseApps: vi.fn<(id: string) => Promise<unknown>>(),
@@ -36,6 +38,8 @@ vi.mock("../../../../external-modules/bots/services/BotApiService", () => ({
     botApiService: {
         isInitialized: () => true,
         getMyApps: game.getMyApps,
+        getAppCatalog: game.getAppCatalog,
+        getReadyMadeApps: game.getReadyMadeApps,
         getMyApp: game.getMyApp,
         getMyAppUniverses: game.getMyAppUniverses,
         getUniverseApps: game.getUniverseApps,
@@ -170,6 +174,8 @@ describe("the Apps pages (#2001)", () => {
         document.body.appendChild(target);
         game.getMyApps.mockResolvedValue({ apps: [gmail, tavily()], bricks: [] });
         game.getMyAppUniverses.mockResolvedValue({ universes: [] });
+        game.getAppCatalog.mockResolvedValue({ apps: [] });
+        game.getReadyMadeApps.mockRejectedValue(new Error("API error: 404"));
         game.getMyApp.mockResolvedValue(appPage());
         game.lendApp.mockResolvedValue({});
         game.changeAppLend.mockResolvedValue({});
