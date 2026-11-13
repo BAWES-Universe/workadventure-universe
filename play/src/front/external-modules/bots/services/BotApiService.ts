@@ -1321,6 +1321,8 @@ export class BotApiService {
         message: string;
         history: { from: "guest" | "brick"; text: string }[];
         saidNeedsAccount: boolean;
+        files?: string[];
+        note?: string;
     }): Promise<unknown> {
         // The request and the reading of the answer both stop at the deadline: a call that hangs would hold back every later turn
         const stop = new AbortController();
@@ -1340,6 +1342,22 @@ export class BotApiService {
         } finally {
             clearTimeout(timer);
         }
+    }
+
+    /** What the Brick for guests takes now (plan v3): files, and voice notes. Nothing when it can't say. */
+    async guestBrickTakes(): Promise<{ files: boolean; notes: boolean }> {
+        try {
+            const response = await this.fetchBotServer("/api/guest-brick/media", { method: "GET" });
+            const data = (await response.json()) as { files?: unknown; notes?: unknown } | null;
+            return { files: data?.files === true, notes: data?.notes === true };
+        } catch {
+            return { files: false, notes: false };
+        }
+    }
+
+    /** This device has the answer to a guest's voice note: its kept copy is deleted. */
+    async guestBrickDelivered(delivery: string): Promise<void> {
+        await this.fetchBotServer("/api/guest-brick/delivered", { method: "POST", body: JSON.stringify({ delivery }) });
     }
 
     /**
@@ -1480,6 +1498,8 @@ export class BotApiService {
             endpoint === "/api/bots/room-enter" ||
             endpoint === "/api/bots/room-leave" ||
             endpoint === "/api/guest-brick/reply" ||
+            endpoint === "/api/guest-brick/media" ||
+            endpoint === "/api/guest-brick/delivered" ||
             /^\/api\/bots\/[^/]+\/(summon|access)$/.test(endpoint);
         const gameToken = this.getGameToken();
         if (gameToken) {

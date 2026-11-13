@@ -2,10 +2,18 @@ import { derived, get, readable, type Readable } from "svelte/store";
 import { MapStore } from "@workadventure/store-utils";
 import { AvailabilityStatus } from "@workadventure/messages";
 import type { TranslationFunctions } from "../../../i18n/i18n-types";
-import type { AnyKindOfUser, ChatMessage, ChatMessageReaction, ChatUser } from "../Connection/ChatConnection";
+import type {
+    AnyKindOfUser,
+    ChatMessage,
+    ChatMessageContent,
+    ChatMessageReaction,
+    ChatMessageType,
+    ChatUser,
+} from "../Connection/ChatConnection";
+import type { NoteTranscript } from "../Bots/BotTranscript";
 import type { BotReplyLimit } from "../Bots/BotReplyLimit";
 import type { BrickCard } from "./Brick";
-import { GUEST_BRICK_ID, type GuestLine } from "./GuestBrick";
+import { GUEST_BRICK_ID, type GuestLine, type GuestMedia } from "./GuestBrick";
 import { brickPicture } from "./BrickLookPicture";
 
 /**
@@ -39,6 +47,9 @@ interface LocalMessage {
     at: Date | null;
     replyLimit?: BotReplyLimit;
     guestKeep?: boolean;
+    /** A picture, file or voice note: drawn by the same bubbles as every chat's. */
+    type?: ChatMessageType;
+    media?: Partial<ChatMessageContent>;
 }
 
 /** A message of the chat as this device draws it. */
@@ -52,12 +63,13 @@ export function localMessage(one: LocalMessage): ChatMessage {
             urls: undefined,
             filename: undefined,
             fileNames: undefined,
+            ...(one.media ?? {}),
         }),
         isMyMessage: one.mine,
         isQuotedMessage: false,
         date: one.at,
         quotedMessage: undefined,
-        type: "text",
+        type: one.type ?? "text",
         reactions: new MapStore<string, ChatMessageReaction>(),
         remove: () => undefined,
         edit: () => Promise.resolve(),
@@ -83,6 +95,84 @@ export function guestLineMessage(brick: BrickCard, line: GuestLine, index: numbe
         at: new Date(line.at),
         guestKeep: line.needsAccount === true,
     });
+}
+
+/** The bubble a file is drawn with, from its link and its type, as the nearby chat tells them. */
+function bubbleOf(one: GuestMedia): ChatMessageType {
+    if (one.kind === "note") return "audio";
+    const ext = one.url.split("?")[0].split(".").pop()?.toLowerCase() ?? "";
+    if (one.type.startsWith("image/") || ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"].includes(ext))
+        return "image";
+    if (one.type.startsWith("audio/")) return "audio";
+    if (one.type.startsWith("video/")) return "video";
+    return "file";
+}
+
+/**
+ * One line of a guest's chat as the messages it is drawn with: its pictures (together when there are several), files and voice
+ * note in the same bubbles as every chat, then its words. `transcript` is what is shown for a note being heard right now.
+ */
+export function guestLineMessages(
+    brick: BrickCard,
+    line: GuestLine,
+    index: number,
+    transcript?: NoteTranscript
+): ChatMessage[] {
+    const media = line.media ?? [];
+    if (media.length === 0) return [guestLineMessage(brick, line, index)];
+    const base = { sender: undefined, mine: true, at: new Date(line.at) };
+    const id = `guest-line:${line.at}:${index}`;
+    const messages: ChatMessage[] = [];
+    const pictures = media.filter((one) => bubbleOf(one) === "image");
+    if (pictures.length > 1) {
+        messages.push(
+            localMessage({
+                ...base,
+                id: `${id}:pictures`,
+                text: "",
+                type: "gallery",
+                media: {
+                    url: pictures[0].url,
+                    urls: pictures.map((one) => one.url),
+                    fileNames: pictures.map((one) => one.name),
+                },
+            })
+        );
+    }
+    media.forEach((one, at) => {
+        if (pictures.length > 1 && bubbleOf(one) === "image") return;
+        const noteTranscript: NoteTranscript | undefined =
+            one.kind !== "note"
+                ? undefined
+                : transcript ??
+                  (one.heard
+                      ? { state: "heard", text: one.heard }
+                      : one.unheard
+                      ? { state: "failed", text: undefined }
+                      : undefined);
+        messages.push(
+            localMessage({
+                ...base,
+                id: `${id}:media:${at}`,
+                text: "",
+                type: bubbleOf(one),
+                media: {
+                    url: one.url,
+                    filename: one.kind === "note" ? "voice message.ogg" : one.name,
+                    ...(one.kind === "note"
+                        ? {
+                              isVoice: true,
+                              voiceDuration: one.duration,
+                              voiceWaveform: one.waveform,
+                              ...(noteTranscript ? { transcript: noteTranscript } : {}),
+                          }
+                        : {}),
+                },
+            })
+        );
+    });
+    if (!line.label && line.text.trim()) messages.push(localMessage({ ...base, id, text: line.text }));
+    return messages;
 }
 
 /**

@@ -11,6 +11,7 @@
     import type { ProximitySession } from "../../Connection/Proximity/ProximitySessions";
     import { selectedChatMessageToReply } from "../../Stores/ChatStore";
     import LL from "../../../../i18n/i18n-svelte";
+    import { GuestBrickChatRoom } from "../../Bricks/GuestBrickChatRoom";
     import { ProximityChatRoom } from "../../Connection/Proximity/ProximityChatRoom";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import {
@@ -517,7 +518,8 @@
         focusOnRequest(get(chatComposerFocusRequestStore));
         const isUploadEnabled = !textOnly && gameManager.getCurrentGameScene().room.isChatUploadEnabled;
         // Check CDN config for proximity chat before enabling the button
-        if (room instanceof ProximityChatRoom && isUploadEnabled) {
+        // The nearby chat and the Brick for guests send files through the uploader: only when its bucket is set up
+        if ((room instanceof ProximityChatRoom || room instanceof GuestBrickChatRoom) && isUploadEnabled) {
             try {
                 const configResponse = await fetch(`${UPLOADER_URL}/config`);
                 if (configResponse.ok) {
@@ -909,6 +911,8 @@
                     );
                 }
             } else if (destination.room instanceof MatrixChatRoom) {
+                await destination.room.sendVoiceNote(file, details);
+            } else if (destination.room instanceof GuestBrickChatRoom) {
                 await destination.room.sendVoiceNote(file, details);
             } else {
                 return false;

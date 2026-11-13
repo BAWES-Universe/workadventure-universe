@@ -1075,6 +1075,13 @@ const chat: BaseTranslation = {
             keepNoLine: "I'll still help while you're here",
             // The game's own line when an answer could not be made: nothing was counted, so they can send it again
             couldNotAnswer: "I couldn't answer that one. Send it again in a moment.",
+            // Voice notes and files sent to the Brick for guests (plan v3)
+            noteTooLong: "This note is over {minutes:number} minutes. Send a shorter one.",
+            couldNotListen: "Couldn't listen to this note. Type it instead.",
+            couldNotFinish: "Couldn't finish this one. Send it again.",
+            answerGone: "This answer is no longer available. Send it again.",
+            fileGone: "This file is gone. Send it again.",
+            fileTooBig: "These files are too big to read together. Send fewer at a time.",
             // Said once, after signing in, with the chat that came along
             welcome: "Welcome, {name}. I'm yours now, and this chat came with me. What shall we do next?",
             welcomeNoName: "Welcome. I'm yours now, and this chat came with me. What shall we do next?",

@@ -32,6 +32,28 @@ export function guestBrickRoom(): GuestBrickChatRoom {
         now: () => Date.now(),
         newTurnId: () => uuidv4(),
         keepMs: GUEST_TOKEN_ASIDE_MS,
+        // The same uploader as the nearby chat; the receipt it gives is what the bot server takes as proof the file is the guest's
+        // Loaded when first used: the uploader's settings and the game come with the page, not with this store
+        upload: async (file) => {
+            const [{ uploadToUploader }, { UploadFailure }, { gameManager }] = await Promise.all([
+                import("../Components/Room/UploadToUploader"),
+                import("../Components/Room/UploadFailure"),
+                import("../../Phaser/Game/GameManager"),
+            ]);
+            let userToken: string | undefined;
+            try {
+                userToken = gameManager.getCurrentGameScene().connection?.userRoomToken;
+            } catch {
+                userToken = undefined;
+            }
+            const uploaded = await uploadToUploader(file, userToken, "guest-brick");
+            if (!uploaded.receipt) throw new UploadFailure("other", undefined, "no-receipt");
+            return { ...uploaded, receipt: uploaded.receipt };
+        },
+        refreshReceipt: async (receipt) =>
+            (await import("../Components/Room/UploadToUploader")).refreshUploadReceipt(receipt),
+        delivered: (delivery) => botApiService.guestBrickDelivered(delivery),
+        takes: () => botApiService.guestBrickTakes(),
     });
     return room;
 }
