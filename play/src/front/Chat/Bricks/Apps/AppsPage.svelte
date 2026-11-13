@@ -5,6 +5,7 @@
     import PageNote from "../../../external-modules/bots/components/page/PageNote.svelte";
     import { botApiService } from "../../../external-modules/bots/services/BotApiService";
     import { namesLine, parseMyUniverses, type MyUniverse } from "./Apps";
+    import AddAppSheet from "./AddAppSheet.svelte";
     import { appIcon } from "./AppIcon";
     import AppPage from "./AppPage.svelte";
     import AppRow from "./AppRow.svelte";
@@ -22,7 +23,7 @@
         type Connectable,
     } from "./Connectable";
     import TeamAppsPage from "./TeamAppsPage.svelte";
-    import { IconPlanet, IconSearch, IconSparkles } from "@wa-icons";
+    import { IconPlanet, IconPlug, IconSearch, IconSparkles } from "@wa-icons";
 
     /**
      * The Apps page (game #2001), opened from the Apps row of the Bricks page: the apps the person connected, each with the
@@ -37,6 +38,8 @@
     let universes: MyUniverse[] = [];
     let openAppId: string | undefined;
     let openUniverseId: string | undefined;
+    // "Add your own app" is open over the page
+    let addingOwn = false;
     $: openUniverse = universes.find((universe) => universe.id === openUniverseId);
 
     // What Connect another holds: both lists Orbit keeps, read once and narrowed here by what the person types
@@ -112,6 +115,13 @@
         return names.length === 0
             ? text.usedByNone()
             : text.usedBy({ names: namesLine(names, text.and(), (count) => text.more({ count })) });
+    }
+
+    /** The sheet made and connected an app and the person chose Done: its page opens, to choose which Bricks use it */
+    function ownAppAdded(appId: string) {
+        addingOwn = false;
+        openAppId = appId;
+        loadMyApps(true).catch((error) => console.error(error));
     }
 
     // Read again each time the page opens: an app connected on another device shows
@@ -201,7 +211,13 @@
             {:else if searching && shownConnected.length + shownAnother.length === 0}
                 <p class="ap-none" data-testid="appsNoMatch">{text.noAppMatches({ query: query.trim() })}</p>
             {/if}
-            <!-- "Add your own app" goes here (its own sheet): "Not here? Add your own app" while `searching` -->
+            <AppRow
+                title={searching ? text.addOwnRowNotHere() : text.addOwnRow()}
+                hint={text.addOwnRowHint()}
+                icon={IconPlug}
+                testId="appsAddOwn"
+                onTap={() => (addingOwn = true)}
+            />
             <p class="ap-note" data-testid="appsSignInNote">
                 <IconSparkles font-size="14" /><span>{text.signInNote()}</span>
             </p>
@@ -222,6 +238,15 @@
             {/each}
         {/if}
     </AppsShell>
+    {#if addingOwn}
+        <AddAppSheet
+            onClose={() => {
+                addingOwn = false;
+                loadMyApps(true).catch((error) => console.error(error));
+            }}
+            onDone={ownAppAdded}
+        />
+    {/if}
 {/if}
 
 <style>

@@ -29,6 +29,9 @@ const game = vi.hoisted(() => ({
     disconnectTeamApp: vi.fn<(id: string) => Promise<unknown>>(),
     getAppsABotCouldUse: vi.fn<(botId: string) => Promise<unknown>>(),
     letBotUseApp: vi.fn<(botId: string, connectionId: string) => Promise<unknown>>(),
+    discoverMcpOAuthEndpoints: vi.fn<(url: string, callback: string) => Promise<unknown>>(),
+    addMyApp: vi.fn<(app: unknown) => Promise<unknown>>(),
+    getMyAppThings: vi.fn<(id: string) => Promise<unknown>>(),
     warn: vi.fn<(message: string) => void>(),
 }));
 // The tests run Svelte's server build, where onMount does nothing; the pages read on mount.
@@ -55,6 +58,9 @@ vi.mock("../../../../external-modules/bots/services/BotApiService", () => ({
         disconnectTeamApp: game.disconnectTeamApp,
         getAppsABotCouldUse: game.getAppsABotCouldUse,
         letBotUseApp: game.letBotUseApp,
+        discoverMcpOAuthEndpoints: game.discoverMcpOAuthEndpoints,
+        addMyApp: game.addMyApp,
+        getMyAppThings: game.getMyAppThings,
     },
 }));
 vi.mock("../../../../Stores/ErrorStore", () => ({ warningMessageStore: { addWarningMessage: game.warn } }));
@@ -70,7 +76,10 @@ vi.mock("../../../../Stores/MapEditorStore", async () => {
     const store = await import("svelte/store");
     return { mapEditorVisibilityStore: store.writable(false) };
 });
-vi.mock("../Reconnect", () => ({ reconnectApp: vi.fn(() => Promise.resolve("done")) }));
+vi.mock("../Reconnect", () => ({
+    reconnectApp: vi.fn(() => Promise.resolve("done")),
+    signInInPopup: vi.fn(() => Promise.resolve("done")),
+}));
 
 import { loadLocale } from "../../../../../i18n/i18n-util.sync";
 import { setLocale } from "../../../../../i18n/i18n-svelte";
@@ -212,6 +221,37 @@ describe("the Apps pages (#2001)", () => {
             expect(rows[0]).toBe("Gmail Used by Brick");
             expect(rows[1]).toBe("Tavily Added by you · Used by Brick");
             expect(byId("appsUniverses")).toBeNull();
+        });
+
+        it("has Add your own app as its last row, which opens the sheet, and Done opens the new app's page to choose Bricks", async () => {
+            game.discoverMcpOAuthEndpoints.mockResolvedValue({
+                discovered: true,
+                name: "Zapier",
+                signsInWith: "Zapier",
+                authorizeUrl: "https://zapier.com/authorize",
+                tokenUrl: "https://zapier.com/token",
+                clientId: "c1",
+                registrationStatus: "auto",
+            });
+            game.addMyApp.mockResolvedValue({ id: "zapier", name: "Zapier" });
+            game.getMyAppThings.mockResolvedValue({ things: ["Find Events"] });
+            game.getMyApp.mockResolvedValue(appPage({ app: tavily({ id: "zapier", name: "Zapier" }) }));
+            page = new AppsPage({ target, props: { onBack: () => {} } });
+            await settle();
+            expect(words(byId("appsAddOwn"))).toBe("Add your own app Paste its MCP link, like Firecrawl");
+            expect(byId("addAppSheet")).toBeNull();
+            await click("appsAddOwn");
+            expect(byId("addAppSheet")).not.toBeNull();
+            const link = byId("addAppLink") as HTMLInputElement;
+            link.value = "https://mcp.zapier.com/api/mcp/mcp";
+            link.dispatchEvent(new InputEvent("input", { inputType: "insertFromPaste", bubbles: true }));
+            await settle();
+            await click("addAppSignIn");
+            expect(byId("addAppConnected")).not.toBeNull();
+            await click("addAppDone");
+            expect(byId("addAppSheet")).toBeNull();
+            expect(game.getMyApp).toHaveBeenCalledWith("zapier");
+            expect(byId("appPage")).not.toBeNull();
         });
 
         it("says so when no Brick uses an app yet, and when its sign-in ended", async () => {
