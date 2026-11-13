@@ -217,6 +217,50 @@ export interface GuestChatLine {
     text: string;
     /** When it was said (ms), on the guest's device. */
     at: number;
+    /** The guest's pictures, files and voice note on this line, as they came along (plan v3). */
+    media?: CarriedChatMedia[];
+    /** The line's text only stands in for its media: it is not drawn. */
+    label?: true;
+}
+
+/**
+ * A guest's picture, file or note in a carried chat: copied into the person's own storage (`url`), or `gone` when the file no
+ * longer existed. On its way in, the device names it by its receipt; the message the Brick leaves never holds one.
+ */
+export interface CarriedChatMedia {
+    kind: "file" | "note";
+    name: string;
+    type: string;
+    url?: string;
+    gone?: true;
+    size?: number;
+    duration?: number;
+    heard?: string;
+    receipt?: string;
+}
+
+const CARRIED_MEDIA_MAX = 10;
+
+function readCarriedChatMedia(value: unknown): CarriedChatMedia[] {
+    if (!Array.isArray(value)) return [];
+    const media: CarriedChatMedia[] = [];
+    for (const one of value.slice(0, CARRIED_MEDIA_MAX)) {
+        if (!one || typeof one !== "object") continue;
+        const { kind, name, type, url, gone, size, duration, heard } = one as Record<string, unknown>;
+        if (kind !== "file" && kind !== "note") continue;
+        const link = typeof url === "string" && /^https?:\/\//.test(url) ? url : undefined;
+        if (!link && gone !== true) continue;
+        media.push({
+            kind,
+            name: typeof name === "string" ? name.slice(0, 255) : "file",
+            type: typeof type === "string" ? type.slice(0, 255) : "application/octet-stream",
+            ...(link ? { url: link } : { gone: true as const }),
+            ...(typeof size === "number" && Number.isFinite(size) && size >= 0 ? { size } : {}),
+            ...(typeof duration === "number" && Number.isFinite(duration) && duration >= 0 ? { duration } : {}),
+            ...(typeof heard === "string" && heard.trim() ? { heard: heard.trim().slice(0, 4000) } : {}),
+        });
+    }
+    return media;
 }
 
 const GUEST_CHAT_LINES_MAX = 500;
@@ -229,12 +273,16 @@ export function readGuestChat(sender: string | null | undefined, content: Record
     const lines: GuestChatLine[] = [];
     for (const one of list.slice(-GUEST_CHAT_LINES_MAX)) {
         if (!one || typeof one !== "object") continue;
-        const { from, text: said, at } = one as Record<string, unknown>;
-        if ((from !== "guest" && from !== "brick") || typeof said !== "string" || !said.trim()) continue;
+        const { from, text: said, at, label } = one as Record<string, unknown>;
+        const media = from === "guest" ? readCarriedChatMedia((one as Record<string, unknown>).media) : [];
+        if ((from !== "guest" && from !== "brick") || typeof said !== "string" || (!said.trim() && !media.length))
+            continue;
         lines.push({
             from,
             text: said.trim().slice(0, GUEST_LINE_MAX),
             at: typeof at === "number" && Number.isFinite(at) && at > 0 ? Math.floor(at) : 0,
+            ...(media.length ? { media } : {}),
+            ...(media.length && label === true ? { label: true as const } : {}),
         });
     }
     return lines;

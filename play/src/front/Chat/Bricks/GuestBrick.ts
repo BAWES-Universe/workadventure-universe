@@ -40,6 +40,8 @@ export interface GuestMedia {
     heard?: string;
     /** The note could not be heard. */
     unheard?: true;
+    /** A carried file that no longer existed when the chat came along. */
+    gone?: true;
 }
 
 /** One line of the chat a guest holds. `needsAccount` marks the Brick's answer that said something needs an account. */
@@ -344,21 +346,49 @@ export const CARRIED_LINES_MAX = 200;
 export const CARRIED_LINE_CHARS = 2000;
 export const CARRIED_BYTES_MAX = 20000;
 
-/** The lines to bring along after sign-in: what was said, and when, the newest ones that fit in one message. */
+/** What a picture, file or note adds to a carried line in the Brick's message, once copied (its link and fields), as the bot server counts it. */
+const CARRIED_MEDIA_BYTES = 400;
+/** The most pictures, files and notes one carried chat brings (the bot server keeps to the same); older ones come as words. */
+export const CARRIED_MEDIA_MAX = 20;
+
+/**
+ * The lines to bring along after sign-in: what was said, and when, the newest ones that fit in one message. A guest's pictures,
+ * files and notes go with their receipts, so the bot server can copy them into the account; a note's words go with it.
+ */
 export function carriedLines(chat: GuestChat): GuestChatLine[] {
     const kept: GuestChatLine[] = [];
     let bytes = 0;
+    let mediaLeft = CARRIED_MEDIA_MAX;
     for (let index = chat.lines.length - 1; index >= 0 && kept.length < CARRIED_LINES_MAX; index--) {
-        const { from, at } = chat.lines[index];
-        // A picture, file or note comes along as what it was: its name, or the words heard in it
-        const text = lineWords(chat.lines[index]);
-        if (!text) continue;
-        const cut = text.slice(0, CARRIED_LINE_CHARS);
-        const line = { from, text: cut, at };
-        // The same measure as the bot server's: a line is sent twice in the message, both copies JSON-escaped
-        bytes += 2 * new TextEncoder().encode(JSON.stringify(line)).length;
+        const one = chat.lines[index];
+        const media = (one.media ?? []).slice(0, Math.max(0, mediaLeft));
+        mediaLeft -= media.length;
+        // Media past what one chat brings comes as words
+        const text = (media.length ? one.text : one.media?.length ? lineWords(one) : one.text).slice(
+            0,
+            CARRIED_LINE_CHARS
+        );
+        const shown = media.map((item) => ({
+            kind: item.kind,
+            name: item.name,
+            type: item.type,
+            ...(item.size !== undefined ? { size: item.size } : {}),
+            ...(item.duration !== undefined ? { duration: item.duration } : {}),
+            ...(item.heard ? { heard: item.heard.slice(0, 4000) } : {}),
+        }));
+        const line: GuestChatLine = {
+            from: one.from,
+            text,
+            at: one.at,
+            ...(shown.length ? { media: shown } : {}),
+            ...(shown.length && one.label && media.length === (one.media?.length ?? 0) ? { label: true as const } : {}),
+        };
+        // The same measure as the bot server's: a line is sent twice in the message, both copies JSON-escaped; receipts not counted
+        bytes += 2 * new TextEncoder().encode(JSON.stringify(line)).length + shown.length * CARRIED_MEDIA_BYTES;
         if (bytes > CARRIED_BYTES_MAX) break;
-        kept.unshift(line);
+        kept.unshift(
+            shown.length ? { ...line, media: shown.map((item, at) => ({ ...item, receipt: media[at].receipt })) } : line
+        );
     }
     return kept;
 }

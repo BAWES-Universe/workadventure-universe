@@ -200,7 +200,40 @@ export interface GuestChatNote {
     text: string;
     /** When it was said (ms), on the guest's device. */
     at: number;
+    /** The pictures, files and voice note the guest sent with this line, copied into the person's own chat (plan v3). */
+    media?: CarriedMedia[];
+    /** The line's text only stands in for its media. */
+    label?: true;
 }
+
+/**
+ * A guest's picture, file or note as a carried chat holds it: copied into the person's own storage (`url`), or `gone` when the
+ * guest's file no longer exists, which keeps its line and words with a "file is gone" bubble. While it is on its way in, it is
+ * named by the guest's receipt only, which never reaches the chat.
+ */
+export interface CarriedMedia {
+    kind: 'file' | 'note';
+    name: string;
+    type: string;
+    url?: string;
+    gone?: true;
+    size?: number;
+    duration?: number;
+    /** What the Brick heard in a note. */
+    heard?: string;
+    receipt?: string;
+}
+/** A carried line as words, for the message's text: what was written, a note's words, and a mark for each file. */
+export function carriedWords(line: GuestChatNote): string {
+    const parts: string[] = [];
+    if (!line.label && line.text.trim()) parts.push(line.text.trim());
+    for (const one of line.media ?? []) {
+        if (one.kind === 'note') parts.push(one.heard ? `(voice note) ${one.heard}` : '(voice note)');
+        else parts.push(one.type.startsWith('image/') ? `(sent a picture: ${one.name})` : `(sent a file: ${one.name})`);
+    }
+    return parts.join(' ');
+}
+
 /** How many hand-overs of a guest's chat are remembered as brought, so one is never brought twice. */
 const CARRIED_CHATS_MAX = 5000;
 /** An answer made in nearby chat waits this long for its person's direct chat to be known, and no more than these at once (#1993). */
@@ -576,7 +609,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
     private async sendCarried(botId: string, matrixUserId: string, carryId: string, lines: GuestChatNote[]): Promise<'sent' | 'wait'> {
         const known = await this.lookUpDirectRoom(botId, matrixUserId);
         if (!known.roomId) return 'wait';
-        const body = lines.map((line) => `${line.from === 'guest' ? 'You' : 'Brick'}: ${line.text}`).join('\n');
+        const body = lines.map((line) => `${line.from === 'guest' ? 'You' : 'Brick'}: ${carriedWords(line)}`).join('\n');
         // The same transaction id for every try of this hand-over: a try that failed after the homeserver had taken the message is not sent twice
         const txnId = createHash('sha256').update(`guest-chat|${botId}|${matrixUserId}|${carryId}`).digest('hex');
         await this.client.sendMessage(this.botUserId(botId), known.roomId, { msgtype: 'm.text', body, [GUEST_CHAT_KEY]: lines }, txnId);

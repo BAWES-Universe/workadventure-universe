@@ -15,7 +15,7 @@ import { BotBusyError, BotUnavailableError } from '../utils/summonErrors';
 import { helloSourceOf, typedVoiceName, type HelloSource, type VoiceHello } from '../voice/VoiceHello';
 import { buildVoiceHello } from '../voice/VoiceHelloWiring';
 import { GuestBrickService, GUEST_FILES_MAX, isGuestBrickId, readCarriedLines } from './GuestBrickService';
-import { buildGuestBrickMedia } from './GuestBrickMedia';
+import { buildCarryCopy, buildGuestBrickMedia, copyCarriedMedia, type CarryCopy } from './GuestBrickMedia';
 import type { GuestChatNote } from '../matrix/MatrixDmBridge';
 
 /** The id the game makes for a guest at their first visit (a uuid): a member's token names an email or an account instead. */
@@ -268,6 +268,8 @@ export interface BotAPIOptions {
      * Only when it is a Brick of `ownerId` (Orbit's id of the person); says whether it was.
      */
     brickChanged?: (botId: string, ownerId: string) => boolean;
+    /** How a carried guest chat's media is copied (plan v3). Left out, built from the bot server's own parts. */
+    carryCopy?: (guestId: string, userUuid: string) => CarryCopy | null;
     /** What answers a guest in their Brick (game #1997). Left out, it is built from the bot server's own parts the first time it is asked for; null: off. */
     guestBrick?: GuestBrickService | null;
     /** "Hear this voice say hello" on the bot page (#1852). Left out, it is built from the bot server's own parts the first time it is asked for; null: not available. */
@@ -315,6 +317,7 @@ export class BotAPI {
     private brickChangedCounts = new Map<string, { count: number; since: number }>();
     private voiceHelloOption: BotAPIOptions['voiceHello'];
     private guestBrickOption: BotAPIOptions['guestBrick'];
+    private carryCopyOption: BotAPIOptions['carryCopy'];
 
     constructor(
         botManager: BotManager,
@@ -336,6 +339,7 @@ export class BotAPI {
         this.carryGuestChat = options.carryGuestChat;
         this.voiceHelloOption = options.voiceHello;
         this.guestBrickOption = options.guestBrick;
+        this.carryCopyOption = options.carryCopy;
 
         // Routers with their own auth and body limits (the Matrix application service) go before the shared parser.
         for (const router of preRouters) {
@@ -345,6 +349,11 @@ export class BotAPI {
         // Keep constructor simple - no route registration here
         this.setupMiddleware();
         this.setupRoutes();
+    }
+
+    /** How a carried chat's media is copied for this person; tests give their own. */
+    private carryCopy(guestId: string, userUuid: string): CarryCopy | null {
+        return (this.carryCopyOption ?? ((g, u) => buildCarryCopy(this.adminApiService, g, u)))(guestId, userUuid);
     }
 
     private guestBrick(): GuestBrickService | null {
@@ -1083,11 +1092,17 @@ export class BotAPI {
                     res.status(403).json({ error: 'Not your chat', code: 'not_allowed' });
                     return;
                 }
-                const kept = readCarriedLines(lines);
-                if (kept.length === 0) {
+                const read = readCarriedLines(lines);
+                if (read.length === 0) {
                     res.status(400).json({ error: 'Nothing to bring' });
                     return;
                 }
+                // The guest's pictures, files and notes are copied into this person's own storage, only when Orbit handed that
+                // guest's chat (`carryId` is the guest id) to them; without a way to copy, they come as words and "gone" bubbles
+                const copy = this.carryCopy(carryId, req.sessionUuid);
+                const kept = copy
+                    ? await copyCarriedMedia(carryId, read, copy)
+                    : read.map((line) => (line.media ? { ...line, media: line.media.map(({ receipt: _r, ...one }) => ({ ...one, gone: true as const })) } : line));
                 const result = await this.carryGuestChat(botId, chatId, carryId, kept);
                 if (result === 'not_brick') {
                     res.status(403).json({ error: 'Not your Brick', code: 'not_allowed' });

@@ -988,6 +988,17 @@ export class AdminApiService {
         throw new Error('Orbit answered the guest allowance in a way that cannot be read');
     }
 
+    /** Whether Orbit handed this guest's chat to the person with this uuid (plan v3: their uploads go with it). False when Orbit can't say. */
+    async guestChatHandedTo(guestId: string, userUuid: string): Promise<boolean> {
+        try {
+            const body = (await this.brickCall<{ handed?: unknown }>('post', 'api/guest-brick/handover', { guestId, userUuid })).data;
+            return body?.handed === true;
+        } catch (error) {
+            console.warn('[AdminApiService] Could not check a hand-over of a guest chat:', error instanceof Error ? error.message : error);
+            return false;
+        }
+    }
+
     /** Closes a counted turn: a reply that failed is given back, and what it took is kept as totals. Never throws. */
     async finishGuestBrickReply(turnId: string, result: { failed?: boolean; tokensUsed?: number; costMicros?: number | null }): Promise<void> {
         const body: Record<string, unknown> = {};

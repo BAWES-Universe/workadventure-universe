@@ -18,7 +18,7 @@ import { AIProviderRegistry } from '../ai/AIProviderRegistry';
 import { readBotLimits, type AIProviderConfig, type BotLimits } from '../ai/types';
 import { priceMetadata } from '../ai/pricing/ledger';
 import type { AdminApiService, GuestBrickAllowance, GuestBrickSetup } from './AdminApiService';
-import type { GuestChatNote } from '../matrix/MatrixDmBridge';
+import type { CarriedMedia, GuestChatNote } from '../matrix/MatrixDmBridge';
 import type { GuestNotes } from '../voice/NoteTurns';
 
 /** One line of the chat the guest holds, as their device sends it back. */
@@ -134,24 +134,68 @@ export const CARRIED_BYTES_MAX = 20000;
 /** The longest the model may take for a guest's answer. The device stops waiting after a little more than this (Orbit round trips on top), so a counted answer always arrives. */
 export const GUEST_REPLY_CEILING_MS = 90_000;
 
-/** The lines of a chat a guest held, as their device brings them along after sign-in: each with when it was said. */
+/** The most pictures, files and notes one carried chat brings, and what a note's words may hold. */
+export const CARRIED_MEDIA_MAX = 20;
+export const CARRIED_HEARD_CHARS = 4000;
+/** What a copied file's link and a media item's fields take in the message, counted before the copy is made. */
+const CARRIED_MEDIA_BYTES = 400;
+
+function readCarriedMedia(value: unknown): CarriedMedia[] {
+    if (!Array.isArray(value)) return [];
+    const media: CarriedMedia[] = [];
+    for (const one of value.slice(0, 10)) {
+        if (!one || typeof one !== 'object') continue;
+        const { kind, name, type, receipt, size, duration, heard } = one as Record<string, unknown>;
+        if ((kind !== 'file' && kind !== 'note') || typeof receipt !== 'string' || receipt.length > 4096) continue;
+        media.push({
+            kind,
+            name: typeof name === 'string' && name.trim() ? name.trim().slice(0, 255) : kind === 'note' ? 'voice message' : 'file',
+            type: typeof type === 'string' && type ? type.slice(0, 255) : 'application/octet-stream',
+            receipt,
+            ...(typeof size === 'number' && Number.isFinite(size) && size >= 0 ? { size: Math.floor(size) } : {}),
+            ...(typeof duration === 'number' && Number.isFinite(duration) && duration >= 0 ? { duration } : {}),
+            ...(typeof heard === 'string' && heard.trim() ? { heard: heard.trim().slice(0, CARRIED_HEARD_CHARS) } : {}),
+        });
+    }
+    return media;
+}
+
+/** The lines of a chat a guest held, as their device brings them along after sign-in: each with when it was said, and its media. */
 export function readCarriedLines(value: unknown): GuestChatNote[] {
     if (!Array.isArray(value)) return [];
     const lines: GuestChatNote[] = [];
+    let mediaLeft = CARRIED_MEDIA_MAX;
     for (const one of value) {
         if (!one || typeof one !== 'object') continue;
-        const { from, text, at } = one as Record<string, unknown>;
-        if ((from !== 'guest' && from !== 'brick') || typeof text !== 'string' || !text.trim()) continue;
-        lines.push({ from, text: text.trim().slice(0, CARRIED_LINE_CHARS), at: typeof at === 'number' && Number.isFinite(at) && at > 0 ? Math.floor(at) : Date.now() });
+        const { from, text, at, label } = one as Record<string, unknown>;
+        const media = from === 'guest' ? readCarriedMedia((one as Record<string, unknown>).media) : [];
+        if ((from !== 'guest' && from !== 'brick') || typeof text !== 'string' || (!text.trim() && media.length === 0)) continue;
+        lines.push({
+            from,
+            text: text.trim().slice(0, CARRIED_LINE_CHARS),
+            at: typeof at === 'number' && Number.isFinite(at) && at > 0 ? Math.floor(at) : Date.now(),
+            ...(media.length ? { media } : {}),
+            ...(media.length && label === true ? { label: true as const } : {}),
+        });
     }
     // The newest ones that fit: the start of a long chat is what is left behind
     const kept: GuestChatNote[] = [];
     let bytes = 0;
     for (let index = lines.length - 1; index >= 0 && kept.length < CARRIED_LINES_MAX; index--) {
-        // A line is sent twice in the event (as the message text and as data), both JSON-escaped
-        bytes += 2 * Buffer.byteLength(JSON.stringify(lines[index]), 'utf8');
+        const line = lines[index];
+        // Media past the most one chat brings stays behind as words
+        if (line.media && line.media.length > mediaLeft) {
+            const keptMedia = line.media.slice(0, mediaLeft);
+            line.media = keptMedia.length ? keptMedia : undefined;
+            if (!line.media) delete line.label;
+        }
+        mediaLeft -= line.media?.length ?? 0;
+        // A line is sent twice in the event (as the message text and as data), both JSON-escaped; a receipt never goes in it
+        const shown = { ...line, media: line.media?.map(({ receipt: _receipt, ...rest }) => rest) };
+        bytes += 2 * Buffer.byteLength(JSON.stringify(shown), 'utf8') + (line.media?.length ?? 0) * CARRIED_MEDIA_BYTES;
         if (bytes > CARRIED_BYTES_MAX) break;
-        kept.unshift(lines[index]);
+        if (!line.text && !line.media) continue;
+        kept.unshift(line);
     }
     return kept;
 }

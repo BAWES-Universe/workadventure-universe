@@ -78,6 +78,58 @@ describe("the chat a guest brought along, drawn in the Brick's chat (#1997)", ()
         expect(drawn[2].date?.getTime()).toBe(5000);
     });
 
+    it("draws a guest's carried pictures and notes in the same bubbles as every chat, and a file that was gone as gone", () => {
+        const message = {
+            ...carrier([]),
+            guestChat: [
+                {
+                    from: "guest" as const,
+                    text: "(sent a picture: cat.png)",
+                    at: 1000,
+                    label: true as const,
+                    media: [
+                        {
+                            kind: "file" as const,
+                            name: "cat.png",
+                            type: "image/png",
+                            url: "https://media.test/cat.png",
+                        },
+                        { kind: "file" as const, name: "old.pdf", type: "application/pdf", gone: true as const },
+                    ],
+                },
+                {
+                    from: "guest" as const,
+                    text: "",
+                    at: 2000,
+                    media: [
+                        {
+                            kind: "note" as const,
+                            name: "note.ogg",
+                            type: "audio/ogg",
+                            url: "https://media.test/n.ogg",
+                            duration: 3,
+                            heard: "coffee?",
+                        },
+                    ],
+                },
+            ],
+        };
+        const drawn = expandGuestChats([message], i18nObject("en-US"), "Khalid");
+        expect(drawn.map((one) => one.type)).toEqual(["image", "file", "audio", "text"]);
+        expect(drawn.slice(0, 3).every((one) => one.isMyMessage)).toBe(true);
+        const [picture, gone, note] = drawn.map((one) => get(one.content));
+        expect(picture.url).toBe("https://media.test/cat.png");
+        expect(gone.url).toBeUndefined();
+        expect(gone.mediaFailed).toBe(true);
+        expect(note.isVoice).toBe(true);
+        expect(note.transcript).toEqual({ state: "heard", text: "coffee?" });
+        // The stand-in words of a picture line are not drawn, and every drawn id stays the same each time
+        expect(bodies(drawn)).not.toContain("(sent a picture: cat.png)");
+        expect(drawn.map((one) => one.id)).toEqual(
+            expandGuestChats([message], i18nObject("en-US"), "Khalid").map((one) => one.id)
+        );
+    });
+
     it("welcomes without a name when the game has none", () => {
         const drawn = expandGuestChats([carrier([{ from: "guest", text: "hi", at: 1 }])], i18nObject("en-US"), null);
         expect(bodies(drawn)[1]).toBe("Welcome. I'm yours now, and this chat came with me. What shall we do next?");

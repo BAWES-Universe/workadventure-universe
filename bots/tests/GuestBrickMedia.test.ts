@@ -15,7 +15,9 @@ vi.mock('../utils/MovementLogger', () => ({ movementLogger: {} }));
 
 import { BotAPI } from '../server/BotAPI';
 import { GuestBrickService, readDelivery, signDelivery, type GuestBrickMedia } from '../server/GuestBrickService';
-import { readGuestUpload } from '../server/GuestBrickMedia';
+import { copyCarriedMedia, readGuestUpload, type CarryCopy } from '../server/GuestBrickMedia';
+import { readCarriedLines } from '../server/GuestBrickService';
+import { carriedWords } from '../matrix/MatrixDmBridge';
 import { checkReceipt, readReceiptFile, signReceipt, uploaderPathOf } from '../server/UploadReceipts';
 import { FileParser } from '../services/FileParser';
 import { DmReplyService } from '../server/DmReplyService';
@@ -313,5 +315,122 @@ describe('POST /api/guest-brick/reply with files and notes, and the delivery', (
         expect(guestBrick.delivered).toHaveBeenLastCalledWith(GUEST, 'd');
         expect((await post('/api/guest-brick/delivered', { delivery: 'd' })).status).toBe(403);
         expect((await post('/api/guest-brick/delivered', { delivery: 'd' }, 'alice@example.test')).status).toBe(404);
+    });
+});
+
+describe("a guest's pictures, files and notes come along when they sign in (plan v3 section 7)", () => {
+    const LINE = {
+        from: 'guest',
+        text: '🎤 Voice message',
+        label: true,
+        at: 5,
+        media: [{ kind: 'note', name: 'voice message.oga', type: 'audio/ogg', receipt: 'r-note', duration: 3, heard: 'where is the coffee' }],
+    };
+
+    it('reads media lines a device brings, with no words of their own, and keeps receipts out of the budget', () => {
+        const lines = readCarriedLines([LINE, { from: 'guest', text: 'and this', at: 6, media: [{ kind: 'file', name: 'menu.png', type: 'image/png', receipt: 'r-pic' }] }, { from: 'brick', text: 'Upstairs.', at: 7, media: [{ kind: 'file', receipt: 'x' }] }]);
+        expect(lines).toEqual([
+            { from: 'guest', text: '🎤 Voice message', label: true, at: 5, media: [{ kind: 'note', name: 'voice message.oga', type: 'audio/ogg', receipt: 'r-note', duration: 3, heard: 'where is the coffee' }] },
+            { from: 'guest', text: 'and this', at: 6, media: [{ kind: 'file', name: 'menu.png', type: 'image/png', receipt: 'r-pic' }] },
+            // The Brick's lines never carry media
+            { from: 'brick', text: 'Upstairs.', at: 7 },
+        ]);
+        expect(readCarriedLines([{ from: 'guest', text: '', at: 1, media: [{ kind: 'file', name: 'a.png', type: 'image/png', receipt: 'r' }] }])).toHaveLength(1);
+        // At most 20 media in one chat: the oldest beyond that stay as words
+        const many = Array.from({ length: 25 }, (_, index) => ({ from: 'guest', text: `pic ${index}`, at: index + 1, media: [{ kind: 'file', name: `${index}.png`, type: 'image/png', receipt: `r${index}` }] }));
+        const kept = readCarriedLines(many);
+        expect(kept.filter((line) => line.media).length).toBe(20);
+        expect(kept.at(-1)?.media).toBeDefined();
+    });
+
+    it('says a carried line in words for the message text', () => {
+        expect(carriedWords({ from: 'guest', text: '🎤 Voice message', label: true, at: 1, media: [{ kind: 'note', name: 'n', type: 'audio/ogg', heard: 'hi there' }] })).toBe('(voice note) hi there');
+        expect(carriedWords({ from: 'guest', text: 'look', at: 1, media: [{ kind: 'file', name: 'menu.png', type: 'image/png' }, { kind: 'file', name: 'a.pdf', type: 'application/pdf' }] })).toBe('look (sent a picture: menu.png) (sent a file: a.pdf)');
+    });
+
+    const copySteps = (over: Partial<CarryCopy> = {}): CarryCopy & { [K in 'handed' | 'read' | 'store']: ReturnType<typeof vi.fn> } =>
+        ({
+            handed: vi.fn(async () => true),
+            read: vi.fn(async (receipt: string) => (receipt === 'r-gone' ? { ok: false, why: 'refused' } : { ok: true, bytes: new Uint8Array([1, 2]), url: 'guest-link', type: 'audio/ogg', name: 'voice message.oga', sha256: 's' })),
+            store: vi.fn(async () => 'https://cdn.test/copy.oga'),
+            ...over,
+        }) as never;
+
+    it("copies them into the person's own storage when Orbit handed the guest's chat to them, never leaving a receipt", async () => {
+        const steps = copySteps();
+        const lines = await copyCarriedMedia(`g-${Math.random()}`, readCarriedLines([LINE]), steps);
+        expect(lines[0].media).toEqual([{ kind: 'note', name: 'voice message.oga', type: 'audio/ogg', duration: 3, heard: 'where is the coffee', url: 'https://cdn.test/copy.oga' }]);
+        expect(steps.store).toHaveBeenCalledWith(new Uint8Array([1, 2]), 'audio/ogg', 'voice message.oga');
+        expect(JSON.stringify(lines)).not.toContain('r-note');
+    });
+
+    it("copies nothing when the chat was not handed to this person, and a gone file keeps its line as gone", async () => {
+        const notHanded = copySteps({ handed: vi.fn(async () => false) });
+        const lines = await copyCarriedMedia(`g-${Math.random()}`, readCarriedLines([LINE]), notHanded);
+        expect(lines[0].media?.[0]).toMatchObject({ gone: true, heard: 'where is the coffee' });
+        expect(notHanded.read).not.toHaveBeenCalled();
+
+        const steps = copySteps();
+        const gone = await copyCarriedMedia(`g-${Math.random()}`, readCarriedLines([{ ...LINE, media: [{ ...LINE.media[0], receipt: 'r-gone' }] }]), steps);
+        expect(gone[0].media?.[0]).toMatchObject({ gone: true });
+        expect(steps.store).not.toHaveBeenCalled();
+    });
+
+    it('copies a file once for a carry asked again (its chat was not there yet)', async () => {
+        const steps = copySteps();
+        const guest = `g-${Math.random()}`;
+        await copyCarriedMedia(guest, readCarriedLines([LINE]), steps);
+        const again = await copyCarriedMedia(guest, readCarriedLines([LINE]), steps);
+        expect(steps.store).toHaveBeenCalledTimes(1);
+        expect(again[0].media?.[0].url).toBe('https://cdn.test/copy.oga');
+    });
+
+    describe('POST /api/bots/:botId/carried-chat with media', () => {
+        const BRICK = 'brick-1';
+        const ALICE = '@alice:matrix.test';
+        const adminApiService = { validateSessionToken: vi.fn(), checkDmAccess: vi.fn() };
+        const carryGuestChat = vi.fn();
+        const carryCopy = vi.fn();
+        let server: Server;
+        let base: string;
+        beforeAll(async () => {
+            vi.spyOn(console, 'log').mockImplementation(() => undefined);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const app = (new BotAPI({ getAccessGate: vi.fn() } as never, adminApiService as never, {} as never, [], { carryGuestChat, carryCopy }) as any).app;
+            server = await new Promise<Server>((resolve) => {
+                const started = app.listen(0, () => resolve(started));
+            });
+            base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+        });
+        afterAll(async () => {
+            await new Promise<void>((resolve) => server.close(() => resolve()));
+        });
+        beforeEach(() => {
+            adminApiService.validateSessionToken.mockResolvedValue({ userId: 'u1', uuid: 'uuid-alice', email: 'a@b.c' });
+            adminApiService.checkDmAccess.mockResolvedValue({ allowed: true, reason: null, user: { uuid: 'uuid-alice', name: 'Alice', isGuest: false } });
+            carryGuestChat.mockReset().mockResolvedValue('sent');
+            carryCopy.mockReset();
+        });
+        const carry = (lines: unknown) =>
+            fetch(`${base}/api/bots/${BRICK}/carried-chat`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer orb_sess_v2_${'a'.repeat(64)}` },
+                body: JSON.stringify({ chatId: ALICE, carryId: GUEST, lines }),
+            });
+
+        it('copies for the guest the hand-over names and the person the session names', async () => {
+            carryCopy.mockReturnValue(copySteps());
+            expect((await carry([LINE])).status).toBe(200);
+            expect(carryCopy).toHaveBeenCalledWith(GUEST, 'uuid-alice');
+            expect(carryGuestChat.mock.calls[0][3][0].media[0]).toMatchObject({ url: 'https://cdn.test/copy.oga' });
+        });
+
+        it('brings media as gone when nothing can copy here, never with a receipt', async () => {
+            carryCopy.mockReturnValue(null);
+            expect((await carry([LINE])).status).toBe(200);
+            const sent = carryGuestChat.mock.calls[0][3];
+            expect(sent[0].media[0]).toMatchObject({ gone: true, heard: 'where is the coffee' });
+            expect(JSON.stringify(sent)).not.toContain('r-note');
+        });
     });
 });

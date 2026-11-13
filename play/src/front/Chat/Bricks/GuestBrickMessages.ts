@@ -13,7 +13,7 @@ import type {
 import type { NoteTranscript } from "../Bots/BotTranscript";
 import type { BotReplyLimit } from "../Bots/BotReplyLimit";
 import type { BrickCard } from "./Brick";
-import { GUEST_BRICK_ID, type GuestLine, type GuestMedia } from "./GuestBrick";
+import { GUEST_BRICK_ID, guestBrickCard, type GuestLine, type GuestMedia } from "./GuestBrick";
 import { brickPicture } from "./BrickLookPicture";
 
 /**
@@ -116,14 +116,15 @@ export function guestLineMessages(
     brick: BrickCard,
     line: GuestLine,
     index: number,
-    transcript?: NoteTranscript
+    transcript?: NoteTranscript,
+    idOf: string = `guest-line:${line.at}:${index}`
 ): ChatMessage[] {
     const media = line.media ?? [];
     if (media.length === 0) return [guestLineMessage(brick, line, index)];
     const base = { sender: undefined, mine: true, at: new Date(line.at) };
-    const id = `guest-line:${line.at}:${index}`;
+    const id = idOf;
     const messages: ChatMessage[] = [];
-    const pictures = media.filter((one) => bubbleOf(one) === "image");
+    const pictures = media.filter((one) => bubbleOf(one) === "image" && !one.gone);
     if (pictures.length > 1) {
         messages.push(
             localMessage({
@@ -140,7 +141,7 @@ export function guestLineMessages(
         );
     }
     media.forEach((one, at) => {
-        if (pictures.length > 1 && bubbleOf(one) === "image") return;
+        if (pictures.length > 1 && bubbleOf(one) === "image" && !one.gone) return;
         const noteTranscript: NoteTranscript | undefined =
             one.kind !== "note"
                 ? undefined
@@ -157,7 +158,9 @@ export function guestLineMessages(
                 text: "",
                 type: bubbleOf(one),
                 media: {
-                    url: one.url,
+                    url: one.gone ? undefined : one.url,
+                    // A file that no longer existed when the chat came along: its bubble says it is gone
+                    ...(one.gone ? { mediaFailed: true } : {}),
                     filename: one.kind === "note" ? "voice message.ogg" : one.name,
                     ...(one.kind === "note"
                         ? {
@@ -197,6 +200,30 @@ export function expandGuestChats(
         }
         const sender = message.sender;
         lines.forEach((line, index) => {
+            // A guest's pictures, files and notes are drawn in the same bubbles as every chat's
+            if (line.media?.length) {
+                const media: GuestMedia[] = line.media.map((one) => ({
+                    kind: one.kind,
+                    name: one.name,
+                    type: one.type,
+                    url: one.url ?? "",
+                    receipt: "",
+                    ...(one.gone ? { gone: true as const } : {}),
+                    ...(one.duration !== undefined ? { duration: one.duration } : {}),
+                    ...(one.heard ? { heard: one.heard } : {}),
+                }));
+                const shown: GuestLine = {
+                    from: "guest",
+                    text: line.text,
+                    at: line.at > 0 ? line.at : message.date?.getTime() ?? 0,
+                    media,
+                    ...(line.label ? { label: true as const } : {}),
+                };
+                expanded.push(
+                    ...guestLineMessages(guestBrickCard(ll, 0), shown, index, undefined, `${message.id}:line:${index}`)
+                );
+                return;
+            }
             expanded.push(
                 localMessage({
                     id: `${message.id}:line:${index}`,

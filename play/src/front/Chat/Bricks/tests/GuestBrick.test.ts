@@ -245,6 +245,91 @@ describe("the Brick for guests: the chat a guest's device keeps (#1997)", () => 
         // Escaped and sent twice, a line takes about 8,000 of the 20,000: two fit, and they are the newest
         expect(kept.map((line) => line.at)).toEqual([9, 10]);
     });
+
+    it("brings along a guest's pictures and notes with their receipts, and media past what one chat brings as words", () => {
+        let chat = newGuestChat(GUEST, 1);
+        chat = withLine(chat, {
+            from: "guest",
+            text: "(sent a picture: cat.png)",
+            at: 2,
+            label: true,
+            media: [
+                {
+                    kind: "file",
+                    name: "cat.png",
+                    type: "image/png",
+                    url: "https://up.test/upload-file/a",
+                    receipt: "r.a",
+                    size: 10,
+                },
+            ],
+        });
+        chat = withLine(chat, {
+            from: "guest",
+            text: "",
+            at: 3,
+            media: [
+                {
+                    kind: "note",
+                    name: "note.ogg",
+                    type: "audio/ogg",
+                    url: "https://up.test/upload-file/b",
+                    receipt: "r.b",
+                    duration: 4,
+                    heard: "where is the coffee",
+                },
+            ],
+        });
+        expect(carriedLines(chat)).toEqual([
+            {
+                from: "guest",
+                text: "(sent a picture: cat.png)",
+                at: 2,
+                label: true,
+                media: [{ kind: "file", name: "cat.png", type: "image/png", size: 10, receipt: "r.a" }],
+            },
+            {
+                from: "guest",
+                text: "",
+                at: 3,
+                media: [
+                    {
+                        kind: "note",
+                        name: "note.ogg",
+                        type: "audio/ogg",
+                        duration: 4,
+                        heard: "where is the coffee",
+                        receipt: "r.b",
+                    },
+                ],
+            },
+        ]);
+
+        let many = newGuestChat(GUEST, 1);
+        for (let at = 1; at <= 25; at++)
+            many = withLine(many, {
+                from: "guest",
+                text: "",
+                at,
+                media: [
+                    {
+                        kind: "file",
+                        name: `p${at}.png`,
+                        type: "image/png",
+                        url: "https://up.test/x",
+                        receipt: `r${at}`,
+                    },
+                ],
+            });
+        const lines = carriedLines(many);
+        // The newest twenty come as pictures, the older ones as words
+        expect(lines.filter((line) => line.media?.length)).toHaveLength(20);
+        expect(lines[lines.length - 1].media?.[0].name).toBe("p25.png");
+        const older = lines.find((line) => !line.media);
+        expect(older?.text).toBe("(sent a picture: p1.png)");
+        // Urls never go along: the bot server copies each by its receipt
+        expect(JSON.stringify(lines)).not.toContain("up.test");
+    });
 });
 
 describe("the chat a guest brought along, as the Brick's message carries it (#1997)", () => {
@@ -278,5 +363,43 @@ describe("the chat a guest brought along, as the Brick's message carries it (#19
         };
         expect(readGuestChat(BOT, content)).toEqual([{ from: "guest", text: "ok", at: 0 }]);
         expect(readGuestChat(BOT, { msgtype: "m.text", "universe.guest_chat": "nope" })).toEqual([]);
+    });
+
+    it("reads a guest's pictures and notes as copied links or as gone, never anything else", () => {
+        const content = {
+            msgtype: "m.text",
+            "universe.guest_chat": [
+                {
+                    from: "guest",
+                    text: "(sent a picture: cat.png)",
+                    at: 1,
+                    label: true,
+                    media: [
+                        { kind: "file", name: "cat.png", type: "image/png", url: "https://media.test/cat.png" },
+                        { kind: "file", name: "old.pdf", type: "application/pdf", gone: true },
+                        { kind: "file", name: "x", type: "image/png", url: "javascript:alert(1)" },
+                        { kind: "other", name: "y", type: "image/png", url: "https://media.test/y" },
+                    ],
+                },
+                {
+                    from: "brick",
+                    text: "",
+                    at: 2,
+                    media: [{ kind: "file", name: "z", type: "image/png", url: "https://a.test/z" }],
+                },
+            ],
+        };
+        expect(readGuestChat(BOT, content)).toEqual([
+            {
+                from: "guest",
+                text: "(sent a picture: cat.png)",
+                at: 1,
+                label: true,
+                media: [
+                    { kind: "file", name: "cat.png", type: "image/png", url: "https://media.test/cat.png" },
+                    { kind: "file", name: "old.pdf", type: "application/pdf", gone: true },
+                ],
+            },
+        ]);
     });
 });
