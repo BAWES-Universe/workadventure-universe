@@ -596,7 +596,7 @@ describe("the Apps pages (#2001)", () => {
                 apps: [{ connectionId: "c1", name: "Tavily", kind: "lent" }],
             });
             game.letBotUseApp.mockRejectedValue(
-                Object.assign(new Error("Maximum of 5 apps per bot reached"), { status: 400 })
+                Object.assign(new Error("Maximum of 5 apps per bot reached"), { status: 422 })
             );
             const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
             const onLet = vi.fn();
@@ -606,6 +606,24 @@ describe("the Apps pages (#2001)", () => {
             warn.mockRestore();
             expect(game.warn).toHaveBeenCalledWith("Maximum of 5 apps per bot reached");
             expect(onLet).not.toHaveBeenCalled();
+        });
+
+        it("shows the line Orbit gives for a cap other than 5, and not a 500's words", async () => {
+            game.getAppsABotCouldUse.mockResolvedValue({
+                apps: [{ connectionId: "c1", name: "Tavily", kind: "lent" }],
+            });
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            page = new MoreApps({ target, props: { botId: "guide", botName: "Guide", onLet: vi.fn() } });
+            await settle();
+            game.letBotUseApp.mockRejectedValueOnce(
+                Object.assign(new Error("Maximum of 8 apps per bot reached"), { status: 422 })
+            );
+            await click("moreAppsLet");
+            expect(game.warn).toHaveBeenLastCalledWith("Maximum of 8 apps per bot reached");
+            game.letBotUseApp.mockRejectedValueOnce(Object.assign(new Error("prisma exploded"), { status: 500 }));
+            await click("moreAppsLet");
+            warn.mockRestore();
+            expect(game.warn).toHaveBeenLastCalledWith("That didn't go through. Nothing changed.");
         });
     });
 

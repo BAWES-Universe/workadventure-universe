@@ -53,11 +53,12 @@ export function mayLine(
 }
 
 /**
- * What a person is told when Orbit would not do a change. Orbit words a refusal (a 400) for people ("Maximum of 5 apps per bot
+ * What a person is told when Orbit would not do a change. Orbit words a refusal (a 422, or a 400) for people ("Maximum of 5 apps per bot
  * reached"), so it is shown as it is; anything else, a network failure included, is the plain "didn't go through" line.
  */
 export function refusalWords(error: unknown, fallback: string): string {
-    if (error instanceof Error && (error as Error & { status?: number }).status === 400) {
+    const status = error instanceof Error ? (error as Error & { status?: number }).status : undefined;
+    if (error instanceof Error && (status === 422 || status === 400)) {
         const words = error.message.trim();
         if (words && words.length <= 200 && !/^API error/i.test(words)) return words;
     }
