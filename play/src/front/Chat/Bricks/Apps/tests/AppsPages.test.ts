@@ -175,7 +175,7 @@ describe("the Apps pages (#2001)", () => {
         game.getMyApps.mockResolvedValue({ apps: [gmail, tavily()], bricks: [] });
         game.getMyAppUniverses.mockResolvedValue({ universes: [] });
         game.getAppCatalog.mockResolvedValue({ apps: [] });
-        game.getReadyMadeApps.mockRejectedValue(new Error("API error: 404"));
+        game.getReadyMadeApps.mockResolvedValue({ apps: [] });
         game.getMyApp.mockResolvedValue(appPage());
         game.lendApp.mockResolvedValue({});
         game.changeAppLend.mockResolvedValue({});

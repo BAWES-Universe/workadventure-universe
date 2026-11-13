@@ -70,13 +70,16 @@
                     console.warn("Could not read the apps to connect", error);
                     return undefined;
                 }),
-            // Orbit answers 404 while there are no ready-made apps to offer: that is an empty list, not a failure
+            // A 404 (none to offer) comes back as an empty list; any other failure is said below the list
             botApiService
                 .getReadyMadeApps()
                 .then(parseReadyMade)
-                .catch(() => []),
+                .catch((error: unknown) => {
+                    console.warn("Could not read the ready-made apps", error);
+                    return undefined;
+                }),
         ]);
-        connectListFailed = !listed;
+        connectListFailed = !listed || !readyMade;
         connectable = listed ? [...listed, ...(readyMade ?? [])] : undefined;
     }
 

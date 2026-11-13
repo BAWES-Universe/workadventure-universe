@@ -128,7 +128,7 @@ describe("Search apps and Connect another (#2001)", () => {
         document.body.appendChild(target);
         game.getMyApps.mockResolvedValue({ apps: [mine()], bricks: [] });
         game.getAppCatalog.mockResolvedValue(CATALOG);
-        game.getReadyMadeApps.mockRejectedValue(new Error("API error: 404"));
+        game.getReadyMadeApps.mockResolvedValue({ apps: [] });
         game.getMyAppUniverses.mockResolvedValue({ universes: [] });
         game.getMyApp.mockResolvedValue({ app: mine(), canLetUse: [], lentTo: [], canLendTo: [] });
         game.connectApp.mockResolvedValue({ status: "stopped" });
@@ -182,7 +182,7 @@ describe("Search apps and Connect another (#2001)", () => {
         document.body.innerHTML = "";
         target = document.createElement("div");
         document.body.appendChild(target);
-        game.getReadyMadeApps.mockRejectedValue(new Error("API error: 404"));
+        game.getReadyMadeApps.mockResolvedValue({ apps: [] });
         await open();
         expect(names("appsConnectRow")).not.toContain("Linear");
         expect(byId("appsConnectListFailed")).toBeNull();
@@ -270,6 +270,15 @@ describe("Search apps and Connect another (#2001)", () => {
         expect(words(byId("appsConnectNote"))).toBe(
             "Couldn't open the sign-in page. Allow pop-ups for this site and try again."
         );
+    });
+
+    it("keeps the listed apps and says so when the ready-made apps could not be read", async () => {
+        game.getReadyMadeApps.mockRejectedValueOnce(new Error("down"));
+        await open();
+        expect(names("appsConnectRow")).toHaveLength(4);
+        expect(words(byId("appsConnectListFailed"))).toBe("Couldn't load the apps you can connect.");
+        await click("appsConnectListTryAgain");
+        expect(byId("appsConnectListFailed")).toBeNull();
     });
 
     it("says the list could not be read, and reads it again on Try again", async () => {
