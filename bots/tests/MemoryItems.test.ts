@@ -309,6 +309,18 @@ describe('PersistentMemory: Forget of one thing', () => {
         clearTimeout(memory.unreportedRetryTimer);
     });
 
+    it('does not queue a forget to tell again when there is no Orbit to tell', async () => {
+        const memory: any = new PersistentMemory({});
+        memory.useHeard(() => heardInDm());
+        memory.setUserUuid(BOT, SARA, 'uuid-sara', true);
+        memory.addMessage(BOT, SARA, 'I love lo-fi', 'person', 'dm');
+        hoisted.axios.post.mockClear();
+        expect(await memory.forgetThings(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]))).toBe(1);
+        expect(hoisted.axios.post).not.toHaveBeenCalled();
+        expect(memory.unreportedItemForgets.size).toBe(0);
+        expect(memory.unreportedRetryTimer ?? null).toBeNull();
+    });
+
     it('lets go a forget that Orbit refuses for good, but keeps one it only could not take yet', async () => {
         const memory = held();
         // A busy Orbit or a refused token is tried again

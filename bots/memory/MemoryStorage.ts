@@ -228,10 +228,11 @@ export class MemoryStorage {
 
     /**
      * Tell Orbit one thing a person asked this bot to forget in the chat ("forget that"), by its key. Orbit keeps it as
-     * forgotten whether or not it has saved the thing yet. True when Orbit took it.
+     * forgotten whether or not it has saved the thing yet. True when Orbit took it, or when it never can (no Orbit set up).
      */
     async reportForgottenItem(botId: string, userUuid: string, itemKey: string, kind: string, at?: number): Promise<boolean> {
-        if (!this.isConfigured() || !this.botServiceToken || !botId || !userUuid || !itemKey) return false;
+        // No Orbit to tell, or nothing to name: this never changes, so there is nothing to try again later (not a failure)
+        if (!this.isConfigured() || !this.botServiceToken || !botId || !userUuid || !itemKey) return true;
         try {
             await axios.post(
                 `${this.adminApiUrl}/api/bots/memory/${encodeURIComponent(botId)}/items`,
