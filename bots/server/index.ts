@@ -17,6 +17,7 @@ import { BotAPI } from './BotAPI';
 import { AdminApiService } from './AdminApiService';
 import { BotRegistry } from './BotRegistry';
 import { brickChangedEverywhere, listenForBrickChanges } from './brickChanges';
+import { BrickRunner } from './BrickRunner';
 import { movementLogger } from '../utils/MovementLogger';
 import { DmReplyService, type DmRoomLink } from './DmReplyService';
 import { botMatrixId, readMatrixConfig } from '../matrix/MatrixConfig';
@@ -138,6 +139,9 @@ let brickSweepInterval: NodeJS.Timeout | undefined;
 let computerSweepInterval: NodeJS.Timeout | undefined;
 /** Ends the retries of listening for Brick changes from other bot servers, at shutdown. */
 let stopBrickListening: (() => void) | undefined;
+/** How often Orbit is asked for the goals and tasks that fell due (#2002). Nothing depends on exactly when: Orbit is the scheduler. */
+const BRICK_DUE_EVERY_MS = 60 * 1000;
+let brickRunner: BrickRunner | undefined;
 
 /** Turns direct messages on once Synapse accepts this bot server's registration; leaves them off otherwise. */
 async function setupMatrix(): Promise<void> {
@@ -201,6 +205,17 @@ async function setupMatrix(): Promise<void> {
     };
     brickSweepInterval = setInterval(() => void adminApiService.sweepBricks(), BRICK_SWEEP_EVERY_MS);
     brickSweepInterval.unref?.();
+    // Reminders (#2002): what Orbit says is due is said in the owner's own chat with their Brick
+    brickRunner = new BrickRunner(
+        {
+            claimDue: () => adminApiService.claimDueItems(),
+            checkRun: (runId, attempt) => adminApiService.checkItemRun(runId, attempt),
+            keepDelivered: (runId, eventId) => adminApiService.keepItemDelivered(runId, eventId),
+            report: (runId, report) => adminApiService.reportItemRun(runId, report),
+        },
+        { say: (brickId, matrixUserId, text, transactionId) => bridge.speakInDirectChat(brickId, matrixUserId, text, transactionId) }
+    );
+    brickRunner.start(BRICK_DUE_EVERY_MS);
     computerSweepInterval = setInterval(() => void adminApiService.sweepComputers(), COMPUTER_SWEEP_EVERY_MS);
     computerSweepInterval.unref?.();
     console.log(`[BotServer] Matrix direct messages on for ${matrixConfig.domain}`);
@@ -246,6 +261,7 @@ async function shutdown(signal: string) {
         stopGameLoop();
         // No more tries at hearing Brick changes, even when the game loop never started
         stopBrickListening?.();
+        brickRunner?.stop();
         
         // Stop movement analysis
         stopMovementAnalysis();

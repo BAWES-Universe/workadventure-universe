@@ -26,6 +26,7 @@ import { tidyTranscript } from '../voice/NoteHearing';
 import type { NoteHearingService } from '../voice/NoteHearingWiring';
 import { ANSWER_EVENT, parseTap, type ParsedTap } from '../mcp/ApprovalCard';
 import type { Asker, Outcome } from '../mcp/ToolApprovals';
+import type { SpokeAnswer } from '../server/BrickRunner';
 
 /** The field of a reply that names the bot's room: the game shows a card under it to go there. */
 export const ROOM_LINK_KEY = 'universe.room_link';
@@ -487,12 +488,28 @@ export class MatrixDmBridge implements MatrixEventHandler {
 
     private async noteDirectRoom(botId: string, matrixUserId: string, roomId: string): Promise<void> {
         const key = MatrixDmBridge.pair(botId, matrixUserId);
-        if (this.directRooms.get(key) === roomId) return;
+        // Known here and kept in the shared store: nothing to do. A chat the store could not take is written again the next time it is seen,
+        // so a restart does not lose it (and a reminder is not told "no chat" for a chat that is there)
+        if (this.directRooms.get(key) === roomId && !this.unkeptRooms.has(key) && !this.unkeptRoomBots.has(roomId)) return;
         this.directRooms.delete(key);
         this.directRooms.set(key, roomId);
         if (this.directRooms.size > DIRECT_ROOMS_MAX) this.directRooms.delete(this.directRooms.keys().next().value!);
-        await this.deps.rooms?.rememberDmRoomOf?.(botId, matrixUserId, roomId).catch(() => undefined);
+        try {
+            // Both records or neither: the chat of this person, and which bot the room belongs to (a restart reads the second to trust the first)
+            if (this.unkeptRoomBots.has(roomId)) await this.deps.rooms?.rememberDmRoom(roomId, this.unkeptRoomBots.get(roomId)!);
+            this.unkeptRoomBots.delete(roomId);
+            await this.deps.rooms?.rememberDmRoomOf?.(botId, matrixUserId, roomId);
+            this.unkeptRooms.delete(key);
+        } catch {
+            this.unkeptRooms.add(key);
+            if (this.unkeptRooms.size > DIRECT_ROOMS_MAX) this.unkeptRooms.delete(this.unkeptRooms.keys().next().value!);
+        }
     }
+
+    /** Direct chats the shared store could not take when they were noted: written again the next time they are seen. */
+    private unkeptRooms = new Set<string>();
+    /** Rooms whose bot the shared store could not take when it was noted: written again with the chat they belong to. */
+    private unkeptRoomBots = new Map<string, string>();
 
     /** The direct chat of this bot and this person, when one is known and still theirs alone. */
     private async directRoomOf(botId: string, matrixUserId: string): Promise<string | null> {
@@ -502,8 +519,13 @@ export class MatrixDmBridge implements MatrixEventHandler {
     /** The same, and whether a chat that is known could not be looked at just now (so "none" is not certain). */
     private async lookUpDirectRoom(botId: string, matrixUserId: string): Promise<{ roomId: string | null; unsure: boolean }> {
         const key = MatrixDmBridge.pair(botId, matrixUserId);
-        const roomId = this.directRooms.get(key) ?? (await this.deps.rooms?.getDmRoomOf?.(botId, matrixUserId).catch(() => null)) ?? null;
-        if (!roomId) return { roomId: null, unsure: false };
+        let roomId = this.directRooms.get(key) ?? null;
+        if (!roomId) {
+            // A store that could not be read says nothing about whether there is a chat, so "none" is not certain then
+            let storeFailed = false;
+            roomId = (await this.deps.rooms?.getDmRoomOf?.(botId, matrixUserId).catch(() => ((storeFailed = true), null))) ?? null;
+            if (!roomId) return { roomId: null, unsure: storeFailed };
+        }
         const theirs = await this.isTheirDirectChat(botId, matrixUserId, roomId);
         if (theirs) {
             await this.noteDirectRoom(botId, matrixUserId, roomId);
@@ -647,6 +669,42 @@ export class MatrixDmBridge implements MatrixEventHandler {
     }
 
     /**
+     * Says something on its own in a person's direct chat with a Brick (game #2002: a reminder, a goal's news), as the Brick. Only in
+     * the chat the two share alone, and only for someone Orbit says may message the bot. `transactionId` is the run's own id, so a
+     * second try of the same run is the same message to Matrix. It never makes a chat: a person with none is told so, not given one.
+     */
+    async speakInDirectChat(botId: string, matrixUserId: string, text: string, transactionId: string): Promise<SpokeAnswer> {
+        // "No chat" and "not allowed" are said only when the answer was certain; a look that failed is "could not tell"
+        let looked: { roomId: string | null; unsure: boolean };
+        try {
+            looked = await this.lookUpDirectRoom(botId, matrixUserId);
+        } catch (error: any) {
+            console.warn(`[MatrixDmBridge] Could not look for the direct chat of bot ${botId}:`, error?.message ?? error);
+            return { ok: false, reason: 'unsure' };
+        }
+        if (!looked.roomId) return { ok: false, reason: looked.unsure ? 'unsure' : 'no_chat' };
+        let access: DmAccessResult;
+        try {
+            access = await this.access(botId, matrixUserId, true);
+        } catch (error: any) {
+            console.warn(`[MatrixDmBridge] Could not ask Orbit whether a person may message bot ${botId}:`, error?.message ?? error);
+            return { ok: false, reason: 'unsure' };
+        }
+        // Orbit could not answer: that says nothing about the person
+        if (accessCheckFailed(access)) return { ok: false, reason: 'unsure' };
+        if (!mayChat(access)) return { ok: false, reason: 'not_allowed' };
+        // Asked while this waited: someone else may have joined the room meanwhile, and then nothing goes there (the next try looks again and finds it is not theirs)
+        if (!this.stillTheirs(looked.roomId, this.botUserId(botId), matrixUserId)) return { ok: false, reason: 'unsure' };
+        try {
+            const eventId = await this.client.sendMessage(this.botUserId(botId), looked.roomId, { msgtype: 'm.text', body: text }, transactionId);
+            return eventId ? { ok: true, eventId } : { ok: false, reason: 'unsure' };
+        } catch (error: any) {
+            console.warn(`[MatrixDmBridge] Could not speak in the direct chat of bot ${botId}:`, error?.message ?? error);
+            return { ok: false, reason: 'unsure' };
+        }
+    }
+
+    /**
      * Sends what waits for this person into this room, which the caller knows to be their direct chat with the bot. Only
      * someone Orbit says may message the bot gets anything there; when Orbit cannot say, it keeps waiting.
      */
@@ -750,11 +808,18 @@ export class MatrixDmBridge implements MatrixEventHandler {
 
     private async rememberRoom(roomId: string, botId: string): Promise<void> {
         this.roomBots.set(roomId, botId);
-        await this.deps.rooms?.rememberDmRoom(roomId, botId).catch(() => undefined);
+        try {
+            await this.deps.rooms?.rememberDmRoom(roomId, botId);
+            this.unkeptRoomBots.delete(roomId);
+        } catch {
+            this.unkeptRoomBots.set(roomId, botId);
+            if (this.unkeptRoomBots.size > DIRECT_ROOMS_MAX) this.unkeptRoomBots.delete(this.unkeptRoomBots.keys().next().value!);
+        }
     }
 
     private async forgetRoom(roomId: string): Promise<void> {
         this.roomBots.delete(roomId);
+        this.unkeptRoomBots.delete(roomId);
         this.roomMembers.delete(roomId);
         for (const [key, room] of [...this.directRooms]) {
             if (room !== roomId) continue;
