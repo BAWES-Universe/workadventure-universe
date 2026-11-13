@@ -590,6 +590,23 @@ describe("the Apps pages (#2001)", () => {
             expect(game.warn).toHaveBeenCalledWith("That didn't go through. Nothing changed.");
             expect(onLet).not.toHaveBeenCalled();
         });
+
+        it("shows Orbit's own words when the bot already has all the apps it may have", async () => {
+            game.getAppsABotCouldUse.mockResolvedValue({
+                apps: [{ connectionId: "c1", name: "Tavily", kind: "lent" }],
+            });
+            game.letBotUseApp.mockRejectedValue(
+                Object.assign(new Error("Maximum of 5 apps per bot reached"), { status: 400 })
+            );
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            const onLet = vi.fn();
+            page = new MoreApps({ target, props: { botId: "guide", botName: "Guide", onLet } });
+            await settle();
+            await click("moreAppsLet");
+            warn.mockRestore();
+            expect(game.warn).toHaveBeenCalledWith("Maximum of 5 apps per bot reached");
+            expect(onLet).not.toHaveBeenCalled();
+        });
     });
 
     describe("the sheets on their own", () => {
