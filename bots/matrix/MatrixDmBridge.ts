@@ -471,11 +471,14 @@ export class MatrixDmBridge implements MatrixEventHandler {
         const key = MatrixDmBridge.pair(botId, matrixUserId);
         // Known here and kept in the shared store: nothing to do. A chat the store could not take is written again the next time it is seen,
         // so a restart does not lose it (and a reminder is not told "no chat" for a chat that is there)
-        if (this.directRooms.get(key) === roomId && !this.unkeptRooms.has(key)) return;
+        if (this.directRooms.get(key) === roomId && !this.unkeptRooms.has(key) && !this.unkeptRoomBots.has(roomId)) return;
         this.directRooms.delete(key);
         this.directRooms.set(key, roomId);
         if (this.directRooms.size > DIRECT_ROOMS_MAX) this.directRooms.delete(this.directRooms.keys().next().value!);
         try {
+            // Both records or neither: the chat of this person, and which bot the room belongs to (a restart reads the second to trust the first)
+            if (this.unkeptRoomBots.has(roomId)) await this.deps.rooms?.rememberDmRoom(roomId, this.unkeptRoomBots.get(roomId)!);
+            this.unkeptRoomBots.delete(roomId);
             await this.deps.rooms?.rememberDmRoomOf?.(botId, matrixUserId, roomId);
             this.unkeptRooms.delete(key);
         } catch {
@@ -486,6 +489,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
 
     /** Direct chats the shared store could not take when they were noted: written again the next time they are seen. */
     private unkeptRooms = new Set<string>();
+    /** Rooms whose bot the shared store could not take when it was noted: written again with the chat they belong to. */
+    private unkeptRoomBots = new Map<string, string>();
 
     /** The direct chat of this bot and this person, when one is known and still theirs alone. */
     private async directRoomOf(botId: string, matrixUserId: string): Promise<string | null> {
@@ -631,6 +636,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
         // Orbit could not answer: that says nothing about the person
         if (accessCheckFailed(access)) return { ok: false, reason: 'unsure' };
         if (!mayChat(access)) return { ok: false, reason: 'not_allowed' };
+        // Asked while this waited: someone else may have joined the room meanwhile, and then nothing goes there (the next try looks again and finds it is not theirs)
+        if (!this.stillTheirs(looked.roomId, this.botUserId(botId), matrixUserId)) return { ok: false, reason: 'unsure' };
         try {
             const eventId = await this.client.sendMessage(this.botUserId(botId), looked.roomId, { msgtype: 'm.text', body: text }, transactionId);
             return eventId ? { ok: true, eventId } : { ok: false, reason: 'unsure' };
@@ -744,11 +751,18 @@ export class MatrixDmBridge implements MatrixEventHandler {
 
     private async rememberRoom(roomId: string, botId: string): Promise<void> {
         this.roomBots.set(roomId, botId);
-        await this.deps.rooms?.rememberDmRoom(roomId, botId).catch(() => undefined);
+        try {
+            await this.deps.rooms?.rememberDmRoom(roomId, botId);
+            this.unkeptRoomBots.delete(roomId);
+        } catch {
+            this.unkeptRoomBots.set(roomId, botId);
+            if (this.unkeptRoomBots.size > DIRECT_ROOMS_MAX) this.unkeptRoomBots.delete(this.unkeptRoomBots.keys().next().value!);
+        }
     }
 
     private async forgetRoom(roomId: string): Promise<void> {
         this.roomBots.delete(roomId);
+        this.unkeptRoomBots.delete(roomId);
         this.roomMembers.delete(roomId);
         for (const [key, room] of [...this.directRooms]) {
             if (room !== roomId) continue;

@@ -128,4 +128,16 @@ describe('BotRegistry waiting messages', () => {
         Object.assign(never, { redis: null, sharedStoreSeen: false });
         await expect(never.getDmRoomOf('b1', '@a:x')).resolves.toBeNull();
     });
+
+    it('says so when it cannot keep a direct room while a store that was in use is down, and does nothing when there never was one', async () => {
+        const down = Object.create(BotRegistry.prototype) as BotRegistry;
+        Object.assign(down, { redis: { isOpen: false }, sharedStoreSeen: true });
+        await expect(down.rememberDmRoomOf('b1', '@a:x', '!r:x')).rejects.toThrow('The shared store is down');
+        await expect(down.rememberDmRoom('!r:x', 'b1')).rejects.toThrow('The shared store is down');
+
+        const never = Object.create(BotRegistry.prototype) as BotRegistry;
+        Object.assign(never, { redis: null, sharedStoreSeen: false });
+        await expect(never.rememberDmRoomOf('b1', '@a:x', '!r:x')).resolves.toBeUndefined();
+        await expect(never.rememberDmRoom('!r:x', 'b1')).resolves.toBeUndefined();
+    });
 });

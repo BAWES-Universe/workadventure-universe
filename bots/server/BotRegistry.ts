@@ -134,7 +134,11 @@ export class BotRegistry {
      * Without Redis this is a no-op and the caller keeps its own in-process copy.
      */
     async rememberDmRoom(roomId: string, botId: string): Promise<void> {
-        if (!this.redis?.isOpen) return;
+        if (!this.redis?.isOpen) {
+            // A store that was in use and is down did not keep it: said, so the caller writes it again (no store at all is not a failure)
+            if (this.sharedStoreSeen) throw new Error('The shared store is down');
+            return;
+        }
         await this.redis.hSet('bots:matrix:dm-rooms', roomId, botId);
     }
 
@@ -155,7 +159,10 @@ export class BotRegistry {
      * without a message from them first. Without Redis this is a no-op and the caller keeps its own in-process copy.
      */
     async rememberDmRoomOf(botId: string, matrixUserId: string, roomId: string): Promise<void> {
-        if (!this.redis?.isOpen) return;
+        if (!this.redis?.isOpen) {
+            if (this.sharedStoreSeen) throw new Error('The shared store is down');
+            return;
+        }
         await this.redis.hSet('bots:matrix:dm-room-of', `${botId}|${matrixUserId}`, roomId);
     }
 

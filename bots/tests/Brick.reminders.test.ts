@@ -250,6 +250,29 @@ describe('the Brick speaks in the owner’s own chat, on its own account', () =>
         expect(remember).toHaveBeenCalledTimes(2);
     });
 
+    it('says nothing, and says it could not tell, when someone joins the room while the access check is pending', async () => {
+        const { bridge, deps, sendMessage } = bridgeWith({});
+        deps.checkAccess.mockImplementationOnce(async () => {
+            (bridge as unknown as { roomMembers: Map<string, Set<string>> }).roomMembers.set(ROOM, new Set([SARA, BRICK_USER, '@omar:matrix.test']));
+            return { allowed: true, reason: null, user: { uuid: 'sara-uuid', name: 'Sara', isGuest: false } };
+        });
+        expect(await bridge.speakInDirectChat(BRICK, SARA, 'x', 't')).toEqual({ ok: false, reason: 'unsure' });
+        expect(sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('writes the room-to-bot record again with the chat, when the store could not take it the first time', async () => {
+        const { bridge, deps } = bridgeWith({});
+        const rememberRoom = (bridge as unknown as { rememberRoom(r: string, b: string): Promise<void> }).rememberRoom.bind(bridge);
+        const note = (bridge as unknown as { noteDirectRoom(b: string, u: string, r: string): Promise<void> }).noteDirectRoom.bind(bridge);
+        deps.rooms.rememberDmRoom.mockRejectedValueOnce(new Error('redis down'));
+        await rememberRoom(ROOM, BRICK);
+        // The chat is noted next: it writes both again, and a later sighting finds nothing left to write
+        await note(BRICK, SARA, ROOM);
+        await note(BRICK, SARA, ROOM);
+        expect(deps.rooms.rememberDmRoom).toHaveBeenCalledTimes(2);
+        expect(deps.rooms.rememberDmRoomOf).toHaveBeenCalledTimes(1);
+    });
+
     it('says nothing in a room someone else is in', async () => {
         const { bridge, sendMessage } = bridgeWith({ members: [SARA, BRICK_USER, '@omar:matrix.test'] });
         expect(await bridge.speakInDirectChat(BRICK, SARA, 'x', 't')).toEqual({ ok: false, reason: 'no_chat' });
