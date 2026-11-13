@@ -21,6 +21,7 @@ const game = vi.hoisted(() => ({
     deleteMyBrick: vi.fn<(brickId: string) => Promise<unknown>>(),
     undoMyBrick: vi.fn<(brickId: string) => Promise<unknown>>(),
     tellBrickChanged: vi.fn<(brickId: string) => Promise<void>>(),
+    getMyUsage: vi.fn<() => Promise<unknown>>(),
     openModal: vi.fn<(component: unknown) => void>(),
     getBot: vi.fn<(brickId: string) => Promise<unknown>>(),
     changeMyBrick: vi.fn<(brickId: string, change: Record<string, unknown>) => Promise<unknown>>(),
@@ -58,6 +59,7 @@ vi.mock("../../../external-modules/bots/services/BotApiService", () => ({
         getBot: game.getBot,
         changeMyBrick: game.changeMyBrick,
         isInitialized: () => true,
+        getMyUsage: game.getMyUsage,
     },
 }));
 vi.mock("../../../Phaser/Game/GameManager", () => ({ gameManager: {} }));
@@ -114,6 +116,7 @@ import { loadLocale } from "../../../../i18n/i18n-util.sync";
 import { setLocale } from "../../../../i18n/i18n-svelte";
 import { bricksPageOpenStore } from "../../Stores/ChatStore";
 import { forgetMyBricks } from "../MyBricksStore";
+import { forgetMyUsage } from "../UsageStore";
 import BricksPage from "../BricksPage.svelte";
 
 const BRICK = "0b7c1d2e-1111-4222-8333-944455556666";
@@ -157,6 +160,13 @@ describe("the Bricks page (#1995)", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         forgetMyBricks();
+        forgetMyUsage();
+        game.getMyUsage.mockResolvedValue({
+            chat: { left: 1, words: "plenty", fullAgainAt: null },
+            computer: null,
+            storage: null,
+            extra: null,
+        });
         bricksPageOpenStore.set(true);
         game.ensureMyBrick.mockResolvedValue({ brick: card(), made: false, deleted: false });
         game.listMyBricks.mockResolvedValue({ bricks: [card(), made()] });
@@ -697,6 +707,45 @@ describe("the Bricks page (#1995)", () => {
             await click("brickDeleteConfirm");
             expect(game.warn).toHaveBeenCalledWith("Couldn't delete the Brick. Try again.");
             expect(byId("brickPage")).not.toBeNull();
+        });
+    });
+
+    describe("the Usage row (#1999)", () => {
+        it("sits under the list and says in a line where the Universe AI bar is", async () => {
+            await open();
+            const row = byId("bricksUsageRow");
+            expect(row?.textContent?.replace(/\s+/g, " ").trim()).toBe("Usage Universe AI · plenty left");
+        });
+
+        it("says when it is low, and when it is full again", async () => {
+            game.getMyUsage.mockResolvedValue({
+                chat: { left: 0.1, words: "low", fullAgainAt: new Date(Date.now() + 3_600_000).toISOString() },
+                computer: null,
+                storage: null,
+                extra: null,
+            });
+            await open();
+            expect(byId("bricksUsageRow")?.textContent).toMatch(/Universe AI · almost used up · full again at /);
+        });
+
+        it("still works when the usage could not be read", async () => {
+            game.getMyUsage.mockRejectedValue(new Error("down"));
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            await open();
+            warn.mockRestore();
+            expect(byId("bricksUsageRow")?.textContent?.replace(/\s+/g, " ").trim()).toBe("Usage Universe AI");
+        });
+
+        it("opens the Usage page, and Back returns to the Bricks", async () => {
+            await open();
+            byId("bricksUsageRow")?.querySelector<HTMLElement>("button")?.click();
+            await settle();
+            expect(byId("usagePage")).not.toBeNull();
+            expect(byId("bricksPage")).toBeNull();
+            target.querySelector<HTMLElement>('[data-testid="edit-panel-back"]')?.click();
+            await settle();
+            expect(byId("usagePage")).toBeNull();
+            expect(rows()).toHaveLength(2);
         });
     });
 });

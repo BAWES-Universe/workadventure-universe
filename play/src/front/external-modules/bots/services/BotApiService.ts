@@ -1255,6 +1255,24 @@ export class BotApiService {
         }
     }
 
+    /**
+     * The signed-in person's Usage page (game #1999): one bar and plain words for Universe AI, computer time and storage
+     * for someone whose Brick uses a computer, and one line while they have extra usage. Throws when Orbit can't be reached.
+     */
+    async getMyUsage(): Promise<unknown> {
+        const response = await this.fetch("/api/me/usage");
+        return response.json();
+    }
+
+    /**
+     * "Ask for more" on the Usage page, when computer time is used up. Only a request to the Universe team: no debt.
+     * Throws when Orbit refuses or can't be reached.
+     */
+    async askForMoreUsage(): Promise<unknown> {
+        const response = await this.fetch("/api/me/usage/ask-for-more", { method: "POST" });
+        return response.json();
+    }
+
     /** Deletes one of the person's own Bricks: it stops at once and waits under Deleted, with Undo. */
     async deleteMyBrick(brickId: string): Promise<unknown> {
         return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}`, { method: "DELETE" });
