@@ -10,6 +10,7 @@ import {
     newGuestChat,
     parseGuestAnswer,
     parseGuestChat,
+    requestMessage,
     serializeGuestChat,
     withLine,
     type GuestAnswer,
@@ -203,7 +204,7 @@ export class GuestBrickChatRoom implements ChatRoom {
                     await this.deps.ask({
                         turnId: this.deps.newTurnId(),
                         roomUrl,
-                        message: text,
+                        message: requestMessage(text),
                         history: historyExcept(chat.lines, skip),
                         saidNeedsAccount: chat.saidNeedsAccount,
                     })

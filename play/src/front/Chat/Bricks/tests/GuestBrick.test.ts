@@ -7,6 +7,9 @@ import {
     GUEST_KEEP_CARD,
     GUEST_STARTERS_CARD,
     REQUEST_LINES_MAX,
+    REQUEST_LINE_CHARS,
+    REQUEST_MESSAGE_CHARS,
+    requestMessage,
     CARRIED_BYTES_MAX,
     CARRIED_LINES_MAX,
     CARRIED_LINE_CHARS,
@@ -118,6 +121,23 @@ describe("the Brick for guests: the chat a guest's device keeps (#1997)", () => 
             { from: "guest", text: "line 0" },
             { from: "guest", text: "line 2" },
         ]);
+    });
+
+    it("keeps a request under what the bot server takes in, however long the chat or the message is", () => {
+        const long = "é\n".repeat(20000);
+        const lines = Array.from({ length: REQUEST_LINES_MAX }, (_, index) => ({
+            from: index % 2 ? ("brick" as const) : ("guest" as const),
+            text: `${index} ${long}`,
+            at: index + 1,
+        }));
+        const history = historyExcept(lines, new Set());
+        const body = JSON.stringify({ message: requestMessage(long), history });
+        expect(new TextEncoder().encode(body).length).toBeLessThan(100 * 1024);
+        // The newest lines are the ones kept, each cut
+        expect(history.length).toBeGreaterThan(0);
+        expect(history[history.length - 1].text.startsWith(`${REQUEST_LINES_MAX - 1} `)).toBe(true);
+        expect(history.every((line) => line.text.length <= REQUEST_LINE_CHARS)).toBe(true);
+        expect(requestMessage(long)).toHaveLength(REQUEST_MESSAGE_CHARS);
     });
 
     it("reads an answer as the bot server says it, and anything else as a failure", () => {

@@ -112,17 +112,38 @@ export function withLine(chat: GuestChat, line: GuestLine): GuestChat {
 export const REQUEST_LINES_MAX = 100;
 
 /**
+ * What one request may carry, so a long chat or a long pasted message never makes it too big for the bot server to take
+ * in (it reads a request body of about 100 KB): each line and the message are cut, and the chat is kept to a byte budget,
+ * newest lines first. Together they stay well under that, with every character counted as it is escaped in the request.
+ */
+export const REQUEST_LINE_CHARS = 4000;
+export const REQUEST_MESSAGE_CHARS = 8000;
+export const REQUEST_HISTORY_BYTES_MAX = 40000;
+
+/** The message of a request, cut to what a request carries. */
+export function requestMessage(text: string): string {
+    return text.slice(0, REQUEST_MESSAGE_CHARS);
+}
+
+/**
  * The chat so far as the request carries it, oldest first: every line but the ones in `skip` (the message being answered,
- * and any the guest wrote since that are still waiting for their turn).
+ * and any the guest wrote since that are still waiting for their turn), the newest that fit.
  */
 export function historyExcept(
     lines: readonly GuestLine[],
     skip: ReadonlySet<number>
 ): { from: "guest" | "brick"; text: string }[] {
-    return lines
-        .filter((_, index) => !skip.has(index))
-        .slice(-REQUEST_LINES_MAX)
-        .map(({ from, text }) => ({ from, text }));
+    const kept = lines.filter((_, index) => !skip.has(index)).slice(-REQUEST_LINES_MAX);
+    const out: { from: "guest" | "brick"; text: string }[] = [];
+    const encoder = new TextEncoder();
+    let bytes = 0;
+    for (let index = kept.length - 1; index >= 0; index--) {
+        const line = { from: kept[index].from, text: kept[index].text.slice(0, REQUEST_LINE_CHARS) };
+        bytes += encoder.encode(JSON.stringify(line)).length + 1;
+        if (bytes > REQUEST_HISTORY_BYTES_MAX) break;
+        out.push(line);
+    }
+    return out.reverse();
 }
 
 /** What the bot server answers a guest's message with (the same four answers as the service). */
