@@ -21,6 +21,7 @@ import { movementLogger } from '../utils/MovementLogger';
 import { DmReplyService, type DmRoomLink } from './DmReplyService';
 import { botMatrixId, readMatrixConfig } from '../matrix/MatrixConfig';
 import { OrbitActions } from '../mcp/OrbitActions';
+import { askOrbitAboutAppUse } from '../mcp/AppUse';
 import { ToolApprovals, type CardSurface } from '../mcp/ToolApprovals';
 import { NearbyAsks } from '../mcp/NearbyAsks';
 import { QuestionCards } from '../mcp/QuestionCards';
@@ -90,6 +91,13 @@ const orbitActions = new OrbitActions(() => {
     const serviceToken = process.env.BOT_SERVICE_TOKEN;
     return ADMIN_API_URL && ADMIN_API_TOKEN && serviceToken ? { adminApiUrl: ADMIN_API_URL, adminApiToken: ADMIN_API_TOKEN, serviceToken } : null;
 });
+// Before every use of an App on a connection (a person's own, lent to a universe, or a universe's own), Orbit is asked (#2001)
+aiService.useAppUse(
+    askOrbitAboutAppUse(() => {
+        const serviceToken = process.env.BOT_SERVICE_TOKEN;
+        return ADMIN_API_URL && serviceToken ? { adminApiUrl: ADMIN_API_URL, serviceToken } : null;
+    })
+);
 const cardSurface: CardSurface = {
     send: (botId, roomId, content) => (dmCards ? dmCards.send(botId, roomId, content) : Promise.reject(new Error('Direct messages are off'))),
     say: (botId, roomId, text) => (dmCards ? dmCards.say(botId, roomId, text) : Promise.reject(new Error('Direct messages are off'))),
@@ -117,9 +125,9 @@ const approvals = new ToolApprovals({
     gate: aiService.gate,
     tools: {
         find: (botId, toolName) => aiService.findToolEntry(botId, toolName),
-        run: async (botId, entry, toolName, args, playerUuid) => {
+        run: async (botId, entry, toolName, args, playerUuid, use) => {
             const config = botManager.getBot(botId)?.getFullConfig() ?? (await dmReplies?.getBotConfig(botId).catch(() => null));
-            return aiService.runApprovedTool(botId, entry, toolName, args, playerUuid, config?.toolTimeoutSeconds);
+            return aiService.runApprovedTool(botId, entry, toolName, args, playerUuid, config?.toolTimeoutSeconds, use);
         },
     },
     followUp: (outcome) => matrixBridge?.sayHowItEnded(outcome) ?? Promise.resolve(),

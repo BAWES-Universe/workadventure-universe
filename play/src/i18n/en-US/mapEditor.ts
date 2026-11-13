@@ -1185,27 +1185,30 @@ const mapEditor: BaseTranslation = {
                     speechServerSilent: "{server:string} didn’t answer. Is it running and the tunnel up?",
                 },
                 tools: {
-                    title: "Tools",
+                    title: "Apps",
                     none: "None yet",
+                    // How many tools sit under a heading on an app's screens, as before
                     count: "{count:number} tool{{s}}",
+                    // How many apps a bot has, on its page
+                    apps: "{count:number} app{{s}}",
                     waits: "waits {patience:string}",
                     patience: "Patience",
-                    patienceHint: "How long it waits for a tool to answer",
+                    patienceHint: "How long it waits for an app to answer",
                     longestReply: "Longest reply",
                     longestReplyHint: "In tokens. 32k fits a full app. Lower keeps this bot short.",
                     steps: "Steps in one reply",
-                    stepsHint: "Tools it may use before it answers.",
+                    stepsHint: "How many times it may use an app before it answers.",
                     keysLimit: "Key's limit",
                     keysLimitIs: "Key's limit · {limit:string}",
                     modelsLimitIs: "Model's limit · {limit:string}",
                     modelStops: "{model:string} writes up to {limit:string} tokens, so this bot stops there.",
                     modelStopsKey:
                         "{model:string} writes up to {limit:string} tokens, so this bot stops there. The key allows {key:string}.",
-                    showToolCalls: "Show tool calls",
-                    showToolCallsOff: "Tool calls stay hidden",
-                    showToolCallsOn: "Shows tool names in chat",
+                    showToolCalls: "Show app use",
+                    showToolCallsOff: "App use stays hidden",
+                    showToolCallsOn: "Shows which app it used in chat",
                     // The Tools screens: a server, a heading, Asking for approvals (game #1655)
-                    servers: "{count:number} MCP server{{s}}",
+                    servers: "{count:number} app{{s}}",
                     notChecked: "Not checked yet",
                     toCheck: "{count:number} to check",
                     sorted: "{server:string}'s {tools:string} are sorted by what they do. For each heading, pick whether {bot:string} uses those tools right away, asks first, or never.",
@@ -1449,10 +1452,10 @@ const mapEditor: BaseTranslation = {
                         summonHint: "Bring this bot to you, anywhere in this bot's room",
                         change: "Have this bot change things",
                         changeHint:
-                            "With this bot's tools under Makes new things and Changes things, like adding a Linear issue",
+                            "With this bot's apps under Makes new things and Changes things, like adding a Linear issue",
                         deleteOrSend: "Have this bot delete or send",
                         deleteOrSendHint:
-                            "With this bot's tools under Deletes or sends out, like sending an email or deleting a page",
+                            "With this bot's apps under Deletes or sends out, like sending an email or deleting a page",
                         manage: "Manage this bot",
                         manageHint: "Change what this bot says and where this bot stands",
                         /** The short names a row's line on the bot page uses */
