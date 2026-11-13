@@ -43,6 +43,8 @@ export async function carryGuestChatAlong(steps: CarrySteps): Promise<CarryOutco
             steps.drop();
             return "none";
         }
+        // Signing out can drop the chat while the question is open: then there is nothing left to keep
+        if (steps.read()?.guestId !== chat.guestId) return "none";
         // Orbit hands a chat over once: from here on it is only brought, never asked for again
         steps.keep({ ...chat, carryTaken: true });
     }

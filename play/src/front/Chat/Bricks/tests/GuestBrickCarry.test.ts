@@ -55,6 +55,18 @@ describe("a guest signs in, and their chat comes with them (#1997)", () => {
         expect(state.chat).toBeUndefined();
     });
 
+    it("keeps nothing when the chat was taken off the device while Orbit was being asked (signed out meanwhile)", async () => {
+        const { state, steps } = device();
+        steps.take = vi.fn<CarrySteps["take"]>().mockImplementation(() => {
+            state.chat = undefined;
+            return Promise.resolve(true);
+        });
+        await expect(carryGuestChatAlong(steps)).resolves.toBe("none");
+        expect(steps.calls).not.toContain("keep");
+        expect(steps.carry).not.toHaveBeenCalled();
+        expect(state.chat).toBeUndefined();
+    });
+
     it("has nothing to bring for someone who never talked to it as a guest, and asks nobody", async () => {
         const { steps } = device(null);
         await expect(carryGuestChatAlong(steps)).resolves.toBe("none");

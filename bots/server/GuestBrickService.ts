@@ -109,7 +109,8 @@ export function readCarriedLines(value: unknown): GuestChatNote[] {
     const kept: GuestChatNote[] = [];
     let bytes = 0;
     for (let index = lines.length - 1; index >= 0 && kept.length < CARRIED_LINES_MAX; index--) {
-        bytes += Buffer.byteLength(lines[index].text, 'utf8');
+        // A line is sent twice in the event (as the message text and as data), both JSON-escaped
+        bytes += 2 * Buffer.byteLength(JSON.stringify(lines[index]), 'utf8');
         if (bytes > CARRIED_BYTES_MAX) break;
         kept.unshift(lines[index]);
     }
@@ -192,6 +193,8 @@ export class GuestBrickService {
                 sentAt
             );
             const answer = readMark(response.content);
+            // An answer that was only the marker has nothing to show: it fails, and the allowance is given back
+            if (!answer.text.trim()) throw new Error(AI_FAILED);
             // What was said is never kept: only what it took
             await this.admin.finishGuestBrickReply(ask.turnId, { tokensUsed: response.tokensUsed, costMicros: priced.cost.micros });
             return { kind: 'reply', text: answer.text, needsAccount: answer.needsAccount && !ask.saidNeedsAccount };

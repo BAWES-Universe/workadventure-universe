@@ -278,6 +278,17 @@ describe("a guest's chat with the Brick for guests (#1997)", () => {
         expect(asked.map((request) => request.turnId)).toEqual(["turn-1", "turn-2"]);
     });
 
+    it("drops the game's note of an earlier turn when a later queued turn gets its answer", async () => {
+        const { room, answers, said, settle } = setup();
+        answers.push(() => Promise.resolve({ kind: "failed" }));
+        answers.push(() => Promise.resolve({ kind: "reply", text: "Here you go.", needsAccount: false }));
+        room.sendMessage("first");
+        room.sendMessage("second");
+        await settle();
+        // The failure note of the first is gone once the second is answered
+        expect(said()).toEqual(["me: first", "me: second", "brick: Here you go."]);
+    });
+
     it("cannot answer without a guest id or a place, and asks nobody then", async () => {
         const noGuest = setup({ guestId: () => null });
         noGuest.room.sendMessage("hi");

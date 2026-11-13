@@ -52,6 +52,8 @@ const PERMISSIONS_TIMEOUT_MS = 20000;
 const HELLO_TIMEOUT_MS = 60000;
 /** How long a lookup of bot states waits before it counts as failed (and is asked again on the next look) */
 const DM_STATUS_TIMEOUT_MS = 10000;
+// A guest's answer from the Brick for guests: writing it can take a while; past this it is not coming, and the next turn goes on
+const GUEST_REPLY_TIMEOUT_MS = 60000;
 /** How long a device waits to be told who makes a chat (#1995) before it opens the chat the way it always did */
 const DIRECT_CHAT_TIMEOUT_MS = 5000;
 /** How long a change to one of the person's Bricks may take before it counts as failed, so no switch or button hangs. */
@@ -1266,10 +1268,14 @@ export class BotApiService {
         history: { from: "guest" | "brick"; text: string }[];
         saidNeedsAccount: boolean;
     }): Promise<unknown> {
+        // The request and the reading of the answer both stop at the deadline: a call that hangs would hold back every later turn
+        const stop = new AbortController();
+        const timer = setTimeout(() => stop.abort(), GUEST_REPLY_TIMEOUT_MS);
         try {
             const response = await this.fetchBotServer("/api/guest-brick/reply", {
                 method: "POST",
                 body: JSON.stringify(request),
+                signal: stop.signal,
             });
             return (await response.json()) as unknown;
         } catch (error) {
@@ -1277,6 +1283,8 @@ export class BotApiService {
             const body = (error as { body?: unknown }).body;
             if (body && typeof body === "object" && "kind" in body) return body;
             throw error;
+        } finally {
+            clearTimeout(timer);
         }
     }
 

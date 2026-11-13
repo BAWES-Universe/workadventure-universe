@@ -218,6 +218,8 @@ export class GuestBrickChatRoom implements ChatRoom {
         if (!this.chat || this.chat.startedAt !== startedAt) return;
         const now = this.deps.now();
         if (answer.kind === "reply") {
+            // A failure or a limit from an earlier queued turn is out of the way once an answer comes
+            this.notes = [];
             this.chat = withLine(this.chat, {
                 from: "brick",
                 text: answer.text,

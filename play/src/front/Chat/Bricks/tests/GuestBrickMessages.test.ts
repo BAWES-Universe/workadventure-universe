@@ -35,6 +35,13 @@ describe("the chat a guest brought along, drawn in the Brick's chat (#1997)", ()
         loadLocale("en-US");
     });
 
+    it("draws a removed carrier as the one removed message, with no lines and no welcome", () => {
+        const message = carrier([{ from: "guest", text: "Where's the coffee here?", at: 1000 }]);
+        message.isDeleted = readable(true);
+        const drawn = expandGuestChats([message], i18nObject("en-US"), "Khalid");
+        expect(drawn).toEqual([message]);
+    });
+
     it("draws each line as it was said, then the Brick's welcome to the person by name", () => {
         const message = carrier([
             { from: "guest", text: "Where's the coffee here?", at: 1000 },

@@ -122,6 +122,12 @@ describe('The Brick for guests answers a guest', () => {
         expect(await empty.service.reply(ask())).toEqual({ kind: 'failed' });
         expect(empty.admin.finishGuestBrickReply).toHaveBeenCalledWith(TURN, { failed: true });
 
+        // An answer that is only the marker has nothing to show: it fails and the allowance is given back
+        const markerOnly = makeService({ answer: NEEDS_ACCOUNT_MARK });
+        expect(await markerOnly.service.reply(ask())).toEqual({ kind: 'failed' });
+        expect(markerOnly.admin.finishGuestBrickReply).toHaveBeenCalledTimes(1);
+        expect(markerOnly.admin.finishGuestBrickReply).toHaveBeenCalledWith(TURN, { failed: true });
+
         const notReady = makeService({ ready: false });
         expect(await notReady.service.reply(ask())).toEqual({ kind: 'failed' });
         expect(notReady.admin.finishGuestBrickReply).toHaveBeenCalledWith(TURN, { failed: true });
@@ -214,6 +220,16 @@ describe('What the bot server takes in', () => {
         expect(cut.every((line) => line.text.length === CARRIED_LINE_CHARS)).toBe(true);
         expect(cut.reduce((all, line) => all + Buffer.byteLength(line.text, 'utf8'), 0)).toBeLessThanOrEqual(CARRIED_BYTES_MAX);
         expect(cut[cut.length - 1].at).toBe(40);
+    });
+
+    it('counts a carried line by what it takes in the message, both copies, so heavily escaped text stays within the budget too', () => {
+        // Ten lines of 2,000 backslashes: 20,000 raw bytes, but far more once each is JSON-escaped, and the message carries them twice
+        const slashes = Array.from({ length: 10 }, (_, index) => ({ from: 'guest', text: '\\'.repeat(2000), at: index + 1 }));
+        const kept = readCarriedLines(slashes);
+        expect(kept.length).toBeLessThan(10);
+        expect(kept[kept.length - 1].at).toBe(10);
+        const event = JSON.stringify({ body: JSON.stringify(kept), data: kept });
+        expect(Buffer.byteLength(event, 'utf8')).toBeLessThan(65536);
     });
 });
 

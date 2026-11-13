@@ -1,4 +1,4 @@
-import { readable } from "svelte/store";
+import { get, readable } from "svelte/store";
 import { MapStore } from "@workadventure/store-utils";
 import { AvailabilityStatus } from "@workadventure/messages";
 import type { TranslationFunctions } from "../../../i18n/i18n-types";
@@ -100,7 +100,8 @@ export function expandGuestChats(
     const expanded: ChatMessage[] = [];
     for (const message of messages) {
         const lines = message.guestChat;
-        if (!lines?.length) {
+        // A removed carrier stays one removed message: its lines are not drawn again
+        if (!lines?.length || get(message.isDeleted)) {
             expanded.push(message);
             continue;
         }
