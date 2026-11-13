@@ -334,6 +334,42 @@ describe("a Brick's computer on screen (#2000)", () => {
         expect(byId("brickScreenFill")).not.toBeNull();
     });
 
+    it("keeps the tap for the job it was made for when the answer comes after a read moved on to another job", async () => {
+        game.watchBrickComputer.mockResolvedValue({ url: "https://screen.test/abc" });
+        const waiting = (id: string) =>
+            computer({
+                machine: "working",
+                job: job({
+                    id,
+                    status: "waiting",
+                    waitingFor: "details",
+                    control: "person",
+                    ready: { what: "your name", where: "the first page" },
+                }),
+            });
+        game.getBrickComputer.mockResolvedValue(waiting("j1"));
+        await loadBrickComputer(BRICK);
+        piece = new BrickScreen({ target, props: { brick, onClose: () => undefined } });
+        await settle();
+        let answer: (value: unknown) => void = () => undefined;
+        game.brickComputerAction.mockReturnValue(
+            new Promise((resolve) => {
+                answer = resolve;
+            })
+        );
+        byId("brickScreenFill")?.click();
+        await settle();
+        // Before the answer, a read goes straight to the next job, which names the same details
+        game.getBrickComputer.mockResolvedValue(waiting("j2"));
+        await loadBrickComputer(BRICK);
+        await settle();
+        answer({ job: job({ id: "j1", control: "person" }) });
+        await settle();
+        // The tap was for j1: j2 still has its details and its button
+        expect(byId("brickScreenReady")).not.toBeNull();
+        expect(byId("brickScreenFill")).not.toBeNull();
+    });
+
     it("follows the Brick that is shown when the page switches to another one, and stops reading the first", async () => {
         const OTHER = "9f8e7d6c-1111-4222-8333-000011112222";
         game.getBrickComputer.mockResolvedValue(computer());

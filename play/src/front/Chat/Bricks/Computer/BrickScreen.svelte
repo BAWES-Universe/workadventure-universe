@@ -144,12 +144,14 @@
         // The tap approves what is on screen: what Brick named is sent back, so Orbit refuses it if Brick named something else since
         const shown =
             action === "fill-details" && job?.ready ? { what: job.ready.what, where: job.ready.where } : undefined;
+        // The job the tap was made for, kept now: the answer can come after a read has moved on to another job
+        const tappedJob = job?.id;
         brickComputerAction(brick.id, action, shown)
             .then((ok) => {
                 if (!ok) warningMessageStore.addWarningMessage($LL.chat.brick.computer.failed());
                 else if (action === "fill-details") {
                     tapped = true;
-                    tappedFor = shown && job ? `${job.id}\n${shown.what}\n${shown.where}` : "";
+                    tappedFor = shown && tappedJob ? `${tappedJob}\n${shown.what}\n${shown.where}` : "";
                     clearedSinceTap = false;
                 }
                 else if (action === "stop") onClose();
