@@ -116,7 +116,7 @@ const RESULT_MAX = 1000;
 const ERROR_MAX = 300;
 
 const FAILED_WORDS: Record<'no_chat' | 'not_allowed', string> = {
-    no_chat: 'The person has no chat with this Brick to say it in',
+    no_chat: 'Brick could not find its chat with the person to say it in',
     not_allowed: 'The person may not message this Brick now',
 };
 

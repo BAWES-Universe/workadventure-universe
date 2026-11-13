@@ -97,7 +97,7 @@ describe('the reminder is said once in its owner’s own chat', () => {
         const noChat = setUp([run({ matrixUserId: null })]);
         await noChat.runner.tick();
         expect(noChat.say).not.toHaveBeenCalled();
-        expect(noChat.reports[0].report).toMatchObject({ attempt: 1, state: 'failed', error: expect.stringContaining('no chat') });
+        expect(noChat.reports[0].report).toMatchObject({ attempt: 1, state: 'failed', error: expect.stringContaining('could not find its chat') });
 
         for (const reason of ['no_chat', 'not_allowed'] as const) {
             const { runner, reports, api } = setUp([run()], { say: async () => ({ ok: false, reason }) });
