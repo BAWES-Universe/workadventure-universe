@@ -1004,6 +1004,8 @@ const chat: BaseTranslation = {
         switchOn: "Turn {name} on or off",
         loading: "Loading your Bricks…",
         loadFailed: "Couldn't load your Bricks.",
+        // The single Brick page, when that one Brick could not be read
+        brickLoadFailed: "Couldn't load this Brick.",
         tryAgain: "Try again",
         none: "You have no Brick.",
         switchFailed: "Couldn't change that. Try again.",

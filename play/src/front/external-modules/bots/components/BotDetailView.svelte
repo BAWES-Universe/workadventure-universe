@@ -296,6 +296,7 @@
             // Reset last saved name when bot changes
             lastSavedName = bot.name || null;
             brickSaved = brickSavedOf(bot);
+            brickUnsaved.clear();
         }
     } else {
         // Bot prop became null - clear currentBot to prevent errors
@@ -315,15 +316,38 @@
     /** Why a Brick's last change was not saved, in a line for the person; cleared by the next one that is. */
     let brickError: string | null = null;
 
-    /** Saves a change of a Brick's page through its own route. False when it was not saved. */
-    async function saveBrick(change: BrickChange): Promise<boolean> {
-        if (!brick) return false;
-        const saved = await brick.save(change).catch((error: unknown) => {
-            console.error("[BotDetailView] Failed to save a Brick:", error);
-            return false;
-        });
-        brickError = saved ? null : $LL.mapEditor.edit.bots.page.telemetry.saveFailed();
-        return saved;
+    /** The typed fields of this Brick whose last save failed: the error line stays until each is saved. */
+    const brickUnsaved = new Set<string>();
+    const TYPED_FIELDS: ReadonlySet<string> = new Set(["description", "chatInstructions"]);
+    /** The last save asked for each Brick: the next one waits for it, so changes reach Orbit in the order they were made. */
+    const brickSaving = new Map<string, Promise<boolean>>();
+
+    /** Saves a change of a Brick's page through its own route, after any save of it still on its way. False when it was not saved. */
+    function saveBrick(change: BrickChange): Promise<boolean> {
+        const way = brick;
+        const brickId = currentBot?.id;
+        if (!way || !brickId) return Promise.resolve(false);
+        const before = brickSaving.get(brickId) ?? Promise.resolve(true);
+        const run = before
+            .catch(() => false)
+            .then(() => way.save(change))
+            .catch((error: unknown) => {
+                console.error("[BotDetailView] Failed to save a Brick:", error);
+                return false;
+            })
+            .then((saved) => {
+                if (brickSaving.get(brickId) === run) brickSaving.delete(brickId);
+                // Typed text that failed stays on the page unsaved: the line says so until that text is saved, and a
+                // later save of another field does not clear it. A name or switch that failed goes back on its own.
+                const typed = Object.keys(change).filter((field) => TYPED_FIELDS.has(field));
+                if (saved) typed.forEach((field) => brickUnsaved.delete(field));
+                else typed.forEach((field) => brickUnsaved.add(field));
+                brickError =
+                    !saved || brickUnsaved.size > 0 ? $LL.mapEditor.edit.bots.page.telemetry.saveFailed() : null;
+                return saved;
+            });
+        brickSaving.set(brickId, run);
+        return run;
     }
 
     /**
@@ -346,7 +370,12 @@
             if (saved) {
                 brickSaved = brickSavedAfter(brickSaved, now, change);
             } else {
-                currentBot = brickPutBack(currentBot, brickSaved, change, now);
+                // Typed text that was refused stays on the page, flagged unsaved: the next change sends it again. The
+                // rest (a pick, a switch) goes back to what was saved.
+                const rest: BrickChange = { ...change };
+                delete rest.description;
+                delete rest.chatInstructions;
+                currentBot = brickPutBack(currentBot, brickSaved, rest, now);
             }
         });
     }
@@ -424,12 +453,18 @@
         const botId = currentBot?.id;
         const newName = currentBot?.name?.trim() || "";
         if (brick) {
-            if (!botId || !newName || newName === lastSavedName) return;
+            if (!botId || newName === lastSavedName) return;
+            // A Brick always has a name: a cleared one comes back as it was saved, and nothing is sent
+            if (!newName) {
+                if (currentBot && lastSavedName) currentBot = { ...currentBot, name: lastSavedName };
+                return;
+            }
             void saveBrick({ name: newName }).then((saved) => {
                 if (currentBot?.id !== botId) return;
                 if (saved) {
                     lastSavedName = newName;
-                } else {
+                } else if ((currentBot.name?.trim() || "") === newName) {
+                    // Only the name that failed goes back: one typed since stays, and saves in its turn
                     currentBot = { ...currentBot, name: lastSavedName || "" };
                 }
             });
@@ -635,7 +670,9 @@
         currentBot = { ...currentBot, enabled };
         saveBrick({ enabled })
             .then((saved) => {
-                if (!saved && currentBot?.id === botId) currentBot = { ...currentBot, enabled: was };
+                if (!saved && currentBot?.id === botId && currentBot.enabled === enabled) {
+                    currentBot = { ...currentBot, enabled: was };
+                }
             })
             .catch((error) => console.error(error))
             .finally(() => {

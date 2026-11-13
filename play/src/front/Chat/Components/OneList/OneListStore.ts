@@ -49,6 +49,105 @@ export function directRoomsWith(rooms: readonly ChatRoom[], chatIds: ReadonlySet
 }
 
 /**
+ * The same as directRoomsWith, kept current: it also follows each chat's members, which can arrive after the chat
+ * itself, so a deleted Brick's chat leaves Chats as soon as it is known to be that Brick's. A chat someone put in a
+ * folder is looked for there too, in folders inside folders as well.
+ */
+export function directRoomsWithStore(
+    directRooms: Readable<ChatRoom[]>,
+    chatIds: Readable<ReadonlySet<string>>,
+    folders?: Readable<RoomFolder[]>
+): Readable<string[]> {
+    return readable<string[]>([], (set) => {
+        let rooms: ChatRoom[] = [];
+        let topFolders: RoomFolder[] = [];
+        let ids: ReadonlySet<string> = new Set();
+        let watches: Unsubscriber[] = [];
+        let started = false;
+        let building = false;
+        let last = "";
+        const allRooms = (): ChatRoom[] => {
+            const all = [...rooms];
+            const seen = new Set<string>();
+            const walk = (folder: RoomFolder) => {
+                if (seen.has(folder.id)) return;
+                seen.add(folder.id);
+                all.push(...get(folder.rooms));
+                get(folder.folders).forEach(walk);
+            };
+            topFolders.forEach(walk);
+            return all;
+        };
+        const update = () => {
+            if (!started || building) return;
+            const next = [...new Set(directRoomsWith(allRooms(), ids))];
+            const key = next.join("|");
+            if (key === last) return;
+            last = key;
+            set(next);
+        };
+        // What is watched follows what there is: a chat or folder that arrives is watched, one that left is not
+        const rewatch = () => {
+            watches.forEach((unsubscribe) => unsubscribe());
+            watches = [];
+            if (ids.size === 0) return;
+            building = true;
+            try {
+                const seen = new Set<string>();
+                const watchFolder = (folder: RoomFolder) => {
+                    if (seen.has(folder.id)) return;
+                    seen.add(folder.id);
+                    watches.push(folder.rooms.subscribe(rewatchSoon), folder.folders.subscribe(rewatchSoon));
+                    get(folder.folders).forEach(watchFolder);
+                };
+                topFolders.forEach(watchFolder);
+                for (const room of allRooms()) {
+                    const members = (room as Partial<{ members: Readable<unknown> }>).members;
+                    if (members) watches.push(members.subscribe(update));
+                }
+            } finally {
+                building = false;
+            }
+        };
+        const rewatchSoon = () => {
+            if (building) return;
+            rewatch();
+            update();
+        };
+        const stopRooms = directRooms.subscribe((value) => {
+            rooms = value;
+            rewatchSoon();
+        });
+        const stopFolders = folders?.subscribe((value) => {
+            topFolders = value;
+            rewatchSoon();
+        });
+        const stopIds = chatIds.subscribe((value) => {
+            ids = value;
+            rewatchSoon();
+        });
+        started = true;
+        update();
+        return () => {
+            stopRooms();
+            stopFolders?.();
+            stopIds();
+            watches.forEach((unsubscribe) => unsubscribe());
+        };
+    });
+}
+
+/** Whether a folder, or a folder inside it, holds a chat with a bot: searching for "Bot" or "Brick" keeps it listed. */
+function folderHasBotChat(folder: RoomFolder, visited: Set<string> = new Set()): boolean {
+    if (visited.has(folder.id)) return false;
+    visited.add(folder.id);
+    return (
+        get(folder.rooms).some((room) => isBotChat(room)) ||
+        get(folder.folders).some((child) => folderHasBotChat(child, visited))
+    );
+}
+
+/**
  * The row of a person's own Brick before its chat exists (#1995): sorted in by when the Brick was made, never unread.
  * Searching for "Bot" or "Brick" finds it whatever it is named.
  */
@@ -97,8 +196,11 @@ function collectFolderNames(folder: RoomFolder, names: string[], visited: Set<st
     }
 }
 
-/** How a store is watched: a joined room in full, an invitation by name and members, a folder by structure. */
-type WatchMode = "room" | "invitation" | "folder";
+/**
+ * How a store is watched: a joined room in full, a direct chat in full and by members (its bot can arrive later, and
+ * searching for "Bot" finds it), an invitation by name and members, a folder by structure.
+ */
+type WatchMode = "room" | "direct" | "invitation" | "folder";
 
 /** Schedules one flush per microtask; overridable in tests. */
 export type FlushScheduler = (flush: () => void) => void;
@@ -159,6 +261,7 @@ export function createOneListStore(
                 const summary = summarizeFolder(snapshotFolder(folder), hiddenRoomIds);
                 const searchNames: string[] = [];
                 if (search.trim() !== "") collectFolderNames(folder, searchNames, new Set());
+                if (findsBots && folderHasBotChat(folder)) searchNames.push(search);
                 candidates.push({
                     id: folder.id,
                     kind: "folder",
@@ -218,12 +321,17 @@ export function createOneListStore(
                 }
                 return unsubscribers;
             }
-            return [
+            const unsubscribers = [
                 target.name.subscribe(markValues),
                 target.messages.subscribe(markValues),
                 target.unreadNotificationCount.subscribe(markValues),
                 target.hasUnreadMessages.subscribe(markValues),
             ];
+            // Who is in a chat decides whether "Bot" finds it, or the folder it is in
+            if ("members" in target && target.members && typeof target.members === "object") {
+                unsubscribers.push((target.members as Readable<unknown>).subscribe(markValues));
+            }
+            return unsubscribers;
         };
 
         /** Subscribes to what arrived and unsubscribes from what left; untouched rooms keep their subscriptions. */
@@ -236,7 +344,7 @@ export function createOneListStore(
                 get(folder.rooms).forEach((room) => wanted.set(room, "room"));
                 get(folder.folders).forEach((child) => addFolder(child, visited));
             };
-            directRooms.forEach((room) => wanted.set(room, "room"));
+            directRooms.forEach((room) => wanted.set(room, "direct"));
             rooms.forEach((room) => wanted.set(room, "room"));
             invitations.forEach((room) => {
                 if (!wanted.has(room)) wanted.set(room, "invitation");

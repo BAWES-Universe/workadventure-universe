@@ -946,7 +946,7 @@ export class BotAPI {
         });
 
         // A Brick was just deleted, or taken back with Undo, on the Bricks page (game #1996). Orbit already decided it; this
-        // only has the bot server read the Brick again now instead of within the minute, so a deleted Brick stops at
+        // only has every bot server read the Brick again now instead of within the minute, so a deleted Brick stops at
         // once. Only the Brick's owner may say it, and only so often, so nobody can keep the bot server asking Orbit.
         this.app.post('/api/bots/:botId/brick-changed', requireSession, (req: BotAPIRequest, res: Response) => {
             const { botId } = req.params;
@@ -972,8 +972,8 @@ export class BotAPI {
                 return;
             }
             try {
-                await this.adminApiService.answerBrickOffer(botId, req.sessionUuid, topic, 'not_now');
-                res.status(204).end();
+                if (await this.adminApiService.answerBrickOffer(botId, req.sessionUuid, topic, 'not_now')) res.status(204).end();
+                else res.status(502).json({ error: 'Could not keep that' });
             } catch (error) {
                 console.error(`[BotAPI] Error keeping "Not now" for bot ${botId}:`, error);
                 res.status(502).json({ error: 'Could not keep that' });

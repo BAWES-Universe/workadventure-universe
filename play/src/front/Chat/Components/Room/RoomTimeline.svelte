@@ -541,20 +541,23 @@
         if (!hello) shownHello = undefined;
         else if (shownHello?.key !== hello.key) shownHello = { key: hello.key, message: hello.make() };
     }
+    const noneDeleted = readable(false);
     $: newestMessage = $messages.length > 0 ? $messages[$messages.length - 1] : undefined;
+    // A deleted message drives no card: its ideas or suggestion went with it
+    $: newestDeletedStore = newestMessage?.isDeleted ?? noneDeleted;
+    $: newestLive = newestMessage && !$newestDeletedStore ? newestMessage : undefined;
     $: brickCardKey = !ownBrick
         ? undefined
         : shownHello
         ? startersCardKey(room.id)
-        : newestMessage?.brickIdeas
-        ? ideasCardKey(newestMessage.id)
-        : newestMessage?.brickOffer
-        ? offerCardKey(newestMessage.id)
+        : newestLive?.brickIdeas
+        ? ideasCardKey(newestLive.id)
+        : newestLive?.brickOffer
+        ? offerCardKey(newestLive.id)
         : undefined;
     // A Brick's suggestion (#1996) is a card only while it is the newest message: once the person wrote on, tapped
     // or closed it, its question stays in the chat as the Brick's words.
-    $: shownOffer =
-        newestMessage?.brickOffer && brickCardKey === offerCardKey(newestMessage.id) ? newestMessage : undefined;
+    $: shownOffer = newestLive?.brickOffer && brickCardKey === offerCardKey(newestLive.id) ? newestLive : undefined;
     $: brickCard =
         brickCardKey === undefined || !brickAnswers || shownAsk || $closedBrickCards.has(brickCardKey)
             ? undefined
@@ -584,7 +587,9 @@
         try {
             if (card.id === BRICK_OFFER_CARD) {
                 const offer = shownOffer?.brickOffer;
-                if (!offer || !ownBrick || !brickCardKey) return false;
+                // The card that was tapped: a message that arrives meanwhile changes brickCardKey, not which card closes
+                const tappedKey = brickCardKey;
+                if (!offer || !ownBrick || !tappedKey) return false;
                 if (tap.choices[0] === OFFER_MAKE) {
                     // The person's own words, carrying the Brick the card described: it is made without the AI
                     await matrixRoom.sendBrickMake($LL.chat.brick.offerMake({ name: offer.name }), offer);
@@ -592,7 +597,7 @@
                     // Kept with their account, so the topic is not suggested again anywhere
                     await botApiService.declineBrickOffer(ownBrick.id, offer.topic);
                 }
-                closeBrickCard(brickCardKey);
+                closeBrickCard(tappedKey);
                 return true;
             }
             if (card.id === BRICK_STARTERS_CARD) {
