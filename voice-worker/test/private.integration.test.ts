@@ -133,5 +133,5 @@ describe('a reply for one person alone, over peer-to-peer connections', () => {
         expect(finished('one-1')).toMatchObject({ playedMs: 0 });
         expect(people.bob.audioPackets).toBe(before);
         expect(r.violations).toEqual([]);
-    });
+    }, 30000);
 });

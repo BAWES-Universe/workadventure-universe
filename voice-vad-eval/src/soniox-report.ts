@@ -99,8 +99,7 @@ say('Speech over the bot (should stop):');
 say();
 say('| group | clips | never stopped: today / hold (of which Soniox heard the words) | stopped by background first: today / hold | first change after onset, hold, median / p95 | stopped for good after onset: today / hold, median / p95 | false resumes, hold (bot playback after the apparent interruption, to its stop or the end of the replay tail) |');
 say('| --- | --- | --- | --- | --- | --- | --- |');
-for (const g of groups.filter((x) => recs.some((r) => r.group === x && r.kind === 'speech'))) {
-    const rs = recs.filter((r) => r.group === g && r.kind === 'speech').map((r) => ({ r, row: rows.get(r.id)! }));
+function speechRow(g: string, rs: { r: Rec; row: Row }[]): void {
     const never = (b: string) => rs.filter(({ row }) => row.result[b].stopAt === undefined);
     const bg = (b: string) => rs.filter(({ row }) => row.result[b].stopAt !== undefined && row.result[b].stopAt! < startOf(row)).length;
     const stops = (b: string) => rs.filter(({ row }) => row.result[b].stopAt !== undefined && row.result[b].stopAt! >= startOf(row)).map(({ row }) => row.result[b].stopAt! - row.onsetMs!);
@@ -127,10 +126,32 @@ for (const g of groups.filter((x) => recs.some((r) => r.group === x && r.kind ==
     const rescued = nh.filter(({ r }) => heardRight(r, finals(r))).length;
     say(`| ${g} | ${rs.length} | ${never('today').length} / ${nh.length} (${rescued}) | ${bg('today')} / ${bg('hold')} | ${ms(p(changes, 0.5))} / ${ms(p(changes, 0.95))} | ${ms(p(stops('today'), 0.5))} / ${ms(p(stops('today'), 0.95))}; ${ms(p(stops('hold'), 0.5))} / ${ms(p(stops('hold'), 0.95))} | ${fr} (${sec(overlap)}) |`);
 }
+for (const g of groups.filter((x) => recs.some((r) => r.group === x && r.kind === 'speech'))) speechRow(g, recs.filter((r) => r.group === g && r.kind === 'speech').map((r) => ({ r, row: rows.get(r.id)! })));
 say();
 say('The playback time after a false resume runs from going on to the next pause or stop, or to the end of the replay, which');
 say('includes the 3 s tail after the clip. It is not limited to a checked span of the person speaking, so it is not the time');
 say('both were talking at once. Onsets and offsets are energy estimates, not checked by a person.');
+say();
+// ---- After listening (results/soniox/disputed-clips.md) ----
+// A person listened, blind, to the source and the as-played input of the two clips the pause never stopped and today did, with a
+// known-speech control (heard as a voice). "no voice": relabelled as noise for today and the pause alike. "not sure": kept as speech.
+const LISTENED: Record<string, string> = { 'en/no/15c563d7_nohash_1.wav': 'no voice', 'en/stop/fd395b74_nohash_3.wav': 'not sure (static, a faint hint of a voice at the very end, no word)' };
+const sourceOf = (r: Rec) => r.id.split('|')[1];
+const noVoice = (r: Rec) => LISTENED[sourceOf(r)] === 'no voice';
+say('After listening: a person listened, blind, to the two soft English clips the pause never stopped (source and as played), with a');
+say('known-speech control, which they heard as a voice:');
+say();
+for (const [source, verdict] of Object.entries(LISTENED)) say(`- \`${source}\` (S40): ${verdict}`);
+say();
+say('A clip judged "no voice" moves out of the speech rows, for today and the pause alike; "not sure" stays as speech. The rows above are');
+say('unchanged; the corrected rows for the groups it touches:');
+say();
+say('| group, corrected | clips | never stopped: today / hold (of which Soniox heard the words) | stopped by background first: today / hold | first change after onset, hold, median / p95 | stopped for good after onset: today / hold, median / p95 | false resumes, hold (bot playback after the apparent interruption, to its stop or the end of the replay tail) |');
+say('| --- | --- | --- | --- | --- | --- | --- |');
+for (const g of groups.filter((x) => recs.some((r) => r.group === x && r.kind === 'speech' && noVoice(r)))) speechRow(g, recs.filter((r) => r.group === g && r.kind === 'speech' && !noVoice(r)).map((r) => ({ r, row: rows.get(r.id)! })));
+say();
+const moved = recs.filter((r) => r.kind === 'speech' && noVoice(r)).map((r) => rows.get(r.id)!);
+say(`Moved to noise: ${moved.length} clip(s); stopped today ${moved.filter((x) => x.result.today.stopAt !== undefined).length}, with the pause ${moved.filter((x) => x.result.hold.stopAt !== undefined).length}.`);
 say();
 say('Noise and knocks over the bot (should not stop):');
 say();

@@ -79,6 +79,21 @@ The playback time after a false resume runs from going on to the next pause or s
 includes the 3 s tail after the clip. It is not limited to a checked span of the person speaking, so it is not the time
 both were talking at once. Onsets and offsets are energy estimates, not checked by a person.
 
+After listening: a person listened, blind, to the two soft English clips the pause never stopped (source and as played), with a
+known-speech control, which they heard as a voice:
+
+- `en/no/15c563d7_nohash_1.wav` (S40): no voice
+- `en/stop/fd395b74_nohash_3.wav` (S40): not sure (static, a faint hint of a voice at the very end, no word)
+
+A clip judged "no voice" moves out of the speech rows, for today and the pause alike; "not sure" stays as speech. The rows above are
+unchanged; the corrected rows for the groups it touches:
+
+| group, corrected | clips | never stopped: today / hold (of which Soniox heard the words) | stopped by background first: today / hold | first change after onset, hold, median / p95 | stopped for good after onset: today / hold, median / p95 | false resumes, hold (bot playback after the apparent interruption, to its stop or the end of the replay tail) |
+| --- | --- | --- | --- | --- | --- | --- |
+| soft command (S40), English | 39 | 0 / 1 (0) | 0 / 0 | 250 ms / 590 ms | 250 ms / 590 ms; 250 ms / 590 ms | 1 (8.0 s) |
+
+Moved to noise: 1 clip(s); stopped today 1, with the pause 0.
+
 Noise and knocks over the bot (should not stop):
 
 | group | clips | stopped: today / hold | hold stopped by: words or a failed stream / the detector / 6 s deadline / view lost | hold went on: watched / after an empty end | held, median |

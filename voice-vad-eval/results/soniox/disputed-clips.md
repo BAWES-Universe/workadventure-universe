@@ -1,8 +1,7 @@
 # The two disputed soft English commands (S40)
 
 GPT's readiness review (13 Nov 2026) asked that these be settled by independent listening to both the source and the exact
-processed input, with hashes and a brief reason, before the private-bot trial. They stay **unresolved possible missed
-interruptions** until a person has listened. Nothing is relabelled yet.
+processed input, with hashes and a brief reason, before the private-bot trial. Listened 13 Nov 2026: A is relabelled as noise; C stays an unresolved possible missed interruption.
 
 | clip | file | sha256 |
 | --- | --- | --- |
@@ -30,17 +29,27 @@ interruptions** until a person has listened. Nothing is relabelled yet.
   - For comparison, a quiet "yes" from C's contributor shows a short, faint harmonic stack.
 - These readings support "no voice". By GPT's rule they do not settle it.
 
-## Listening (pending)
+## Listening
 
-**Setup.** A blind page plays A, B and C in that fixed order, with no words or results shown:
+**Setup.** On 13 Nov 2026, about 2:10 PM Kuwait time, a person listened to a blind page with headphones. It played A, B and C in that order, with no words or results shown:
 - the source, peak-normalised to -3 dBFS;
 - the as-played input, peak-normalised the same way.
 
-The scored waveforms are unchanged. B is a positive control.
+The scored waveforms are unchanged. B is a positive control. One listener.
 
-**Answers.** Each sound gets one of: voice / no voice / not sure.
+**Answers, verbatim:**
+- A: "no voice"
+- B: "has voice". The control passed.
+- C: "static sound and a weird hint of voice starting towards the end but no recognizable voice"
 
-**What happens next:**
-- **No voice:** A and C are relabelled as non-speech for both today and the pause. Corrected denominators are shown, and the original rows are kept.
-- **Voice or not sure:** the case stays a valid interruption, and activation stays blocked.
-- **Control:** if B is not heard as a voice, the listening result is not used.
+**What follows:**
+- **A is relabelled as noise.** This applies to today and the pause alike. `results/soniox/soniox-check.md` keeps its original rows and adds corrected ones:
+  - soft English S40 drops to 39 clips;
+  - the pause never stopped 1 of them (C), against 0 today;
+  - 1 false resume, with 8.0 s of playback.
+
+  A's other four variants (S20, S30, N10, N5) in the scripted replay are still counted as speech there. That is the conservative side: those variants were stopped.
+- **C is "not sure", so it stays as speech: an unresolved possible missed interruption, and activation stays blocked.**
+  - Band energy supports what was heard. C's 100-300 Hz band rises about 10 dB above its floor at 300-350 ms and again from 850 ms to the end of the 1 s file, while the higher bands stay flat.
+  - So, if there is a voice, it is the very start of a sound cut off by the end of the recording, not the word.
+  - The pause misses it because Silero and Soniox both register nothing. Today stops on it only because the level gate fires on the static, scaled to -40 dBFS.
