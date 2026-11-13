@@ -88,8 +88,11 @@
     });
 
     onDestroy(() => {
+        // The sheet can go away without its own close (signed out, the page changed): same clean-up as close
+        closed = true;
         if (checkTimer) clearTimeout(checkTimer);
         checkAbort?.abort();
+        dropUnfinished();
     });
 
     function forgetCheck() {

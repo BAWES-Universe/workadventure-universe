@@ -376,6 +376,49 @@ describe("Add your own app (#2001, mock Part 13)", () => {
         expect(byId("addAppConnected")).toBeNull();
     });
 
+    it("takes the app away when the sheet goes away without its own close, while Orbit is still making it", async () => {
+        let answer: (value: unknown) => void = () => {};
+        game.addMyApp.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    answer = resolve;
+                })
+        );
+        await open();
+        await paste(ZAPIER);
+        void click("addAppSignIn");
+        await settle();
+        sheet?.$destroy();
+        sheet = undefined;
+        answer({ id: "late-2" });
+        await settle();
+        expect(game.disconnectMyApp).toHaveBeenCalledWith("late-2");
+        expect(onClose).not.toHaveBeenCalled();
+    });
+
+    it("takes an unfinished app away when the sheet goes away without its own close", async () => {
+        game.reconnect.mockImplementationOnce(async (app) => {
+            await app;
+            return "stopped";
+        });
+        await open();
+        await paste(ZAPIER);
+        await click("addAppSignIn");
+        sheet?.$destroy();
+        sheet = undefined;
+        expect(game.disconnectMyApp).toHaveBeenCalledWith("app-1");
+    });
+
+    it("keeps a connected app when the sheet goes away", async () => {
+        await open();
+        await paste(ZAPIER);
+        await click("addAppSignIn");
+        expect(byId("addAppConnected")).not.toBeNull();
+        sheet?.$destroy();
+        sheet = undefined;
+        expect(game.disconnectMyApp).not.toHaveBeenCalled();
+    });
+
     it("says so when the window can't open", async () => {
         game.reconnect.mockResolvedValueOnce("blocked");
         await open();
