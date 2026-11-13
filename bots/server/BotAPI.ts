@@ -21,6 +21,8 @@ export interface BotAPIRequest extends Request {
     userIdentifier?: string;
     /** The uuid of the person behind the Orbit session (what the game calls the player's uuid). */
     sessionUuid?: string;
+    /** Orbit's own id of that person: the one a Brick's owner is named by. */
+    sessionUserId?: string;
     isLogged?: boolean;
     sessionToken?: string;
     /** Set when the request carried an Orbit session the Admin API did not accept (expired or revoked). */
@@ -65,6 +67,7 @@ async function authenticateToken(
         req.isLogged = true;
         req.sessionToken = bearerToken;
         req.sessionUuid = userInfo.uuid;
+        req.sessionUserId = userInfo.userId;
         next();
     } catch (error) {
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -178,6 +181,7 @@ async function identifyPlayer(
                 req.isLogged = true;
                 req.sessionToken = bearerToken;
                 req.sessionUuid = userInfo.uuid;
+                req.sessionUserId = userInfo.userId;
             } else {
                 req.sessionRejected = true;
             }
@@ -224,6 +228,7 @@ async function identifyForAccessMiddleware(
             req.isLogged = true;
             req.sessionToken = bearerToken;
             req.sessionUuid = userInfo.uuid;
+            req.sessionUserId = userInfo.userId;
         } catch {
             res.status(401).json({ error: 'Orbit session validation failed' });
             return;
@@ -242,6 +247,16 @@ export interface BotAPIOptions {
     dmRoom?: (botId: string) => Promise<{ url: string; room: string; world: string; universe: string } | undefined>;
     /** Whether a bot hears voice notes, for the mic in its chat: the same hearing its voice calls use. Left out, no bot is said to hear. */
     noteHearing?: { canHear(botId: string): Promise<boolean> };
+    /**
+     * The one chat of a bot and a person (game #1995): the chat they have, or whether this device is the one to make it;
+     * only when Matrix DMs are on. `chatId` is the person's chat address, already checked to be theirs.
+     */
+    directChat?: (botId: string, chatId: string) => Promise<{ roomId: string } | { create: true } | { wait: true }>;
+    /**
+     * A Brick was deleted or taken back with Undo (game #1996): its settings are read again before its next message.
+     * Only when it is a Brick of `ownerId` (Orbit's id of the person); says whether it was.
+     */
+    brickChanged?: (botId: string, ownerId: string) => boolean;
     /** "Hear this voice say hello" on the bot page (#1852). Left out, it is built from the bot server's own parts the first time it is asked for; null: not available. */
     voiceHello?: VoiceHello | null;
 }
@@ -280,6 +295,10 @@ export class BotAPI {
     private dmStatus: BotAPIOptions['dmStatus'];
     private noteHearing: BotAPIOptions['noteHearing'];
     private dmRoom: BotAPIOptions['dmRoom'];
+    private directChat: BotAPIOptions['directChat'];
+    private brickChanged: BotAPIOptions['brickChanged'];
+    /** Per person, how many Brick changes they told in the current minute. */
+    private brickChangedCounts = new Map<string, { count: number; since: number }>();
     private voiceHelloOption: BotAPIOptions['voiceHello'];
 
     constructor(
@@ -297,6 +316,8 @@ export class BotAPI {
         this.dmStatus = options.dmStatus;
         this.noteHearing = options.noteHearing;
         this.dmRoom = options.dmRoom;
+        this.directChat = options.directChat;
+        this.brickChanged = options.brickChanged;
         this.voiceHelloOption = options.voiceHello;
 
         // Routers with their own auth and body limits (the Matrix application service) go before the shared parser.
@@ -307,6 +328,19 @@ export class BotAPI {
         // Keep constructor simple - no route registration here
         this.setupMiddleware();
         this.setupRoutes();
+    }
+
+    /** At most 30 Brick changes a minute for one person: far more than tapping Delete and Undo, too few to keep Orbit busy. */
+    private brickChangedAllowed(userId: string, now = Date.now()): boolean {
+        const seen = this.brickChangedCounts.get(userId);
+        if (!seen || now - seen.since >= 60_000) {
+            this.brickChangedCounts.delete(userId);
+            this.brickChangedCounts.set(userId, { count: 1, since: now });
+            if (this.brickChangedCounts.size > 10_000) this.brickChangedCounts.delete(this.brickChangedCounts.keys().next().value!);
+            return true;
+        }
+        seen.count += 1;
+        return seen.count <= 30;
     }
 
     private voiceHello(): VoiceHello | null {
@@ -871,6 +905,78 @@ export class BotAPI {
             } catch (error) {
                 console.error(`[BotAPI] Error reading the room of bot ${botId}:`, error);
                 res.status(500).json({ error: 'Could not read the room' });
+            }
+        });
+
+        // One chat for a person and a bot, however many of their devices open it at once (game #1995). A device that has
+        // no chat with the bot asks here before it makes one, and is told the chat they already have, to make it (one
+        // device at a time is), or to ask again in a moment. The person is the one the Orbit session names: the chat
+        // address their device sends counts only when Orbit says it is that same person's and that they may message
+        // the bot, so nobody learns of, or holds up, a chat that is not theirs.
+        this.app.post('/api/bots/:botId/direct-chat', requireSession, async (req: BotAPIRequest, res: Response) => {
+            if (!this.directChat) {
+                res.status(404).json({ error: 'Direct messages are off' });
+                return;
+            }
+            const { botId } = req.params;
+            if (!/^[A-Za-z0-9_-]{1,64}$/.test(botId)) {
+                res.status(400).json({ error: 'Not a bot id' });
+                return;
+            }
+            const chatId = req.body?.chatId;
+            if (typeof chatId !== 'string' || !/^@[^\s:]{1,255}:[^\s]{1,255}$/.test(chatId) || chatId.length > 255) {
+                res.status(400).json({ error: 'Not a chat address' });
+                return;
+            }
+            try {
+                const access = await this.adminApiService.checkDmAccess(botId, chatId);
+                if (!access.allowed && (access.reason ?? '').startsWith('admin_api_')) {
+                    res.status(503).json({ error: 'Could not check right now', code: 'cannot_check' });
+                    return;
+                }
+                if (!access.allowed || !access.user || !req.sessionUuid || access.user.uuid !== req.sessionUuid) {
+                    res.status(403).json({ error: 'You cannot message this bot', code: 'not_allowed' });
+                    return;
+                }
+                res.json(await this.directChat(botId, chatId));
+            } catch (error) {
+                console.error(`[BotAPI] Error finding the direct chat of bot ${botId}:`, error);
+                res.status(500).json({ error: 'Could not find the chat' });
+            }
+        });
+
+        // A Brick was just deleted, or taken back with Undo, on the Bricks page (game #1996). Orbit already decided it; this
+        // only has every bot server read the Brick again now instead of within the minute, so a deleted Brick stops at
+        // once. Only the Brick's owner may say it, and only so often, so nobody can keep the bot server asking Orbit.
+        this.app.post('/api/bots/:botId/brick-changed', requireSession, (req: BotAPIRequest, res: Response) => {
+            const { botId } = req.params;
+            if (!/^[A-Za-z0-9_-]{1,64}$/.test(botId) || !req.sessionUserId) {
+                res.status(400).json({ error: 'Not a bot id' });
+                return;
+            }
+            if (!this.brickChangedAllowed(req.sessionUserId)) {
+                res.status(429).json({ error: 'Too many changes, try again in a minute' });
+                return;
+            }
+            this.brickChanged?.(botId, req.sessionUserId);
+            res.status(204).end();
+        });
+
+        // "Not now" on a Brick's suggestion (game #1996). Orbit closed the topic when the card was shown; this keeps what
+        // the person tapped. The person is the one the Orbit session names, and Orbit keeps it only for the Brick's owner.
+        this.app.post('/api/bots/:botId/brick-offer', requireSession, async (req: BotAPIRequest, res: Response) => {
+            const { botId } = req.params;
+            const topic = req.body?.topic;
+            if (!/^[A-Za-z0-9_-]{1,64}$/.test(botId) || typeof topic !== 'string' || !topic.trim() || topic.length > 200 || !req.sessionUuid) {
+                res.status(400).json({ error: 'Not a suggestion' });
+                return;
+            }
+            try {
+                if (await this.adminApiService.answerBrickOffer(botId, req.sessionUuid, topic, 'not_now')) res.status(204).end();
+                else res.status(502).json({ error: 'Could not keep that' });
+            } catch (error) {
+                console.error(`[BotAPI] Error keeping "Not now" for bot ${botId}:`, error);
+                res.status(502).json({ error: 'Could not keep that' });
             }
         });
 

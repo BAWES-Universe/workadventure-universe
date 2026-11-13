@@ -2434,7 +2434,8 @@ describe('DmReplyService bot settings', () => {
             missingCache: new Map(),
         });
         await service.getBotConfig(BOT);
-        expect(getBotConfiguration).toHaveBeenCalledWith(BOT, 10_000);
+        // Direct messages also take a Brick, which Orbit answers only when asked for by name (#1995)
+        expect(getBotConfiguration).toHaveBeenCalledWith(BOT, 10_000, { bricks: true });
     });
 
     it('keeps real bots cached when many ids that are not bots are looked up', async () => {

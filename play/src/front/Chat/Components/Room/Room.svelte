@@ -32,8 +32,11 @@
     import StatusDot from "../Status/StatusDot.svelte";
     import { chatStatusStore } from "../Status/ChatStatusStore";
     import { statusDotColour } from "../Status/ChatStatus";
-    import RoomMenu from "./RoomMenu/RoomMenu.svelte";
+    import { gameManager } from "../../../Phaser/Game/GameManager";
+    import { myBricksByChatId } from "../../Bricks/MyBricksStore";
+    import { brickHello } from "../../Bricks/BrickHello";
     import { previewLine } from "./MessageActions/messageActions";
+    import RoomMenu from "./RoomMenu/RoomMenu.svelte";
     import { IconBellOff } from "@wa-icons";
 
     export let room: ChatRoom & ChatRoomMembershipManagement & ChatRoomModeration & ChatRoomNotificationControl;
@@ -109,10 +112,14 @@
             ? undefined
             : latestMessage.sender?.username ?? $LL.chat.topRow.someone()
         : undefined;
+    // Your own Brick's chat with nothing written yet keeps its hello under its name, as before the chat existed (#1995)
+    $: ownBrick = partnerId ? $myBricksByChatId.get(partnerId) : undefined;
     $: preview = latestMessageText
         ? latestMessageSender
             ? `${latestMessageSender}: ${latestMessageText}`
             : latestMessageText
+        : ownBrick && $messages.length === 0
+        ? brickHello(ownBrick.name, $LL, gameManager.getPlayerName(), ownBrick.hello)
         : "";
 
     // `lastMessageTimestamp` is a plain getter: read it again whenever the messages change.

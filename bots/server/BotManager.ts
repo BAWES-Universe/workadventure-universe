@@ -305,6 +305,9 @@ export class BotManager {
      * If bot exists but is disconnected, despawns it first and spawns a new one
      */
     async spawnBot(botId: string, config: BotConfiguration): Promise<BotClient> {
+        // A Brick (#1995) lives in its owner's chats: it stands in no room, so it is never put on a map
+        if (config.brick || !config.roomUrl) throw new Error(`Bot ${botId} has no room, so it cannot be put on a map`);
+
         // Check if bot already exists
         const existingInstance = this.bots.get(botId);
         if (existingInstance) {

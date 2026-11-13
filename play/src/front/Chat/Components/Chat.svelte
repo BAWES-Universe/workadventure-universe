@@ -1,12 +1,13 @@
 <script lang="ts">
     import { gameManager } from "../../Phaser/Game/GameManager";
-    import { findGroupOpenStore, navChat } from "../Stores/ChatStore";
+    import { bricksPageOpenStore, findGroupOpenStore, navChat } from "../Stores/ChatStore";
     import { INITIAL_SIDEBAR_WIDTH } from "../../Stores/ChatStore";
     import { selectedRoomStore } from "../Stores/SelectRoomStore";
     import { chatBackPeekStore, chatDepthStore, closeChatLevel } from "../ChatBack";
     import { installChatHistory } from "../ChatHistory";
     import { isIOS } from "../../WebRtc/DeviceUtils";
     import { orbitHoldsHistoryStore } from "../../Stores/OrbitHistoryStore";
+    import { userIsConnected } from "../../Stores/MenuStore";
     import RoomUserList from "./UserList/RoomUserList.svelte";
     import RoomList from "./RoomList.svelte";
     import ChatTabs from "./ChatTabs.svelte";
@@ -22,11 +23,12 @@
 
     // A swipe back from a conversation in a narrow panel draws all chats, tabs included, under it (#1553).
     $: peekList = $chatBackPeekStore === "list" && sideBarWidth < CHAT_LAYOUT_LIMIT && $selectedRoomStore !== undefined;
-    // The tabs sit over the list. They go when the list does: a thread open in a narrow panel, or Find a group.
+    // The tabs sit over the list. They go when the list does: a thread open in a narrow panel, or a page that takes
+    // the list's place (Find a group, Bricks).
     $: layout = resolveChatLayout(sideBarWidth, CHAT_LAYOUT_LIMIT, $selectedRoomStore !== undefined && !peekList);
-    $: showTabs =
-        $navChat.key === "users" ||
-        ($navChat.key === "chat" && layout.showList && !($findGroupOpenStore && $chatConnectionStatus === "ONLINE"));
+    $: pageOverList =
+        ($findGroupOpenStore && $chatConnectionStatus === "ONLINE") || ($bricksPageOpenStore && $userIsConnected);
+    $: showTabs = $navChat.key === "users" || ($navChat.key === "chat" && layout.showList && !pageOverList);
     // Side by side with a thread, the list is a 335px column and the tabs stay over that column only: the thread
     // beside them starts at the top of the panel, as it did when the tabs were part of the list.
     $: tabsBesideThread = showTabs && $navChat.key === "chat" && layout.twoColumns;

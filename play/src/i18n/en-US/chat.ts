@@ -965,6 +965,99 @@ const chat: BaseTranslation = {
         answeredNearby: "Answered in nearby chat, only for you",
         saidSomethingElse: "You said something else, so nothing was done",
     },
+    // A person's own Brick (#1995): a bot that lives in their chats. Its hello and ideas are fixed words, shown by the
+    // game, so they cost nothing and nothing is sent to anyone.
+    brick: {
+        hello: "Hi {name}, I'm {brick}, your own helper in Universe. Ask me anything, or hand me a job.",
+        helloNoName: "Hi, I'm {brick}, your own helper in Universe. Ask me anything, or hand me a job.",
+        suggests: "{name} suggests",
+        startTitle: "Where shall we start?",
+        seeWhatICanDo: "See what I can do",
+        seeWhatICanDoLine: "A few ideas to start with",
+        makeAnother: "Make another Brick",
+        makeAnotherLine: "One for a single job, like your recipes",
+        // What a tap on "Make another Brick" sends, in the person's words: the Brick asks what the job is
+        makeAnotherAsk: "Make me another Brick.",
+        // What a tap on "See what I can do" sends, in the person's words
+        whatCanYouDo: "What can you do for me?",
+        // The Brick's fixed answer to it, and the ideas under it. Only things it can do today.
+        ideasLine: "A few things I could take off your plate. Pick one, or just ask in your own words.",
+        ideasTitle: "What shall I take on?",
+        ideas: {
+            write: "Write something with you",
+            writeLine: "A message, a post or a tricky reply",
+            writeAsk: "Help me write something.",
+            web: "Read a web page for you",
+            webLine: "Send me the link and I'll pull out what matters",
+            webAsk: "Read a web page for me.",
+            file: "Go through a file with you",
+            fileLine: "Send me a PDF or a document",
+            fileAsk: "Go through a file with me.",
+            think: "Think something through with you",
+            thinkLine: "A decision or a plan, step by step",
+            thinkAsk: "Help me think something through.",
+        },
+        closeCard: "Close",
+        // The Bricks button in the Chats footer, and the page it opens
+        bricks: "Bricks",
+        backToChats: "Back to Chats",
+        switchOn: "Turn {name} on or off",
+        loading: "Loading your Bricks…",
+        loadFailed: "Couldn't load your Bricks.",
+        // The single Brick page, when that one Brick could not be read
+        brickLoadFailed: "Couldn't load this Brick.",
+        tryAgain: "Try again",
+        none: "You have no Brick.",
+        switchFailed: "Couldn't change that. Try again.",
+        openPage: "Open {name}'s page",
+        // More Bricks (#1996): New Brick on the Bricks page, in the game's own dialog
+        newBrick: "New Brick",
+        pickLook: "Pick its look",
+        wokas: "WOKAs",
+        readyToTalk: "Ready to talk as soon as you create it, on Universe AI.",
+        makeFailed: "Couldn't make the Brick. Try again.",
+        // The name New Brick starts with, from the colour picked: "Teal Brick"
+        lookName: "{colour} Brick",
+        colours: {
+            orange: "Orange",
+            red: "Red",
+            amber: "Amber",
+            lime: "Lime",
+            green: "Green",
+            teal: "Teal",
+            sky: "Sky",
+            blue: "Blue",
+            violet: "Violet",
+            pink: "Pink",
+            white: "White",
+            charcoal: "Charcoal",
+        },
+        // A Brick's own page, and deleting it with Undo
+        backToBricks: "Back to Bricks",
+        openItsChat: "Open its chat",
+        openChatOf: "Open {name}",
+        deleteBrick: "Delete Brick",
+        deleteAsk: "Delete {name}?",
+        deleteWhat:
+            "Its chat, what it remembers, its goals and tasks and its computer's files go. Everything it made stays in Your artifacts.",
+        // Its computer's files, offered before they go
+        itsFiles: "Its files",
+        itsFilesSize: "{size} on its computer",
+        download: "Download",
+        // A Brick's Advanced settings: its chats are its owner's, so they never go to analytics or the admin pages
+        telemetryOff: "A Brick's chats are yours, so they stay out of analytics, error reports and the admin pages.",
+        undoUntil: "You can undo this until {day}, on the Bricks page.",
+        undoLater: "You can undo this on the Bricks page.",
+        deleteFailed: "Couldn't delete the Brick. Try again.",
+        deleted: "Deleted",
+        goneOn: "Gone for good on {day}",
+        undo: "Undo",
+        undoFailed: "Couldn't bring the Brick back. Try again.",
+        // A Brick suggests a Brick for a job that keeps coming back, on the question card
+        offerMake: "Make {name}",
+        offerNotNow: "Not now",
+        offerNotNowLine: "I'll keep helping here, and won't ask again",
+    },
     // Calling a Brick, or a bot whose owner allows it (#2004): the button, the bar, and the card for someone who walks up
     brickCall: {
         button: "Call",
@@ -1221,6 +1314,8 @@ const chat: BaseTranslation = {
     },
     inviteFooter: {
         button: "Invite someone to join",
+        // Beside the Bricks button (#1995) the row is shared, so the button says it in one word
+        buttonShort: "Invite",
         title: "Invite someone to join",
         hint: "Anyone with the link can walk straight into this room. No download, no account needed.",
         hintRoom: "Anyone with the link can walk straight into {room}. No download, no account needed.",

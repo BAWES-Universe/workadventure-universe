@@ -298,6 +298,41 @@ describe("an Orbit that does not answer about who may use a bot", () => {
         await vi.advanceTimersByTimeAsync(20000);
         await failed;
     });
+
+    const brickWrites: Array<[string, (api: BotApiService) => Promise<unknown>]> = [
+        ["switching a Brick", (api) => api.setBrickEnabled("b1", false)],
+        ["saving a Brick", (api) => api.changeMyBrick("b1", { name: "Recipes" })],
+        ["making a Brick", (api) => api.makeMyBrick({ name: "Recipes" })],
+        ["deleting a Brick", (api) => api.deleteMyBrick("b1")],
+        ["bringing a Brick back", (api) => api.undoMyBrick("b1")],
+    ];
+
+    it.each(brickWrites)("fails %s in time when Orbit never answers", async (_name, call) => {
+        vi.spyOn(globalThis, "fetch").mockImplementation((_url, init) => untilCancelled(init?.signal));
+        const failed = expect(call(service())).rejects.toThrow("Orbit did not answer in time");
+        await vi.advanceTimersByTimeAsync(20000);
+        await failed;
+    });
+
+    it.each(brickWrites)("fails %s in time when Orbit answers but its body never ends", async (_name, call) => {
+        const stalled = {
+            ok: true,
+            status: 200,
+            headers: new Headers({ "Content-Type": "application/json" }),
+            json: () =>
+                new Promise(() => {
+                    // the body never ends
+                }),
+            text: () =>
+                new Promise(() => {
+                    // the body never ends
+                }),
+        } as unknown as Response;
+        vi.spyOn(globalThis, "fetch").mockResolvedValue(stalled);
+        const failed = expect(call(service())).rejects.toThrow("Orbit did not answer in time");
+        await vi.advanceTimersByTimeAsync(20000);
+        await failed;
+    });
 });
 
 describe("summoning a bot the owner limits", () => {

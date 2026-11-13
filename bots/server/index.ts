@@ -16,6 +16,7 @@ import { BotManager } from './BotManager';
 import { BotAPI } from './BotAPI';
 import { AdminApiService } from './AdminApiService';
 import { BotRegistry } from './BotRegistry';
+import { brickChangedEverywhere, listenForBrickChanges } from './brickChanges';
 import { movementLogger } from '../utils/MovementLogger';
 import { DmReplyService, type DmRoomLink } from './DmReplyService';
 import { botMatrixId, readMatrixConfig } from '../matrix/MatrixConfig';
@@ -25,7 +26,7 @@ import { NearbyAsks } from '../mcp/NearbyAsks';
 import { QuestionCards } from '../mcp/QuestionCards';
 import { verifyMatrixRegistration } from '../matrix/verifyMatrixRegistration';
 import { MatrixAppServiceClient } from '../matrix/MatrixAppServiceClient';
-import { MatrixDmBridge } from '../matrix/MatrixDmBridge';
+import { MatrixDmBridge, type DirectChatAnswer } from '../matrix/MatrixDmBridge';
 import { createMatrixAppServiceRouter, type MatrixAppServiceRouter } from '../matrix/MatrixAppServiceRouter';
 import { uploadAttachment } from '../matrix/uploadAttachment';
 import { botWokaPicture } from '../matrix/wokaPicture';
@@ -126,6 +127,13 @@ const approvals = new ToolApprovals({
 aiService.useApprovals(approvals);
 aiService.useNearbyAsks(nearbyAsks);
 let dmRoom: ((botId: string) => Promise<DmRoomLink | undefined>) | undefined;
+let directChat: ((botId: string, chatId: string) => Promise<DirectChatAnswer>) | undefined;
+let brickChanged: ((botId: string, ownerId: string) => boolean) | undefined;
+/** How often Orbit is asked to remove deleted Bricks whose days are over (#1996). Nothing depends on when it runs. */
+const BRICK_SWEEP_EVERY_MS = 60 * 60 * 1000;
+let brickSweepInterval: NodeJS.Timeout | undefined;
+/** Ends the retries of listening for Brick changes from other bot servers, at shutdown. */
+let stopBrickListening: (() => void) | undefined;
 
 /** Turns direct messages on once Synapse accepts this bot server's registration; leaves them off otherwise. */
 async function setupMatrix(): Promise<void> {
@@ -176,6 +184,13 @@ async function setupMatrix(): Promise<void> {
             )
         );
     dmRoom = (botId) => dmReplyService.roomOf(botId);
+    // One chat for a person and a bot across their devices (#1995)
+    directChat = (botId, chatId) => bridge.directChatFor(botId, chatId);
+    // A Brick that was just deleted, or taken back with Undo, is read again before its next message (#1996)
+    // On every bot server, not only this one
+    brickChanged = brickChangedEverywhere(botRegistry, (botId, ownerId) => dmReplyService.forgetBrickOf(botId, ownerId));
+    brickSweepInterval = setInterval(() => void adminApiService.sweepBricks(), BRICK_SWEEP_EVERY_MS);
+    brickSweepInterval.unref?.();
     console.log(`[BotServer] Matrix direct messages on for ${matrixConfig.domain}`);
 }
 // Made in start(), once direct messages are settled: their routes are part of the API.
@@ -217,6 +232,8 @@ async function shutdown(signal: string) {
     try {
         // Stop game loop
         stopGameLoop();
+        // No more tries at hearing Brick changes, even when the game loop never started
+        stopBrickListening?.();
         
         // Stop movement analysis
         stopMovementAnalysis();
@@ -256,10 +273,18 @@ async function start() {
 
         // Before any bot connects: a bot shows Message only when Synapse accepted the registration
         await setupMatrix();
-        botAPI = new BotAPI(botManager, adminApiService, botRegistry, preRouters, { dmStatus, dmRoom, noteHearing: noteHearing ?? undefined });
+        botAPI = new BotAPI(botManager, adminApiService, botRegistry, preRouters, { dmStatus, dmRoom, directChat, brickChanged, noteHearing: noteHearing ?? undefined });
 
         // Initialize bot manager
         await botManager.initialize();
+        // A Brick deleted through another bot server stops here at once too (#1996). Without it, within the minute.
+        const replies = dmReplies;
+        if (replies) {
+            // The stop is kept before the first try ends, so a shutdown meanwhile ends the retries too
+            const listening = listenForBrickChanges(botRegistry, (botId, ownerId) => void replies.forgetBrickOf(botId, ownerId));
+            stopBrickListening = listening.stop;
+            await listening.firstTry;
+        }
 
         // Start API server
         botAPI.start(BOT_SERVER_PORT);
@@ -389,6 +414,7 @@ function stopMovementAnalysis(): void {
 function stopGameLoop(): void {
     if (gameLoopInterval) {
         clearInterval(gameLoopInterval);
+        if (brickSweepInterval) clearInterval(brickSweepInterval);
         gameLoopInterval = null;
         console.log('[BotServer] Game loop stopped');
     }

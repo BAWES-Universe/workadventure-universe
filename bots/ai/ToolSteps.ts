@@ -4,6 +4,7 @@
  * it from the `universe.steps` field of one direct message that the bot server updates in place.
  */
 import { CHANGE_ARTIFACT_TOOL, MAKE_ARTIFACT_TOOL } from './ArtifactTools';
+import { MAKE_BRICK_TOOL } from './BrickTools';
 
 /** What a step is about, for the working emoji beside the bot's Woka (#1667): reading ("📖"), searching ("🔎") or writing ("✍️"). */
 export type StepKind = 'read' | 'search' | 'write';
@@ -83,7 +84,18 @@ const OWN_STEPS: Record<string, (args: Record<string, unknown>) => Omit<ToolStep
     },
     [MAKE_ARTIFACT_TOOL]: (args) => ({ doing: 'Making an artifact', done: 'Made an artifact', detail: shown(args.title), group: 'make_artifact', kind: 'write' }),
     [CHANGE_ARTIFACT_TOOL]: (args) => ({ doing: 'Changing an artifact', done: 'Changed an artifact', detail: shown(args.title), group: 'change_artifact', kind: 'write' }),
+    // Another Brick for this person (game #1996): "Made Recipe Brick", with what it is for under it. A suggestion is
+    // never a step: its card says it.
+    [MAKE_BRICK_TOOL]: (args) => {
+        const name = shown(args.name);
+        return { doing: name ? `Making ${name}` : 'Making a Brick', done: name ? `Made ${name}` : 'Made a Brick', detail: asDetail(shown(args.line)), group: `make_brick:${name ?? ''}`, kind: 'write' };
+    },
 };
+
+/** A Brick's line under its step: "Keeps your mum's recipes" reads "keeps your mum's recipes" there. */
+function asDetail(line: string | undefined): string | undefined {
+    return line && /^[A-Z][a-z]/.test(line) ? line[0].toLowerCase() + line.slice(1) : line;
+}
 
 /** How a group reads in the summary, by count. Groups without one say "<done> 3 times". */
 const OWN_GROUPS: Record<string, (count: number) => string> = {

@@ -44,6 +44,7 @@ import { isAChatRoomIsVisible, navChat, selectedChatMessageToReply, botsChatIds 
 import { readBotSteps } from "../../Bots/BotSteps";
 import { readNoteTranscript, type NoteTranscriptNotice } from "../../Bots/BotTranscript";
 import { BOT_ASK_ANSWER_EVENT, botAskAnswerContent, type BotAsk, type BotAskTap } from "../../Bots/BotAsk";
+import { BRICK_MAKE_KEY, STARTER_KEY, type BrickOffer } from "../../Bricks/Brick";
 import { selectedRoomStore } from "../../Stores/SelectRoomStore";
 import { gameManager } from "../../../Phaser/Game/GameManager";
 import { localUserStore } from "../../../Connection/LocalUserStore";
@@ -745,6 +746,33 @@ export class MatrixChatRoom
             BOT_ASK_ANSWER_EVENT as never,
             botAskAnswerContent(ask, tap) as never
         );
+    }
+
+    /**
+     * A tap on one of a Brick's ways to start (#1995): the words go as the person's own message, and the event says which
+     * starter it was, so the bot server answers that one with its fixed words instead of asking the AI.
+     */
+    async sendStarter(message: string, starter: string): Promise<void> {
+        await this.matrixRoom.client.sendMessage(this.matrixRoom.roomId, {
+            body: message,
+            msgtype: MsgType.Text,
+            formatted_body: message,
+            [STARTER_KEY]: starter,
+        } as RoomMessageEventContent);
+    }
+
+    /**
+     * A tap on "Make it" on a Brick's suggestion (#1996): the words go as the person's own message, and the event
+     * carries the Brick the card described, so the bot server makes exactly that one without asking the AI.
+     */
+    async sendBrickMake(message: string, offer: BrickOffer): Promise<void> {
+        const { topic, name, line, instructions } = offer;
+        await this.matrixRoom.client.sendMessage(this.matrixRoom.roomId, {
+            body: message,
+            msgtype: MsgType.Text,
+            formatted_body: message,
+            [BRICK_MAKE_KEY]: { topic, name, line, instructions },
+        } as RoomMessageEventContent);
     }
 
     sendMessage(message: string) {

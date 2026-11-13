@@ -1,9 +1,10 @@
 <script lang="ts">
+    import { onMount } from "svelte";
     import { derived } from "svelte/store";
     import type { Readable } from "svelte/store";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import LL from "../../../i18n/i18n-svelte";
-    import { findGroupOpenStore, navChat } from "../Stores/ChatStore";
+    import { bricksPageOpenStore, chatSearchBarValue, findGroupOpenStore, navChat } from "../Stores/ChatStore";
     import { selectedRoomStore } from "../Stores/SelectRoomStore";
     import { chatBackPeekStore } from "../ChatBack";
     import { INITIAL_SIDEBAR_WIDTH, loginTokenErrorStore } from "../../Stores/ChatStore";
@@ -17,6 +18,9 @@
     import { ROOM_MESSAGES_SESSION_ID, listableSessions } from "../Connection/Proximity/ProximitySessions";
     import WokaFromUserId from "../../Components/Woka/WokaFromUserId.svelte";
     import { readHadProximityChat, shouldShowSayHiCard } from "../Stores/SayHiCardStore";
+    import { bricksWithoutChat } from "../Bricks/BrickChat";
+    import { loadMyBricks, myBricksByChatId, myBricksSettled, refreshMyChatId } from "../Bricks/MyBricksStore";
+    import BricksPage from "../Bricks/BricksPage.svelte";
     import RoomTimeline from "./Room/RoomTimeline.svelte";
     import ChatLoader from "./ChatLoader.svelte";
     import ChatError from "./ChatError.svelte";
@@ -27,7 +31,7 @@
     import ProximityTopRow from "./TopRow/ProximityTopRow.svelte";
     import AreaChatRows from "./AreaRow/AreaChatRows.svelte";
     import OneList from "./OneList/OneList.svelte";
-    import type { OneListEntry } from "./OneList/OneListStore";
+    import { brickEntry, type OneListEntry } from "./OneList/OneListStore";
     import { CHAT_LAYOUT_LIMIT, resolveChatLayout } from "./ChatLayout";
     import {
         IconChevronRight,
@@ -100,6 +104,26 @@
             })
     );
 
+    // Your own Brick (#1995) is in Chats from the start: until its chat exists it has a row of its own, sorted in by
+    // when the Brick was made, with no unread badge. Read once the list shows, for a signed-in person only.
+    onMount(() => {
+        loadMyBricks().catch((error) => console.error(error));
+    });
+    // The chat signs in after the list can show: the Bricks' chat addresses are made from the person's own, known then.
+    $: if ($chatConnectionStatus === "ONLINE") refreshMyChatId();
+    const brickEntries: Readable<OneListEntry[]> = derived(
+        [bricksWithoutChat(chat, myBricksByChatId), chatSearchBarValue],
+        ([$bricks, $search]) => $bricks.map((brick) => brickEntry(brick, $search))
+    );
+    // A Brick's chat is a saved chat: its row shows only while the saved chat is connected.
+    const extraEntries: Readable<OneListEntry[]> = derived(
+        [proximityEntries, brickEntries, chatConnectionStatus],
+        ([$proximity, $bricks, $status]) =>
+            $status === "ONLINE" && $bricks.length > 0 ? [...$proximity, ...$bricks] : $proximity
+    );
+    // Until the Bricks are read, an empty list is not known to be empty: the card for an empty list waits for them.
+    $: bricksKnown = !$userIsConnected || $myBricksSettled;
+
     // The live card shows while you're in a bubble, a meeting or a zone.
     let liveCardVisible = false;
     $: hasProximityHistory = $proximityEntries.length > 0;
@@ -113,7 +137,9 @@
     let listEmpty = false;
     $: savedChatsEmpty =
         $chatConnectionStatus === "ONLINE"
-            ? listEmpty
+            ? bricksKnown
+                ? listEmpty
+                : undefined
             : $chatConnectionStatus === "OFFLINE" || !$userIsConnected
             ? true
             : undefined;
@@ -152,6 +178,8 @@
         >
             {#if $findGroupOpenStore && $chatConnectionStatus === "ONLINE"}
                 <FindGroup />
+            {:else if $bricksPageOpenStore && $userIsConnected}
+                <BricksPage />
             {:else}
                 {#if $shouldRetrySendingEvents}
                     <RefreshChat />
@@ -220,7 +248,7 @@
                         <!-- One list: proximity chats you had, DMs, groups, invitations and folders, newest first. -->
                         <div class="px-2 pb-2">
                             <OneList
-                                extraEntries={proximityEntries}
+                                {extraEntries}
                                 showEmpty={$chatConnectionStatus === "ONLINE" && !showSayHiCard}
                                 bind:isEmpty={listEmpty}
                                 onOpenSession={openSession}

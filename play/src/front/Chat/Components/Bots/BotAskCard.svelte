@@ -26,6 +26,8 @@
     export let now = Date.now();
     /** Pinned above the message box while it waits, with a close button, instead of sitting in the chat. */
     export let docked = false;
+    /** The small line over a pinned card's title, when it is not an answer the bot waits for: "Brick suggests" (#1995). */
+    export let headLine: string | undefined = undefined;
     /** When more than one card waits: which one this is. */
     export let position: { at: number; total: number } | undefined = undefined;
     /** Another waiting card that closes within a minute, so its warning is not hidden behind this one. */
@@ -126,7 +128,7 @@
 {#if compact && docked && open}
     <div class="ask ask-bar mx-4 flex items-center" data-testid="botAskBar">
         <div class="flex min-w-0 flex-1 flex-col">
-            <span class="ask-from" dir="auto">{$LL.chat.botAsk.needsAnswer({ name: botName })}</span>
+            <span class="ask-from" dir="auto">{headLine ?? $LL.chat.botAsk.needsAnswer({ name: botName })}</span>
             <b class="ask-title truncate" dir="auto">{shown.title}</b>
         </div>
         {#if position && position.total > 1}
@@ -147,7 +149,8 @@
         <div class="ask-head">
             <div class="flex min-w-0 flex-1 flex-col gap-0.5">
                 {#if docked}
-                    <span class="ask-from" dir="auto">{$LL.chat.botAsk.needsAnswer({ name: botName })}</span>
+                    <span class="ask-from" dir="auto">{headLine ?? $LL.chat.botAsk.needsAnswer({ name: botName })}</span
+                    >
                 {/if}
                 <b class="ask-title" dir="auto">{shown.title}</b>
                 {#if shown.actsAs || shown.everyTime}
@@ -185,7 +188,7 @@
                 <button
                     type="button"
                     class="ask-icon"
-                    aria-label={$LL.chat.botAsk.closeCard()}
+                    aria-label={headLine ? $LL.chat.brick.closeCard() : $LL.chat.botAsk.closeCard()}
                     disabled={sending}
                     data-testid="botAskClose"
                     on:click={() => tap({ action: "close" })}><IconX /></button

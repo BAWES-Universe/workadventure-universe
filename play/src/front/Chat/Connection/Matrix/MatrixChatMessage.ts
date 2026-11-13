@@ -1,7 +1,7 @@
 import type { IContent, MatrixEvent, Room } from "matrix-js-sdk";
 import { Direction, EventStatus, EventType, MatrixEventEvent, MsgType, RelationType } from "matrix-js-sdk";
 import type { Writable } from "svelte/store";
-import { writable } from "svelte/store";
+import { get, writable } from "svelte/store";
 import { v4 as uuidv4 } from "uuid";
 import { MapStore } from "@workadventure/store-utils";
 import { readBotStatusNote, type BotStatusNote } from "../../Bots/BotChatStatus";
@@ -9,6 +9,8 @@ import { readBotRoomLink, type BotRoomLink } from "../../Bots/BotRoomLink";
 import { readBotReplyLimit, type BotReplyLimit } from "../../Bots/BotReplyLimit";
 import { readBotAsk, type BotAsk } from "../../Bots/BotAsk";
 import { readAnsweredNearby } from "../../Bots/PrivateAnswer";
+import { readBrickIdeas, readBrickMade, readBrickOffer, type BrickOffer, type MadeBrick } from "../../Bricks/Brick";
+import { LL } from "../../../../i18n/i18n-svelte";
 import { readArtifactField, type ArtifactCard } from "../../../Artifacts/artifactCard";
 import { readBotSteps, type BotSteps } from "../../Bots/BotSteps";
 import { readNoteTranscript, type NoteTranscript, type NoteTranscriptNotice } from "../../Bots/BotTranscript";
@@ -66,6 +68,12 @@ export class MatrixChatMessage implements ChatMessage {
     readonly replyLimit: BotReplyLimit | undefined;
     readonly artifact: ArtifactCard | undefined;
     readonly answeredNearby: boolean;
+    /** A Brick's fixed "what I can do" answer (#1995): shown in the person's language, with its ideas under it. */
+    readonly brickIdeas: boolean;
+    /** The Bricks a Brick made while writing this answer (#1996). */
+    readonly brickMade: MadeBrick[];
+    /** A Brick's suggestion of a Brick for a job that keeps coming back (#1996). */
+    readonly brickOffer: BrickOffer | undefined;
     /** A card a bot's notice asks one answer with (#1657): the bot server edits the same notice as the card ends. */
     readonly ask: Writable<BotAsk | undefined>;
     /** A bot's steps line (#1545): the bot server updates this one message while the bot works. */
@@ -94,6 +102,9 @@ export class MatrixChatMessage implements ChatMessage {
         );
         this.artifact = readArtifactField(event.getSender(), event.getOriginalContent());
         this.answeredNearby = readAnsweredNearby(event.getSender(), event.getOriginalContent());
+        this.brickIdeas = readBrickIdeas(event.getSender(), event.getOriginalContent());
+        this.brickMade = readBrickMade(event.getSender(), event.getOriginalContent());
+        this.brickOffer = readBrickOffer(event.getSender(), event.getOriginalContent());
         this.steps = writable(readBotSteps(event.getSender(), this.stepsContent()));
         this.transcriptOf = readNoteTranscript(event.getSender(), this.stepsContent());
         this.transcriptNotice = this.transcriptOf !== undefined;
@@ -280,7 +291,15 @@ export class MatrixChatMessage implements ChatMessage {
             };
         }
 
-        return { body: content.body, url: undefined, urls: undefined, filename: undefined, fileNames: undefined };
+        return {
+            // The fixed answer is the same sentence for everyone: shown in this person's language, like the ideas under
+            // it. The words it was sent with stand in while no language is loaded.
+            body: (this.brickIdeas && get(LL).chat.brick.ideasLine()) || content.body,
+            url: undefined,
+            urls: undefined,
+            filename: undefined,
+            fileNames: undefined,
+        };
     }
 
     /** Whether the message is a voice message, and the length and shape its sender wrote with it (MSC1767). */

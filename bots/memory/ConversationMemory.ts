@@ -147,6 +147,8 @@ export interface BotPlayerMemory {
     // turn is in. Runtime only: nothing here is saved.
     pendingArtifacts?: Array<{ id: string; version: number; title: string; kind: 'app' | 'page' | 'markdown' | 'svg'; maker: string }>;
     dmRoomId?: string;
+    /** What a direct-message turn did about Bricks (game #1996): one it made, a suggestion to show. Goes out with the reply. Runtime only. */
+    pendingBricks?: import('../ai/BrickTools').BrickNote[];
     /** The artifacts the person pointed at by replying to their card in the turn being answered (game #1781), from the
      * chat app. Their pasted links come from the history. Started fresh with each turn. Runtime only. */
     pointedArtifacts?: string[];

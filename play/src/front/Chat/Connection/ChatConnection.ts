@@ -2,6 +2,7 @@ import type { Readable, Writable } from "svelte/store";
 import type { AvailabilityStatus } from "@workadventure/messages";
 import type { MapStore } from "@workadventure/store-utils";
 import type { StateEvents } from "matrix-js-sdk";
+import type { BrickOffer, MadeBrick } from "../Bricks/Brick";
 import type { BotStatusNote } from "../Bots/BotChatStatus";
 import type { BotRoomLink } from "../Bots/BotRoomLink";
 import type { BotReplyLimit } from "../Bots/BotReplyLimit";
@@ -227,6 +228,13 @@ export interface ChatMessage {
     artifact?: ArtifactCard;
     /** Set on a bot's direct message that is the one copy of an answer it gave this person alone in nearby chat (#1993): a quiet line under it says so. */
     answeredNearby?: boolean;
+    /** Set on a Brick's fixed "what I can do" answer (#1995): while it is the newest message, its ideas show above the message box. */
+    brickIdeas?: boolean;
+    /** The Bricks a Brick made while writing this answer (#1996): each is one tap from its chat, under the answer. */
+    brickMade?: MadeBrick[];
+    /** Set on a Brick's suggestion of a Brick for a job that keeps coming back (#1996): while it is the newest message
+     * it is a card above the message box, afterwards its question stays in the chat. */
+    brickOffer?: BrickOffer;
     /** Set when a bot's direct message is a card that waits for one answer (#1657): pinned above the message box while
      * it waits, then drawn in the chat as it ended. The bot server edits the same notice. */
     ask?: Readable<BotAsk | undefined>;

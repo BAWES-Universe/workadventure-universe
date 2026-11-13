@@ -1,5 +1,5 @@
 import { savedNearbyPage, type SavedNearbyItem } from "../../../Chat/Components/Room/Details/NearbySaved";
-import type { BotAiOptions, BotData } from "../types";
+import type { BotAiOptions, BotData, BrickChange } from "../types";
 import {
     readPermissions,
     readRule,
@@ -52,6 +52,10 @@ const PERMISSIONS_TIMEOUT_MS = 20000;
 const HELLO_TIMEOUT_MS = 60000;
 /** How long a lookup of bot states waits before it counts as failed (and is asked again on the next look) */
 const DM_STATUS_TIMEOUT_MS = 10000;
+/** How long a device waits to be told who makes a chat (#1995) before it opens the chat the way it always did */
+const DIRECT_CHAT_TIMEOUT_MS = 5000;
+/** How long a change to one of the person's Bricks may take before it counts as failed, so no switch or button hangs. */
+const BRICK_WRITE_TIMEOUT_MS = 20_000;
 
 export function isOrbitSessionResponse(value: unknown): value is { version: 2; sessionId: string; expiresAt: number } {
     if (!value || typeof value !== "object") return false;
@@ -1120,6 +1124,145 @@ export class BotApiService {
                 return data.room ?? null;
             } catch {
                 // The bot server answers "no room" (or "not for you") with `room: null`: any error is no answer.
+                return undefined;
+            }
+        })();
+        return Promise.race([asking, late]).finally(() => {
+            clearTimeout(timer);
+        });
+    }
+
+    /**
+     * The signed-in person's own Brick (game #1995): Orbit makes it the first time anyone asks for this account and
+     * answers with the same one ever after, from every device. `deleted` when its owner deleted it on purpose: it is
+     * not made again. Throws for a guest and when Orbit can't be reached.
+     */
+    async ensureMyBrick(): Promise<unknown> {
+        const response = await this.fetch("/api/bricks/default", { method: "POST" });
+        return response.json();
+    }
+
+    /**
+     * A change to one of the person's Bricks, with a deadline: past it the request is dropped and this throws, so the
+     * caller's usual failure shows instead of a switch or button that waits for good.
+     */
+    private async brickWrite(endpoint: string, options: RequestInit): Promise<unknown> {
+        const stop = new AbortController();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        // Raced as well as aborted: the Orbit sign-in that comes first in a request does not listen for the abort
+        const late = new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => {
+                stop.abort();
+                reject(new Error("Orbit did not answer in time"));
+            }, BRICK_WRITE_TIMEOUT_MS);
+        });
+        try {
+            // The answer's body is read inside the same deadline: headers that come in time with a body that never
+            // ends would otherwise hold the switch as long as the connection lives
+            const answer = (async () => {
+                const response = await this.fetch(endpoint, { ...options, signal: stop.signal });
+                return (await response.json()) as unknown;
+            })();
+            return await Promise.race([answer, late]);
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
+    /** The signed-in person's Bricks, for their Bricks page: the one everyone gets first, then the ones they made. */
+    async listMyBricks(): Promise<unknown> {
+        const response = await this.fetch("/api/bricks");
+        return response.json();
+    }
+
+    /** Turns one of the person's own Bricks on or off. Answers with the Brick as it is now. */
+    async setBrickEnabled(brickId: string, enabled: boolean): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}`, {
+            method: "PATCH",
+            body: JSON.stringify({ enabled }),
+        });
+    }
+
+    /**
+     * Saves a change to one of the person's own Bricks from its page (game #1996): its name, line, Personality or
+     * switch. Answers with `{ brick }`, its card as it is now. Throws when Orbit refuses or can't be reached.
+     */
+    async changeMyBrick(brickId: string, change: BrickChange): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}`, {
+            method: "PATCH",
+            body: JSON.stringify(change),
+        });
+    }
+
+    /**
+     * Makes another Brick for the signed-in person (game #1996): New Brick on their Bricks page. Answers with
+     * `{ brick }`. Throws when Orbit refuses or can't be reached.
+     */
+    async makeMyBrick(brick: { name: string; characterTextureId?: string }): Promise<unknown> {
+        return await this.brickWrite("/api/bricks", { method: "POST", body: JSON.stringify(brick) });
+    }
+
+    /** Deletes one of the person's own Bricks: it stops at once and waits under Deleted, with Undo. */
+    async deleteMyBrick(brickId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}`, { method: "DELETE" });
+    }
+
+    /** Brings a deleted Brick back while it still waits. Answers with the Brick as it is now. */
+    async undoMyBrick(brickId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/undo`, { method: "POST" });
+    }
+
+    /**
+     * Tells the bot server that a Brick was deleted or brought back, so it reads the Brick again now instead of within
+     * the minute. Never throws: without it the change still arrives, a little later.
+     */
+    async tellBrickChanged(brickId: string): Promise<void> {
+        if (!this.botServerUrl) return;
+        try {
+            await this.fetchBotServer(`/api/bots/${encodeURIComponent(brickId)}/brick-changed`, { method: "POST" });
+        } catch (error) {
+            console.warn("Could not tell the bot server about a Brick", error);
+        }
+    }
+
+    /**
+     * "Not now" on a Brick's suggestion (game #1996): kept with the person's account, so the same topic is not
+     * suggested again in any chat or on any device. Throws when it could not be kept.
+     */
+    async declineBrickOffer(brickId: string, topic: string): Promise<void> {
+        await this.fetchBotServer(`/api/bots/${encodeURIComponent(brickId)}/brick-offer`, {
+            method: "POST",
+            body: JSON.stringify({ topic }),
+        });
+    }
+
+    /**
+     * The one chat of this person and a bot (game #1995), asked by a device that has no chat with it yet, before it
+     * makes one: the bot server answers with the chat they already have, "make it" (one device at a time is told so),
+     * or "ask again in a moment". Undefined when it can't say (direct messages off, an older bot server, any error):
+     * the caller then opens the chat the way it always did. No answer in time is "ask again in a moment": another
+     * device may be making the chat right now, so this one never makes a second.
+     */
+    async askDirectChat(botId: string, chatId: string): Promise<unknown> {
+        if (!this.botServerUrl) return undefined;
+        const stop = new AbortController();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        // Raced as well as aborted: the Orbit sign-in that comes first in a request does not listen for the abort
+        const late = new Promise<unknown>((resolve) => {
+            timer = setTimeout(() => {
+                stop.abort();
+                resolve({ wait: true });
+            }, DIRECT_CHAT_TIMEOUT_MS);
+        });
+        const asking = (async () => {
+            try {
+                const response = await this.fetchBotServer(`/api/bots/${encodeURIComponent(botId)}/direct-chat`, {
+                    method: "POST",
+                    body: JSON.stringify({ chatId }),
+                    signal: stop.signal,
+                });
+                return (await response.json()) as unknown;
+            } catch {
                 return undefined;
             }
         })();

@@ -834,6 +834,7 @@ export class PersistentMemory extends ConversationMemory {
             pendingMedia: memory.pendingMedia ? memory.pendingMedia.map(item => ({ ...item })) : [],
             // The turn being answered belongs to the chat it is in, never to a copy in another one
             pendingArtifacts: undefined,
+            pendingBricks: undefined,
             dmRoomId: undefined,
             pointedArtifacts: undefined,
             artifactCalls: undefined,
