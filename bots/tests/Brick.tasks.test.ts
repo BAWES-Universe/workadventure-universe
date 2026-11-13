@@ -246,6 +246,15 @@ describe('setting a reminder', () => {
         expect(String(second.note)).toContain('Do not set it again');
     });
 
+    it('sets it again when it was cancelled a moment ago and is asked for again', async () => {
+        const { admin, context } = setUp();
+        const first = await runTaskTool(SET_REMINDER_TOOL, { text: 'Cancel then again', when: '2026-11-15 17:00' }, context);
+        await runTaskTool(CHANGE_TASK_TOOL, { id: first.id, action: 'cancel' }, context);
+        const again = await runTaskTool(SET_REMINDER_TOOL, { text: 'Cancel then again', when: '2026-11-15 17:00' }, context);
+        expect(admin.setBrickItem).toHaveBeenCalledTimes(2);
+        expect(String(again.note)).not.toContain('Do not set it again');
+    });
+
     it('sets one reminder when "in 20 minutes" is asked twice a few seconds apart', async () => {
         const { admin, context } = setUp();
         let clock = NOW;

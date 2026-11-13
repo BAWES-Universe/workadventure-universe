@@ -389,6 +389,8 @@ async function changeTask(args: Record<string, unknown>, settings: TaskSettings,
     const answer = await context.admin.changeBrickItem(context.botId, id, body);
     if (refused(answer)) return refusal(answer);
     const item = answer.item;
+    // Whatever was just set under this id is no longer what a repeat of the same ask would find
+    for (const [key, kept] of justSet) if (kept.result.id === item.id) justSet.delete(key);
     const done = action === 'cancel' ? 'cancelled' : action === 'snooze' ? 'snoozed' : action === 'pause' ? 'paused' : action === 'resume' ? 'resumed' : 'changed';
     return { [done]: true, ...view(item, now, settings.workdays), note: item.nextDueAt ? 'Tell them plainly what you did, and when it comes next.' : 'Tell them plainly what you did.' };
 }
