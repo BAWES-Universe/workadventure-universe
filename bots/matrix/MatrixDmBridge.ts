@@ -49,6 +49,32 @@ export const BRICK_OFFER_KEY = 'universe.brick_offer';
 /** On a person's message: they tapped "Make it" on that card, and this is the Brick it described (game #1996). */
 export const BRICK_MAKE_KEY = 'universe.brick_make';
 
+/**
+ * A Brick's offer to connect an App (game #2001), on its own message after the answer: `{ topic, app, name, state,
+ * connectionId, ask, asked, other }`. The game shows it as a card ("Connect your calendar?"); the sign-in happens in the game.
+ */
+export const APP_OFFER_KEY = 'universe.app_offer';
+/**
+ * The event the game sends once the person connected an App from that card and the Brick may use it: `{ app, name }`. The
+ * Brick carries on with what they asked, and then says what it may do with it. No message of the person's goes with it.
+ */
+export const APP_CONNECTED_EVENT = 'universe.app_connected';
+/** On the synthesized message that carries a Brick on after an App was connected: `{ app, name }` (never sent by a person). */
+export const APP_CONNECTED_KEY = 'universe.app_connected';
+
+/** What a Brick says once an App is connected: what it may do with it, and where the rest is chosen. Fixed words, no model. */
+export function appConnectedLine(name: string): string {
+    return `I can look things up in ${name} right away. Changing or sending anything in it asks you first. For now only I can use it: choose which of your Bricks can in [Apps](#apps).`;
+}
+
+/** The App a "connected" event names, when it is whole. */
+export function connectedAppOf(value: unknown): { app: string; name: string } | null {
+    if (!value || typeof value !== 'object') return null;
+    const { app, name } = value as Record<string, unknown>;
+    if (typeof app !== 'string' || !app.trim() || typeof name !== 'string' || !name.trim()) return null;
+    return { app: app.trim().slice(0, 80), name: name.replace(/\s+/g, ' ').trim().slice(0, 60) };
+}
+
 /** The Brick a tapped suggestion described, when the message carries one that is whole. */
 function offeredBrickOf(value: unknown): OfferedBrick | null {
     if (!value || typeof value !== 'object') return null;
@@ -313,6 +339,35 @@ export class MatrixDmBridge implements MatrixEventHandler {
         }
         if (event.type === ANSWER_EVENT) {
             await this.onTap(event);
+            return;
+        }
+        if (event.type === APP_CONNECTED_EVENT) {
+            await this.onAppConnected(event);
+        }
+    }
+
+    /**
+     * The person connected an App from a Brick's card (game #2001): the Brick carries on with what they asked, exactly as it
+     * would with a message from them (access, steps and all), told in a line that is from the system and not their words. Only
+     * from a person in their own two-person chat with the bot; whether they may chat with it is checked as for any message.
+     * Never throws; a lost answer costs nothing, since the card already said what happened.
+     */
+    private async onAppConnected(event: MatrixEvent): Promise<void> {
+        if (botIdFromMatrixId(this.config.domain, event.sender)) return;
+        const connected = connectedAppOf(event.content);
+        if (!connected || !this.firstSighting(event.event_id)) return;
+        const note = `[The person signed in to ${connected.name} on its own page, and you may use ${connected.name} now. Carry on with what they asked just before, using it. This line is from the system, not words they typed.]`;
+        try {
+            await this.onMessage({
+                type: 'm.room.message',
+                room_id: event.room_id,
+                sender: event.sender,
+                event_id: `$app-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
+                origin_server_ts: Date.now(),
+                content: { msgtype: 'm.text', body: note, [APP_CONNECTED_KEY]: connected },
+            });
+        } catch (error: any) {
+            console.warn(`[MatrixDmBridge] Could not carry on after an App was connected in ${event.room_id}:`, error?.message ?? error);
         }
     }
 
@@ -1086,6 +1141,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 ...(content[STARTER_KEY] === STARTER_IDEAS && !catchUp ? { starter: STARTER_IDEAS } : {}),
                 // "Make it" tapped on the Brick's suggestion (#1996)
                 ...(!catchUp && offeredBrickOf(content[BRICK_MAKE_KEY]) ? { makeOffered: offeredBrickOf(content[BRICK_MAKE_KEY])! } : {}),
+                // An App was connected from a card (game #2001): a line from the system, nothing is learned about the person from it
+                ...(!catchUp && event.sender && !botIdFromMatrixId(this.config.domain, event.sender) && connectedAppOf(content[APP_CONNECTED_KEY]) ? { note: true } : {}),
                 onInterimMessage: async (interim) => {
                     // A lost "let me look" line must not cost the person the real answer, so it never throws.
                     try {
@@ -1171,6 +1228,25 @@ export class MatrixDmBridge implements MatrixEventHandler {
                     .sendMessage(botUserId, event.room_id, content, txnId)
                     .catch(() => this.client.sendMessage(botUserId, event.room_id, content, txnId))
                     .catch((error) => console.warn(`[MatrixDmBridge] Could not send a Brick suggestion from bot ${botId}:`, error?.message ?? error));
+            }
+            // The offer to connect an App (game #2001), after the answer like the one above. Asked once, right before it is sent.
+            const appOffer = reply.text ? reply.bricks?.find((note) => note.kind === 'app') : undefined;
+            const appTopic = appOffer && appOffer.kind === 'app' && reply.claimApp ? await reply.claimApp() : null;
+            if (appOffer && appOffer.kind === 'app' && appTopic) {
+                const { app, name, state, connectionId, ask, asked, other } = appOffer;
+                const content = { msgtype: 'm.text', body: ask || name, [APP_OFFER_KEY]: { topic: appTopic, app, name, state, connectionId, ask, asked, other } };
+                const txnId = randomUUID();
+                await this.client
+                    .sendMessage(botUserId, event.room_id, content, txnId)
+                    .catch(() => this.client.sendMessage(botUserId, event.room_id, content, txnId))
+                    .catch((error) => console.warn(`[MatrixDmBridge] Could not send an App offer from bot ${botId}:`, error?.message ?? error));
+            }
+            // Once the Brick carried on after an App was connected, what it may do with it (fixed words)
+            const justConnected = !catchUp && reply.text ? connectedAppOf(content[APP_CONNECTED_KEY]) : null;
+            if (justConnected) {
+                await this.client
+                    .sendText(botUserId, event.room_id, appConnectedLine(justConnected.name))
+                    .catch((error) => console.warn(`[MatrixDmBridge] Could not say what bot ${botId} may do with an App:`, error?.message ?? error));
             }
             for (const card of reply.artifacts ?? []) {
                 // A live artifact the bot made or changed: the game shows a card to open it

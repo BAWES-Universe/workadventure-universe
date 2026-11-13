@@ -345,6 +345,19 @@ function brickOf(data: unknown): { ownerId: string; isDefault: boolean; deleted?
     return typeof ownerId === 'string' && ownerId ? { ownerId, isDefault: isDefault === true, ...(deleted === true ? { deleted: true } : {}) } : null;
 }
 
+/** One App on Orbit's list as a Brick may offer it (game #2001): what a person sees of it, and where they stand with it. */
+export interface OfferableApp {
+    key: string;
+    name: string;
+    blurb: string;
+    /** The person's own connection to it, when they have one. */
+    connectionId: string | null;
+    /** That connection is signed in and works. */
+    connected: boolean;
+    /** This Brick already has it. */
+    usable: boolean;
+}
+
 /** A person's Brick as Orbit lists it (#1996): what the game needs to show it, nothing that steers it. */
 export interface BrickCard {
     id: string;
@@ -931,6 +944,30 @@ export class AdminApiService {
     async claimBrickOffer(viaBotId: string, userId: string, topic: string): Promise<{ show: boolean; topic: string }> {
         const response = await this.brickCall<{ show?: unknown; topic?: unknown }>('post', `api/bots/${encodeURIComponent(viaBotId)}/brick-offers`, { userId, topic });
         return { show: response.data?.show === true, topic: typeof response.data?.topic === 'string' ? response.data.topic : topic };
+    }
+
+    /**
+     * The Apps a Brick of this person could offer to connect (game #2001): the list a super admin keeps in Orbit, with the
+     * person's own connection to each when they have one, whether it works, and whether this Brick may already use it. Orbit
+     * answers only for the Brick's owner. Throws when Orbit says no or cannot be reached: the caller offers nothing then.
+     */
+    async appsOfferableFor(viaBotId: string, userId: string): Promise<OfferableApp[]> {
+        const response = await this.brickCall<{ apps?: unknown }>('get', `api/bots/${encodeURIComponent(viaBotId)}/apps/offerable`, undefined, { userId });
+        const apps = Array.isArray(response.data?.apps) ? response.data.apps : [];
+        const out: OfferableApp[] = [];
+        for (const one of apps) {
+            const app = one as Record<string, unknown> | null;
+            if (!app || typeof app.key !== 'string' || !app.key || typeof app.name !== 'string' || !app.name) continue;
+            out.push({
+                key: app.key,
+                name: app.name,
+                blurb: typeof app.blurb === 'string' ? app.blurb : '',
+                connectionId: typeof app.connectionId === 'string' && app.connectionId ? app.connectionId : null,
+                connected: app.connected === true,
+                usable: app.usable === true,
+            });
+        }
+        return out;
     }
 
     /** What the person tapped on the suggestion (#1996). Kept for the record; never throws, the topic is closed either way. */

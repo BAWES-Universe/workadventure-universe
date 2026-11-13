@@ -22,7 +22,7 @@ import { withoutNoteIds, type ChatUpload } from '../services/ChatFiles';
 import { chatFileKeeper, sentMediaJob } from '../services/ChatFileKeeper';
 import type { BotConfiguration } from './AdminApiService';
 import { BRICK_CHAT_LINK } from '../ai/BrickTools';
-import type { BrickNote, BrickOfferNote } from '../ai/BrickTools';
+import type { AppOfferNote, BrickNote, BrickOfferNote } from '../ai/BrickTools';
 import type { BotManager } from './BotManager';
 
 /** Label stored with direct messages in memory and analytics, where bubble messages store their space name. */
@@ -160,6 +160,8 @@ export interface DmReply {
      * as Orbit keeps it, or null to leave the card out. Asks once however often it is called.
      */
     claimOffer?: () => Promise<string | null>;
+    /** The same for an App offer's card (game #2001). */
+    claimApp?: () => Promise<string | null>;
     /**
      * This message waited behind an answer in progress and was answered together with the others that waited (#1159):
      * nothing is sent for it. True once that one answer was given, false when it failed or was a reply limit card.
@@ -676,8 +678,9 @@ export class DmReplyService extends BaseBehavior {
         const madeOne = bricks.find((note) => note.kind === 'made');
         if (!replyText.trim() && madeOne?.kind === 'made') replyText = brickMadeText(madeOne.name, madeOne.id, madeOne.made);
         // A suggestion goes out only with words, and Orbit is asked about it only as its card is sent (claimOffer)
-        if (!replyText.trim()) bricks = bricks.filter((note) => note.kind !== 'offer');
+        if (!replyText.trim()) bricks = bricks.filter((note) => note.kind !== 'offer' && note.kind !== 'app');
         const claimOffer = this.offerClaim(bricks, botId, person.uuid);
+        const claimApp = this.appClaim(bricks, botId, person.uuid);
         // Someone already standing in the bot's room gets no card asking them to come visit it
         const roomLink = this.isInBotRoom(botId, person.uuid)
             ? undefined
@@ -704,6 +707,7 @@ export class DmReplyService extends BaseBehavior {
             ...(artifacts.length ? { artifacts } : {}),
             ...(bricks.length ? { bricks } : {}),
             ...(claimOffer ? { claimOffer } : {}),
+            ...(claimApp ? { claimApp } : {}),
         };
     }
 
@@ -724,6 +728,27 @@ export class DmReplyService extends BaseBehavior {
                 .then((claim) => (claim.show ? claim.topic : null))
                 .catch((error: unknown) => {
                     console.warn('[DmReplyService] Could not ask Orbit about a Brick suggestion:', error instanceof Error ? error.message : error);
+                    return null;
+                }));
+    }
+
+    /**
+     * The same for an App offer (game #2001): one the person asked for by name needs no asking, and any other is shown once per
+     * person and App, as Orbit keeps it, so "Not now" holds on every device.
+     */
+    private appClaim(bricks: BrickNote[], botId: string, userId: string): (() => Promise<string | null>) | undefined {
+        const offer = bricks.find((note): note is AppOfferNote => note.kind === 'app');
+        const admin = this.adminApiService;
+        if (!offer) return undefined;
+        if (offer.asked) return () => Promise.resolve(offer.topic);
+        if (!admin) return undefined;
+        let asked: Promise<string | null> | undefined;
+        return () =>
+            (asked ??= admin
+                .claimBrickOffer(botId, userId, offer.topic)
+                .then((claim) => (claim.show ? claim.topic : null))
+                .catch((error: unknown) => {
+                    console.warn('[DmReplyService] Could not ask Orbit about an App offer:', error instanceof Error ? error.message : error);
                     return null;
                 }));
     }

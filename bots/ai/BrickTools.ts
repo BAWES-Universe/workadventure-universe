@@ -42,7 +42,30 @@ export interface BrickOfferNote {
     instructions: string;
 }
 
-export type BrickNote = MadeBrickNote | BrickOfferNote;
+/**
+ * An App the Brick offered to connect this turn (game #2001, "Connect your calendar?"): the card goes out after the answer,
+ * like a Brick's suggestion. See AppTools.ts.
+ */
+export interface AppOfferNote {
+    kind: 'app';
+    /** What Orbit keeps "Not now" under, for this person and this App ("app google calendar"). */
+    topic: string;
+    /** The App on Orbit's list: its key and the name people see. */
+    app: string;
+    name: string;
+    /** "new": nothing is connected yet. "connected": they already connected it, and this Brick may not use it yet. */
+    state: 'new' | 'connected';
+    /** Their connection when they have one, so the card lets this Brick use it instead of signing in again. */
+    connectionId: string | null;
+    /** The card's question ("Connect your calendar?"); empty for one they asked for by name ("Connect Notion?"). */
+    ask: string;
+    /** They asked for it by name: shown whatever they said to an earlier offer, and "Not now" is not remembered. */
+    asked: boolean;
+    /** The second choice, when the kind of App has others ("Another calendar" / "Outlook, iCloud and more"). */
+    other: { label: string; line: string; search: string } | null;
+}
+
+export type BrickNote = MadeBrickNote | BrickOfferNote | AppOfferNote;
 
 const NAME_MAX = 40;
 const LINE_MAX = 120;
