@@ -206,6 +206,12 @@ const text = (value: unknown, max: number): string => (typeof value === 'string'
 type Repeat = 'none' | 'every_day' | 'workdays';
 const repeatOf = (value: unknown): Repeat => (value === 'every_day' || value === 'workdays' ? value : 'none');
 
+/** The wait "in N minutes" means, whole minutes, or null when none was given or it is not one a reminder can wait. */
+function inMinutesOf(args: Record<string, unknown>): number | null {
+    const value = args.in_minutes;
+    return typeof value === 'number' && Number.isFinite(value) && value >= 1 && value <= 525_600 ? Math.round(value) : null;
+}
+
 /** A cadence the person's words mean, or the plain thing to tell the model when it cannot be made. */
 function cadenceFrom(args: Record<string, unknown>, settings: TaskSettings, timeZone: string, now: number): { cadence: Record<string, unknown> } | { problem: Record<string, unknown> } {
     const repeat = repeatOf(args.repeat);
@@ -218,9 +224,8 @@ function cadenceFrom(args: Record<string, unknown>, settings: TaskSettings, time
         }
         return { cadence: { type: 'daily', time, days: [...settings.workdays].sort((a, b) => a - b) } };
     }
-    if (typeof args.in_minutes === 'number' && Number.isFinite(args.in_minutes) && args.in_minutes >= 1 && args.in_minutes <= 525_600) {
-        return { cadence: { type: 'once', at: new Date(now + Math.round(args.in_minutes) * 60_000).toISOString() } };
-    }
+    const minutes = inMinutesOf(args);
+    if (minutes !== null) return { cadence: { type: 'once', at: new Date(now + minutes * 60_000).toISOString() } };
     if (args.when === undefined || args.when === null || args.when === '') {
         return { problem: { error: 'There is no time yet. Ask them when, once. Never guess.' } };
     }
@@ -324,7 +329,8 @@ async function setReminder(args: Record<string, unknown>, settings: TaskSettings
     const built = cadenceFrom(args, settings, timeZone, now);
     if ('problem' in built) return built.problem;
     // "In 20 minutes" is a moment that moves with the clock, so it is keyed on what was asked, not on the moment it came to
-    const relative = repeatOf(args.repeat) === 'none' && typeof args.in_minutes === 'number' && built.cadence.type === 'once' ? `in ${Math.round(args.in_minutes)} min` : null;
+    const minutes = repeatOf(args.repeat) === 'none' ? inMinutesOf(args) : null;
+    const relative = minutes !== null ? `in ${minutes} min` : null;
     const key = `${context.botId}|${context.userId}|${words}|${relative ?? JSON.stringify(built.cadence)}`;
     const before = justSet.get(key);
     if (before && now - before.at < JUST_SET_MS) return { ...before.result, note: 'Already set a moment ago, once. Do not set it again.' };

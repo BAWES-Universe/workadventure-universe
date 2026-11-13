@@ -255,6 +255,13 @@ describe('setting a reminder', () => {
         expect(String(again.note)).not.toContain('Do not set it again');
     });
 
+    it('does not take two different times for one reminder because both came with an unusable "in 0 minutes"', async () => {
+        const { admin, context } = setUp();
+        await runTaskTool(SET_REMINDER_TOOL, { text: 'Zero wait', in_minutes: 0, when: '2026-11-15 10:00' }, context);
+        await runTaskTool(SET_REMINDER_TOOL, { text: 'Zero wait', in_minutes: 0, when: '2026-11-15 11:00' }, context);
+        expect(admin.setBrickItem).toHaveBeenCalledTimes(2);
+    });
+
     it('sets one reminder when "in 20 minutes" is asked twice a few seconds apart', async () => {
         const { admin, context } = setUp();
         let clock = NOW;
