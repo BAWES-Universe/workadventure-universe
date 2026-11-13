@@ -106,6 +106,30 @@ describe("the Bricks' computers store (#2000)", () => {
         expect(game.getBrickComputer).toHaveBeenCalledTimes(4);
     });
 
+    it("keeps following quickly when a read fails while a job runs, and slows down only once a read shows it idle", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        game.getBrickComputer.mockResolvedValue(computer({ machine: "working", job: runningJob }));
+        const stop = followBrickComputer(BRICK);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(game.getBrickComputer).toHaveBeenCalledTimes(1);
+        // A failed read says nothing about the computer: the next read is still four seconds away
+        game.getBrickComputer.mockRejectedValue(new Error("offline"));
+        await vi.advanceTimersByTimeAsync(4000);
+        expect(game.getBrickComputer).toHaveBeenCalledTimes(2);
+        await vi.advanceTimersByTimeAsync(4000);
+        expect(game.getBrickComputer).toHaveBeenCalledTimes(3);
+        // A read that goes through and shows nothing to do slows it down
+        game.getBrickComputer.mockResolvedValue(computer());
+        await vi.advanceTimersByTimeAsync(4000);
+        expect(game.getBrickComputer).toHaveBeenCalledTimes(4);
+        await vi.advanceTimersByTimeAsync(16000);
+        expect(game.getBrickComputer).toHaveBeenCalledTimes(4);
+        await vi.advanceTimersByTimeAsync(4000);
+        expect(game.getBrickComputer).toHaveBeenCalledTimes(5);
+        stop();
+        warn.mockRestore();
+    });
+
     describe("pieces that show the same Brick", () => {
         const OTHER = "9f8e7d6c-1111-4222-8333-000011112222";
 

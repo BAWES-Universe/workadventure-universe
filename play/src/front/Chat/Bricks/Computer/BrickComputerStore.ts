@@ -97,10 +97,12 @@ const loops = new Map<string, { holders: number; stop: () => void }>();
 function startLoop(brickId: string): () => void {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    // A read that failed says nothing about the computer: the pace stays what the last read that went through set it to
+    let busy = false;
     const tick = async () => {
         const view = await loadBrickComputer(brickId);
         if (stopped) return;
-        const busy = !!view && (holdsComputer(view.job) || view.queued.length > 0);
+        if (view) busy = holdsComputer(view.job) || view.queued.length > 0;
         timer = setTimeout(() => void tick(), busy ? POLL_MS : POLL_MS * 5);
     };
     void tick();

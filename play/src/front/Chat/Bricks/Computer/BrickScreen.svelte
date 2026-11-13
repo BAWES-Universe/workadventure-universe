@@ -17,7 +17,7 @@
     export let brick: BrickRef;
     export let onClose: () => void;
 
-    /** A watch link lasts a few minutes: it is asked for again before it runs out. */
+    /** A watch link lasts a few minutes. A screen that has none (it was never given one, or gave up asking) asks again this often. */
     const RENEW_MS = 4 * 60 * 1000;
 
     $: view = $brickComputers.get(brick.id);
@@ -104,7 +104,8 @@
         failures = 0;
         noLink = 0;
         gaveUp = false;
-        look();
+        // A screen that is showing keeps its link: a new one would load the frame again and break in on whoever is using it
+        if (!url) look();
     }
 
     function forget() {

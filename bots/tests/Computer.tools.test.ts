@@ -141,6 +141,12 @@ describe('asking Orbit for a computer (#2000)', () => {
         expect(await service().startComputerJob(BRICK, 'uuid-alice', { title: 'x' })).toEqual({ ok: false, reason: 'unknown' });
     });
 
+    it('throws when Orbit answers with a failure status, since every refusal comes as a 200 with a reason', async () => {
+        process.env.BOT_SERVICE_TOKEN = 'secret';
+        request.mockRejectedValueOnce(Object.assign(new Error('Request failed with status code 500'), { response: { status: 500 } }));
+        await expect(service().startComputerJob(BRICK, 'uuid-alice', { title: 'x' })).rejects.toThrow(/500/);
+    });
+
     it('sweeps without ever throwing', async () => {
         process.env.BOT_SERVICE_TOKEN = 'secret';
         request.mockRejectedValueOnce(new Error('down'));

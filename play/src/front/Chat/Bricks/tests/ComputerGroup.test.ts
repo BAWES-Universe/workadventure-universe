@@ -492,6 +492,48 @@ describe("a Brick's computer on screen (#2000)", () => {
             expect(byId("brickScreenFrame")?.getAttribute("src")).toBe("https://screen.test/third");
         });
 
+        it("keeps the screen it is showing as it is, and does not load the frame again when the link would have run out", async () => {
+            vi.useFakeTimers();
+            game.watchBrickComputer
+                .mockResolvedValueOnce({ url: "https://screen.test/first" })
+                .mockResolvedValue({ url: "https://screen.test/second" });
+            game.getBrickComputer.mockResolvedValue(working());
+            await loadBrickComputer(BRICK);
+            piece = new BrickScreen({ target, props: { brick, onClose: () => undefined } });
+            await advance(0);
+            expect(byId("brickScreenFrame")?.getAttribute("src")).toBe("https://screen.test/first");
+            for (let i = 0; i < 3; i++) {
+                // eslint-disable-next-line no-await-in-loop
+                await advance(4 * 60 * 1000);
+                expect(byId("brickScreenFrame")?.getAttribute("src")).toBe("https://screen.test/first");
+            }
+            // The person takes over: still the same frame, so nothing they type is lost
+            game.getBrickComputer.mockResolvedValue(
+                computer({ machine: "working", job: job({ id: "j1", control: "person" }) })
+            );
+            await loadBrickComputer(BRICK);
+            for (let i = 0; i < 2; i++) {
+                // eslint-disable-next-line no-await-in-loop
+                await advance(4 * 60 * 1000);
+                expect(byId("brickScreenFrame")?.getAttribute("src")).toBe("https://screen.test/first");
+            }
+            expect(game.watchBrickComputer).toHaveBeenCalledTimes(1);
+        });
+
+        it("asks again when the time comes if it has no screen yet, even after it gave up", async () => {
+            vi.useFakeTimers();
+            game.watchBrickComputer.mockResolvedValueOnce("failed").mockResolvedValue("failed");
+            game.getBrickComputer.mockResolvedValue(working());
+            await loadBrickComputer(BRICK);
+            piece = new BrickScreen({ target, props: { brick, onClose: () => undefined } });
+            await advance(40000);
+            const asked = game.watchBrickComputer.mock.calls.length;
+            expect(asked).toBe(5);
+            game.watchBrickComputer.mockResolvedValue({ url: "https://screen.test/later" });
+            await advance(4 * 60 * 1000);
+            expect(byId("brickScreenFrame")?.getAttribute("src")).toBe("https://screen.test/later");
+        });
+
         it("has one request on its way at a time, however often the computer is read meanwhile", async () => {
             vi.useFakeTimers();
             game.watchBrickComputer.mockReturnValue(
