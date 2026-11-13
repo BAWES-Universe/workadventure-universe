@@ -502,6 +502,21 @@ describe("the Apps pages (#2001)", () => {
             expect(game.getTeamApp).toHaveBeenCalledTimes(2);
         });
 
+        it("says the page could not be read again, and offers Try again, when it did not come back after a change", async () => {
+            game.getTeamApp.mockResolvedValueOnce({
+                app: teamApp(),
+                canAddAsManager: [],
+                canLetUse: [{ id: "h", name: "Hala" }],
+            });
+            await open();
+            game.getTeamApp.mockRejectedValueOnce(new Error("offline"));
+            await click("teamAppLetUse");
+            // What was read before is still shown, with a line that it may be out of date
+            expect(byId("teamAppLoadFailed")).not.toBeNull();
+            expect(byId("teamAppTryAgain")).not.toBeNull();
+            expect(words(byId("teamAppPage"))).toContain("Belongs to BAWES Universe");
+        });
+
         it("offers no Let it use when Orbit sends nobody, and says Orbit's line when it refuses", async () => {
             await open();
             expect(byId("teamAppBotOff")).toBeNull();

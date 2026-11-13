@@ -59,22 +59,27 @@
         }
     }
 
-    /** One change, then the page and the list read again. On a refusal nothing is changed and the person is told. */
+    /**
+     * One change, then the page and the list read again. On a refusal nothing is changed and the person is told. Nothing else
+     * can be changed until the reading is done, so an older answer never lands over a newer one.
+     */
     async function change(work: () => Promise<unknown>): Promise<boolean> {
         if (busy) return false;
         busy = true;
         try {
-            await work();
-        } catch (error) {
-            console.warn("An app change did not go through", error);
-            warningMessageStore.addWarningMessage(text.workFailed());
-            return false;
+            try {
+                await work();
+            } catch (error) {
+                console.warn("An app change did not go through", error);
+                warningMessageStore.addWarningMessage(text.workFailed());
+                return false;
+            }
+            await Promise.all([load(), loadMyApps(true)]);
+            return true;
         } finally {
             // eslint-disable-next-line require-atomic-updates
             busy = false;
         }
-        await Promise.all([load(), loadMyApps(true)]);
-        return true;
     }
 
     const letUse = (botId: string) => change(() => botApiService.letBrickUseApp(appId, botId));
@@ -99,12 +104,15 @@
         return done;
     }
 
+    // A confirmation stays open while another change is on its way: it is not dropped without being done
     async function takeBack(lendOf: Lend) {
+        if (busy) return;
         sheet = undefined;
         await change(() => botApiService.takeAppBack(appId, lendOf.universeId));
     }
 
     async function disconnect() {
+        if (busy) return;
         sheet = undefined;
         if (await change(() => botApiService.disconnectMyApp(appId))) onBack();
     }
@@ -112,9 +120,16 @@
     async function reconnect() {
         if (signingIn) return;
         signingIn = true;
-        const result = await reconnectApp(appId);
-        // eslint-disable-next-line require-atomic-updates
-        signingIn = false;
+        let result: Awaited<ReturnType<typeof reconnectApp>>;
+        try {
+            result = await reconnectApp(appId);
+        } catch (error) {
+            console.warn("The sign-in did not finish", error);
+            result = "blocked";
+        } finally {
+            // eslint-disable-next-line require-atomic-updates
+            signingIn = false;
+        }
         if (result === "blocked") warningMessageStore.addWarningMessage(text.reconnectFailed());
         await Promise.all([load(), loadMyApps(true)]);
     }
@@ -157,6 +172,13 @@
                 </div>
             {/if}
         {:else}
+            {#if loadFailed}
+                <!-- A change went through but reading the page again did not: what is shown may be out of date -->
+                <p class="pg-bad" data-testid="appLoadFailed">{text.loadFailed()}</p>
+                <div class="pg-pad">
+                    <PageButton tall testId="appTryAgain" on:click={() => void load()}>{text.tryAgain()}</PageButton>
+                </div>
+            {/if}
             <div class="pg-card">
                 <span class="pg-ico"><svelte:component this={appIcon(app.name)} font-size="24" /></span>
                 <div class="pg-tx">
@@ -280,8 +302,12 @@
             {/if}
 
             <div class="pg-off">
-                <PageButton tall danger testId="appDisconnect" on:click={() => (sheet = { kind: "disconnect" })}
-                    >{text.disconnect({ app: app.name })}</PageButton
+                <PageButton
+                    tall
+                    danger
+                    disabled={busy}
+                    testId="appDisconnect"
+                    on:click={() => (sheet = { kind: "disconnect" })}>{text.disconnect({ app: app.name })}</PageButton
                 >
                 <span class="pg-cn">{text.disconnectLine({ app: app.name })}</span>
             </div>

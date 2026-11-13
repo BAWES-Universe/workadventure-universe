@@ -56,17 +56,20 @@
         if (busy) return false;
         busy = true;
         try {
-            await work();
-        } catch (error) {
-            console.warn("A change to the universe's app did not go through", error);
-            warningMessageStore.addWarningMessage(text.workFailed());
-            return false;
+            try {
+                await work();
+            } catch (error) {
+                console.warn("A change to the universe's app did not go through", error);
+                warningMessageStore.addWarningMessage(text.workFailed());
+                return false;
+            }
+            // Nothing else can be changed until the page is read again, so an older answer never lands over a newer one
+            await load();
+            return true;
         } finally {
             // eslint-disable-next-line require-atomic-updates
             busy = false;
         }
-        await load();
-        return true;
     }
 
     async function addManager(person: Person): Promise<boolean> {
@@ -79,22 +82,25 @@
         if (busy) return;
         busy = true;
         try {
-            await botApiService.letBotUseApp(botId, appId);
-        } catch (error) {
-            console.warn("Could not let the bot use the universe's app", error);
-            warningMessageStore.addWarningMessage(refusalWords(error, text.workFailed()));
+            try {
+                await botApiService.letBotUseApp(botId, appId);
+            } catch (error) {
+                console.warn("Could not let the bot use the universe's app", error);
+                warningMessageStore.addWarningMessage(refusalWords(error, text.workFailed()));
+                return;
+            }
+            await load();
+        } finally {
             // eslint-disable-next-line require-atomic-updates
             busy = false;
-            return;
         }
-        // eslint-disable-next-line require-atomic-updates
-        busy = false;
-        await load();
     }
 
     const removeManager = (person: Person) => change(() => botApiService.removeTeamAppManager(appId, person.id));
 
     async function disconnect() {
+        // The confirmation stays open while another change is on its way: it is not dropped without being done
+        if (busy) return;
         sheet = undefined;
         if (await change(() => botApiService.disconnectTeamApp(appId))) onBack();
     }
@@ -102,9 +108,16 @@
     async function reconnect() {
         if (signingIn) return;
         signingIn = true;
-        const result = await reconnectApp(appId);
-        // eslint-disable-next-line require-atomic-updates
-        signingIn = false;
+        let result: Awaited<ReturnType<typeof reconnectApp>>;
+        try {
+            result = await reconnectApp(appId);
+        } catch (error) {
+            console.warn("The sign-in did not finish", error);
+            result = "blocked";
+        } finally {
+            // eslint-disable-next-line require-atomic-updates
+            signingIn = false;
+        }
         if (result === "blocked") warningMessageStore.addWarningMessage(text.reconnectFailed());
         await load();
     }
@@ -138,6 +151,14 @@
                 </div>
             {/if}
         {:else}
+            {#if loadFailed}
+                <!-- A change went through but reading the page again did not: what is shown may be out of date -->
+                <p class="tp-bad" data-testid="teamAppLoadFailed">{text.loadFailed()}</p>
+                <div class="tp-pad">
+                    <PageButton tall testId="teamAppTryAgain" on:click={() => void load()}>{text.tryAgain()}</PageButton
+                    >
+                </div>
+            {/if}
             <div class="tp-card">
                 <span class="tp-ico"><svelte:component this={appIcon(app.name)} font-size="24" /></span>
                 <div class="tp-tx">
@@ -235,8 +256,12 @@
             <PageNote>{text.countedForUniverse({ universe })}</PageNote>
 
             <div class="tp-off">
-                <PageButton tall danger testId="teamAppDisconnect" on:click={() => (sheet = "disconnect")}
-                    >{text.disconnect({ app: app.name })}</PageButton
+                <PageButton
+                    tall
+                    danger
+                    disabled={busy}
+                    testId="teamAppDisconnect"
+                    on:click={() => (sheet = "disconnect")}>{text.disconnect({ app: app.name })}</PageButton
                 >
                 <span class="tp-cn">{text.teamDisconnectLine({ app: app.name })}</span>
             </div>

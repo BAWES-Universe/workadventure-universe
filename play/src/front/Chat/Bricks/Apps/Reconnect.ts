@@ -27,12 +27,19 @@ export async function reconnectApp(appId: string): Promise<ReconnectResult> {
         }
         return "blocked";
     }
-    // eslint-disable-next-line require-atomic-updates
-    popup.location.href = authorizeUrl;
+    // The window was closed by hand while the request was on its way: nothing is left to sign in to
+    try {
+        if (popup.closed) return "stopped";
+        popup.location.href = authorizeUrl;
+    } catch (error) {
+        console.warn("Could not open the sign-in window", error);
+        return "blocked";
+    }
     return await new Promise<ReconnectResult>((resolve) => {
         const finish = (result: ReconnectResult) => {
             window.removeEventListener("message", onMessage);
             window.removeEventListener("focus", onFocus);
+            window.clearInterval(watch);
             resolve(result);
         };
         const onMessage = (event: MessageEvent) => {
@@ -51,5 +58,7 @@ export async function reconnectApp(appId: string): Promise<ReconnectResult> {
         };
         window.addEventListener("message", onMessage);
         window.addEventListener("focus", onFocus);
+        // A window closed without this one getting focus back is noticed here, so the page never waits on a closed window
+        const watch = window.setInterval(onFocus, 1000);
     });
 }

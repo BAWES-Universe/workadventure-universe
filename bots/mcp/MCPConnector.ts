@@ -334,6 +334,8 @@ async function sendViaOrbit(link: OrbitLink, method: string, params: Record<stri
         );
         return response.data as { status?: number; contentType?: string | null; sessionId?: string | null; body?: string };
     };
+    // Set once the call itself is on its way: a cancellation after that may have come too late, so it is not "never sent"
+    let callSubmitted = false;
     try {
         let sessionId: string | undefined;
         const cached = mcpSessionInitCache.get(key);
@@ -349,6 +351,7 @@ async function sendViaOrbit(link: OrbitLink, method: string, params: Record<stri
             mcpSessionInitCache.set(key, { sessionId, initializedAt: Date.now() });
         }
         const requestId = method === 'tools/list' ? '1' : '2';
+        if (method === 'tools/call') callSubmitted = true;
         const answer = await send({ jsonrpc: '2.0', id: requestId, method, ...(params !== undefined ? { params } : {}) }, sessionId, method === 'tools/call' ? link.callId : undefined);
         if (typeof answer.status === 'number' && answer.status >= 400) {
             // The link refused or lost the session: it did not run, and the next call opens a fresh session
@@ -371,7 +374,7 @@ async function sendViaOrbit(link: OrbitLink, method: string, params: Record<stri
         return { data: parsed.data, neverRan: false, retryable: false, ...(parsed.listChanged ? { listChanged: true } : {}) };
     } catch (error: any) {
         mcpSessionInitCache.delete(key);
-        if (axios.isCancel(error)) return signal?.aborted ? NOT_SENT : NOT_ANSWERED;
+        if (axios.isCancel(error)) return signal?.aborted && !callSubmitted ? NOT_SENT : NOT_ANSWERED;
         const status = axios.isAxiosError(error) ? error.response?.status : undefined;
         console.warn(`[MCPConnector] Orbit could not send ${method} to a ready-made App${status ? ` (HTTP ${status})` : ''}`);
         // Orbit said no (not allowed, not found, a message it does not pass): nothing reached the link. Anything else, and a

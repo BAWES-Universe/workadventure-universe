@@ -113,7 +113,7 @@ describe('every use of an App on a connection', () => {
         for (const reason of ['limit_reached', 'not_lent', 'incomplete', 'gone'] as const) {
             const [result] = await call(service(async () => ({ allowed: false, reason })));
             expect(result.result.error).toContain('Carry on without it');
-            expect(result.result.outcome).toBe('notSent');
+            expect(result.result.outcome).toBe('not_sent');
         }
         expect(execute).not.toHaveBeenCalled();
     });
@@ -197,6 +197,21 @@ describe('a ready-made App', () => {
         const listing = sent.find((b) => b.message.method === 'tools/list');
         expect(listing).toMatchObject({ botId: 'bot-y', serverId: 's4', forOwner: true });
         expect(listing).not.toHaveProperty('callId');
+    });
+
+    it('is not taken as never sent when the turn is cancelled after the call went to Orbit', async () => {
+        vi.stubEnv('BOT_SERVICE_TOKEN', 'svc');
+        const controller = new AbortController();
+        vi.spyOn(axios, 'post').mockImplementation(async (_url: string, body: any) => {
+            if (body.message.method === 'initialize') return { data: { status: 200, contentType: 'application/json', sessionId: 'sess-2', body: '{}' } };
+            if (body.message.method === 'notifications/initialized') return { data: { status: 202, contentType: null, sessionId: null, body: '' } };
+            // The call is out: the turn is cancelled while Orbit may still be running it
+            controller.abort();
+            throw new axios.CanceledError('canceled');
+        });
+        const ai = service(async () => ({ allowed: true }));
+        const [result] = await ai['executeToolCalls']([{ id: 'call-10', name: 'send_email', arguments: '{}' }], signedIn as never, undefined, READY as never, undefined, 'room', 'bot-x', 7, controller.signal);
+        expect(result.result).toMatchObject({ outcome: 'uncertain' });
     });
 
     it('is not run when Orbit says no, and tells the bot nothing about why', async () => {

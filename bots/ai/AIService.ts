@@ -376,7 +376,7 @@ export class AIService {
             // spent or a switch turned off stops it at once. No answer is a no.
             if (entry.connectionId) {
                 const answer: AppUseAnswer = use && this.appUse ? await this.appUse(use.botId, entry.serverId, use) : { allowed: false, reason: 'unavailable' };
-                if (!answer.allowed) return { error: appNotUsedLine(answer.reason ?? 'gone'), outcome: 'notSent' };
+                if (!answer.allowed) return { error: appNotUsedLine(answer.reason ?? 'gone'), outcome: 'not_sent' };
             }
             const rawResult = await MCPConnector.executeToolCall(
                 entry.serverId,

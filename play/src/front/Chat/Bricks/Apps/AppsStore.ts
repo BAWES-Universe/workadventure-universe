@@ -21,22 +21,29 @@ const failed = writable(false);
 export const myAppsFailed: Readable<boolean> = { subscribe: failed.subscribe };
 
 let loading: Promise<void> | undefined;
+// The read that waits behind the one on its way, after a change: every caller that asks meanwhile shares it
+let queued: Promise<void> | undefined;
+// Counts sign-outs: a read asked for before the person signed out changes nothing when it ends.
+let generation = 0;
 
 function read(): Promise<void> {
+    const asked = generation;
     const reading: Promise<void> = botApiService
         .getMyApps()
         .then((answer) => {
+            if (asked !== generation) return;
             const parsed = parseMyApps(answer);
             if (parsed) apps.set(parsed.apps);
             failed.set(!parsed);
         })
         .catch((error: unknown) => {
+            if (asked !== generation) return;
             console.warn("Could not read your apps", error);
             failed.set(true);
         })
         .finally(() => {
             if (loading === reading) loading = undefined;
-            settled.set(true);
+            if (asked === generation) settled.set(true);
         });
     loading = reading;
     return reading;
@@ -44,18 +51,30 @@ function read(): Promise<void> {
 
 /**
  * Reads the person's apps. One request at a time; resolves either way. After a change the page made, `afterChange` reads
- * once more behind any read already on its way, because that one may have started before the change.
+ * once more behind any read already on its way, because that one may have started before the change. Changes that come
+ * while that read waits share it: it starts after the last of them, so an older answer never lands over a newer one.
  */
 export function loadMyApps(afterChange = false): Promise<void> {
     if (!get(userIsConnected)) return Promise.resolve();
     if (!loading) return read();
-    return afterChange ? loading.then(read) : loading;
+    if (!afterChange) return loading;
+    if (!queued) {
+        const waiting: Promise<void> = loading.then(() => {
+            // It starts now: later changes ask for a read of their own
+            if (queued === waiting) queued = undefined;
+            return read();
+        });
+        queued = waiting;
+    }
+    return queued;
 }
 
 /** Forgets what was read: when the person signs out, and for tests */
 export function forgetMyApps(): void {
+    generation++;
     apps.set(undefined);
     settled.set(false);
     failed.set(false);
     loading = undefined;
+    queued = undefined;
 }
