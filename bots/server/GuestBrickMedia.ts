@@ -13,19 +13,24 @@ import { uploadAttachment } from '../matrix/uploadAttachment';
 import type { CarriedMedia, GuestChatNote } from '../matrix/MatrixDmBridge';
 import { sharedNoteHearing } from '../voice/NoteHearingWiring';
 
-/** A guest's upload by its receipt: only the guest it names, read through the uploader, and only while it is what was uploaded. */
+/**
+ * A guest's upload by its receipt: only the guest it names, read through the uploader, and only while it is what was uploaded.
+ * `expiredOk` is for a carry only: Orbit has handed that guest's chat to the person asking, so a receipt past its day still names
+ * the guest's own file, and the file's hash still has to match. Whether the file is still kept is the uploader's to say.
+ */
 export async function readGuestUpload(
     guestId: string,
     receipt: unknown,
     secret: string,
     uploaderUrl: string,
     fetchBytes: (url: string, maxBytes: number) => Promise<ArrayBuffer | Uint8Array> = (url, maxBytes) => FileParser.fetchBytes(url, maxBytes),
-    now: number = Date.now()
+    now: number = Date.now(),
+    expiredOk = false
 ): Promise<GuestUpload> {
-    const check = checkReceipt(receipt, secret, guestId, ['guest-brick', 'chat-file', 'chat-note'], now);
+    const check = checkReceipt(receipt, secret, guestId, ['guest-brick', 'chat-file', 'chat-note'], expiredOk ? -Infinity : now);
     if ('reason' in check) return { ok: false, why: check.reason === 'expired' ? 'expired' : 'refused' };
     const file = await readReceiptFile(check.claims, uploaderUrl, GUEST_FILE_BYTES_MAX, fetchBytes);
-    if ('reason' in file) return { ok: false, why: file.reason === 'too-big' ? 'too-big' : 'refused' };
+    if ('reason' in file) return { ok: false, why: file.reason === 'too-big' ? 'too-big' : file.reason === 'not-now' ? 'not-now' : 'refused' };
     const { claims } = check;
     return { ok: true, bytes: file.bytes, url: claims.loc, type: claims.type, name: claims.name, sha256: claims.sha256 };
 }
@@ -103,6 +108,8 @@ export async function copyCarriedMedia(guestId: string, lines: GuestChatNote[], 
                 continue;
             }
             const upload = await copy.read(receipt);
+            // The uploader couldn't be asked just now: nothing of this part is said, and the device asks again later
+            if ('why' in upload && upload.why === 'not-now') throw new CarryNotNowError('Could not read a file just now');
             if (!upload.ok || bytes + upload.bytes.byteLength > CARRIED_COPY_BYTES_MAX) {
                 media.push(gone());
                 continue;
@@ -127,7 +134,7 @@ export function buildCarryCopy(admin: AdminApiService, guestId: string, userUuid
     if (!secret || !uploaderUrl || !/^https?:\/\//.test(uploaderUrl)) return null;
     return {
         handed: () => admin.guestChatHandedTo(guestId, userUuid),
-        read: (receipt) => readGuestUpload(guestId, receipt, secret, uploaderUrl),
+        read: (receipt) => readGuestUpload(guestId, receipt, secret, uploaderUrl, undefined, undefined, true),
         store: (bytes, type, name) => uploadAttachment(Buffer.from(bytes), type, name),
     };
 }

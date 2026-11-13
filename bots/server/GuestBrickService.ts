@@ -50,7 +50,8 @@ export interface GuestBrickAsk {
 export type GuestUpload =
     | { ok: true; bytes: Uint8Array; url: string; type: string; name: string; sha256: string }
     /** `expired`: the device renews the receipt and sends the same message again. `refused`: not theirs, gone or changed. */
-    | { ok: false; why: 'expired' | 'refused' | 'too-big' };
+    /** `not-now`: the uploader could not be asked just now (a timeout or a server error); the file may well still be there. */
+    | { ok: false; why: 'expired' | 'refused' | 'too-big' | 'not-now' };
 
 /** What the Brick for guests needs to read files and hear notes, the same way every bot does. */
 export interface GuestBrickMedia {
@@ -282,7 +283,11 @@ export class GuestBrickService {
         let bytes = 0;
         for (const receipt of ask.note !== undefined ? [ask.note] : named) {
             const one = await this.media.readUpload(ask.guestId, receipt);
-            if ('why' in one) return { ok: false, answer: { kind: 'upload', why: one.why } };
+            if ('why' in one) {
+                // The uploader couldn't be asked just now: nothing is said to be gone, the guest sends it again in a moment
+                if (one.why === 'not-now') return { ok: false, answer: ask.note !== undefined ? { kind: 'unheard', why: 'busy' } : { kind: 'busy' } };
+                return { ok: false, answer: { kind: 'upload', why: one.why } };
+            }
             bytes += one.bytes.byteLength;
             if (bytes > GUEST_TURN_BYTES_MAX) return { ok: false, answer: { kind: 'upload', why: 'too-big' } };
             read.push(one);

@@ -75,11 +75,12 @@ export function uploaderPathOf(claims: Pick<ReceiptClaims, 'fid' | 'bkt'>, uploa
     return claims.bkt ? `${base}/chat-file/${encodeURIComponent(claims.bkt)}/${encodeURIComponent(claims.fid)}` : `${base}/upload-file/${encodeURIComponent(claims.fid)}`;
 }
 
-export type ReceiptFile = { ok: true; bytes: Uint8Array; claims: ReceiptClaims } | { ok: false; reason: 'gone' | 'changed' | 'too-big' };
+export type ReceiptFile = { ok: true; bytes: Uint8Array; claims: ReceiptClaims } | { ok: false; reason: 'gone' | 'changed' | 'too-big' | 'not-now' };
 
 /**
  * The bytes of a receipt's file, read through the uploader's path with at most `maxBytes`, and only when they are the bytes the
- * uploader stored. `fetchBytes` is the SSRF-safe bounded fetch (it validates every redirect).
+ * uploader stored. `fetchBytes` is the SSRF-safe bounded fetch (it validates every redirect). Only the uploader saying the file is
+ * not there (a 4xx other than 408 or 429) makes it `gone`: a timeout, a dropped connection or a 5xx is `not-now`, to ask again.
  */
 export async function readReceiptFile(
     claims: ReceiptClaims,
@@ -92,7 +93,11 @@ export async function readReceiptFile(
     try {
         bytes = new Uint8Array(await fetchBytes(uploaderPathOf(claims, uploaderUrl), maxBytes));
     } catch (error) {
-        return { ok: false, reason: /too large/i.test((error as Error)?.message ?? '') ? 'too-big' : 'gone' };
+        const message = (error as Error)?.message ?? '';
+        if (/too large/i.test(message)) return { ok: false, reason: 'too-big' };
+        const status = /^HTTP (\d{3})\b/.exec(message)?.[1];
+        const gone = status !== undefined && status.startsWith('4') && status !== '408' && status !== '429';
+        return { ok: false, reason: gone ? 'gone' : 'not-now' };
     }
     if (createHash('sha256').update(bytes).digest('hex') !== claims.sha256) return { ok: false, reason: 'changed' };
     return { ok: true, bytes, claims };

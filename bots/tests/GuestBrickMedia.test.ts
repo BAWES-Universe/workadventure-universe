@@ -91,6 +91,24 @@ describe('upload receipts', () => {
         expect(await readReceiptFile(check.claims, UPLOADER, 100, async () => Promise.reject(new Error('File too large (over 1MB)')))).toEqual({ ok: false, reason: 'too-big' });
     });
 
+    it('say "not now" for a file the uploader could not be asked about, never "gone"', async () => {
+        const check = checkReceipt(receipt(), SECRET, GUEST, ['guest-brick']);
+        if (!check.ok) throw new Error('receipt');
+        const read = (error: Error) => readReceiptFile(check.claims, UPLOADER, 100, async () => Promise.reject(error));
+        expect(await read(new Error('HTTP 410 fetching x'))).toEqual({ ok: false, reason: 'gone' });
+        for (const error of [new Error('HTTP 503 fetching x'), new Error('HTTP 429 fetching x'), new Error('HTTP 408 fetching x'), new Error('The operation was aborted due to timeout'), new Error('fetch failed')]) {
+            expect(await read(error)).toEqual({ ok: false, reason: 'not-now' });
+        }
+        expect(await readGuestUpload(GUEST, receipt(), SECRET, UPLOADER, async () => Promise.reject(new Error('HTTP 502 fetching x')))).toEqual({ ok: false, why: 'not-now' });
+    });
+
+    it("read a receipt past its day only for a carry, still only the guest's own and the same bytes", async () => {
+        const fetchBytes = async () => new Uint8Array([1, 2, 3]);
+        expect(await readGuestUpload(GUEST, receipt({ exp: 1 }), SECRET, UPLOADER, fetchBytes, Date.now(), true)).toMatchObject({ ok: true });
+        expect(await readGuestUpload(OTHER, receipt({ exp: 1 }), SECRET, UPLOADER, fetchBytes, Date.now(), true)).toEqual({ ok: false, why: 'refused' });
+        expect(await readGuestUpload(GUEST, receipt({ exp: 1 }), SECRET, UPLOADER, async () => new Uint8Array([7]), Date.now(), true)).toEqual({ ok: false, why: 'refused' });
+    });
+
     it("give the guest Brick a guest's upload, or why not", async () => {
         const fetchBytes = async () => new Uint8Array([1, 2, 3]);
         expect(await readGuestUpload(GUEST, receipt(), SECRET, UPLOADER, fetchBytes)).toMatchObject({ ok: true, url: 'https://cdn.test/0b6f3c1e-1111-4222-8333-944455556666.png', type: 'image/png', name: 'menu.png' });
@@ -174,7 +192,7 @@ function makeService(over: Partial<{ allowance: GuestBrickAllowance; throws: boo
         secret: SECRET,
         notes,
         readUpload: vi.fn(async (guestId: string, value: unknown) =>
-            value === 'gone' ? { ok: false, why: 'refused' } : value === 'old' ? { ok: false, why: 'expired' } : { ok: true, bytes: new Uint8Array([1, 2, 3]), url: `https://cdn.test/${String(value)}.png`, type: 'image/png', name: 'menu.png', sha256: `sha-${String(value)}` }
+            value === 'gone' ? { ok: false, why: 'refused' } : value === 'old' ? { ok: false, why: 'expired' } : value === 'flaky' ? { ok: false, why: 'not-now' } : { ok: true, bytes: new Uint8Array([1, 2, 3]), url: `https://cdn.test/${String(value)}.png`, type: 'image/png', name: 'menu.png', sha256: `sha-${String(value)}` }
         ),
         readFiles: vi.fn(async (text: string, files: { url: string }[]) => ({ text: `${text}\n[User also sent an image: ${files[0].url}]`, images: files.map((file) => file.url) })),
     };
@@ -201,6 +219,9 @@ describe('The Brick for guests reads what a guest sends', () => {
         expect(await service.reply(ask({ files: ['gone'] }))).toEqual({ kind: 'upload', why: 'refused' });
         expect(await service.reply(ask({ files: ['old'] }))).toEqual({ kind: 'upload', why: 'expired' });
         expect(await service.reply(ask({ files: Array.from({ length: 11 }, (_, i) => `r${i}`) }))).toEqual({ kind: 'upload', why: 'refused' });
+        // The uploader could not be asked just now: never "gone", the guest sends it again in a moment
+        expect(await service.reply(ask({ files: ['flaky'] }))).toEqual({ kind: 'busy' });
+        expect(await service.reply(ask({ note: 'flaky' }))).toEqual({ kind: 'unheard', why: 'busy' });
         expect(admin.claimGuestBrickReply).not.toHaveBeenCalled();
         expect(generate).not.toHaveBeenCalled();
     });
@@ -407,6 +428,11 @@ describe("a guest's pictures, files and notes come along when they sign in (plan
         const again = await copyCarriedMedia(guest, readCarriedLines([LINE]), steps);
         expect(steps.store).toHaveBeenCalledTimes(2);
         expect(again[0].media?.[0].url).toBe('https://cdn.test/copy.oga');
+
+        // The uploader could not be asked about a file: the part waits, nothing is marked gone
+        const flaky = copySteps({ read: vi.fn(async () => ({ ok: false, why: 'not-now' })) });
+        await expect(copyCarriedMedia(`g-${Math.random()}`, readCarriedLines([LINE]), flaky)).rejects.toBeInstanceOf(CarryNotNowError);
+        expect(flaky.store).not.toHaveBeenCalled();
 
         // Orbit could not be asked: never taken as "not handed", so nothing is marked gone
         const offline = copySteps({ handed: vi.fn(async () => Promise.reject(new Error('timeout'))) });
