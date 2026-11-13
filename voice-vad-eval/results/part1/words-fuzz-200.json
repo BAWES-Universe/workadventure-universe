@@ -1,0 +1,12 @@
+{
+ "scenarios": 200,
+ "firstSeed": 1,
+ "turnsDelivered": 3550,
+ "wordsDelivered": 340118,
+ "pauseHolds": 1371,
+ "pauseResumesAfterEmpty": 0,
+ "pauseGoOnsOverSteadyNoise": 179,
+ "replyStops": 1167,
+ "problems": 0,
+ "firstProblems": []
+}
