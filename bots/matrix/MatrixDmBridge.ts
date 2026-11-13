@@ -25,6 +25,7 @@ import { tidyTranscript } from '../voice/NoteHearing';
 import type { NoteHearingService } from '../voice/NoteHearingWiring';
 import { ANSWER_EVENT, parseTap, type ParsedTap } from '../mcp/ApprovalCard';
 import type { Asker, Outcome } from '../mcp/ToolApprovals';
+import type { SpokeAnswer } from '../server/BrickRunner';
 
 /** The field of a reply that names the bot's room: the game shows a card under it to go there. */
 export const ROOM_LINK_KEY = 'universe.room_link';
@@ -587,6 +588,25 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 console.warn(`[MatrixDmBridge] Could not let go of the direct chat of bot ${botId}:`, error?.message ?? error);
             });
         };
+    }
+
+    /**
+     * Says something on its own in a person's direct chat with a Brick (game #2002: a reminder, a goal's news), as the Brick. Only in
+     * the chat the two share alone, and only for someone Orbit says may message the bot. `transactionId` is the run's own id, so a
+     * second try of the same run is the same message to Matrix. It never makes a chat: a person with none is told so, not given one.
+     */
+    async speakInDirectChat(botId: string, matrixUserId: string, text: string, transactionId: string): Promise<SpokeAnswer> {
+        const roomId = await this.directRoomOf(botId, matrixUserId).catch(() => null);
+        if (!roomId) return { ok: false, reason: 'no_chat' };
+        const access = await this.access(botId, matrixUserId, true);
+        if (accessCheckFailed(access) || !mayChat(access)) return { ok: false, reason: 'not_allowed' };
+        try {
+            const eventId = await this.client.sendMessage(this.botUserId(botId), roomId, { msgtype: 'm.text', body: text }, transactionId);
+            return eventId ? { ok: true, eventId } : { ok: false, reason: 'failed' };
+        } catch (error: any) {
+            console.warn(`[MatrixDmBridge] Could not speak in the direct chat of bot ${botId}:`, error?.message ?? error);
+            return { ok: false, reason: 'failed' };
+        }
     }
 
     /**
