@@ -14,7 +14,8 @@ import { MCPConnector } from '../mcp/MCPConnector';
 import { BotBusyError, BotUnavailableError } from '../utils/summonErrors';
 import { helloSourceOf, typedVoiceName, type HelloSource, type VoiceHello } from '../voice/VoiceHello';
 import { buildVoiceHello } from '../voice/VoiceHelloWiring';
-import { GuestBrickService, isGuestBrickId, readCarriedLines } from './GuestBrickService';
+import { GuestBrickService, GUEST_FILES_MAX, isGuestBrickId, readCarriedLines } from './GuestBrickService';
+import { buildGuestBrickMedia } from './GuestBrickMedia';
 import type { GuestChatNote } from '../matrix/MatrixDmBridge';
 
 /** The id the game makes for a guest at their first visit (a uuid): a member's token names an email or an account instead. */
@@ -347,7 +348,9 @@ export class BotAPI {
     }
 
     private guestBrick(): GuestBrickService | null {
-        if (this.guestBrickOption === undefined) this.guestBrickOption = new GuestBrickService(this.adminApiService);
+        if (this.guestBrickOption === undefined) {
+            this.guestBrickOption = new GuestBrickService(this.adminApiService, undefined, undefined, buildGuestBrickMedia(this.botManager, this.adminApiService));
+        }
         return this.guestBrickOption;
     }
 
@@ -981,8 +984,21 @@ export class BotAPI {
                 res.status(403).json({ error: 'Only for guests' });
                 return;
             }
-            const { turnId, roomUrl, message, history, saidNeedsAccount } = req.body ?? {};
-            if (!isGuestBrickId(turnId) || typeof roomUrl !== 'string' || !roomUrl || roomUrl.length > 2000 || typeof message !== 'string' || !message.trim()) {
+            const { turnId, roomUrl, message, history, saidNeedsAccount, files, note } = req.body ?? {};
+            // A picture, a file or a voice note may come with no words; a message with nothing at all is refused
+            const named = Array.isArray(files) ? files : [];
+            const hasMedia = named.length > 0 || (typeof note === 'string' && note.length > 0);
+            if (
+                !isGuestBrickId(turnId) ||
+                typeof roomUrl !== 'string' ||
+                !roomUrl ||
+                roomUrl.length > 2000 ||
+                typeof message !== 'string' ||
+                (!message.trim() && !hasMedia) ||
+                (files !== undefined && !Array.isArray(files)) ||
+                named.length > GUEST_FILES_MAX ||
+                (note !== undefined && typeof note !== 'string')
+            ) {
                 res.status(400).json({ error: 'Not a message' });
                 return;
             }
@@ -994,6 +1010,8 @@ export class BotAPI {
                     message,
                     history: Array.isArray(history) ? history : [],
                     saidNeedsAccount: saidNeedsAccount === true,
+                    ...(named.length > 0 ? { files: named } : {}),
+                    ...(typeof note === 'string' && note ? { note } : {}),
                 });
                 if (answer.kind === 'busy') res.status(429).json(answer);
                 else if (answer.kind === 'failed') res.status(502).json(answer);
@@ -1001,6 +1019,37 @@ export class BotAPI {
             } catch (error) {
                 console.error('[BotAPI] Error answering a guest:', error instanceof Error ? error.message : error);
                 res.status(502).json({ kind: 'failed' });
+            }
+        });
+
+        // What the Brick for guests takes from a guest now (plan v3): files with their upload receipts, and voice notes when Orbit
+        // has every part of them. The game shows the paperclip and the mic only for what is here.
+        this.app.get('/api/guest-brick/media', identifySummoner, async (req: BotAPIRequest, res: Response) => {
+            const brick = this.guestBrick();
+            if (!brick?.available()) {
+                res.json({ files: false, notes: false });
+                return;
+            }
+            res.json(await brick.canTake());
+        });
+
+        // The guest's device has the answer to a voice note: its kept copy at Orbit is deleted. Only the guest it was for can say it.
+        this.app.post('/api/guest-brick/delivered', identifySummoner, async (req: BotAPIRequest, res: Response) => {
+            const brick = this.guestBrick();
+            const guestId = req.gameIdentifier;
+            if (!brick?.available() || req.isLogged || typeof guestId !== 'string' || !GUEST_ID.test(guestId)) {
+                res.status(404).json({ error: 'Not available' });
+                return;
+            }
+            try {
+                if (!(await brick.delivered(guestId, req.body?.delivery))) {
+                    res.status(403).json({ error: 'Not yours' });
+                    return;
+                }
+                res.status(204).end();
+            } catch (error) {
+                console.error('[BotAPI] Error closing a guest answer:', error instanceof Error ? error.message : error);
+                res.status(502).json({ error: 'Could not say it now' });
             }
         });
 

@@ -30,6 +30,24 @@ export interface NoteSender {
 /** A reply limit that stopped the note before it was heard: the caller shows the usual limit card. */
 export type TurnHeard = HeardNote | { ok: false; reason: 'reply-limit'; allowance: { limit: string; resetsAt: string; who: string } };
 
+/** Where a guest's note to the Brick for guests stands. */
+export type GuestNoteTurn =
+    /** Heard: the answer stage is held for the caller, with `generation`. */
+    | { kind: 'heard'; turnId: string; generation: number; transcript: string }
+    /** Answered before: the kept answer, sent again without running anything. */
+    | { kind: 'answered'; turnId: string; transcript: string; answer: string }
+    /** Not heard, and nothing is pending: "This note is over N minutes", or "Couldn't listen to this note". */
+    | { kind: 'refused'; why: 'too-long' | 'busy' | 'failed'; longestSeconds?: number }
+    /** Its answer is no longer kept: "This answer is no longer available. Send it again." */
+    | { kind: 'expired' }
+    /** It may have been heard or answered by a server that is gone: never run again on its own. "Couldn't finish this one." */
+    | { kind: 'uncertain' };
+
+const GUEST_BRICK = 'guest-brick';
+
+/** What the Brick for guests needs of note turns. */
+export type GuestNotes = Pick<NoteTurns, 'canHearGuest' | 'guestNote' | 'answered' | 'answerFailed' | 'delivered'>;
+
 export interface NoteTurnsOptions {
     orbit: VoiceNoteOrbit;
     hearers: Record<string, ClipHearer>;
@@ -173,7 +191,17 @@ export class NoteTurns {
             return words !== null ? { ok: true, text: words, provider: 'kept', clipSeconds: measured.seconds, timings: { downloadMs, uploadMs: 0, waitMs: 0, totalMs: this.now() - started } } : { ok: false, reason: 'failed' };
         }
         if (turn.state !== 'reserved' && turn.state !== 'hearing') return { ok: false, reason: 'failed' };
+        return this.hearStage(turn.id, measured, { started, downloadMs, botId, onStart });
+    }
 
+    /** Takes the hearing stage of a reserved turn and hears its normalized copy; the words are kept at Orbit. */
+    private async hearStage(
+        turnId: string,
+        measured: { seconds: number; bytes: Uint8Array; filename: string },
+        context: { started: number; downloadMs: number; botId?: string; onStart?: () => void }
+    ): Promise<HeardNote> {
+        const { started, downloadMs, botId, onStart } = context;
+        const turn = { id: turnId };
         const lease = await this.options.orbit.leaseVoiceNote(turn.id, { stage: 'hearing', adapters: this.adapters() }, this.timeoutMs);
         if ('reason' in lease) return { ok: false, reason: lease.reason === 'held' ? 'busy' : lease.reason === 'no-hearing' ? 'none' : 'failed' };
         const hearing = lease.hearing;
@@ -216,7 +244,7 @@ export class NoteTurns {
         onStart?.();
         try {
             const heard = lease.reconcile && hearer.reconcile ? await hearer.reconcile(settings, lease.reconcile, hooks) : await hearer.hear(settings, { bytes: measured.bytes, filename: measured.filename }, hooks);
-            if (owner) this.options.report?.(botId, providerId, { ok: true });
+            if (owner && botId) this.options.report?.(botId, providerId, { ok: true });
             await this.record(turn.id, { event: 'heard', generation: lease.generation, transcript: heard.text, seconds: Math.max(0, Math.ceil(heard.seconds ?? measured.seconds)) });
             const totalMs = this.now() - started;
             this.log(`heard a ${measured.seconds.toFixed(1)} s note with ${settings.adapter} in ${totalMs} ms (download ${downloadMs}, upload ${heard.uploadMs}, wait ${heard.waitMs})`);
@@ -226,12 +254,99 @@ export class NoteTurns {
             const charged = submitted ? 'yes' : error instanceof HearingError && error.status !== 504 && error.status !== undefined ? 'no' : 'unknown';
             await this.record(turn.id, { event: 'hearing-failed', generation: lease.generation, charged });
             if (error instanceof HearingError) {
-                if (owner) this.options.report?.(botId, providerId, { ok: false, ...(error.status !== undefined ? { status: error.status } : {}), ...(error.rejected ? { rejected: true } : {}) });
+                if (owner && botId) this.options.report?.(botId, providerId, { ok: false, ...(error.status !== undefined ? { status: error.status } : {}), ...(error.rejected ? { rejected: true } : {}) });
                 if (error.rejected) return { ok: false, reason: 'rejected', status: error.status };
                 return { ok: false, reason: 'failed', ...(error.status !== undefined ? { status: error.status } : {}) };
             }
             throw error;
         }
+    }
+
+    /** Whether the Brick for guests hears voice notes now, for the mic: every part at Orbit, and Universe AI hearing. Never throws. */
+    async canHearGuest(): Promise<boolean> {
+        try {
+            if (!needsAll(await this.capabilities())) return false;
+            const kept = this.hearingCache.get(GUEST_BRICK);
+            const answer = kept && this.now() - kept.at < HEARING_MS ? kept.value : await this.options.orbit.guestBrickHearing(this.adapters(), this.timeoutMs);
+            if (!kept || this.now() - kept.at >= HEARING_MS) this.hearingCache.set(GUEST_BRICK, { at: this.now(), value: answer });
+            return !!answer && answer.route !== 'none' && !!answer.provider && answer.provider.adapter in this.options.hearers;
+        } catch (error) {
+            this.log(`could not ask Orbit whether the Brick for guests hears (${describe(error)})`);
+            return false;
+        }
+    }
+
+    /**
+     * A guest's voice note to the Brick for guests (plan v3): measured, reserved on the guest Brick's own note minutes (per guest and
+     * per universe, on Universe AI), heard, and then the answer stage is held for the caller, who runs the model and says
+     * `answered` or `answerFailed`. The same turn asked again gives back its kept answer, or its words without a second hearing.
+     * `contentHash` covers everything the turn holds (the note, the text, the files, the history), so a reused id is refused.
+     */
+    async guestNote(input: { guestId: string; roomUrl: string; turnId: string; bytes: Uint8Array; contentHash: string }): Promise<GuestNoteTurn> {
+        try {
+            if (!needsAll(await this.capabilities())) return { kind: 'refused', why: 'failed' };
+            const measured = await this.options.length.measure(input.bytes, await this.options.longestSeconds());
+            if ('reason' in measured) {
+                if (measured.reason === 'unavailable') this.log('ffmpeg is not available: notes are not heard');
+                return { kind: 'refused', why: measured.reason === 'too-long' ? 'too-long' : 'failed' };
+            }
+            const reservation = await this.options.orbit.reserveVoiceNote(
+                {
+                    scope: 'guest-brick',
+                    roomUrl: input.roomUrl,
+                    userId: input.guestId,
+                    isGuest: true,
+                    clientTurnId: clientTurnIdOf(input.turnId),
+                    contentHash: input.contentHash,
+                    seconds: Math.max(1, Math.ceil(measured.seconds)),
+                    adapters: this.adapters(),
+                },
+                this.timeoutMs
+            );
+            if ('reason' in reservation) {
+                if (reservation.reason === 'expired') return { kind: 'expired' };
+                if (reservation.reason === 'too-long') return { kind: 'refused', why: 'too-long', longestSeconds: (reservation as Extract<Reservation, { reason: 'too-long' }>).longestSeconds };
+                return { kind: 'refused', why: reservation.reason === 'busy' ? 'busy' : 'failed' };
+            }
+            const turn = reservation.turn;
+            if (reservation.answer?.answer !== undefined) return { kind: 'answered', turnId: turn.id, transcript: reservation.answer.transcript, answer: reservation.answer.answer };
+            if (turn.state === 'reserved' || turn.state === 'hearing') {
+                const started = this.now();
+                const heard = await this.hearStage(turn.id, measured, { started, downloadMs: 0 });
+                if ('reason' in heard) return { kind: 'refused', why: heard.reason === 'busy' ? 'busy' : 'failed' };
+            } else if (turn.state === 'answering') {
+                return { kind: 'refused', why: 'busy' };
+            } else if (turn.state === 'answered' || turn.state === 'delivered') {
+                return { kind: 'expired' };
+            } else if (turn.state !== 'heard') {
+                return { kind: 'uncertain' };
+            }
+            const lease = await this.options.orbit.leaseVoiceNote(turn.id, { stage: 'answer' }, this.timeoutMs);
+            if (!('generation' in lease)) {
+                const reason = (lease as { reason: string }).reason;
+                return reason === 'held' ? { kind: 'refused', why: 'busy' } : reason === 'expired' ? { kind: 'expired' } : { kind: 'uncertain' };
+            }
+            if (typeof lease.transcript !== 'string') return { kind: 'uncertain' };
+            return { kind: 'heard', turnId: turn.id, generation: lease.generation, transcript: lease.transcript };
+        } catch (error) {
+            this.log(`could not hear a note for the Brick for guests (${describe(error)})`);
+            return { kind: 'refused', why: 'failed' };
+        }
+    }
+
+    /** The answer of a guest's note: kept at Orbit, encrypted, until the device says it has it (15 minutes at most). */
+    answered(turnId: string, generation: number, answer: string): Promise<void> {
+        return this.record(turnId, { event: 'answered', generation, answer });
+    }
+
+    /** The model failed: the words stay, so the next try answers without hearing the note again. */
+    answerFailed(turnId: string, generation: number): Promise<void> {
+        return this.record(turnId, { event: 'answer-failed', generation });
+    }
+
+    /** The device has the answer: Orbit deletes it. */
+    delivered(turnId: string): Promise<void> {
+        return this.record(turnId, { event: 'delivered' });
     }
 
     /** The words a turn already has, read through the answer stage and handed straight back, so nothing is heard again. */

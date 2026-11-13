@@ -210,3 +210,64 @@ describe('what the provider still holds', () => {
         expect(orbit.claimVoiceNoteCleanups).not.toHaveBeenCalled();
     });
 });
+
+describe("a guest's note to the Brick for guests", () => {
+    const NOTE = { guestId: 'guest-1', roomUrl: 'https://play.test/@/u/w/lobby', turnId: 'turn-g', bytes: new Uint8Array([1, 2]), contentHash: 'hash-1' };
+    const answerLease = (): Lease => ({ granted: true, generation: 2, leaseUntil: 'later', transcript: 'where is the coffee' });
+
+    it('is reserved on the guest Brick, heard once, and its answer stage is held for the model', async () => {
+        orbit.leaseVoiceNote.mockImplementation(async (_id: string, input: { stage: string }) => (input.stage === 'answer' ? answerLease() : { granted: true, generation: 1, leaseUntil: 'later', hearing: UNIVERSE_AI }));
+        const t = turns();
+        const heard = await t.guestNote(NOTE);
+        expect(heard).toEqual({ kind: 'heard', turnId: 'turn-1', generation: 2, transcript: 'where is the coffee' });
+        expect(orbit.reserveVoiceNote).toHaveBeenCalledWith(
+            { scope: 'guest-brick', roomUrl: NOTE.roomUrl, userId: 'guest-1', isGuest: true, clientTurnId: 'turn-g', contentHash: 'hash-1', seconds: 4, adapters: ['soniox'] },
+            expect.any(Number)
+        );
+        expect(hearer.hear).toHaveBeenCalledTimes(1);
+        await t.answered('turn-1', 2, 'Second row.');
+        await t.delivered('turn-1');
+        expect(events.slice(-2)).toEqual([{ event: 'answered', generation: 2, answer: 'Second row.' }, { event: 'delivered' }]);
+    });
+
+    it('gives back a kept answer without hearing or running anything again', async () => {
+        orbit.reserveVoiceNote.mockResolvedValueOnce({ ...reserved('answered'), answer: { transcript: 'where is the coffee', answer: 'Second row.' } });
+        expect(await turns().guestNote(NOTE)).toEqual({ kind: 'answered', turnId: 'turn-1', transcript: 'where is the coffee', answer: 'Second row.' });
+        expect(hearer.hear).not.toHaveBeenCalled();
+        expect(orbit.leaseVoiceNote).not.toHaveBeenCalled();
+    });
+
+    it('answers words heard before (an answer that failed) without hearing the note again', async () => {
+        orbit.reserveVoiceNote.mockResolvedValueOnce(reserved('heard'));
+        orbit.leaseVoiceNote.mockResolvedValueOnce(answerLease());
+        expect(await turns().guestNote(NOTE)).toMatchObject({ kind: 'heard', transcript: 'where is the coffee' });
+        expect(hearer.hear).not.toHaveBeenCalled();
+    });
+
+    it('says when the note is too long, the answer is gone, or a try may have finished elsewhere, and never runs those again', async () => {
+        measure.mockResolvedValueOnce({ ok: false, reason: 'too-long' });
+        expect(await turns().guestNote(NOTE)).toEqual({ kind: 'refused', why: 'too-long' });
+        orbit.reserveVoiceNote.mockResolvedValueOnce({ ok: false, reason: 'too-long', longestSeconds: 120 });
+        expect(await turns().guestNote(NOTE)).toEqual({ kind: 'refused', why: 'too-long', longestSeconds: 120 });
+        orbit.reserveVoiceNote.mockResolvedValueOnce({ ok: false, reason: 'expired' });
+        expect(await turns().guestNote(NOTE)).toEqual({ kind: 'expired' });
+        orbit.reserveVoiceNote.mockResolvedValueOnce(reserved('uncertain'));
+        expect(await turns().guestNote(NOTE)).toEqual({ kind: 'uncertain' });
+        orbit.reserveVoiceNote.mockResolvedValueOnce(reserved('answering'));
+        expect(await turns().guestNote(NOTE)).toEqual({ kind: 'refused', why: 'busy' });
+        orbit.reserveVoiceNote.mockResolvedValueOnce({ ok: false, reason: 'note-minutes', limit: 'person', resetsAt: 'tomorrow' });
+        expect(await turns().guestNote(NOTE)).toEqual({ kind: 'refused', why: 'failed' });
+        expect(hearer.hear).not.toHaveBeenCalled();
+    });
+
+    it('hears nothing with an Orbit that does not have every part, and the mic shows only when Universe AI hears', async () => {
+        orbit.voiceNoteCapabilities.mockResolvedValue(null);
+        expect(await turns().guestNote(NOTE)).toEqual({ kind: 'refused', why: 'failed' });
+        expect(await turns().canHearGuest()).toBe(false);
+        expect(orbit.reserveVoiceNote).not.toHaveBeenCalled();
+        orbit.voiceNoteCapabilities.mockResolvedValue(CAPS);
+        expect(await turns().canHearGuest()).toBe(true);
+        orbit.guestBrickHearing.mockResolvedValue({ ...UNIVERSE_AI, route: 'none', provider: null, payer: null });
+        expect(await turns().canHearGuest()).toBe(false);
+    });
+});

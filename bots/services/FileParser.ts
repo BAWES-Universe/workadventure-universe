@@ -22,6 +22,7 @@
  *  - video/*: note type only
  *  - unknown: note filename and type
  */
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { resolve4, resolve6 } from 'dns/promises';
 import { extractWebContent } from './WebPageExtractor';
 
@@ -58,7 +59,21 @@ export interface ParsedFile {
     };
 }
 
+/** Files whose bytes were already read and checked, by their link: inside `FileParser.withLoadedFiles`, the only ones that can be read. */
+export type LoadedFiles = ReadonlyMap<string, { bytes: ArrayBuffer; type: string }>;
+
 export class FileParser {
+    private static readonly loaded = new AsyncLocalStorage<LoadedFiles>();
+
+    /**
+     * Runs `work` (the same reading every bot does) on files whose bytes were read and checked already, a guest's uploads for
+     * instance: their links read from those bytes, and nothing else can be fetched while it runs, so a document that names other
+     * addresses never reaches the network.
+     */
+    static withLoadedFiles<T>(files: LoadedFiles, work: () => Promise<T>): Promise<T> {
+        return FileParser.loaded.run(files, work);
+    }
+
     // Short-lived URL-keyed memo for sniffContentType: coalesces in-flight
     // requests and caches results briefly (see sniffContentType).
     private static sniffCache = new Map<
@@ -758,6 +773,13 @@ export class FileParser {
      * chains from pivoting to internal or private addresses.
      */
     private static async fetchBuffer(url: string, maxBytes = 25 * 1024 * 1024): Promise<ArrayBuffer> {
+        const loaded = FileParser.loaded.getStore();
+        if (loaded) {
+            const file = loaded.get(url);
+            if (!file) throw new Error('Only the files already read can be read here');
+            if (file.bytes.byteLength > maxBytes) throw new Error(`File too large (over ${maxBytes / 1024 / 1024}MB)`);
+            return file.bytes;
+        }
         const MAX_REDIRECTS = 5;
         const MAX_BYTES = maxBytes; // 25MB cap by default (same as BotClient)
         let currentUrl = url;
@@ -825,6 +847,11 @@ export class FileParser {
      * same safe-destination check to URLs they hand off to external providers.
      */
     static async validateUrl(url: string): Promise<void> {
+        const loaded = FileParser.loaded.getStore();
+        if (loaded) {
+            if (loaded.has(url)) return;
+            throw new Error('Only the files already read can be read here');
+        }
         let parsedUrl: URL;
         try {
             parsedUrl = new URL(url);
@@ -951,6 +978,8 @@ export class FileParser {
      * coalesced; cached results expire after SNIFF_CACHE_TTL_MS.
      */
     static sniffContentType(url: string): Promise<string | null> {
+        const loaded = FileParser.loaded.getStore();
+        if (loaded) return Promise.resolve(loaded.get(url)?.type ?? null);
         const cached = FileParser.sniffCache.get(url);
         if (cached && cached.expiresAt > Date.now()) {
             return cached.promise;

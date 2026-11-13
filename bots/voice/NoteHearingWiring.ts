@@ -7,7 +7,7 @@ import type { AdminApiService } from '../server/AdminApiService';
 import { FileParser } from '../services/FileParser';
 import { NoteHearing, type Clip, type HearingSettings, type NoteAllowance } from './NoteHearing';
 import { NoteLength } from './NoteLength';
-import { NoteTurns, needsAll, type NoteSender, type TurnHeard } from './NoteTurns';
+import { NoteTurns, needsAll, type GuestNotes, type NoteSender, type TurnHeard } from './NoteTurns';
 import { SonioxNotes } from './SonioxNotes';
 import { ListeningBudget } from './VoiceListening';
 import { BotVoiceSettings } from './VoiceSettings';
@@ -59,6 +59,8 @@ export interface NoteHearingService {
     /** Keeps deleting what the hearing provider still holds, until it confirms. */
     startCleaning(): void;
     readonly limits: NoteLimits;
+    /** Voice notes to the Brick for guests: always the turns at Orbit (an Orbit from before has none, so it hears none). */
+    readonly guest: GuestNotes;
 }
 
 /** Null where hearing can't work: no Orbit set up for voice. */
@@ -183,6 +185,7 @@ export function buildNoteHearing(admin: AdminApiService, env: NodeJS.ProcessEnv 
             replySource = source;
         },
         startCleaning: () => turns.startCleaning(),
+        guest: turns,
     };
 }
 

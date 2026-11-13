@@ -2552,10 +2552,12 @@ export abstract class BaseBehavior {
         /** The bot reading it, for a caller with no bot client (a direct message). */
         botId?: string,
         /** Filled with what was read from each link (null when reading it failed), for keeping the files (#1508). */
-        found?: Map<string, ParsedFile | null>
+        found?: Map<string, ParsedFile | null>,
+        /** How much of each file is read, for a caller with no bot (the Brick for guests). */
+        readCharsOverride?: number
     ): Promise<string> {
         const allUrls = [...new Set([url, ...(galleryUrls || [])])];
-        const readChars = this.aiService?.readCharsFor(botId ?? this.bot?.getBotId());
+        const readChars = readCharsOverride ?? this.aiService?.readCharsFor(botId ?? this.bot?.getBotId());
         let augmentedMessage = message;
 
         // Hoist dynamic import and load all files in parallel
