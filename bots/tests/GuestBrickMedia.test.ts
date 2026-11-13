@@ -96,6 +96,9 @@ describe('upload receipts', () => {
         if (!check.ok) throw new Error('receipt');
         const read = (error: Error) => readReceiptFile(check.claims, UPLOADER, 100, async () => Promise.reject(error));
         expect(await read(new Error('HTTP 410 fetching x'))).toEqual({ ok: false, reason: 'gone' });
+        // A link the fetch refuses (an address it must not reach) never changes on its own: never asked again and again
+        expect(await read(new Error("URL hostname 'uploader' resolves to a private/internal IP address"))).toEqual({ ok: false, reason: 'gone' });
+        expect(await read(new Error('Unsupported URL scheme: ftp:'))).toEqual({ ok: false, reason: 'gone' });
         for (const error of [new Error('HTTP 503 fetching x'), new Error('HTTP 429 fetching x'), new Error('HTTP 408 fetching x'), new Error('The operation was aborted due to timeout'), new Error('fetch failed')]) {
             expect(await read(error)).toEqual({ ok: false, reason: 'not-now' });
         }
@@ -430,7 +433,7 @@ describe("a guest's pictures, files and notes come along when they sign in (plan
         expect(again[0].media?.[0].url).toBe('https://cdn.test/copy.oga');
 
         // The uploader could not be asked about a file: the part waits, nothing is marked gone
-        const flaky = copySteps({ read: vi.fn(async () => ({ ok: false, why: 'not-now' })) });
+        const flaky = copySteps({ read: vi.fn(async () => ({ ok: false as const, why: 'not-now' as const })) });
         await expect(copyCarriedMedia(`g-${Math.random()}`, readCarriedLines([LINE]), flaky)).rejects.toBeInstanceOf(CarryNotNowError);
         expect(flaky.store).not.toHaveBeenCalled();
 

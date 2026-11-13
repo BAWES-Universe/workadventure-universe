@@ -75,12 +75,18 @@ export function uploaderPathOf(claims: Pick<ReceiptClaims, 'fid' | 'bkt'>, uploa
     return claims.bkt ? `${base}/chat-file/${encodeURIComponent(claims.bkt)}/${encodeURIComponent(claims.fid)}` : `${base}/upload-file/${encodeURIComponent(claims.fid)}`;
 }
 
+/**
+ * What a fetch says when the uploader could not be asked just now: a 5xx, 408 or 429, a timeout or a dropped connection.
+ * Anything else, a 4xx or a link the fetch refuses (an address it must not reach), is not going to change on its own.
+ */
+const TRANSIENT_FETCH = /^HTTP (5\d\d|408|429)\b|timed? ?out|timeout|aborted|fetch failed|socket hang up|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|EPIPE|network/i;
+
 export type ReceiptFile = { ok: true; bytes: Uint8Array; claims: ReceiptClaims } | { ok: false; reason: 'gone' | 'changed' | 'too-big' | 'not-now' };
 
 /**
  * The bytes of a receipt's file, read through the uploader's path with at most `maxBytes`, and only when they are the bytes the
- * uploader stored. `fetchBytes` is the SSRF-safe bounded fetch (it validates every redirect). Only the uploader saying the file is
- * not there (a 4xx other than 408 or 429) makes it `gone`: a timeout, a dropped connection or a 5xx is `not-now`, to ask again.
+ * uploader stored. `fetchBytes` is the SSRF-safe bounded fetch (it validates every redirect). A timeout, a dropped connection
+ * or a 5xx (408 and 429 too) is `not-now`, to ask again; anything else, a 4xx or a link the fetch refuses, is `gone`.
  */
 export async function readReceiptFile(
     claims: ReceiptClaims,
@@ -95,9 +101,7 @@ export async function readReceiptFile(
     } catch (error) {
         const message = (error as Error)?.message ?? '';
         if (/too large/i.test(message)) return { ok: false, reason: 'too-big' };
-        const status = /^HTTP (\d{3})\b/.exec(message)?.[1];
-        const gone = status !== undefined && status.startsWith('4') && status !== '408' && status !== '429';
-        return { ok: false, reason: gone ? 'gone' : 'not-now' };
+        return { ok: false, reason: TRANSIENT_FETCH.test(message) ? 'not-now' : 'gone' };
     }
     if (createHash('sha256').update(bytes).digest('hex') !== claims.sha256) return { ok: false, reason: 'changed' };
     return { ok: true, bytes, claims };
