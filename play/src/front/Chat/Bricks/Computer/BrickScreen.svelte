@@ -154,8 +154,7 @@
                 else if (action === "fill-details") {
                     tapped = true;
                     tappedRound = roundAtTap;
-                }
-                else if (action === "stop") onClose();
+                } else if (action === "stop") onClose();
                 else if (action === "hand-back") tapped = false;
             })
             .catch((error) => console.error(error))

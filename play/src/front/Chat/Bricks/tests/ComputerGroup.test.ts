@@ -580,13 +580,11 @@ describe("a Brick's computer on screen (#2000)", () => {
 
         it("has one request on its way after one that found no screen, however often the computer is read", async () => {
             vi.useFakeTimers();
-            game.watchBrickComputer
-                .mockResolvedValueOnce(undefined)
-                .mockReturnValue(
-                    new Promise(() => {
-                        // the next one never answers
-                    })
-                );
+            game.watchBrickComputer.mockResolvedValueOnce(undefined).mockReturnValue(
+                new Promise(() => {
+                    // the next one never answers
+                })
+            );
             game.getBrickComputer.mockResolvedValue(working());
             await loadBrickComputer(BRICK);
             piece = new BrickScreen({ target, props: { brick, onClose: () => undefined } });

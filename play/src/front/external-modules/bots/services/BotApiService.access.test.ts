@@ -307,7 +307,10 @@ describe("an Orbit that does not answer about who may use a bot", () => {
         ["bringing a Brick back", (api) => api.undoMyBrick("b1")],
         ["reading a Brick's computer", (api) => api.getBrickComputer("b1")],
         ["a tap on a Brick's computer", (api) => api.brickComputerAction("b1", "stop")],
-        ["a tap that fills in details", (api) => api.brickComputerAction("b1", "fill-details", { what: "x", where: "y" })],
+        [
+            "a tap that fills in details",
+            (api) => api.brickComputerAction("b1", "fill-details", { what: "x", where: "y" }),
+        ],
         ["dismissing a computer notice", (api) => api.dismissBrickComputerNotice("b1", "j1")],
     ];
 
