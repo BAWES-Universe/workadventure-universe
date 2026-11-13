@@ -13,7 +13,8 @@
 //       without a break since the sound and heard no speech for SILENCE_MS of it, and the same reply is still playing
 //   - it is a PROVISIONAL CONTINUATION when the stretch is still open (a fan keeps the volume gate open, so the
 //       recognizer never finishes) but the detector has followed each person without a break since the sound and heard
-//       no speech for SILENCE_MS of it, and no words have ever come: the voice goes on, and the open stretch is still
+//       no speech for SILENCE_MS of it, and no words have ever come and no audio has gone missing in it, from its very
+//       start (before the gate too): the voice goes on, and the open stretch is still
 //       watched until it ends. Any words from it, speech from the detector, a failure, missing audio or a break in the
 //       detector's view then stops the reply as today. This is not counted as a false alarm: nothing proves it was one.
 //       A detector that misses speech while the recognizer has no words yet can still let the voice go on over someone.
@@ -104,8 +105,10 @@ interface Candidate {
     droppedMs: number;
     /** Undefined while the stretch is open; `empty` once it ended with nothing. */
     end?: 'empty';
-    /** Words came through for this stretch at some point. */
+    /** Words came through for this stretch at some point, from its very start (before the gate too), even if taken back. */
     words: boolean;
+    /** Audio of this stretch went missing at some point, from its very start: nothing about it can then be certified. */
+    missing: boolean;
 }
 
 /** One pause (or dip, or wait) on one reply, and the stretches it is waiting on. */
@@ -145,7 +148,7 @@ export class YieldControl implements Interruptions {
         return !this.closed && this.options.speaker.playingId !== undefined;
     }
 
-    loud(turn: { participantId: string; epoch: number; turnId: string; heard: string }, speech: (stopVoice: boolean) => void): boolean {
+    loud(turn: { participantId: string; epoch: number; turnId: string; heard: string; everWords: boolean; missingMs: number }, speech: (stopVoice: boolean) => void): boolean {
         if (this.closed) return false;
         const { speaker, observer } = this.options;
         const playing = speaker.playingId;
@@ -186,7 +189,19 @@ export class YieldControl implements Interruptions {
             this.yieldVoice();
         }
         this.count('candidates');
-        const candidate: Candidate = { participantId: turn.participantId, epoch: turn.epoch, turnId: turn.turnId, speech, cancel: () => undefined, at: now, stream: view.stream, droppedMs: view.droppedMs, words: turn.heard !== '' };
+        const candidate: Candidate = {
+            participantId: turn.participantId,
+            epoch: turn.epoch,
+            turnId: turn.turnId,
+            speech,
+            cancel: () => undefined,
+            at: now,
+            stream: view.stream,
+            droppedMs: view.droppedMs,
+            // The whole stretch so far, not just its latest words: words taken back, or audio lost, before the gate still count
+            words: turn.everWords || turn.heard !== '',
+            missing: turn.missingMs > 0,
+        };
         episode.candidates.set(turn.turnId, candidate);
         const ep = episode;
         candidate.cancel = observer.confirm(turn.participantId, turn.epoch, (fallback) => {
@@ -219,17 +234,26 @@ export class YieldControl implements Interruptions {
         else if (isStopCommand(text)) this.stop(episode, 'confirmed_command', candidate);
     }
 
+    missing(turnId: string, ms: number): void {
+        const episode = this.episode;
+        const candidate = episode?.candidates.get(turnId);
+        if (!episode || !candidate || candidate.end || ms <= 0) return;
+        candidate.missing = true;
+        // While going on provisionally, the stretch can no longer be followed whole: a stop, as today
+        if (episode.phase === 'continuing') this.stop(episode, 'continuing_audio_missing', candidate);
+    }
+
     ended(turnId: string, how: TurnEnd): void {
         const episode = this.episode;
         const candidate = episode?.candidates.get(turnId);
         if (!episode || !candidate) return;
-        if (how === 'empty' && !candidate.words) {
+        if (how === 'empty' && !candidate.words && !candidate.missing) {
             candidate.end = 'empty';
             this.count('ended_empty');
             this.look(episode);
             return;
         }
-        if (episode.phase === 'continuing' && (how === 'gone' || (how === 'capped' && !candidate.words))) {
+        if (episode.phase === 'continuing' && (how === 'gone' || (how === 'capped' && !candidate.words && !candidate.missing))) {
             // Going on already: a stretch that ends with no evidence either way (the person left, or the length limit
             // with no words ever) is no longer watched, and nothing is stopped
             this.count(how === 'gone' ? 'continuing_person_gone' : 'continuing_capped');
@@ -366,7 +390,7 @@ export class YieldControl implements Interruptions {
             return;
         }
         // A provisional continuation: stretches still open, no words ever, everyone followed and quiet long enough since the sound
-        if (this.provisional && candidates.some((c) => !c.end) && candidates.every((c) => !c.words && this.followed(c, now, true))) {
+        if (this.provisional && candidates.some((c) => !c.end) && candidates.every((c) => !c.words && !c.missing && this.followed(c, now, true))) {
             episode.phase = 'continuing';
             this.count('continues');
             this.count('continue_ms', Math.round(now - episode.pausedAt));

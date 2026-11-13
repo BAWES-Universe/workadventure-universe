@@ -45,7 +45,8 @@ Never stopped, by set and condition:
 
 ## Noise and knocks (311 clips), provider hears nothing (a successful empty result): should not stop
 
-Rates are per minute of the bot talking: to its stop, or to the end of the clip and its 8 s tail.
+Rates are per minute of reply-active elapsed time: from the start of the clip to the stop, or to the end of the clip and its 8 s
+tail. Time spent paused and the silent tail are included, not subtracted: this is not time the bot was actually heard talking.
 
 | behaviour | group | clips stopped for good | of which by the 6 s deadline | pauses or dips per min | held s per min | went on after an empty result | went on, watched |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -70,7 +71,27 @@ Rates are per minute of the bot talking: to its stop, or to the end of the clip 
 | pause; also go on, watched, over steady noise | speechlike (93) | 70 (75.3%) | 0 | 5.00 | 5.1 | 0 | 71 |
 | pause; also go on, watched, over steady noise | three knocks (20) | 0 (0.0%) | 0 | 5.00 | 8.0 | 0 | 20 |
 
-Steady noise by level: what stopped it, and how long the bot could talk first (median over clips that stopped):
+Steady non-speech noise only (177 clips), by level: what stopped it, and how long the bot could talk first (median over clips that stopped):
+
+| behaviour | level (dBFS) | clips | stopped | first stop after | detector heard speech | words or failure | 6 s deadline | view lost while going on | went on, watched |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| today's rule | -45 | 59 | 50 | 2.7 s | - | - | - | - | - |
+| today's rule | -35 | 59 | 59 | 0.2 s | - | - | - | - | - |
+| today's rule | -25 | 59 | 59 | 0.1 s | - | - | - | - | - |
+| stop only when confirmed | -45 | 59 | 32 | 8.3 s | 1 | 0 | 31 | 0 | 0 |
+| stop only when confirmed | -35 | 59 | 56 | 6.2 s | 4 | 0 | 52 | 0 | 0 |
+| stop only when confirmed | -25 | 59 | 57 | 6.1 s | 3 | 0 | 54 | 0 | 0 |
+| turn down, then stop or back up | -45 | 59 | 32 | 8.3 s | 1 | 0 | 31 | 0 | 0 |
+| turn down, then stop or back up | -35 | 59 | 56 | 6.2 s | 4 | 0 | 52 | 0 | 0 |
+| turn down, then stop or back up | -25 | 59 | 57 | 6.1 s | 3 | 0 | 54 | 0 | 0 |
+| pause; go on only after an empty result | -45 | 59 | 32 | 8.3 s | 1 | 0 | 31 | 0 | 0 |
+| pause; go on only after an empty result | -35 | 59 | 56 | 6.2 s | 4 | 0 | 52 | 0 | 0 |
+| pause; go on only after an empty result | -25 | 59 | 57 | 6.1 s | 3 | 0 | 54 | 0 | 0 |
+| pause; also go on, watched, over steady noise | -45 | 59 | 2 | 40.4 s | 2 | 0 | 0 | 0 | 135 |
+| pause; also go on, watched, over steady noise | -35 | 59 | 5 | 4.2 s | 5 | 0 | 0 | 0 | 98 |
+| pause; also go on, watched, over steady noise | -25 | 59 | 4 | 1.9 s | 4 | 0 | 0 | 0 | 74 |
+
+All 291 steady fixtures pooled (non-speech, scenes and speech-like noise together), by level:
 
 | behaviour | level (dBFS) | clips | stopped | first stop after | detector heard speech | words or failure | 6 s deadline | view lost while going on | went on, watched |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -100,7 +121,8 @@ Three knocks in 1.3 s, one trial per clip (20 trials): from the pause, how long 
 
 ## Noise and knocks (311 clips), provider hears words in anything (background speech transcribed): should not stop
 
-Rates are per minute of the bot talking: to its stop, or to the end of the clip and its 8 s tail.
+Rates are per minute of reply-active elapsed time: from the start of the clip to the stop, or to the end of the clip and its 8 s
+tail. Time spent paused and the silent tail are included, not subtracted: this is not time the bot was actually heard talking.
 
 | behaviour | group | clips stopped for good | of which by the 6 s deadline | pauses or dips per min | held s per min | went on after an empty result | went on, watched |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -125,7 +147,27 @@ Rates are per minute of the bot talking: to its stop, or to the end of the clip 
 | pause; also go on, watched, over steady noise | speechlike (93) | 93 (100.0%) | 17 | 18.55 | 34.5 | 0 | 0 |
 | pause; also go on, watched, over steady noise | three knocks (20) | 20 (100.0%) | 0 | 13.64 | 45.0 | 0 | 0 |
 
-Steady noise by level: what stopped it, and how long the bot could talk first (median over clips that stopped):
+Steady non-speech noise only (177 clips), by level: what stopped it, and how long the bot could talk first (median over clips that stopped):
+
+| behaviour | level (dBFS) | clips | stopped | first stop after | detector heard speech | words or failure | 6 s deadline | view lost while going on | went on, watched |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| today's rule | -45 | 59 | 50 | 2.7 s | - | - | - | - | - |
+| today's rule | -35 | 59 | 59 | 0.2 s | - | - | - | - | - |
+| today's rule | -25 | 59 | 59 | 0.1 s | - | - | - | - | - |
+| stop only when confirmed | -45 | 59 | 50 | 7.5 s | 1 | 27 | 22 | 0 | 0 |
+| stop only when confirmed | -35 | 59 | 59 | 6.2 s | 3 | 6 | 50 | 0 | 0 |
+| stop only when confirmed | -25 | 59 | 59 | 6.1 s | 3 | 3 | 53 | 0 | 0 |
+| turn down, then stop or back up | -45 | 59 | 50 | 7.5 s | 1 | 27 | 22 | 0 | 0 |
+| turn down, then stop or back up | -35 | 59 | 59 | 6.2 s | 3 | 6 | 50 | 0 | 0 |
+| turn down, then stop or back up | -25 | 59 | 59 | 6.1 s | 3 | 3 | 53 | 0 | 0 |
+| pause; go on only after an empty result | -45 | 59 | 50 | 7.5 s | 1 | 27 | 22 | 0 | 0 |
+| pause; go on only after an empty result | -35 | 59 | 59 | 6.2 s | 3 | 6 | 50 | 0 | 0 |
+| pause; go on only after an empty result | -25 | 59 | 59 | 6.1 s | 3 | 3 | 53 | 0 | 0 |
+| pause; also go on, watched, over steady noise | -45 | 59 | 50 | 7.5 s | 1 | 27 | 22 | 0 | 0 |
+| pause; also go on, watched, over steady noise | -35 | 59 | 59 | 6.2 s | 3 | 6 | 50 | 0 | 0 |
+| pause; also go on, watched, over steady noise | -25 | 59 | 59 | 6.1 s | 3 | 3 | 53 | 0 | 0 |
+
+All 291 steady fixtures pooled (non-speech, scenes and speech-like noise together), by level:
 
 | behaviour | level (dBFS) | clips | stopped | first stop after | detector heard speech | words or failure | 6 s deadline | view lost while going on | went on, watched |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |

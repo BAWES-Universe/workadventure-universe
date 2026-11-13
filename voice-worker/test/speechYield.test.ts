@@ -259,6 +259,7 @@ describe('hearing tells the control how each stretch it was asked about ended', 
                 return answer;
             },
             words: (_, text) => log.push(`words ${text}`),
+            missing: (_, ms) => log.push(`missing ${ms}`),
             ended: (_, how: TurnEnd) => {
                 log.push(`ended ${how}`);
                 if (how === 'text') speech?.(true);
@@ -348,7 +349,7 @@ describe('hearing tells the control how each stretch it was asked about ended', 
             pauseMs: 400,
             counters: new Counters(),
             send: () => undefined,
-            interruptions: { owns: () => true, loud: () => true, words: () => undefined, ended: (_, how) => ended.push(how) },
+            interruptions: { owns: () => true, loud: () => true, words: () => undefined, missing: () => undefined, ended: (_, how) => ended.push(how) },
         });
         for (let t = 0; t < 300; t += 20) recognition.sink({ participantId: 'p1', epoch: 1, pcm16k: tone(440), droppedMs: 0 });
         for (let t = 0; t < 500; t += 20) recognition.sink({ participantId: 'p1', epoch: 1, pcm16k: new Int16Array(320), droppedMs: 0 });
@@ -391,7 +392,7 @@ describe('hearing tells the control how each stretch it was asked about ended', 
             pauseMs: 400,
             counters: new Counters(),
             send: () => undefined,
-            interruptions: { owns: () => true, loud: () => true, words: () => undefined, ended: (_, how) => ended.push(how) },
+            interruptions: { owns: () => true, loud: () => true, words: () => undefined, missing: () => undefined, ended: (_, how) => ended.push(how) },
         });
         for (let t = 0; t < 300; t += 20) recognition.sink({ participantId: 'p1', epoch: 1, pcm16k: tone(440), droppedMs: 0 });
         for (let t = 0; t < 500; t += 20) recognition.sink({ participantId: 'p1', epoch: 1, pcm16k: new Int16Array(320), droppedMs: 0 });
@@ -475,7 +476,8 @@ function controlled(policy: YieldPolicy = 'hold', settings: { silenceMs?: number
     const control = new YieldControl({ policy, counters, speaker, observer, silenceMs: 300, freshMs: 300, watchdogMs: 2000, ...settings });
     control.onStopHeld = () => calls.push('stop held');
     const spoke: [string, boolean][] = [];
-    const loud = (p: string, turnId = `t-${p}`, heard = '') => control.loud({ participantId: p, epoch: 1, turnId, heard }, (stop) => spoke.push([p, stop]));
+    const loud = (p: string, turnId = `t-${p}`, heard = '', earlier: { everWords?: boolean; missingMs?: number } = {}) =>
+        control.loud({ participantId: p, epoch: 1, turnId, heard, everWords: heard !== '' || (earlier.everWords ?? false), missingMs: earlier.missingMs ?? 0 }, (stop) => spoke.push([p, stop]));
     const fresh = (p: string, quietMs = 0, speech = false, stream = 1) => views.set(p, { ageMs: 20, quietMs, speech, stream, droppedMs: 0 });
     return { control, counters, calls, speaker, views, asks, spoke, loud, fresh };
 }
@@ -760,6 +762,203 @@ describe('steady noise: the voice goes on provisionally while the open stretch i
         c.loud('p1');
         await waitFor('the watchdog', () => c.counters.get('yield_watchdog') === 1, 1500);
         expect(c.counters.get('yield_continues')).toBe(0);
+    });
+});
+
+describe('going on needs the whole stretch: words or lost audio from before the gate, and skips inside the detector, still count', () => {
+    /** The real hearing and the real control together; the detector's view of p1 is set by hand (fresh, no speech, unbroken). */
+    function composed(script: { partials?: [number, string][]; firstDroppedMs?: number } = {}) {
+        const counters = new Counters();
+        const calls: string[] = [];
+        const speaker: YieldSpeaker = {
+            playingId: 'r1',
+            hold: () => (calls.push('hold'), 'r1'),
+            resume: (id) => (calls.push(`resume ${id}`), true),
+            setGain: () => undefined,
+        };
+        const view = { ageMs: 20, quietMs: 60_000, speech: false, stream: 1, droppedMs: 0 };
+        const observer: SessionObserver = {
+            frame: () => undefined,
+            drop: () => undefined,
+            baseline: () => undefined,
+            close: () => undefined,
+            heard: () => view,
+            confirm: () => () => undefined,
+        };
+        const control = new YieldControl({ policy: 'hold', counters, speaker, observer, silenceMs: 300, freshMs: 300, watchdogMs: 1500 });
+        control.onStopHeld = () => calls.push('stop held');
+        const spoke: boolean[] = [];
+        const recognition = new Recognition({
+            factory: (events) => {
+                let pushes = 0;
+                return {
+                    push: () => {
+                        pushes++;
+                        for (const [at, text] of script.partials ?? []) if (at === pushes) events.partial(text);
+                    },
+                    finish: () => events.final(''),
+                    close: () => undefined,
+                };
+            },
+            maxUtteranceMs: 180000,
+            pauseMs: 400,
+            counters,
+            send: () => undefined,
+            onSpeaking: (_, stop) => spoke.push(stop),
+            interruptions: control,
+        });
+        let first = true;
+        /** A steady fan, in real time: it keeps the stretch open. */
+        const fan = async (ms: number, droppedMs = 0) => {
+            for (let t = 0; t < ms; t += 100) {
+                for (let f = 0; f < 5; f++) {
+                    const lost = first ? (script.firstDroppedMs ?? 0) : f === 0 && t === 0 ? droppedMs : 0;
+                    first = false;
+                    recognition.sink({ participantId: 'p1', epoch: 1, pcm16k: tone(NOISE_HZ), droppedMs: lost });
+                }
+                await sleep(100);
+            }
+        };
+        return { counters, calls, spoke, fan, control, recognition };
+    }
+
+    it('the control case: a fan with nothing before the gate goes on after the quiet window, the stretch still open', async () => {
+        const c = composed();
+        await c.fan(900);
+        expect(c.calls).toEqual(['hold', 'resume r1']);
+        expect(c.counters.get('yield_continues')).toBe(1);
+        expect(c.spoke).toEqual([]);
+        c.recognition.dispose();
+        c.control.close();
+    });
+
+    it('a word heard and taken back before the gate (partial "hello" at 20 ms, empty at 40 ms): never goes on, never resolved empty', async () => {
+        const c = composed({ partials: [[1, 'hello'], [2, '']] });
+        await c.fan(1800);
+        expect(c.calls).not.toContain('resume r1');
+        expect(c.counters.get('yield_continues')).toBe(0);
+        expect(c.counters.get('yield_resumes')).toBe(0);
+        // Nothing settled while paused: today's stop, once
+        expect(c.counters.get('yield_watchdog')).toBe(1);
+        expect(c.counters.get('yield_stops')).toBe(1);
+        expect(c.spoke).toEqual([true]);
+        c.recognition.dispose();
+        c.control.close();
+    });
+
+    it('20 ms of audio missing before the gate: never goes on, never resolved empty', async () => {
+        const c = composed({ firstDroppedMs: 20 });
+        await c.fan(1800);
+        expect(c.calls).not.toContain('resume r1');
+        expect(c.counters.get('yield_continues')).toBe(0);
+        expect(c.counters.get('yield_resumes')).toBe(0);
+        expect(c.counters.get('yield_watchdog')).toBe(1);
+        expect(c.counters.get('yield_stops')).toBe(1);
+        c.recognition.dispose();
+        c.control.close();
+    });
+
+    it('audio missing after the gate: no going on while paused; a stop, once, while going on', async () => {
+        const paused = composed();
+        await paused.fan(200);
+        await paused.fan(1700, 20);
+        expect(paused.calls).not.toContain('resume r1');
+        expect(paused.counters.get('yield_stops')).toBe(1);
+        paused.recognition.dispose();
+        paused.control.close();
+
+        const going = composed();
+        await going.fan(900);
+        expect(going.calls).toEqual(['hold', 'resume r1']);
+        await going.fan(300, 20);
+        expect(going.counters.get('yield_continuing_audio_missing')).toBe(1);
+        expect(going.counters.get('yield_stops')).toBe(1);
+        expect(going.spoke).toEqual([true]);
+        going.recognition.dispose();
+        going.control.close();
+    });
+
+    /**
+     * The real observer with a small shared queue: other people's half windows fill it, so 20 ms of p1 is skipped. The
+     * skip is shorter than the reset (100 ms), so p1's run of audio (its stream number) goes on; it must still show.
+     */
+    async function skipping() {
+        const d = detector();
+        const counters = new Counters();
+        const observer = new SpeechObserver({ counters, load: async () => d.model, maxQueuedMsTotal: 64 });
+        await observer.ready();
+        const session = observer.session('s1');
+        const calls: string[] = [];
+        const speaker: YieldSpeaker = {
+            playingId: 'r1',
+            hold: () => (calls.push('hold'), 'r1'),
+            resume: (id) => (calls.push(`resume ${id}`), true),
+            setGain: () => undefined,
+        };
+        const control = new YieldControl({ policy: 'hold', counters, speaker, observer: session, silenceMs: 300, freshMs: 300, watchdogMs: 1500 });
+        control.onStopHeld = () => calls.push('stop held');
+        const spoke: boolean[] = [];
+        let at = 0;
+        /** p1's fan, 20 ms at a time, in real time. */
+        const fan = async (ms: number) => {
+            for (let t = 0; t < ms; t += 20) {
+                session.frame({ participantId: 'p1', epoch: 1, pcm16k: tone(NOISE_HZ, 320, at), droppedMs: 0 });
+                at += 320;
+                await settle();
+                await sleep(15);
+            }
+        };
+        /** Others' half windows fill the shared queue, one 20 ms frame of p1 is refused, then the others leave. */
+        const skip = async () => {
+            const before = counters.get('observer_overloads');
+            for (let i = 2; counters.get('observer_overloads') === before && i < 60; i++) session.frame({ participantId: `p${i}`, epoch: 1, pcm16k: tone(NOISE_HZ), droppedMs: 0 });
+            const full = counters.get('observer_overloads');
+            const view = session.heard('p1', 1)!;
+            session.frame({ participantId: 'p1', epoch: 1, pcm16k: tone(NOISE_HZ, 320, at), droppedMs: 0 });
+            at += 320;
+            expect(counters.get('observer_overloads')).toBe(full + 1);
+            session.drop((p) => p !== 'p1');
+            return view;
+        };
+        const loud = () => control.loud({ participantId: 'p1', epoch: 1, turnId: 't1', heard: '', everWords: false, missingMs: 0 }, (stop) => spoke.push(stop));
+        return { counters, calls, spoke, fan, skip, loud, session, control, observer };
+    }
+
+    it('20 ms skipped inside the detector while paused: the same stream, but it shows, and the reply never goes on', async () => {
+        const s = await skipping();
+        await s.fan(320);
+        expect(s.loud()).toBe(true);
+        await s.fan(160);
+        const before = await s.skip();
+        await s.fan(160);
+        const after = s.session.heard('p1', 1)!;
+        expect(after.stream).toBe(before.stream);
+        expect(after.droppedMs).toBe(before.droppedMs + 20);
+        // Fresh, unbroken-looking quiet from then on, until the pause deadline
+        for (const until = performance.now() + 4000; !s.counters.get('yield_stops') && performance.now() < until; ) await s.fan(100);
+        expect(s.calls).not.toContain('resume r1');
+        expect(s.counters.get('yield_continues')).toBe(0);
+        expect(s.counters.get('yield_watchdog')).toBe(1);
+        expect(s.counters.get('yield_stops')).toBe(1);
+        s.control.close();
+        await s.observer.dispose();
+    });
+
+    it('20 ms skipped inside the detector while going on: a stop, once', async () => {
+        const s = await skipping();
+        await s.fan(320);
+        expect(s.loud()).toBe(true);
+        await s.fan(800);
+        expect(s.calls).toEqual(['hold', 'resume r1']);
+        await s.skip();
+        await s.fan(320);
+        expect(s.counters.get('yield_continuing_view_lost')).toBe(1);
+        expect(s.counters.get('yield_stops')).toBe(1);
+        expect(s.spoke).toEqual([true]);
+        await s.fan(320);
+        expect(s.counters.get('yield_stops')).toBe(1);
+        s.control.close();
+        await s.observer.dispose();
     });
 });
 

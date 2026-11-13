@@ -298,7 +298,8 @@ function report(path: string, outPath: string): void {
         const noise = rows.filter((r) => r.kind !== 'speech' && r.provider === provider);
         say(`## Noise and knocks (${noise.length} clips), provider ${provider === 'empty' ? 'hears nothing (a successful empty result)' : 'hears words in anything (background speech transcribed)'}: should not stop`);
         say();
-        say('Rates are per minute of the bot talking: to its stop, or to the end of the clip and its 8 s tail.');
+        say('Rates are per minute of reply-active elapsed time: from the start of the clip to the stop, or to the end of the clip and its 8 s');
+        say('tail. Time spent paused and the silent tail are included, not subtracted: this is not time the bot was actually heard talking.');
         say();
         say('| behaviour | group | clips stopped for good | of which by the 6 s deadline | pauses or dips per min | held s per min | went on after an empty result | went on, watched |');
         say('| --- | --- | --- | --- | --- | --- | --- | --- |');
@@ -311,20 +312,26 @@ function report(path: string, outPath: string): void {
             }
         }
         say();
-        say('Steady noise by level: what stopped it, and how long the bot could talk first (median over clips that stopped):');
-        say();
-        say('| behaviour | level (dBFS) | clips | stopped | first stop after | detector heard speech | words or failure | 6 s deadline | view lost while going on | went on, watched |');
-        say('| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |');
-        for (const b of BEHAVIOURS) {
-            const levels = new Map<string, Row[]>();
-            for (const r of noise.filter((x) => x.kind === 'noise')) levels.set(r.condition, [...(levels.get(r.condition) ?? []), r]);
-            for (const [level, members] of [...levels].sort((p, q) => Number(p[0]) - Number(q[0]))) {
-                const x = noiseStats(members, b);
-                const t = b === 'today';
-                say(`| ${NAMES[b]} | ${level} | ${x.clips} | ${x.stopped} | ${sec(x.firstStop)} | ${t ? '-' : x.detector} | ${t ? '-' : x.words} | ${t ? '-' : x.watchdog} | ${t ? '-' : x.viewLost} | ${t ? '-' : x.continues} |`);
+        const steady = noise.filter((x) => x.kind === 'noise');
+        const byLevel = (title: string, pool: Row[]) => {
+            say(title);
+            say();
+            say('| behaviour | level (dBFS) | clips | stopped | first stop after | detector heard speech | words or failure | 6 s deadline | view lost while going on | went on, watched |');
+            say('| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |');
+            for (const b of BEHAVIOURS) {
+                const levels = new Map<string, Row[]>();
+                for (const r of pool) levels.set(r.condition, [...(levels.get(r.condition) ?? []), r]);
+                for (const [level, members] of [...levels].sort((p, q) => Number(p[0]) - Number(q[0]))) {
+                    const x = noiseStats(members, b);
+                    const t = b === 'today';
+                    say(`| ${NAMES[b]} | ${level} | ${x.clips} | ${x.stopped} | ${sec(x.firstStop)} | ${t ? '-' : x.detector} | ${t ? '-' : x.words} | ${t ? '-' : x.watchdog} | ${t ? '-' : x.viewLost} | ${t ? '-' : x.continues} |`);
+                }
             }
-        }
-        say();
+            say();
+        };
+        const nonSpeech = steady.filter((x) => x.label === 'nonspeech');
+        byLevel(`Steady non-speech noise only (${nonSpeech.length} clips), by level: what stopped it, and how long the bot could talk first (median over clips that stopped):`, nonSpeech);
+        byLevel(`All ${steady.length} steady fixtures pooled (non-speech, scenes and speech-like noise together), by level:`, steady);
         const knocks = noise.filter((r) => r.kind === 'burst');
         if (knocks.length) {
             say(`Three knocks in 1.3 s, one trial per clip (${knocks.length} trials): from the pause, how long until the bot went on, and when the recognizer finished.`);

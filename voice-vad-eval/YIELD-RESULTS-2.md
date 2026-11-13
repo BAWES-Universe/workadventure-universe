@@ -78,7 +78,7 @@ This is your provisional continuation, as a separate phase with its own counters
 - Deadline-only stops are reported separately.
 - Interruptions are matched clip by clip against today.
 - False resumes and overlap are counted.
-- Held time is measured per minute of the bot actually talking. That runs to its stop, or to the end of the clip and its 8 s tail.
+- Held time is measured per minute of reply-active elapsed time: from the clip start to the stop, or to the end of the clip and its 8 s tail. Paused time and the tail are included, not subtracted (label corrected in round 3; it is not time the bot was heard talking).
 - Knocks are shown as one hold per trial, with the recognizer's finish shown separately.
 
 **Tuning.** The rule was written down before the runs: the shortest of 300, 600, 1,000 or 1,500 ms that meets all four of these on the tune half:
@@ -124,16 +124,17 @@ This is your provisional continuation, as a separate phase with its own counters
 | Three knocks (20) | 20 | 0 | 0 | 8.0 |
 
 - **Every remaining stop when going on watched** is the detector hearing speech in the noise. No stop comes from the deadline, and no view was lost.
-- **By level, steady noise stopped:**
+- **By level, all 291 steady fixtures pooled** (non-speech, scenes and speech-like together; label corrected in round 3):
   - -45 dBFS: 23 of 97, against 88 today;
   - -35 dBFS: 28 of 97, against 97 today;
   - -25 dBFS: 31 of 97, against 97 today.
+- **By level, steady non-speech only (177):** -45 dBFS 2 of 59 (today 50), -35 dBFS 5 of 59 (today 59), -25 dBFS 4 of 59 (today 59).
 - **Knocks, one trial each:**
   - Going on only after empty: held 3.3 s. The recognizer finished at 3.3 s and the bot went on at 3.3 s.
   - Going on watched: held **1.6 s**. The bot went on at 1.6 s, while the recognizer still finished at 3.3 s. So the recognizer's own pause no longer adds to the hold.
 
 **Noise, provider hears words in anything:** no rescue, as you predicted.
-- Every clip stops, as today.
+- No rescue of the stops today's rule makes: steady non-speech still stops in 168 of 177, as today (wording corrected in round 3; not every clip).
 - Going on watched never applies, because words are present.
 - The cost is a pause before the stop: up to the 6 s deadline in 125 of 177 steady clips.
 

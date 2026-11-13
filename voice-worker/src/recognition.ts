@@ -56,11 +56,15 @@ export interface Interruptions {
     /**
      * Loud enough for long enough (the barge-in time). False: it counts as speaking at once (today's rule). True: the
      * control calls `speech` once it is speech (with whether to stop the bot's voice), or never; until then nothing is
-     * announced for this stretch, not even when words come through. `heard` is the words that came before it, if any.
+     * announced for this stretch, not even when words come through. `heard` is the words that came before it, if any
+     * (for a stop command). `everWords` and `missingMs` cover the whole stretch so far, from its very start: words that
+     * came and were taken back before the gate, and audio that went missing before it, still count.
      */
-    loud(turn: { participantId: string; epoch: number; turnId: string; heard: string }, speech: (stopVoice: boolean) => void): boolean;
+    loud(turn: { participantId: string; epoch: number; turnId: string; heard: string; everWords: boolean; missingMs: number }, speech: (stopVoice: boolean) => void): boolean;
     /** The words so far of a stretch that is waiting. */
     words(turnId: string, text: string): void;
+    /** Audio of a stretch that is waiting went missing (lost on the way). */
+    missing(turnId: string, ms: number): void;
     /** A stretch the control was asked about ended (before its user.turn goes out). */
     ended(turnId: string, how: TurnEnd): void;
 }
@@ -198,6 +202,7 @@ export class Recognition {
         if (voiced) turn.lastVoicedAt = turn.lastAt;
         turn.audioMs += ms;
         turn.gapMs += frame.droppedMs;
+        if (frame.droppedMs > 0 && turn.waiting) this.options.interruptions?.missing(turn.id, frame.droppedMs);
         turn.quietMs = voiced ? 0 : turn.quietMs + ms;
         c.inc('speech_ms', Math.round(ms));
         if (voiced) turn.voicedMs += ms;
@@ -213,7 +218,7 @@ export class Recognition {
                 this.options.onSpeaking?.(participantId, stopVoice);
             };
             const control = this.options.interruptions;
-            if (control?.loud({ participantId, epoch, turnId: turn.id, heard: turn.text }, go)) {
+            if (control?.loud({ participantId, epoch, turnId: turn.id, heard: turn.text, everWords: turn.everText, missingMs: turn.gapMs }, go)) {
                 if (!turn.speaking) turn.waiting = true;
             } else {
                 go(true);

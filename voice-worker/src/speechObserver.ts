@@ -50,7 +50,8 @@ const EMPTY = new Float32Array(0);
  * What the detector last made of one person. `ageMs`: how long ago the newest audio it answered for arrived. `quietMs`:
  * how long (in their audio) it has heard no speech. `speech`: it hears speech now. `stream`: which unbroken run of their
  * audio this is: it changes whenever audio went missing, waited too long, overflowed or failed, so the same number twice
- * means every bit of their audio in between was answered. `droppedMs`: audio lost on the way within this run.
+ * means every bit of their audio in between was answered, unless `droppedMs` grew. `droppedMs`: audio missing within
+ * this run, in all, whether lost on the way or skipped by the observer itself; it only grows.
  */
 export interface Heard {
     ageMs: number;
@@ -183,7 +184,7 @@ class Stream {
     missingMs = 0;
     /** When the newest audio of the last answer kept arrived. */
     answeredAt = -Infinity;
-    /** Audio lost on the way within this run (less than GAP_RESET_MS at a time, or it would have ended the run). */
+    /** Audio missing within this run, lost on the way or skipped here (less than GAP_RESET_MS at a time, or it would have ended the run). Only grows. */
     droppedMs = 0;
     readonly serial = ++streamSerials;
     // The rule
@@ -600,9 +601,12 @@ export class SpeechObserver {
         if (this.queuedSamples + length > this.maxTotal) {
             c.inc('observer_overflow_ms', ms);
             c.inc('observer_overloads');
-            // Skipped here, so missing for this person just as if the network had lost it
+            // Skipped here, so missing for this person just as if the network had lost it. It counts toward droppedMs
+            // too, which only grows: a skip shorter than the reset (missingMs, cleared by the next piece taken) must still
+            // show to anyone checking that every bit of this run was answered (the interruption control's recovery)
             if (stream) {
                 stream.missingMs += ms;
+                stream.droppedMs += ms;
                 if (stream.missingMs >= GAP_RESET_MS) this.end(stream, 'overflow');
             }
             return;

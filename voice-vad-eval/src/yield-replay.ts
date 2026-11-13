@@ -266,6 +266,7 @@ function replay(pcm: Int16Array, probs: Float32Array, behaviour: Behaviour, kind
         owns: (participantId: string) => control.owns(participantId),
         loud: (turn: Parameters<typeof control.loud>[0], speech: Parameters<typeof control.loud>[1]) => control.loud(turn, speech),
         words: (turnId: string, text: string) => control.words(turnId, text),
+        missing: (turnId: string, ms: number) => control.missing(turnId, ms),
         ended: (turnId: string, how: Parameters<typeof control.ended>[1]) => {
             log(`ended_${how}`);
             control.ended(turnId, how);
