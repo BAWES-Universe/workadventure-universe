@@ -234,6 +234,21 @@ describe('An App offer in a Brick\'s chat', () => {
         expect(appConnectedLine('Google Calendar')).toContain('[Apps](#apps)');
     });
 
+    it('still tells the line of the system from the person\'s words when the Brick was resting and answers it later', async () => {
+        const { bridge, client, deps, config } = makeBridge({ botId: BRICK, name: 'Brick', enabled: false, aiProviderRef: 'universe-ai', roomUrl: '', brick: { ownerId: 'user-alice', isDefault: true } });
+        deps.reply.mockResolvedValue({ text: 'Tomorrow: 10:00 standup.', media: [] });
+        await bridge.onEvent(invite());
+        await bridge.onEvent(connected());
+        expect(deps.reply).not.toHaveBeenCalled();
+
+        deps.getBotConfig.mockResolvedValue({ ...config, enabled: true });
+        await bridge.checkWaiting();
+
+        expect(deps.reply).toHaveBeenCalledTimes(1);
+        expect(deps.reply.mock.calls[0][4]).toMatchObject({ note: true });
+        expect(client.sendText.mock.calls.map(([, , words]) => words)).toContain(appConnectedLine('Google Calendar'));
+    });
+
     it('ignores a connected event that is not whole, and one a bot sent', async () => {
         const { bridge, deps } = makeBridge();
         await bridge.onEvent(invite());

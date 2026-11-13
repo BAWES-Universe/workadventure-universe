@@ -1142,7 +1142,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 // "Make it" tapped on the Brick's suggestion (#1996)
                 ...(!catchUp && offeredBrickOf(content[BRICK_MAKE_KEY]) ? { makeOffered: offeredBrickOf(content[BRICK_MAKE_KEY])! } : {}),
                 // An App was connected from a card (game #2001): a line from the system, nothing is learned about the person from it
-                ...(!catchUp && event.sender && !botIdFromMatrixId(this.config.domain, event.sender) && connectedAppOf(content[APP_CONNECTED_KEY]) ? { note: true } : {}),
+                ...(event.sender && !botIdFromMatrixId(this.config.domain, event.sender) && connectedAppOf(content[APP_CONNECTED_KEY]) ? { note: true } : {}),
                 onInterimMessage: async (interim) => {
                     // A lost "let me look" line must not cost the person the real answer, so it never throws.
                     try {
@@ -1242,7 +1242,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
                     .catch((error) => console.warn(`[MatrixDmBridge] Could not send an App offer from bot ${botId}:`, error?.message ?? error));
             }
             // Once the Brick carried on after an App was connected, what it may do with it (fixed words)
-            const justConnected = !catchUp && reply.text ? connectedAppOf(content[APP_CONNECTED_KEY]) : null;
+            const justConnected = reply.text ? connectedAppOf(content[APP_CONNECTED_KEY]) : null;
             if (justConnected) {
                 await this.client
                     .sendText(botUserId, event.room_id, appConnectedLine(justConnected.name))
@@ -1357,6 +1357,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
         if (typeof content.info?.duration === 'number') info.duration = content.info.duration;
         if (Object.keys(info).length > 0) kept.info = info;
         for (const key of ['org.matrix.msc3245.voice', 'm.voice'] as const) if (content[key] !== undefined) kept[key] = {};
+        // A line from the system after an App was connected (game #2001) must still be told apart from the person's own words
+        const connected = connectedAppOf(content[APP_CONNECTED_KEY]);
+        if (connected) kept[APP_CONNECTED_KEY] = connected;
         const message = JSON.stringify({
             event_id: event.event_id,
             room_id: event.room_id,
