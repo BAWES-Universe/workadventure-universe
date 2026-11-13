@@ -14,7 +14,7 @@ vi.mock('../mcp/MCPConnector', () => ({ MCPConnector: { clearCache: vi.fn() } })
 vi.mock('../utils/MovementLogger', () => ({ movementLogger: {} }));
 
 import { BotAPI } from '../server/BotAPI';
-import { CARRIED_BYTES_MAX, CARRIED_LINES_MAX, CARRIED_LINE_CHARS, GuestBrickService, guestTurn, readCarriedLines, readHistory, readMark, NEEDS_ACCOUNT_MARK } from '../server/GuestBrickService';
+import { GUEST_REPLY_CEILING_MS, CARRIED_BYTES_MAX, CARRIED_LINES_MAX, CARRIED_LINE_CHARS, GuestBrickService, guestTurn, readCarriedLines, readHistory, readMark, NEEDS_ACCOUNT_MARK } from '../server/GuestBrickService';
 import { GUEST_CHAT_KEY, MatrixDmBridge } from '../matrix/MatrixDmBridge';
 import type { GuestBrickAllowance, GuestBrickSetup } from '../server/AdminApiService';
 
@@ -138,6 +138,17 @@ describe('The Brick for guests answers a guest', () => {
         const notReady = makeService({ ready: false });
         expect(await notReady.service.reply(ask())).toEqual({ kind: 'failed' });
         expect(notReady.admin.finishGuestBrickReply).toHaveBeenCalledWith(TURN, { failed: true });
+    });
+
+    it('never lets the model take longer than the device waits, whatever wait Orbit sends', async () => {
+        const { service, admin, generate } = makeService();
+        admin.getGuestBrick.mockResolvedValueOnce({ ...SETUP, credentials: { ...SETUP.credentials, limits: { ...SETUP.credentials.limits, waitSeconds: 500 } } });
+        await service.reply(ask());
+        expect((generate.mock.calls[0][2] as { settings: { timeout: number } }).settings.timeout).toBe(GUEST_REPLY_CEILING_MS);
+        // A shorter wait from Orbit still counts
+        const short = makeService();
+        await short.service.reply(ask());
+        expect((short.generate.mock.calls[0][2] as { settings: { timeout: number } }).settings.timeout).toBe(7000);
     });
 
     it('answers one message of a guest at a time, so two taps never spend two replies on one question', async () => {

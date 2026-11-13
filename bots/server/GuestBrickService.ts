@@ -95,6 +95,9 @@ export const CARRIED_LINES_MAX = 200;
 export const CARRIED_LINE_CHARS = 2000;
 export const CARRIED_BYTES_MAX = 20000;
 
+/** The longest the model may take for a guest's answer. The device stops waiting after a little more than this (Orbit round trips on top), so a counted answer always arrives. */
+export const GUEST_REPLY_CEILING_MS = 90_000;
+
 /** The lines of a chat a guest held, as their device brings them along after sign-in: each with when it was said. */
 export function readCarriedLines(value: unknown): GuestChatNote[] {
     if (!Array.isArray(value)) return [];
@@ -174,7 +177,8 @@ export class GuestBrickService {
         const config = {
             ...setup.credentials,
             maxTokens: typeof setup.credentials.maxTokens === 'number' ? setup.credentials.maxTokens : limits.replyTokens,
-            settings: { ...(setup.credentials.settings ?? {}), timeout: limits.waitSeconds * 1000 },
+            // Never longer than the device waits for an answer (BotApiService GUEST_REPLY_TIMEOUT_MS), whatever Orbit says: a reply that finished after the device gave up would be counted but never seen
+            settings: { ...(setup.credentials.settings ?? {}), timeout: Math.min(limits.waitSeconds * 1000, GUEST_REPLY_CEILING_MS) },
         } as unknown as AIProviderConfig;
         const history = readHistory(ask.history, limits.messages, limits.readChars);
         const message = ask.message.trim().slice(0, limits.readChars);

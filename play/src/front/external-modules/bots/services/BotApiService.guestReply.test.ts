@@ -71,7 +71,7 @@ describe("BotApiService.guestBrickReply deadline (#1997)", () => {
             () => "answered",
             () => "stopped"
         );
-        await vi.advanceTimersByTimeAsync(120_000);
+        await vi.advanceTimersByTimeAsync(140_000);
         await expect(outcome).resolves.toBe("stopped");
     });
 

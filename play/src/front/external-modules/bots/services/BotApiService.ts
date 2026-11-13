@@ -52,8 +52,9 @@ const PERMISSIONS_TIMEOUT_MS = 20000;
 const HELLO_TIMEOUT_MS = 60000;
 /** How long a lookup of bot states waits before it counts as failed (and is asked again on the next look) */
 const DM_STATUS_TIMEOUT_MS = 10000;
-// A guest's answer from the Brick for guests: writing it can take a while; past this it is not coming, and the next turn goes on
-const GUEST_REPLY_TIMEOUT_MS = 60000;
+// A guest's answer from the Brick for guests: writing it can take a while; past this it is not coming, and the next turn goes on.
+// The bot server never lets the model take longer than 90 s for one (GUEST_REPLY_CEILING_MS), and this leaves room for its calls to Orbit.
+const GUEST_REPLY_TIMEOUT_MS = 130000;
 /** How long a device waits to be told who makes a chat (#1995) before it opens the chat the way it always did */
 const DIRECT_CHAT_TIMEOUT_MS = 5000;
 /** How long a change to one of the person's Bricks may take before it counts as failed, so no switch or button hangs. */
