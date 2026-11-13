@@ -318,6 +318,29 @@ describe("an Orbit that does not answer about who may use a bot", () => {
         await failed;
     });
 
+    it("says a screen request that never gets an answer failed, and a computer with no screen has none", async () => {
+        vi.spyOn(globalThis, "fetch").mockImplementation((_url, init) => untilCancelled(init?.signal));
+        const failed = expect(service().watchBrickComputer("b1")).resolves.toBe("failed");
+        await vi.advanceTimersByTimeAsync(20000);
+        await failed;
+        vi.restoreAllMocks();
+        vi.spyOn(globalThis, "fetch").mockResolvedValue(
+            new Response(JSON.stringify({ error: "resting" }), {
+                status: 409,
+                headers: { "Content-Type": "application/json" },
+            })
+        );
+        await expect(service().watchBrickComputer("b1")).resolves.toBeUndefined();
+        vi.restoreAllMocks();
+        vi.spyOn(globalThis, "fetch").mockResolvedValue(
+            new Response(JSON.stringify({ error: "down" }), {
+                status: 502,
+                headers: { "Content-Type": "application/json" },
+            })
+        );
+        await expect(service().watchBrickComputer("b1")).resolves.toBe("failed");
+    });
+
     it.each(brickWrites)("fails %s in time when Orbit answers but its body never ends", async (_name, call) => {
         const stalled = {
             ok: true,

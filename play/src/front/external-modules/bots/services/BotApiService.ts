@@ -1239,15 +1239,19 @@ export class BotApiService {
         });
     }
 
-    /** The screen of a computer that is working. Never wakes a machine: a resting one answers 409 and nothing starts. */
-    async watchBrickComputer(brickId: string): Promise<{ url: string } | undefined> {
+    /**
+     * The screen of a computer that is working. Never wakes a machine: a resting one answers 409 and nothing starts, which is
+     * `undefined` (no screen to show). A request that did not go through (Orbit down, too slow, refused) is "failed", so the
+     * screen can tell the two apart and ask again soon.
+     */
+    async watchBrickComputer(brickId: string): Promise<{ url: string } | undefined | "failed"> {
         try {
             const data = (await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/computer/watch`, {
                 method: "POST",
             })) as { url?: unknown };
             return typeof data.url === "string" ? { url: data.url } : undefined;
-        } catch {
-            return undefined;
+        } catch (error) {
+            return (error as { status?: number }).status === 409 ? undefined : "failed";
         }
     }
 

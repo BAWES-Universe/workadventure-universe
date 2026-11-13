@@ -316,6 +316,54 @@ describe("a Brick's computer on screen (#2000)", () => {
         expect(game.getBrickComputer).toHaveBeenCalledWith(OTHER);
     });
 
+    describe("when asking for the screen does not go through", () => {
+        afterEach(() => {
+            vi.useRealTimers();
+        });
+
+        const working = () => computer({ machine: "working", job: job() });
+        const advance = async (ms: number) => {
+            await vi.advanceTimersByTimeAsync(ms);
+            await tick();
+        };
+
+        it("asks again soon, and shows the screen once it goes through", async () => {
+            vi.useFakeTimers();
+            game.watchBrickComputer
+                .mockResolvedValueOnce("failed")
+                .mockResolvedValueOnce("failed")
+                .mockResolvedValueOnce({ url: "https://screen.test/third" });
+            game.getBrickComputer.mockResolvedValue(working());
+            await loadBrickComputer(BRICK);
+            piece = new BrickScreen({ target, props: { brick, onClose: () => undefined } });
+            await advance(0);
+            expect(byId("brickScreenFrame")).toBeNull();
+            expect(game.watchBrickComputer).toHaveBeenCalledTimes(1);
+            await advance(2000);
+            expect(game.watchBrickComputer).toHaveBeenCalledTimes(2);
+            expect(byId("brickScreenFrame")).toBeNull();
+            await advance(4000);
+            expect(game.watchBrickComputer).toHaveBeenCalledTimes(3);
+            expect(byId("brickScreenFrame")?.getAttribute("src")).toBe("https://screen.test/third");
+        });
+
+        it("stops asking after a few tries, however often the computer is read", async () => {
+            vi.useFakeTimers();
+            game.watchBrickComputer.mockResolvedValue("failed");
+            game.getBrickComputer.mockResolvedValue(working());
+            await loadBrickComputer(BRICK);
+            piece = new BrickScreen({ target, props: { brick, onClose: () => undefined } });
+            await advance(60_000);
+            // The first ask and four more, not one per read of the computer
+            expect(game.watchBrickComputer).toHaveBeenCalledTimes(5);
+            await loadBrickComputer(BRICK);
+            await loadBrickComputer(BRICK);
+            await advance(1000);
+            expect(game.watchBrickComputer).toHaveBeenCalledTimes(5);
+            expect(byId("brickScreenNone")).not.toBeNull();
+        });
+    });
+
     it("shows no screen for a computer that is resting, and does not ask for one to be woken", async () => {
         game.watchBrickComputer.mockResolvedValue(undefined);
         game.getBrickComputer.mockResolvedValue(computer());

@@ -47,34 +47,69 @@
     // is over: it is dropped, so the next job never shows it.
     let letGo = 0;
 
+    // A watch request that did not go through is asked again soon, a few times, then left until the computer has new work
+    // or the link would have been renewed anyway. A computer that simply has no screen to show is not retried.
+    const RETRY_MS = 2000;
+    const RETRIES = 4;
+    let failures = 0;
+    let gaveUp = false;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+
     function look() {
         const asked = letGo;
+        clearTimeout(retry);
         botApiService
             .watchBrickComputer(brick.id)
             .then((answer) => {
+                if (answer === "failed") {
+                    if (asked !== letGo) {
+                        looked = true;
+                    } else if (failures < RETRIES) {
+                        looked = false;
+                        retry = setTimeout(look, RETRY_MS * 2 ** failures);
+                        failures += 1;
+                    } else {
+                        looked = true;
+                        gaveUp = true;
+                    }
+                    return;
+                }
                 looked = true;
+                failures = 0;
                 if (asked === letGo) url = answer?.url;
             })
             .catch((error) => console.error(error));
     }
 
+    function renew() {
+        failures = 0;
+        gaveUp = false;
+        look();
+    }
+
     function forget() {
         url = undefined;
         letGo += 1;
+        // The next job starts afresh: its own link, and its own few tries
+        clearTimeout(retry);
+        failures = 0;
+        gaveUp = false;
+        looked = true;
     }
 
     onMount(() => {
         const stop = followBrickComputer(brick.id);
         look();
-        const renew = setInterval(look, RENEW_MS);
+        const renewing = setInterval(renew, RENEW_MS);
         // The computer got work again after the screen was open with nothing to show: ask for its screen once more
         const again = brickComputers.subscribe((all) => {
-            if (looked && !url && canWatch(all.get(brick.id))) look();
+            if (looked && !url && !gaveUp && canWatch(all.get(brick.id))) look();
         });
         return () => {
             stop();
             again();
-            clearInterval(renew);
+            clearInterval(renewing);
+            clearTimeout(retry);
         };
     });
 
@@ -320,17 +355,18 @@
     }
     /* Beside the chat there is room: the line that says what it is doing sits on the left, the two buttons stay compact on the right */
     @media (min-width: 1024px) {
+        /* When the screen host is too narrow for both (the chat takes a lot of a 1024 px window), the buttons drop under the words */
         .bs-actions.watch {
             flex-direction: row;
+            flex-wrap: wrap;
             align-items: center;
         }
         .bs-actions.watch .bs-now {
-            flex: 1;
+            flex: 1 1 200px;
             min-width: 0;
         }
         .bs-actions.watch .bs-btns {
-            flex: none;
-            width: 440px;
+            flex: 0 1 440px;
             max-width: 100%;
         }
         /* In control, the buttons stack at the same compact width on the right, as in the mock */
