@@ -547,16 +547,16 @@ class LocalUserStore {
     }
 
     /**
-     * Which guest's chat Orbit already handed over, kept on its own: Orbit hands a chat over once, so this must survive
+     * Which guest's chat Orbit already handed over, and to which account, kept on its own: Orbit hands a chat over once, so this must survive
      * even when there is no room left to save the chat again with the mark.
      */
     getGuestBrickChatTaken(): string | null {
         return localStorage.getItem(guestBrickChatTakenKey);
     }
 
-    setGuestBrickChatTaken(guestId: string): void {
+    setGuestBrickChatTaken(mark: string): void {
         try {
-            localStorage.setItem(guestBrickChatTakenKey, guestId);
+            localStorage.setItem(guestBrickChatTakenKey, mark);
         } catch {
             // No room even for this: the mark is kept for this page only, by the caller
         }

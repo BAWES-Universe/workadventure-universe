@@ -73,12 +73,16 @@ export const guestBrickEntries: Readable<OneListEntry[]> = derived(
 export const guestBrickOnline = readable("online" as const);
 
 /**
+ * Hand-overs Orbit made to this account, as this page knows them: for when even the small mark of it could not be saved.
+ * A mark is for one account's one chat (guest id and chat address), so a chat left by an earlier account is never taken as handed over to another.
+ */
+const takenThisPage = new Set<string>();
+const takenMark = (guestId: string, myChatId: string): string => `${guestId}|${myChatId}`;
+
+/**
  * A guest signed in with a chat they had with the Brick for guests (#1997): the first time the chat with their own Brick
  * is open (from its row or from its chat, whichever the person opens), that chat is brought into it. Never for a guest, and only into the one Brick everyone gets.
  */
-/** Hand-overs Orbit made, as this page knows them: for when even the small mark of it could not be saved. */
-const takenThisPage = new Set<string>();
-
 export function bringGuestChatInto(brickId: string): void {
     const myChatId = localUserStore.getChatId();
     const own = get(myBricksStore)?.find((brick) => brick.id === brickId);
@@ -86,17 +90,24 @@ export function bringGuestChatInto(brickId: string): void {
     bringGuestChat({
         read: () => {
             const chat = parseGuestChat(localUserStore.getGuestBrickChat(), null, Date.now());
-            // Taken, even when the chat could not be saved again with its mark
-            const taken =
-                chat && (takenThisPage.has(chat.guestId) || localUserStore.getGuestBrickChatTaken() === chat.guestId);
-            return chat && taken ? { ...chat, carryTaken: true as const } : chat;
+            if (!chat) return chat;
+            // Taken only when Orbit handed it to this very account: a mark left by an earlier account on this device is not theirs
+            const mark = takenMark(chat.guestId, myChatId);
+            const rest = { ...chat };
+            delete rest.carryTaken;
+            return takenThisPage.has(mark) || localUserStore.getGuestBrickChatTaken() === mark
+                ? { ...rest, carryTaken: true as const }
+                : rest;
         },
         keep: (chat) => {
+            const rest = { ...chat };
+            delete rest.carryTaken;
             if (chat.carryTaken) {
-                takenThisPage.add(chat.guestId);
-                localUserStore.setGuestBrickChatTaken(chat.guestId);
+                const mark = takenMark(chat.guestId, myChatId);
+                takenThisPage.add(mark);
+                localUserStore.setGuestBrickChatTaken(mark);
             }
-            localUserStore.setGuestBrickChat(serializeGuestChat(chat));
+            localUserStore.setGuestBrickChat(serializeGuestChat(rest));
         },
         drop: () => localUserStore.dropGuestBrickChat(),
         take: (guestId) => botApiService.takeGuestChat(guestId),

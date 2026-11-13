@@ -55,6 +55,8 @@ describe("the chat a guest brought along keeps that Orbit handed it over, even w
     });
 
     async function steps(): Promise<CarrySteps> {
+        // A fresh page each time: what a page remembers is its own
+        vi.resetModules();
         const { bringGuestChatInto } = await import("../GuestBrickStore");
         bringGuestChatInto("10");
         return shared.steps as CarrySteps;
@@ -70,6 +72,19 @@ describe("the chat a guest brought along keeps that Orbit handed it over, even w
 
         // The chat on the device has no mark, but the one handed over is still known, so Orbit is not asked again
         expect(JSON.parse(shared.saved as string).carryTaken).toBeUndefined();
+        expect(carry.read()?.carryTaken).toBe(true);
+    });
+
+    it("does not take a chat as handed over when the mark, or the chat itself, was left by another account on this device", async () => {
+        const carry = await steps();
+        shared.taken = `${GUEST}|@someone-else:chat`;
+        expect(carry.read()?.carryTaken).toBeUndefined();
+
+        const chat = JSON.parse(shared.saved as string);
+        shared.saved = JSON.stringify({ ...chat, carryTaken: true });
+        expect(carry.read()?.carryTaken).toBeUndefined();
+
+        shared.taken = `${GUEST}|@me:chat`;
         expect(carry.read()?.carryTaken).toBe(true);
     });
 
