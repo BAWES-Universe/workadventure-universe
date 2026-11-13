@@ -4,12 +4,14 @@
 #   1. the detector as the image holds it answers with no network at all (speech-observer/check.mts);
 #   2. where the whole worker reaches on the network, off and on, traced from outside the container with strace on
 #      every thread from before node starts: anything the "on" run reaches that the "off" run does not is the observer's;
-#   3. the switch: on = started with VOICE_SPEECH_OBSERVER=1, off = started without it. Off, the worker has no observer,
+#   3. the switch: on = started as the image is (VOICE_SPEECH_OBSERVER=1 is the same), off = the engineers' off switch,
+#      VOICE_SPEECH_OBSERVER=0. Off, the worker has no observer,
 #      no observer counters, and the runtime's native library is not even loaded into the process;
 #   4. the safety catch: switched on but with the runtime's reporting not suppressed, the worker runs as today and the
 #      observer stays off;
-#   5. with YIELD=1, the limited owner rollout of the pause: on with VOICE_YIELD_BOTS naming every load bot, then the
-#      switch-off procedure (the same container settings without VOICE_YIELD_BOTS, restarted): no pause counters move.
+#   5. with YIELD=1, the pause as the image ships it (every bot), then the switch-off procedure (restarted with
+#      VOICE_SPEECH_OBSERVER=0): no pause counters move. (The load gives its bots no speech-to-text, so the pause's own
+#      gate never runs here: this shows a clean start and a clean switch-off, not a pause; test/measure/imageYield.ts does.)
 # Each run hears two people on their own connections and two in a LiveKit room for a while, then idles.
 #   scripts/image-check.sh <data dir> <out dir> [seconds of audio, default 20] [idle seconds, default 75]
 # Needs Docker, the image (IMAGE), strace, root, and a livekit-server on 127.0.0.1:7880 with the worker's test keys.
@@ -58,14 +60,14 @@ run() { # name, extra docker args...
     rm -f "$OUT/$name.full.strace"
 }
 echo "== 2 and 3. traced runs: off, on, off again"
-run 1-off
+run 1-off -e VOICE_SPEECH_OBSERVER=0
 run 2-on -e VOICE_SPEECH_OBSERVER=1
-run 3-off-again
+run 3-off-again -e VOICE_SPEECH_OBSERVER=0
 echo "== 4. switched on without the runtime's reporting suppressed"
 run 4-on-without-reporting-switch -e VOICE_SPEECH_OBSERVER=1 -e ORT_DISABLE_TELEMETRY=
 if [ "${YIELD:-0}" = 1 ]; then
-    echo "== 5. the pause for the load's bots, then switched off by removing VOICE_YIELD_BOTS and restarting"
-    run 5-pause-on -e VOICE_SPEECH_OBSERVER=1 -e VOICE_YIELD_BOTS=botx0,botx1,boty0,boty1
-    run 6-pause-removed -e VOICE_SPEECH_OBSERVER=1
+    echo "== 5. the pause as shipped, for every bot, then switched off with VOICE_SPEECH_OBSERVER=0 and restarting"
+    run 5-pause-on
+    run 6-pause-removed -e VOICE_SPEECH_OBSERVER=0
 fi
 rm -rf "$OUT/go"

@@ -29,15 +29,13 @@ function parseIce(env: NodeJS.ProcessEnv): IceConfig {
 }
 
 /**
- * The limited owner rollout (yieldControl.ts), only with the speech observer on: VOICE_YIELD_BOTS names the bots (ids,
- * comma separated) whose voice pauses on a loud sound and stops only once it is speech; VOICE_YIELD_POLICY picks how
- * (`hold`, the default; `confirm` and `dip` exist only to be compared). Unset: no bot, today's rule for all.
+ * The pause (yieldControl.ts), on for every bot whenever the speech observer is on: a bot's voice pauses on a loud sound and
+ * stops only once it is speech. VOICE_YIELD_POLICY picks how (`hold`, the default; `confirm` and `dip` exist only to be
+ * compared). There is no per-bot list and nothing for anyone to set.
  */
 function yieldFromEnv(env: NodeJS.ProcessEnv): Pick<WorkerOptions, 'yieldBots'> {
-    const botIds = new Set((env.VOICE_YIELD_BOTS ?? '').split(',').map((id) => id.trim()).filter(Boolean));
-    if (!botIds.size) return {};
     const policy = (YIELD_POLICIES as readonly string[]).includes(env.VOICE_YIELD_POLICY ?? '') ? (env.VOICE_YIELD_POLICY as YieldPolicy) : 'hold';
-    return { yieldBots: { botIds, policy } };
+    return { yieldBots: { policy } };
 }
 
 export function optionsFromEnv(env: NodeJS.ProcessEnv = process.env): WorkerOptions {
@@ -57,11 +55,12 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv = process.env): WorkerOpti
         maxPreviewSeconds: int(env.VOICE_MAX_PREVIEW_SECONDS, DEFAULT_MAX_PREVIEW_SECONDS),
         maxPreviews: int(env.VOICE_MAX_PREVIEWS, DEFAULT_MAX_PREVIEWS),
         recognitionFinalTimeoutSeconds: int(env.VOICE_RECOGNITION_FINAL_TIMEOUT_SECONDS, DEFAULT_SONIOX_FINAL_TIMEOUT_MS / 1000),
-        // The speech detector (speechObserver.ts), on when both are set (the image sets the model, not the switch). On, it
-        // watches and counts; today's rule still decides for every bot, except those named for the limited owner rollout.
-        // It watches at most VOICE_SPEECH_OBSERVER_MAX_STREAMS people at once (default 15, the load it was measured at: 9
-        // people in 3 proximity sessions and 6 in 2 LiveKit rooms); anyone beyond that is simply not watched.
-        ...(env.VOICE_SPEECH_OBSERVER === '1' && env.VOICE_SPEECH_OBSERVER_MODEL
+        // The speech detector (speechObserver.ts) and with it the pause, on wherever the model is (the image sets it). The one
+        // way off, for engineers only: VOICE_SPEECH_OBSERVER=0, then restart; every bot is back to today's rule (the voice
+        // stops on any loud sound). It watches at most VOICE_SPEECH_OBSERVER_MAX_STREAMS people at once (default 15, the load
+        // it was measured at: 9 people in 3 proximity sessions and 6 in 2 LiveKit rooms); anyone beyond that is not watched,
+        // and today's rule decides for them.
+        ...(env.VOICE_SPEECH_OBSERVER !== '0' && env.VOICE_SPEECH_OBSERVER_MODEL
             ? {
                   speechObserver: {
                       load: sileroLoader({ modelPath: env.VOICE_SPEECH_OBSERVER_MODEL, runtime: env.VOICE_SPEECH_OBSERVER_RUNTIME, env }),

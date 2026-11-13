@@ -885,13 +885,13 @@ describe('the real detector\'s runtime', () => {
     });
 });
 
-describe('off unless the worker is started with it', () => {
-    it('is not in the settings unless both the switch and the model are given', () => {
+describe('on wherever the model is, unless the engineers switch it off', () => {
+    it('is in the settings whenever the model is given, and not with VOICE_SPEECH_OBSERVER=0', () => {
         expect(optionsFromEnv({}).speechObserver).toBeUndefined();
         expect(optionsFromEnv({ VOICE_SPEECH_OBSERVER: '1' }).speechObserver).toBeUndefined();
-        expect(optionsFromEnv({ VOICE_SPEECH_OBSERVER_MODEL: '/m.onnx' }).speechObserver).toBeUndefined();
-        expect(optionsFromEnv({ VOICE_SPEECH_OBSERVER: 'true', VOICE_SPEECH_OBSERVER_MODEL: '/m.onnx' }).speechObserver).toBeUndefined();
+        expect(optionsFromEnv({ VOICE_SPEECH_OBSERVER_MODEL: '/m.onnx' }).speechObserver).toBeDefined();
         expect(optionsFromEnv({ VOICE_SPEECH_OBSERVER: '1', VOICE_SPEECH_OBSERVER_MODEL: '/m.onnx' }).speechObserver).toBeDefined();
+        expect(optionsFromEnv({ VOICE_SPEECH_OBSERVER: '0', VOICE_SPEECH_OBSERVER_MODEL: '/m.onnx' }).speechObserver).toBeUndefined();
     });
 
     it('switched on, watches at most 15 people at once unless told otherwise', () => {

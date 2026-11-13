@@ -5,8 +5,8 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts
 
-# The speech observer's detector (speech-observer/README.md): in the image, and off unless the worker is started with
-# VOICE_SPEECH_OBSERVER=1. Its own lockfile; no install scripts; only the two packages and this machine's native library are kept.
+# The speech observer's detector (speech-observer/README.md): in the image and on, with the pause for every bot; the
+# engineers' off switch is VOICE_SPEECH_OBSERVER=0. Its own lockfile; no install scripts; only the two packages and this machine's native library are kept.
 COPY speech-observer ./speech-observer
 RUN cd speech-observer \
   && echo "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3  silero_vad_v6.2.3.onnx" | sha256sum -c - \

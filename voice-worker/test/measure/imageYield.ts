@@ -4,9 +4,9 @@
 // (a successful empty result), named through the bubble's own `endpoint` setting, so the run is deterministic and free.
 //
 // The person's microphone plays recorded audio: a steady air conditioner, then a person speaking over it.
-//   expect `pause` (worker started with VOICE_YIELD_BOTS=bot1): the bot pauses, goes on while the fan stays, then the
+//   expect `pause` (the worker started as the image is, no settings): the bot pauses, goes on while the fan stays, then the
 //     voice inside the same stretch stops it for good
-//   expect `today` (the same container settings without VOICE_YIELD_BOTS, restarted): the fan stops it at once
+//   expect `today` (the engineers' off switch: restarted with VOICE_SPEECH_OBSERVER=0): the fan stops it at once
 //
 //   tsx test/measure/imageYield.ts <worker port> <fixture port> <pause|today> <noise wav> <speech wav> <out json>
 import { readFileSync, writeFileSync } from 'node:fs';

@@ -10,29 +10,30 @@ worker's own dependencies so that nothing in the worker's `package.json` or lock
 | `licenses/` | The licences of both, and ONNX Runtime's third-party notices. |
 | `check.mts`, `checkDetector.mts` | Checks the detector as a built image holds it. Prints one line of JSON and exits with 1 when the check fails, so it can be a build or deployment step. |
 
-## Off unless switched on
+## On by default, with one off switch for engineers
 
-The image carries all of this, and the observer stays off. It is on only when the worker is started with
-`VOICE_SPEECH_OBSERVER=1`. The image already sets the other three things it needs:
+The image carries all of this, and the observer is on: the worker turns it on wherever the model is set, and the image
+sets it, with the other things it needs:
 
 - `ORT_DISABLE_TELEMETRY=1`: the runtime's native library looks up `mobile.events.data.microsoft.com` unless this is
   in the environment before it starts. The loader refuses to load without it.
 - `VOICE_SPEECH_OBSERVER_MODEL` and `VOICE_SPEECH_OBSERVER_RUNTIME`: where the model and the runtime are in the image.
 
-Switched on, it only counts (the `observer_*` counters in `/stats` and `engine.status`). It changes nothing the bot
-hears, says, or stops for. To switch it off again: remove `VOICE_SPEECH_OBSERVER` and restart the worker. Nothing else
-is stored anywhere.
+It watches at most `VOICE_SPEECH_OBSERVER_MAX_STREAMS` people at once (default 15, the load it was measured at); anyone
+beyond that is not watched, and today's rule decides for them. Nothing is stored anywhere.
 
-## The limited owner rollout
+**Off switch, for engineers only:** start the worker with `VOICE_SPEECH_OBSERVER=0` (and restart). The observer and the
+pause are then off for every bot, and every bot is back to today's rule: the voice stops on any loud sound.
 
-Only with the observer on, and only for the bots named in `VOICE_YIELD_BOTS` (bot ids, comma separated), a loud sound
-while the bot speaks pauses its voice instead of stopping it, and the voice stops only once the sound is confirmed as
-speech; it goes on from the same spot after a clean, empty result and fresh silence, or, while the stretch is still
-open (a fan), once the detector has followed the person without a break and heard no speech for 1.5 s since the sound
-and no words have come: then it keeps watching that stretch and stops as today on any words, detector speech, failure or
-loss of view (`../src/yieldControl.ts`). Every other bot keeps today's rule. It is an internal setting, never a user one. `VOICE_YIELD_POLICY` is `hold` unless
-set to `confirm` or `dip`, which exist only for comparison. Its counters are `yield_*` and `playback_hold*`. To end it:
-remove `VOICE_YIELD_BOTS` and restart the worker.
+## The pause, for every bot
+
+With the observer on, for every bot, a loud sound while the bot speaks pauses its voice instead of stopping it, and the
+voice stops only once the sound is confirmed as speech; it goes on from the same spot after a clean, empty result and
+fresh silence, or, while the stretch is still open (a fan), once the detector has followed the person without a break
+and heard no speech for 1.5 s since the sound and no words have come: then it keeps watching that stretch and stops as
+today on any words, detector speech, failure or loss of view (`../src/yieldControl.ts`). There is no per-bot list and
+no user setting. `VOICE_YIELD_POLICY` is `hold` unless set to `confirm` or `dip`, which exist only for comparison. Its
+counters are `yield_*` and `playback_hold*`.
 
 ## In the image
 

@@ -56,16 +56,18 @@ const settle = async (): Promise<void> => {
     for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve));
 };
 
-describe('the rollout setting', () => {
-    const model = { VOICE_SPEECH_OBSERVER: '1', VOICE_SPEECH_OBSERVER_MODEL: '/model.onnx' };
-    it('names bots only with the detector on; hold unless a comparison policy is named; nothing when empty or removed', () => {
-        expect(optionsFromEnv({ ...model, VOICE_YIELD_BOTS: ' a ,b,, ' }).yieldBots).toEqual({ botIds: new Set(['a', 'b']), policy: 'hold' });
-        expect(optionsFromEnv({ ...model, VOICE_YIELD_BOTS: 'a', VOICE_YIELD_POLICY: 'dip' }).yieldBots?.policy).toBe('dip');
-        expect(optionsFromEnv({ ...model, VOICE_YIELD_BOTS: 'a', VOICE_YIELD_POLICY: 'anything' }).yieldBots?.policy).toBe('hold');
-        expect(optionsFromEnv({ ...model, VOICE_YIELD_BOTS: ' , ' }).yieldBots).toBeUndefined();
-        expect(optionsFromEnv(model).yieldBots).toBeUndefined();
-        expect(optionsFromEnv({ VOICE_YIELD_BOTS: 'a' }).yieldBots).toBeUndefined();
-        expect(optionsFromEnv({ VOICE_SPEECH_OBSERVER: '1', VOICE_YIELD_BOTS: 'a' }).yieldBots).toBeUndefined();
+describe('the pause is on for every bot wherever the detector is', () => {
+    const model = { VOICE_SPEECH_OBSERVER_MODEL: '/model.onnx' };
+    it('needs no setting: every bot, hold unless a comparison policy is named; the engineers\' off switch turns the pause off with the detector', () => {
+        expect(optionsFromEnv(model).yieldBots).toEqual({ policy: 'hold' });
+        expect(optionsFromEnv({ ...model, VOICE_SPEECH_OBSERVER: '1' }).yieldBots).toEqual({ policy: 'hold' });
+        expect(optionsFromEnv({ ...model, VOICE_YIELD_POLICY: 'dip' }).yieldBots?.policy).toBe('dip');
+        expect(optionsFromEnv({ ...model, VOICE_YIELD_POLICY: 'anything' }).yieldBots?.policy).toBe('hold');
+        // A per-bot list is gone: an old VOICE_YIELD_BOTS narrows nothing
+        expect(optionsFromEnv({ ...model, VOICE_YIELD_BOTS: 'a' }).yieldBots).toEqual({ policy: 'hold' });
+        expect(optionsFromEnv({ ...model, VOICE_SPEECH_OBSERVER: '0' }).yieldBots).toBeUndefined();
+        expect(optionsFromEnv({ ...model, VOICE_SPEECH_OBSERVER: '0' }).speechObserver).toBeUndefined();
+        expect(optionsFromEnv({}).yieldBots).toBeUndefined();
     });
 });
 
@@ -1251,10 +1253,12 @@ describe("end to end over a person's own connection (proximity), the bot speakin
         expect(r.violations).toEqual([]);
     }, 30_000);
 
-    it('the switch-off procedure: named in VOICE_YIELD_BOTS the hum pauses and goes on; restarted without it, the same hum stops as today', async () => {
-        const on = optionsFromEnv({ VOICE_SPEECH_OBSERVER: '1', VOICE_SPEECH_OBSERVER_MODEL: '/model.onnx', VOICE_YIELD_BOTS: 'other, bot1' });
-        const off = optionsFromEnv({ VOICE_SPEECH_OBSERVER: '1', VOICE_SPEECH_OBSERVER_MODEL: '/model.onnx' });
+    it('the switch-off procedure: by default the hum pauses any bot and it goes on; restarted with VOICE_SPEECH_OBSERVER=0, the same hum stops as today', async () => {
+        const on = optionsFromEnv({ VOICE_SPEECH_OBSERVER_MODEL: '/model.onnx' });
+        const off = optionsFromEnv({ VOICE_SPEECH_OBSERVER: '0', VOICE_SPEECH_OBSERVER_MODEL: '/model.onnx' });
+        expect(on.yieldBots?.botIds).toBeUndefined();
         expect(off.yieldBots).toBeUndefined();
+        expect(off.speechObserver).toBeUndefined();
         for (const [settings, pauses] of [
             [on.yieldBots, true],
             [off.yieldBots, false],
