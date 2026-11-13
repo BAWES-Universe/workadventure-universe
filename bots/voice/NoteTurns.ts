@@ -417,7 +417,7 @@ export class NoteTurns {
             outcome = { failed: true };
         }
         try {
-            await this.options.orbit.settleVoiceNoteCleanup(job.id, outcome, this.timeoutMs);
+            await this.options.orbit.settleVoiceNoteCleanup(job.id, { ...outcome, lease: job.lease }, this.timeoutMs);
         } catch (error) {
             this.log(`could not tell Orbit how a cleanup went (${describe(error)})`);
         }

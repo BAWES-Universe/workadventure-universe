@@ -194,14 +194,14 @@ describe('whether a bot hears, for the mic', () => {
 describe('what the provider still holds', () => {
     it('is deleted until the provider confirms, and Orbit is told each answer', async () => {
         orbit.claimVoiceNoteCleanups.mockResolvedValue([
-            { id: 'c-1', kind: 'transcription', objectId: 't-1', provider: UNIVERSE_AI.provider },
-            { id: 'c-2', kind: 'file', objectId: 'f-1', provider: UNIVERSE_AI.provider },
+            { id: 'c-1', kind: 'transcription', objectId: 't-1', lease: '2026-11-13T20:00:00.000Z', provider: UNIVERSE_AI.provider },
+            { id: 'c-2', kind: 'file', objectId: 'f-1', lease: '2026-11-13T20:00:01.000Z', provider: UNIVERSE_AI.provider },
         ]);
         hearer.remove.mockResolvedValueOnce(409).mockRejectedValueOnce(new Error('network'));
         expect(await turns().cleanNow()).toBe(2);
         expect(hearer.remove).toHaveBeenCalledWith({ key: 'key-of-enc' }, 'transcription', 't-1');
-        expect(orbit.settleVoiceNoteCleanup).toHaveBeenCalledWith('c-1', { status: 409 }, expect.any(Number));
-        expect(orbit.settleVoiceNoteCleanup).toHaveBeenCalledWith('c-2', { failed: true }, expect.any(Number));
+        expect(orbit.settleVoiceNoteCleanup).toHaveBeenCalledWith('c-1', { status: 409, lease: '2026-11-13T20:00:00.000Z' }, expect.any(Number));
+        expect(orbit.settleVoiceNoteCleanup).toHaveBeenCalledWith('c-2', { failed: true, lease: '2026-11-13T20:00:01.000Z' }, expect.any(Number));
     });
 
     it('is left alone by an Orbit from before, which has no cleanup jobs', async () => {

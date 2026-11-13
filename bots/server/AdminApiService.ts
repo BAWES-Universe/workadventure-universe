@@ -10,7 +10,7 @@ import { parseForgetNotice, type MemoryForgetHandler } from '../memory/ForgetNot
 import { SOMEONE_UNKNOWN } from '../memory/Heard';
 import type { WokaList } from '../matrix/wokaPicture';
 import type { VoiceActiveAnswer, VoiceCredentialsAnswer, VoiceHealthReport, VoiceLimits } from '../voice/VoiceSettings';
-import type { CleanupJob, Lease, NoteHearingAnswer, Reservation, ReserveInput, TurnEvent, VoiceNoteCapabilities } from '../voice/VoiceNoteOrbit';
+import type { CleanupJob, CleanupOutcome, Lease, NoteHearingAnswer, Reservation, ReserveInput, TurnEvent, VoiceNoteCapabilities } from '../voice/VoiceNoteOrbit';
 
 // Optional Sentry integration (uncomment if @sentry/node is installed)
 // import * as Sentry from '@sentry/node';
@@ -1263,8 +1263,8 @@ export class AdminApiService {
         return response.data?.jobs ?? [];
     }
 
-    /** What the provider answered a delete with. */
-    async settleVoiceNoteCleanup(id: string, outcome: { status: number } | { failed: true }, timeoutMs: number): Promise<void> {
+    /** What the provider answered a delete with. Throws on a refusal (409: this server's hold ran out and another has the job). */
+    async settleVoiceNoteCleanup(id: string, outcome: CleanupOutcome, timeoutMs: number): Promise<void> {
         await axios.patch(resolveAdminApiEndpoint(this.adminApiUrl, `api/voice-notes/cleanups/${encodeURIComponent(id)}`), outcome, { headers: this.voiceHeaders(), timeout: timeoutMs });
     }
 

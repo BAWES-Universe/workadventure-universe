@@ -69,8 +69,13 @@ export interface CleanupJob {
     id: string;
     kind: 'file' | 'transcription';
     objectId: string;
+    /** Sent back when settling: Orbit only takes the answer of the server holding the job now (409 for a late one). */
+    lease: string;
     provider: { id: string; adapter: string; endpoint: string | null; region: string | null; apiKeyEncrypted: string };
 }
+
+/** What a provider answered a delete with (or `failed` for no answer), with the job's `lease`. */
+export type CleanupOutcome = ({ status: number } | { failed: true }) & { lease: string };
 
 /** The Orbit calls voice notes make (AdminApiService is the real one; tests give a fake). */
 export interface VoiceNoteOrbit {
@@ -84,5 +89,5 @@ export interface VoiceNoteOrbit {
     recordVoiceNote(turnId: string, event: TurnEvent, timeoutMs: number): Promise<void>;
     addVoiceNoteCleanup(job: { providerId: string; region?: string | null; kind: 'file' | 'transcription'; objectId: string }, timeoutMs: number): Promise<void>;
     claimVoiceNoteCleanups(limit: number, timeoutMs: number): Promise<CleanupJob[]>;
-    settleVoiceNoteCleanup(id: string, outcome: { status: number } | { failed: true }, timeoutMs: number): Promise<void>;
+    settleVoiceNoteCleanup(id: string, outcome: CleanupOutcome, timeoutMs: number): Promise<void>;
 }
