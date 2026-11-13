@@ -1214,6 +1214,8 @@ const chat: BaseTranslation = {
             since: "Since {day:string}",
             bricksThatCanUse: "Bricks that can use it",
             letUse: "Let it use {app:string}",
+            brickMayNote: "Tap a Brick that uses it to change what it may do: right away, asks first or off.",
+            changeWhatItMay: "Change what {name:string} may do with {app:string}",
             remove: "Remove",
             rightAway: "{things:string} right away",
             everythingRightAway: "Everything right away",
@@ -1224,6 +1226,8 @@ const chat: BaseTranslation = {
             thingChange: "Changes things",
             thingDeleteSend: "Deletes or sends out",
             otherPeople: "Other people",
+            onlyYou: "Only you",
+            onlyYouLine: "People who chat with your Bricks can't use it",
             onlyForYou: "Only for you",
             onlyForYouLine:
                 "{app:string} is signed in as you. Nothing in it is safe to hand to other people, so it is never lent to a universe, and a Brick never uses it for anyone else.",
@@ -1303,7 +1307,7 @@ const chat: BaseTranslation = {
                 "Bots keep using it for now, on {name:string}'s sign-in. Reconnect it with the team's account so it no longer depends on {name:string}.",
             botsThatCanUse: "Bots that can use it",
             botsThatCanUseNote:
-                "Bots in {universe:string}. No bot gets it until a manager lets it, on that bot's own page under Apps.",
+                "Bots in {universe:string}. No bot gets it until a manager lets it. Tap one that uses it to change what it may do: right away, asks first or off.",
             botOff: "Turned off",
             botUsesIt: "Uses it",
             managers: "Managers",

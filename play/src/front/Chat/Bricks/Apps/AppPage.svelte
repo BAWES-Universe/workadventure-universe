@@ -6,8 +6,11 @@
     import PageNote from "../../../external-modules/bots/components/page/PageNote.svelte";
     import { botApiService } from "../../../external-modules/bots/services/BotApiService";
     import { warningMessageStore } from "../../../Stores/ErrorStore";
+    import { loadMyBricks, myBricksStore } from "../MyBricksStore";
+    import BrickPicture from "../BrickPicture.svelte";
     import { dayOf, parseMyAppPage, THINGS, type Lend, type MyAppPage, type Thing } from "./Apps";
     import { appIcon } from "./AppIcon";
+    import AppBrickScreen from "./AppBrickScreen.svelte";
     import AppRow from "./AppRow.svelte";
     import AppSection from "./AppSection.svelte";
     import AppsShell from "./AppsShell.svelte";
@@ -15,7 +18,7 @@
     import { mayLine, thingLabel } from "./AppWords";
     import LendSheet from "./LendSheet.svelte";
     import { reconnectApp } from "./Reconnect";
-    import { IconAlertTriangle, IconLock, IconPlanet, IconPlus, IconX } from "@wa-icons";
+    import { IconAlertTriangle, IconLock, IconPlanet, IconPlus, IconUsers, IconX } from "@wa-icons";
 
     /**
      * One of the person's own apps (game #2001): who it is connected as, the Bricks that can use it (Remove, or Let it use),
@@ -38,8 +41,12 @@
         | { kind: "disconnect" }
         | undefined;
     let signingIn = false;
+    // A Brick of the person's whose way of using this app is open (right away, asks first or off), over the page
+    let brickScreen: { botId: string; botName: string; serverId: string } | undefined;
 
     $: app = page?.app;
+    // The pictures of the person's Bricks: a Brick not in the list yet has an empty place, so nothing jumps when it comes
+    $: looks = new Map(($myBricksStore ?? []).map((card) => [card.id, card.characterTextureId]));
 
     async function load() {
         try {
@@ -122,142 +129,165 @@
 
     onMount(() => {
         load().catch((error) => console.error(error));
+        loadMyBricks().catch((error) => console.error(error));
     });
 </script>
 
-<AppsShell title={app?.name ?? ""} backLabel={text.backToApps()} {onBack} testId="appPage">
-    {#if !page || !app}
-        {#if !loadFailed}
-            <PageNote>{text.loading()}</PageNote>
-        {:else}
-            <p class="pg-bad" data-testid="appLoadFailed">{text.loadFailed()}</p>
-            <div class="pg-pad">
-                <PageButton tall testId="appTryAgain" on:click={() => void load()}>{text.tryAgain()}</PageButton>
-            </div>
-        {/if}
-    {:else}
-        <div class="pg-card">
-            <span class="pg-ico"><svelte:component this={appIcon(app.name)} font-size="24" /></span>
-            <div class="pg-tx">
-                <span class="pg-cap">{app.reconnectRequired ? text.reconnectEndedTitle() : text.connected()}</span>
-                <span class="pg-mid">{app.source === "link" ? text.addedByYouCard() : text.signedInAsYou()}</span>
-                {#if app.connectedAt}<span class="pg-cn">{text.since({ day: dayOf(app.connectedAt, $locale) })}</span
-                    >{/if}
-            </div>
-        </div>
-        {#if app.reconnectRequired}
-            <div class="pg-alert" data-testid="appSignInEnded">
-                <IconAlertTriangle font-size="20" />
-                <div class="pg-tx">
-                    <span class="pg-t">{text.reconnectEndedTitle()}</span>
-                    <span class="pg-cn">{text.reconnectEndedLine({ app: app.name })}</span>
-                </div>
-            </div>
-            <div class="pg-pad pg-wide">
-                <PageButton tall go disabled={signingIn} testId="appReconnect" on:click={() => void reconnect()}
-                    >{signingIn ? text.reconnecting() : text.reconnect({ app: app.name })}</PageButton
-                >
-            </div>
-        {/if}
-
-        <AppSection title={text.bricksThatCanUse()} />
-        {#each app.bricks as brick (brick.botId)}
-            <AppRow
-                title={brick.botName}
-                hint={mayLine($LL, app.name, brick.settings, brick.enabled)}
-                testId="appBrickRow"
-            >
-                <PageButton disabled={busy} testId="appBrickRemove" on:click={() => void remove(brick.botId)}
-                    >{text.remove()}</PageButton
-                >
-            </AppRow>
-        {/each}
-        {#each page.canLetUse as brick (brick.id)}
-            <AppRow title={brick.name} hint={text.cantUse({ app: app.name })} testId="appBrickOff">
-                <PageButton disabled={busy} testId="appBrickLetUse" on:click={() => void letUse(brick.id)}
-                    >{text.letUse({ app: app.name })}</PageButton
-                >
-            </AppRow>
-        {/each}
-
-        {#if !app.lendable}
-            <AppSection title={text.otherPeople()} />
-            <AppRow
-                title={text.onlyForYou()}
-                hint={text.onlyForYouLine({ app: app.name })}
-                icon={IconLock}
-                testId="appOnlyForYou"
-            />
-        {:else}
-            <AppSection title={text.lentTo()} testId="appLentTo" />
-            {#each page.lentTo as lend (lend.universeId)}
-                <div class="pg-lent" data-testid="appLent">
-                    <div class="pg-lent-h">
-                        <span class="pg-ico sm"><IconPlanet font-size="20" /></span>
-                        <span class="pg-t grow">{lend.universeName}</span>
-                        <button
-                            type="button"
-                            class="pg-x"
-                            aria-label={text.takeBackLabel({ app: app.name, universe: lend.universeName })}
-                            data-testid="appTakeBack"
-                            on:click={() => (sheet = { kind: "takeBack", lend })}><IconX font-size="18" /></button
-                        >
-                    </div>
-                    <div class="pg-lent-r">
-                        <span class="pg-tx">
-                            <span class="pg-lab">{text.botsMay()}</span>
-                            <span class="pg-cn wh"
-                                >{mayOf(lend)} · {lend.usesPerDay === null
-                                    ? text.noLimit()
-                                    : text.usesADay({ count: lend.usesPerDay })}</span
-                            >
-                        </span>
-                        <PageButton testId="appLendChange" on:click={() => (sheet = { kind: "change", lend })}
-                            >{text.change()}</PageButton
-                        >
-                    </div>
-                    {#if lend.bots.length === 0}
-                        <p class="pg-cn pad">{text.noBotUsesIt({ app: app.name })}</p>
-                    {:else}
-                        {#each lend.bots as bot (bot.botId)}
-                            <div class="pg-bot" data-testid="appLentBot">
-                                <span class="pg-cn wh"
-                                    >{text.botUses({ name: bot.botName, count: bot.usesThisMonth })}</span
-                                >
-                            </div>
-                        {/each}
-                        <p class="pg-cn pad">
-                            {lend.usesPerDay === null
-                                ? text.todayNoLimit({ used: lend.usedToday })
-                                : text.todayOf({ used: lend.usedToday, limit: lend.usesPerDay })}
-                        </p>
-                    {/if}
-                </div>
-            {/each}
-            {#if page.lentTo.length === 0}
-                <PageNote>
-                    {page.canLendTo.length > 0
-                        ? text.noUniverseYet({ app: app.name })
-                        : text.noUniverseToLend({ app: app.name })}
-                </PageNote>
-            {/if}
-            {#if page.canLendTo.length > 0}
+{#if brickScreen && app}
+    <AppBrickScreen
+        botId={brickScreen.botId}
+        botName={brickScreen.botName}
+        serverId={brickScreen.serverId}
+        appName={app.name}
+        onBack={() => {
+            brickScreen = undefined;
+            // What the Brick may do changed on the other screen: the lines under the Bricks are read again
+            load().catch((error) => console.error(error));
+        }}
+    />
+{:else}
+    <AppsShell title={app?.name ?? ""} backLabel={text.backToApps()} {onBack} testId="appPage">
+        {#if !page || !app}
+            {#if !loadFailed}
+                <PageNote>{text.loading()}</PageNote>
+            {:else}
+                <p class="pg-bad" data-testid="appLoadFailed">{text.loadFailed()}</p>
                 <div class="pg-pad">
-                    <PageButton tall testId="appLendGo" on:click={() => (sheet = { kind: "lend" })}
-                        ><IconPlus font-size="18" />{text.lendTo()}</PageButton
+                    <PageButton tall testId="appTryAgain" on:click={() => void load()}>{text.tryAgain()}</PageButton>
+                </div>
+            {/if}
+        {:else}
+            <div class="pg-card">
+                <span class="pg-ico"><svelte:component this={appIcon(app.name)} font-size="24" /></span>
+                <div class="pg-tx">
+                    <span class="pg-cap">{app.reconnectRequired ? text.reconnectEndedTitle() : text.connected()}</span>
+                    <span class="pg-mid">{app.source === "link" ? text.addedByYouCard() : text.signedInAsYou()}</span>
+                    {#if app.connectedAt}<span class="pg-cn"
+                            >{text.since({ day: dayOf(app.connectedAt, $locale) })}</span
+                        >{/if}
+                </div>
+            </div>
+            {#if app.reconnectRequired}
+                <div class="pg-alert" data-testid="appSignInEnded">
+                    <IconAlertTriangle font-size="20" />
+                    <div class="pg-tx">
+                        <span class="pg-t">{text.reconnectEndedTitle()}</span>
+                        <span class="pg-cn">{text.reconnectEndedLine({ app: app.name })}</span>
+                    </div>
+                </div>
+                <div class="pg-pad pg-wide">
+                    <PageButton tall go disabled={signingIn} testId="appReconnect" on:click={() => void reconnect()}
+                        >{signingIn ? text.reconnecting() : text.reconnect({ app: app.name })}</PageButton
                     >
                 </div>
             {/if}
-        {/if}
 
-        <div class="pg-off">
-            <PageButton tall danger testId="appDisconnect" on:click={() => (sheet = { kind: "disconnect" })}
-                >{text.disconnect({ app: app.name })}</PageButton
-            >
-            <span class="pg-cn">{text.disconnectLine({ app: app.name })}</span>
-        </div>
-    {/if}
-</AppsShell>
+            <AppSection title={text.bricksThatCanUse()} />
+            {#each app.bricks as brick (brick.botId)}
+                <AppRow
+                    title={brick.botName}
+                    hint={mayLine($LL, app.name, brick.settings, brick.enabled)}
+                    openLabel={text.changeWhatItMay({ name: brick.botName, app: app.name })}
+                    onOpen={() =>
+                        (brickScreen = { botId: brick.botId, botName: brick.botName, serverId: brick.serverId })}
+                    testId="appBrickRow"
+                >
+                    <BrickPicture slot="picture" look={looks.get(brick.botId) ?? null} size={32} />
+                    <PageButton disabled={busy} testId="appBrickRemove" on:click={() => void remove(brick.botId)}
+                        >{text.remove()}</PageButton
+                    >
+                </AppRow>
+            {/each}
+            {#each page.canLetUse as brick (brick.id)}
+                <AppRow title={brick.name} hint={text.cantUse({ app: app.name })} testId="appBrickOff">
+                    <BrickPicture slot="picture" look={looks.get(brick.id) ?? null} size={32} />
+                    <PageButton disabled={busy} testId="appBrickLetUse" on:click={() => void letUse(brick.id)}
+                        >{text.letUse({ app: app.name })}</PageButton
+                    >
+                </AppRow>
+            {/each}
+            {#if app.bricks.length > 0}<PageNote>{text.brickMayNote()}</PageNote>{/if}
+
+            <AppSection title={text.otherPeople()} />
+            {#if !app.lendable}
+                <AppRow
+                    title={text.onlyForYou()}
+                    hint={text.onlyForYouLine({ app: app.name })}
+                    icon={IconLock}
+                    testId="appOnlyForYou"
+                />
+            {:else}
+                <AppRow title={text.onlyYou()} hint={text.onlyYouLine()} icon={IconUsers} testId="appOnlyYou" />
+                <AppSection title={text.lentTo()} testId="appLentTo" />
+                {#each page.lentTo as lend (lend.universeId)}
+                    <div class="pg-lent" data-testid="appLent">
+                        <div class="pg-lent-h">
+                            <span class="pg-ico sm"><IconPlanet font-size="20" /></span>
+                            <span class="pg-t grow">{lend.universeName}</span>
+                            <button
+                                type="button"
+                                class="pg-x"
+                                aria-label={text.takeBackLabel({ app: app.name, universe: lend.universeName })}
+                                data-testid="appTakeBack"
+                                on:click={() => (sheet = { kind: "takeBack", lend })}><IconX font-size="18" /></button
+                            >
+                        </div>
+                        <div class="pg-lent-r">
+                            <span class="pg-tx">
+                                <span class="pg-lab">{text.botsMay()}</span>
+                                <span class="pg-cn wh"
+                                    >{mayOf(lend)} · {lend.usesPerDay === null
+                                        ? text.noLimit()
+                                        : text.usesADay({ count: lend.usesPerDay })}</span
+                                >
+                            </span>
+                            <PageButton testId="appLendChange" on:click={() => (sheet = { kind: "change", lend })}
+                                >{text.change()}</PageButton
+                            >
+                        </div>
+                        {#if lend.bots.length === 0}
+                            <p class="pg-cn pad">{text.noBotUsesIt({ app: app.name })}</p>
+                        {:else}
+                            {#each lend.bots as bot (bot.botId)}
+                                <div class="pg-bot" data-testid="appLentBot">
+                                    <span class="pg-cn wh"
+                                        >{text.botUses({ name: bot.botName, count: bot.usesThisMonth })}</span
+                                    >
+                                </div>
+                            {/each}
+                            <p class="pg-cn pad">
+                                {lend.usesPerDay === null
+                                    ? text.todayNoLimit({ used: lend.usedToday })
+                                    : text.todayOf({ used: lend.usedToday, limit: lend.usesPerDay })}
+                            </p>
+                        {/if}
+                    </div>
+                {/each}
+                {#if page.lentTo.length === 0}
+                    <PageNote>
+                        {page.canLendTo.length > 0
+                            ? text.noUniverseYet({ app: app.name })
+                            : text.noUniverseToLend({ app: app.name })}
+                    </PageNote>
+                {/if}
+                {#if page.canLendTo.length > 0}
+                    <div class="pg-pad">
+                        <PageButton tall testId="appLendGo" on:click={() => (sheet = { kind: "lend" })}
+                            ><IconPlus font-size="18" />{text.lendTo()}</PageButton
+                        >
+                    </div>
+                {/if}
+            {/if}
+
+            <div class="pg-off">
+                <PageButton tall danger testId="appDisconnect" on:click={() => (sheet = { kind: "disconnect" })}
+                    >{text.disconnect({ app: app.name })}</PageButton
+                >
+                <span class="pg-cn">{text.disconnectLine({ app: app.name })}</span>
+            </div>
+        {/if}
+    </AppsShell>
+{/if}
 
 {#if app && sheet?.kind === "lend"}
     <LendSheet app={app.name} universes={page?.canLendTo ?? []} onSubmit={lend} onClose={() => (sheet = undefined)} />
