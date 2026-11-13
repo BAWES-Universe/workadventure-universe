@@ -104,6 +104,32 @@ describe('The Brick for guests answers a guest', () => {
         }
     });
 
+    it('runs the model only on a new claim or one whose earlier try failed, never again for a try Orbit already counted', async () => {
+        // Orbit says this very try was counted before and did not fail: the model is not paid for a second time
+        const counted = makeService({ allowance: { allowed: true, counted: false } });
+        expect(await counted.service.reply(ask())).toEqual({ kind: 'failed' });
+        expect(counted.generate).not.toHaveBeenCalled();
+        expect(counted.admin.finishGuestBrickReply).not.toHaveBeenCalled();
+
+        // A new try, a retry of one that failed (Orbit counts it again) and an Orbit that does not say, all run once
+        for (const allowance of [{ allowed: true, counted: true }, { allowed: true }] as GuestBrickAllowance[]) {
+            const fresh = makeService({ allowance });
+            expect(await fresh.service.reply(ask())).toMatchObject({ kind: 'reply' });
+            expect(fresh.generate).toHaveBeenCalledTimes(1);
+        }
+    });
+
+    it("reads Orbit's counted flag from the claim, and treats a missing one as counted", async () => {
+        const { AdminApiService } = await import('../server/AdminApiService');
+        const claim = async (data: unknown) => {
+            const fake = { brickCall: vi.fn(async () => ({ data })) };
+            return AdminApiService.prototype.claimGuestBrickReply.call(fake as never, { guestId: GUEST, turnId: TURN, roomUrl: ROOM_URL });
+        };
+        expect(await claim({ allowed: true, turnId: TURN, counted: false })).toEqual({ allowed: true, counted: false });
+        expect(await claim({ allowed: true, turnId: TURN, counted: true })).toEqual({ allowed: true });
+        expect(await claim({ allowed: true })).toEqual({ allowed: true });
+    });
+
     it('spends nothing when Orbit cannot be asked: no allowance answer, no model', async () => {
         const { service, admin, generate } = makeService();
         admin.claimGuestBrickReply.mockRejectedValue(new Error('timeout'));

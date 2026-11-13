@@ -172,6 +172,12 @@ export class GuestBrickService {
             return { kind: 'failed' };
         }
         if (allowance.allowed === false) return { kind: 'limit', limit: allowance.limit, resetsAt: allowance.resetsAt };
+        // This very try was counted before and did not fail: it is answered or being answered, so the model is not paid for again.
+        // A try that failed before is counted again by Orbit (`counted` is true), so it runs.
+        if (allowance.counted === false) {
+            console.warn('[GuestBrick] This try was already counted, so no model runs again:', ask.turnId);
+            return { kind: 'failed' };
+        }
 
         const limits: BotLimits = readBotLimits(setup.credentials.limits);
         const config = {

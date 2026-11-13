@@ -373,7 +373,10 @@ export interface GuestBrickSetup {
 }
 
 /** May a guest get one more reply from the Brick for guests: yes, or which allowance is used up and when it opens again. */
-export type GuestBrickAllowance = { allowed: true } | { allowed: false; limit: 'guest' | 'universe'; resetsAt: string };
+export type GuestBrickAllowance =
+    /** `counted` is false when Orbit already counted this very try and it did not fail: it is answered or being answered, so no model runs again. Absent from an Orbit that does not say: treated as counted. */
+    | { allowed: true; counted?: boolean }
+    | { allowed: false; limit: 'guest' | 'universe'; resetsAt: string };
 
 const BRICK_CALL_TIMEOUT_MS = 8_000;
 
@@ -975,8 +978,8 @@ export class AdminApiService {
      * is made without an answer, so nothing is spent that is not counted.
      */
     async claimGuestBrickReply(input: { guestId: string; turnId: string; roomUrl: string }): Promise<GuestBrickAllowance> {
-        const body = (await this.brickCall<Partial<{ allowed: boolean; limit: string; resetsAt: string }>>('post', 'api/guest-brick/replies', input)).data;
-        if (body?.allowed === true) return { allowed: true };
+        const body = (await this.brickCall<Partial<{ allowed: boolean; counted: boolean; limit: string; resetsAt: string }>>('post', 'api/guest-brick/replies', input)).data;
+        if (body?.allowed === true) return body.counted === false ? { allowed: true, counted: false } : { allowed: true };
         const limit = body?.limit === 'guest' || body?.limit === 'universe' ? body.limit : null;
         if (body?.allowed === false && limit && typeof body.resetsAt === 'string' && !Number.isNaN(Date.parse(body.resetsAt))) {
             return { allowed: false, limit, resetsAt: body.resetsAt };
