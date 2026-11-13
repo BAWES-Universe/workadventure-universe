@@ -181,6 +181,24 @@ describe('BotClient call-only connection', () => {
         expect(internals.spaceUserIdOf(SPACE, 7)).toBe('room_7');
     });
 
+    it("sends a limit card and an ask to the caller's own id in a call, and to none before the caller is there", async () => {
+        const { client, internals } = bot(true);
+        client.setBehavior({ setBot: vi.fn(), onSpaceUserJoined: vi.fn(), getConfiguredFacing: vi.fn() } as never);
+        internals.spaces.set(SPACE, 'call_abc');
+        const sent = vi.spyOn(client as unknown as { send(m: unknown): void }, 'send').mockImplementation(() => undefined);
+        const receivers = () =>
+            sent.mock.calls.map(([m]) => (m as { message: { privateEvent: { receiverUserId: string } } }).message.privateEvent.receiverUserId);
+        const card = { limit: 'l', resetsAt: 'r', who: 'w' };
+        const ask = { kind: 'reply' as const, id: 'a', revision: 1, body: 'b' };
+        client.sendReplyLimitCard(SPACE, 7, card);
+        expect(client.sendAskEvent(SPACE, 7, ask)).toBe(false);
+        expect(sent).not.toHaveBeenCalled();
+        await internals.handleSubMessage({ $case: 'addSpaceUserMessage', addSpaceUserMessage: { spaceName: SPACE, user: { spaceUserId: 'room_7' } } });
+        client.sendReplyLimitCard(SPACE, 7, card);
+        expect(client.sendAskEvent(SPACE, 7, ask)).toBe(true);
+        expect(receivers()).toEqual(['room_7', 'room_7']);
+    });
+
     it('never takes the random id of a call-only connection for a player number', async () => {
         const { client, internals } = bot(true);
         const onSpaceUserLeft = vi.fn();

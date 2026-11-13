@@ -2439,12 +2439,9 @@ export class BotClient {
      * to that person in the bot's nearby chat; the pusher passes it on only when a bot sends it.
      */
     sendReplyLimitCard(spaceName: string, playerId: number, card: { limit: string; resetsAt: string; who: string }): void {
-        const spaceUserId = this.spaces.get(spaceName);
-        if (!spaceUserId) return;
-        // A space user id is "<room>_<user id>": the person's is the bot's with their own user id at the end
-        const cut = spaceUserId.lastIndexOf('_');
-        if (cut < 0) return;
-        const receiverUserId = `${spaceUserId.slice(0, cut)}_${playerId}`;
+        // The person's own id in this space (in a call, the caller's, not the bot's call-only one)
+        const receiverUserId = this.spaceUserIdOf(spaceName, playerId);
+        if (!receiverUserId) return;
         this.send({
             message: {
                 $case: 'privateEvent',
@@ -2468,11 +2465,9 @@ export class BotClient {
      * bot is not in that space, so nothing was sent.
      */
     sendAskEvent(spaceName: string, playerId: number, event: { kind: 'card' | 'reply'; id: string; revision: number; body: string }): boolean {
-        const spaceUserId = this.spaces.get(spaceName);
-        if (!spaceUserId) return false;
-        const cut = spaceUserId.lastIndexOf('_');
-        if (cut < 0) return false;
-        this.sendPrivateEvent(spaceName, `${spaceUserId.slice(0, cut)}_${playerId}`, {
+        const receiverUserId = this.spaceUserIdOf(spaceName, playerId);
+        if (!receiverUserId) return false;
+        this.sendPrivateEvent(spaceName, receiverUserId, {
             $case: 'botAsk',
             botAsk: { botId: this.config.botId, botName: this.config.name, ...event },
         });
