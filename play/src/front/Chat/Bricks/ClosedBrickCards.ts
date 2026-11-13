@@ -40,3 +40,5 @@ export const startersCardKey = (roomId: string): string => `starters:${roomId}`;
 export const ideasCardKey = (messageId: string): string => `ideas:${messageId}`;
 /** A Brick's suggestion (#1996): closed with X, "Not now" or "Make it", it never comes back for that message. */
 export const offerCardKey = (messageId: string): string => `offer:${messageId}`;
+/** A Brick's offer to connect an App (#2001): closed with X, "Not now" or once it is connected, it never comes back for that message. */
+export const appCardKey = (messageId: string): string => `app:${messageId}`;

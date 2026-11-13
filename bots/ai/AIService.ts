@@ -128,6 +128,7 @@ import { MAX_OUTGOING_MEDIA_BYTES, type BotPlayerMemory, type PendingMedia } fro
 import { FIND_FILES_TOOL, OPEN_FILE_TOOL, SEND_AGAIN_TOOL, fileToolDefinitions, formatFileResult, isFileTool, runFileTool } from './FileTools';
 import { COMPUTER_TOOL, computerToolDefinitions, computerToolsNote, isComputerTool, runComputerTool } from './ComputerTools';
 import { pretendRunnerOn, runPretendJob } from './ComputerPretendRunner';
+import { OFFER_APP_TOOL, appToolDefinitions, appsNote, isAppTool, runAppTool } from './AppTools';
 import { MAKE_BRICK_TOOL, SUGGEST_BRICK_TOOL, brickToolDefinitions, brickToolsNote, isBrickTool, runBrickTool, type BrickNote } from './BrickTools';
 import { linkOfStore } from '../services/ChatFiles';
 import { addTurnMedia, startTurnMedia, turnMediaNotice, type TurnMedia } from './ArtifactMedia';
@@ -1341,6 +1342,8 @@ export class AIService {
                     artifactsEnabled() ? turnMediaNotice(turnMedia) : '',
                     // A person's own first Brick, in their direct messages: it can make Bricks, and what it already suggested (#1996)
                     channel === 'dm' && botId && playerId !== undefined ? await this.brickNoteFor(botId, playerId, adminApiService) : '',
+                    // A person's own Brick can lead them to connect an App (game #2001)
+                    channel === 'dm' && botId && playerId !== undefined ? await this.appsNoteFor(botId, playerId, botClient, adminApiService) : '',
                     computerOn ? computerToolsNote() : '',
                 ].filter(Boolean).join('\n\n') || undefined,
                 channel,
@@ -3367,6 +3370,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         // Tools: make another Brick, and suggest one (game #1996). Only a person's own first Brick has them, in its owner's direct messages.
         if (channel === 'dm' && this.brickToolsOn(botId, botClient, adminApiService)) tools.push(...brickToolDefinitions());
 
+        // Tool: offer to connect an App from the chat (game #2001). Any of a person's own Bricks, in its owner's direct messages.
+        if (channel === 'dm' && this.appToolsOn(botId, botClient, adminApiService)) tools.push(...appToolDefinitions());
+
         // Tool: a job on the Brick's own computer (game #2000), the last way after an answer and an app. Only when it is on for its owner.
         if (channel === 'dm' && computerOn && !botClient) tools.push(...computerToolDefinitions());
 
@@ -3517,6 +3523,33 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const memory = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId) : undefined;
         if (!admin || !where.botId || !memory?.userUuid) return { error: "That can't be done in this chat right now." };
         return runBrickTool(name, args, { admin, botId: where.botId, userId: memory.userUuid, notes: (memory.pendingBricks ??= []) });
+    }
+
+    /** Whether this reply has offer_app: any of a person's own Bricks (one that lives in no room), in a direct message, with Orbit to ask. */
+    private appToolsOn(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService): boolean {
+        const admin = adminApiService ?? this.adminApiService;
+        return !botClient && !!botId && this.ownBricks.has(botId) && !!admin?.isConfigured?.();
+    }
+
+    /** What such a Brick is told about the Apps it may offer, with what was already offered. Empty when there is nothing to offer or Orbit cannot say. */
+    private async appsNoteFor(botId: string, playerId: number, botClient?: BotClient, adminApiService?: AdminApiService): Promise<string> {
+        if (!this.appToolsOn(botId, botClient, adminApiService)) return '';
+        const admin = adminApiService ?? this.adminApiService;
+        const userId = this.conversationMemory?.getMemory(botId, playerId)?.userUuid;
+        if (!admin || !userId) return '';
+        const [apps, offers] = await Promise.all([
+            admin.appsOfferableFor(botId, userId).catch(() => null),
+            admin.brickOffersFor(botId, userId).catch(() => null),
+        ]);
+        return appsNote(apps, offers?.topics ?? []);
+    }
+
+    /** Runs offer_app for the person in this direct message. What the game shows for it waits with the reply. */
+    private async runAppToolCall(args: Record<string, unknown>, where: { adminApiService?: AdminApiService; botId?: string; playerId?: number }): Promise<Record<string, unknown>> {
+        const admin = where.adminApiService ?? this.adminApiService;
+        const memory = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId) : undefined;
+        if (!admin || !where.botId || !memory?.userUuid) return { error: "That can't be done in this chat right now." };
+        return runAppTool(args, { admin, botId: where.botId, userId: memory.userUuid, notes: (memory.pendingBricks ??= []) });
     }
 
     private filesOn(botId?: string, adminApiService?: AdminApiService): boolean {
@@ -3878,7 +3911,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 // With artifacts off, a tool of the same name belongs to an MCP server: send it down the default branch
                 // So does a file tool's name when Orbit doesn't keep files here (#1508)
                 // And a Brick tool's name anywhere but in a first Brick's direct messages (#1996)
-                switch ((isArtifactTool(toolCall.name) && !artifactsEnabled()) || (isFileTool(toolCall.name) && !this.filesOn(botId, adminApiService)) || (isBrickTool(toolCall.name) && !this.brickToolsOn(botId, botClient, adminApiService)) || (isComputerTool(toolCall.name) && (!!botClient || !this.ownBricks.has(botId ?? ''))) ? '' : toolCall.name) {
+                switch ((isArtifactTool(toolCall.name) && !artifactsEnabled()) || (isFileTool(toolCall.name) && !this.filesOn(botId, adminApiService)) || (isBrickTool(toolCall.name) && !this.brickToolsOn(botId, botClient, adminApiService)) || (isAppTool(toolCall.name) && !this.appToolsOn(botId, botClient, adminApiService)) || (isComputerTool(toolCall.name) && (!!botClient || !this.ownBricks.has(botId ?? ''))) ? '' : toolCall.name) {
                     case 'get_people_on_map':
                         if (botClient) {
                             const people = botClient.getAllPeople();
@@ -4190,6 +4223,13 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     case SUGGEST_BRICK_TOOL:
                         result = await this.runBrickToolCall(
                             toolCall.name,
+                            typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
+                            { adminApiService, botId, playerId }
+                        );
+                        break;
+
+                    case OFFER_APP_TOOL:
+                        result = await this.runAppToolCall(
                             typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
                             { adminApiService, botId, playerId }
                         );

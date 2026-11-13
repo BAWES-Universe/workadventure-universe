@@ -1,6 +1,6 @@
 import type { TranslationFunctions } from "../../../i18n/i18n-types";
 import type { BotAsk } from "../Bots/BotAsk";
-import { STARTER_IDEAS, type BrickOffer } from "./Brick";
+import { STARTER_IDEAS, type AppOffer, type BrickOffer } from "./Brick";
 
 /**
  * The fixed words of a person's own Brick (game #1995): its hello, the ways to start under it, and the ideas under its
@@ -40,12 +40,15 @@ function ownCard(id: string, title: string, choices: { id: string; label: string
 export const BRICK_STARTERS_CARD = "brick.starters";
 /** The starter that asks the Brick for another Brick (#1996): sent as the person's own words. */
 export const STARTER_MAKE = "make";
+/** The starter that opens the Apps page (#2001). Nothing is sent: the page opens. */
+export const STARTER_APPS = "apps";
 export const BRICK_IDEAS_CARD = "brick.ideas";
 
 /** The ways to start under the hello, on the question card. Only starters that work today. */
 export function brickStartersCard(ll: TranslationFunctions): BotAsk {
     return ownCard(BRICK_STARTERS_CARD, ll.chat.brick.startTitle(), [
         { id: STARTER_IDEAS, label: ll.chat.brick.seeWhatICanDo(), line: ll.chat.brick.seeWhatICanDoLine() },
+        { id: STARTER_APPS, label: ll.chat.brick.connectMyApps(), line: ll.chat.brick.connectMyAppsLine() },
         { id: STARTER_MAKE, label: ll.chat.brick.makeAnother(), line: ll.chat.brick.makeAnotherLine() },
     ]);
 }
@@ -60,6 +63,38 @@ export function brickOfferCard(offer: BrickOffer, ll: TranslationFunctions): Bot
         { id: OFFER_MAKE, label: ll.chat.brick.offerMake({ name: offer.name }), line: offer.line },
         { id: OFFER_NOT_NOW, label: ll.chat.brick.offerNotNow(), line: ll.chat.brick.offerNotNowLine() },
     ]);
+}
+
+export const BRICK_APP_CARD = "brick.app";
+export const APP_CONNECT = "connect";
+export const APP_OTHER = "other";
+export const APP_NOT_NOW = "not_now";
+
+/**
+ * A Brick's offer to connect an App (#2001) on the question card: "Connect your calendar?" with the App's own sign-in, a
+ * second choice when the kind of App has others, and "Not now". One they asked for by name is "Connect Notion?" with two.
+ * An App they already connected is "Let it use", never a second sign-in.
+ */
+export function brickAppCard(offer: AppOffer, ll: TranslationFunctions): BotAsk {
+    const text = ll.chat.brick.appCard;
+    const choices: { id: string; label: string; line: string }[] = [
+        offer.state === "connected"
+            ? { id: APP_CONNECT, label: text.letUse({ name: offer.name }), line: text.letUseLine() }
+            : {
+                  id: APP_CONNECT,
+                  label: text.connect({ name: offer.name }),
+                  line: text.connectLine({ name: offer.name }),
+              },
+    ];
+    if (offer.other && !offer.asked) {
+        choices.push({ id: APP_OTHER, label: offer.other.label, line: offer.other.line });
+    }
+    choices.push({
+        id: APP_NOT_NOW,
+        label: text.notNow(),
+        line: offer.asked ? text.notNowAsked() : text.notNowOffered(),
+    });
+    return ownCard(BRICK_APP_CARD, offer.ask || text.askByName({ name: offer.name }), choices);
 }
 
 export const BRICK_IDEAS = ["write", "web", "file", "think"] as const;
