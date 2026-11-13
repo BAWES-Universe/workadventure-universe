@@ -139,6 +139,22 @@ describe('BotClient call-only connection', () => {
         expect(over).toHaveBeenCalledWith(SPACE);
     });
 
+    it('tells when the caller is in the call space: they came in, or were there before the bot', async () => {
+        const { client, internals } = bot(true);
+        client.setBehavior({ setBot: vi.fn(), onSpaceUserJoined: vi.fn(), getConfiguredFacing: vi.fn() } as never);
+        const joined = vi.fn();
+        client.onCallJoined = joined;
+        await internals.handleSubMessage({ $case: 'initSpaceUsersMessage', initSpaceUsersMessage: { spaceName: SPACE, users: [] } });
+        await internals.handleSubMessage({ $case: 'addSpaceUserMessage', addSpaceUserMessage: { spaceName: 'a-bubble', user: { spaceUserId: 'room_7' } } });
+        await internals.handleSubMessage({ $case: 'addSpaceUserMessage', addSpaceUserMessage: { spaceName: SPACE, user: { spaceUserId: 'call_abc' } } });
+        expect(joined).not.toHaveBeenCalled();
+        await internals.handleSubMessage({ $case: 'addSpaceUserMessage', addSpaceUserMessage: { spaceName: SPACE, user: { spaceUserId: 'room_7' } } });
+        expect(joined).toHaveBeenCalledWith(SPACE);
+        joined.mockClear();
+        await internals.handleSubMessage({ $case: 'initSpaceUsersMessage', initSpaceUsersMessage: { spaceName: SPACE, users: [{ spaceUserId: 'room_7' }] } });
+        expect(joined).toHaveBeenCalledWith(SPACE);
+    });
+
     it('never takes the random id of a call-only connection for a player number', async () => {
         const { client, internals } = bot(true);
         const onSpaceUserLeft = vi.fn();

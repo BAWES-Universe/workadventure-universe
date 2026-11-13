@@ -49,7 +49,20 @@ export interface BotInstance {
 interface LiveCall {
     client: BotClient;
     spaceName: string;
+    /** Hangs the call up if its caller never joins the space; cleared when they do, or when the call ends. */
+    joinTimer?: ReturnType<typeof setTimeout>;
 }
+
+/**
+ * How long the bot waits in a call's space for the caller to come in before it hangs up. Internal safety only (a
+ * caller who closed the tab between asking and joining, or a script calling the route): never shown to anyone.
+ */
+export const CALL_JOIN_DEADLINE_MS = 45_000;
+
+const clearJoinTimer = (call: LiveCall): void => {
+    if (call.joinTimer) clearTimeout(call.joinTimer);
+    call.joinTimer = undefined;
+};
 
 const callKey = (botId: string, callerUuid: string): string => `${botId}|${callerUuid}`;
 
@@ -940,17 +953,32 @@ export class BotManager {
         const spaceName = callSpaceName({ botId, callerUuid, callId: randomUUID() });
         const client = await this.buildClient(botId, config, { callOnly: true });
         const call: LiveCall = { client, spaceName };
-        // Registered before it connects: a second start for the same person ends this one instead of racing it
+        // Two starts for the same person and bot can both be here: the one registered last wins, and the one that
+        // was registered first (maybe already connected) is ended, so none is left running with no entry.
+        // Registered before it connects: a later start for the same person ends this one instead of racing it.
+        const previous = this.calls.get(key);
         this.calls.set(key, call);
+        if (previous) {
+            clearJoinTimer(previous);
+            await previous.client.endCall(previous.spaceName);
+        }
         const hangUp = (): void => {
+            clearJoinTimer(call);
             if (this.calls.get(key) === call) this.calls.delete(key);
             client.disconnect();
         };
         client.onDisconnect = () => {
+            clearJoinTimer(call);
             if (this.calls.get(key) === call) this.calls.delete(key);
         };
         // The caller left the space (closed the tab, lost the connection): nobody is left to talk to
         client.onCallOver = hangUp;
+        // The caller is in the space (or was before the bot): the join deadline no longer applies
+        let callerIn = false;
+        client.onCallJoined = () => {
+            callerIn = true;
+            clearJoinTimer(call);
+        };
         try {
             await client.connect();
             if (this.calls.get(key) !== call) {
@@ -964,6 +992,11 @@ export class BotManager {
             hangUp();
             throw error;
         }
+        // A call nobody joins would stay open until this server restarts: hang up if the caller never comes
+        if (!callerIn && this.calls.get(key) === call) {
+            call.joinTimer = setTimeout(hangUp, CALL_JOIN_DEADLINE_MS);
+            call.joinTimer.unref?.();
+        }
         return { spaceName };
     }
 
@@ -973,6 +1006,7 @@ export class BotManager {
         const call = this.calls.get(key);
         if (!call) return false;
         this.calls.delete(key);
+        clearJoinTimer(call);
         await call.client.endCall(call.spaceName);
         return true;
     }
@@ -1454,7 +1488,10 @@ export class BotManager {
         this.stopRoomVerification();
         this.adminApiService.stopPrivacySync?.();
 
-        for (const call of this.calls.values()) call.client.disconnect();
+        for (const call of this.calls.values()) {
+            clearJoinTimer(call);
+            call.client.disconnect();
+        }
         this.calls.clear();
         const shutdownPromises = Array.from(this.bots.keys()).map(botId => this.despawnBot(botId));
         await Promise.all(shutdownPromises);

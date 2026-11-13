@@ -2,8 +2,8 @@
  * Starting and ending a call with a bot (game #2004): the call's client is its own, never one of the bots standing in
  * a room; there is one live call per person and bot; and the bot hangs up when the caller does.
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { BotManager } from '../server/BotManager';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { BotManager, CALL_JOIN_DEADLINE_MS } from '../server/BotManager';
 import { BotCannotCallError, BotUnavailableError } from '../utils/summonErrors';
 import { isCallSpaceName, parseCallSpaceName } from '../../libs/shared-utils/src/Space/callSpaceName';
 
@@ -11,6 +11,7 @@ function fakeClient(options: { accept?: boolean } = {}) {
     return {
         onDisconnect: undefined as (() => void) | undefined,
         onCallOver: undefined as ((space: string) => void) | undefined,
+        onCallJoined: undefined as ((space: string) => void) | undefined,
         connect: vi.fn().mockResolvedValue(undefined),
         acceptCall: vi.fn().mockResolvedValue(options.accept ?? true),
         endCall: vi.fn().mockResolvedValue(undefined),
@@ -122,5 +123,80 @@ describe('BotManager calls', () => {
         expect(clients[0].acceptCall).not.toHaveBeenCalled();
         expect(manager.liveCalls()).toBe(1);
         expect(isCallSpaceName(fast.spaceName)).toBe(true);
+    });
+
+    describe('a call nobody joins', () => {
+        beforeEach(() => vi.useFakeTimers());
+        afterEach(() => vi.useRealTimers());
+
+        it('is hung up when the caller never comes into the space', async () => {
+            const { manager, clients } = setup();
+            await manager.startCall('b1', 'uuid-1');
+            vi.advanceTimersByTime(CALL_JOIN_DEADLINE_MS - 1);
+            expect(clients[0].disconnect).not.toHaveBeenCalled();
+            expect(manager.liveCalls()).toBe(1);
+            vi.advanceTimersByTime(1);
+            expect(clients[0].disconnect).toHaveBeenCalled();
+            expect(manager.liveCalls()).toBe(0);
+        });
+
+        it('stays when the caller joins before the deadline', async () => {
+            const { manager, clients } = setup();
+            const { spaceName } = await manager.startCall('b1', 'uuid-1');
+            clients[0].onCallJoined?.(spaceName);
+            vi.advanceTimersByTime(CALL_JOIN_DEADLINE_MS * 3);
+            expect(clients[0].disconnect).not.toHaveBeenCalled();
+            expect(manager.liveCalls()).toBe(1);
+        });
+
+        it('sets no deadline when the caller was already in the space when the bot came in', async () => {
+            const { manager, build, clients } = setup();
+            build.mockImplementationOnce((async () => {
+                const client = fakeClient();
+                client.acceptCall.mockImplementation((space: string) => {
+                    client.onCallJoined?.(space);
+                    return Promise.resolve(true);
+                });
+                clients.push(client);
+                return client;
+            }) as never);
+            await manager.startCall('b1', 'uuid-1');
+            expect(vi.getTimerCount()).toBe(0);
+            vi.advanceTimersByTime(CALL_JOIN_DEADLINE_MS * 2);
+            expect(manager.liveCalls()).toBe(1);
+        });
+
+        it('leaves no timer behind when the call ends any way', async () => {
+            const { manager, clients } = setup();
+            await manager.startCall('b1', 'uuid-1');
+            expect(vi.getTimerCount()).toBe(1);
+            await manager.endCall('b1', 'uuid-1');
+            expect(vi.getTimerCount()).toBe(0);
+
+            const { spaceName } = await manager.startCall('b1', 'uuid-2');
+            clients[1].onCallOver?.(spaceName);
+            expect(vi.getTimerCount()).toBe(0);
+
+            await manager.startCall('b1', 'uuid-3');
+            clients[2].onDisconnect?.();
+            expect(vi.getTimerCount()).toBe(0);
+
+            await manager.startCall('b1', 'uuid-4');
+            await manager.startCall('b1', 'uuid-4');
+            expect(vi.getTimerCount()).toBe(1);
+            (manager as never as { botRegistry: unknown }).botRegistry = { disconnect: vi.fn().mockResolvedValue(undefined) };
+            await manager.shutdown();
+            expect(vi.getTimerCount()).toBe(0);
+        });
+    });
+
+    it('keeps exactly one live call when two starts for the same person and bot run together', async () => {
+        const { manager, clients } = setup();
+        const results = await Promise.allSettled([manager.startCall('b1', 'uuid-1'), manager.startCall('b1', 'uuid-1')]);
+        expect(clients).toHaveLength(2);
+        expect(manager.liveCalls()).toBe(1);
+        const ended = clients.filter((c) => c.disconnect.mock.calls.length > 0 || c.endCall.mock.calls.length > 0);
+        expect(ended).toHaveLength(1);
+        expect(results.filter((r) => r.status === 'fulfilled').length).toBeGreaterThanOrEqual(1);
     });
 });

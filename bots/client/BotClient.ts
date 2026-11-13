@@ -192,6 +192,8 @@ export class BotClient {
     public onDisconnect?: () => void;
     /** A call-only connection: the person who called is no longer in the call's space, so the call is over. */
     public onCallOver?: (spaceName: string) => void;
+    /** A call-only client sees the caller in its call space (they came in, or were already there). */
+    public onCallJoined?: (spaceName: string) => void;
 
     /**
      * Who the bot listens to when others are in the bubble (#1220): the person who says its name, who summoned it, or
@@ -3133,6 +3135,12 @@ export class BotClient {
         }
     }
 
+    /** In a call space, anyone who is not a call-only connection (this bot) is the caller. */
+    private noteCallerIn(spaceName: string, users: ReadonlyArray<{ spaceUserId?: string }>): void {
+        if (!this.config.callOnly || !isCallSpaceName(spaceName)) return;
+        if (users.some((user) => !user.spaceUserId?.startsWith(CALL_ONLY_SPACE_USER_PREFIX))) this.onCallJoined?.(spaceName);
+    }
+
     /** The call is over: the bot leaves its space and closes its connection. Never throws. */
     async endCall(spaceName: string): Promise<void> {
         try {
@@ -3613,6 +3621,7 @@ export class BotClient {
                 break;
 
             case 'initSpaceUsersMessage':
+                this.noteCallerIn(message.initSpaceUsersMessage.spaceName, message.initSpaceUsersMessage.users ?? []);
                 this.audience.seen(message.initSpaceUsersMessage.spaceName, message.initSpaceUsersMessage.users ?? []);
                 for (const user of message.initSpaceUsersMessage.users ?? []) this.noteChatId(message.initSpaceUsersMessage.spaceName, user, true);
                 this.voice?.spaceUsers(message.initSpaceUsersMessage.spaceName, message.initSpaceUsersMessage.users ?? []);
@@ -3677,6 +3686,7 @@ export class BotClient {
                 break;
 
             case 'addSpaceUserMessage':
+                if (message.addSpaceUserMessage.user) this.noteCallerIn(message.addSpaceUserMessage.spaceName, [message.addSpaceUserMessage.user]);
                 // First of all: from here on a reply in this space is read by them too (#1993)
                 if (message.addSpaceUserMessage.user) this.audience.joined(message.addSpaceUserMessage.spaceName, message.addSpaceUserMessage.user);
                 this.noteChatId(message.addSpaceUserMessage.spaceName, message.addSpaceUserMessage.user, true);
