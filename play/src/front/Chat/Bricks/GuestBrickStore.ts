@@ -133,9 +133,10 @@ export function bringGuestChatInto(brickId: string): void {
         },
         drop: () => localUserStore.dropGuestBrickChat(),
         take: (guestId) => botApiService.takeGuestChat(guestId),
-        carry: async (carryId, lines) => {
+        parts: () => botApiService.botServerCarriesParts(),
+        carry: async (carryId, lines, part) => {
             try {
-                return await botApiService.carryGuestChat(brickId, myChatId, carryId, lines);
+                return await botApiService.carryGuestChat(brickId, myChatId, carryId, lines, part);
             } catch (error) {
                 // Not this person's chat or Brick: it is not theirs to bring
                 if ((error as { status?: number }).status === 403) return "refused";

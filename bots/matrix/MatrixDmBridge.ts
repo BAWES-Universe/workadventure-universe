@@ -52,6 +52,14 @@ export const BRICK_OFFER_KEY = 'universe.brick_offer';
  * message of the Brick in their own Brick's chat. The game draws each line as it was said and ends with the Brick's welcome.
  */
 export const GUEST_CHAT_KEY = 'universe.guest_chat';
+/** On a message that holds one part of a chat carried in parts (plan v3 section 7): `{ v: 1, from, to, last }`. */
+export const GUEST_CHAT_PART_KEY = 'universe.guest_chat_part';
+/** One part of a chat carried in parts: its lines' place in the chat, and whether it is the last. */
+export interface CarriedPart {
+    from: number;
+    to: number;
+    last: boolean;
+}
 /** On a person's message: they tapped "Make it" on that card, and this is the Brick it described (game #1996). */
 export const BRICK_MAKE_KEY = 'universe.brick_make';
 
@@ -196,6 +204,8 @@ const TYPING_REFRESH_MS = 20 * 1000;
 const ONLY_DIRECT = 'I only take direct messages.';
 /** One line of a guest's chat that is brought along when they sign in. */
 export interface GuestChatNote {
+    /** Its stable name in a chat carried in parts: the game draws a line sent twice once. */
+    id?: string;
     from: 'guest' | 'brick';
     text: string;
     /** When it was said (ms), on the guest's device. */
@@ -584,15 +594,16 @@ export class MatrixDmBridge implements MatrixEventHandler {
      * person's and that the bot is their own Brick. `carryId` is the guest id Orbit handed over, so one hand-over is brought once
      * however many times a device asks. `wait` when the chat is not there yet: the device asks again in a moment.
      */
-    async carryGuestChat(botId: string, matrixUserId: string, carryId: string, lines: GuestChatNote[]): Promise<'sent' | 'already' | 'wait'> {
+    async carryGuestChat(botId: string, matrixUserId: string, carryId: string, lines: GuestChatNote[], part?: CarriedPart | null): Promise<'sent' | 'already' | 'wait'> {
         if (botIdFromMatrixId(this.config.domain, matrixUserId)) return 'wait';
-        const key = `${MatrixDmBridge.pair(botId, matrixUserId)}|${carryId}`;
+        // A chat carried in parts (plan v3 section 7): each part is its own message, said once however often it is asked
+        const key = `${MatrixDmBridge.pair(botId, matrixUserId)}|${carryId}${part ? `|${part.from}-${part.to}` : ''}`;
         if (this.carriedChats.has(key)) return 'already';
         // Taken before anything is looked at or sent, so two asks at once bring it once; the second waits for how the first ends
         // and says "already" only if it was sent (a device is told to drop its copy on "already", so it must be there)
         const inFlight = this.carrying.get(key);
         if (inFlight) return (await inFlight) === 'sent' ? 'already' : 'wait';
-        const sending = this.sendCarried(botId, matrixUserId, carryId, lines);
+        const sending = this.sendCarried(botId, matrixUserId, carryId, lines, part ?? null);
         this.carrying.set(key, sending);
         try {
             const result = await sending;
@@ -606,13 +617,15 @@ export class MatrixDmBridge implements MatrixEventHandler {
         }
     }
 
-    private async sendCarried(botId: string, matrixUserId: string, carryId: string, lines: GuestChatNote[]): Promise<'sent' | 'wait'> {
+    private async sendCarried(botId: string, matrixUserId: string, carryId: string, lines: GuestChatNote[], part: CarriedPart | null): Promise<'sent' | 'wait'> {
         const known = await this.lookUpDirectRoom(botId, matrixUserId);
         if (!known.roomId) return 'wait';
         const body = lines.map((line) => `${line.from === 'guest' ? 'You' : 'Brick'}: ${carriedWords(line)}`).join('\n');
-        // The same transaction id for every try of this hand-over: a try that failed after the homeserver had taken the message is not sent twice
-        const txnId = createHash('sha256').update(`guest-chat|${botId}|${matrixUserId}|${carryId}`).digest('hex');
-        await this.client.sendMessage(this.botUserId(botId), known.roomId, { msgtype: 'm.text', body, [GUEST_CHAT_KEY]: lines }, txnId);
+        // The same transaction id for every try of this hand-over (of this part): a try that failed after the homeserver had taken
+        // the message is not sent twice. Past the homeserver's memory of it, the game still draws a named line once
+        const txnId = createHash('sha256').update(`guest-chat|${botId}|${matrixUserId}|${carryId}${part ? `|${part.from}-${part.to}` : ''}`).digest('hex');
+        const content = { msgtype: 'm.text', body, [GUEST_CHAT_KEY]: lines, ...(part ? { [GUEST_CHAT_PART_KEY]: { v: 1, from: part.from, to: part.to, last: part.last } } : {}) };
+        await this.client.sendMessage(this.botUserId(botId), known.roomId, content, txnId);
         return 'sent';
     }
 

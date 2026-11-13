@@ -130,6 +130,33 @@ describe("the chat a guest brought along, drawn in the Brick's chat (#1997)", ()
         );
     });
 
+    it("draws a chat carried in parts as one chat: each line once, in order, and one welcome after the last part", () => {
+        const part = (id: string, lines: { id: string; text: string; at: number }[]) => ({
+            ...carrier([]),
+            id,
+            guestChat: lines.map((line) => ({ ...line, from: "guest" as const })),
+        });
+        const first = part("$p1", [
+            { id: "7.0", text: "one", at: 1 },
+            { id: "7.1", text: "two", at: 2 },
+        ]);
+        // The first part sent again (its answer was lost), then the second
+        const again = part("$p1b", [
+            { id: "7.0", text: "one", at: 1 },
+            { id: "7.1", text: "two", at: 2 },
+        ]);
+        const second = part("$p2", [{ id: "7.2", text: "three", at: 3 }]);
+        const drawn = expandGuestChats([first, again, second], i18nObject("en-US"), "Khalid");
+        expect(bodies(drawn)).toEqual([
+            "one",
+            "two",
+            "three",
+            "Welcome, Khalid. I'm yours now, and this chat came with me. What shall we do next?",
+        ]);
+        // While only the first part is here, it ends with the welcome
+        expect(bodies(expandGuestChats([first], i18nObject("en-US"), "Khalid")).at(-1)).toContain("Welcome");
+    });
+
     it("welcomes without a name when the game has none", () => {
         const drawn = expandGuestChats([carrier([{ from: "guest", text: "hi", at: 1 }])], i18nObject("en-US"), null);
         expect(bodies(drawn)[1]).toBe("Welcome. I'm yours now, and this chat came with me. What shall we do next?");

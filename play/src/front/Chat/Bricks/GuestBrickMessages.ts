@@ -179,8 +179,8 @@ export function guestLineMessages(
 }
 
 /**
- * The messages of a chat with the chat a guest brought along drawn in: the one message that carries it becomes the lines
- * as they were said, each on its own, then the Brick's welcome in the person's language. Other messages are left as they are.
+ * The messages of a chat with the chat a guest brought along drawn in: the messages that carry it become the lines as they
+ * were said, each on its own and each once, then the Brick's welcome in the person's language, once. Other messages are left as they are.
  * Done when the chat is drawn only: the message itself stays one message in the chat.
  */
 export function expandGuestChats(
@@ -190,6 +190,17 @@ export function expandGuestChats(
 ): ChatMessage[] {
     if (!messages.some((message) => message.guestChat?.length)) return messages as ChatMessage[];
     const name = personName?.trim();
+    // A chat carried in parts (plan v3 section 7): its lines are named, a line sent twice is drawn once, and the welcome
+    // comes once, after its last part here. A chat carried as one message is its own carry
+    const carryOf = (message: ChatMessage): string => {
+        const id = message.guestChat?.find((line) => line.id)?.id;
+        return id ? `carry:${id.slice(0, id.lastIndexOf("."))}` : `message:${message.id}`;
+    };
+    const lastOf = new Map<string, string>();
+    for (const message of messages) {
+        if (message.guestChat?.length && !get(message.isDeleted)) lastOf.set(carryOf(message), message.id);
+    }
+    const drawnLines = new Set<string>();
     const expanded: ChatMessage[] = [];
     for (const message of messages) {
         const lines = message.guestChat;
@@ -200,6 +211,10 @@ export function expandGuestChats(
         }
         const sender = message.sender;
         lines.forEach((line, index) => {
+            if (line.id) {
+                if (drawnLines.has(line.id)) return;
+                drawnLines.add(line.id);
+            }
             // A guest's pictures, files and notes are drawn in the same bubbles as every chat's
             if (line.media?.length) {
                 const media: GuestMedia[] = line.media.map((one) => ({
@@ -234,6 +249,7 @@ export function expandGuestChats(
                 })
             );
         });
+        if (lastOf.get(carryOf(message)) !== message.id) continue;
         expanded.push(
             localMessage({
                 id: `${message.id}:welcome`,

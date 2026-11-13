@@ -213,6 +213,8 @@ export const GUEST_CHAT_KEY = "universe.guest_chat";
 
 /** One line of a chat a guest had with the Brick for guests, as it comes along when they sign in. */
 export interface GuestChatLine {
+    /** Its stable name in a chat carried in parts: a line sent twice is drawn once. None in a chat carried as one message. */
+    id?: string;
     from: "guest" | "brick";
     text: string;
     /** When it was said (ms), on the guest's device. */
@@ -239,7 +241,7 @@ export interface CarriedChatMedia {
     receipt?: string;
 }
 
-const CARRIED_MEDIA_MAX = 10;
+const CARRIED_MEDIA_MAX = 20;
 
 function readCarriedChatMedia(value: unknown): CarriedChatMedia[] {
     if (!Array.isArray(value)) return [];
@@ -273,11 +275,12 @@ export function readGuestChat(sender: string | null | undefined, content: Record
     const lines: GuestChatLine[] = [];
     for (const one of list.slice(-GUEST_CHAT_LINES_MAX)) {
         if (!one || typeof one !== "object") continue;
-        const { from, text: said, at, label } = one as Record<string, unknown>;
+        const { from, text: said, at, label, id } = one as Record<string, unknown>;
         const media = from === "guest" ? readCarriedChatMedia((one as Record<string, unknown>).media) : [];
         if ((from !== "guest" && from !== "brick") || typeof said !== "string" || (!said.trim() && !media.length))
             continue;
         lines.push({
+            ...(typeof id === "string" && /^[A-Za-z0-9._-]{1,64}$/.test(id) ? { id } : {}),
             from,
             text: said.trim().slice(0, GUEST_LINE_MAX),
             at: typeof at === "number" && Number.isFinite(at) && at > 0 ? Math.floor(at) : 0,

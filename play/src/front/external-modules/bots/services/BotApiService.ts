@@ -11,6 +11,7 @@ import {
 import { resolveCredentialUrl } from "../../admin-api/iframeAuth";
 import { freshOrbitAccessToken, type GameTokenHolder } from "../../admin-api/orbitAccessToken";
 import type { PushOverview, PushSettings } from "../../../Notification/Push/PushSettings";
+import type { GuestChatLine } from "../../../Chat/Bricks/Brick";
 import { ChatPusherSchema, type ChatPusher, type PushActivityReport } from "../../../Notification/Push/PushChat";
 import { readBotUsage, type BotUsage, type UsageRange } from "../usageModel";
 import {
@@ -1355,6 +1356,16 @@ export class BotApiService {
         }
     }
 
+    /**
+     * Whether the bot server takes a guest's chat in parts after sign-in (plan v3 section 7). False for a bot server from before,
+     * which takes it as one message. Throws when the bot server can't be asked.
+     */
+    async botServerCarriesParts(): Promise<boolean> {
+        const response = await this.fetchBotServer("/api/guest-brick/media", { method: "GET" });
+        const data = (await response.json().catch(() => null)) as { carryParts?: unknown } | null;
+        return data?.carryParts === true;
+    }
+
     /** This device has the answer to a guest's voice note: its kept copy is deleted. */
     async guestBrickDelivered(delivery: string): Promise<void> {
         await this.fetchBotServer("/api/guest-brick/delivered", { method: "POST", body: JSON.stringify({ delivery }) });
@@ -1373,18 +1384,19 @@ export class BotApiService {
     }
 
     /**
-     * Has the bot server say a guest's chat in the person's own chat with their Brick (game #1997), once. Answers
-     * `sent`, `already` (it was said already) or `wait` (their chat is not there yet: ask again in a moment).
+     * Has the bot server say one part of a guest's chat in the person's own chat with their Brick (game #1997, plan v3 section
+     * 7), once. Answers `sent`, `already` (it was said already) or `wait` (their chat is not there yet: ask again in a moment).
      */
     async carryGuestChat(
         brickId: string,
         chatId: string,
         carryId: string,
-        lines: { from: "guest" | "brick"; text: string; at: number }[]
+        lines: GuestChatLine[],
+        part?: { from: number; to: number; last: boolean }
     ): Promise<"sent" | "already" | "wait"> {
         const response = await this.fetchBotServer(`/api/bots/${encodeURIComponent(brickId)}/carried-chat`, {
             method: "POST",
-            body: JSON.stringify({ chatId, carryId, lines }),
+            body: JSON.stringify({ chatId, carryId, lines, ...(part ? { part } : {}) }),
         });
         const result = ((await response.json()) as { result?: unknown } | null)?.result;
         if (result === "sent" || result === "already" || result === "wait") return result;

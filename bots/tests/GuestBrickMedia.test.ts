@@ -320,7 +320,7 @@ describe('POST /api/guest-brick/reply with files and notes, and the delivery', (
     it('says what the Brick for guests takes now', async () => {
         guestBrick.canTake.mockResolvedValueOnce({ files: true, notes: false });
         const response = await fetch(`${base}/api/guest-brick/media`, { headers: { 'X-WA-Auth': token(GUEST) } });
-        expect(await response.json()).toEqual({ files: true, notes: false });
+        expect(await response.json()).toEqual({ files: true, notes: false, carryParts: true });
     });
 
     it("closes a kept answer only for the guest it was for", async () => {
@@ -397,6 +397,21 @@ describe("a guest's pictures, files and notes come along when they sign in (plan
         const again = await copyCarriedMedia(guest, readCarriedLines([LINE]), steps);
         expect(steps.store).toHaveBeenCalledTimes(1);
         expect(again[0].media?.[0].url).toBe('https://cdn.test/copy.oga');
+    });
+
+    it('tries a copy again when the carry is asked again after the copy failed', async () => {
+        const steps = copySteps();
+        steps.store.mockRejectedValueOnce(new Error('storage down'));
+        const guest = `g-${Math.random()}`;
+        const first = await copyCarriedMedia(guest, readCarriedLines([LINE]), steps);
+        expect(first[0].media?.[0]).toMatchObject({ gone: true });
+        const again = await copyCarriedMedia(guest, readCarriedLines([LINE]), steps);
+        expect(steps.store).toHaveBeenCalledTimes(2);
+        expect(again[0].media?.[0].url).toBe('https://cdn.test/copy.oga');
+    });
+
+    it('keeps the name of each line a device brings in parts', () => {
+        expect(readCarriedLines([{ ...LINE, id: '17.3' }, { from: 'brick', text: 'ok', at: 2, id: 'bad id!' }]).map((line) => line.id)).toEqual(['17.3', undefined]);
     });
 
     describe('POST /api/bots/:botId/carried-chat with media', () => {

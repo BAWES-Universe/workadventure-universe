@@ -18,7 +18,7 @@ import { AIProviderRegistry } from '../ai/AIProviderRegistry';
 import { readBotLimits, type AIProviderConfig, type BotLimits } from '../ai/types';
 import { priceMetadata } from '../ai/pricing/ledger';
 import type { AdminApiService, GuestBrickAllowance, GuestBrickSetup } from './AdminApiService';
-import type { CarriedMedia, GuestChatNote } from '../matrix/MatrixDmBridge';
+import type { CarriedMedia, CarriedPart, GuestChatNote } from '../matrix/MatrixDmBridge';
 import type { GuestNotes } from '../voice/NoteTurns';
 
 /** One line of the chat the guest holds, as their device sends it back. */
@@ -167,10 +167,11 @@ export function readCarriedLines(value: unknown): GuestChatNote[] {
     let mediaLeft = CARRIED_MEDIA_MAX;
     for (const one of value) {
         if (!one || typeof one !== 'object') continue;
-        const { from, text, at, label } = one as Record<string, unknown>;
+        const { from, text, at, label, id } = one as Record<string, unknown>;
         const media = from === 'guest' ? readCarriedMedia((one as Record<string, unknown>).media) : [];
         if ((from !== 'guest' && from !== 'brick') || typeof text !== 'string' || (!text.trim() && media.length === 0)) continue;
         lines.push({
+            ...(typeof id === 'string' && /^[A-Za-z0-9._-]{1,64}$/.test(id) ? { id } : {}),
             from,
             text: text.trim().slice(0, CARRIED_LINE_CHARS),
             at: typeof at === 'number' && Number.isFinite(at) && at > 0 ? Math.floor(at) : Date.now(),
@@ -198,6 +199,16 @@ export function readCarriedLines(value: unknown): GuestChatNote[] {
         kept.unshift(line);
     }
     return kept;
+}
+
+/** The part a device names, null for a chat brought as one message, or 'bad' for one that is not a part. */
+export function readCarriedPart(value: unknown): CarriedPart | null | 'bad' {
+    if (value === undefined || value === null) return null;
+    if (typeof value !== 'object') return 'bad';
+    const { from, to, last } = value as Record<string, unknown>;
+    const whole = (n: unknown): n is number => typeof n === 'number' && Number.isInteger(n) && n >= 0 && n <= 100_000;
+    if (!whole(from) || !whole(to) || to <= from || typeof last !== 'boolean') return 'bad';
+    return { from, to, last };
 }
 
 /** What the model is given as the guest's turn: the chat so far, then what they write now. */

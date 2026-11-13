@@ -14,9 +14,9 @@ import { MCPConnector } from '../mcp/MCPConnector';
 import { BotBusyError, BotUnavailableError } from '../utils/summonErrors';
 import { helloSourceOf, typedVoiceName, type HelloSource, type VoiceHello } from '../voice/VoiceHello';
 import { buildVoiceHello } from '../voice/VoiceHelloWiring';
-import { GuestBrickService, GUEST_FILES_MAX, isGuestBrickId, readCarriedLines } from './GuestBrickService';
+import { GuestBrickService, GUEST_FILES_MAX, isGuestBrickId, readCarriedLines, readCarriedPart } from './GuestBrickService';
 import { buildCarryCopy, buildGuestBrickMedia, copyCarriedMedia, type CarryCopy } from './GuestBrickMedia';
-import type { GuestChatNote } from '../matrix/MatrixDmBridge';
+import type { CarriedPart, GuestChatNote } from '../matrix/MatrixDmBridge';
 
 /** The id the game makes for a guest at their first visit (a uuid): a member's token names an email or an account instead. */
 const GUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -262,7 +262,7 @@ export interface BotAPIOptions {
      * Brings a guest's chat with the Brick for guests into the signed-in person's own Brick (game #1997): `chatId` is the
      * person's chat address, already checked to be theirs, and `botId` already checked to be their own Brick.
      */
-    carryGuestChat?: (botId: string, chatId: string, carryId: string, lines: GuestChatNote[]) => Promise<'sent' | 'already' | 'wait' | 'not_brick'>;
+    carryGuestChat?: (botId: string, chatId: string, carryId: string, lines: GuestChatNote[], part?: CarriedPart | null) => Promise<'sent' | 'already' | 'wait' | 'not_brick'>;
     /**
      * A Brick was deleted or taken back with Undo (game #1996): its settings are read again before its next message.
      * Only when it is a Brick of `ownerId` (Orbit's id of the person); says whether it was.
@@ -1035,11 +1035,12 @@ export class BotAPI {
         // has every part of them. The game shows the paperclip and the mic only for what is here.
         this.app.get('/api/guest-brick/media', identifySummoner, async (req: BotAPIRequest, res: Response) => {
             const brick = this.guestBrick();
+            // `carryParts`: a guest's chat is brought in parts after sign-in (plan v3 section 7), whatever the guest Brick takes
             if (!brick?.available()) {
-                res.json({ files: false, notes: false });
+                res.json({ files: false, notes: false, carryParts: true });
                 return;
             }
-            res.json(await brick.canTake());
+            res.json({ ...(await brick.canTake()), carryParts: true });
         });
 
         // The guest's device has the answer to a voice note: its kept copy at Orbit is deleted. Only the guest it was for can say it.
@@ -1073,11 +1074,13 @@ export class BotAPI {
             }
             const { botId } = req.params;
             const { chatId, carryId, lines } = req.body ?? {};
+            // A chat carried in parts names each part; one carried as a single message (a game from before) names none
+            const part = readCarriedPart(req.body?.part);
             if (!/^[A-Za-z0-9_-]{1,64}$/.test(botId) || typeof chatId !== 'string' || !/^@[^\s:]{1,255}:[^\s]{1,255}$/.test(chatId) || chatId.length > 255) {
                 res.status(400).json({ error: 'Not a chat address' });
                 return;
             }
-            if (!isGuestBrickId(carryId) || !Array.isArray(lines)) {
+            if (!isGuestBrickId(carryId) || !Array.isArray(lines) || part === 'bad') {
                 res.status(400).json({ error: 'Not a chat to bring' });
                 return;
             }
@@ -1103,7 +1106,7 @@ export class BotAPI {
                 const kept = copy
                     ? await copyCarriedMedia(carryId, read, copy)
                     : read.map((line) => (line.media ? { ...line, media: line.media.map(({ receipt: _r, ...one }) => ({ ...one, gone: true as const })) } : line));
-                const result = await this.carryGuestChat(botId, chatId, carryId, kept);
+                const result = await this.carryGuestChat(botId, chatId, carryId, kept, part);
                 if (result === 'not_brick') {
                     res.status(403).json({ error: 'Not your Brick', code: 'not_allowed' });
                     return;

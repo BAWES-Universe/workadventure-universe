@@ -121,6 +121,8 @@ export interface GuestChat {
     saidNeedsAccount: boolean;
     /** Set once Orbit has handed this chat to the account that signed in: it is only brought along from then on, never asked for again. */
     carryTaken?: true;
+    /** How many lines, from the first, are already in the person's chat with their Brick: a carry cut short goes on from here. */
+    carriedTo?: number;
     lines: GuestLine[];
 }
 
@@ -166,7 +168,7 @@ export function parseGuestChat(
     try {
         const saved = JSON.parse(raw) as Record<string, unknown> | null;
         if (!saved || typeof saved !== "object") return undefined;
-        const { guestId: owner, startedAt, savedAt, saidNeedsAccount, carryTaken } = saved;
+        const { guestId: owner, startedAt, savedAt, saidNeedsAccount, carryTaken, carriedTo } = saved;
         if (typeof owner !== "string" || (guestId !== null && owner !== guestId)) return undefined;
         if (typeof startedAt !== "number" || typeof savedAt !== "number" || !Number.isFinite(savedAt)) return undefined;
         if (keepMs !== undefined && now - savedAt > keepMs) return undefined;
@@ -178,6 +180,7 @@ export function parseGuestChat(
             savedAt,
             saidNeedsAccount: saidNeedsAccount === true,
             ...(carryTaken === true ? { carryTaken: true as const } : {}),
+            ...(typeof carriedTo === "number" && Number.isInteger(carriedTo) && carriedTo > 0 ? { carriedTo } : {}),
             lines,
         };
     } catch {
@@ -341,54 +344,105 @@ export function guestKeepCard(ll: TranslationFunctions): BotAsk {
 /** What a card remembers it was closed by: the chat it was in, so a new chat starts with its cards again. */
 export const guestChatCardId = (chat: Pick<GuestChat, "startedAt">): string => `${GUEST_BRICK_ID}:${chat.startedAt}`;
 
-/** What a carried chat holds at most (the bot server keeps to the same): the newest lines, each cut, within a byte budget. */
+/**
+ * What one part of a carried chat holds at most (the bot server keeps to the same): lines, each cut, within a byte budget. A long
+ * chat comes in as many parts as it takes (plan v3 section 7): no line is left behind.
+ */
 export const CARRIED_LINES_MAX = 200;
 export const CARRIED_LINE_CHARS = 2000;
 export const CARRIED_BYTES_MAX = 20000;
 
 /** What a picture, file or note adds to a carried line in the Brick's message, once copied (its link and fields), as the bot server counts it. */
 const CARRIED_MEDIA_BYTES = 400;
-/** The most pictures, files and notes one carried chat brings (the bot server keeps to the same); older ones come as words. */
+/** The most pictures, files and notes one part brings (the bot server keeps to the same). */
 export const CARRIED_MEDIA_MAX = 20;
+/** The words a carried note keeps. */
+const CARRIED_HEARD_CHARS = 4000;
+
+/** The stable name of a carried line: the chat it is from and its place in it, so a part sent twice is drawn once. */
+export const carriedLineId = (chat: Pick<GuestChat, "startedAt">, index: number): string =>
+    `${chat.startedAt}.${index}`;
+
+/** The same measure as the bot server's: a line is sent twice in the message, both copies JSON-escaped; receipts not counted. */
+function carriedBytes(line: GuestChatLine): number {
+    const shown = { ...line, media: line.media?.map((one) => ({ ...one, receipt: undefined })) };
+    return 2 * new TextEncoder().encode(JSON.stringify(shown)).length + (line.media?.length ?? 0) * CARRIED_MEDIA_BYTES;
+}
+
+/** One line as it is carried, cut until it fits in a part on its own: a line is never left behind for being long. */
+function carriedLine(chat: GuestChat, index: number): GuestChatLine {
+    const one = chat.lines[index];
+    const media = (one.media ?? []).slice(0, CARRIED_MEDIA_MAX).map((item) => ({
+        kind: item.kind,
+        name: item.name,
+        type: item.type,
+        ...(item.size !== undefined ? { size: item.size } : {}),
+        ...(item.duration !== undefined ? { duration: item.duration } : {}),
+        ...(item.heard ? { heard: item.heard.slice(0, CARRIED_HEARD_CHARS) } : {}),
+        receipt: item.receipt,
+    }));
+    let line: GuestChatLine = {
+        id: carriedLineId(chat, index),
+        from: one.from,
+        text: one.text.slice(0, CARRIED_LINE_CHARS),
+        at: one.at,
+        ...(media.length ? { media } : {}),
+        ...(media.length && one.label ? { label: true as const } : {}),
+    };
+    // Rarely: a line of escaped characters. Its words are cut further, the note's words first, until it fits
+    for (let cut = 0.75; carriedBytes(line) > CARRIED_BYTES_MAX && cut > 0.01; cut *= 0.75) {
+        line = {
+            ...line,
+            text: one.text.slice(0, Math.floor(CARRIED_LINE_CHARS * cut)),
+            ...(line.media
+                ? {
+                      media: line.media.map((item) =>
+                          item.heard
+                              ? { ...item, heard: item.heard.slice(0, Math.floor(CARRIED_HEARD_CHARS * cut)) }
+                              : item
+                      ),
+                  }
+                : {}),
+        };
+    }
+    return line;
+}
+
+/** One part of a carried chat: the lines from `from` up to (not including) `to`, and whether it is the last of the chat. */
+export interface CarriedPart {
+    from: number;
+    to: number;
+    last: boolean;
+    lines: GuestChatLine[];
+}
 
 /**
- * The lines to bring along after sign-in: what was said, and when, the newest ones that fit in one message. A guest's pictures,
- * files and notes go with their receipts, so the bot server can copy them into the account; a note's words go with it.
+ * The next part of a chat to bring along after sign-in, from line `from`: as many lines, in order, as fit in one message. A
+ * guest's pictures, files and notes go with their receipts, so the bot server can copy them into the account; a note's words go
+ * with it. The same chat and `from` always make the same part, so a part asked again is the same part.
  */
-export function carriedLines(chat: GuestChat): GuestChatLine[] {
-    const kept: GuestChatLine[] = [];
+export function carriedPart(chat: GuestChat, from: number): CarriedPart {
+    const lines: GuestChatLine[] = [];
     let bytes = 0;
-    let mediaLeft = CARRIED_MEDIA_MAX;
-    for (let index = chat.lines.length - 1; index >= 0 && kept.length < CARRIED_LINES_MAX; index--) {
-        const one = chat.lines[index];
-        const media = (one.media ?? []).slice(0, Math.max(0, mediaLeft));
-        mediaLeft -= media.length;
-        // Media past what one chat brings comes as words
-        const text = (media.length ? one.text : one.media?.length ? lineWords(one) : one.text).slice(
-            0,
-            CARRIED_LINE_CHARS
-        );
-        const shown = media.map((item) => ({
-            kind: item.kind,
-            name: item.name,
-            type: item.type,
-            ...(item.size !== undefined ? { size: item.size } : {}),
-            ...(item.duration !== undefined ? { duration: item.duration } : {}),
-            ...(item.heard ? { heard: item.heard.slice(0, 4000) } : {}),
-        }));
-        const line: GuestChatLine = {
-            from: one.from,
-            text,
-            at: one.at,
-            ...(shown.length ? { media: shown } : {}),
-            ...(shown.length && one.label && media.length === (one.media?.length ?? 0) ? { label: true as const } : {}),
-        };
-        // The same measure as the bot server's: a line is sent twice in the message, both copies JSON-escaped; receipts not counted
-        bytes += 2 * new TextEncoder().encode(JSON.stringify(line)).length + shown.length * CARRIED_MEDIA_BYTES;
-        if (bytes > CARRIED_BYTES_MAX) break;
-        kept.unshift(
-            shown.length ? { ...line, media: shown.map((item, at) => ({ ...item, receipt: media[at].receipt })) } : line
-        );
+    let media = 0;
+    let to = from;
+    while (to < chat.lines.length && lines.length < CARRIED_LINES_MAX) {
+        const line = carriedLine(chat, to);
+        const size = carriedBytes(line);
+        const count = line.media?.length ?? 0;
+        if (lines.length > 0 && (bytes + size > CARRIED_BYTES_MAX || media + count > CARRIED_MEDIA_MAX)) break;
+        lines.push(line);
+        bytes += size;
+        media += count;
+        to += 1;
     }
-    return kept;
+    return { from, to, last: to >= chat.lines.length, lines };
+}
+
+/** For a bot server from before, which takes a carried chat as one message: the newest lines that fit in one part. */
+export function carriedTail(chat: GuestChat): CarriedPart {
+    let start = chat.lines.length;
+    while (start > 0 && carriedPart(chat, start - 1).last) start -= 1;
+    const part = carriedPart(chat, start);
+    return { ...part, to: chat.lines.length, last: true };
 }

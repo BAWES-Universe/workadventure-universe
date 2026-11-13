@@ -2,7 +2,7 @@ import { writable } from "svelte/store";
 import type { Readable } from "svelte/store";
 import type { GuestChatLine } from "./Brick";
 import { ASK_AGAIN_MS, ROOM_WAIT_MS } from "./Brick";
-import { carriedLines, type GuestChat } from "./GuestBrick";
+import { carriedPart, carriedTail, type CarriedPart, type GuestChat } from "./GuestBrick";
 
 /**
  * A guest signs in, and the chat they had with the Brick for guests goes with them (game #1997). Orbit hands the chat to
@@ -18,8 +18,17 @@ export interface CarrySteps {
     drop: () => void;
     /** Asks Orbit whether this chat was handed to this account, and is this device's to bring. Throws when it can't be asked. */
     take: (guestId: string) => Promise<boolean>;
-    /** Has the bot server say the lines in the Brick's chat. `refused` when they are not this person's to say. Throws when it can't be asked. */
-    carry: (carryId: string, lines: GuestChatLine[]) => Promise<"sent" | "already" | "wait" | "refused">;
+    /**
+     * Has the bot server say one part of the chat in the Brick's chat. `refused` when it is not this person's to say. Throws when
+     * it can't be asked. The same part asked again is said once.
+     */
+    carry: (
+        carryId: string,
+        lines: GuestChatLine[],
+        part?: Pick<CarriedPart, "from" | "to" | "last">
+    ) => Promise<"sent" | "already" | "wait" | "refused">;
+    /** Whether the bot server takes the chat in parts; false for one from before, which takes one message. Throws when it can't be asked. */
+    parts?: () => Promise<boolean>;
     sleep: (ms: number) => Promise<void>;
     now: () => number;
 }
@@ -48,24 +57,52 @@ export async function carryGuestChatAlong(steps: CarrySteps): Promise<CarryOutco
         // Orbit hands a chat over once: from here on it is only brought, never asked for again
         steps.keep({ ...chat, carryTaken: true });
     }
-    const lines = carriedLines(chat);
+    // In parts, in order (plan v3 section 7): each part is kept as said before the next, so a carry cut short goes on where it
+    // stopped, and the device keeps its chat until every line is in. A line said while this runs (an answer that came back
+    // during sign-in) comes along in the next part
+    let inParts: boolean;
+    try {
+        inParts = steps.parts ? await steps.parts() : true;
+    } catch (error) {
+        console.warn("Could not ask how the chat this device had as a guest is brought", error);
+        return "later";
+    }
+    let from = chat.carriedTo ?? 0;
     const waitUntil = steps.now() + ROOM_WAIT_MS;
     /* eslint-disable no-await-in-loop */
     for (;;) {
+        const now = steps.read();
+        // Signed out, or another guest's chat since: nothing more of this one to bring
+        if (!now || now.guestId !== chat.guestId || now.startedAt !== chat.startedAt) return "none";
+        if (from >= now.lines.length) {
+            steps.drop();
+            return "carried";
+        }
+        // A bot server from before takes one message: the newest lines that fit, as it always did
+        const part = inParts ? carriedPart(now, from) : carriedTail(now);
         let result: "sent" | "already" | "wait" | "refused";
         try {
-            result = await steps.carry(chat.guestId, lines);
+            result = inParts
+                ? await steps.carry(chat.guestId, part.lines, { from: part.from, to: part.to, last: part.last })
+                : await steps.carry(chat.guestId, part.lines);
         } catch (error) {
             console.warn("Could not bring the chat this device had as a guest", error);
             return "later";
         }
-        if (result !== "wait") {
+        if (result === "refused") {
             steps.drop();
-            return result === "refused" ? "none" : "carried";
+            return "none";
         }
-        // Their chat with the Brick is being made: one question at a time, each after the answer to the one before
-        if (steps.now() >= waitUntil) return "later";
-        await steps.sleep(ASK_AGAIN_MS);
+        if (result === "wait") {
+            // Their chat with the Brick is being made: one question at a time, each after the answer to the one before
+            if (steps.now() >= waitUntil) return "later";
+            await steps.sleep(ASK_AGAIN_MS);
+            continue;
+        }
+        from = part.to;
+        const kept = steps.read();
+        if (kept && kept.guestId === chat.guestId && kept.startedAt === chat.startedAt)
+            steps.keep({ ...kept, carriedTo: from });
     }
     /* eslint-enable no-await-in-loop */
 }

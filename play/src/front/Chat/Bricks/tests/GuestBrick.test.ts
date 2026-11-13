@@ -13,7 +13,7 @@ import {
     CARRIED_BYTES_MAX,
     CARRIED_LINES_MAX,
     CARRIED_LINE_CHARS,
-    carriedLines,
+    carriedPart,
     guestBrickCard,
     guestKeepCard,
     guestStarterWords,
@@ -209,44 +209,75 @@ describe("the Brick for guests: the chat a guest's device keeps (#1997)", () => 
         ]);
     });
 
-    it("brings along what was said and when, and nothing else", () => {
+    it("brings along what was said and when, each line named, and nothing else", () => {
         let chat = newGuestChat(GUEST, 1);
         chat = withLine(chat, { from: "guest", text: "hi", at: 2 });
         chat = withLine(chat, { from: "brick", text: "Sign in.", at: 3, needsAccount: true });
-        expect(carriedLines(chat)).toEqual([
-            { from: "guest", text: "hi", at: 2 },
-            { from: "brick", text: "Sign in.", at: 3 },
-        ]);
+        expect(carriedPart(chat, 0)).toEqual({
+            from: 0,
+            to: 2,
+            last: true,
+            lines: [
+                { id: "1.0", from: "guest", text: "hi", at: 2 },
+                { id: "1.1", from: "brick", text: "Sign in.", at: 3 },
+            ],
+        });
     });
 
-    it("brings along only the newest lines that fit in one message, each cut, so a long chat never makes a message too big", () => {
+    it("brings a long chat in parts, every line in order and none left behind, each part within one message", () => {
         let chat = newGuestChat(GUEST, 1);
         for (let at = 1; at <= 300; at++) chat = withLine(chat, { from: "guest", text: `line ${at}`, at });
-        const few = carriedLines(chat);
-        expect(few).toHaveLength(CARRIED_LINES_MAX);
-        expect(few[few.length - 1].at).toBe(300);
-        expect(few[0].at).toBe(101);
+        const first = carriedPart(chat, 0);
+        expect(first).toMatchObject({ from: 0, last: false });
+        expect(first.lines.length).toBeLessThanOrEqual(CARRIED_LINES_MAX);
+        const all = [first];
+        while (!all[all.length - 1].last) all.push(carriedPart(chat, all[all.length - 1].to));
+        expect(all.flatMap((part) => part.lines).map((line) => line.at)).toEqual(
+            Array.from({ length: 300 }, (_, i) => i + 1)
+        );
+        // The same chat and start make the same part: a part asked again is the same part
+        expect(carriedPart(chat, first.to)).toEqual(all[1]);
 
         let long = newGuestChat(GUEST, 1);
         for (let at = 1; at <= 40; at++) long = withLine(long, { from: "brick", text: "é".repeat(5000), at });
-        const cut = carriedLines(long);
-        expect(cut.every((line) => line.text.length === CARRIED_LINE_CHARS)).toBe(true);
-        expect(cut.reduce((all, line) => all + new TextEncoder().encode(line.text).length, 0)).toBeLessThanOrEqual(
-            CARRIED_BYTES_MAX
+        const parts = [];
+        for (let from = 0; from < long.lines.length; ) {
+            const part = carriedPart(long, from);
+            parts.push(part);
+            from = part.to;
+        }
+        expect(parts.length).toBeGreaterThan(1);
+        expect(parts.flatMap((part) => part.lines).map((line) => line.at)).toEqual(
+            Array.from({ length: 40 }, (_, i) => i + 1)
         );
-        expect(cut.length).toBeGreaterThan(0);
-        expect(cut[cut.length - 1].at).toBe(40);
+        for (const part of parts) {
+            expect(part.lines.every((line) => line.text.length === CARRIED_LINE_CHARS)).toBe(true);
+            const bytes = part.lines.reduce(
+                (all, line) => all + 2 * new TextEncoder().encode(JSON.stringify(line)).length,
+                0
+            );
+            expect(bytes).toBeLessThanOrEqual(CARRIED_BYTES_MAX);
+        }
     });
 
-    it("counts a line the way the bot server does, so the server never cuts more than the device already did", () => {
+    it("counts a line the way the bot server does, and cuts a line that alone would not fit rather than leave it behind", () => {
         let slashes = newGuestChat(GUEST, 1);
         for (let at = 1; at <= 10; at++) slashes = withLine(slashes, { from: "guest", text: "\\".repeat(2000), at });
-        const kept = carriedLines(slashes);
-        // Escaped and sent twice, a line takes about 8,000 of the 20,000: two fit, and they are the newest
-        expect(kept.map((line) => line.at)).toEqual([9, 10]);
+        // Escaped and sent twice, a line takes about 8,000 of the 20,000: two fit in a part
+        expect(carriedPart(slashes, 0)).toMatchObject({ from: 0, to: 2 });
+
+        let wide = newGuestChat(GUEST, 1);
+        wide = withLine(wide, { from: "guest", text: "\u0001".repeat(2000), at: 1 });
+        wide = withLine(wide, { from: "guest", text: "\u0001".repeat(2000), at: 2 });
+        const part = carriedPart(wide, 0);
+        expect(part.lines).toHaveLength(1);
+        expect(2 * new TextEncoder().encode(JSON.stringify(part.lines[0])).length).toBeLessThanOrEqual(
+            CARRIED_BYTES_MAX
+        );
+        expect(part.lines[0].text.length).toBeGreaterThan(0);
     });
 
-    it("brings along a guest's pictures and notes with their receipts, and media past what one chat brings as words", () => {
+    it("brings along a guest's pictures and notes with their receipts, never their links, and at most 20 in a part", () => {
         let chat = newGuestChat(GUEST, 1);
         chat = withLine(chat, {
             from: "guest",
@@ -280,8 +311,9 @@ describe("the Brick for guests: the chat a guest's device keeps (#1997)", () => 
                 },
             ],
         });
-        expect(carriedLines(chat)).toEqual([
+        expect(carriedPart(chat, 0).lines).toEqual([
             {
+                id: "1.0",
                 from: "guest",
                 text: "(sent a picture: cat.png)",
                 at: 2,
@@ -289,6 +321,7 @@ describe("the Brick for guests: the chat a guest's device keeps (#1997)", () => 
                 media: [{ kind: "file", name: "cat.png", type: "image/png", size: 10, receipt: "r.a" }],
             },
             {
+                id: "1.1",
                 from: "guest",
                 text: "",
                 at: 3,
@@ -321,14 +354,11 @@ describe("the Brick for guests: the chat a guest's device keeps (#1997)", () => 
                     },
                 ],
             });
-        const lines = carriedLines(many);
-        // The newest twenty come as pictures, the older ones as words
-        expect(lines.filter((line) => line.media?.length)).toHaveLength(20);
-        expect(lines[lines.length - 1].media?.[0].name).toBe("p25.png");
-        const older = lines.find((line) => !line.media);
-        expect(older?.text).toBe("(sent a picture: p1.png)");
-        // Urls never go along: the bot server copies each by its receipt
-        expect(JSON.stringify(lines)).not.toContain("up.test");
+        const first = carriedPart(many, 0);
+        expect(first).toMatchObject({ to: 20, last: false });
+        expect(carriedPart(many, 20)).toMatchObject({ to: 25, last: true });
+        // Links never go along: the bot server copies each by its receipt
+        expect(JSON.stringify(first)).not.toContain("up.test");
     });
 });
 

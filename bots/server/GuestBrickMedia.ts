@@ -49,7 +49,7 @@ export const CARRIED_COPY_BYTES_MAX = 60 * 1024 * 1024;
 const COPIES_KEPT_MS = 60 * 60 * 1000;
 const COPIES_MAX = 2000;
 /** Copies made for a hand-over, by guest and file, so a carry asked again (its chat was not there yet) never copies twice. */
-const copies = new Map<string, { at: number; url: string | null }>();
+const copies = new Map<string, { at: number; url: string }>();
 
 export interface CarryCopy {
     /** Whether Orbit handed this guest's chat to the person who asks. */
@@ -64,7 +64,7 @@ export interface CarryCopy {
 /**
  * Brings a guest's pictures, files and notes into the account that signed in as them (plan v3 section 7): only when Orbit handed
  * that guest's chat to this person, each read by the guest's own receipt and copied into the person's own storage, never by
- * reusing the guest's receipt. A file that is gone, changed or past what one chat copies keeps its line, words and bubble as
+ * reusing the guest's receipt. A file that is gone, changed or past what one part copies keeps its line, words and bubble as
  * gone. No receipt is left in what comes back. Carrying never hears, never runs the model and never charges.
  */
 export async function copyCarriedMedia(guestId: string, lines: GuestChatNote[], copy: CarryCopy): Promise<GuestChatNote[]> {
@@ -93,7 +93,7 @@ export async function copyCarriedMedia(guestId: string, lines: GuestChatNote[], 
             const key = `${guestId}|${receipt}`;
             const known = copies.get(key);
             if (known) {
-                media.push(known.url ? { ...shown, url: known.url } : gone());
+                media.push({ ...shown, url: known.url });
                 continue;
             }
             const upload = await copy.read(receipt);
@@ -103,7 +103,8 @@ export async function copyCarriedMedia(guestId: string, lines: GuestChatNote[], 
             }
             bytes += upload.bytes.byteLength;
             const url = await copy.store(upload.bytes, upload.type, upload.name).catch(() => null);
-            copies.set(key, { at: now, url });
+            // Only a copy that was made is remembered: one that failed is tried again when the carry is asked again
+            if (url) copies.set(key, { at: now, url });
             media.push(url ? { ...shown, type: upload.type, url } : gone());
         }
         out.push({ ...line, media });
