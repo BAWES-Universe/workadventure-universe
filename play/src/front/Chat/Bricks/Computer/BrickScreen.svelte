@@ -31,18 +31,19 @@
     let busy = false;
     // The person tapped "Fill in my details" for what Brick named: once Brick has put it in, the tray says so
     let tapped = false;
-    // What the tap approved. A page that needs details after that is a new request: it gets its own tap, one a page.
-    let tappedFor = "";
-    let clearedSinceTap = false;
-    // The same words for another job are another request, even when a read never saw the gap between them
+    // Each new request for details is a round: the first sight of it, or the same words seen again after a gap, or other
+    // words. A tap covers the round it was made in, so the next request needs its own tap, even when a read missed the gap
+    // between them or the answer to the tap came after it.
+    let tappedRound = 0;
+    let round = 0;
+    let lastKey = "";
     $: readyKey = job?.ready ? `${job.id}\n${job.ready.what}\n${job.ready.where}` : "";
-    $: if (tapped) {
-        if (!job?.ready) clearedSinceTap = true;
-        else if (clearedSinceTap || readyKey !== tappedFor) {
-            tapped = false;
-            clearedSinceTap = false;
-        }
+    function noteReady(key: string) {
+        if (key && key !== lastKey) round += 1;
+        lastKey = key;
     }
+    $: noteReady(readyKey);
+    $: if (tapped && readyKey && tappedRound !== round) tapped = false;
 
     // Counts the times the screen was let go. A link that was asked for before that, and arrives after, belongs to a job that
     // is over: it is dropped, so the next job never shows it.
@@ -144,15 +145,14 @@
         // The tap approves what is on screen: what Brick named is sent back, so Orbit refuses it if Brick named something else since
         const shown =
             action === "fill-details" && job?.ready ? { what: job.ready.what, where: job.ready.where } : undefined;
-        // The job the tap was made for, kept now: the answer can come after a read has moved on to another job
-        const tappedJob = job?.id;
+        // The round the tap was made in, kept now: the answer can come after a read has moved on to another request
+        const roundAtTap = round;
         brickComputerAction(brick.id, action, shown)
             .then((ok) => {
                 if (!ok) warningMessageStore.addWarningMessage($LL.chat.brick.computer.failed());
                 else if (action === "fill-details") {
                     tapped = true;
-                    tappedFor = shown && tappedJob ? `${tappedJob}\n${shown.what}\n${shown.where}` : "";
-                    clearedSinceTap = false;
+                    tappedRound = roundAtTap;
                 }
                 else if (action === "stop") onClose();
                 else if (action === "hand-back") tapped = false;

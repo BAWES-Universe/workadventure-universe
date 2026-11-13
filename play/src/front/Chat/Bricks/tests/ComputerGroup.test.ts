@@ -370,6 +370,47 @@ describe("a Brick's computer on screen (#2000)", () => {
         expect(byId("brickScreenFill")).not.toBeNull();
     });
 
+    it("asks for a new tap when the same details come back on the same job while the answer to the tap is still on its way", async () => {
+        game.watchBrickComputer.mockResolvedValue({ url: "https://screen.test/abc" });
+        const waiting = () =>
+            computer({
+                machine: "working",
+                job: job({
+                    id: "j1",
+                    status: "waiting",
+                    waitingFor: "details",
+                    control: "person",
+                    ready: { what: "your name", where: "the first page" },
+                }),
+            });
+        game.getBrickComputer.mockResolvedValue(waiting());
+        await loadBrickComputer(BRICK);
+        piece = new BrickScreen({ target, props: { brick, onClose: () => undefined } });
+        await settle();
+        let answer: (value: unknown) => void = () => undefined;
+        game.brickComputerAction.mockReturnValue(
+            new Promise((resolve) => {
+                answer = resolve;
+            })
+        );
+        byId("brickScreenFill")?.click();
+        await settle();
+        // Brick puts the details in, then names the same ones again: the answer to the tap has not come yet
+        game.getBrickComputer.mockResolvedValue(
+            computer({ machine: "working", job: job({ id: "j1", status: "working", control: "person" }) })
+        );
+        await loadBrickComputer(BRICK);
+        await settle();
+        game.getBrickComputer.mockResolvedValue(waiting());
+        await loadBrickComputer(BRICK);
+        await settle();
+        answer({ job: job({ id: "j1", control: "person" }) });
+        await settle();
+        // The tap was for the first request: this one is new and has its own button
+        expect(byId("brickScreenReady")).not.toBeNull();
+        expect(byId("brickScreenFill")).not.toBeNull();
+    });
+
     it("reads the computer again only when the Brick changes, not when the page hands over a new object for the same one", async () => {
         const OTHER = "9f8e7d6c-1111-4222-8333-000011112222";
         game.getBrickComputer.mockResolvedValue(computer());
