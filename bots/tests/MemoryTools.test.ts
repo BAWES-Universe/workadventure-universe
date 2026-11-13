@@ -454,6 +454,14 @@ describe('CodeRabbit on #2020: a thing with "and" in it, and a keep that says it
         expect(itemsAbout(named, 'forget my name and remember my name')).toEqual([]);
     });
 
+    it('forgets nothing when a keep could mean the thing to be forgotten', () => {
+        const paris = [thing('fact', 'Paris', 'home_city'), thing('fact', 'Paris', 'next_trip')];
+        expect(itemsAbout(paris, 'forget my home city but keep Paris')).toEqual([]);
+        expect(ids(resolveForgetting(paris, 'forget my home city but keep Paris').unsure).sort()).toEqual(['fact:home_city:Paris', 'fact:next_trip:Paris']);
+        // A keep that names the other one outright still lets the first go
+        expect(ids(itemsAbout(paris, 'forget my home city but keep my next trip'))).toEqual(['fact:home_city:Paris']);
+    });
+
     it('shows a forget that removed nothing as a step that did not run', () => {
         expect(resultOf('a', { forgotten: [], unclear: true, note: 'x' })).toMatchObject({ id: 'a', ok: false });
         expect(resultOf('a', { forgotten: ['They like coffee'], count: 1 })).toEqual({ id: 'a', ok: true });

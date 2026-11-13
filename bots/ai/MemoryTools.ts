@@ -261,6 +261,7 @@ export function resolveForgetting(items: MemoryItem[], about: string): Forgettin
     if (!asked) return none;
     const chosen = new Map<string, MemoryItem>();
     const kept = new Set<string>();
+    const keepCould = new Map<string, MemoryItem>();
     const unsure = new Map<string, MemoryItem>();
     let unsettled = false;
     let asking = 0;
@@ -271,6 +272,8 @@ export function resolveForgetting(items: MemoryItem[], about: string): Forgettin
         const found = resolveClause(items, clause.keep ? tokens.filter((token) => !KEEP_WORDS.has(token) && !FORGET_WORDS.has(token)) : tokens);
         if (clause.keep) {
             for (const item of found.picked) kept.add(item.id);
+            // A keep that could mean more than one thing ("keep Paris" with two facts that are Paris) protects each of them
+            for (const item of found.unsure) keepCould.set(item.id, item);
             // "my name, remember it": a keep that names nothing but "it" is about what was just said, so that is kept, not forgotten
             if (found.picked.length === 0 && tokens.every((token) => FILLER.has(token) || KEEP_WORDS.has(token) || PRONOUNS.has(token) || NEGATIONS.has(token) || FORGET_WORDS.has(token))) for (const item of lastAsked) kept.add(item.id);
             continue;
@@ -282,6 +285,11 @@ export function resolveForgetting(items: MemoryItem[], about: string): Forgettin
         lastAsked = found.picked;
     }
     const taken = [...chosen.values()].filter((item) => !kept.has(item.id));
+    // What is to be forgotten may be one of the things a vague keep could mean: which is meant is asked, nothing is taken
+    if (taken.some((item) => keepCould.has(item.id))) {
+        for (const item of keepCould.values()) unsure.set(item.id, item);
+        return { chosen: [], unsure: [...unsure.values()], clear: false, keepOnly: false };
+    }
     // A stored thing can have "and" in it ("fish and chips" beside "fish"). When the whole request is exactly one such thing,
     // cutting it at the "and" must not take more than that thing: if it would, which one is meant is asked, not guessed.
     const whole = wholeThingOf(items, asked);
