@@ -75,20 +75,20 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
         started = await context.admin.startComputerJob(context.botId, context.userId, { title: job, writes: args.reads_only === true ? false : undefined });
     } catch (error) {
         console.warn('[ComputerTools] Could not start a job:', error instanceof Error ? error.message : error);
-        return { started: false, note: "The computer could not be reached just now. Say so in one plain sentence; you can still chat and use their apps." };
+        return { started: false, success: false, note: "The computer could not be reached just now. Say so in one plain sentence; you can still chat and use their apps." };
     }
     if (!started.ok) {
         switch (started.reason) {
             case 'off':
-                return { started: false, note: "Your computer is off. Say so in one sentence and that they can give you one from this Brick's page, under Computer. Do not start anything else in its place." };
+                return { started: false, success: false, note: "Your computer is off. Say so in one sentence and that they can give you one from this Brick's page, under Computer. Do not start anything else in its place." };
             case 'broken_start':
-                return { started: false, note: "Your computer isn't starting right now, so this job has to wait. Say so in plain words: you can still chat and use their apps, and you'll tell them the moment it is back. Do not offer a price or a reason." };
+                return { started: false, success: false, note: "Your computer isn't starting right now, so this job has to wait. Say so in plain words: you can still chat and use their apps, and you'll tell them the moment it is back. Do not offer a price or a reason." };
             case 'not_owner':
             case 'not_open':
             case 'not_set':
-                return { started: false, note: "That can't be done on a computer here right now. Say so in one plain sentence." };
+                return { started: false, success: false, note: "That can't be done on a computer here right now. Say so in one plain sentence." };
             default:
-                return { started: false, note: 'The job did not start. Say so in one plain sentence.' };
+                return { started: false, success: false, note: 'The job did not start. Say so in one plain sentence.' };
         }
     }
     const { job: made, restoredFrom } = started;

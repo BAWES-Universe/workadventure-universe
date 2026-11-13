@@ -1207,8 +1207,7 @@ export class BotApiService {
      * left. Only reads; it never makes or wakes anything. `{ computer }`.
      */
     async getBrickComputer(brickId: string): Promise<unknown> {
-        const response = await this.fetch(`/api/bricks/${encodeURIComponent(brickId)}/computer`);
-        return response.json();
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/computer`, {});
     }
 
     /** One of the owner's calls on a Brick's computer (give, turn off, stop, take over, hand back, fill in details). */
@@ -1219,36 +1218,33 @@ export class BotApiService {
         shown?: { what: string; where: string }
     ): Promise<unknown> {
         const base = `/api/bricks/${encodeURIComponent(brickId)}/computer`;
-        const response =
-            action === "give"
-                ? await this.fetch(base, { method: "POST" })
-                : action === "turn-off"
-                ? await this.fetch(base, { method: "DELETE" })
-                : action === "fill-details" && shown
-                ? await this.fetch(`${base}/${action}`, {
-                      method: "POST",
-                      body: JSON.stringify({ what: shown.what, where: shown.where }),
-                  })
-                : await this.fetch(`${base}/${action}`, { method: "POST" });
-        return response.json();
+        // Every call has a deadline, so a stalled one fails and the controls and the poll carry on
+        return action === "give"
+            ? await this.brickWrite(base, { method: "POST" })
+            : action === "turn-off"
+            ? await this.brickWrite(base, { method: "DELETE" })
+            : action === "fill-details" && shown
+            ? await this.brickWrite(`${base}/${action}`, {
+                  method: "POST",
+                  body: JSON.stringify({ what: shown.what, where: shown.where }),
+              })
+            : await this.brickWrite(`${base}/${action}`, { method: "POST" });
     }
 
     /** Dismisses the notice of how a job ended ("stopped waiting for you", "this month's time ran out"): only the ending it was shown for. */
     async dismissBrickComputerNotice(brickId: string, jobId: string): Promise<unknown> {
-        const response = await this.fetch(`/api/bricks/${encodeURIComponent(brickId)}/computer/dismiss`, {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/computer/dismiss`, {
             method: "POST",
             body: JSON.stringify({ jobId }),
         });
-        return response.json();
     }
 
     /** The screen of a computer that is working. Never wakes a machine: a resting one answers 409 and nothing starts. */
     async watchBrickComputer(brickId: string): Promise<{ url: string } | undefined> {
         try {
-            const response = await this.fetch(`/api/bricks/${encodeURIComponent(brickId)}/computer/watch`, {
+            const data = (await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/computer/watch`, {
                 method: "POST",
-            });
-            const data = (await response.json()) as { url?: unknown };
+            })) as { url?: unknown };
             return typeof data.url === "string" ? { url: data.url } : undefined;
         } catch {
             return undefined;

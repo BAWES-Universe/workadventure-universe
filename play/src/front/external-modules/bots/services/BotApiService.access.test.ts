@@ -305,6 +305,10 @@ describe("an Orbit that does not answer about who may use a bot", () => {
         ["making a Brick", (api) => api.makeMyBrick({ name: "Recipes" })],
         ["deleting a Brick", (api) => api.deleteMyBrick("b1")],
         ["bringing a Brick back", (api) => api.undoMyBrick("b1")],
+        ["reading a Brick's computer", (api) => api.getBrickComputer("b1")],
+        ["a tap on a Brick's computer", (api) => api.brickComputerAction("b1", "stop")],
+        ["a tap that fills in details", (api) => api.brickComputerAction("b1", "fill-details", { what: "x", where: "y" })],
+        ["dismissing a computer notice", (api) => api.dismissBrickComputerNotice("b1", "j1")],
     ];
 
     it.each(brickWrites)("fails %s in time when Orbit never answers", async (_name, call) => {

@@ -282,6 +282,40 @@ describe("a Brick's computer on screen (#2000)", () => {
         expect(byId("brickScreenFrame")?.getAttribute("src")).toBe("https://screen.test/next");
     });
 
+    it("asks for a new tap when the next page needs details, one tap a page", async () => {
+        game.watchBrickComputer.mockResolvedValue({ url: "https://screen.test/abc" });
+        const waiting = (ready: { what: string; where: string } | null) =>
+            computer({
+                machine: "working",
+                job: job({ status: "waiting", waitingFor: "details", control: "person", ...(ready ? { ready } : {}) }),
+            });
+        game.getBrickComputer.mockResolvedValue(waiting({ what: "your name", where: "the first page" }));
+        await loadBrickComputer(BRICK);
+        piece = new BrickScreen({ target, props: { brick, onClose: () => undefined } });
+        await settle();
+        game.brickComputerAction.mockResolvedValue({ job: job({ control: "person" }) });
+        byId("brickScreenFill")?.click();
+        await settle();
+        expect(byId("brickScreenReady")).toBeNull();
+        // Brick names what the next page needs while the person is still in control
+        game.getBrickComputer.mockResolvedValue(waiting({ what: "your passport number", where: "the second page" }));
+        await loadBrickComputer(BRICK);
+        await settle();
+        expect(byId("brickScreenReady")?.textContent).toContain("Your passport number");
+        expect(byId("brickScreenFill")).not.toBeNull();
+    });
+
+    it("follows the Brick that is shown when the page switches to another one, and stops reading the first", async () => {
+        const OTHER = "9f8e7d6c-1111-4222-8333-000011112222";
+        game.getBrickComputer.mockResolvedValue(computer());
+        await showGroup(computer());
+        expect(game.getBrickComputer).toHaveBeenCalledWith(BRICK);
+        game.getBrickComputer.mockClear();
+        (piece as unknown as { $set: (props: object) => void }).$set({ brick: { ...brick, id: OTHER, name: "Other" } });
+        await settle();
+        expect(game.getBrickComputer).toHaveBeenCalledWith(OTHER);
+    });
+
     it("shows no screen for a computer that is resting, and does not ask for one to be woken", async () => {
         game.watchBrickComputer.mockResolvedValue(undefined);
         game.getBrickComputer.mockResolvedValue(computer());

@@ -31,6 +31,17 @@
     let busy = false;
     // The person tapped "Fill in my details" for what Brick named: once Brick has put it in, the tray says so
     let tapped = false;
+    // What the tap approved. A page that needs details after that is a new request: it gets its own tap, one a page.
+    let tappedFor = "";
+    let clearedSinceTap = false;
+    $: readyKey = job?.ready ? `${job.ready.what}\n${job.ready.where}` : "";
+    $: if (tapped) {
+        if (!job?.ready) clearedSinceTap = true;
+        else if (clearedSinceTap || readyKey !== tappedFor) {
+            tapped = false;
+            clearedSinceTap = false;
+        }
+    }
 
     // Counts the times the screen was let go. A link that was asked for before that, and arrives after, belongs to a job that
     // is over: it is dropped, so the next job never shows it.
@@ -81,7 +92,11 @@
         brickComputerAction(brick.id, action, shown)
             .then((ok) => {
                 if (!ok) warningMessageStore.addWarningMessage($LL.chat.brick.computer.failed());
-                else if (action === "fill-details") tapped = true;
+                else if (action === "fill-details") {
+                    tapped = true;
+                    tappedFor = shown ? `${shown.what}\n${shown.where}` : "";
+                    clearedSinceTap = false;
+                }
                 else if (action === "stop") onClose();
                 else if (action === "hand-back") tapped = false;
             })
@@ -316,17 +331,20 @@
         .bs-actions.watch .bs-btns {
             flex: none;
             width: 440px;
+            max-width: 100%;
         }
         /* In control, the buttons stack at the same compact width on the right, as in the mock */
         .bs > .bs-go {
             align-self: flex-end;
             width: 440px;
+            max-width: 100%;
         }
         .bs-actions:not(.watch) {
             align-items: flex-end;
         }
         .bs-actions:not(.watch) .bs-btns {
             width: 440px;
+            max-width: 100%;
         }
     }
     .bs-go,

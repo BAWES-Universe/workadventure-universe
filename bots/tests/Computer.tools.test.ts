@@ -15,7 +15,7 @@ import { AdminApiService } from '../server/AdminApiService';
 import { AIService } from '../ai/AIService';
 import { COMPUTER_TOOL, computerToolDefinitions, computerToolsNote, isComputerTool, runComputerTool } from '../ai/ComputerTools';
 import { PRETEND_STEPS, pretendRunnerOn, runPretendJob } from '../ai/ComputerPretendRunner';
-import { describeStep } from '../ai/ToolSteps';
+import { describeStep, resultOf } from '../ai/ToolSteps';
 
 const BRICK = '0b7c1d2e-1111-4222-8333-944455556666';
 const request = axios.request as unknown as ReturnType<typeof vi.fn>;
@@ -86,6 +86,19 @@ describe('use_computer (#2000)', () => {
         expect(await run(down)).toMatchObject({ started: false });
         warn.mockRestore();
         expect(await run(asking({}), {})).toEqual({ error: 'Say in a few words what the job is.' });
+    });
+
+    it('marks a job that did not start as a failed step, and a job that is running or waiting its turn as one that worked', async () => {
+        const down = { startComputerJob: vi.fn().mockRejectedValue(new Error('offline')) };
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const refused = ['off', 'broken_start', 'not_owner', 'not_open', 'not_set', 'something_new'];
+        expect(resultOf('c1', await run(down))).toMatchObject({ ok: false });
+        warn.mockRestore();
+        for (const reason of refused) {
+            expect(resultOf('c1', await run(asking({ ok: false, reason })))).toMatchObject({ ok: false });
+        }
+        expect(resultOf('c1', await run(asking({ ok: true, job: job(), restoredFrom: null })))).toMatchObject({ ok: true });
+        expect(resultOf('c1', await run(asking({ ok: true, job: job({ status: 'queued', queuedFor: 'turn' }), restoredFrom: null })))).toMatchObject({ ok: true });
     });
 
     it('shows as one step on the steps line', () => {

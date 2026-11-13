@@ -2,7 +2,7 @@
     // A Brick's computer on its page (game #2000), laid out the way Voice is: off is a way in that says what it is for and has
     // one button that says what it does; on is a card with what it is doing now, how much of the month is left, its files, and
     // a quiet button to turn it off. No switch, no sizes, no provider or engine names. The styles are the Voice group's own.
-    import { onMount } from "svelte";
+    import { onDestroy } from "svelte";
     import LL, { locale } from "../../../../i18n/i18n-svelte";
     import PageGroup from "../../../external-modules/bots/components/page/PageGroup.svelte";
     import PageButton from "../../../external-modules/bots/components/page/PageButton.svelte";
@@ -83,7 +83,14 @@
         ? $LL.chat.brick.computer.noticeUnanswered({ name })
         : $LL.chat.brick.computer.noticeMonth({ name });
 
-    onMount(() => followBrickComputer(brick.id));
+    // Follows the Brick shown now: when the page switches to another Brick, the old one stops being read
+    let stopFollowing: (() => void) | undefined;
+    function follow(id: string) {
+        stopFollowing?.();
+        stopFollowing = followBrickComputer(id);
+    }
+    $: follow(brick.id);
+    onDestroy(() => stopFollowing?.());
 
     function dismiss() {
         if (busy || !notice) return;

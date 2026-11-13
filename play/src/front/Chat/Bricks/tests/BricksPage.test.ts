@@ -60,6 +60,8 @@ vi.mock("../../../external-modules/bots/services/BotApiService", () => ({
         changeMyBrick: game.changeMyBrick,
         isInitialized: () => true,
         getMyUsage: game.getMyUsage,
+        // The page reads a Brick's computer once its page is open: nothing to show here
+        getBrickComputer: () => Promise.resolve(undefined),
     },
 }));
 vi.mock("../../../Phaser/Game/GameManager", () => ({ gameManager: {} }));
