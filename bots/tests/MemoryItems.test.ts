@@ -321,6 +321,30 @@ describe('PersistentMemory: Forget of one thing', () => {
         expect(memory.unreportedRetryTimer ?? null).toBeNull();
     });
 
+    it('does not queue a forget with nothing to name, or when Orbit has no service token, and still queues one Orbit could not take', async () => {
+        const memory = held();
+        hoisted.axios.post.mockClear();
+        const storage = (memory as any).memoryStorage;
+        // Nothing to name: it can never be reported
+        expect(await storage.reportForgottenItem(BOT, 'uuid-sara', '', 'pref')).toBe(true);
+        expect(await storage.reportForgottenItem('', 'uuid-sara', lofi, 'pref')).toBe(true);
+        // A URL with no service token cannot change while this runs (the process would have to be restarted, which empties the queue)
+        const saved = process.env.BOT_SERVICE_TOKEN;
+        delete process.env.BOT_SERVICE_TOKEN;
+        try {
+            const noToken: any = new PersistentMemory({ adminApiUrl: 'http://orbit.local' });
+            expect(await noToken.memoryStorage.reportForgottenItem(BOT, 'uuid-sara', lofi, 'pref')).toBe(true);
+        } finally {
+            process.env.BOT_SERVICE_TOKEN = saved;
+        }
+        expect(hoisted.axios.post.mock.calls.filter((call) => String(call[0]).endsWith('/items'))).toEqual([]);
+        // Orbit that could not be reached is still tried again
+        hoisted.axios.post.mockRejectedValueOnce({ isAxiosError: true, message: 'busy', response: { status: 503 } });
+        await memory.forgetThings(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]));
+        expect(memory.unreportedItemForgets.size).toBe(1);
+        clearTimeout(memory.unreportedRetryTimer);
+    });
+
     it('lets go a forget that Orbit refuses for good, but keeps one it only could not take yet', async () => {
         const memory = held();
         // A busy Orbit or a refused token is tried again
