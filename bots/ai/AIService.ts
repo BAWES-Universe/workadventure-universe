@@ -186,7 +186,7 @@ function sentOnlyTo(options: TurnOptions | undefined, playerId: number | undefin
 
 /** A bot's provider, resolved by bot id (#374): the settings to call, where they came from, or "resting". */
 /** Where a reply was given and who it was for, sent with its usage (Orbit #491). */
-type UsageTalker = { channel: 'dm' | 'nearby'; userId?: string; isGuest?: boolean; greeting?: boolean };
+type UsageTalker = { channel: 'dm' | 'nearby' | 'task'; userId?: string; isGuest?: boolean; greeting?: boolean; runId?: string; eventId?: string };
 
 type ResolvedProvider =
     | { resting: false; config: AIProviderConfig; source: 'provider' | 'universe-ai' | 'own-key' }
@@ -3517,6 +3517,100 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     private brickToolsOn(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService): boolean {
         const admin = adminApiService ?? this.adminApiService;
         return !botClient && !!botId && this.helperBricks.has(botId) && !!admin?.isConfigured?.();
+    }
+
+    /**
+     * One run of a goal or task that needs a model (#2002): its own context, never the person's chat, saving nothing into memory. Rounds of
+     * the model and its tools go on until `final` is called (that call ends it, after it ran), the model stops calling tools, or the steps
+     * are used up. Every model call is its own usage row on the task channel under the run's id, so what a run costs is on the books call by
+     * call. `permit` is asked before every model call and every tool: a run that was paused, finished, deleted or changed stops there.
+     */
+    async runBrickTask(opts: {
+        botId: string;
+        providerId: string;
+        system: string;
+        user: string;
+        tools: any[];
+        maxSteps: number;
+        signal?: AbortSignal;
+        permit: () => Promise<boolean>;
+        runTool: (name: string, args: Record<string, unknown>) => Promise<string>;
+        final: string;
+        usage: { runId: string; attempt: number; userId?: string };
+    }): Promise<{ ended: 'final' | 'no_tool' | 'steps' | 'not_permitted' | 'resting' | 'failed'; error?: string }> {
+        const resolved = await this.resolveProvider(opts.providerId, opts.botId);
+        if (resolved.resting) return { ended: 'resting' };
+        const config = resolved.config;
+        const rounds: ReplySteps = { steps: [] };
+        for (let round = 1; round <= opts.maxSteps; round++) {
+            if (opts.signal?.aborted) return { ended: 'failed', error: 'stopped' };
+            if (!(await opts.permit())) return { ended: 'not_permitted' };
+            // One ledger for each call: each is a usage row of its own
+            const ledger = new UsageLedger();
+            const startedAt = Date.now();
+            let content = '';
+            let reasoning: string | undefined;
+            let meta: AIStreamChunk['metadata'] | undefined;
+            const calls = new Map<string, { id: string; name: string; arguments: string }>();
+            let failed: string | null = null;
+            try {
+                for await (const chunk of this.meteredStream(ledger, config.providerId, opts.system, opts.user, config, opts.tools, opts.signal, undefined, rounds.steps.length > 0 ? rounds : undefined)) {
+                    if (chunk.content) content += chunk.content;
+                    for (const call of chunk.toolCalls ?? []) {
+                        const known = call.id ? calls.get(call.id) : Array.from(calls.values()).pop();
+                        if (known) {
+                            if (call.arguments && call.arguments !== '{}') known.arguments += call.arguments;
+                            if (call.name) known.name = call.name;
+                        } else if (call.id) {
+                            calls.set(call.id, { id: call.id, name: call.name || '', arguments: call.arguments && call.arguments !== '{}' ? call.arguments : '' });
+                        }
+                    }
+                    if (chunk.done) {
+                        meta = chunk.metadata;
+                        if (chunk.reasoning) reasoning = chunk.reasoning;
+                    }
+                }
+            } catch (error) {
+                failed = providerErrorText(error);
+            }
+            const errored = failed !== null || !!meta?.error;
+            // The call's own row, whether it worked or not: a call that was made was paid for, and one that never started adds a zero
+            await this.trackUsage(
+                opts.botId,
+                config.providerId,
+                {
+                    tokensUsed: meta?.tokensUsed ?? 0,
+                    promptTokens: meta?.promptTokens ?? 0,
+                    completionTokens: meta?.completionTokens ?? 0,
+                    ...(meta?.cacheReadTokens || meta?.cacheWriteTokens ? { cacheReadTokens: meta.cacheReadTokens ?? 0, cacheWriteTokens: meta.cacheWriteTokens ?? 0 } : {}),
+                    latency: Date.now() - startedAt,
+                    error: errored,
+                },
+                ledger.summary(),
+                { channel: 'task', runId: opts.usage.runId, eventId: `${opts.usage.attempt}.${round}`, ...(opts.usage.userId ? { userId: opts.usage.userId } : {}) }
+            );
+            if (errored) return { ended: 'failed', error: failed ?? meta?.errorText ?? 'The model did not answer' };
+            const pending = Array.from(calls.values()).filter((call) => call.name.trim() !== '');
+            if (pending.length === 0) return { ended: 'no_tool' };
+            const results: { id: string; name: string; text: string }[] = [];
+            let finished = false;
+            for (const call of pending) {
+                if (!(await opts.permit())) return { ended: 'not_permitted' };
+                const args = this.safeParseToolArgs(call.arguments || '{}');
+                let text: string;
+                try {
+                    text = await opts.runTool(call.name, args);
+                } catch (error) {
+                    text = JSON.stringify({ error: 'That did not work just now.' });
+                    console.warn(`[AIService] A step of a goal or task failed (${call.name}):`, error instanceof Error ? error.message : error);
+                }
+                results.push({ id: call.id, name: call.name, text });
+                if (call.name === opts.final && !text.includes('"error"')) finished = true;
+            }
+            if (finished) return { ended: 'final' };
+            rounds.steps.push(stepOf(round, content, pending, results, reasoning));
+        }
+        return { ended: 'steps' };
     }
 
     /**
