@@ -77,6 +77,16 @@ let dmCards: CardSurface | undefined;
 // bubble to the person who asked alone, with one plain line for everyone (#1658). Built before direct messages, so a bubble
 // has its cards with or without them.
 const aiService = botManager.getAIService();
+// Every bot hears voice notes (plan v3): what a bot's reply would run on decides whether the note is checked against the person's
+// replies before it is heard, and what the hearing provider still holds is deleted until it confirms
+{
+    const hearing = sharedNoteHearing(adminApiService);
+    hearing?.useReplySource(async (botId) => {
+        const config = botManager.getBot(botId)?.getFullConfig() ?? (await adminApiService.getBotConfiguration(botId, 5000, { bricks: true }).catch(() => null));
+        return config?.aiProviderRef ? aiService.replySource(config.aiProviderRef, botId) : null;
+    });
+    hearing?.startCleaning();
+}
 const nearbyAsks = new NearbyAsks({
     bot: (botId) => botManager.getBot(botId),
     quick: async (botId, system, prompt, timeoutMs) => {

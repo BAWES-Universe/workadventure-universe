@@ -2786,13 +2786,14 @@ export class BotClient {
 
     /**
      * Hears a voice note and tells everyone who got it, so each shows "Listening…" and then the words under the note (or that it could
-     * not be heard). Returns the words for the bot, or 'unheard' when there are none to give: the bot then does not answer a file it
+     * not be heard). Returns the words for the bot, '' when the person's replies are used up (the note goes on as before and the reply path shows the limit card), or 'unheard' when there are none to give: the bot then does not answer a file it
      * cannot read.
      */
     private async hearNearbyNote(
         spaceName: string,
         senderUserId: string,
-        spaceMessage: { id?: string; url?: string; fileName?: string; voiceDurationMs?: number }
+        spaceMessage: { id?: string; url?: string; fileName?: string; voiceDurationMs?: number },
+        sender: { userId?: string; isGuest?: boolean } = {}
     ): Promise<string> {
         const hearing = sharedNoteHearing(adminApiService);
         const id = spaceMessage.id;
@@ -2800,12 +2801,20 @@ export class BotClient {
         // and are saved for them only
         if (!hearing || !id || !senderUserId || !spaceMessage.url) return 'unheard';
         const note = { messageId: id, senderUserId };
-        this.sendTranscript(spaceName, note, 'listening');
-        const heard = await hearing.hear(this.config.botId, `${spaceName}|${senderUserId}|${id}`, {
-            url: spaceMessage.url,
-            filename: spaceMessage.fileName ?? 'Voice message',
-            ...(spaceMessage.voiceDurationMs ? { seconds: spaceMessage.voiceDurationMs / 1000 } : {}),
-        });
+        const heard = await hearing.hear(
+            this.config.botId,
+            `${spaceName}|${senderUserId}|${id}`,
+            {
+                url: spaceMessage.url,
+                filename: spaceMessage.fileName ?? 'Voice message',
+                ...(spaceMessage.voiceDurationMs ? { seconds: spaceMessage.voiceDurationMs / 1000 } : {}),
+            },
+            sender,
+            // "Listening…" once the note is on its way to be heard; never for a note refused before that
+            () => this.sendTranscript(spaceName, note, 'listening')
+        );
+        // The person's replies are used up: the note is read as before, and the reply path shows the usual limit card
+        if ('reason' in heard && heard.reason === 'reply-limit') return '';
         const words = 'text' in heard ? tidyTranscript(heard.text, hearing.limits.maxChars) : '';
         if (!words) {
             this.sendTranscript(spaceName, note, 'failed');
@@ -3813,9 +3822,11 @@ export class BotClient {
                         // Heard once, here; the people who got the note see what was heard under it
                         let lineText = spaceMessage.message;
                         if (noteForBot) {
-                            const heard = await this.hearNearbyNote(spaceName, senderUserId, spaceMessage);
+                            // Counted on the person as Orbit knows them (their uuid), like their replies; unknown yet: not heard
+                            const talker = this.behavior?.getTalker(senderId) ?? null;
+                            const heard = await this.hearNearbyNote(spaceName, senderUserId, spaceMessage, talker ?? {});
                             if (heard === 'unheard') break;
-                            lineText = lineText ? `${lineText}\n${heard}` : heard;
+                            if (heard) lineText = lineText ? `${lineText}\n${heard}` : heard;
                         }
                         // Said out loud, not typed, to this bot and let through: a card waiting for an answer says so (#1661)
                         if (spaceMessage.spoken) this.noteSpoken(spaceName, senderId);

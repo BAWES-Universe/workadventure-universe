@@ -1101,7 +1101,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         let text = read.text;
         if (read.note && this.deps.noteHearing) {
             // A voice note is heard once, here: the bot answers the words, and the note shows what was heard (or that it could not be)
-            const heard = await this.hearNote(botUserId, botId, event, read.note);
+            const heard = await this.hearNote(botUserId, botId, event, read.note, { userId: user.uuid, isGuest: user.isGuest });
             if (heard === 'unheard') return;
             if (heard) text = text ? `${text}\n[Voice note] ${heard}` : `[Voice note] ${heard}`;
         }
@@ -1496,7 +1496,13 @@ export class MatrixDmBridge implements MatrixEventHandler {
      * the bot, '' when the bot has no hearing to use (the note reaches it as the file, as before), or 'unheard' when it was meant to
      * be heard and could not be (the person is told under the note; the bot is not made to answer a file it cannot read).
      */
-    private async hearNote(botUserId: string, botId: string, event: MatrixEvent, note: { data: Buffer; filename: string; seconds?: number }): Promise<string> {
+    private async hearNote(
+        botUserId: string,
+        botId: string,
+        event: MatrixEvent,
+        note: { data: Buffer; filename: string; seconds?: number },
+        sender: { userId?: string; isGuest?: boolean }
+    ): Promise<string> {
         const hearing = this.deps.noteHearing;
         // A bot with no hearing to use is not promised anything: no row, and the note reaches it as the file, as before
         if (!hearing || !(await hearing.canHear(botId))) return '';
@@ -1521,10 +1527,21 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 console.warn(`[MatrixDmBridge] Could not show a transcript in ${roomId}:`, error?.message ?? error);
             }
         };
-        // "Listening…" is only worth showing when the answer takes a moment, but the person should never wonder: it goes out at once
-        const listening = show('listening');
-        const heard = await hearing.hear(botId, event.event_id, { bytes: note.data, filename: note.filename, ...(note.seconds !== undefined ? { seconds: note.seconds } : {}) });
+        // "Listening…" goes out the moment the note is on its way to be heard, so the person never wonders; a note refused before
+        // that (a used-up allowance) never shows it
+        let listening: Promise<void> | undefined;
+        const heard = await hearing.hear(
+            botId,
+            event.event_id,
+            { bytes: note.data, filename: note.filename, ...(note.seconds !== undefined ? { seconds: note.seconds } : {}) },
+            sender,
+            () => {
+                listening ??= show('listening');
+            }
+        );
         await listening;
+        // The person's replies are used up: nothing was heard, and the reply path shows the usual limit card for the note
+        if ('reason' in heard && heard.reason === 'reply-limit') return '';
         if (heard.ok) {
             const words = tidyTranscript(heard.text, hearing.limits.maxChars);
             if (!words) {
