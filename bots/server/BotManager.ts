@@ -940,6 +940,16 @@ export class BotManager {
      * call is Orbit's answer, asked by the caller of this. One call per person and bot: a new one replaces the old
      * (a reload, a second tab). Returns the name of the space to join.
      */
+    /** Whether this bot has a voice to take a call with (for the call button: the start asks again). */
+    async canTakeCall(botId: string): Promise<boolean> {
+        try {
+            const config = await this.adminApiService.getBotConfiguration(botId);
+            return !!config && (config as { enabled?: boolean }).enabled !== false && config.voiceEnabled === true;
+        } catch {
+            return false;
+        }
+    }
+
     async startCall(botId: string, callerUuid: string): Promise<{ spaceName: string }> {
         await this.endCall(botId, callerUuid);
         const config = await this.adminApiService.getBotConfiguration(botId);

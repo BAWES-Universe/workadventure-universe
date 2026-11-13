@@ -490,6 +490,11 @@ export class BotAPI {
                     this.botManager.getBot(botId)?.getName()
                 );
                 if (verdict.kind === 'allowed') {
+                    // Calling is also a voice: the call button is drawn only for a bot that has one (the start still checks)
+                    if (action === 'call' && !(await this.botManager.canTakeCall(botId))) {
+                        res.json({ allowed: false, code: 'no_voice', reason: 'This bot has no voice.' });
+                        return;
+                    }
                     res.json({ allowed: true });
                     return;
                 }

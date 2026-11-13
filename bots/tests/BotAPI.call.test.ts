@@ -25,6 +25,7 @@ const botManager = {
     getAccessGate: vi.fn(() => gate),
     startCall: vi.fn(),
     endCall: vi.fn(),
+    canTakeCall: vi.fn(),
 };
 const adminApiService = {
     validateSessionToken: vi.fn(),
@@ -53,6 +54,7 @@ beforeEach(() => {
     botManager.getBot.mockReturnValue({ getName: () => 'Nora' });
     botManager.startCall.mockResolvedValue({ spaceName: 'call__abc' });
     botManager.endCall.mockResolvedValue(true);
+    botManager.canTakeCall.mockResolvedValue(true);
     gate.check.mockResolvedValue({ allowed: true, kind: 'allowed' });
 });
 
@@ -147,5 +149,19 @@ describe('Asking whether a call may be made', () => {
         const response = await post('/api/bots/b1/access', { action: 'call', playerUuid: 'uuid-1' }, auth);
         expect(response.status).toBe(200);
         expect(gate.check).toHaveBeenCalledWith('b1', 'call', { signedIn: true, identifier: 'uuid-1' }, 'Nora');
+        expect(await response.json()).toEqual({ allowed: true });
+    });
+
+    it('says no for a bot with no voice, so its chat shows no Call button', async () => {
+        botManager.canTakeCall.mockResolvedValue(false);
+        const response = await post('/api/bots/b1/access', { action: 'call', playerUuid: 'uuid-1' }, auth);
+        expect(await response.json()).toMatchObject({ allowed: false, code: 'no_voice' });
+    });
+
+    it('does not ask about the voice for any other action, nor when Orbit already said no', async () => {
+        await post('/api/bots/b1/access', { action: 'dm', playerUuid: 'uuid-1' }, auth);
+        gate.check.mockResolvedValue({ allowed: false, kind: 'refused', code: 'not_allowed', line: 'No' });
+        await post('/api/bots/b1/access', { action: 'call', playerUuid: 'uuid-1' }, auth);
+        expect(botManager.canTakeCall).not.toHaveBeenCalled();
     });
 });

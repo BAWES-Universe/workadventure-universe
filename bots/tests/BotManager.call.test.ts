@@ -53,6 +53,16 @@ describe('BotManager calls', () => {
         expect(manager.getAllBots()).toEqual([]);
     });
 
+    it('says a bot can take a call only when it is there and has a voice', async () => {
+        expect(await setup().manager.canTakeCall('b1')).toBe(true);
+        expect(await setup({ botId: 'b1', name: 'Nora', voiceEnabled: false }).manager.canTakeCall('b1')).toBe(false);
+        expect(await setup({ botId: 'b1', name: 'Nora', voiceEnabled: true, enabled: false }).manager.canTakeCall('b1')).toBe(false);
+        expect(await setup(null).manager.canTakeCall('b1')).toBe(false);
+        const broken = setup();
+        broken.admin.getBotConfiguration.mockRejectedValue(new Error('down'));
+        expect(await broken.manager.canTakeCall('b1')).toBe(false);
+    });
+
     it('keeps one live call per person and bot: a new one replaces the old', async () => {
         const { manager, clients } = setup();
         const first = await manager.startCall('b1', 'uuid-1');
