@@ -2,6 +2,7 @@ import { writable } from "svelte/store";
 import type { Readable } from "svelte/store";
 import { leaveChat } from "../../ChatBack";
 import { bricksPageOpenStore, navChat } from "../../Stores/ChatStore";
+import { appsSearchStart } from "./AppsSearch";
 
 /**
  * Opening the Apps page from somewhere else (game #2001): "Connect my apps" under a Brick's hello, the "Apps" link in the
@@ -16,17 +17,13 @@ const requested = writable(false);
 /** True while a request to open the Apps page waits for the Bricks page to take it. */
 export const appsPageRequest: Readable<boolean> = { subscribe: requested.subscribe };
 
-const searchStart = writable<string | undefined>(undefined);
-/** What "Search apps" starts with when the Apps page opens from a card ("calendar"). The page clears it once read. */
-export const appsSearchStart = searchStart;
-
 /** The Bricks page calls this when it has opened the Apps page for a request. */
 export function takeAppsPageRequest(): void {
     requested.set(false);
 }
 
 export function openAppsPage(options: { search?: string } = {}): void {
-    searchStart.set(options.search?.trim() || undefined);
+    appsSearchStart.set(options.search?.trim() || undefined);
     leaveChat();
     navChat.switchToChat();
     bricksPageOpenStore.set(true);
