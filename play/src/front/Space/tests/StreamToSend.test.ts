@@ -89,3 +89,63 @@ describe("showing our camera to the speakers (#1623)", () => {
         expect(get(cameraOnStore(local([microphone])))).toBe(false);
     });
 });
+
+describe("what each space carries while a call with a Brick is live (#2004, check 64)", () => {
+    const CALL = "call__abc";
+    const bubble = (name = "a-bubble") => ({
+        isStreamingStore: writable(true),
+        showsCameraToStreamersStore: writable(false),
+        getName: () => name,
+    });
+    const audioOf = (value: LocalStreamStoreValue | undefined) =>
+        value?.type === "success" ? value.stream?.getAudioTracks() : undefined;
+    const videoOf = (value: LocalStreamStoreValue | undefined) =>
+        value?.type === "success" ? value.stream?.getVideoTracks() : undefined;
+
+    it("carries everything, as before, while no call is live", () => {
+        const localStream = local([camera, microphone]);
+        expect(get(streamToSend(localStream, bubble(), writable(undefined)))).toBe(get(localStream));
+        expect(get(streamToSend(localStream, bubble(CALL), writable(undefined)))).toBe(get(localStream));
+    });
+
+    it("gives the microphone to the call alone while it is on: the bubble keeps the camera, never the microphone", () => {
+        const gate = writable<{ spaceName: string; owner: "bot" | "people" }>({ spaceName: CALL, owner: "bot" });
+        const localStream = local([camera, microphone]);
+        const inBubble = get(streamToSend(localStream, bubble(), gate));
+        expect(audioOf(inBubble)).toEqual([]);
+        expect(videoOf(inBubble)).toEqual([camera]);
+        const inCall = get(streamToSend(localStream, bubble(CALL), gate));
+        expect(audioOf(inCall)).toEqual([microphone]);
+        // A call is audio only: the camera is never sent to it
+        expect(videoOf(inCall)).toEqual([]);
+    });
+
+    it("gives the microphone back to the people, and takes it from the call, the moment it goes on hold", () => {
+        const gate = writable<{ spaceName: string; owner: "bot" | "people" }>({ spaceName: CALL, owner: "people" });
+        const localStream = local([camera, microphone]);
+        const inBubble = get(streamToSend(localStream, bubble(), gate));
+        expect(audioOf(inBubble)).toEqual([microphone]);
+        expect(get(streamToSend(localStream, bubble(CALL), gate))).toBeUndefined();
+    });
+
+    it("never carries the microphone in both places, whoever holds it", () => {
+        const localStream = local([microphone]);
+        for (const owner of ["bot", "people"] as const) {
+            const gate = writable({ spaceName: CALL, owner });
+            const a = audioOf(get(streamToSend(localStream, bubble(), gate))) ?? [];
+            const b = audioOf(get(streamToSend(localStream, bubble(CALL), gate))) ?? [];
+            expect(a.length + b.length).toBe(1);
+        }
+    });
+
+    it("keeps the same stream while the tracks do not change", () => {
+        const gate = writable<{ spaceName: string; owner: "bot" | "people" }>({ spaceName: CALL, owner: "bot" });
+        const sent = streamToSend(local([camera, microphone]), bubble(), gate);
+        const seen: unknown[] = [];
+        const stop = sent.subscribe((value) => seen.push(value?.type === "success" ? value.stream : undefined));
+        gate.set({ spaceName: CALL, owner: "bot" });
+        stop();
+        expect(seen[0]).toBeDefined();
+        expect(seen.every((stream) => stream === seen[0])).toBe(true);
+    });
+});

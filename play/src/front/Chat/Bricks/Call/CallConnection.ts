@@ -1,0 +1,157 @@
+import { get, type Readable } from "svelte/store";
+import type { Observable } from "rxjs";
+import type { CallFailure, CallResult } from "../../../external-modules/bots/services/callFailure";
+import type { CallMicGate } from "../../../Space/CallMicGate";
+import { micOwner, isLive } from "./CallSession";
+import type { botCallStore } from "./CallStore";
+
+/**
+ * How one call is carried (game #2004): the bot server makes the bot join the call's private space, this browser joins
+ * the same space, and the two talk in it like any two people in a bubble (the same peer-to-peer path). This file only
+ * decides when things happen, so every piece it needs comes in and a test runs it without a game:
+ *   - the call is "connected" when the bot is in the space, and ends by the bot when it leaves;
+ *   - whoever holds the microphone follows the call's phase, and never two places (CallMicGate);
+ *   - however the call ends (the person, a quiet stretch, the bot, a lost space), the space is left, the bot is told
+ *     and the microphone goes back to the people, once.
+ */
+export interface CallSpaceLike {
+    getName(): string;
+    readonly usersStore: Readable<ReadonlyMap<string, unknown>>;
+    readonly observeUserLeft: Observable<unknown>;
+    readonly observeUserJoined: Observable<unknown>;
+    readonly onLeaveSpace: Observable<void>;
+}
+
+export interface CallDeps {
+    store: Pick<typeof botCallStore, "subscribe" | "start" | "send">;
+    /** The bot server's answer, for this person. */
+    startCall(botId: string): Promise<CallResult>;
+    /** Tells the bot server the call is over. Never throws. */
+    endCall(botId: string): Promise<unknown>;
+    joinSpace(spaceName: string, signal: AbortSignal): Promise<CallSpaceLike>;
+    leaveSpace(space: CallSpaceLike): Promise<void>;
+    setGate(gate: CallMicGate | undefined): void;
+    /**
+     * The person's microphone setting. A call needs it on to be heard: tapping Call turns it on if it was off, and the
+     * call turns it off again when it ends, only if the call was the one that turned it on.
+     */
+    microphone?: { isOn(): boolean; turnOn(): void; turnOff(): void };
+    now(): number;
+    /** How long the bot has to come into the space before the call is given up on. */
+    connectTimeoutMs?: number;
+}
+
+export type BeginResult =
+    | { ok: true }
+    | { ok: false; failure: "already_on_a_call" }
+    | { ok: false; failure: CallFailure; reason?: string };
+
+export const CALL_CONNECT_TIMEOUT_MS = 30_000;
+
+export function createCallConnection(deps: CallDeps) {
+    let active: { botId: string; stop: () => void } | undefined;
+
+    async function begin(botId: string, botName: string): Promise<BeginResult> {
+        if (active || !deps.store.start(botId, botName)) return { ok: false, failure: "already_on_a_call" };
+
+        const abort = new AbortController();
+        const cleanups: Array<() => void> = [];
+        let space: CallSpaceLike | undefined;
+        let finished = false;
+        let connected = false;
+        let turnedMicrophoneOn = false;
+
+        // However the call ends, once: leave the space, tell the bot server, give the microphone back
+        const finish = (by: "you" | "bot" | "quiet" | "unavailable"): void => {
+            if (finished) return;
+            finished = true;
+            abort.abort();
+            // The state is ended first (so the one true line is shown), then the rest follows
+            deps.store.send({ type: "end", by });
+            for (const stop of cleanups.splice(0)) stop();
+            deps.setGate(undefined);
+            if (turnedMicrophoneOn && deps.microphone?.isOn()) deps.microphone.turnOff();
+            const left = space;
+            space = undefined;
+            if (left) deps.leaveSpace(left).catch(() => undefined);
+            deps.endCall(botId).catch(() => undefined);
+            if (active?.botId === botId) active = undefined;
+        };
+        active = { botId, stop: () => finish("you") };
+        // Tapping Call is the person's own action: turn the microphone on if it was off
+        if (deps.microphone && !deps.microphone.isOn()) {
+            deps.microphone.turnOn();
+            turnedMicrophoneOn = true;
+        }
+
+        // The microphone follows the call's phase; any end of the call (the person pressing End, a quiet stretch) ends
+        // everything through the same path
+        const watch = deps.store.subscribe((call) => {
+            if (finished) return;
+            if (!call || call.botId !== botId || !isLive(call.state)) {
+                finish(call?.state.endedBy ?? "you");
+                return;
+            }
+            if (space) {
+                deps.setGate({ spaceName: space.getName(), owner: micOwner(call.state) === "bot" ? "bot" : "people" });
+            }
+        });
+        cleanups.push(watch);
+
+        const started = await deps.startCall(botId);
+        if (finished) {
+            // Ended while it was starting: the bot server must not keep a call nobody holds
+            if (started.started) deps.endCall(botId).catch(() => undefined);
+            return { ok: false, failure: "failed" };
+        }
+        if (!started.started) {
+            finish("unavailable");
+            return { ok: false, failure: started.failure, reason: started.reason };
+        }
+
+        try {
+            space = await deps.joinSpace(started.spaceName, abort.signal);
+        } catch {
+            finish("unavailable");
+            return { ok: false, failure: "failed" };
+        }
+        if (finished) {
+            deps.leaveSpace(space).catch(() => undefined);
+            return { ok: false, failure: "failed" };
+        }
+        // The call's space carries nothing of the microphone until the call is on: set the gate before anything is heard
+        deps.setGate({ spaceName: space.getName(), owner: "people" });
+
+        const live = space;
+        const botIn = (): void => {
+            if (connected || finished) return;
+            connected = true;
+            deps.store.send({ type: "connected", now: deps.now() });
+        };
+        // The space holds two members: this person and the bot
+        const joined = live.observeUserJoined.subscribe(botIn);
+        cleanups.push(() => joined.unsubscribe());
+        const left = live.observeUserLeft.subscribe(() => {
+            if (connected) finish("bot");
+        });
+        cleanups.push(() => left.unsubscribe());
+        const lost = live.onLeaveSpace.subscribe(() => finish("unavailable"));
+        cleanups.push(() => lost.unsubscribe());
+        if (get(live.usersStore).size > 0) botIn();
+
+        const timer = setTimeout(() => {
+            if (!connected) finish("unavailable");
+        }, deps.connectTimeoutMs ?? CALL_CONNECT_TIMEOUT_MS);
+        cleanups.push(() => clearTimeout(timer));
+        return { ok: true };
+    }
+
+    return {
+        begin,
+        /** The person hangs up (the same path as every other end). */
+        end(): void {
+            active?.stop();
+        },
+        isActive: (): boolean => active !== undefined,
+    };
+}

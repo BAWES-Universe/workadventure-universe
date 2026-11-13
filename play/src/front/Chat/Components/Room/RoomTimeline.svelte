@@ -30,7 +30,11 @@
     import LL, { locale } from "../../../../i18n/i18n-svelte";
     import { formatPeopleNames } from "../TopRow/TopRowSummary";
     import { availabilityFromNote, botChatClosed, botHeaderState, botIdFromChatId } from "../../Bots/BotChatStatus";
-    import { botHearsCache, botStatusCache } from "../../Bots/BotStatusStore";
+    import { botCallAccessCache, botHearsCache, botStatusCache } from "../../Bots/BotStatusStore";
+    import CallButton from "../../Bricks/Call/CallButton.svelte";
+    import CallBarHost from "../../Bricks/Call/CallBarHost.svelte";
+    import { botCallStore, callBarInChatStore } from "../../Bricks/Call/CallStore";
+    import { startCallWith } from "../../Bricks/Call/startCallWith";
     import { nextReplyLimitExpiry, shownReplyLimitIds } from "../../Bots/BotReplyLimit";
     import BotStatusNoteCard from "../Bots/BotStatusNoteCard.svelte";
     import BotReplyLimitCard from "../Bots/BotReplyLimitCard.svelte";
@@ -272,6 +276,7 @@
         );
     }
     onDestroy(() => voiceWordsSubscription?.unsubscribe());
+    onDestroy(() => callBarInChatStore.set(false));
     function editVoiceDraft(turnId: string) {
         const words = proximityRoom?.editVoiceDraft(turnId);
         if (words !== undefined) messageInputBarRef?.putText(words);
@@ -472,6 +477,11 @@
     $: botAvailability = partnerBotId ? botStatusCache.store(partnerBotId) : readable(undefined);
     // The mic shows in a bot's chat only when that bot can hear the note
     $: botHears = partnerBotId ? botHearsCache.store(partnerBotId) : readable(false);
+    // Call: Orbit's rule says yes and the bot has a voice (#2004). The button is not drawn at all otherwise.
+    $: canCall = partnerBotId ? botCallAccessCache.store(partnerBotId) : readable(false);
+    $: callHere = !!$botCallStore && partnerBotId !== undefined && $botCallStore.botId === partnerBotId;
+    $: callBarInChatStore.set(callHere);
+    $: roomPicture = room.pictureStore;
     $: botState = partnerBotId ? $botAvailability : undefined;
     $: botClosed = botChatClosed(botState);
     $: lastBotMessage = partnerBotId ? [...$messages].reverse().find((message) => !message.isMyMessage) : undefined;
@@ -1344,6 +1354,11 @@
                         </svelte:element>
                     {/if}
                 </div>
+                {#if partnerBotId !== undefined && $canCall && !$botCallStore}
+                    <div class="flex h-12 w-12 shrink-0 items-center justify-center">
+                        <CallButton onCall={() => void startCallWith(partnerBotId, $roomName)} />
+                    </div>
+                {/if}
                 {#if matrixRoom}
                     <div class="flex h-12 w-12 shrink-0 items-center justify-center">
                         <RoomMenu room={matrixRoom} inHeader />
@@ -1372,6 +1387,10 @@
                             directPartner ? openProfileRoomIdStore.set(room.id) : openRoomDetailsIdStore.set(room.id)}
                     />
                 {/key}
+            {/if}
+            {#if callHere}
+                <!-- The call bar, at the top of this bot's chat (#2004); with another chat open it floats on screen -->
+                <CallBarHost picture={$roomPicture} />
             {/if}
             {#if ownBrick}
                 <BrickComputerBar brick={ownBrick} />

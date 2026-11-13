@@ -24,6 +24,8 @@
     export let onEnd: () => void = () => undefined;
     export let onMute: () => void = () => undefined;
     export let onStopSpeaking: () => void = () => undefined;
+    /** Whether Stop speaking can be offered: only where the game can really stop the bot's voice. */
+    export let stoppable = true;
     export let onOpen: () => void = () => undefined;
 
     $: hold = state.phase === "hold";
@@ -82,7 +84,7 @@
                 >{$LL.chat.brickCall.resume()}</button
             >
         {:else}
-            {#if speaking}
+            {#if speaking && stoppable}
                 <button
                     type="button"
                     class="call-ic"

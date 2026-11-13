@@ -1242,6 +1242,9 @@ const chat: BaseTranslation = {
         onACall: "On a call",
         endedQuiet: "The call ended after a quiet stretch.",
         endedUnavailable: "The call ended because voice isn't available now.",
+        failed: "The call couldn't start. Try again in a moment.",
+        noVoice: "{name} has no voice to call.",
+        signIn: "Sign in again to call.",
     },
     voiceDraft: {
         onlyYou: "Only you see this",
