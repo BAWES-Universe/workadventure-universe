@@ -37,8 +37,9 @@ Full table: `overflow17/table.md`.
 | closing with everyone connected | 56 ms | 28 ms |
 
 Everyone beyond 15 is not watched and today's rule decides for them (heard exactly as much, nobody lost). That a person who is not watched stops the bot as today
-is the worker's unit test `speechYield.test.ts: "cannot tell (not loaded, not watched, another path): today's rule at once"`. Not measured here: a 16th person's
-noise at the image level; and the 30-minute soak of the earlier build is not repeated (this one is 10 minutes).
+is the worker's unit test `speechYield.test.ts: "cannot tell (not loaded, not watched, another path): today's rule at once"`. The 16th person's noise, at the image level (`src/chrome-sixteenth.ts`, `sixteenth/result.json`): with 15 people keeping the detector's 15 places busy, a real Chromium joined as the 16th and a fan
+played over the bot: the fan stopped the reply 106 ms after it started, as today (`yield_fallback_not_fresh` 1, `observer_streams_refused` counted, no pause). With places free again the same fan
+made the pause hold and go on. The 30-minute soak of the earlier build is not repeated (this one is 10 minutes).
 
 ## 3. The off switch with a call running (real Chrome)
 
@@ -84,8 +85,7 @@ a voice inside the fan then stopped it in 10 of 10.
 
 ## Not covered, left for Part 2
 
-Real phones and the laptop (iPhone Safari and PWA, Android Chrome, a real microphone), more than one talker per Chromium, a 16th person's noise at the image level,
-and real Soniox timing (the fixture hears no words). Babble (many voices) is still not solved, as before.
+Real phones and the laptop (iPhone Safari and PWA, Android Chrome, a real microphone), more than one talker per Chromium, and real Soniox timing (the fixture hears no words). Babble (many voices) is still not solved, as before.
 
 ## Re-running
 

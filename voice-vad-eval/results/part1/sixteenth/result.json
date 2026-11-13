@@ -1,0 +1,24 @@
+{
+ "sixteenth-person-with-15-busy": {
+  "fanStoppedTheReply": true,
+  "stoppedAfterMs": 106,
+  "pauseHolds": 0,
+  "pauseGoOns": 0,
+  "notWatchedFallbacks": {
+   "observer_streams_refused": 6,
+   "yield_fallback_not_fresh": 1
+  },
+  "peakWatched": 15
+ },
+ "alone-after-the-15-left": {
+  "fanStoppedTheReply": false,
+  "stoppedAfterMs": null,
+  "pauseHolds": 1,
+  "pauseGoOns": 1,
+  "notWatchedFallbacks": {
+   "observer_streams_refused": 0,
+   "yield_fallback_not_fresh": 0
+  },
+  "peakWatched": 15
+ }
+}
