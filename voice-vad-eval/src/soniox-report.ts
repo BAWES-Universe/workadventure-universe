@@ -97,7 +97,7 @@ say();
 const startOf = (r: Row) => 1000 + (r.leadExtraMs ?? 0);
 say('Speech over the bot (should stop):');
 say();
-say('| group | clips | never stopped: today / hold (of which Soniox heard the words) | stopped by background first: today / hold | first change after onset, hold, median / p95 | stopped for good after onset: today / hold, median / p95 | false resumes, hold (overlap) |');
+say('| group | clips | never stopped: today / hold (of which Soniox heard the words) | stopped by background first: today / hold | first change after onset, hold, median / p95 | stopped for good after onset: today / hold, median / p95 | false resumes, hold (bot playback after the apparent interruption, to its stop or the end of the replay tail) |');
 say('| --- | --- | --- | --- | --- | --- | --- |');
 for (const g of groups.filter((x) => recs.some((r) => r.group === x && r.kind === 'speech'))) {
     const rs = recs.filter((r) => r.group === g && r.kind === 'speech').map((r) => ({ r, row: rows.get(r.id)! }));
@@ -127,6 +127,10 @@ for (const g of groups.filter((x) => recs.some((r) => r.group === x && r.kind ==
     const rescued = nh.filter(({ r }) => heardRight(r, finals(r))).length;
     say(`| ${g} | ${rs.length} | ${never('today').length} / ${nh.length} (${rescued}) | ${bg('today')} / ${bg('hold')} | ${ms(p(changes, 0.5))} / ${ms(p(changes, 0.95))} | ${ms(p(stops('today'), 0.5))} / ${ms(p(stops('today'), 0.95))}; ${ms(p(stops('hold'), 0.5))} / ${ms(p(stops('hold'), 0.95))} | ${fr} (${sec(overlap)}) |`);
 }
+say();
+say('The playback time after a false resume runs from going on to the next pause or stop, or to the end of the replay, which');
+say('includes the 3 s tail after the clip. It is not limited to a checked span of the person speaking, so it is not the time');
+say('both were talking at once. Onsets and offsets are energy estimates, not checked by a person.');
 say();
 say('Noise and knocks over the bot (should not stop):');
 say();

@@ -65,7 +65,7 @@ what Soniox said, when it said it. Quiet window 1,500 ms (frozen). "Today" is th
 
 Speech over the bot (should stop):
 
-| group | clips | never stopped: today / hold (of which Soniox heard the words) | stopped by background first: today / hold | first change after onset, hold, median / p95 | stopped for good after onset: today / hold, median / p95 | false resumes, hold (overlap) |
+| group | clips | never stopped: today / hold (of which Soniox heard the words) | stopped by background first: today / hold | first change after onset, hold, median / p95 | stopped for good after onset: today / hold, median / p95 | false resumes, hold (bot playback after the apparent interruption, to its stop or the end of the replay tail) |
 | --- | --- | --- | --- | --- | --- | --- |
 | known hard case | 17 | 8 / 8 (8) | 9 / 0 | 160 ms / 180 ms | - / -; 160 ms / 180 ms | 0 (0.0 s) |
 | soft command (S40), English | 40 | 0 / 2 (0) | 0 / 0 | 250 ms / 590 ms | 250 ms / 590 ms; 250 ms / 590 ms | 2 (16.1 s) |
@@ -74,6 +74,10 @@ Speech over the bot (should stop):
 | command over noise, Arabic | 40 | 0 / 0 (0) | 35 / 0 | 90 ms / 150 ms | 90 ms / 100 ms; 100 ms / 150 ms | 2 (0.2 s) |
 | sentence over noise | 20 | 0 / 0 (0) | 18 / 0 | 90 ms / 390 ms | 100 ms / 100 ms; 100 ms / 390 ms | 0 (0.0 s) |
 | sentence (S30) | 20 | 0 / 0 (0) | 0 / 0 | 110 ms / 270 ms | 110 ms / 270 ms; 110 ms / 270 ms | 0 (0.0 s) |
+
+The playback time after a false resume runs from going on to the next pause or stop, or to the end of the replay, which
+includes the 3 s tail after the clip. It is not limited to a checked span of the person speaking, so it is not the time
+both were talking at once. Onsets and offsets are energy estimates, not checked by a person.
 
 Noise and knocks over the bot (should not stop):
 
