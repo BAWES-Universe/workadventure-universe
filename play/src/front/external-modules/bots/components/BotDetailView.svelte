@@ -30,6 +30,7 @@
     import { UNIVERSE_AI_REF } from "../mindModel";
     import type { UsageScreen } from "../usageModel";
     import type { ToolsScreen } from "../toolsModel";
+    import ComputerGroup from "../../../Chat/Bricks/Computer/ComputerGroup.svelte";
     import BrickLookPicker from "../../../Chat/Bricks/BrickLookPicker.svelte";
     import BotWokaPicker from "./BotWokaPicker.svelte";
     import BotCompanionPicker from "./BotCompanionPicker.svelte";
@@ -929,6 +930,14 @@
                     link
                     onToggle={() => (editingCompanion = true)}
                 />
+                <!-- Computer comes after Companion, in the mock's order (game #2000) -->
+                {#if currentBot?.id}
+                    <ComputerGroup
+                        brick={{ id: currentBot.id, name: currentBot.name || "Brick" }}
+                        open={openGroup === "computer"}
+                        onToggle={toggleGroup}
+                    />
+                {/if}
             {:else}
                 {#if askedUsage && currentBot}
                     <MakerAskedCard name={currentBot.name || "Bot"} usage={askedUsage} onUseKey={openMind} />
