@@ -453,12 +453,13 @@ describe("a guest's pictures, files and notes come along when they sign in (plan
         const adminApiService = { validateSessionToken: vi.fn(), checkDmAccess: vi.fn() };
         const carryGuestChat = vi.fn();
         const carryCopy = vi.fn();
+        const carryBrick = vi.fn();
         let server: Server;
         let base: string;
         beforeAll(async () => {
             vi.spyOn(console, 'log').mockImplementation(() => undefined);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const app = (new BotAPI({ getAccessGate: vi.fn() } as never, adminApiService as never, {} as never, [], { carryGuestChat, carryCopy }) as any).app;
+            const app = (new BotAPI({ getAccessGate: vi.fn() } as never, adminApiService as never, {} as never, [], { carryGuestChat, carryCopy, carryBrick }) as any).app;
             server = await new Promise<Server>((resolve) => {
                 const started = app.listen(0, () => resolve(started));
             });
@@ -472,6 +473,7 @@ describe("a guest's pictures, files and notes come along when they sign in (plan
             adminApiService.checkDmAccess.mockResolvedValue({ allowed: true, reason: null, user: { uuid: 'uuid-alice', name: 'Alice', isGuest: false } });
             carryGuestChat.mockReset().mockResolvedValue('sent');
             carryCopy.mockReset();
+            carryBrick.mockReset().mockResolvedValue(true);
         });
         const carry = (lines: unknown) =>
             fetch(`${base}/api/bots/${BRICK}/carried-chat`, {
@@ -492,6 +494,16 @@ describe("a guest's pictures, files and notes come along when they sign in (plan
             const response = await carry([LINE]);
             expect(response.status).toBe(503);
             expect(await response.json()).toMatchObject({ code: 'cannot_check' });
+            expect(carryGuestChat).not.toHaveBeenCalled();
+        });
+
+        it('copies nothing into a bot that is not their Brick', async () => {
+            carryBrick.mockResolvedValue(false);
+            carryCopy.mockReturnValue(copySteps());
+            const response = await carry([LINE]);
+            expect(response.status).toBe(403);
+            expect(await response.json()).toMatchObject({ code: 'not_allowed' });
+            expect(carryCopy).not.toHaveBeenCalled();
             expect(carryGuestChat).not.toHaveBeenCalled();
         });
 

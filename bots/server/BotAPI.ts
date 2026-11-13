@@ -263,6 +263,8 @@ export interface BotAPIOptions {
      * person's chat address, already checked to be theirs, and `botId` already checked to be their own Brick.
      */
     carryGuestChat?: (botId: string, chatId: string, carryId: string, lines: GuestChatNote[], part?: CarriedPart | null) => Promise<'sent' | 'already' | 'wait' | 'not_brick'>;
+    /** Whether a guest's chat may be brought into this bot (the one Brick everyone gets, not deleted): asked before anything is copied. */
+    carryBrick?: (botId: string) => Promise<boolean>;
     /**
      * A Brick was deleted or taken back with Undo (game #1996): its settings are read again before its next message.
      * Only when it is a Brick of `ownerId` (Orbit's id of the person); says whether it was.
@@ -313,6 +315,7 @@ export class BotAPI {
     private directChat: BotAPIOptions['directChat'];
     private brickChanged: BotAPIOptions['brickChanged'];
     private carryGuestChat: BotAPIOptions['carryGuestChat'];
+    private carryBrick: BotAPIOptions['carryBrick'];
     /** Per person, how many Brick changes they told in the current minute. */
     private brickChangedCounts = new Map<string, { count: number; since: number }>();
     private voiceHelloOption: BotAPIOptions['voiceHello'];
@@ -337,6 +340,7 @@ export class BotAPI {
         this.directChat = options.directChat;
         this.brickChanged = options.brickChanged;
         this.carryGuestChat = options.carryGuestChat;
+        this.carryBrick = options.carryBrick;
         this.voiceHelloOption = options.voiceHello;
         this.guestBrickOption = options.guestBrick;
         this.carryCopyOption = options.carryCopy;
@@ -1098,6 +1102,11 @@ export class BotAPI {
                 const read = readCarriedLines(lines);
                 if (read.length === 0) {
                     res.status(400).json({ error: 'Nothing to bring' });
+                    return;
+                }
+                // Not their Brick: refused before anything is copied, so no copy is left behind with nothing pointing at it
+                if (this.carryBrick && !(await this.carryBrick(botId))) {
+                    res.status(403).json({ error: 'Not your Brick', code: 'not_allowed' });
                     return;
                 }
                 // The guest's pictures, files and notes are copied into this person's own storage, only when Orbit handed that
