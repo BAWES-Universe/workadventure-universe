@@ -10,18 +10,34 @@ import { parseBrickComputer, parseJobAnswer, holdsComputer, type BrickComputerVi
 const computers = writable<Map<string, BrickComputerView>>(new Map());
 export const brickComputers: Readable<Map<string, BrickComputerView>> = { subscribe: computers.subscribe };
 
-const put = (brickId: string, view: BrickComputerView) =>
+/**
+ * Answers can come back in a different order than they were asked for: a read that was on its way when the owner tapped Stop
+ * can arrive after Stop's answer. Each ask takes a number when it is sent, and an answer older than the one on screen is dropped.
+ */
+const asked = new Map<string, number>();
+const onScreen = new Map<string, number>();
+const ticket = (brickId: string): number => {
+    const next = (asked.get(brickId) ?? 0) + 1;
+    asked.set(brickId, next);
+    return next;
+};
+
+const put = (brickId: string, view: BrickComputerView, sentAs: number) => {
+    if (sentAs < (onScreen.get(brickId) ?? 0)) return;
+    onScreen.set(brickId, sentAs);
     computers.update((all) => {
         const next = new Map(all);
         next.set(brickId, view);
         return next;
     });
+};
 
 /** Reads one Brick's computer again. Resolves to what Orbit said, or undefined when it could not be read. */
 export async function loadBrickComputer(brickId: string): Promise<BrickComputerView | undefined> {
+    const sentAs = ticket(brickId);
     try {
         const view = parseBrickComputer(await botApiService.getBrickComputer(brickId));
-        if (view) put(brickId, view);
+        if (view) put(brickId, view, sentAs);
         return view;
     } catch (error) {
         console.warn("Could not read a Brick's computer", error);
@@ -40,12 +56,13 @@ export async function brickComputerAction(
     action: ComputerAction,
     shown?: { what: string; where: string }
 ): Promise<boolean> {
+    const sentAs = ticket(brickId);
     try {
         const answer = shown
             ? await botApiService.brickComputerAction(brickId, action, shown)
             : await botApiService.brickComputerAction(brickId, action);
         const view = parseBrickComputer(answer);
-        if (view) put(brickId, view);
+        if (view) put(brickId, view, sentAs);
         else if (parseJobAnswer(answer)) await loadBrickComputer(brickId);
         else return false;
         return true;
@@ -59,10 +76,11 @@ export async function brickComputerAction(
 
 /** "Dismiss" on the notice of how a job ended: Orbit forgets that ending, so neither the page nor the chat says it again. True when it did. */
 export async function dismissComputerNotice(brickId: string, jobId: string): Promise<boolean> {
+    const sentAs = ticket(brickId);
     try {
         const view = parseBrickComputer(await botApiService.dismissBrickComputerNotice(brickId, jobId));
         if (!view) return false;
-        put(brickId, view);
+        put(brickId, view, sentAs);
         return true;
     } catch (error) {
         console.warn("Could not dismiss a Brick's computer notice", error);
