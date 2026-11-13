@@ -62,6 +62,6 @@ Band energy matches what was heard. C's 100-300 Hz band rises about 10 dB above 
 
 The primary row means no additional never-stopped clips among those 38. It does not prove that there are no new misses overall.
 
-**Scripted replay (`results/yield-replay.md`):** there are 5 variants of each source. Every variant was stopped by every behaviour except C's S40. Speech clips number 3,195 in the conservative view and 3,190 in the primary. In both, the pause stops 99.1% for the person, against 64.3% today, and misses none of today's stops.
+**Scripted replay (`results/yield-replay.md`):** there are 5 variants of each source. Every behaviour stopped all 10 variants, because the scripted provider hears words from the estimated onset. Speech clips number 3,195 in the conservative view and 3,190 in the primary. In both, the pause stops 99.1% for the person, against 64.3% today, and misses none of today's stops.
 
 **No change to the detector or the 1,500 ms window.** The next evidence is fresh, clearly spoken speech through a real microphone in the device check.
