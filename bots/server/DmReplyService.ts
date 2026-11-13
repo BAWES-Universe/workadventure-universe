@@ -129,6 +129,8 @@ export interface DmReplyHooks {
     pointedArtifactIds?: string[];
     /** A line from the system about something the person did (a card they tapped), not words they typed: nothing is learned about them from it. */
     note?: boolean;
+    /** The App the person just connected from a Brick's card (game #2001): the reply's steps line starts with "Connected {name}". */
+    connectedApp?: { app: string; name: string };
     /** The person tapped this starter under a Brick's hello (#1995): the message is the starter's own words. */
     starter?: string;
     /** The person tapped "Make it" on a Brick's suggestion (#1996): the Brick the card described. Their message is the button's own words. */
@@ -529,6 +531,15 @@ export class DmReplyService extends BaseBehavior {
         const showStepsNow = async () => {
             if (steps && hooks.onSteps) await hooks.onSteps(steps.field(), steps.text());
         };
+        // The App the person just connected is the first thing the line says, shown whatever the bot's tool-calls switch says
+        // (it is what they did, not a call the bot made), as in the mock: "Connected Google Calendar · Used Find Events"
+        if (hooks.connectedApp && hooks.onSteps) {
+            const id = `app-connected-${hooks.connectedApp.app}`;
+            steps = new ReplySteps();
+            steps.start([{ id, doing: `Connecting ${hooks.connectedApp.name}`, done: `Connected ${hooks.connectedApp.name}`, group: id }]);
+            steps.finish([{ id, ok: true }]);
+            await showStepsNow();
+        }
         const stopSteps = async () => {
             if (!steps) return;
             steps.stop();
