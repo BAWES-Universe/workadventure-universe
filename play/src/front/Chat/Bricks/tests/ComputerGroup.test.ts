@@ -370,6 +370,45 @@ describe("a Brick's computer on screen (#2000)", () => {
         expect(byId("brickScreenFill")).not.toBeNull();
     });
 
+    it("reads the computer again only when the Brick changes, not when the page hands over a new object for the same one", async () => {
+        const OTHER = "9f8e7d6c-1111-4222-8333-000011112222";
+        game.getBrickComputer.mockResolvedValue(computer());
+        await showGroup(computer());
+        const set = (props: object) => (piece as unknown as { $set: (props: object) => void }).$set(props);
+        game.getBrickComputer.mockClear();
+        // Typing in the name or the line replaces the Brick object, with the same id, over and over
+        for (let i = 0; i < 10; i++) {
+            set({ brick: { ...brick, name: `Recipe Brick ${i}` } });
+            // eslint-disable-next-line no-await-in-loop
+            await settle();
+        }
+        expect(game.getBrickComputer).not.toHaveBeenCalled();
+        // Another Brick is read, and the first one is let go
+        set({ brick: { ...brick, id: OTHER, name: "Other" } });
+        await settle();
+        expect(game.getBrickComputer).toHaveBeenCalledTimes(1);
+        expect(game.getBrickComputer).toHaveBeenCalledWith(OTHER);
+    });
+
+    it("reads the Brick of a chat bar again only when the Brick changes", async () => {
+        const OTHER = "9f8e7d6c-1111-4222-8333-000011112222";
+        game.getBrickComputer.mockResolvedValue(computer({ machine: "working", job: job() }));
+        await loadBrickComputer(BRICK);
+        piece = new BrickComputerBar({ target, props: { brick } });
+        await settle();
+        game.getBrickComputer.mockClear();
+        const set = (props: object) => (piece as unknown as { $set: (props: object) => void }).$set(props);
+        for (let i = 0; i < 10; i++) {
+            set({ brick: { ...brick, name: `Recipe Brick ${i}` } });
+            // eslint-disable-next-line no-await-in-loop
+            await settle();
+        }
+        expect(game.getBrickComputer).not.toHaveBeenCalled();
+        set({ brick: { ...brick, id: OTHER, name: "Other" } });
+        await settle();
+        expect(game.getBrickComputer).toHaveBeenCalledWith(OTHER);
+    });
+
     it("follows the Brick that is shown when the page switches to another one, and stops reading the first", async () => {
         const OTHER = "9f8e7d6c-1111-4222-8333-000011112222";
         game.getBrickComputer.mockResolvedValue(computer());
@@ -454,6 +493,28 @@ describe("a Brick's computer on screen (#2000)", () => {
             await loadBrickComputer(BRICK);
             await advance(0);
             expect(byId("brickScreenFrame")?.getAttribute("src")).toBe("https://screen.test/next");
+        });
+
+        it("has one request on its way after one that found no screen, however often the computer is read", async () => {
+            vi.useFakeTimers();
+            game.watchBrickComputer
+                .mockResolvedValueOnce(undefined)
+                .mockReturnValue(
+                    new Promise(() => {
+                        // the next one never answers
+                    })
+                );
+            game.getBrickComputer.mockResolvedValue(working());
+            await loadBrickComputer(BRICK);
+            piece = new BrickScreen({ target, props: { brick, onClose: () => undefined } });
+            await advance(0);
+            for (let i = 0; i < 6; i++) {
+                // eslint-disable-next-line no-await-in-loop
+                await loadBrickComputer(BRICK);
+                // eslint-disable-next-line no-await-in-loop
+                await advance(0);
+            }
+            expect(game.watchBrickComputer).toHaveBeenCalledTimes(2);
         });
 
         it("stops asking after a few tries, however often the computer is read", async () => {

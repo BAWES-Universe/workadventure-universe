@@ -83,13 +83,18 @@
         ? $LL.chat.brick.computer.noticeUnanswered({ name })
         : $LL.chat.brick.computer.noticeMonth({ name });
 
-    // Follows the Brick shown now: when the page switches to another Brick, the old one stops being read
+    // Follows the Brick shown now: when the page switches to another Brick, the old one stops being read. It goes by the id
+    // alone: the page hands over a new Brick object whenever its name or line is edited, and that must not start the read again.
     let stopFollowing: (() => void) | undefined;
+    let followed: string | undefined;
     function follow(id: string) {
+        if (id === followed) return;
         stopFollowing?.();
+        followed = id;
         stopFollowing = followBrickComputer(id);
     }
-    $: follow(brick.id);
+    $: brickId = brick.id;
+    $: follow(brickId);
     onDestroy(() => stopFollowing?.());
 
     function dismiss() {

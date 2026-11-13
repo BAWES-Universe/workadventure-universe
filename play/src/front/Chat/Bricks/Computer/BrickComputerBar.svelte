@@ -2,7 +2,7 @@
     // The line above a Brick's chat while its computer has something to do (game #2000): what it is doing, with Stop and Watch
     // one tap away. Chat answers as fast as ever under it. It only reads: it never wakes a computer, and Watch is only offered
     // for a computer that is working.
-    import { onMount } from "svelte";
+    import { onDestroy } from "svelte";
     import LL from "../../../../i18n/i18n-svelte";
     import { warningMessageStore } from "../../../Stores/ErrorStore";
     import {
@@ -75,7 +75,18 @@
               })
             : line;
 
-    onMount(() => followBrickComputer(brick.id));
+    // Follows the Brick whose chat this is, by its id alone, so a new Brick object with the same id starts nothing again
+    let stopFollowing: (() => void) | undefined;
+    let followed: string | undefined;
+    function follow(id: string) {
+        if (id === followed) return;
+        stopFollowing?.();
+        followed = id;
+        stopFollowing = followBrickComputer(id);
+    }
+    $: brickId = brick.id;
+    $: follow(brickId);
+    onDestroy(() => stopFollowing?.());
 
     let busy = false;
     function dismiss() {
