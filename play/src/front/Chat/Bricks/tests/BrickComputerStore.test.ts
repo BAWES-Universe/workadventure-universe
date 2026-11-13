@@ -162,6 +162,19 @@ describe("the Bricks' computers store (#2000)", () => {
             expect(brickComputerOf(OTHER)?.machine).toBe("working");
         });
 
+        it("shows a read that was sent after a tap even when the tap's answer comes last", async () => {
+            const tap = later<unknown>();
+            game.brickComputerAction.mockReturnValueOnce(tap.promise);
+            const tapping = brickComputerAction(OTHER, "stop");
+            game.getBrickComputer.mockResolvedValueOnce(computer({ machine: "working", job: runningJob }));
+            await loadBrickComputer(OTHER);
+            expect(brickComputerOf(OTHER)?.machine).toBe("working");
+            tap.settle(computer({ machine: "resting", job: null }));
+            await tapping;
+            // The read was sent after the tap, so it is the newer picture and stays
+            expect(brickComputerOf(OTHER)?.machine).toBe("working");
+        });
+
         it("still shows each answer when they come back in the order they were asked", async () => {
             game.getBrickComputer.mockResolvedValueOnce(computer({ machine: "working", job: runningJob }));
             await loadBrickComputer(OTHER);
