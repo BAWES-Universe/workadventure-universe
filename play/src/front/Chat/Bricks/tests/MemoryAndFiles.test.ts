@@ -14,6 +14,7 @@ const game = vi.hoisted(() => ({
     closeModal: vi.fn<() => void>(),
     warn: vi.fn<(message: string) => void>(),
     openYourArtifacts: vi.fn<() => void>(),
+    zip: vi.fn<() => Promise<{ added: number; missed: number } | undefined>>(),
 }));
 // The tests run Svelte's server build, where onMount does nothing; the groups read on mount.
 // eslint-disable-next-line svelte/no-svelte-internal
@@ -35,6 +36,10 @@ vi.mock("../MyBricksStore", () => ({
             return () => bricks.subscribers.delete(run);
         },
     },
+}));
+vi.mock("../BrickFiles", async (original) => ({
+    ...(await original<Record<string, unknown>>()),
+    downloadEverything: game.zip,
 }));
 vi.mock("../../../Enum/EnvironmentVariable", () => ({ UPLOADER_URL: "http://uploader.test" }));
 vi.mock("../../../Stores/ErrorStore", () => ({ warningMessageStore: { addWarningMessage: game.warn } }));
@@ -291,13 +296,35 @@ describe("Memory and Files on a Brick's page (#2003)", () => {
                 "bakery-spending-2026.xlsx 10 Nov · 48 KB Download",
             ]);
             expect(rowsText("filesSentRow")).toEqual([
-                "passport-and-ticket.pdf 10 Nov · 1.4 MB · only Brick and you Delete",
+                "passport-and-ticket.pdf 10 Nov · 1.4 MB · only Brick and you Download Delete",
             ]);
             expect(byId("filesAllMade")?.textContent).toContain("All 6 things it made");
             expect(byId("filesAllMade")?.textContent).toContain("Opens Your artifacts");
             expect(byId("filesDownloadAll")).not.toBeNull();
             byId("filesAllMade")?.click();
             expect(game.openYourArtifacts).toHaveBeenCalledTimes(1);
+        });
+
+        it("offers one sent file to download on its own row, as a made file has", async () => {
+            game.getBrickFiles.mockResolvedValue(answer());
+            await openGroup();
+            expect(all("filesSentDownload")).toHaveLength(1);
+        });
+
+        it("says so when the zip is missing some of the files, and when it is whole stays quiet", async () => {
+            game.getBrickFiles.mockResolvedValue(answer());
+            await openGroup();
+            game.zip.mockResolvedValueOnce({ added: 2, missed: 1 });
+            byId("filesDownloadAll")?.click();
+            await settle();
+            expect(game.warn).toHaveBeenCalledWith(
+                "Some files couldn't be added to the download. Try again to get them."
+            );
+            game.warn.mockClear();
+            game.zip.mockResolvedValueOnce({ added: 3, missed: 0 });
+            byId("filesDownloadAll")?.click();
+            await settle();
+            expect(game.warn).not.toHaveBeenCalled();
         });
 
         it("says a file sent in a nearby chat was sent in a nearby chat", async () => {

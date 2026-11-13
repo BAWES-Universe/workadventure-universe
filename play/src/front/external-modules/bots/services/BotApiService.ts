@@ -1283,32 +1283,28 @@ export class BotApiService {
      * never answers this for anyone else, whoever owns or manages the bot.
      */
     async getMyMemory(botId: string): Promise<unknown> {
-        const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/my-memory`);
-        return response.json();
+        // With the deadline brickWrite gives: a read that never answers shows Retry instead of loading for good
+        return await this.brickWrite(`/api/bots/${encodeURIComponent(botId)}/my-memory`, {});
     }
 
     /** The person makes a bot forget one thing from their list, or everything it remembers about them. */
     async forgetMyMemory(botId: string, what: { itemId: string } | { everything: true }): Promise<unknown> {
-        const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/my-memory/forget`, {
+        return await this.brickWrite(`/api/bots/${encodeURIComponent(botId)}/my-memory/forget`, {
             method: "POST",
             body: JSON.stringify(what),
         });
-        return response.json();
     }
 
     /** A Brick's files for its owner (game #2003): what it made, what they sent it, and what is on its computer. */
     async getBrickFiles(brickId: string): Promise<unknown> {
-        const response = await this.fetch(`/api/bricks/${encodeURIComponent(brickId)}/files`);
-        return response.json();
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/files`, {});
     }
 
     /** Deletes a file the owner sent their Brick: the one change the files list allows. */
     async deleteBrickFile(brickId: string, fileId: string): Promise<unknown> {
-        const response = await this.fetch(
-            `/api/bricks/${encodeURIComponent(brickId)}/files/${encodeURIComponent(fileId)}`,
-            { method: "DELETE" }
-        );
-        return response.json();
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/files/${encodeURIComponent(fileId)}`, {
+            method: "DELETE",
+        });
     }
 
     /** Brings a deleted Brick back while it still waits. Answers with the Brick as it is now. */

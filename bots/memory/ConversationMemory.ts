@@ -345,6 +345,8 @@ export class ConversationMemory {
      * and the bot then has no tool for it. Returns how many things went.
      */
     forgetThings?(botId: string, playerId: number, keys: ReadonlySet<string>, kinds: ReadonlyMap<string, string>): Promise<number>;
+    /** As forgetThings, and how many of them Orbit has not taken yet: those are tried again, but not if this process restarts. */
+    forgetThingsReported?(botId: string, playerId: number, keys: ReadonlySet<string>, kinds: ReadonlyMap<string, string>): Promise<{ went: number; waiting: number }>;
 
     /**
      * A reply only this person read, in a space where other people were (#1993): kept as said with nobody else there,

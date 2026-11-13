@@ -42,7 +42,7 @@ export class PersistentMemory extends ConversationMemory {
      * Things a person asked us to forget that Orbit has not yet taken (it was unreachable), by "botId|uuid|key". Each is
      * told again before the next save and by a timer, so a thing never comes back for want of one failed call.
      */
-    private unreportedItemForgets: Map<string, { botId: string; userUuid: string; itemKey: string; kind: string; since: number }> = new Map();
+    private unreportedItemForgets: Map<string, { botId: string; userUuid: string; itemKey: string; kind: string; since: number; first: number }> = new Map();
     private unreportedRetryTimer: NodeJS.Timeout | null = null;
     private static readonly UNREPORTED_RETRY_MS = 30 * 1000;
     /** A retry safety guard, not a limit anyone sees: a forget Orbit has not taken in a day is let go, so a report it will never take is not tried for ever. */
@@ -156,8 +156,13 @@ export class PersistentMemory extends ConversationMemory {
      * things went.
      */
     async forgetThings(botId: string, playerId: number, keys: ReadonlySet<string>, kinds: ReadonlyMap<string, string>): Promise<number> {
+        return (await this.forgetThingsReported(botId, playerId, keys, kinds)).went;
+    }
+
+    /** As forgetThings, and how many of the things Orbit has not taken yet (they are tried again, but only while this process runs). */
+    async forgetThingsReported(botId: string, playerId: number, keys: ReadonlySet<string>, kinds: ReadonlyMap<string, string>): Promise<{ went: number; waiting: number }> {
         const memory = this.getMemory(botId, playerId);
-        if (!memory || keys.size === 0) return 0;
+        if (!memory || keys.size === 0) return { went: 0, waiting: 0 };
         const userUuid = this.personOf(`${botId}_${playerId}`, memory);
         const removed = dropItems(memory, keys);
         // The snapshots of this person are dropped from too, so joining again does not bring a thing back
@@ -167,24 +172,32 @@ export class PersistentMemory extends ConversationMemory {
             if (key.startsWith(`${botId}_`) && other !== memory && this.personOf(key, other) === userUuid) dropItems(other, keys);
         }
         // A person who is not known to Orbit yet (no uuid) has nothing there to forget
+        let waiting = 0;
         if (!userUuid.startsWith('temp-')) {
             const askedAt = Date.now();
             const reported = await Promise.all(
                 [...keys].map((itemKey) => this.memoryStorage.reportForgottenItem(botId, userUuid, itemKey, kinds.get(itemKey) ?? 'fact', askedAt))
             );
             [...keys].forEach((itemKey, index) => {
-                if (!reported[index]) this.keepToReport({ botId, userUuid, itemKey, kind: kinds.get(itemKey) ?? 'fact', since: askedAt });
+                if (!reported[index]) {
+                    waiting++;
+                    this.keepToReport({ botId, userUuid, itemKey, kind: kinds.get(itemKey) ?? 'fact', since: askedAt });
+                }
             });
         }
         if (removed > 0) this.scheduleDebouncedSave(botId, playerId);
-        return removed;
+        return { went: removed, waiting };
     }
 
     /** Orbit did not take this forget: keep it, and tell Orbit again soon. */
-    private keepToReport(entry: { botId: string; userUuid: string; itemKey: string; kind: string; since?: number }): void {
+    private keepToReport(entry: { botId: string; userUuid: string; itemKey: string; kind: string; since?: number; first?: number }): void {
         const mapKey = `${entry.botId}|${entry.userUuid}|${entry.itemKey}`;
-        // Keep when it first failed, so one that Orbit never takes is let go after a day rather than tried for ever
-        this.unreportedItemForgets.set(mapKey, { ...entry, since: this.unreportedItemForgets.get(mapKey)?.since ?? entry.since ?? Date.now() });
+        const before = this.unreportedItemForgets.get(mapKey);
+        const now = Date.now();
+        // "since" is when the person last asked for it to go, and is what Orbit is told: a later ask must not be reported as
+        // an earlier one, or what they said in between would be kept. "first" is when it first failed, so one that Orbit
+        // never takes is let go after a day rather than tried for ever.
+        this.unreportedItemForgets.set(mapKey, { ...entry, since: Math.max(entry.since ?? now, before?.since ?? 0), first: before?.first ?? entry.first ?? entry.since ?? now });
         if (this.unreportedRetryTimer) return;
         this.unreportedRetryTimer = setTimeout(() => {
             this.unreportedRetryTimer = null;
@@ -198,8 +211,12 @@ export class PersistentMemory extends ConversationMemory {
         const waiting = [...this.unreportedItemForgets].filter(([, entry]) => !botId || entry.botId === botId);
         await Promise.all(
             waiting.map(async ([mapKey, entry]) => {
-                if (await this.memoryStorage.reportForgottenItem(entry.botId, entry.userUuid, entry.itemKey, entry.kind, entry.since)) this.unreportedItemForgets.delete(mapKey);
-                else if (Date.now() - entry.since > PersistentMemory.UNREPORTED_GIVE_UP_MS) {
+                const taken = await this.memoryStorage.reportForgottenItem(entry.botId, entry.userUuid, entry.itemKey, entry.kind, entry.since);
+                // Another ask for the same thing may have replaced this entry while Orbit was answering: only this one is let go
+                const ownIt = this.unreportedItemForgets.get(mapKey) === entry;
+                if (taken) {
+                    if (ownIt) this.unreportedItemForgets.delete(mapKey);
+                } else if (ownIt && Date.now() - entry.first > PersistentMemory.UNREPORTED_GIVE_UP_MS) {
                     console.warn(`[PersistentMemory] Orbit has not taken a forget for bot ${entry.botId} in a day; letting it go`);
                     this.unreportedItemForgets.delete(mapKey);
                 }

@@ -173,6 +173,11 @@ export function resultOf(id: string, result: unknown): ToolStepResult {
         const r = result as Record<string, unknown>;
         // A card is waiting for someone's OK: nothing ran, so the step must not read "Used ..." (#1657)
         if (r.status === 'waiting_for_ok') return { id, ok: false, note: 'Waiting for your OK. Nothing ran yet' };
+        // Forgetting that removed nothing (asked which memory they mean, a question, already gone): the step must not read
+        // "Forgot" while the memory is still there (game #2020)
+        if (Array.isArray(r.forgotten) && r.forgotten.length === 0 && !r.error) {
+            return { id, ok: false, note: r.unclear === true ? 'Asked which one. Nothing forgotten yet' : 'Nothing was forgotten' };
+        }
         if (r.error || r.success === false || r.isError === true) {
             const why = typeof r.error === 'string' ? r.error : typeof r.message === 'string' ? r.message : undefined;
             // A tool server call that may have run is not a failure; a cancelled turn stays as it was

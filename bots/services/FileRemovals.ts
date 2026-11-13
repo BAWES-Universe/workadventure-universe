@@ -84,7 +84,7 @@ export class FileRemovalSweeper {
             });
             return true;
         } catch (error) {
-            console.warn(`[FileRemovals] Could not remove ${fileId} from the uploader: ${axios.isAxiosError(error) ? (error.response?.status ?? error.code ?? 'no answer') : 'failed'}`);
+            console.warn(`[FileRemovals] Could not remove a file from the uploader: ${axios.isAxiosError(error) ? (error.response?.status ?? error.code ?? 'no answer') : 'failed'}`);
             return false;
         }
     }

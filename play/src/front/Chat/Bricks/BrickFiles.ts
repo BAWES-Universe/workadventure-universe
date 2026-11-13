@@ -168,14 +168,17 @@ export function downloadFile(
 
 /** One name for each file in the zip: the same name twice becomes "name (2).ext". */
 export function zipNames(names: string[]): string[] {
-    const seen = new Map<string, number>();
+    // Every name given out is kept, so "a.pdf" twice beside a file really called "a (2).pdf" never gives one name to two files
+    const taken = new Set<string>();
     return names.map((name) => {
         const clean = name.replace(/[\\/:*?"<>|]+/g, "-").trim() || "file";
-        const times = (seen.get(clean.toLowerCase()) ?? 0) + 1;
-        seen.set(clean.toLowerCase(), times);
-        if (times === 1) return clean;
+        let candidate = clean;
         const dot = clean.lastIndexOf(".");
-        return dot > 0 ? `${clean.slice(0, dot)} (${times})${clean.slice(dot)}` : `${clean} (${times})`;
+        for (let times = 2; taken.has(candidate.toLowerCase()); times++) {
+            candidate = dot > 0 ? `${clean.slice(0, dot)} (${times})${clean.slice(dot)}` : `${clean} (${times})`;
+        }
+        taken.add(candidate.toLowerCase());
+        return candidate;
     });
 }
 

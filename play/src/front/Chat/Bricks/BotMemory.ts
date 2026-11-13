@@ -55,6 +55,12 @@ export interface SaidItem {
     private: boolean;
 }
 
+/** "home_city" as "home city". */
+function readableLabel(label: string): string {
+    const words = label.replace(/[_-]+/g, " ").trim();
+    return words ? words[0].toUpperCase() + words.slice(1) : label;
+}
+
 export function sayItem(item: MemoryItem, ll: TranslationFunctions, locale?: string): SaidItem {
     const m = ll.chat.brick.memory;
     const { value } = item;
@@ -70,7 +76,13 @@ export function sayItem(item: MemoryItem, ll: TranslationFunctions, locale?: str
             text = m.likes({ value });
             break;
         default:
-            text = item.label === "current_state" ? m.feeling({ value }) : value;
+            // Another fact keeps its label with it ("home city: Paris"), so two facts that share a value are told apart
+            text =
+                item.label === "current_state"
+                    ? m.feeling({ value })
+                    : item.label
+                    ? `${readableLabel(item.label)}: ${value}`
+                    : value;
     }
     const day = item.at !== null ? shortDay(item.at, locale) : "";
     const note = item.private ? m.private() : day ? m.fromChat({ date: day }) : m.fromChatUndated();

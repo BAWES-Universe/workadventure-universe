@@ -926,18 +926,23 @@
                     />
                 {/if}
                 <!-- What it remembers about its owner, and its files (game #2003) -->
-                <BrickMemoryGroup
-                    botId={currentBot.id}
-                    name={currentBot.name || "Brick"}
-                    open={openGroup === "memory"}
-                    onToggle={toggleGroup}
-                />
-                <BrickFilesGroup
-                    brickId={currentBot.id}
-                    name={currentBot.name || "Brick"}
-                    open={openGroup === "files"}
-                    onToggle={toggleGroup}
-                />
+                <!-- Keyed by the Brick: each reads its list once, so another Brick must start them over -->
+                {#key currentBot.id}
+                    <BrickMemoryGroup
+                        botId={currentBot.id}
+                        name={currentBot.name || "Brick"}
+                        open={openGroup === "memory"}
+                        onToggle={toggleGroup}
+                    />
+                {/key}
+                {#key currentBot.id}
+                    <BrickFilesGroup
+                        brickId={currentBot.id}
+                        name={currentBot.name || "Brick"}
+                        open={openGroup === "files"}
+                        onToggle={toggleGroup}
+                    />
+                {/key}
                 <PermissionsGroup
                     bot={currentBot}
                     open={openGroup === "access"}

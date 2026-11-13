@@ -88,6 +88,9 @@
         downloadEverything(everything, `${name}-files.zip`)
             .then((done) => {
                 if (!done) warningMessageStore.addWarningMessage($LL.chat.brick.files.everythingFailed());
+                // Some went in and some did not: the person must not take the zip for all of it
+                else if (done.missed > 0)
+                    warningMessageStore.addWarningMessage($LL.chat.brick.files.everythingPartial());
             })
             .catch((error) => {
                 console.error(error);
@@ -143,10 +146,15 @@
                     <span class="bkg-mtx">
                         <span class="bkg-t">{file.name}</span>
                         <span class="bkg-cn">{noteOf(file, true)}</span>
+                        <span class="bkg-acts">
+                            <PageButton testId="filesSentDownload" on:click={() => download(file)}
+                                >{$LL.chat.brick.files.download()}</PageButton
+                            >
+                            <PageButton testId="filesDelete" on:click={() => remove(file)}
+                                >{$LL.chat.brick.files.delete()}</PageButton
+                            >
+                        </span>
                     </span>
-                    <PageButton testId="filesDelete" on:click={() => remove(file)}
-                        >{$LL.chat.brick.files.delete()}</PageButton
-                    >
                 </div>
             {:else}
                 <p class="bkg-note" data-testid="filesNoneSent">

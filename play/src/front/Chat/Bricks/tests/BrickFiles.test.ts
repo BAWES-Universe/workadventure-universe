@@ -117,6 +117,10 @@ describe("a Brick's files (#2003)", () => {
                 "A (3).pdf",
                 "file",
             ]);
+            // A name given out is never given again: the third "a.pdf" skips the file really called "a (2).pdf"
+            const names = zipNames(["a.pdf", "a.pdf", "a (2).pdf"]);
+            expect(names).toEqual(["a.pdf", "a (2).pdf", "a (2) (2).pdf"]);
+            expect(new Set(names.map((name) => name.toLowerCase())).size).toBe(3);
         });
     });
 

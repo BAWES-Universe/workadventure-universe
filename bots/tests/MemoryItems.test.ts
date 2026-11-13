@@ -115,6 +115,22 @@ describe('dropItems: a forgotten thing goes, with what was built from it', () =>
         expect(lines).toEqual(expect.arrayContaining(['hello there', 'I love lo-fi', 'my birthday is June 5']));
     });
 
+    it('takes the bot reply that says a short value back, and only the one right after its line (CodeRabbit)', () => {
+        const short = talking();
+        say(short, 'hello there', 500);
+        say(short, 'call me Amy', 1000);
+        reply(short, 'Hello, Amy!', 1001);
+        say(short, 'what is the weather', 2000);
+        reply(short, 'Amy, it is sunny', 2001);
+        const record = short.getMemory(BOT, SARA)!;
+        expect(dropItems(record, new Set([memoryItemKey('name', null, 'Amy')]))).toBe(1);
+        const lines = record.conversationHistory.map((line) => line.message);
+        expect(lines).not.toContain('call me Amy');
+        expect(lines).not.toContain('Hello, Amy!');
+        // A later reply is another matter: only what answers the line the name came from is taken
+        expect(lines).toEqual(expect.arrayContaining(['hello there', 'what is the weather', 'Amy, it is sunny']));
+    });
+
     it('takes a birthday with the events written for it', () => {
         expect(mine().relationship.importantEvents.some((event) => event.event.startsWith('birthday'))).toBe(true);
         dropItems(mine(), new Set([memoryItemKey('birthday', null, 'June 5')]));
@@ -345,6 +361,29 @@ describe('PersistentMemory: Forget of one thing', () => {
         clearTimeout(memory.unreportedRetryTimer);
     });
 
+    it('says how many forgets Orbit has not taken yet, and keeps the latest ask for reporting (CodeRabbit)', async () => {
+        const memory = held();
+        hoisted.axios.post.mockReset().mockRejectedValue({ isAxiosError: true, message: 'busy', response: { status: 503 } });
+        const first = await memory.forgetThingsReported(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]));
+        expect(first).toEqual({ went: 1, waiting: 1 });
+        const [entry] = [...memory.unreportedItemForgets.values()];
+        const firstAt = entry.first;
+        expect(entry.since).toBeGreaterThanOrEqual(firstAt);
+        // Asked again later: the report carries the later time, and the day it is let go from stays the first one
+        memory.keepToReport({ ...entry, since: entry.since + 500 });
+        const [again] = [...memory.unreportedItemForgets.values()];
+        expect(again.since).toBe(entry.since + 500);
+        expect(again.first).toBe(firstAt);
+        // Orbit takes the older entry's report while a newer one replaced it: the newer one stays
+        hoisted.axios.post.mockReset().mockImplementation(async () => {
+            memory.keepToReport({ ...again, since: again.since + 500 });
+            return { status: 200, data: {} };
+        });
+        await memory.reportUnreportedForgets(BOT);
+        expect(memory.unreportedItemForgets.size).toBe(1);
+        clearTimeout(memory.unreportedRetryTimer);
+    });
+
     it('lets go a forget that Orbit refuses for good, but keeps one it only could not take yet', async () => {
         const memory = held();
         // A busy Orbit or a refused token is tried again
@@ -381,7 +420,7 @@ describe('PersistentMemory: Forget of one thing', () => {
         hoisted.axios.post.mockReset().mockRejectedValue(new Error('Orbit is down'));
         await memory.forgetThings(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]));
         const [entry] = [...memory.unreportedItemForgets.values()];
-        entry.since = Date.now() - 25 * 60 * 60 * 1000;
+        entry.first = Date.now() - 25 * 60 * 60 * 1000;
         await memory.reportUnreportedForgets(BOT);
         expect(memory.unreportedItemForgets.size).toBe(0);
         clearTimeout(memory.unreportedRetryTimer);

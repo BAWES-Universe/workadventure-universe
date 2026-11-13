@@ -4,7 +4,7 @@ import { ConversationMemory } from '../memory/ConversationMemory';
 import { heardInDm } from '../memory/Heard';
 import { memoryItemKey, memoryItemsOf } from '../memory/MemoryItems';
 import { FORGET_MEMORY_TOOL, WHAT_I_REMEMBER_TOOL, isMemoryTool, itemsAbout, resolveForgetting, memoryToolDefinitions, memoryToolsNote, runMemoryTool } from '../ai/MemoryTools';
-import { describeStep } from '../ai/ToolSteps';
+import { describeStep, resultOf } from '../ai/ToolSteps';
 
 function sara() {
     const memory = new ConversationMemory();
@@ -432,5 +432,31 @@ describe('a keep that names nothing keeps what was just said (audit)', () => {
         const answer = (await runMemoryTool(FORGET_MEMORY_TOOL, { about: 'my name, remember it' }, { memory: sara(), forget })) as any;
         expect(forget).not.toHaveBeenCalled();
         expect(answer.forgotten).toEqual([]);
+    });
+});
+
+describe('CodeRabbit on #2020: a thing with "and" in it, and a keep that says its verb', () => {
+    it('asks which one when "fish and chips" could also be cut into "fish" and "chips"', () => {
+        const both = [thing('pref', 'fish'), thing('pref', 'fish and chips')];
+        expect(itemsAbout(both, 'forget fish and chips')).toEqual([]);
+        expect(ids(resolveForgetting(both, 'forget fish and chips').unsure).sort()).toEqual(['pref::fish', 'pref::fish and chips']);
+        // Alone, "fish and chips" is the one thing it says
+        expect(ids(itemsAbout([thing('pref', 'fish and chips')], 'forget fish and chips'))).toEqual(['pref::fish and chips']);
+        // Plain "coffee and tea" with each stored alone still forgets both
+        expect(ids(itemsAbout([thing('pref', 'coffee'), thing('pref', 'tea')], 'forget coffee and tea')).sort()).toEqual(['pref::coffee', 'pref::tea']);
+    });
+
+    it('keeps what a keep clause names, with its verb said', () => {
+        const items = [thing('pref', 'coffee'), thing('pref', 'tea')];
+        expect(itemsAbout(items, 'forget coffee but keep coffee')).toEqual([]);
+        expect(ids(itemsAbout(items, 'forget coffee and tea but keep coffee'))).toEqual(['pref::tea']);
+        const named = [thing('name', 'Mark'), thing('birthday', '12 June')];
+        expect(itemsAbout(named, 'forget my name and remember my name')).toEqual([]);
+    });
+
+    it('shows a forget that removed nothing as a step that did not run', () => {
+        expect(resultOf('a', { forgotten: [], unclear: true, note: 'x' })).toMatchObject({ id: 'a', ok: false });
+        expect(resultOf('a', { forgotten: ['They like coffee'], count: 1 })).toEqual({ id: 'a', ok: true });
+        expect(resultOf('a', { things: [] })).toEqual({ id: 'a', ok: true });
     });
 });

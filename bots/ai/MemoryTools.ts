@@ -267,7 +267,8 @@ export function resolveForgetting(items: MemoryItem[], about: string): Forgettin
     let lastAsked: MemoryItem[] = [];
     for (const clause of clausesOf(asked)) {
         const tokens = tokensOf(clause.text);
-        const found = resolveClause(items, tokens);
+        // "keep coffee" and "remember my name" name the thing after the verb: the verb is not part of what is named
+        const found = resolveClause(items, clause.keep ? tokens.filter((token) => !KEEP_WORDS.has(token) && !FORGET_WORDS.has(token)) : tokens);
         if (clause.keep) {
             for (const item of found.picked) kept.add(item.id);
             // "my name, remember it": a keep that names nothing but "it" is about what was just said, so that is kept, not forgotten
@@ -281,12 +282,31 @@ export function resolveForgetting(items: MemoryItem[], about: string): Forgettin
         lastAsked = found.picked;
     }
     const taken = [...chosen.values()].filter((item) => !kept.has(item.id));
+    // A stored thing can have "and" in it ("fish and chips" beside "fish"). When the whole request is exactly one such thing,
+    // cutting it at the "and" must not take more than that thing: if it would, which one is meant is asked, not guessed.
+    const whole = wholeThingOf(items, asked);
+    if (whole && !unsettled && taken.some((item) => item.id !== whole.id)) {
+        for (const item of [whole, ...taken]) unsure.set(item.id, item);
+        return { chosen: [], unsure: [...unsure.values()], clear: false, keepOnly: false };
+    }
     return {
         chosen: unsettled ? [] : taken,
         unsure: [...unsure.values()],
         clear: asking > 0 && !unsettled && taken.length > 0,
         keepOnly: asking === 0,
     };
+}
+
+/** The one preference or fact that this whole request says, word for word, when it is cut up by "and" or the like. */
+function wholeThingOf(items: readonly MemoryItem[], asked: string): MemoryItem | undefined {
+    const words = tokensOf(asked).filter((token) => !FILLER.has(token));
+    if (words.length === 0) return undefined;
+    const hits = items.filter((item) => {
+        if (item.kind !== 'pref' && item.kind !== 'fact') return false;
+        const { value, whole } = wordsOf(item);
+        return same(words, value) || same(words, whole);
+    });
+    return hits.length === 1 ? hits[0] : undefined;
 }
 
 function resolveClause(items: readonly MemoryItem[], tokens: readonly string[]): { picked: MemoryItem[]; unsure: MemoryItem[] } {
@@ -316,7 +336,7 @@ const ABOUT_MOST = 200;
 export interface MemoryToolContext {
     memory: BotPlayerMemory | null | undefined;
     /** Drops these things from memory, with what was built from them, and tells Orbit. Returns how many went. */
-    forget: (keys: ReadonlySet<string>, kinds: ReadonlyMap<string, string>) => Promise<number>;
+    forget: (keys: ReadonlySet<string>, kinds: ReadonlyMap<string, string>) => Promise<number | { went: number; waiting: number }>;
 }
 
 /** Runs one of the two tools. Never throws: the model is told in plain words what happened. */
@@ -365,10 +385,14 @@ export async function runMemoryTool(name: string, args: Record<string, unknown>,
             for (const item of forgetting.chosen) chosen.set(item.id, item);
         }
         try {
-            const went = await context.forget(new Set(chosen.keys()), new Map([...chosen].map(([id, item]) => [id, item.kind])));
+            const result = await context.forget(new Set(chosen.keys()), new Map([...chosen].map(([id, item]) => [id, item.kind])));
+            const went = typeof result === 'number' ? result : result.went;
+            const waiting = typeof result === 'number' ? 0 : result.waiting;
             const missed = notFound > 0 ? ` ${notFound} of the ids were not things you remember.` : '';
             if (went === 0) return { forgotten: [], note: `Nothing was removed just now: ${chosen.size === 1 ? 'it was' : 'they were'} already gone.${missed} Tell them so in one short sentence, and do not say it was forgotten just now.` };
             if (went < chosen.size) return { count: went, asked: chosen.size, note: `Only ${went} of the ${chosen.size} things went; the rest were already gone.${missed} Tell them so in one short sentence, and do not say all of it was forgotten.` };
+            // Orbit could not take it just now: it is gone from this chat and is being sent again, so do not say it is gone for good
+            if (waiting > 0) return { forgotten: [...chosen.values()].map(describe), count: went, saving: 'waiting', note: `It is forgotten in this chat, with the lines it came from, but the saved copy could not be cleared just now. It is tried again soon.${missed} Tell them in one short sentence that it is forgotten here and that clearing the saved copy is still going, and do not repeat what it was.` };
             return { forgotten: [...chosen.values()].map(describe), count: went, note: `It is forgotten, with the lines of this chat it came from.${missed} Tell them in one short sentence, and do not repeat what it was.` };
         } catch (error) {
             console.warn('[MemoryTools] Could not forget:', error instanceof Error ? error.message : error);

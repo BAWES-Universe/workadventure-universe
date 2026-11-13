@@ -117,6 +117,7 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
     const history = memory.conversationHistory;
     const doomedLines = new Set<object>();
     const phrases: RegExp[] = [];
+    const echoes: Array<{ at: number; words: RegExp }> = [];
     let removed = 0;
 
     const goes = (id: string, at: number | null) => {
@@ -134,6 +135,8 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
         // The lines that say it back go too, the bot's and the person's: only the last line it was said in is noted, and a thing
         // said twice would otherwise leave the first. Words are matched whole ("Mark" is not "bookmark").
         if (phrase.trim().length >= MIN_PHRASE) phrases.push(wholeWords(phrase.trim().toLowerCase()));
+        // A value too short to match everywhere ("Amy") is still said back in the reply right after the line it came from
+        else if (phrase.trim().length > 0 && at !== null) echoes.push({ at, words: wholeWords(phrase.trim().toLowerCase()) });
     };
 
     if (info.name) {
@@ -182,10 +185,13 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
     }
 
     if (doomedLines.size > 0 || phrases.length > 0) {
-        memory.conversationHistory = history.filter((line) => {
+        memory.conversationHistory = history.filter((line, index) => {
             if (doomedLines.has(line)) return false;
             const text = line.message.toLowerCase();
-            return !phrases.some((phrase) => phrase.test(text));
+            if (phrases.some((phrase) => phrase.test(text))) return false;
+            // The bot's reply right after the line a short value came from, when it says it back ("call me Amy" / "Hello, Amy!")
+            const before = history[index - 1];
+            return !(line.sender !== 'person' && before && doomedLines.has(before) && echoes.some((echo) => before.timestamp === echo.at && echo.words.test(text)));
         });
     }
     if (removed > 0) info.lastInfoUpdate = Date.now();

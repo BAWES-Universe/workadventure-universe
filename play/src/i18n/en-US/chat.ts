@@ -1111,6 +1111,7 @@ const chat: BaseTranslation = {
             everythingLine:
                 "One file with all of the above. What a Brick keeps counts on your Usage page, in plain sizes.",
             everythingFailed: "Couldn't put the files together. Try again.",
+            everythingPartial: "Some files couldn't be added to the download. Try again to get them.",
             loadFailed: "Couldn't read the files. Try again.",
             // What is on its computer (only once it has one)
             onItsComputer: "On its computer",

@@ -123,3 +123,9 @@ button.bkg-tap:focus-visible {
     gap: 8px;
     padding: 4px;
 }
+.bkg-acts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 8px;
+    margin-top: 6px;
+}
