@@ -969,14 +969,15 @@ export class BotAPI {
         // The Brick for guests answers a guest who writes to it (game #1997). The guest is the one the game token names, never
         // one the request names, and only a guest's own id counts: a member has their own Brick. The chat lives on the
         // guest's device, which sends the lines it holds with each message; nothing of it is kept here.
-        this.app.post('/api/guest-brick/reply', requireGameToken, async (req: BotAPIRequest, res: Response) => {
+        this.app.post('/api/guest-brick/reply', identifySummoner, async (req: BotAPIRequest, res: Response) => {
             const brick = this.guestBrick();
             if (!brick?.available()) {
                 res.status(404).json({ error: 'Not available' });
                 return;
             }
             const guestId = req.gameIdentifier;
-            if (typeof guestId !== 'string' || !GUEST_ID.test(guestId)) {
+            // A request that comes with a signed-in Orbit session is a member's, even when their game identifier looks like a guest's (a member without an email)
+            if (req.isLogged || typeof guestId !== 'string' || !GUEST_ID.test(guestId)) {
                 res.status(403).json({ error: 'Only for guests' });
                 return;
             }

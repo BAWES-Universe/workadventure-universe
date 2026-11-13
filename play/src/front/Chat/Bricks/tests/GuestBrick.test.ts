@@ -217,6 +217,14 @@ describe("the Brick for guests: the chat a guest's device keeps (#1997)", () => 
         expect(cut.length).toBeGreaterThan(0);
         expect(cut[cut.length - 1].at).toBe(40);
     });
+
+    it("counts a line the way the bot server does, so the server never cuts more than the device already did", () => {
+        let slashes = newGuestChat(GUEST, 1);
+        for (let at = 1; at <= 10; at++) slashes = withLine(slashes, { from: "guest", text: "\\".repeat(2000), at });
+        const kept = carriedLines(slashes);
+        // Escaped and sent twice, a line takes about 8,000 of the 20,000: two fit, and they are the newest
+        expect(kept.map((line) => line.at)).toEqual([9, 10]);
+    });
 });
 
 describe("the chat a guest brought along, as the Brick's message carries it (#1997)", () => {

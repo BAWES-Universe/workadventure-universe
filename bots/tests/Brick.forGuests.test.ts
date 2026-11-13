@@ -233,8 +233,8 @@ describe('What the bot server takes in', () => {
         // Ten lines of 2,000 backslashes: 20,000 raw bytes, but far more once each is JSON-escaped, and the message carries them twice
         const slashes = Array.from({ length: 10 }, (_, index) => ({ from: 'guest', text: '\\'.repeat(2000), at: index + 1 }));
         const kept = readCarriedLines(slashes);
-        expect(kept.length).toBeLessThan(10);
-        expect(kept[kept.length - 1].at).toBe(10);
+        // The device counts the same way, so it keeps the same two: the server never cuts more
+        expect(kept.map((line) => line.at)).toEqual([9, 10]);
         const event = JSON.stringify({ body: JSON.stringify(kept), data: kept });
         expect(Buffer.byteLength(event, 'utf8')).toBeLessThan(65536);
     });
@@ -293,6 +293,17 @@ describe('POST /api/guest-brick/reply', () => {
         expect((await post(message, { 'X-WA-Auth': 'garbage' })).status).toBe(401);
         expect((await post(message, { 'X-WA-Auth': token('alice@example.test') })).status).toBe(403);
         expect(guestBrick.reply).not.toHaveBeenCalled();
+    });
+
+    it('turns away a signed-in member whose game identifier looks like a guest id, as one asking with their Orbit session', async () => {
+        adminApiService.validateSessionToken.mockResolvedValueOnce({ uuid: GUEST, userId: 'user-1', email: '' });
+        const member = await post(message, { 'X-WA-Auth': token(GUEST), Authorization: `Bearer orb_sess_v2_${'a'.repeat(64)}` });
+        expect(member.status).toBe(403);
+        expect(guestBrick.reply).not.toHaveBeenCalled();
+        // A stale session that Orbit does not know is not a member: the guest still gets its answer
+        adminApiService.validateSessionToken.mockResolvedValueOnce(null);
+        guestBrick.reply.mockResolvedValueOnce({ kind: 'reply', text: 'Hi', needsAccount: false });
+        expect((await post(message, { 'X-WA-Auth': token(GUEST), Authorization: `Bearer orb_sess_v2_${'b'.repeat(64)}` })).status).toBe(200);
     });
 
     it('takes a try id, a room, and words', async () => {

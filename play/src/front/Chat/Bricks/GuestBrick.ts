@@ -212,9 +212,11 @@ export function carriedLines(chat: GuestChat): GuestChatLine[] {
     for (let index = chat.lines.length - 1; index >= 0 && kept.length < CARRIED_LINES_MAX; index--) {
         const { from, text, at } = chat.lines[index];
         const cut = text.slice(0, CARRIED_LINE_CHARS);
-        bytes += new TextEncoder().encode(cut).length;
+        const line = { from, text: cut, at };
+        // The same measure as the bot server's: a line is sent twice in the message, both copies JSON-escaped
+        bytes += 2 * new TextEncoder().encode(JSON.stringify(line)).length;
         if (bytes > CARRIED_BYTES_MAX) break;
-        kept.unshift({ from, text: cut, at });
+        kept.unshift(line);
     }
     return kept;
 }
