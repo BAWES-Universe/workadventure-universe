@@ -198,6 +198,11 @@ export class PersistentMemory extends ConversationMemory {
         // an earlier one, or what they said in between would be kept. "first" is when it first failed, so one that Orbit
         // never takes is let go after a day rather than tried for ever.
         this.unreportedItemForgets.set(mapKey, { ...entry, since: Math.max(entry.since ?? now, before?.since ?? 0), first: before?.first ?? entry.first ?? entry.since ?? now });
+        this.armUnreportedRetry();
+    }
+
+    /** Try the forgets Orbit has not taken again soon, once (a timer already running is left alone). */
+    private armUnreportedRetry(): void {
         if (this.unreportedRetryTimer) return;
         this.unreportedRetryTimer = setTimeout(() => {
             this.unreportedRetryTimer = null;
@@ -212,8 +217,9 @@ export class PersistentMemory extends ConversationMemory {
         await Promise.all(
             waiting.map(async ([mapKey, entry]) => {
                 const taken = await this.memoryStorage.reportForgottenItem(entry.botId, entry.userUuid, entry.itemKey, entry.kind, entry.since);
-                // Another ask for the same thing may have replaced this entry while Orbit was answering: only this one is let go
-                const ownIt = this.unreportedItemForgets.get(mapKey) === entry;
+                // A later ask for the same thing may have been kept while Orbit was answering (it carries a later time): only the
+                // ask Orbit just answered is let go. Compared by that time, not by the object, which a re-arming may have copied.
+                const ownIt = this.unreportedItemForgets.get(mapKey)?.since === entry.since;
                 if (taken) {
                     if (ownIt) this.unreportedItemForgets.delete(mapKey);
                 } else if (ownIt && Date.now() - entry.first > PersistentMemory.UNREPORTED_GIVE_UP_MS) {
@@ -222,7 +228,7 @@ export class PersistentMemory extends ConversationMemory {
                 }
             })
         );
-        if (this.unreportedItemForgets.size > 0) this.keepToReport([...this.unreportedItemForgets.values()][0]);
+        if (this.unreportedItemForgets.size > 0) this.armUnreportedRetry();
     }
 
     private dropForgotten(botId: string, notice: MemoryForgetNotice): void {

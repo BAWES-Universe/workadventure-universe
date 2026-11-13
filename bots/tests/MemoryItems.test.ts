@@ -362,6 +362,21 @@ describe('PersistentMemory: Forget of one thing', () => {
         clearTimeout(memory.unreportedRetryTimer);
     });
 
+    it('lets go of a forget Orbit took even when an overlapping run re-kept the same ask meanwhile (Sentry)', async () => {
+        const memory = held();
+        hoisted.axios.post.mockReset().mockRejectedValue({ isAxiosError: true, message: 'busy', response: { status: 503 } });
+        await memory.forgetThingsReported(BOT, SARA, new Set([lofi]), new Map([[lofi, 'pref']]));
+        const [entry] = [...memory.unreportedItemForgets.values()];
+        hoisted.axios.post.mockReset().mockImplementation(async () => {
+            // Another run keeps the same ask again (a new object, the same time) while Orbit is still answering this one
+            memory.keepToReport({ ...entry });
+            return { data: {} };
+        });
+        await memory.reportUnreportedForgets(BOT);
+        expect(memory.unreportedItemForgets.size).toBe(0);
+        clearTimeout(memory.unreportedRetryTimer);
+    });
+
     it('does not queue a forget to tell again when there is no Orbit to tell', async () => {
         const memory: any = new PersistentMemory({});
         memory.useHeard(() => heardInDm());
