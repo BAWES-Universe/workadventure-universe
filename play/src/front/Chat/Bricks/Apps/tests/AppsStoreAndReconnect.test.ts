@@ -69,6 +69,19 @@ describe("the person's apps (#2001)", () => {
         expect(get(myAppsStore)?.map((one) => one.id)).toEqual(["new"]);
     });
 
+    it("starts no refresh for a change that was waiting when the person signed out", async () => {
+        const first = pending();
+        game.getMyApps.mockReturnValueOnce(first.promise);
+        const reading = loadMyApps();
+        const afterChange = loadMyApps(true);
+        forgetMyApps();
+        first.done({ apps: [app("theirs")], bricks: [] });
+        await reading;
+        await afterChange;
+        expect(game.getMyApps).toHaveBeenCalledTimes(1);
+        expect(get(myAppsStore)).toBeUndefined();
+    });
+
     it("does not bring back the apps of someone who signed out while a read was on its way", async () => {
         const slow = pending();
         game.getMyApps.mockReturnValueOnce(slow.promise);

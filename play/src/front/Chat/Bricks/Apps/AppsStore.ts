@@ -59,7 +59,10 @@ export function loadMyApps(afterChange = false): Promise<void> {
     if (!loading) return read();
     if (!afterChange) return loading;
     if (!queued) {
+        const asked = generation;
         const waiting: Promise<void> = loading.then(() => {
+            // Signed out while it waited: the next person's apps are not read for a change that was not theirs
+            if (asked !== generation) return undefined;
             // It starts now: later changes ask for a read of their own
             if (queued === waiting) queued = undefined;
             return read();
