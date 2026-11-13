@@ -156,9 +156,16 @@ export class GuestBrickService {
         let allowance: GuestBrickAllowance;
         try {
             setup = await this.admin.getGuestBrick(ask.roomUrl);
+        } catch (error) {
+            console.warn('[GuestBrick] Could not ask Orbit:', error instanceof Error ? error.message : error);
+            return { kind: 'failed' };
+        }
+        try {
             allowance = await this.admin.claimGuestBrickReply({ guestId: ask.guestId, turnId: ask.turnId, roomUrl: ask.roomUrl });
         } catch (error) {
             console.warn('[GuestBrick] Could not ask Orbit:', error instanceof Error ? error.message : error);
+            // Orbit may have counted the turn before the answer was lost: it is closed as failed, so nothing is kept for an answer never given
+            await this.admin.finishGuestBrickReply(ask.turnId, { failed: true });
             return { kind: 'failed' };
         }
         if (allowance.allowed === false) return { kind: 'limit', limit: allowance.limit, resetsAt: allowance.resetsAt };

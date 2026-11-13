@@ -122,6 +122,13 @@ describe('The Brick for guests answers a guest', () => {
         expect(await empty.service.reply(ask())).toEqual({ kind: 'failed' });
         expect(empty.admin.finishGuestBrickReply).toHaveBeenCalledWith(TURN, { failed: true });
 
+        // Orbit may have counted the turn before its answer was lost: the turn is closed as failed
+        const claimLost = makeService();
+        claimLost.admin.claimGuestBrickReply.mockRejectedValueOnce(new Error('timeout'));
+        expect(await claimLost.service.reply(ask())).toEqual({ kind: 'failed' });
+        expect(claimLost.admin.finishGuestBrickReply).toHaveBeenCalledWith(TURN, { failed: true });
+        expect(claimLost.generate).not.toHaveBeenCalled();
+
         // An answer that is only the marker has nothing to show: it fails and the allowance is given back
         const markerOnly = makeService({ answer: NEEDS_ACCOUNT_MARK });
         expect(await markerOnly.service.reply(ask())).toEqual({ kind: 'failed' });
