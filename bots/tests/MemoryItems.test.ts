@@ -173,6 +173,9 @@ describe('dropItems: a forgotten thing goes, with what was built from it', () =>
         reply(short, 'Sunny, good for tea outside', 4001);
         say(short, 'anything else?', 5000);
         reply(short, 'Tea is your favorite, so I would stay in', 5001);
+        // Words that only contain "you" or "like": not about what the person likes
+        say(short, 'and the evening?', 6000);
+        reply(short, 'Yourself and the young ones will likely want tea', 6001);
         const record = short.getMemory(BOT, SARA)!;
         expect(dropItems(record, new Set([memoryItemKey('pref', null, 'tea')]))).toBe(1);
         const context = short.getConversationContext(BOT, SARA);
@@ -183,6 +186,7 @@ describe('dropItems: a forgotten thing goes, with what was built from it', () =>
         // What the person asked and an unrelated mention stay
         expect(context).toContain('what is the weather');
         expect(context).toContain('Sunny, good for tea outside');
+        expect(context).toContain('Yourself and the young ones will likely want tea');
     });
 
     it('takes a birthday with the events written for it', () => {
