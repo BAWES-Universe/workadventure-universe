@@ -1,0 +1,871 @@
+{
+ "engine": "pipecat",
+ "turnEnd": "local",
+ "results": [
+  {
+   "id": "S1",
+   "status": "PASS",
+   "reason": "greeting heard 116 ms after join; generated 2920 ms, wall 2781 ms",
+   "evidence": {
+    "checks": {
+     "greetingSpoken": true,
+     "firstAudioWithin1500ms": true,
+     "finishedNotInterrupted": true,
+     "playedEqualsTotal": true,
+     "wallMatchesGenerated": true,
+     "committedTextIntact": true
+    },
+    "joinToFirstAudioMs": 116,
+    "sayToFirstAudioMs": 115,
+    "connectMs": 284,
+    "pacing": {
+     "generatedMs": 2920,
+     "wallMsFirstToLastAudible": 2781,
+     "audiblePacketsMs": 2400,
+     "playedMs": 2920
+    },
+    "durationS": 4
+   }
+  },
+  {
+   "id": "S2",
+   "status": "PASS",
+   "reason": "talk-over stop p50 337 ms p95 377 ms, no stale audio",
+   "evidence": {
+    "checks": {
+     "allTrialsInterruptedWithReason": true,
+     "trialsCompleted": true,
+     "p95StopWithin1000ms": true,
+     "noStaleAudio": true,
+     "committedTextIntact": true
+    },
+    "stopMs": {
+     "n": 10,
+     "p50": 337,
+     "p95": 377,
+     "min": 337,
+     "max": 377
+    },
+    "staleMsPerTrial": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "playedMsPerTrial": [
+     2520,
+     2480,
+     2480,
+     2480,
+     2480,
+     2480,
+     2480,
+     2480,
+     2480,
+     2520
+    ],
+    "problems": [],
+    "definition": "stop = last audible RTP packet before a >=250 ms gap, minus the time the person starts speaking (VAD-confirmed speech start inside the clip)",
+    "durationS": 64
+   }
+  },
+  {
+   "id": "S3",
+   "status": "PASS",
+   "reason": "one reply each, in order, nothing cut off",
+   "evidence": {
+    "checks": {
+     "oneReplyToVoiceTurn": true,
+     "oneReplyToTypedText": true,
+     "inboundOrderTurnBeforeText": true,
+     "allRepliesFullyPlayed": true,
+     "noDuplicateSegments": true
+    },
+    "inboundOrder": [
+     "user.turn",
+     "user.text"
+    ],
+    "replies": [
+     {
+      "replyTo": "turn:p1-t1",
+      "played": 1620
+     },
+     {
+      "replyTo": "text:m-281",
+      "played": 2020
+     }
+    ],
+    "durationS": 9
+   }
+  },
+  {
+   "id": "S4",
+   "status": "PASS",
+   "reason": "job survived the talk-over and its result was spoken in full later",
+   "evidence": {
+    "checks": {
+     "ackWasInterrupted": true,
+     "jobFinishedNotCancelled": true,
+     "resultSegmentPlayedFully": true,
+     "resultHeard": true,
+     "firstHeard": true
+    },
+    "ackProgress": {
+     "type": "playback.progress",
+     "sessionId": "s4-pipecat-local-2-51012",
+     "ts": 1793482753690.5308,
+     "segmentId": "seg-21",
+     "playedMs": 1540,
+     "totalMs": 2720,
+     "finished": true,
+     "interrupted": true,
+     "reason": "barge_in"
+    },
+    "resultProgress": {
+     "type": "playback.progress",
+     "sessionId": "s4-pipecat-local-2-51012",
+     "ts": 1793482761809.535,
+     "segmentId": "seg-23",
+     "playedMs": 2660,
+     "totalMs": 2660,
+     "finished": true,
+     "interrupted": false,
+     "reason": "completed"
+    },
+    "resultAudibleMs": 2440,
+    "jobFinishedAfterMs": 7001,
+    "note": "the job lives in the fake brain; the engine-testable part is that the interruption does not stop the session and the later result is spoken in full",
+    "durationS": 11
+   }
+  },
+  {
+   "id": "S5",
+   "status": "PASS",
+   "reason": "spoken yes arrived as user.turn from p2 and resolved the pending ask",
+   "evidence": {
+    "checks": {
+     "deliveredAsUserTurn": true,
+     "attributedToP2": true,
+     "laneIsOne": true,
+     "textIsYes": true,
+     "brainSawConfirmationForP2": true
+    },
+    "turn": {
+     "type": "user.turn",
+     "sessionId": "s5-pipecat-local-5-73463",
+     "ts": 1793476379606.7366,
+     "lane": 1,
+     "participantId": "p2",
+     "turnId": "p2-t1",
+     "text": "yes",
+     "partial": false,
+     "droppedAudioMs": 0,
+     "incomplete": false,
+     "speechMs": 1404,
+     "endReason": "smart_turn",
+     "speechStartedAt": 1793476378202.5483,
+     "turnEndedAt": 1793476379606.7312
+    },
+    "note": "two people in the bubble; the question was for p2; p2 answered. UI part (card) is N/A for the engine.",
+    "durationS": 6
+   }
+  },
+  {
+   "id": "S6",
+   "status": "PASS",
+   "reason": "audio stopped 40 ms after voice.stop; mic ignored; text still answered",
+   "evidence": {
+    "checks": {
+     "progressInterruptedVoiceStop": true,
+     "audioStoppedWithin1s": true,
+     "noLeakedAudioAfter1s": true,
+     "statusVoiceStopped": true,
+     "micIgnored": true,
+     "lateSayRejected": true,
+     "sessionUsableForText": true
+    },
+    "stopAfterMs": 40,
+    "leakedPackets": 0,
+    "progress": {
+     "type": "playback.progress",
+     "sessionId": "s6-pipecat-local-3-61829",
+     "ts": 1793482764082.2097,
+     "segmentId": "seg-24",
+     "playedMs": 2100,
+     "totalMs": 10400,
+     "finished": true,
+     "interrupted": true,
+     "reason": "voice_stop"
+    },
+    "lateProgress": {
+     "type": "playback.progress",
+     "sessionId": "s6-pipecat-local-3-61829",
+     "ts": 1793482772919.3599,
+     "segmentId": "seg-25",
+     "playedMs": 0,
+     "totalMs": 0,
+     "finished": true,
+     "interrupted": false,
+     "reason": "rejected"
+    },
+    "durationS": 13
+   }
+  },
+  {
+   "id": "S7",
+   "status": "PASS",
+   "reason": "loss and gap were reported as droppedAudioMs with incomplete:true; clean run reported zero",
+   "evidence": {
+    "checks": {
+     "controlReportsZero": true,
+     "loss10Reported": true,
+     "gap1sReported": true,
+     "turnsStillDelivered": true
+    },
+    "control_no_loss": {
+     "injectedDroppedMs": 0,
+     "turns": 1,
+     "reportedDroppedMsTotal": 0,
+     "everyTurnWithDropsIncomplete": true,
+     "texts": [
+      "why should one halt on the way your power is sufficient i said experience proves this"
+     ]
+    },
+    "loss_10pct": {
+     "injectedDroppedMs": 640,
+     "turns": 1,
+     "reportedDroppedMsTotal": 2580,
+     "everyTurnWithDropsIncomplete": true,
+     "texts": [
+      "why should one halt on the way your power is sufficient i said experience proves this"
+     ]
+    },
+    "gap_1s": {
+     "injectedDroppedMs": 1000,
+     "turns": 1,
+     "reportedDroppedMsTotal": 1260,
+     "everyTurnWithDropsIncomplete": true,
+     "texts": [
+      "why should one halt on the way your power is sufficient i said experience proves this"
+     ]
+    },
+    "durationS": 30
+   }
+  },
+  {
+   "id": "S8",
+   "status": "PASS",
+   "reason": "three lanes attributed, one talk-over stopped the bot for all, overlap handled",
+   "evidence": {
+    "checks": {
+     "threeLanesAttributedCorrectly": true,
+     "botHeardByAll": true,
+     "talkOverStoppedBotOnAllLanes": true,
+     "overlapBothTurnsCorrect": true,
+     "noEngineFailure": true,
+     "allLanesHealthy": true
+    },
+    "attribution": [
+     true,
+     true,
+     true
+    ],
+    "heard": [
+     true,
+     true,
+     true
+    ],
+    "stopMsPerLane": [
+     2745,
+     2787,
+     2735
+    ],
+    "overlapTurns": [
+     "pa:your power is sufficient i said",
+     "pc:experience proves this"
+    ],
+    "healthyLanes": 3,
+    "durationS": 29
+   }
+  },
+  {
+   "id": "S9",
+   "status": "PASS",
+   "reason": "all four mode changes behaved, same connection",
+   "evidence": {
+    "checks": {
+     "talkWorks": true,
+     "listenOnly_botHeard_micIgnored": true,
+     "typeAndListen_botHeard_micIgnored": true,
+     "off_silent_deaf": true,
+     "talkAgainWorks": true,
+     "noReconnect": true
+    },
+    "steps": {
+     "talk": {
+      "turn": true,
+      "heard": true
+     },
+     "listen_only": {
+      "turn": false,
+      "heard": true
+     },
+     "type_and_listen": {
+      "turn": false,
+      "heard": true
+     },
+     "off": {
+      "turn": false,
+      "heard": false
+     },
+     "talk_again": {
+      "turn": true,
+      "heard": true
+     }
+    },
+    "joins": 1,
+    "leaves": 0,
+    "durationS": 53
+   }
+  },
+  {
+   "id": "S10",
+   "status": "PASS",
+   "reason": "dropped and rejoined without a repeated greeting or repeated audio",
+   "evidence": {
+    "checks": {
+     "leaveReported": true,
+     "rejoinFlagged": true,
+     "greetedOnce": true,
+     "segmentFinishedOnce": true,
+     "noDuplicateAudio": true,
+     "turnsWorkAfterRejoin": true
+    },
+    "leaveDetectedAfterMs": 3342,
+    "audibleMsBefore": 1720,
+    "audibleMsAfter": 3800,
+    "segmentTotalMs": 10400,
+    "progress": {
+     "type": "playback.progress",
+     "sessionId": "s10-pipecat-local-10-4600",
+     "ts": 1793476518067.856,
+     "segmentId": "seg-49",
+     "playedMs": 9360,
+     "totalMs": 10400,
+     "finished": true,
+     "interrupted": false,
+     "reason": "lane_loss"
+    },
+    "durationS": 18
+   }
+  },
+  {
+   "id": "S11",
+   "status": "PASS",
+   "reason": "Arabic ok-latency p50 358 ms vs English 320 ms; mishandled 25% vs 25%",
+   "evidence": {
+    "checks": {
+     "allTurnsDelivered": true,
+     "arabicTextIntact": true,
+     "arabicOkLatencyWithin500msOfEnglish": true,
+     "arabicMishandledNotWorseThanEnglish": true
+    },
+    "englishOkLatencyMs": {
+     "n": 6,
+     "p50": 320,
+     "max": 332
+    },
+    "arabicOkLatencyMs": {
+     "n": 6,
+     "p50": 358,
+     "max": 403
+    },
+    "englishMishandledShare": 0.25,
+    "arabicMishandledShare": 0.25,
+    "rows": [
+     {
+      "clip": "en_jfk",
+      "lang": "en",
+      "rep": 0,
+      "ok": true,
+      "text_ok": true,
+      "reason": "smart_turn",
+      "latencyMs": -8413,
+      "class": "early_cut"
+     },
+     {
+      "clip": "en_ls_experience",
+      "lang": "en",
+      "rep": 0,
+      "ok": true,
+      "text_ok": true,
+      "reason": "smart_turn",
+      "latencyMs": 320,
+      "class": "ok"
+     },
+     {
+      "clip": "en_ls_halt",
+      "lang": "en",
+      "rep": 0,
+      "ok": true,
+      "text_ok": true,
+      "reason": "smart_turn",
+      "latencyMs": 308,
+      "class": "ok"
+     },
+     {
+      "clip": "en_ls_power",
+      "lang": "en",
+      "rep": 0,
+      "ok": true,
+      "text_ok": true,
+      "reason": "smart_turn",
+      "latencyMs": 324,
+      "class": "ok"
+     },
+     {
+      "clip": "ar_egy_demo",
+      "lang": "ar",
+      "rep": 0,
+      "ok": true,
+      "text_ok": true,
+      "reason": "smart_turn",
+      "latencyMs": -2145,
+      "class": "early_cut"
+     },
+     {
+      "clip": "ar_iraqi_1",
+      "lang": "ar",
+      "rep": 0,
+      "ok": true,
+      "text_ok": true,
+      "reason": "smart_turn",
+      "latencyMs": 352,
+      "class": "ok"
+     },
+     {
+      "clip": "ar_iraqi_2",
+      "lang": "ar",
+      "rep": 0,
+      "ok": true,
+      "text_ok": true,
+      "reason": "smart_turn",
+      "latencyMs": 352,
+      "class": "ok"
+     },
+     {
+      "clip": "ar_iraqi_3",
+      "lang": "ar",
+      "rep": 0,
+      "ok": true,
+      "text_ok": true,
+      "reason": "smart_turn",
+      "latencyMs": 403,
+      "class": "ok"
+     },
+     {
+      "clip": "en_jfk",
+      "lang": "en",
+      "rep": 1,
+      "ok": true,
+      "text_ok": true,
+      "reason": "smart_turn",
+      "latencyMs": -8451,
+      "class": "early_cut"
+     },
+     {
+      "clip": "en_ls_experience",
+      "lang": "en",
+      "rep": 1,
+      "ok": true,
+      "text_ok": true,
+      "reason": "smart_turn",
+      "latencyMs": 332,
+      "class": "ok"
+     },
+     {
+      "clip": "en_ls_halt",
+      "lang": "en",
+      "rep": 1,
+      "ok": true,
+      "text_ok": true,
+      "reason": "smart_turn",
+      "latencyMs": 312,
+      "class": "ok"
+     },
+     {
+      "clip": "en_ls_power",
+      "lang": "en",
+      "rep": 1,
+      "ok": true,
+      "text_ok": true,
+      "reason": "smart_turn",
+      "latencyMs": 320,
+      "class": "ok"
+     },
+     {
+      "clip": "ar_egy_demo",
+      "lang": "ar",
+      "rep": 1,
+      "ok": true,
+      "text_ok": true,
+      "reason": "smart_turn",
+      "latencyMs": -2192,
+      "class": "early_cut"
+     },
+     {
+      "clip": "ar_iraqi_1",
+      "lang": "ar",
+      "rep": 1,
+      "ok": true,
+      "text_ok": true,
+      "reason": "smart_turn",
+      "latencyMs": 358,
+      "class": "ok"
+     },
+     {
+      "clip": "ar_iraqi_2",
+      "lang": "ar",
+      "rep": 1,
+      "ok": true,
+      "text_ok": true,
+      "reason": "smart_turn",
+      "latencyMs": 359,
+      "class": "ok"
+     },
+     {
+      "clip": "ar_iraqi_3",
+      "lang": "ar",
+      "rep": 1,
+      "ok": true,
+      "text_ok": true,
+      "reason": "smart_turn",
+      "latencyMs": 403,
+      "class": "ok"
+     }
+    ],
+    "smartTurnLog": [
+     {
+      "lane": "p1",
+      "log": [
+       [
+        "p1-t1",
+        true,
+        0.9042243957519531,
+        56.82627499936643
+       ],
+       [
+        "p1-t2",
+        false,
+        0.024070680141448975,
+        55.122167999797966
+       ],
+       [
+        "p1-t2",
+        false,
+        0.08601978421211243,
+        51.378441999986535
+       ],
+       [
+        "p1-t2",
+        false,
+        0.030293136835098267,
+        62.19085500015353
+       ],
+       [
+        "p1-t2",
+        true,
+        0.9485659599304199,
+        55.34037200050079
+       ],
+       [
+        "p1-t3",
+        true,
+        0.9893293380737305,
+        71.03683399964211
+       ],
+       [
+        "p1-t4",
+        true,
+        0.9685282111167908,
+        66.1630429995057
+       ],
+       [
+        "p1-t5",
+        true,
+        0.9870367050170898,
+        54.00188499970682
+       ],
+       [
+        "p1-t6",
+        true,
+        0.9557313919067383,
+        55.77199700019264
+       ],
+       [
+        "p1-t7",
+        true,
+        0.9854345321655273,
+        58.13238700011425
+       ],
+       [
+        "p1-t8",
+        true,
+        0.9749865531921387,
+        53.17252999975608
+       ],
+       [
+        "p1-t9",
+        true,
+        0.509845495223999,
+        49.046608000026026
+       ],
+       [
+        "p1-t10",
+        true,
+        0.9282535910606384,
+        49.291667999568745
+       ],
+       [
+        "p1-t11",
+        true,
+        0.8896843194961548,
+        50.16561100001127
+       ],
+       [
+        "p1-t12",
+        true,
+        0.9403132200241089,
+        59.59452600018267
+       ],
+       [
+        "p1-t13",
+        false,
+        0.02144560217857361,
+        65.56287799958227
+       ],
+       [
+        "p1-t13",
+        false,
+        0.1142410933971405,
+        47.12801400000899
+       ],
+       [
+        "p1-t13",
+        false,
+        0.08601978421211243,
+        52.151640000374755
+       ],
+       [
+        "p1-t13",
+        true,
+        0.963354766368866,
+        49.70461199991405
+       ],
+       [
+        "p1-t14",
+        true,
+        0.9893293380737305,
+        66.97743999939121
+       ],
+       [
+        "p1-t15",
+        true,
+        0.9540347456932068,
+        52.06951500076684
+       ],
+       [
+        "p1-t16",
+        true,
+        0.9870367050170898,
+        51.33682699943165
+       ],
+       [
+        "p1-t17",
+        true,
+        0.95045405626297,
+        48.080194999784
+       ],
+       [
+        "p1-t18",
+        true,
+        0.9768373966217041,
+        58.25568199998088
+       ],
+       [
+        "p1-t19",
+        true,
+        0.9729918241500854,
+        62.46579999969981
+       ],
+       [
+        "p1-t20",
+        true,
+        0.509845495223999,
+        51.25187800058484
+       ],
+       [
+        "p1-t21",
+        true,
+        0.9282535910606384,
+        53.823311000087415
+       ],
+       [
+        "p1-t22",
+        true,
+        0.8896843194961548,
+        50.52963800062571
+       ]
+      ]
+     }
+    ],
+    "caveat": "1 real Arabic speaker clip + 3 synthetic clips; fake STT text; mishandled = early cut in the middle of the clip, or the 3 s silence fallback; see clips/SOURCES.md",
+    "durationS": 145
+   }
+  },
+  {
+   "id": "X1",
+   "status": "PASS",
+   "reason": "uncommitted text stayed silent; retracted queued segment never played",
+   "evidence": {
+    "checks": {
+     "uncommittedRejected": true,
+     "retractedQueuedSegmentReported": true,
+     "firstSegmentCompleted": true,
+     "retractedSegmentNeverPlayed": true
+    },
+    "uncommitted": {
+     "type": "playback.progress",
+     "sessionId": "x1-pipecat-local-12-67462",
+     "ts": 1793476667589.4602,
+     "segmentId": "seg-73",
+     "playedMs": 0,
+     "totalMs": 0,
+     "finished": true,
+     "interrupted": false,
+     "reason": "rejected"
+    },
+    "retract": {
+     "type": "playback.progress",
+     "sessionId": "x1-pipecat-local-12-67462",
+     "ts": 1793476670093.897,
+     "segmentId": "seg-75",
+     "playedMs": 0,
+     "totalMs": 0,
+     "finished": true,
+     "interrupted": true,
+     "reason": "retract"
+    },
+    "durationS": 14
+   }
+  },
+  {
+   "id": "HARNESS",
+   "status": "PASS",
+   "reason": "engine failures, bridge schema violations, unexpected process exits",
+   "evidence": {
+    "failures": [],
+    "violations": 0,
+    "exited": [],
+    "counters": {
+     "bridge_out": 1374,
+     "bridge_in": 82,
+     "tts_generated_ms": 252800,
+     "segments_started": 72,
+     "audio_out_chunks": 8894,
+     "audio_out_bytes": 8538240,
+     "frames_in": 22079,
+     "bytes_in": 14130048,
+     "segments_completed": 54,
+     "tts_played_ms": 149200,
+     "lane_watchdog": 15,
+     "vad_starts": 47,
+     "segments_cancelled": 18,
+     "tts_cancelled_ms": 102560,
+     "barge_ins": 29,
+     "stt_partials": 374,
+     "turns_final": 47,
+     "frames_gated": 2101,
+     "say_rejected": 2,
+     "dropped_audio_ms": 3940
+    }
+   }
+  },
+  {
+   "id": "S13",
+   "status": "PASS",
+   "reason": "stub label rode on user.turn",
+   "evidence": {
+    "checks": {
+     "quietIsCalm": true,
+     "loudIsExcited": true,
+     "allMarkedStub": true,
+     "confidenceInRange": true
+    },
+    "labels": {
+     "whisper": null,
+     "quiet": {
+      "label": "calm",
+      "confidence": 1,
+      "source": "stub"
+     },
+     "normal": {
+      "label": "neutral",
+      "confidence": 0.5,
+      "source": "stub"
+     },
+     "loud": {
+      "label": "excited",
+      "confidence": 0.846,
+      "source": "stub"
+     }
+    },
+    "turnSeen": {
+     "whisper": false,
+     "quiet": true,
+     "normal": true,
+     "loud": true
+    },
+    "turnsPerClip": {
+     "whisper": 0,
+     "quiet": 1,
+     "normal": 1,
+     "loud": 1
+    },
+    "note": "the label is read from the longest turn of the clip (a clip can be split in two turns). whisper (gain 0.08, about -47 dBFS) is informational: shows whether the engine heard a turn at all"
+   }
+  },
+  {
+   "id": "HARNESS-emotion-stack",
+   "status": "PASS",
+   "reason": "engine failures, bridge schema violations, unexpected process exits",
+   "evidence": {
+    "failures": [],
+    "violations": 0,
+    "exited": [],
+    "counters": {
+     "bridge_out": 66,
+     "frames_in": 1422,
+     "bytes_in": 910048,
+     "vad_starts": 4,
+     "stt_partials": 17,
+     "turns_final": 3,
+     "bridge_in": 3,
+     "tts_generated_ms": 4860,
+     "segments_started": 3,
+     "audio_out_chunks": 243,
+     "audio_out_bytes": 233280,
+     "segments_completed": 3,
+     "tts_played_ms": 4860
+    }
+   }
+  }
+ ],
+ "totalSeconds": 427
+}
