@@ -58,6 +58,7 @@ function bot(callOnly: boolean) {
         emitAddSpaceFilter: (...args: unknown[]) => void;
         sendSpaceUserUpdate: (...args: unknown[]) => void;
         spaces: Map<string, string>;
+        spaceUserIdOf(spaceName: string, playerId: number): string | undefined;
     };
     return { client, internals };
 }
