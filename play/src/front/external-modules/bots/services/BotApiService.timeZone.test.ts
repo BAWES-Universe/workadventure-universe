@@ -40,7 +40,7 @@ describe("keeping the player's time zone in Orbit", () => {
         const [url, init] = fetchMock.mock.calls[0];
         expect(url).toBe(`${ORBIT}/api/me/preferences`);
         expect(init?.method).toBe("PUT");
-        expect(JSON.parse(String(init?.body))).toEqual({
+        expect(JSON.parse(init?.body as string)).toEqual({
             key: "timeZone",
             value: Intl.DateTimeFormat().resolvedOptions().timeZone,
         });
