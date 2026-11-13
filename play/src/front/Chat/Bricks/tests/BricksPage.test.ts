@@ -25,6 +25,12 @@ const game = vi.hoisted(() => ({
     openModal: vi.fn<(component: unknown) => void>(),
     getBot: vi.fn<(brickId: string) => Promise<unknown>>(),
     changeMyBrick: vi.fn<(brickId: string, change: Record<string, unknown>) => Promise<unknown>>(),
+    getBotAiOptions: vi.fn<(target: { botId?: string }) => Promise<unknown>>(),
+    getAvailableAIProviders: vi.fn<(all?: boolean) => Promise<unknown[]>>(),
+    getMyAiKeys: vi.fn<() => Promise<unknown>>(),
+    getBotVoice: vi.fn<(brickId: string) => Promise<unknown>>(),
+    getMyVoiceKeys: vi.fn<() => Promise<unknown>>(),
+    getBotPermissions: vi.fn<(brickId: string) => Promise<unknown>>(),
 }));
 const looks = vi.hoisted(() => {
     // A tiny store, made before the modules load: the WOKAs the game offers a bot
@@ -58,12 +64,32 @@ vi.mock("../../../external-modules/bots/services/BotApiService", () => ({
         tellBrickChanged: game.tellBrickChanged,
         getBot: game.getBot,
         changeMyBrick: game.changeMyBrick,
+        getBotAiOptions: game.getBotAiOptions,
+        getAvailableAIProviders: game.getAvailableAIProviders,
+        getMyAiKeys: game.getMyAiKeys,
+        getBotVoice: game.getBotVoice,
+        getMyVoiceKeys: game.getMyVoiceKeys,
+        getBotPermissions: game.getBotPermissions,
         isInitialized: () => true,
         getMyUsage: game.getMyUsage,
     },
 }));
 vi.mock("../../../Phaser/Game/GameManager", () => ({ gameManager: {} }));
 vi.mock("../../../external-modules/admin-api/index", () => ({ canOpenOrbit: () => false, openOrbitPage: () => {} }));
+// The companions the room offers: none are drawn here
+vi.mock("../../../external-modules/bots/stores/BotCompanionCatalogStore", async () => {
+    const store = await import("svelte/store");
+    return {
+        botCompanionCatalogStore: store.readable([
+            { name: "Pets", textures: [{ id: "dog-2", name: "Dog", url: "resources/dog.png" }] },
+        ]),
+        ensureBotCompanionCatalog: () => Promise.resolve(),
+        findCompanion: (
+            catalog: { textures: { id: string; name: string }[] }[] | null,
+            id: string | null | undefined
+        ) => catalog?.flatMap((collection) => collection.textures).find((texture) => texture.id === id),
+    };
+});
 vi.mock("../../../Enum/ComputedConst", () => ({ ABSOLUTE_PUSHER_URL: "http://pusher.test/" }));
 vi.mock("../../../external-modules/bots/stores/BotWokaCatalogStore", () => ({
     botWokaCatalogStore: looks.catalog,
@@ -77,6 +103,11 @@ vi.mock("../../Stores/StoredWokaStore", async () => {
     };
 });
 vi.mock("svelte-modals", () => ({ openModal: game.openModal, closeModal: vi.fn() }));
+// A WOKA is drawn on a canvas, which this test environment has none of
+vi.mock(
+    "../../../Components/Woka/WokaImage.svelte",
+    async () => await import("../../../external-modules/bots/components/testStub.svelte")
+);
 // The dialog has its own tests; here only that New Brick opens it
 vi.mock(
     "../NewBrickDialog.svelte",
@@ -112,6 +143,7 @@ vi.mock("../BrickChat", async () => {
     return { openBrickChat: game.openBrickChat, openingBrickChats: store.writable(new Set<string>()) };
 });
 
+import { readBotVoice } from "../../../external-modules/bots/voiceModel";
 import { loadLocale } from "../../../../i18n/i18n-util.sync";
 import { setLocale } from "../../../../i18n/i18n-svelte";
 import { bricksPageOpenStore } from "../../Stores/ChatStore";
@@ -183,6 +215,81 @@ describe("the Bricks page (#1995)", () => {
                 updatedBy: { id: "u-omar", name: "Omar", email: null },
             })
         );
+        // What a Brick may run on: Universe AI, and one of its owner's own keys (lent to no universe)
+        game.getBotAiOptions.mockResolvedValue({
+            current: "universe-ai",
+            currentModel: null,
+            universeAi: { available: true, model: "u-1", supportsVision: false, limits: { reply: 1000, steps: 5 } },
+            maker: { id: "u-omar", name: "Omar" },
+            viewerIsMaker: true,
+            keys: [
+                {
+                    id: "key-1",
+                    name: "My Claude",
+                    kind: null,
+                    kindLabel: "Claude",
+                    logo: null,
+                    plainIcon: "chip",
+                    group: "hosted",
+                    universeName: "",
+                    status: "working",
+                    ifDown: "universe-ai",
+                    model: "m-1",
+                    output: null,
+                    supportsVision: false,
+                    visionModels: [],
+                    models: [{ id: "m-1" }],
+                    modelsProblem: null,
+                    limited: false,
+                    limits: { reply: 1000, steps: 5 },
+                },
+            ],
+            currentKey: null,
+            vision: { saved: null, savedKey: null },
+            providers: null,
+        });
+        game.getAvailableAIProviders.mockResolvedValue([]);
+        game.getMyAiKeys.mockResolvedValue([{ id: "key-1", name: "My Claude" }]);
+        // Its Voice: off, on Universe AI, with no key of the owner's yet
+        game.getBotVoice.mockResolvedValue(
+            readBotVoice({
+                enabled: false,
+                universeAllows: true,
+                paidBy: "universe-ai",
+                parts: { recognition: "universe-ai", speech: "universe-ai" },
+                revision: null,
+                draft: { profile: {}, updatedAt: null },
+                revisions: [],
+                lentKeys: [],
+                universeAi: {
+                    recognition: {
+                        providerId: "uai-listen",
+                        adapter: "soniox",
+                        name: "Soniox",
+                        model: "m",
+                        models: [{ id: "m", label: "M" }],
+                    },
+                    speech: {
+                        providerId: "uai-speak",
+                        adapter: "elevenlabs",
+                        name: "ElevenLabs",
+                        model: "v",
+                        models: [{ id: "v", label: "V" }],
+                        defaultVoice: { voiceId: "v-river", voiceName: "River" },
+                    },
+                },
+                voiceLimits: {
+                    revision: 1,
+                    limits: { turnSeconds: 30, replyCharacters: 600, replySeconds: 60, listenMinutesPerDay: 60 },
+                    window: {
+                        hours: 5,
+                        signedIn: { replies: 30, voiceReplies: 25 },
+                        guest: { replies: 10, voiceReplies: 3 },
+                    },
+                },
+            })
+        );
+        game.getMyVoiceKeys.mockResolvedValue([]);
         target = document.createElement("div");
         document.body.appendChild(target);
     });
@@ -455,11 +562,25 @@ describe("the Bricks page (#1995)", () => {
                 "Keeps the family recipes"
             );
             expect(target.querySelector<HTMLElement>('[data-testid="bot-switch"]')).not.toBeNull();
-            // The parts a Brick has so far: Personality and Advanced settings. The rest come with their own issues.
+            // The parts a Brick has so far, in the mock's order. The rest come with their own issues.
             const groups = [...target.querySelectorAll<HTMLElement>('[data-testid^="bot-page-group-"]')].map(
                 (group) => group.dataset.testid
             );
-            expect(groups).toEqual(["bot-page-group-say", "bot-page-group-advanced"]);
+            expect(groups).toEqual([
+                "bot-page-group-mind",
+                "bot-page-group-say",
+                "bot-page-group-voice",
+                "bot-page-group-behavior",
+                "bot-page-group-access",
+                "bot-page-group-companion",
+                "bot-page-group-advanced",
+            ]);
+            // The rows say what the mock's say: Universe AI, none yet, stays put and waits, none yet
+            expect(byId("bot-page-group-mind")?.textContent).toContain("Universe AI");
+            expect(byId("bot-page-group-voice")?.textContent).toContain("Off · Give Recipe Brick a voice");
+            expect(byId("bot-page-group-behavior")?.textContent).toContain("Stays put · waits for people");
+            expect(byId("bot-page-group-access")?.textContent).toContain("Only you");
+            expect(byId("bot-page-group-companion")?.textContent).toContain("None yet");
             expect(byId("bot-page-group-advanced")?.textContent).toContain("Bot chat telemetry off");
             expect(target.querySelector(".bp-meta")?.textContent).toMatch(/^Made by Omar · .+ · Changed .+$/);
             await click("edit-panel-back");
@@ -624,6 +745,182 @@ describe("the Bricks page (#1995)", () => {
             expect(byId("brick-save-error")).toBeNull();
             warn.mockRestore();
             error.mockRestore();
+        });
+
+        // The page keeps the group last opened open for the next Brick, so a group is only tapped when it is closed
+        const openGroup = async (id: string) => {
+            const group = byId(`bot-page-group-${id}`);
+            if (group?.classList.contains("open")) return;
+            group?.querySelector<HTMLElement>("button")?.click();
+            await settle();
+        };
+
+        describe("its look: the circle on top opens the New Brick look picker, and a tap saves", () => {
+            const pictureSrc = () => byId("brick-look")?.querySelector("img")?.getAttribute("src");
+
+            it("saves the look on the tap that picks it, goes back to the page with it, and tells the bot server", async () => {
+                game.changeMyBrick.mockImplementation((_id, change) => Promise.resolve({ brick: made(change) }));
+                await open();
+                await openPage();
+                expect(pictureSrc()).toBe("/static/images/bricks/brick-orange.png");
+                await click("brick-look");
+                expect(byId("brickLookPicker")).not.toBeNull();
+                expect(byId("bot-page")).toBeNull();
+                // The Brick colours, the one it wears picked
+                expect(target.querySelectorAll('[data-testid="brickLookTile"]')).toHaveLength(12);
+                expect(target.querySelector('[data-testid="brickLookTile"][aria-pressed="true"]')).not.toBeNull();
+                await click("brickLookTile", 1);
+                expect(game.changeMyBrick).toHaveBeenCalledWith(MADE, { characterTextureId: "brick-red" });
+                expect(game.tellBrickChanged).toHaveBeenCalledWith(MADE);
+                expect(byId("brickLookPicker")).toBeNull();
+                expect(pictureSrc()).toBe("/static/images/bricks/brick-red.png");
+            });
+
+            it("offers the WOKAs the game offers a bot on a second pill, and saves one the same way", async () => {
+                looks.catalog.set({
+                    woka: {
+                        collections: [{ name: "Heroes", textures: [{ id: "woka-1", name: "Hero", url: "hero.png" }] }],
+                    },
+                });
+                game.changeMyBrick.mockImplementation((_id, change) => Promise.resolve({ brick: made(change) }));
+                await open();
+                await openPage();
+                await click("brick-look");
+                await click("brickLookTabWokas");
+                await click("brickLookWoka");
+                expect(game.changeMyBrick).toHaveBeenCalledWith(MADE, { characterTextureId: "woka-1" });
+                looks.catalog.set(null);
+            });
+
+            it("stays open with the look it had when Orbit refused, so the tap can be tried again, and saves nothing for the look it wears", async () => {
+                const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+                game.changeMyBrick.mockRejectedValueOnce(new Error("offline"));
+                await open();
+                await openPage();
+                await click("brick-look");
+                expect(byId("brickLookError")).toBeNull();
+                await click("brickLookTile", 1);
+                expect(byId("brickLookPicker")).not.toBeNull();
+                // It says so, instead of staying quiet
+                expect(byId("brickLookError")?.textContent).toContain("Could not save this");
+                // The one it wears: nothing to save, back to the page
+                await click("brickLookTile", 0);
+                expect(game.changeMyBrick).toHaveBeenCalledTimes(1);
+                expect(byId("brickLookPicker")).toBeNull();
+                expect(pictureSrc()).toBe("/static/images/bricks/brick-orange.png");
+                warn.mockRestore();
+            });
+
+            it("goes back to the page without saving on Back", async () => {
+                await open();
+                await openPage();
+                await click("brick-look");
+                await click("brickLookBack");
+                expect(byId("brickLookPicker")).toBeNull();
+                expect(game.changeMyBrick).not.toHaveBeenCalled();
+            });
+        });
+
+        describe("Mind, Behavior and Companion save on the Brick, through its own route", () => {
+            beforeEach(() => {
+                game.changeMyBrick.mockImplementation((_id, change) => Promise.resolve({ brick: made(change) }));
+            });
+
+            it("puts it on one of its owner's own keys, said as 'Your key. You pay.', never as lent to a universe", async () => {
+                await open();
+                await openPage();
+                await openGroup("mind");
+                expect(game.getBotAiOptions).toHaveBeenCalledWith({ botId: MADE });
+                expect(byId("bot-runs-on")?.textContent).toContain("Your key. You pay.");
+                expect(text()).not.toContain("lent");
+                expect(text()).not.toContain("this universe");
+                await click("bot-runs-on-mine");
+                expect(game.changeMyBrick).toHaveBeenCalledWith(
+                    MADE,
+                    expect.objectContaining({ aiProviderRef: "key-1" })
+                );
+            });
+
+            it("saves how it behaves, only the keys that changed, and offers no route to walk", async () => {
+                await open();
+                await openPage();
+                await openGroup("behavior");
+                expect(byId("bot-moves-route")).toBeNull();
+                // A Brick stands on no map, so nothing tells it to drag the bot on the map.
+                expect(byId("bot-page-group-behavior")?.textContent).not.toContain("on the map");
+                expect(byId("bot-page-group-behavior")?.textContent).not.toContain("facing direction");
+                expect(byId("bot-page-group-behavior")?.textContent).toContain("These settings apply when you bring");
+                await click("bot-moves-wander");
+                expect(byId("bot-page-group-behavior")?.textContent).not.toContain("circle");
+                expect(game.changeMyBrick).toHaveBeenCalledTimes(1);
+                const change = game.changeMyBrick.mock.calls[0][1] as {
+                    behaviorType: string;
+                    behaviorConfig: Record<string, unknown>;
+                };
+                expect(change.behaviorType).toBe("social");
+                expect(change.behaviorConfig).toMatchObject({ moves: "wander", goesToPeople: false });
+                expect(Object.keys(change.behaviorConfig).sort()).toEqual(
+                    ["assignedSpace", "behaviorType", "goesToPeople", "moves"].sort()
+                );
+            });
+
+            it("puts what it shows back to what was saved when Orbit refuses a change", async () => {
+                const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+                game.changeMyBrick.mockRejectedValueOnce(new Error("offline"));
+                await open();
+                await openPage();
+                await openGroup("behavior");
+                await click("bot-moves-wander");
+                expect(byId("brick-save-error")).not.toBeNull();
+                expect(byId("bot-page-group-behavior")?.textContent).toContain("Stays put");
+                warn.mockRestore();
+            });
+
+            it("picks its companion from the room's list and saves it; None takes it away", async () => {
+                await open();
+                await openPage();
+                await openGroup("companion");
+                expect(byId("bot-companion-picker")).not.toBeNull();
+                await click("bot-companion-dog-2");
+                await click("bot-companion-save");
+                expect(game.changeMyBrick).toHaveBeenCalledWith(MADE, { companionTextureId: "dog-2" });
+                expect(byId("bot-companion-picker")).toBeNull();
+                expect(byId("bot-page-group-companion")?.textContent).toContain("Dog");
+                await openGroup("companion");
+                await click("bot-companion-none");
+                await click("bot-companion-save");
+                expect(game.changeMyBrick).toHaveBeenLastCalledWith(MADE, { companionTextureId: null });
+                expect(byId("bot-page-group-companion")?.textContent).toContain("None yet");
+            });
+        });
+
+        describe("Voice and Permissions (Slice 13)", () => {
+            it("reads its voice from Orbit, runs on its owner's own keys, and never says a key is lent to a universe", async () => {
+                await open();
+                await openPage();
+                expect(game.getBotVoice).toHaveBeenCalledWith(MADE);
+                await openGroup("voice");
+                expect(byId("bot-voice-switch")).not.toBeNull();
+                expect(text()).not.toContain("lent");
+                expect(text()).not.toContain("this universe");
+            });
+
+            it("says 'Only you' for Permissions, because it is on no map, and asks Orbit for no roles or rules", async () => {
+                await open();
+                await openPage();
+                expect(game.getBotPermissions).not.toHaveBeenCalled();
+                await openGroup("access");
+                expect(byId("brick-access")?.textContent).toContain("Only you for now");
+                expect(byId("brick-access")?.textContent).toContain("talks with you and nobody else");
+                expect(byId("brick-access")?.textContent).toContain("the place’s rules decide who can talk with");
+                // A visiting Brick has no rules of its own (Orbit #927): nothing promises a role editor here
+                expect(byId("brick-access")?.textContent).not.toContain("roles");
+                // No Private switch, no rows to add, no refused line: those are for people it can reach
+                expect(byId("bot-visibility")).toBeNull();
+                expect(byId("bot-access-add")).toBeNull();
+                expect(byId("bot-access-reply")).toBeNull();
+                expect(game.getBotPermissions).not.toHaveBeenCalled();
+            });
         });
 
         it("says so when the Brick could not be read, and reads it again on a tap", async () => {

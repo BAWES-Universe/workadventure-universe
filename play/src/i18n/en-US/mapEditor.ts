@@ -842,6 +842,7 @@ const mapEditor: BaseTranslation = {
                     spot: "Its spot",
                     spotHint: "Drag the bot on the map to move it",
                     spotNote: "After a chat, it walks back to its spot.",
+                    brickNote: "These settings apply when you bring {name:string} along.",
                     facing: "Default facing direction",
                     facingHint: "Where it looks when nobody's around",
                     facingDown: "Down",
@@ -892,6 +893,11 @@ const mapEditor: BaseTranslation = {
                     keyHosted: "Your key, lent to {universe:string}. You pay.",
                     keyComputer: "Your computer, lent to {universe:string}.",
                     keyUnlent: "Your key, no longer lent here.",
+                    // A Brick's page: its keys are its owner's own, lent to no universe
+                    keyHostedBrick: "Your key. You pay.",
+                    keyComputerBrick: "Your computer.",
+                    makerHintBrick: "Your own AI keys show here.",
+                    noKeysHintBrick: "Add an AI key in AI keys to run {bot:string} on it.",
                     downNow: "Down now",
                     downUseUniverseAi: ", so Universe AI answers until it’s back.",
                     downStops: ", so this bot rests until it’s back.",
@@ -1085,6 +1091,18 @@ const mapEditor: BaseTranslation = {
                     universeAiPeople: "People use their own voice replies",
                     universeAiListens: "Free for people talking with it",
                     keyYouPay: "You pay · lent to this universe",
+                    // A Brick's page: its keys are its owner's own, lent to no universe
+                    brick: {
+                        keyYouPay: "You pay",
+                        pausedGone: "Paused · {key:string} is not available",
+                        keyGoneTitle: "{key:string} isn’t there any more",
+                        keyGoneLine:
+                            "{bot:string} answers in text. Add the key again in AI keys, or pick a Universe AI voice.",
+                        noServiceLine:
+                            "Universe AI has no voice here yet. Add a voice key in AI keys: one key from a company that listens and speaks is enough, or use two companies. {bot:string} keeps chatting in text until then.",
+                        moreVoicesLine:
+                            "Add a voice key from any company this server offers in AI keys. You pay for {bot:string}’s voice on it; nobody’s replies are used.",
+                    },
                     keyOwnerPays: "{owner:string} pays · lent to this universe",
                     language: "Language",
                     languageFollow: "Each person’s language",
@@ -1360,6 +1378,11 @@ const mapEditor: BaseTranslation = {
                     briefOpenRules: "Public · own rules for {names:string}",
                     briefPrivateRules: "Private · own rules for {names:string}",
                     briefOpen: "Public",
+                    // A Brick not on a map: nobody but its owner can reach it (a visiting Brick has no rules of its own, Orbit #927)
+                    brickBrief: "Only you",
+                    brickTitle: "Only you for now",
+                    brickLine:
+                        "{name:string} talks with you and nobody else. When you bring {name:string} along, the place’s rules decide who can talk with {name:string}.",
                     briefPrivate: "Private",
                     briefMore: "{first:string}, {second:string} and {count:number} more",
                     briefLoading: "…",
