@@ -41,6 +41,7 @@ async function restart(switchedOff: boolean): Promise<number> {
         } catch {
             /* not yet */
         }
+        if (Date.now() - t > 60_000) throw new Error(`the worker did not answer /health within 60 s after the restart: ${docker('logs', '--tail', '20', NAME)}`);
         await sleep(100);
     }
     return Date.now() - t;
