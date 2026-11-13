@@ -43,6 +43,40 @@ Never stopped, by set and condition:
 | en-command | S30 | 294 | 1 | 1 | 1 | 1 | 1 |
 | en-command | S40 | 294 | 7 | 7 | 7 | 7 | 7 |
 
+After listening: source-level labels (`src/listened.ts`, `results/soniox/disputed-clips.md`), applied to every variant of the source
+and to every behaviour alike. The tables above use the original labels and stay as the sensitivity view.
+
+- `en/no/15c563d7_nohash_1.wav` (5 variants here): "no voice", so out of the speech rows
+- `en/stop/fd395b74_nohash_3.wav` (5 variants here): "static sound and a weird hint of voice starting towards the end but no recognizable voice", so unscored in the primary view, speech in the conservative view
+
+| view | behaviour | speech clips | stopped for the person | never stopped | stopped by background first | clips with a false resume | overlap, total | of today's stops: also stopped, as fast / later / not |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| conservative: noise relabelled, uncertain counted as speech | today's rule | 3195 | 2054 (64.3%) | 8 | 1133 | 0 | 0.0 s | - |
+| conservative: noise relabelled, uncertain counted as speech | stop only when confirmed | 3195 | 3166 (99.1%) | 8 | 21 | 0 | 0.0 s | 1946 / 108 / 0 |
+| conservative: noise relabelled, uncertain counted as speech | turn down, then stop or back up | 3195 | 3166 (99.1%) | 8 | 21 | 0 | 0.0 s | 1946 / 108 / 0 |
+| conservative: noise relabelled, uncertain counted as speech | pause; go on only after an empty result | 3195 | 3166 (99.1%) | 8 | 21 | 0 | 0.0 s | 1946 / 108 / 0 |
+| conservative: noise relabelled, uncertain counted as speech | pause; also go on, watched, over steady noise | 3195 | 3166 (99.1%) | 8 | 21 | 9 | 0.9 s | 1946 / 108 / 0 |
+| primary: noise relabelled, uncertain unscored | today's rule | 3190 | 2051 (64.3%) | 8 | 1131 | 0 | 0.0 s | - |
+| primary: noise relabelled, uncertain unscored | stop only when confirmed | 3190 | 3161 (99.1%) | 8 | 21 | 0 | 0.0 s | 1943 / 108 / 0 |
+| primary: noise relabelled, uncertain unscored | turn down, then stop or back up | 3190 | 3161 (99.1%) | 8 | 21 | 0 | 0.0 s | 1943 / 108 / 0 |
+| primary: noise relabelled, uncertain unscored | pause; go on only after an empty result | 3190 | 3161 (99.1%) | 8 | 21 | 0 | 0.0 s | 1943 / 108 / 0 |
+| primary: noise relabelled, uncertain unscored | pause; also go on, watched, over steady noise | 3190 | 3161 (99.1%) | 8 | 21 | 9 | 0.9 s | 1943 / 108 / 0 |
+
+The variants themselves, with the original labels:
+
+| clip | label after listening | today's rule | stop only when confirmed | turn down, then stop or back up | pause; go on only after an empty result | pause; also go on, watched, over steady noise |
+| --- | --- | --- | --- | --- | --- | --- |
+| `speech|en/no/15c563d7_nohash_1.wav|N10` | noise | stopped at 0.2 s | stopped at 1.1 s | stopped at 1.1 s | stopped at 1.1 s | stopped at 1.1 s |
+| `speech|en/no/15c563d7_nohash_1.wav|N5` | noise | stopped at 0.1 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s |
+| `speech|en/no/15c563d7_nohash_1.wav|S20` | noise | stopped at 1.1 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s |
+| `speech|en/no/15c563d7_nohash_1.wav|S30` | noise | stopped at 1.1 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s |
+| `speech|en/no/15c563d7_nohash_1.wav|S40` | noise | stopped at 1.1 s | stopped at 4.1 s | stopped at 4.1 s | stopped at 4.1 s | stopped at 4.1 s |
+| `speech|en/stop/fd395b74_nohash_3.wav|N10` | uncertain | stopped at 0.1 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s |
+| `speech|en/stop/fd395b74_nohash_3.wav|N5` | uncertain | stopped at 0.1 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s |
+| `speech|en/stop/fd395b74_nohash_3.wav|S20` | uncertain | stopped at 1.1 s | stopped at 1.1 s | stopped at 1.1 s | stopped at 1.1 s | stopped at 1.1 s |
+| `speech|en/stop/fd395b74_nohash_3.wav|S30` | uncertain | stopped at 1.1 s | stopped at 1.1 s | stopped at 1.1 s | stopped at 1.1 s | stopped at 1.1 s |
+| `speech|en/stop/fd395b74_nohash_3.wav|S40` | uncertain | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s | stopped at 1.3 s |
+
 ## Noise and knocks (311 clips), provider hears nothing (a successful empty result): should not stop
 
 Rates are per minute of reply-active elapsed time: from the start of the clip to the stop, or to the end of the clip and its 8 s

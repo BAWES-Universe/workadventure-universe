@@ -82,17 +82,20 @@ both were talking at once. Onsets and offsets are energy estimates, not checked 
 After listening: a person listened, blind, to the two soft English clips the pause never stopped (source and as played), with a
 known-speech control, which they heard as a voice:
 
-- `en/no/15c563d7_nohash_1.wav` (S40): no voice
-- `en/stop/fd395b74_nohash_3.wav` (S40): not sure (static, a faint hint of a voice at the very end, no word)
+- `en/no/15c563d7_nohash_1.wav`: "no voice", so relabelled as noise
+- `en/stop/fd395b74_nohash_3.wav`: "static sound and a weird hint of voice starting towards the end but no recognizable voice", so uncertain: unscored in the primary view, counted as speech in the conservative view
 
-A clip judged "no voice" moves out of the speech rows, for today and the pause alike; "not sure" stays as speech. The rows above are
-unchanged; the corrected rows for the groups it touches:
+Three views of the speech groups these touch. The original rows above stay as they are. Each label applies to today and the pause alike.
+"No more never-stopped clips" in the primary view does not prove there are no new misses overall, or that an uncertain clip was rightly ignored.
 
-| group, corrected | clips | never stopped: today / hold (of which Soniox heard the words) | stopped by background first: today / hold | first change after onset, hold, median / p95 | stopped for good after onset: today / hold, median / p95 | false resumes, hold (bot playback after the apparent interruption, to its stop or the end of the replay tail) |
-| --- | --- | --- | --- | --- | --- | --- |
-| soft command (S40), English | 39 | 0 / 1 (0) | 0 / 0 | 250 ms / 590 ms | 250 ms / 590 ms; 250 ms / 590 ms | 1 (8.0 s) |
+| view | group | clips | never stopped: today / hold (of which Soniox heard the words) | stopped by background first: today / hold | first change after onset, hold, median / p95 | stopped for good after onset: today / hold, median / p95 | false resumes, hold (bot playback after the apparent interruption, to its stop or the end of the replay tail) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| original labels | soft command (S40), English | 40 | 0 / 2 (0) | 0 / 0 | 250 ms / 590 ms | 250 ms / 590 ms; 250 ms / 590 ms | 2 (16.1 s) |
+| conservative: noise relabelled, uncertain counted as speech | soft command (S40), English | 39 | 0 / 1 (0) | 0 / 0 | 250 ms / 590 ms | 250 ms / 590 ms; 250 ms / 590 ms | 1 (8.0 s) |
+| primary: noise relabelled, uncertain unscored | soft command (S40), English | 38 | 0 / 0 (0) | 0 / 0 | 250 ms / 590 ms | 250 ms / 590 ms; 250 ms / 590 ms | 0 (0.0 s) |
 
-Moved to noise: 1 clip(s); stopped today 1, with the pause 0.
+Relabelled as noise: 1 clip(s); stopped today 1, with the pause 0.
+Uncertain, kept as a diagnostic: `speech|en/stop/fd395b74_nohash_3.wav|S40`; today stopped; the pause never stopped, with 8.0 s of bot playback after going on (to the end of the replay tail).
 
 Noise and knocks over the bot (should not stop):
 

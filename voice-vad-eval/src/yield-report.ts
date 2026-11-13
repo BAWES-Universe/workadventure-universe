@@ -4,6 +4,7 @@
 // Speech clips should stop the bot; noise clips should not. "Stopped" is for good (the answer is lost); "paused",
 // "turned down" and "went on" are the reversible steps. The person's recording starts 1.0 s into every speech clip (LEAD in
 // fixtures.ts): a stop before that came from the background, not from them. Onset is ESTIMATED from energy (fixtures.ts).
+import { LISTENED, listenedAs, sourceOfId } from './listened.ts';
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { LEAD } from './fixtures.ts';
@@ -293,6 +294,36 @@ function report(path: string, outPath: string): void {
         if (counts.some(Boolean)) say(`| ${set} | ${condition} | ${group.length} | ${counts.join(' | ')} |`);
     }
     say();
+
+    // ---- Source-level labels from listening (src/listened.ts) ----
+    const listenedRows = rows.filter((r) => r.kind === 'speech' && listenedAs(r.id));
+    if (listenedRows.length) {
+        say('After listening: source-level labels (`src/listened.ts`, `results/soniox/disputed-clips.md`), applied to every variant of the source');
+        say('and to every behaviour alike. The tables above use the original labels and stay as the sensitivity view.');
+        say();
+        for (const [source, l] of Object.entries(LISTENED)) say(`- \`${source}\` (${rows.filter((r) => r.kind === 'speech' && sourceOfId(r.id) === source).length} variants here): "${l.heard}", so ${l.label === 'noise' ? 'out of the speech rows' : 'unscored in the primary view, speech in the conservative view'}`);
+        say();
+        say('| view | behaviour | speech clips | stopped for the person | never stopped | stopped by background first | clips with a false resume | overlap, total | of today\'s stops: also stopped, as fast / later / not |');
+        say('| --- | --- | --- | --- | --- | --- | --- | --- | --- |');
+        const views: [string, Row[]][] = [
+            ['conservative: noise relabelled, uncertain counted as speech', rows.filter((r) => r.kind !== 'speech' || listenedAs(r.id) !== 'noise')],
+            ['primary: noise relabelled, uncertain unscored', rows.filter((r) => r.kind !== 'speech' || !listenedAs(r.id))],
+        ];
+        for (const [view, vr] of views) {
+            for (const b of BEHAVIOURS) {
+                const s = speechStats(vr, b);
+                const m = b === 'today' ? undefined : matched(vr, b);
+                say(`| ${view} | ${NAMES[b]} | ${s.n} | ${s.forPerson} (${pct(s.forPerson, s.n)}) | ${s.never} | ${s.background} | ${s.falseResumeClips} | ${sec(sum(s.overlaps))} | ${m ? `${m.same} / ${m.later} / ${m.missed}` : '-'} |`);
+            }
+        }
+        say();
+        say('The variants themselves, with the original labels:');
+        say();
+        say('| clip | label after listening | ' + BEHAVIOURS.map((b) => NAMES[b]).join(' | ') + ' |');
+        say('| --- | --- | ' + BEHAVIOURS.map(() => '---').join(' | ') + ' |');
+        for (const r of listenedRows.sort((x, y) => x.id.localeCompare(y.id))) say(`| \`${r.id}\` | ${listenedAs(r.id)} | ${BEHAVIOURS.map((b) => (r.result[b].stopAt === undefined ? 'never stopped' : `stopped at ${sec(r.result[b].stopAt!)}`)).join(' | ')} |`);
+        say();
+    }
 
     for (const provider of ['empty', 'words'] as const) {
         const noise = rows.filter((r) => r.kind !== 'speech' && r.provider === provider);

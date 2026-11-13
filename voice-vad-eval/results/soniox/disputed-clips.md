@@ -1,7 +1,7 @@
 # The two disputed soft English commands (S40)
 
 GPT's readiness review (13 Nov 2026) asked that these be settled by independent listening to both the source and the exact
-processed input, with hashes and a brief reason, before the private-bot trial. Listened 13 Nov 2026: A is relabelled as noise; C stays an unresolved possible missed interruption.
+processed input, with hashes and a brief reason, before the private-bot trial. Listened 13 Nov 2026: A is relabelled as noise. C is uncertain: it is kept as an unscored diagnostic case, and GPT agreed (13 Nov) that it does not block the private trial on its own.
 
 | clip | file | sha256 |
 | --- | --- | --- |
@@ -42,14 +42,26 @@ The scored waveforms are unchanged. B is a positive control. One listener.
 - B: "has voice". The control passed.
 - C: "static sound and a weird hint of voice starting towards the end but no recognizable voice"
 
-**What follows:**
-- **A is relabelled as noise.** This applies to today and the pause alike. `results/soniox/soniox-check.md` keeps its original rows and adds corrected ones:
-  - soft English S40 drops to 39 clips;
-  - the pause never stopped 1 of them (C), against 0 today;
-  - 1 false resume, with 8.0 s of playback.
+**What follows** (GPT, 13 Nov: accepted, with the labels below):
 
-  A's other four variants (S20, S30, N10, N5) in the scripted replay are still counted as speech there. That is the conservative side: those variants were stopped.
-- **C is "not sure", so it stays as speech: an unresolved possible missed interruption, and activation stays blocked.**
-  - Band energy supports what was heard. C's 100-300 Hz band rises about 10 dB above its floor at 300-350 ms and again from 850 ms to the end of the 1 s file, while the higher bands stay flat.
-  - So, if there is a voice, it is the very start of a sound cut off by the end of the recording, not the word.
-  - The pause misses it because Silero and Soniox both register nothing. Today stops on it only because the level gate fires on the static, scaled to -40 dBFS.
+The labels live in `src/listened.ts`. They apply to every variant of the source, and to today and the pause alike, in both reports.
+
+**A is noise.** It leaves the speech rows, and the original-label rows stay as the sensitivity view.
+
+**C is uncertain.** It is not proven noise, not a proven cut-off command, and not a passed speech test. It is unscored in the primary view and counted as speech in the conservative view. Its result is kept as a diagnostic: today stopped; the pause never stopped, with 8.0 s of bot playback after going on, including the replay tail.
+
+Band energy matches what was heard. C's 100-300 Hz band rises about 10 dB above its floor at 300-350 ms and again from 850 ms to the end, while the higher bands stay flat. That is not evidence of a voice either way.
+
+**Soft English S40, Soniox run:**
+
+| view | speech clips | never stopped: today / pause |
+| --- | --- | --- |
+| original labels | 40 | 0 / 2 |
+| A relabelled, C counted as speech (conservative) | 39 | 0 / 1 possible miss |
+| A relabelled, C unscored (primary) | 38 | 0 / 0 |
+
+The primary row means no additional never-stopped clips among those 38. It does not prove that there are no new misses overall.
+
+**Scripted replay (`results/yield-replay.md`):** there are 5 variants of each source. Every variant was stopped by every behaviour except C's S40. Speech clips number 3,195 in the conservative view and 3,190 in the primary. In both, the pause stops 99.1% for the person, against 64.3% today, and misses none of today's stops.
+
+**No change to the detector or the 1,500 ms window.** The next evidence is fresh, clearly spoken speech through a real microphone in the device check.
