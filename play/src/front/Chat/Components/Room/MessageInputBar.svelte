@@ -28,6 +28,7 @@
     import LazyEmote from "../../../Components/EmoteMenu/LazyEmote.svelte";
     import { composerDraftStore } from "../../Stores/ComposerDraftStore";
     import { draftMessageService } from "../../Services/DraftMessageService";
+    import { GUEST_BRICK_ID } from "../../Bricks/GuestBrick";
     import { localUserStore } from "../../../Connection/LocalUserStore";
     import { MatrixChatRoom } from "../../Connection/Matrix/MatrixChatRoom";
     import { KLIPY_API_KEY, UPLOADER_URL } from "../../../Enum/EnvironmentVariable";
@@ -170,6 +171,9 @@
     const draftRoomId = room.id;
     const draftId = `${room.id}-${localUserStore.getChatId() ?? "0"}`;
     const hasSpaceDrafts = spaceGenerationOf(room) !== undefined;
+    // The chat with the Brick for guests is kept on the device for a guest and goes with them: an unsent line is not saved
+    // under a key every guest on the device would share, and nothing is left behind when the chat is dropped (#1997).
+    const keepsDraft = room.id !== GUEST_BRICK_ID;
     // The stay the composer opened in: text left when that stay ends is kept there as unsent, never sent on.
     const mountSessionId = room instanceof ProximityChatRoom ? room.currentSessionId : undefined;
     // Back with the same people within a few minutes: what you'd typed before walking away goes back in here.
@@ -528,7 +532,9 @@
         } else {
             fileAttachementEnabled = isUploadEnabled;
         }
-        const draft = hasSpaceDrafts
+        const draft = !keepsDraft
+            ? undefined
+            : hasSpaceDrafts
             ? composerDraftStore.load(draftRoomId, spaceGenerationOf(room))
             : await draftMessageService.loadDraft(draftId);
         if (draft) {
@@ -577,7 +583,7 @@
                 replyingToMessageId: replyMessageId ?? null,
                 spaceGeneration: spaceGenerationOf(room),
             });
-        } else {
+        } else if (keepsDraft) {
             draftMessageService.saveDraft({
                 id: draftId,
                 roomId: room.id,
