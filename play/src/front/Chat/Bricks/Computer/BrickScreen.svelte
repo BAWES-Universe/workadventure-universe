@@ -49,15 +49,22 @@
     let letGo = 0;
 
     // A watch request that did not go through is asked again soon, a few times, then left until the computer has new work
-    // or the link would have been renewed anyway. A computer that simply has no screen to show is not retried.
+    // or the link would have been renewed anyway. A computer that has no screen to show yet is asked again as it is read, but
+    // for a minute or so, not for good. Only one request is on its way at a time.
     const RETRY_MS = 2000;
     const RETRIES = 4;
+    const NO_LINK_ASKS = 15;
     let failures = 0;
+    let noLink = 0;
     let gaveUp = false;
     let retry: ReturnType<typeof setTimeout> | undefined;
+    // The screen's "let go" count the request on its way was asked in: a request asked in an older one does not hold up a new one
+    let onItsWay: number | undefined;
 
     function look() {
         const asked = letGo;
+        if (onItsWay === asked) return;
+        onItsWay = asked;
         clearTimeout(retry);
         botApiService
             .watchBrickComputer(brick.id)
@@ -77,13 +84,24 @@
                 }
                 looked = true;
                 failures = 0;
-                if (asked === letGo) url = answer?.url;
+                if (asked !== letGo) return;
+                url = answer?.url;
+                if (url) {
+                    noLink = 0;
+                } else {
+                    noLink += 1;
+                    if (noLink >= NO_LINK_ASKS) gaveUp = true;
+                }
             })
-            .catch((error) => console.error(error));
+            .catch((error) => console.error(error))
+            .finally(() => {
+                if (onItsWay === asked) onItsWay = undefined;
+            });
     }
 
     function renew() {
         failures = 0;
+        noLink = 0;
         gaveUp = false;
         look();
     }
@@ -94,6 +112,7 @@
         // The next job starts afresh: its own link, and its own few tries
         clearTimeout(retry);
         failures = 0;
+        noLink = 0;
         gaveUp = false;
         looked = true;
     }
