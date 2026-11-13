@@ -106,6 +106,68 @@ describe("the Bricks' computers store (#2000)", () => {
         expect(game.getBrickComputer).toHaveBeenCalledTimes(4);
     });
 
+    describe("pieces that show the same Brick", () => {
+        const OTHER = "9f8e7d6c-1111-4222-8333-000011112222";
+
+        it("share one loop: one read a tick for any number of followers, and it stops when the last lets go", async () => {
+            game.getBrickComputer.mockResolvedValue(computer({ machine: "working", job: runningJob }));
+            const bar = followBrickComputer(BRICK);
+            await vi.advanceTimersByTimeAsync(0);
+            const screen = followBrickComputer(BRICK);
+            const card = followBrickComputer(BRICK);
+            // Each one that joins reads once now, so it starts fresh
+            await vi.advanceTimersByTimeAsync(0);
+            expect(game.getBrickComputer).toHaveBeenCalledTimes(3);
+            game.getBrickComputer.mockClear();
+            await vi.advanceTimersByTimeAsync(4000);
+            expect(game.getBrickComputer).toHaveBeenCalledTimes(1);
+            await vi.advanceTimersByTimeAsync(4000);
+            expect(game.getBrickComputer).toHaveBeenCalledTimes(2);
+            // One lets go: it still reads
+            screen();
+            await vi.advanceTimersByTimeAsync(4000);
+            expect(game.getBrickComputer).toHaveBeenCalledTimes(3);
+            // Letting go twice is harmless: the others still hold it
+            screen();
+            bar();
+            await vi.advanceTimersByTimeAsync(4000);
+            expect(game.getBrickComputer).toHaveBeenCalledTimes(4);
+            // The last one stops it
+            card();
+            await vi.advanceTimersByTimeAsync(60000);
+            expect(game.getBrickComputer).toHaveBeenCalledTimes(4);
+        });
+
+        it("keep two Bricks apart", async () => {
+            game.getBrickComputer.mockResolvedValue(computer({ machine: "working", job: runningJob }));
+            const a = followBrickComputer(BRICK);
+            const b = followBrickComputer(OTHER);
+            await vi.advanceTimersByTimeAsync(0);
+            game.getBrickComputer.mockClear();
+            await vi.advanceTimersByTimeAsync(4000);
+            expect(game.getBrickComputer.mock.calls.map((call) => call[0]).sort()).toEqual([OTHER, BRICK].sort());
+            a();
+            game.getBrickComputer.mockClear();
+            await vi.advanceTimersByTimeAsync(4000);
+            expect(game.getBrickComputer.mock.calls.map((call) => call[0])).toEqual([OTHER]);
+            b();
+            game.getBrickComputer.mockClear();
+            await vi.advanceTimersByTimeAsync(60000);
+            expect(game.getBrickComputer).not.toHaveBeenCalled();
+        });
+
+        it("start again from scratch after everyone let go", async () => {
+            game.getBrickComputer.mockResolvedValue(computer());
+            followBrickComputer(BRICK)();
+            await vi.advanceTimersByTimeAsync(0);
+            game.getBrickComputer.mockClear();
+            const again = followBrickComputer(BRICK);
+            await vi.advanceTimersByTimeAsync(0);
+            expect(game.getBrickComputer).toHaveBeenCalledTimes(1);
+            again();
+        });
+    });
+
     it("dismisses the notice of one named ending, and keeps what Orbit answers with", async () => {
         game.dismissBrickComputerNotice.mockResolvedValue(computer({ notice: null }));
         expect(await dismissComputerNotice(BRICK, "j9")).toBe(true);

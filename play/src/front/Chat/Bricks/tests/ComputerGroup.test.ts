@@ -305,6 +305,35 @@ describe("a Brick's computer on screen (#2000)", () => {
         expect(byId("brickScreenFill")).not.toBeNull();
     });
 
+    it("asks for a tap again when another job names the same details, even if no read saw the gap", async () => {
+        game.watchBrickComputer.mockResolvedValue({ url: "https://screen.test/abc" });
+        const waiting = (id: string) =>
+            computer({
+                machine: "working",
+                job: job({
+                    id,
+                    status: "waiting",
+                    waitingFor: "details",
+                    control: "person",
+                    ready: { what: "your name", where: "the first page" },
+                }),
+            });
+        game.getBrickComputer.mockResolvedValue(waiting("j1"));
+        await loadBrickComputer(BRICK);
+        piece = new BrickScreen({ target, props: { brick, onClose: () => undefined } });
+        await settle();
+        game.brickComputerAction.mockResolvedValue({ job: job({ control: "person" }) });
+        byId("brickScreenFill")?.click();
+        await settle();
+        expect(byId("brickScreenReady")).toBeNull();
+        // The next job asks for the very same thing, and the read goes straight from one job to the other
+        game.getBrickComputer.mockResolvedValue(waiting("j2"));
+        await loadBrickComputer(BRICK);
+        await settle();
+        expect(byId("brickScreenReady")).not.toBeNull();
+        expect(byId("brickScreenFill")).not.toBeNull();
+    });
+
     it("follows the Brick that is shown when the page switches to another one, and stops reading the first", async () => {
         const OTHER = "9f8e7d6c-1111-4222-8333-000011112222";
         game.getBrickComputer.mockResolvedValue(computer());

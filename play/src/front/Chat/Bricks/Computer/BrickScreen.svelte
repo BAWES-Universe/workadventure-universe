@@ -34,7 +34,8 @@
     // What the tap approved. A page that needs details after that is a new request: it gets its own tap, one a page.
     let tappedFor = "";
     let clearedSinceTap = false;
-    $: readyKey = job?.ready ? `${job.ready.what}\n${job.ready.where}` : "";
+    // The same words for another job are another request, even when a read never saw the gap between them
+    $: readyKey = job?.ready ? `${job.id}\n${job.ready.what}\n${job.ready.where}` : "";
     $: if (tapped) {
         if (!job?.ready) clearedSinceTap = true;
         else if (clearedSinceTap || readyKey !== tappedFor) {
@@ -129,7 +130,7 @@
                 if (!ok) warningMessageStore.addWarningMessage($LL.chat.brick.computer.failed());
                 else if (action === "fill-details") {
                     tapped = true;
-                    tappedFor = shown ? `${shown.what}\n${shown.where}` : "";
+                    tappedFor = shown && job ? `${job.id}\n${shown.what}\n${shown.where}` : "";
                     clearedSinceTap = false;
                 }
                 else if (action === "stop") onClose();

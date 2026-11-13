@@ -91,11 +91,10 @@ export async function dismissComputerNotice(brickId: string, jobId: string): Pro
 
 const POLL_MS = 4000;
 
-/**
- * Keeps one Brick's computer up to date while something shows it: read at once, then every few seconds while a job runs, waits or
- * is in line, and slowly otherwise. Reading is all it does. Returns the function that stops it.
- */
-export function followBrickComputer(brickId: string): () => void {
+/** One loop per Brick, however many pieces on screen show it: the bar, the page card and the screen share it. */
+const loops = new Map<string, { holders: number; stop: () => void }>();
+
+function startLoop(brickId: string): () => void {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const tick = async () => {
@@ -108,6 +107,29 @@ export function followBrickComputer(brickId: string): () => void {
     return () => {
         stopped = true;
         if (timer) clearTimeout(timer);
+    };
+}
+
+/**
+ * Keeps one Brick's computer up to date while something shows it: read at once, then every few seconds while a job runs, waits or
+ * is in line, and slowly otherwise. Reading is all it does. Pieces that show the same Brick share one loop, so the same read never
+ * goes out twice: the first to follow starts it, one that joins later reads once now so it starts fresh, and the last to let go
+ * stops it. Returns the function that lets go (letting go twice is harmless).
+ */
+export function followBrickComputer(brickId: string): () => void {
+    const existing = loops.get(brickId);
+    const loop = existing ?? { holders: 0, stop: startLoop(brickId) };
+    if (!existing) loops.set(brickId, loop);
+    else void loadBrickComputer(brickId);
+    loop.holders += 1;
+    let released = false;
+    return () => {
+        if (released) return;
+        released = true;
+        loop.holders -= 1;
+        if (loop.holders > 0) return;
+        loop.stop();
+        if (loops.get(brickId) === loop) loops.delete(brickId);
     };
 }
 
