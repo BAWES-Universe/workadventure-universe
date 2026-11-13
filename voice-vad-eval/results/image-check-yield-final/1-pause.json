@@ -1,6 +1,6 @@
 {
   "expect": "pause",
-  "image": "sha256:343bf5ee476dcf389a5beb708c82d276c86779c89536c635738b527328fd8bb3",
+  "image": "sha256:72ea76f013b410677b4600754020ba541af03f181aa2ed2687e5716ffd8ee2b3",
   "botPacketsWhileFanOn": 75,
   "finishedWhileFanOn": 0,
   "speechStartedWhileFanOn": 0,
@@ -14,32 +14,32 @@
       "fan on"
     ],
     [
-      3736,
+      3728,
       "held: 1"
     ],
     [
-      5318,
+      5340,
       "went on over the fan: 1"
     ],
     [
-      6818,
+      6840,
       "voice over the fan"
     ],
     [
-      6899,
-      "reply ended: {\"type\":\"playback.progress\",\"segmentId\":\"seg-1\",\"playedMs\":2240,\"totalMs\":29120,\"finished\":true,\"interrupted\":true,\"reason\":\"barge_in\",\"sessionId\":\"bot1.1\",\"ts\":1794565699311}"
+      6921,
+      "reply ended: {\"type\":\"playback.progress\",\"segmentId\":\"seg-1\",\"playedMs\":2280,\"totalMs\":29120,\"finished\":true,\"interrupted\":true,\"reason\":\"barge_in\",\"sessionId\":\"bot1.1\",\"ts\":1794566447450}"
     ]
   ],
   "finished": {
     "type": "playback.progress",
     "segmentId": "seg-1",
-    "playedMs": 2240,
+    "playedMs": 2280,
     "totalMs": 29120,
     "finished": true,
     "interrupted": true,
     "reason": "barge_in",
     "sessionId": "bot1.1",
-    "ts": 1794565699311
+    "ts": 1794566447450
   },
   "speechStarted": 1,
   "yieldCounters": {
@@ -47,13 +47,13 @@
     "yield_holds": 1,
     "yield_candidates": 1,
     "yield_continues": 1,
-    "yield_continue_ms": 1605,
+    "yield_continue_ms": 1603,
     "yield_confirmed_detector_while_continuing": 1,
     "yield_stops": 1
   },
   "observer": {
-    "windowsAccepted": 306,
-    "speechWindows": 3,
+    "windowsAccepted": 307,
+    "speechWindows": 4,
     "loaded": 1
   },
   "fixtureStreams": 1
