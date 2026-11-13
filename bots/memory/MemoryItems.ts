@@ -103,7 +103,19 @@ const MIN_PHRASE = 4;
 
 /** These words as their own words, not a piece of a longer one. */
 function wholeWords(text: string): RegExp {
-    return new RegExp(`(^|[^\\p{L}\\p{N}])${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^\\p{L}\\p{N}])`, 'u');
+    return new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRegExp(text)}($|[^\\p{L}\\p{N}])`, 'u');
+}
+
+function escapeRegExp(text: string): string {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** A bot line that tells the person what they like back ("You love tea", "Since you enjoy tea"), not one that only has the word. */
+function saidBackToThem(text: string): RegExp {
+    return new RegExp(
+        `(^|[^\\p{L}\\p{N}])(you|your|you're|you've)[^.!?\\n]{0,40}?(like|love|enjoy|prefer|adore|favou?rite|fan of|into)[^.!?\\n]{0,25}?(^|[^\\p{L}\\p{N}])${escapeRegExp(text)}($|[^\\p{L}\\p{N}])`,
+        'u'
+    );
 }
 
 /**
@@ -117,7 +129,7 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
     const history = memory.conversationHistory;
     const doomedLines = new Set<object>();
     const phrases: RegExp[] = [];
-    const echoes: Array<{ at: number | null; ownName: boolean; words: RegExp }> = [];
+    const echoes: Array<{ at: number | null; ownName: boolean; words: RegExp; toldBack: RegExp }> = [];
     let removed = 0;
 
     const goes = (id: string, at: number | null) => {
@@ -136,7 +148,10 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
         // said twice would otherwise leave the first. Words are matched whole ("Mark" is not "bookmark").
         if (phrase.trim().length >= MIN_PHRASE) phrases.push(wholeWords(phrase.trim().toLowerCase()));
         // A value too short to match everywhere ("Amy") is still said back in the reply right after the line it came from
-        else if (phrase.trim().length > 0) echoes.push({ at, ownName, words: wholeWords(phrase.trim().toLowerCase()) });
+        else if (phrase.trim().length > 0) {
+            const short = phrase.trim().toLowerCase();
+            echoes.push({ at, ownName, words: wholeWords(short), toldBack: saidBackToThem(short) });
+        }
     };
 
     if (info.name) {
@@ -192,6 +207,8 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
             if (line.sender === 'person') return true;
             // The person's own name is not said back by the bot in any later line either: it is the person who forgot it
             if (echoes.some((echo) => echo.ownName && echo.words.test(text))) return false;
+            // A later bot line that tells the person what they like back ("You love tea") goes too; one that only has the word stays
+            if (echoes.some((echo) => echo.toldBack.test(text))) return false;
             // The bot's reply right after the line a short value came from, when it says it back ("I like tea" / "Tea it is!")
             const before = history[index - 1];
             return !(before && doomedLines.has(before) && echoes.some((echo) => echo.at !== null && before.timestamp === echo.at && echo.words.test(text)));

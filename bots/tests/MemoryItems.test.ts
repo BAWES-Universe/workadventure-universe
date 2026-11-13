@@ -147,6 +147,27 @@ describe('dropItems: a forgotten thing goes, with what was built from it', () =>
         expect(lines).toEqual(expect.arrayContaining(['what is the weather', 'Sunny, good for tea outside']));
     });
 
+    it('takes a later bot line that tells a short preference back, and the model never sees it, keeping other mentions (CodeRabbit)', () => {
+        const short = talking();
+        say(short, 'I love tea', 1000);
+        reply(short, 'Tea is lovely!', 1001);
+        say(short, 'what is the weather', 2000);
+        reply(short, 'You love tea, so a warm day is good news', 2001);
+        say(short, 'what should I eat', 3000);
+        reply(short, 'Since you really enjoy tea, a scone goes well', 3001);
+        say(short, 'and outside?', 4000);
+        reply(short, 'Sunny, good for tea outside', 4001);
+        const record = short.getMemory(BOT, SARA)!;
+        expect(dropItems(record, new Set([memoryItemKey('pref', null, 'tea')]))).toBe(1);
+        const context = short.getConversationContext(BOT, SARA);
+        expect(context).not.toMatch(/love tea/i);
+        expect(context).not.toMatch(/enjoy tea/i);
+        expect(context).not.toContain('Tea is lovely!');
+        // What the person asked and an unrelated mention stay
+        expect(context).toContain('what is the weather');
+        expect(context).toContain('Sunny, good for tea outside');
+    });
+
     it('takes a birthday with the events written for it', () => {
         expect(mine().relationship.importantEvents.some((event) => event.event.startsWith('birthday'))).toBe(true);
         dropItems(mine(), new Set([memoryItemKey('birthday', null, 'June 5')]));
