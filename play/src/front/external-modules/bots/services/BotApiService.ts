@@ -1206,6 +1206,59 @@ export class BotApiService {
     }
 
     /**
+     * A Brick's computer as its owner sees it (game #2000): whether it is on, what it is doing, how much of the month is
+     * left. Only reads; it never makes or wakes anything. `{ computer }`.
+     */
+    async getBrickComputer(brickId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/computer`, {});
+    }
+
+    /** One of the owner's calls on a Brick's computer (give, turn off, stop, take over, hand back, fill in details). */
+    async brickComputerAction(
+        brickId: string,
+        action: "give" | "turn-off" | "stop" | "take-over" | "hand-back" | "fill-details",
+        /** With "fill-details": what the screen showed Brick is ready to put in, and where. Orbit refuses the tap if Brick named something else since. */
+        shown?: { what: string; where: string }
+    ): Promise<unknown> {
+        const base = `/api/bricks/${encodeURIComponent(brickId)}/computer`;
+        // Every call has a deadline, so a stalled one fails and the controls and the poll carry on
+        return action === "give"
+            ? await this.brickWrite(base, { method: "POST" })
+            : action === "turn-off"
+            ? await this.brickWrite(base, { method: "DELETE" })
+            : action === "fill-details" && shown
+            ? await this.brickWrite(`${base}/${action}`, {
+                  method: "POST",
+                  body: JSON.stringify({ what: shown.what, where: shown.where }),
+              })
+            : await this.brickWrite(`${base}/${action}`, { method: "POST" });
+    }
+
+    /** Dismisses the notice of how a job ended ("stopped waiting for you", "this month's time ran out"): only the ending it was shown for. */
+    async dismissBrickComputerNotice(brickId: string, jobId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/computer/dismiss`, {
+            method: "POST",
+            body: JSON.stringify({ jobId }),
+        });
+    }
+
+    /**
+     * The screen of a computer that is working. Never wakes a machine: a resting one answers 409 and nothing starts, which is
+     * `undefined` (no screen to show). A request that did not go through (Orbit down, too slow, refused) is "failed", so the
+     * screen can tell the two apart and ask again soon.
+     */
+    async watchBrickComputer(brickId: string): Promise<{ url: string } | undefined | "failed"> {
+        try {
+            const data = (await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/computer/watch`, {
+                method: "POST",
+            })) as { url?: unknown };
+            return typeof data.url === "string" ? { url: data.url } : undefined;
+        } catch (error) {
+            return (error as { status?: number }).status === 409 ? undefined : "failed";
+        }
+    }
+
+    /**
      * The signed-in person's Usage page (game #1999): one bar and plain words for Universe AI, computer time and storage
      * for someone whose Brick uses a computer, and one line while they have extra usage. Throws when Orbit can't be reached.
      */

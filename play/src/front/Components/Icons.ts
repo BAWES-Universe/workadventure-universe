@@ -212,5 +212,12 @@ export { default as IconVolume2 } from "~icons/tabler/volume-2";
 export { default as IconVolumeOff } from "~icons/tabler/volume-off";
 export { default as IconHeart } from "~icons/tabler/heart";
 export { default as IconPlugConnected } from "~icons/tabler/plug-connected";
+// A Brick's computer (game #2000)
+export { default as IconDeviceDesktop } from "~icons/tabler/device-desktop";
+export { default as IconClipboardText } from "~icons/tabler/clipboard-text";
+export { default as IconTicket } from "~icons/tabler/ticket";
+export { default as IconFileSpreadsheet } from "~icons/tabler/file-spreadsheet";
+export { default as IconCircleCheck } from "~icons/tabler/circle-check";
+export { default as IconHandFinger } from "~icons/tabler/hand-finger";
 export { default as IconPhoneOff } from "~icons/tabler/phone-off";
 export { default as IconPhoneCall } from "~icons/tabler/phone-call";

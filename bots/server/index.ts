@@ -132,7 +132,10 @@ let brickChanged: ((botId: string, ownerId: string) => boolean) | undefined;
 let carryGuestChat: ((botId: string, chatId: string, carryId: string, lines: GuestChatNote[]) => Promise<'sent' | 'already' | 'wait' | 'not_brick'>) | undefined;
 /** How often Orbit is asked to remove deleted Bricks whose days are over (#1996). Nothing depends on when it runs. */
 const BRICK_SWEEP_EVERY_MS = 60 * 60 * 1000;
+// A job that stopped renewing its room is stopped safely and jobs in line are tried again (#2000)
+const COMPUTER_SWEEP_EVERY_MS = 60 * 1000;
 let brickSweepInterval: NodeJS.Timeout | undefined;
+let computerSweepInterval: NodeJS.Timeout | undefined;
 /** Ends the retries of listening for Brick changes from other bot servers, at shutdown. */
 let stopBrickListening: (() => void) | undefined;
 
@@ -198,6 +201,8 @@ async function setupMatrix(): Promise<void> {
     };
     brickSweepInterval = setInterval(() => void adminApiService.sweepBricks(), BRICK_SWEEP_EVERY_MS);
     brickSweepInterval.unref?.();
+    computerSweepInterval = setInterval(() => void adminApiService.sweepComputers(), COMPUTER_SWEEP_EVERY_MS);
+    computerSweepInterval.unref?.();
     console.log(`[BotServer] Matrix direct messages on for ${matrixConfig.domain}`);
 }
 // Made in start(), once direct messages are settled: their routes are part of the API.
@@ -422,6 +427,7 @@ function stopGameLoop(): void {
     if (gameLoopInterval) {
         clearInterval(gameLoopInterval);
         if (brickSweepInterval) clearInterval(brickSweepInterval);
+        if (computerSweepInterval) clearInterval(computerSweepInterval);
         gameLoopInterval = null;
         console.log('[BotServer] Game loop stopped');
     }
