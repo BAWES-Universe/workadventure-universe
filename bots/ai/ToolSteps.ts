@@ -38,6 +38,8 @@ export interface ToolStepResult {
     unknown?: boolean;
     /** Why it didn't work, short and without links. */
     note?: string;
+    /** What the step says once it has ended, when "Forgot" or "Read a page" would be untrue ("Didn't forget anything"). */
+    done?: string;
 }
 
 /** unknown: the call went out and no answer came back, so it may have run (#1692). */
@@ -176,7 +178,7 @@ export function resultOf(id: string, result: unknown): ToolStepResult {
         // Forgetting that removed nothing (asked which memory they mean, a question, already gone): the step must not read
         // "Forgot" while the memory is still there (game #2020)
         if (Array.isArray(r.forgotten) && r.forgotten.length === 0 && !r.error) {
-            return { id, ok: false, note: r.unclear === true ? 'Asked which one. Nothing forgotten yet' : 'Nothing was forgotten' };
+            return { id, ok: false, done: 'Forgot nothing yet', note: r.unclear === true ? 'Asked which one. Nothing forgotten yet' : 'Nothing was forgotten' };
         }
         if (r.error || r.success === false || r.isError === true) {
             const why = typeof r.error === 'string' ? r.error : typeof r.message === 'string' ? r.message : undefined;
@@ -230,6 +232,7 @@ export class ReplySteps {
             if (!step) continue;
             step.state = result.ok ? 'done' : result.unknown ? 'unknown' : 'failed';
             if (result.note) step.note = result.note;
+            if (result.done) step.done = result.done;
             changed = true;
         }
         return changed;

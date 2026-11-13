@@ -4,6 +4,23 @@
 import { describe, expect, it } from 'vitest';
 import { ReplySteps, describeStep, resultOf, showsAsStep, summaryOf, tidyName } from '../ai/ToolSteps';
 
+describe('a forget that removed nothing, as the line shows it (CodeRabbit)', () => {
+    it('does not read "Forgot" once it ended without forgetting', () => {
+        const steps = new ReplySteps(0);
+        steps.start([describeStep({ id: 'f', name: 'forget_memory', arguments: { about: 'coffee' } })]);
+        expect(steps.field().steps[0].done).toBe('Forgot');
+        steps.finish([resultOf('f', { forgotten: [], unclear: true })]);
+        const step = steps.field().steps[0];
+        expect(step).toMatchObject({ state: 'failed', done: 'Forgot nothing yet' });
+        expect(step.note).toContain('Nothing forgotten');
+        // Forgot for real: the label stays
+        const again = new ReplySteps(0);
+        again.start([describeStep({ id: 'g', name: 'forget_memory', arguments: { about: 'coffee' } })]);
+        again.finish([resultOf('g', { forgotten: ['x'], count: 1 })]);
+        expect(again.field().steps[0]).toMatchObject({ state: 'done', done: 'Forgot' });
+    });
+});
+
 describe('ToolSteps', () => {
     it('tidies a tool name into words when its server gave no title', () => {
         expect(tidyName('generate_music')).toBe('Generate music');

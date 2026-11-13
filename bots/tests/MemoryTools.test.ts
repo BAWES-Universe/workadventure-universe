@@ -462,8 +462,22 @@ describe('CodeRabbit on #2020: a thing with "and" in it, and a keep that says it
         expect(ids(itemsAbout(paris, 'forget my home city but keep my next trip'))).toEqual(['fact:home_city:Paris']);
     });
 
+    it('says the saved copy is still going, for a partial removal as well as a whole one', async () => {
+        const memory = sara();
+        const waiting = async (went: number) => (await runMemoryTool(FORGET_MEMORY_TOOL, { about: 'that I like coffee' }, { memory, forget: vi.fn(async () => ({ went, waiting: 1 })) })) as Record<string, unknown>;
+        const whole = await waiting(1);
+        expect(whole).toMatchObject({ count: 1, saving: 'waiting' });
+        expect(String(whole.note)).toContain('saved copy');
+        const both = await runMemoryTool(FORGET_MEMORY_TOOL, { ids: [memoryItemKey('name', null, 'Sara'), memoryItemKey('pref', null, 'coffee, no sugar')] }, { memory, forget: vi.fn(async () => ({ went: 1, waiting: 1 })) });
+        expect(both).toMatchObject({ count: 1, asked: 2, saving: 'waiting' });
+        expect(String((both as { note: string }).note)).toContain('saved copy');
+        // Orbit took it: no such warning
+        const done = (await runMemoryTool(FORGET_MEMORY_TOOL, { about: 'that I like coffee' }, { memory, forget: vi.fn(async () => ({ went: 1, waiting: 0 })) })) as Record<string, unknown>;
+        expect(done.saving).toBeUndefined();
+    });
+
     it('shows a forget that removed nothing as a step that did not run', () => {
-        expect(resultOf('a', { forgotten: [], unclear: true, note: 'x' })).toMatchObject({ id: 'a', ok: false });
+        expect(resultOf('a', { forgotten: [], unclear: true, note: 'x' })).toMatchObject({ id: 'a', ok: false, done: 'Forgot nothing yet' });
         expect(resultOf('a', { forgotten: ['They like coffee'], count: 1 })).toEqual({ id: 'a', ok: true });
         expect(resultOf('a', { things: [] })).toEqual({ id: 'a', ok: true });
     });

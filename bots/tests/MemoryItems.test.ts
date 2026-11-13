@@ -115,20 +115,36 @@ describe('dropItems: a forgotten thing goes, with what was built from it', () =>
         expect(lines).toEqual(expect.arrayContaining(['hello there', 'I love lo-fi', 'my birthday is June 5']));
     });
 
-    it('takes the bot reply that says a short value back, and only the one right after its line (CodeRabbit)', () => {
+    it('takes every bot line that says the person\'s short name back, and keeps what the person said (CodeRabbit)', () => {
         const short = talking();
         say(short, 'hello there', 500);
         say(short, 'call me Amy', 1000);
         reply(short, 'Hello, Amy!', 1001);
         say(short, 'what is the weather', 2000);
         reply(short, 'Amy, it is sunny', 2001);
+        say(short, 'my friend Amy is coming', 3000);
         const record = short.getMemory(BOT, SARA)!;
         expect(dropItems(record, new Set([memoryItemKey('name', null, 'Amy')]))).toBe(1);
         const lines = record.conversationHistory.map((line) => line.message);
         expect(lines).not.toContain('call me Amy');
         expect(lines).not.toContain('Hello, Amy!');
-        // A later reply is another matter: only what answers the line the name came from is taken
-        expect(lines).toEqual(expect.arrayContaining(['hello there', 'what is the weather', 'Amy, it is sunny']));
+        expect(lines).not.toContain('Amy, it is sunny');
+        // What the person said about someone else stays
+        expect(lines).toEqual(expect.arrayContaining(['hello there', 'what is the weather', 'my friend Amy is coming']));
+    });
+
+    it('takes only the reply right after the line a short preference came from', () => {
+        const short = talking();
+        say(short, 'I love tea', 1000);
+        reply(short, 'Tea is lovely!', 1001);
+        say(short, 'what is the weather', 2000);
+        reply(short, 'Sunny, good for tea outside', 2001);
+        const record = short.getMemory(BOT, SARA)!;
+        expect(dropItems(record, new Set([memoryItemKey('pref', null, 'tea')]))).toBe(1);
+        const lines = record.conversationHistory.map((line) => line.message);
+        expect(lines).not.toContain('I love tea');
+        expect(lines).not.toContain('Tea is lovely!');
+        expect(lines).toEqual(expect.arrayContaining(['what is the weather', 'Sunny, good for tea outside']));
     });
 
     it('takes a birthday with the events written for it', () => {

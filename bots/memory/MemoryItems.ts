@@ -117,7 +117,7 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
     const history = memory.conversationHistory;
     const doomedLines = new Set<object>();
     const phrases: RegExp[] = [];
-    const echoes: Array<{ at: number; words: RegExp }> = [];
+    const echoes: Array<{ at: number | null; ownName: boolean; words: RegExp }> = [];
     let removed = 0;
 
     const goes = (id: string, at: number | null) => {
@@ -130,19 +130,19 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
         if (info.heard) delete info.heard[key];
         if (info.drawnFrom) delete info.drawnFrom[key];
     };
-    const takeLines = (at: number | null, phrase: string) => {
+    const takeLines = (at: number | null, phrase: string, ownName = false) => {
         if (at !== null) for (const line of history) if (line.timestamp === at && line.sender === 'person') doomedLines.add(line);
         // The lines that say it back go too, the bot's and the person's: only the last line it was said in is noted, and a thing
         // said twice would otherwise leave the first. Words are matched whole ("Mark" is not "bookmark").
         if (phrase.trim().length >= MIN_PHRASE) phrases.push(wholeWords(phrase.trim().toLowerCase()));
         // A value too short to match everywhere ("Amy") is still said back in the reply right after the line it came from
-        else if (phrase.trim().length > 0 && at !== null) echoes.push({ at, words: wholeWords(phrase.trim().toLowerCase()) });
+        else if (phrase.trim().length > 0) echoes.push({ at, ownName, words: wholeWords(phrase.trim().toLowerCase()) });
     };
 
     if (info.name) {
         const at = positive(info.drawnFrom?.name);
         if (goes(memoryItemKey('name', null, info.name), at)) {
-            takeLines(at, info.name);
+            takeLines(at, info.name, true);
             delete info.name;
             forgetPlace('name');
             removed++;
@@ -184,14 +184,17 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
         removed++;
     }
 
-    if (doomedLines.size > 0 || phrases.length > 0) {
+    if (doomedLines.size > 0 || phrases.length > 0 || echoes.length > 0) {
         memory.conversationHistory = history.filter((line, index) => {
             if (doomedLines.has(line)) return false;
             const text = line.message.toLowerCase();
             if (phrases.some((phrase) => phrase.test(text))) return false;
-            // The bot's reply right after the line a short value came from, when it says it back ("call me Amy" / "Hello, Amy!")
+            if (line.sender === 'person') return true;
+            // The person's own name is not said back by the bot in any later line either: it is the person who forgot it
+            if (echoes.some((echo) => echo.ownName && echo.words.test(text))) return false;
+            // The bot's reply right after the line a short value came from, when it says it back ("I like tea" / "Tea it is!")
             const before = history[index - 1];
-            return !(line.sender !== 'person' && before && doomedLines.has(before) && echoes.some((echo) => before.timestamp === echo.at && echo.words.test(text)));
+            return !(before && doomedLines.has(before) && echoes.some((echo) => echo.at !== null && before.timestamp === echo.at && echo.words.test(text)));
         });
     }
     if (removed > 0) info.lastInfoUpdate = Date.now();
