@@ -179,6 +179,20 @@ describe('the detector, asked about one person', () => {
         expect(performance.now() - from).toBeLessThan(800);
     });
 
+    it('their audio stops coming while it is asked (a sender silent between sounds): today\'s rule at once, not after the pause\'s deadline', async () => {
+        const o = asking();
+        await o.observer.ready();
+        // 100 ms: three windows answered, and 4 ms of a fourth left waiting when the audio stops
+        o.feed(NOISE_HZ, 100);
+        await settle();
+        const a = o.asked();
+        const from = performance.now();
+        while (!a.answers.length && performance.now() - from < 2000) await sleep(20);
+        expect(a.answers).toEqual([true]);
+        expect(performance.now() - from).toBeLessThan(800);
+        expect(o.counters.get('observer_decide_fallback_idle')).toBe(1);
+    });
+
     it('slow even once (answers that keep coming, but late): today\'s rule for that question, never a late confirmation', async () => {
         const o = asking();
         await o.observer.ready();
@@ -430,6 +444,17 @@ describe('hearing tells the control how each stretch it was asked about ended', 
         expect(at('user.speech_started')).toBeGreaterThan(-1);
         expect(at('user.turn')).toBeGreaterThan(at('user.speech_started'));
         expect(h.spoke).toEqual([]);
+    });
+
+    it('while the control owns it, words held back from a stretch that then ends because the person is gone are still announced before its end, as today', () => {
+        const h = hearing([{ text: 'hi', wordMs: 20 }], true, 180000, true);
+        h.loud(40);
+        expect(h.started()).toBe(0);
+        h.recognition.interrupt('p1', 1, 'lost', 'path');
+        const at = (entry: string) => h.log.indexOf(entry);
+        expect(at('user.speech_started')).toBeGreaterThan(-1);
+        expect(at('user.turn')).toBeGreaterThan(at('user.speech_started'));
+        expect(h.started()).toBe(1);
     });
 
     it('not owned (the bot silent, or another bot): a fast partial announces at once, as today', () => {

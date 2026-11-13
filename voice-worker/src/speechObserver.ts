@@ -544,12 +544,13 @@ export class SpeechObserver {
         }
         if (this.streams.get(stream.key) === stream) this.streams.delete(stream.key);
         c.inc('observer_streams_ended');
-        // Dropped because the detector could not keep up, or failed: a decision waiting on it is made as today. Not
-        // heard any more (revoked): nothing. Their audio paused (idle) or was lost on the way (reset): their next audio
-        // starts a new stream, which goes on deciding.
-        if ((reason === 'expired' || reason === 'overflow' || reason === 'failed') && stream.owner.pending.get(stream.participantId)?.epoch === stream.epoch) {
-            this.decide(stream.owner, stream.participantId, 'observer_decide_fallback_behind');
-        }
+        // Dropped because the detector could not keep up, or failed: a decision waiting on it is made as today. Their audio
+        // stopped coming (idle) while a decision waits: nothing more is coming to decide on (a sender that sends nothing
+        // while silent), so it is made as today too, at once, not after the pause's deadline. Not heard any more (revoked):
+        // nothing. Lost on the way (reset): their next audio starts a new stream, which goes on deciding.
+        const pending = stream.owner.pending.get(stream.participantId)?.epoch === stream.epoch;
+        if (pending && (reason === 'expired' || reason === 'overflow' || reason === 'failed')) this.decide(stream.owner, stream.participantId, 'observer_decide_fallback_behind');
+        else if (pending && reason === 'idle') this.decide(stream.owner, stream.participantId, 'observer_decide_fallback_idle');
     }
 
     private take(owner: Owner, frame: InputFrame, path: ObserverPath): void {

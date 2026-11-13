@@ -356,8 +356,9 @@ export class Recognition {
             turn.waiting = false;
             this.options.interruptions?.ended(turn.id, how);
         }
-        // Words that came before it was ever loud enough to ask: announced now, as today's partial would have, before its end
-        if (turn.deferred && !turn.announced && turn.everText && how !== 'gone') this.announce(turn, participantId, person.epoch);
+        // Words that came before it was ever loud enough to ask: announced now, before its end, as today's partial would have
+        // been (also when the person is no longer heard: today they were announced at their first words all the same)
+        if (turn.deferred && !turn.announced && turn.everText) this.announce(turn, participantId, person.epoch);
         turn.over = true;
         clearTimeout(turn.timer);
         person.open.delete(turn);
