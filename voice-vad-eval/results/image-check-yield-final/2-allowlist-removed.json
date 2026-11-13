@@ -1,0 +1,37 @@
+{
+  "expect": "today",
+  "image": "sha256:343bf5ee476dcf389a5beb708c82d276c86779c89536c635738b527328fd8bb3",
+  "timeline": [
+    [
+      3626,
+      "bot heard"
+    ],
+    [
+      3626,
+      "fan on"
+    ],
+    [
+      3726,
+      "reply ended: {\"type\":\"playback.progress\",\"segmentId\":\"seg-1\",\"playedMs\":660,\"totalMs\":29120,\"finished\":true,\"interrupted\":true,\"reason\":\"barge_in\",\"sessionId\":\"bot1.1\",\"ts\":1794565715479}"
+    ]
+  ],
+  "finished": {
+    "type": "playback.progress",
+    "segmentId": "seg-1",
+    "playedMs": 660,
+    "totalMs": 29120,
+    "finished": true,
+    "interrupted": true,
+    "reason": "barge_in",
+    "sessionId": "bot1.1",
+    "ts": 1794565715479
+  },
+  "speechStarted": 1,
+  "yieldCounters": {},
+  "observer": {
+    "windowsAccepted": 208,
+    "speechWindows": 0,
+    "loaded": 1
+  },
+  "fixtureStreams": 1
+}

@@ -1,0 +1,60 @@
+{
+  "expect": "pause",
+  "image": "sha256:343bf5ee476dcf389a5beb708c82d276c86779c89536c635738b527328fd8bb3",
+  "botPacketsWhileFanOn": 75,
+  "finishedWhileFanOn": 0,
+  "speechStartedWhileFanOn": 0,
+  "timeline": [
+    [
+      3605,
+      "bot heard"
+    ],
+    [
+      3605,
+      "fan on"
+    ],
+    [
+      3736,
+      "held: 1"
+    ],
+    [
+      5318,
+      "went on over the fan: 1"
+    ],
+    [
+      6818,
+      "voice over the fan"
+    ],
+    [
+      6899,
+      "reply ended: {\"type\":\"playback.progress\",\"segmentId\":\"seg-1\",\"playedMs\":2240,\"totalMs\":29120,\"finished\":true,\"interrupted\":true,\"reason\":\"barge_in\",\"sessionId\":\"bot1.1\",\"ts\":1794565699311}"
+    ]
+  ],
+  "finished": {
+    "type": "playback.progress",
+    "segmentId": "seg-1",
+    "playedMs": 2240,
+    "totalMs": 29120,
+    "finished": true,
+    "interrupted": true,
+    "reason": "barge_in",
+    "sessionId": "bot1.1",
+    "ts": 1794565699311
+  },
+  "speechStarted": 1,
+  "yieldCounters": {
+    "yield_episodes": 1,
+    "yield_holds": 1,
+    "yield_candidates": 1,
+    "yield_continues": 1,
+    "yield_continue_ms": 1605,
+    "yield_confirmed_detector_while_continuing": 1,
+    "yield_stops": 1
+  },
+  "observer": {
+    "windowsAccepted": 306,
+    "speechWindows": 3,
+    "loaded": 1
+  },
+  "fixtureStreams": 1
+}
