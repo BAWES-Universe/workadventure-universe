@@ -514,24 +514,39 @@ describe("pictures, files and voice notes to the Brick for guests (plan v3)", ()
 
     it.each([
         [{ kind: "unheard", why: "too-long", longestSeconds: 300 }, "This note is over 5 minutes. Send a shorter one."],
-        [{ kind: "unheard", why: "failed" }, "Couldn't listen to this note. Type it instead."],
         [{ kind: "unheard", why: "uncertain" }, "Couldn't finish this one. Send it again."],
         [{ kind: "unheard", why: "expired" }, "This answer is no longer available. Send it again."],
-    ])("says in plain words why a note was not heard (%o)", async (answer, words) => {
-        const { room, answers, settle } = withMedia();
-        answers.push(() => Promise.resolve(answer));
-        await room.sendVoiceNote(new File(["ogg"], "voice message.oga", { type: "audio/ogg" }), {
-            duration: 2,
-            waveform: [],
-        });
-        await settle();
-        const drawn = get(room.messages);
-        expect(get(drawn.at(-1)!.content).body).toBe(words);
-        expect(get(drawn.find((message) => message.type === "audio")!.content).transcript).toEqual({
-            state: "failed",
-            text: undefined,
-        });
-    });
+    ])(
+        "says in plain words why a note got no answer, and its bubble does not say it was not heard (%o)",
+        async (answer, words) => {
+            const { room, answers, settle } = withMedia();
+            answers.push(() => Promise.resolve(answer));
+            await room.sendVoiceNote(new File(["ogg"], "voice message.oga", { type: "audio/ogg" }), {
+                duration: 2,
+                waveform: [],
+            });
+            await settle();
+            const drawn = get(room.messages);
+            expect(get(drawn.at(-1)!.content).body).toBe(words);
+            expect(get(drawn.find((message) => message.type === "audio")!.content).transcript).toBeUndefined();
+        }
+    );
+
+    it.each([[{ kind: "unheard", why: "failed" }], [{ kind: "unheard", why: "busy" }]])(
+        "says a note was not heard in its own bubble, once (%o)",
+        async (answer) => {
+            const { room, answers, settle } = withMedia();
+            answers.push(() => Promise.resolve(answer));
+            await room.sendVoiceNote(new File(["ogg"], "voice message.oga", { type: "audio/ogg" }), {
+                duration: 2,
+                waveform: [],
+            });
+            await settle();
+            const drawn = get(room.messages);
+            expect(drawn).toHaveLength(1);
+            expect(get(drawn[0].content).transcript).toEqual({ state: "failed", text: undefined });
+        }
+    );
 
     it("renews a receipt that ran out and sends the same message again, once", async () => {
         const { room, asked, answers, settle, deps } = withMedia();

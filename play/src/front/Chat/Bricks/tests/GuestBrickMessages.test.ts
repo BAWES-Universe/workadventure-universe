@@ -120,7 +120,7 @@ describe("the chat a guest brought along, drawn in the Brick's chat (#1997)", ()
         const [picture, gone, note] = drawn.map((one) => get(one.content));
         expect(picture.url).toBe("https://media.test/cat.png");
         expect(gone.url).toBeUndefined();
-        expect(gone.mediaFailed).toBe(true);
+        expect(gone.mediaGone).toBe(true);
         expect(note.isVoice).toBe(true);
         expect(note.transcript).toEqual({ state: "heard", text: "coffee?" });
         // The stand-in words of a picture line are not drawn, and every drawn id stays the same each time

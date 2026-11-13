@@ -450,7 +450,12 @@ export class GuestBrickChatRoom implements ChatRoom {
         const now = this.deps.now();
         if (hasNote) {
             if (answer.kind === "reply") this.markNote(index, answer.heard);
-            else if (answer.kind === "unheard") this.markNote(index, undefined);
+            else if (answer.kind === "unheard" && (answer.why === "failed" || answer.why === "busy")) {
+                // Not heard: the note's own bubble says so, as in every bot's chat, and nothing else is added
+                this.markNote(index, undefined);
+                return;
+            }
+            // Too long, unfinished or an answer gone: the note was not the problem, the line below says what was
             else this.publish();
         }
         if (answer.kind === "reply") {

@@ -100,6 +100,8 @@ export function guestLineMessage(brick: BrickCard, line: GuestLine, index: numbe
 /** The bubble a file is drawn with, from its link and its type, as the nearby chat tells them. */
 function bubbleOf(one: GuestMedia): ChatMessageType {
     if (one.kind === "note") return "audio";
+    // A picture or file that is gone has nothing to show: its file card says so
+    if (one.gone) return "file";
     const ext = one.url.split("?")[0].split(".").pop()?.toLowerCase() ?? "";
     if (one.type.startsWith("image/") || ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"].includes(ext))
         return "image";
@@ -160,7 +162,7 @@ export function guestLineMessages(
                 media: {
                     url: one.gone ? undefined : one.url,
                     // A file that no longer existed when the chat came along: its bubble says it is gone
-                    ...(one.gone ? { mediaFailed: true } : {}),
+                    ...(one.gone ? { mediaGone: true } : {}),
                     filename: one.kind === "note" ? "voice message.ogg" : one.name,
                     ...(one.kind === "note"
                         ? {

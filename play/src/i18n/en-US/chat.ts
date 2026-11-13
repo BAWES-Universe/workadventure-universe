@@ -249,6 +249,8 @@ const chat: BaseTranslation = {
         tooBig: "{fileName} is too big {maxFileSize}.",
         notLogged: "You need to be logged in to upload a file.",
         clickToOpen: "Click to open",
+        // A guest's file that did not come along after sign-in
+        gone: "This file is gone",
     },
     codeView: {
         lines: "{count:number} {{line|lines}}",
