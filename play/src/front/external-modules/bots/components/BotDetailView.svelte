@@ -32,6 +32,7 @@
     import type { ToolsScreen } from "../toolsModel";
     import BrickFilesGroup from "../../../Chat/Bricks/BrickFilesGroup.svelte";
     import BrickMemoryGroup from "../../../Chat/Bricks/BrickMemoryGroup.svelte";
+    import ComputerGroup from "../../../Chat/Bricks/Computer/ComputerGroup.svelte";
     import BrickLookPicker from "../../../Chat/Bricks/BrickLookPicker.svelte";
     import BotWokaPicker from "./BotWokaPicker.svelte";
     import BotCompanionPicker from "./BotCompanionPicker.svelte";
@@ -895,8 +896,8 @@
 
         <div class="bp-groups">
             {#if brick}
-                <!-- A Brick's page, in the mock's order: Mind, Personality, Voice, Behavior, Permissions and Companion are
-                     here. Usage, Apps, Computer, Goals and tasks, Memory, Files and Template come with their own issues -->
+                <!-- A Brick's page, in the mock's order: Mind, Personality, Voice, Behavior, Memory, Files, Permissions, Companion
+                     and Computer are here. Usage, Apps, Goals and tasks and Template come with their own issues -->
                 <MindGroup
                     bot={currentBot}
                     open={openGroup === "mind"}
@@ -944,6 +945,14 @@
                     link
                     onToggle={() => (editingCompanion = true)}
                 />
+                <!-- Computer comes after Companion, in the mock's order (game #2000) -->
+                {#if currentBot?.id}
+                    <ComputerGroup
+                        brick={{ id: currentBot.id, name: currentBot.name || "Brick" }}
+                        open={openGroup === "computer"}
+                        onToggle={toggleGroup}
+                    />
+                {/if}
             {:else}
                 {#if askedUsage && currentBot}
                     <MakerAskedCard name={currentBot.name || "Bot"} usage={askedUsage} onUseKey={openMind} />

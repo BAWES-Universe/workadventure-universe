@@ -126,6 +126,8 @@ import {
 import { MAX_OUTGOING_MEDIA_BYTES, type BotPlayerMemory, type PendingMedia } from '../memory/ConversationMemory';
 import { FIND_FILES_TOOL, OPEN_FILE_TOOL, SEND_AGAIN_TOOL, fileToolDefinitions, formatFileResult, isFileTool, runFileTool } from './FileTools';
 import { FORGET_MEMORY_TOOL, WHAT_I_REMEMBER_TOOL, isMemoryTool, memoryToolDefinitions, memoryToolsNote, runMemoryTool } from './MemoryTools';
+import { COMPUTER_TOOL, computerToolDefinitions, computerToolsNote, isComputerTool, runComputerTool } from './ComputerTools';
+import { pretendRunnerOn, runPretendJob } from './ComputerPretendRunner';
 import { MAKE_BRICK_TOOL, SUGGEST_BRICK_TOOL, brickToolDefinitions, brickToolsNote, isBrickTool, runBrickTool, type BrickNote } from './BrickTools';
 import { linkOfStore } from '../services/ChatFiles';
 import { addTurnMedia, startTurnMedia, turnMediaNotice, type TurnMedia } from './ArtifactMedia';
@@ -1293,6 +1295,9 @@ export class AIService {
                 }
             }
 
+            // A Brick's own computer, in its owner's direct messages and only while it is on for them (game #2000)
+            const computerOn = channel === 'dm' && botId && playerId !== undefined ? await this.computerOnFor(botId, playerId, adminApiService) : false;
+
             // Build system prompt. Order matters for provider prompt caching
             // (issue #1333): see ai/systemPrompt.ts.
             // The ends of the parts that stay the same from message to message are where the Claude provider marks its cache
@@ -1310,6 +1315,7 @@ export class AIService {
                     channel === 'dm' && botId && playerId !== undefined ? await this.brickNoteFor(botId, playerId, adminApiService) : '',
                     // Any bot, in a direct message: what it remembers about the person, and forgetting it (#2003)
                     channel === 'dm' && this.memoryToolsOn(botId, botClient) ? memoryToolsNote() : '',
+                    computerOn ? computerToolsNote() : '',
                 ].filter(Boolean).join('\n\n') || undefined,
                 channel,
                 // A direct message with a bot that lives in no room, a Brick (#1995)
@@ -1332,7 +1338,8 @@ export class AIService {
                       adminApiService || this.adminApiService,
                       channel,
                       providerId,
-                      this.gatePerson(botId, playerId, botClient, spaceName)
+                      this.gatePerson(botId, playerId, botClient, spaceName),
+                      computerOn
                   );
             // In a bubble, what is on an approval card is for one person only: nothing is said before a tool that asks, and
             // nothing from a card is repeated in the chat (#1658). Added at the end, after what the provider caches.
@@ -3135,7 +3142,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     /**
      * Build tool definitions for function calling
      */
-    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService, channel: 'world' | 'dm' = 'world', providerId?: string, asking?: BotAccessPerson): Promise<{ tools: any[]; toolServerMap: Map<string, ToolServerEntry> }> {
+    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService, channel: 'world' | 'dm' = 'world', providerId?: string, asking?: BotAccessPerson, computerOn = false): Promise<{ tools: any[]; toolServerMap: Map<string, ToolServerEntry> }> {
         const tools: any[] = [];
         const toolServerMap = new Map<string, ToolServerEntry>();
 
@@ -3336,6 +3343,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
         // Tools: what the bot remembers about this person, and forgetting it (game #2003). Any bot, in a direct message only.
         if (channel === 'dm' && this.memoryToolsOn(botId, botClient)) tools.push(...memoryToolDefinitions());
+        // Tool: a job on the Brick's own computer (game #2000), the last way after an answer and an app. Only when it is on for its owner.
+        if (channel === 'dm' && computerOn && !botClient) tools.push(...computerToolDefinitions());
 
         // Add MCP tools
         if (botId && adminApiService) {
@@ -3422,6 +3431,45 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     noteBrick(botId: string, brick: { isDefault: boolean; deleted?: boolean } | undefined): void {
         if (brick?.isDefault && !brick.deleted) this.helperBricks.add(botId);
         else this.helperBricks.delete(botId);
+        if (brick && !brick.deleted) this.ownBricks.add(botId);
+        else this.ownBricks.delete(botId);
+    }
+
+    /** Every Brick that lives in no room and is not deleted: the ones that may have a computer (game #2000). */
+    private ownBricks = new Set<string>();
+    private computerOnCache = new Map<string, { on: boolean; at: number }>();
+
+    /**
+     * Whether this Brick's computer is on for the person in this direct message. Orbit answers; the answer is kept a short while so
+     * chat stays fast, and a failure means off. Never wakes anything.
+     */
+    private async computerOnFor(botId: string, playerId: number, adminApiService?: AdminApiService): Promise<boolean> {
+        const admin = adminApiService ?? this.adminApiService;
+        const userId = this.conversationMemory?.getMemory(botId, playerId)?.userUuid;
+        if (!this.ownBricks.has(botId) || !admin?.isConfigured?.() || !userId) return false;
+        const key = `${botId}|${userId}`;
+        const known = this.computerOnCache.get(key);
+        if (known && Date.now() - known.at < 30_000) return known.on;
+        const on = await admin.computerIsOn(botId, userId).catch(() => false);
+        this.computerOnCache.set(key, { on, at: Date.now() });
+        return on;
+    }
+
+    /** Runs use_computer for the person in this direct message. Orbit starts the job and only for the Brick's owner. */
+    private async runComputerToolCall(args: Record<string, unknown>, where: { adminApiService?: AdminApiService; botId?: string; playerId?: number }): Promise<Record<string, unknown>> {
+        const admin = where.adminApiService ?? this.adminApiService;
+        const userId = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId)?.userUuid : undefined;
+        if (!admin || !where.botId || !userId || !this.ownBricks.has(where.botId)) return { error: "That can't be done in this chat right now." };
+        const botId = where.botId;
+        const result = await runComputerTool(args, {
+            admin,
+            botId,
+            userId,
+            onStarted: pretendRunnerOn() ? (jobId) => void runPretendJob(admin, botId, jobId) : undefined,
+        });
+        // A job started or queued changes what the bar says: read it fresh next time
+        this.computerOnCache.delete(`${botId}|${userId}`);
+        return result;
     }
 
     /** Whether this reply has the two Brick tools: a person's own first Brick, in a direct message, with Orbit to ask. */
@@ -3821,7 +3869,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 // With artifacts off, a tool of the same name belongs to an MCP server: send it down the default branch
                 // So does a file tool's name when Orbit doesn't keep files here (#1508)
                 // And a Brick tool's name anywhere but in a first Brick's direct messages (#1996)
-                switch ((isArtifactTool(toolCall.name) && !artifactsEnabled()) || (isFileTool(toolCall.name) && !this.filesOn(botId, adminApiService)) || (isBrickTool(toolCall.name) && !this.brickToolsOn(botId, botClient, adminApiService)) || (isMemoryTool(toolCall.name) && !this.memoryToolsOn(botId, botClient)) ? '' : toolCall.name) {
+                switch ((isArtifactTool(toolCall.name) && !artifactsEnabled()) || (isFileTool(toolCall.name) && !this.filesOn(botId, adminApiService)) || (isBrickTool(toolCall.name) && !this.brickToolsOn(botId, botClient, adminApiService)) || (isMemoryTool(toolCall.name) && !this.memoryToolsOn(botId, botClient)) || (isComputerTool(toolCall.name) && (!!botClient || !this.ownBricks.has(botId ?? ''))) ? '' : toolCall.name) {
                     case 'get_people_on_map':
                         if (botClient) {
                             const people = botClient.getAllPeople();
@@ -4144,6 +4192,13 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             toolCall.name,
                             typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
                             { botId, playerId }
+                        );
+                        break;
+
+                    case COMPUTER_TOOL:
+                        result = await this.runComputerToolCall(
+                            typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
+                            { adminApiService, botId, playerId }
                         );
                         break;
 
