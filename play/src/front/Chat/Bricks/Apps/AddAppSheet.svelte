@@ -66,6 +66,10 @@
     let reserved = "";
     /** The app Orbit made for this sheet, kept so that a second tap on the sign-in button does not make a second one */
     let createdId: string | undefined;
+    /** What that app was made from: if the person changes any of it before trying again, the old app is replaced */
+    let createdFrom = "";
+    /** The sheet was closed: an app that is still being made is taken away again when Orbit answers */
+    let closed = false;
     let things: string[] | undefined;
     let linkInput: HTMLInputElement | undefined;
 
@@ -100,6 +104,7 @@
     function dropUnfinished() {
         const id = createdId;
         createdId = undefined;
+        createdFrom = "";
         if (!id || phase === "connected") return;
         botApiService
             .disconnectMyApp(id)
@@ -157,28 +162,48 @@
         nameTouched = true;
     }
 
-    /** Makes the app in Orbit, with the way in the person gave. Its id comes back as a promise so the sign-in window can open first. */
-    async function create(): Promise<string> {
+    function appBody() {
+        return newAppBody({
+            name: name.trim() || text.namePlaceholder(),
+            link,
+            signIn: phase === "found" ? "oauth" : signIn,
+            sentAs,
+            key,
+            oauth,
+            headers,
+        });
+    }
+
+    /**
+     * The app this sheet made, made again when the person changed anything it was made from (the way in, a key, a header, the
+     * name) after a try that did not finish. Its id comes back as a promise so the sign-in window can open first.
+     */
+    function theApp(): Promise<string> {
+        const body = appBody();
+        const from = JSON.stringify(body);
+        if (createdId && createdFrom === from) return Promise.resolve(createdId);
+        dropUnfinished();
+        return create(body, from);
+    }
+
+    /** Makes the app in Orbit, with the way in the person gave */
+    async function create(body: ReturnType<typeof appBody>, from: string): Promise<string> {
         try {
-            const id = parseNewAppId(
-                await botApiService.addMyApp(
-                    newAppBody({
-                        name: name.trim() || text.namePlaceholder(),
-                        link,
-                        signIn: phase === "found" ? "oauth" : signIn,
-                        sentAs,
-                        key,
-                        oauth,
-                        headers,
-                    })
-                )
-            );
+            const id = parseNewAppId(await botApiService.addMyApp(body));
             if (!id) throw new Error("Orbit did not say which app it made");
+            if (closed) {
+                // The sheet was closed while Orbit was making it: nobody is left to finish it
+                botApiService
+                    .disconnectMyApp(id)
+                    .catch((error: unknown) => console.warn("Could not drop the app", error));
+                throw new Error("The sheet was closed");
+            }
             createdId = id;
+            createdFrom = from;
             return id;
         } catch (error) {
             console.warn("Could not add the app", error);
-            trouble = "failed";
+            if (!closed) trouble = "failed";
             throw error;
         }
     }
@@ -197,7 +222,7 @@
         if (busy || !headersFine()) return;
         busy = true;
         trouble = "";
-        const creating = createdId ? Promise.resolve(createdId) : create();
+        const creating = theApp();
         // If the window can't open the rejection is not awaited anywhere else; it has already been said on the sheet
         creating.catch(() => undefined);
         try {
@@ -221,7 +246,7 @@
         busy = true;
         trouble = "";
         try {
-            await (createdId ? Promise.resolve(createdId) : create());
+            await theApp();
             await connected();
         } catch {
             // said on the sheet by create()
@@ -241,6 +266,7 @@
     }
 
     function close() {
+        closed = true;
         forgetCheck();
         dropUnfinished();
         onClose();

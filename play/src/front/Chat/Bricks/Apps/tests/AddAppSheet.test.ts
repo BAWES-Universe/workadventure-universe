@@ -331,6 +331,51 @@ describe("Add your own app (#2001, mock Part 13)", () => {
         expect(byId("addAppStopped")).toBeNull();
     });
 
+    it("makes the app again, and drops the old one, when the person changes how it signs in after a try that did not finish", async () => {
+        game.discoverMcpOAuthEndpoints.mockResolvedValue({ discovered: false });
+        game.addMyApp.mockResolvedValueOnce({ id: "app-1" }).mockResolvedValueOnce({ id: "app-2" });
+        game.reconnect.mockImplementationOnce(async (app) => {
+            await app;
+            return "stopped";
+        });
+        await open();
+        await paste("https://tools.example.com/mcp");
+        await type("addAppAuthorize", "https://tools.example.com/oauth/authorize");
+        await type("addAppToken", "https://tools.example.com/oauth/token");
+        await type("addAppClientId", "id-1");
+        await type("addAppClientSecret", "secret-1");
+        await click("addAppSaveSignIn");
+        expect(words(byId("addAppStopped"))).not.toBe("");
+        // a different way in: a key
+        await click("addAppHowKey");
+        await type("addAppKey", "sk-new");
+        await click("addAppAdd");
+        expect(game.disconnectMyApp).toHaveBeenCalledWith("app-1");
+        expect(game.addMyApp).toHaveBeenCalledTimes(2);
+        expect((game.addMyApp.mock.calls[1][0] as { authType: string }).authType).toBe("bearer");
+        await click("addAppDone");
+        expect(onDone).toHaveBeenCalledWith("app-2");
+    });
+
+    it("takes the app away when the sheet is closed while Orbit is still making it", async () => {
+        let answer: (value: unknown) => void = () => {};
+        game.addMyApp.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    answer = resolve;
+                })
+        );
+        await open();
+        await paste(ZAPIER);
+        void click("addAppSignIn");
+        await settle();
+        await click("addAppCancel");
+        answer({ id: "late-1" });
+        await settle();
+        expect(game.disconnectMyApp).toHaveBeenCalledWith("late-1");
+        expect(byId("addAppConnected")).toBeNull();
+    });
+
     it("says so when the window can't open", async () => {
         game.reconnect.mockResolvedValueOnce("blocked");
         await open();
