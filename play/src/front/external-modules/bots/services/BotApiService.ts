@@ -517,6 +517,33 @@ export class BotApiService {
         return response;
     }
 
+    private timeZoneKept = false;
+
+    /**
+     * Tells Orbit the time zone this player's own device is in (preference `timeZone`), so a Brick reads "tomorrow at
+     * 9" on their clock without ever asking where they are (game #2002). Once per page load, only for a signed-in
+     * player, and never loudly: when it cannot be sent the Brick simply asks once.
+     */
+    async keepTimeZone(): Promise<void> {
+        if (this.timeZoneKept || !this.adminUrl || !this.accessToken) return;
+        let zone: string | undefined;
+        try {
+            zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        } catch {
+            return;
+        }
+        if (typeof zone !== "string" || zone.length === 0 || zone.length > 64) return;
+        this.timeZoneKept = true;
+        try {
+            await this.fetch("/api/me/preferences", {
+                method: "PUT",
+                body: JSON.stringify({ key: "timeZone", value: zone }),
+            });
+        } catch {
+            // Not sent this time; tried again when the page loads next
+        }
+    }
+
     /**
      * How many things in Orbit wait for this player's answer (pending invitations for now), for the count on the
      * Orbit button. Null when it can't be known: a guest, no Orbit, or Orbit didn't answer.
