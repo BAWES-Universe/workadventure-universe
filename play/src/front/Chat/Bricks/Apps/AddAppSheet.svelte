@@ -202,7 +202,8 @@
         creating.catch(() => undefined);
         try {
             const result = await signInInPopup(creating);
-            if (trouble === "failed") return;
+            // `create()` said so on the sheet while the window was open: the type system cannot see that
+            if ((trouble as Trouble) === "failed") return;
             if (result === "done") await connected();
             else trouble = result === "blocked" ? "blocked" : "stopped";
         } catch (error) {
