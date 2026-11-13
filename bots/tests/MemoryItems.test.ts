@@ -157,11 +157,14 @@ describe('dropItems: a forgotten thing goes, with what was built from it', () =>
         reply(short, 'Since you really enjoy tea, a scone goes well', 3001);
         say(short, 'and outside?', 4000);
         reply(short, 'Sunny, good for tea outside', 4001);
+        say(short, 'anything else?', 5000);
+        reply(short, 'Tea is your favorite, so I would stay in', 5001);
         const record = short.getMemory(BOT, SARA)!;
         expect(dropItems(record, new Set([memoryItemKey('pref', null, 'tea')]))).toBe(1);
         const context = short.getConversationContext(BOT, SARA);
         expect(context).not.toMatch(/love tea/i);
         expect(context).not.toMatch(/enjoy tea/i);
+        expect(context).not.toMatch(/Tea is your favorite/i);
         expect(context).not.toContain('Tea is lovely!');
         // What the person asked and an unrelated mention stay
         expect(context).toContain('what is the weather');

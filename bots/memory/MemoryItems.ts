@@ -112,10 +112,11 @@ function escapeRegExp(text: string): string {
 
 /** A bot line that tells the person what they like back ("You love tea", "Since you enjoy tea"), not one that only has the word. */
 function saidBackToThem(text: string): RegExp {
-    return new RegExp(
-        `(^|[^\\p{L}\\p{N}])(you|your|you're|you've)[^.!?\\n]{0,40}?(like|love|enjoy|prefer|adore|favou?rite|fan of|into)[^.!?\\n]{0,25}?(^|[^\\p{L}\\p{N}])${escapeRegExp(text)}($|[^\\p{L}\\p{N}])`,
-        'u'
-    );
+    const word = `(^|[^\\p{L}\\p{N}])${escapeRegExp(text)}($|[^\\p{L}\\p{N}])`;
+    const person = `(^|[^\\p{L}\\p{N}])(you|your|you're|you've)`;
+    const likes = `(like|love|enjoy|prefer|adore|favou?rite|fan of|into|go-to)`;
+    // "You love tea" and "Tea is your favorite": the person, a word for liking, and the value, in either order, in one sentence
+    return new RegExp(`${person}[^.!?\\n]{0,40}?${likes}[^.!?\\n]{0,25}?${word}|${word}[^.!?\\n]{0,40}?${person}[^.!?\\n]{0,40}?${likes}`, 'u');
 }
 
 /**
