@@ -28,21 +28,25 @@ export function gitHubHandOverPage(state: string, code: string): string {
 <body>
   <p id="github-message">Finishing your GitHub sign-in…</p>
   <script>
-    var state = ${scriptValue(state)};
-    var code = ${scriptValue(code)};
-    try { history.replaceState(null, "", location.pathname); } catch (e) { /* nothing to tidy */ }
-    var opener = null;
-    try { opener = window.opener; } catch (e) { /* the window that opened this is gone */ }
-    if (opener && state && code) {
-      opener.postMessage({ type: "oauth-github", state: state, code: code }, window.location.origin);
-    } else if (opener) {
-      // Came back without what it needs: the window that opened it stops waiting
-      opener.postMessage({ type: "oauth-failure" }, window.location.origin);
-      document.getElementById("github-message").textContent = "The GitHub sign-in did not finish. Go back to Universe and try again.";
-      setTimeout(function () { window.close(); }, 5000);
-    } else {
-      document.getElementById("github-message").textContent = "This sign-in was not started here. Go back to Universe and press Connect GitHub again.";
-    }
+    // Inside a function: a top-level "var opener" would be window.opener itself, and setting it would cut the link to that window
+    (function () {
+      var state = ${scriptValue(state)};
+      var code = ${scriptValue(code)};
+      try { history.replaceState(null, "", location.pathname); } catch (e) { /* nothing to tidy */ }
+      var back = null;
+      try { back = window.opener; } catch (e) { /* the window that opened this is gone */ }
+      var message = document.getElementById("github-message");
+      if (back && state && code) {
+        back.postMessage({ type: "oauth-github", state: state, code: code }, window.location.origin);
+      } else if (back) {
+        // Came back without what it needs: the window that opened it stops waiting
+        back.postMessage({ type: "oauth-failure" }, window.location.origin);
+        message.textContent = "The GitHub sign-in did not finish. Go back to Universe and try again.";
+        setTimeout(function () { window.close(); }, 5000);
+      } else {
+        message.textContent = "This sign-in was not started here. Go back to Universe and press Connect GitHub again.";
+      }
+    })();
   </script>
 </body></html>`;
 }
