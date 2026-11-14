@@ -87,4 +87,78 @@ describe("BotApiService.syncVisitingBrick tells the bot server when the player c
         await api.syncVisitingBrick(undefined, { ending: true });
         expect(bodyOfLastCall()).toEqual({ roomId: ROOM_A, ending: true });
     });
+    describe("a Brick that walks with its person here is looked after", () => {
+        const walkTo = (standing: { at?: { x: number; y: number } }, x: number, y: number) => {
+            standing.at = { x, y };
+        };
+
+        const answer = (present: boolean) =>
+            fetchMock.mockImplementation(() =>
+                Promise.resolve(
+                    new Response(JSON.stringify({ present }), {
+                        status: 200,
+                        headers: { "Content-Type": "application/json" },
+                    })
+                )
+            );
+
+        it("is synced again every minute with where the player stands now, so a Brick that dropped off the map is put back", async () => {
+            const api = signedIn();
+            const standing: { at: { x: number; y: number } } = { at: { x: 10, y: 20 } };
+            api.setOwnPlaceProvider(() => standing.at);
+            await api.syncVisitingBrick(standing.at);
+            expect(fetchMock).toHaveBeenCalledTimes(1);
+            walkTo(standing, 30, 40);
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+            expect(bodyOfLastCall()).toMatchObject({ roomId: ROOM_A, x: 30, y: 40 });
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(fetchMock).toHaveBeenCalledTimes(3);
+        });
+
+        it("asks nothing when the game does not know where the player is yet, and tries again a minute on", async () => {
+            const api = signedIn();
+            const standing: { at?: { x: number; y: number } } = {};
+            api.setOwnPlaceProvider(() => standing.at);
+            await api.syncVisitingBrick({ x: 1, y: 1 });
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(fetchMock).toHaveBeenCalledTimes(1);
+            walkTo(standing, 5, 6);
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+        });
+
+        it("never starts for someone with no Brick on the map, and stops when the Brick is gone, the visit ends or the room changes", async () => {
+            const api = signedIn();
+            api.setOwnPlaceProvider(() => ({ x: 1, y: 1 }));
+            answer(false);
+            await api.syncVisitingBrick({ x: 1, y: 1 });
+            await vi.advanceTimersByTimeAsync(180_000);
+            expect(fetchMock).toHaveBeenCalledTimes(1);
+
+            // Present, then not (the visit ended on another device): it stops
+            answer(true);
+            await api.syncVisitingBrick({ x: 1, y: 1 });
+            answer(false);
+            await vi.advanceTimersByTimeAsync(60_000);
+            const afterGone = fetchMock.mock.calls.length;
+            await vi.advanceTimersByTimeAsync(180_000);
+            expect(fetchMock).toHaveBeenCalledTimes(afterGone);
+
+            // Present, then the visit is ended here
+            answer(true);
+            await api.syncVisitingBrick({ x: 1, y: 1 });
+            await api.syncVisitingBrick(undefined, { ending: true });
+            const afterEnd = fetchMock.mock.calls.length;
+            await vi.advanceTimersByTimeAsync(180_000);
+            expect(fetchMock).toHaveBeenCalledTimes(afterEnd);
+
+            // Present, then the player walks into another room: the next room starts its own
+            await api.syncVisitingBrick({ x: 1, y: 1 });
+            enter(api, ROOM_B);
+            const afterMove = fetchMock.mock.calls.length;
+            await vi.advanceTimersByTimeAsync(180_000);
+            expect(fetchMock).toHaveBeenCalledTimes(afterMove);
+        });
+    });
 });

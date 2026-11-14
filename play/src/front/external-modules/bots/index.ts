@@ -803,6 +803,8 @@ function ownPlace(): { x: number; y: number } | undefined {
 function putVisitingBrickBeside(): void {
     // The Brick page brings a Brick along from where the person stands
     provideOwnPosition(ownPlace);
+    // A Brick that dropped off the map while its person is still here is put back beside them
+    botApiService.setOwnPlaceProvider(ownPlace);
     const sync = () => {
         // The player's sprite is made a moment after the room loads: the Brick appears where they stand, once the game knows
         // where that is. Never without it: the bot server would not put the Brick on the map

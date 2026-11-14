@@ -432,6 +432,25 @@ describe('putting the Brick on the map', () => {
         expect(spawn.mock.calls[1][1].roomUrl).toBe(ROOM_B);
     });
 
+    it('puts a Brick back beside its person when its connection dropped mid-visit, and does nothing while it is connected (Sentry on #2023)', async () => {
+        const { botManager, orbit, spawn, internals } = manager();
+        orbit.answer = [visitingConfig('brick-1', ROOM_A)];
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT);
+        // The game asks again every minute while the Brick is with its person: nothing changes while it is connected
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, { x: 60, y: 70 });
+        expect(spawn).toHaveBeenCalledTimes(1);
+        // Its socket dropped (the pusher restarted, the network failed): the next sync starts it again beside the person
+        internals.bots.get('brick-1')!.status = 'disconnected';
+        expect(await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, { x: 80, y: 90 })).toEqual({ botId: 'brick-1' });
+        expect(spawn).toHaveBeenCalledTimes(2);
+        expect(spawn.mock.calls[1][2]).toEqual({ position: { x: 80, y: 90 } });
+        // And after the bot server restarted (nothing is held for it any more)
+        internals.bots.delete('brick-1');
+        (botManager as unknown as { visitors: Map<string, unknown> }).visitors.clear();
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, { x: 11, y: 12 });
+        expect(spawn).toHaveBeenCalledTimes(3);
+    });
+
     it('swaps one Brick for another the person brings along', async () => {
         const { botManager, orbit, despawn, internals } = manager();
         orbit.answer = [visitingConfig('brick-1', ROOM_A)];

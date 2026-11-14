@@ -206,7 +206,11 @@ export class BotApiService {
             console.error("[BotApiService] Refusing insecure bot-server credential target:", error);
             this.botServerUrl = null;
         }
-        if (this.roomId !== roomId) this.enteredRoomAt = Date.now();
+        if (this.roomId !== roomId) {
+            this.enteredRoomAt = Date.now();
+            // The Brick of the room before is not this room's to look after: a room entered again starts its own sync
+            this.stopVisitRecheck();
+        }
         this.roomId = roomId;
         this.initializeListeners.forEach((listener) => listener());
         return roomIdChanged;
@@ -1641,11 +1645,40 @@ export class BotApiService {
                 }),
             });
             const answer = (await response.json()) as { present?: unknown } | null;
-            return typeof answer?.present === "boolean" ? answer.present : undefined;
+            const present = typeof answer?.present === "boolean" ? answer.present : undefined;
+            // While a Brick walks with its person here it is looked after: a Brick that dropped off the map (its connection
+            // broke, the bot server restarted) is put back by the next sync, and Orbit hears the person is still here
+            if (options?.ending || present === false) this.stopVisitRecheck();
+            else if (present === true) this.startVisitRecheck();
+            return present;
         } catch (error) {
             console.warn("Could not put the Brick beside you", error);
             return undefined;
         }
+    }
+
+    /** Where the player stands now, for a Brick that has to be put back beside them (the game's own, set once). */
+    setOwnPlaceProvider(provider: (() => { x: number; y: number } | undefined) | undefined): void {
+        this.ownPlaceProvider = provider;
+    }
+
+    private ownPlaceProvider: (() => { x: number; y: number } | undefined) | undefined;
+    private visitRecheck: ReturnType<typeof setInterval> | undefined;
+    private static readonly VISIT_RECHECK_MS = 60_000;
+
+    private startVisitRecheck(): void {
+        if (this.visitRecheck !== undefined) return;
+        this.visitRecheck = setInterval(() => {
+            const place = this.ownPlaceProvider?.();
+            // Without a place the bot server would not put it back: tried again a minute on
+            if (place) void this.syncVisitingBrick(place);
+        }, BotApiService.VISIT_RECHECK_MS);
+    }
+
+    private stopVisitRecheck(): void {
+        if (this.visitRecheck === undefined) return;
+        clearInterval(this.visitRecheck);
+        this.visitRecheck = undefined;
     }
 
     /**
