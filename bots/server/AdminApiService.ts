@@ -259,7 +259,7 @@ export interface BotFilesFound {
  * What people do with a bot, as Orbit's check names it. `change` and `deleteOrSend` are the two permissions a bot's tool
  * needs to change things or to delete or send something (Orbit #737, game #1656).
  */
-export type BotAccessAction = 'chat' | 'dm' | 'summon' | 'change' | 'deleteOrSend';
+export type BotAccessAction = 'chat' | 'dm' | 'call' | 'summon' | 'change' | 'deleteOrSend';
 
 /** Who is asking: a signed-in person is named by their uuid or email, a guest only by being a guest. */
 export interface BotAccessPerson {

@@ -11,7 +11,7 @@ import { BotRegistry } from './BotRegistry';
 import type { BotConfiguration } from './AdminApiService';
 import { movementLogger } from '../utils/MovementLogger';
 import { MCPConnector } from '../mcp/MCPConnector';
-import { BotBusyError, BotUnavailableError } from '../utils/summonErrors';
+import { BotBusyError, BotCannotCallError, BotUnavailableError } from '../utils/summonErrors';
 import { helloSourceOf, typedVoiceName, type HelloSource, type VoiceHello } from '../voice/VoiceHello';
 import { buildVoiceHello } from '../voice/VoiceHelloWiring';
 import { GuestBrickService, isGuestBrickId, readCarriedLines } from './GuestBrickService';
@@ -485,8 +485,8 @@ export class BotAPI {
             try {
                 const { botId } = req.params;
                 const action = req.body?.action;
-                if (action !== 'summon' && action !== 'chat' && action !== 'dm') {
-                    res.status(400).json({ error: 'action must be "summon", "chat" or "dm"' });
+                if (action !== 'summon' && action !== 'chat' && action !== 'dm' && action !== 'call') {
+                    res.status(400).json({ error: 'action must be "summon", "chat", "dm" or "call"' });
                     return;
                 }
 
@@ -511,6 +511,11 @@ export class BotAPI {
                     this.botManager.getBot(botId)?.getName()
                 );
                 if (verdict.kind === 'allowed') {
+                    // Calling is also a voice: the call button is drawn only for a bot that has one (the start still checks)
+                    if (action === 'call' && !(await this.botManager.canTakeCall(botId))) {
+                        res.json({ allowed: false, code: 'no_voice', reason: 'This bot has no voice.' });
+                        return;
+                    }
                     res.json({ allowed: true });
                     return;
                 }
@@ -616,6 +621,79 @@ export class BotAPI {
                 }
                 console.error('[BotAPI] Error summoning bot:', error);
                 res.status(500).json({ error: error.message, code: 'failed' });
+            }
+        });
+
+        // A person calls a bot (game #2004). Who is asking comes from the Orbit session or the game token, as for Summon, and
+        // only they can call for themselves. Orbit's "Call" rule decides (it needs an account, so a guest hears "sign in");
+        // the bot then opens a call-only connection and joins the call's private space, whose name comes back for the
+        // caller to join. The bot does not have to be standing anywhere: it is not in the room for a call.
+        this.app.post('/api/bots/:botId/call', identifySummoner, async (req: BotAPIRequest, res: Response) => {
+            try {
+                const { botId } = req.params;
+                const { playerUuid } = req.body ?? {};
+                if (!playerUuid || typeof playerUuid !== 'string') {
+                    res.status(400).json({ error: 'Missing required field: playerUuid' });
+                    return;
+                }
+                if (req.sessionUuid !== playerUuid && req.gameIdentifier !== playerUuid) {
+                    if (req.sessionRejected && !req.sessionUuid) {
+                        res.status(401).json({ error: 'Invalid or expired Orbit session', code: 'session_expired' });
+                        return;
+                    }
+                    res.status(403).json({ error: 'You can only call a bot for yourself', code: 'not_you' });
+                    return;
+                }
+
+                // The call is held by the person's account, never by a guest's token: a guest is refused below by Orbit
+                const verdict = await this.botManager.getAccessGate().check(
+                    botId,
+                    'call',
+                    { signedIn: !!req.sessionUuid, identifier: req.sessionUuid },
+                    this.botManager.getBot(botId)?.getName()
+                );
+                if (verdict.kind === 'refused') {
+                    res.status(403).json({ started: false, error: verdict.line, reason: verdict.line, code: verdict.code ?? 'not_allowed' });
+                    return;
+                }
+                if (verdict.kind === 'cannot_check') {
+                    res.status(503).json({ started: false, error: verdict.line, reason: verdict.line, code: 'cannot_check' });
+                    return;
+                }
+
+                const call = await this.botManager.startCall(botId, playerUuid);
+                res.json({ botId, started: true, spaceName: call.spaceName });
+            } catch (error: any) {
+                if (error instanceof BotCannotCallError) {
+                    res.status(409).json({ started: false, error: error.message, code: 'no_voice' });
+                    return;
+                }
+                if (error instanceof BotUnavailableError) {
+                    res.status(404).json({ started: false, error: error.message, code: 'not_here' });
+                    return;
+                }
+                console.error('[BotAPI] Error starting a call:', error);
+                res.status(500).json({ started: false, error: 'The call could not start', code: 'failed' });
+            }
+        });
+
+        // The caller hangs up: the bot leaves the call and closes its connection. Only the person who called can end it.
+        this.app.post('/api/bots/:botId/call/end', identifySummoner, async (req: BotAPIRequest, res: Response) => {
+            try {
+                const { botId } = req.params;
+                const { playerUuid } = req.body ?? {};
+                if (!playerUuid || typeof playerUuid !== 'string') {
+                    res.status(400).json({ error: 'Missing required field: playerUuid' });
+                    return;
+                }
+                if (req.sessionUuid !== playerUuid && req.gameIdentifier !== playerUuid) {
+                    res.status(403).json({ error: 'You can only end your own call', code: 'not_you' });
+                    return;
+                }
+                res.json({ botId, ended: await this.botManager.endCall(botId, playerUuid) });
+            } catch (error: any) {
+                console.error('[BotAPI] Error ending a call:', error);
+                res.status(500).json({ error: 'The call could not be ended', code: 'failed' });
             }
         });
 
