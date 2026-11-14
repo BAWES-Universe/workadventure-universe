@@ -111,6 +111,9 @@ const tavily = (over: Record<string, unknown> = {}) => ({
     signInLostAt: null,
     connectedAt: "2026-11-04T09:00:00.000Z",
     lendable: true,
+    kind: "mcp",
+    keyLast4: null,
+    keyMode: null,
     bricks: [{ botId: "b1", botName: "Brick", serverId: "s1", enabled: true, headings: HEADINGS }],
     ...over,
 });

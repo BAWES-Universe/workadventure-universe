@@ -1079,6 +1079,9 @@ describe("the Bricks page (#1995)", () => {
             signInLostAt: null,
             connectedAt: "2026-11-10T09:00:00.000Z",
             lendable: false,
+            kind: "mcp",
+            keyLast4: null,
+            keyMode: null,
             bricks: [],
         });
 

@@ -12,6 +12,9 @@ const mine = (over: Partial<MyApp> = {}): MyApp => ({
     signInLostAt: null,
     connectedAt: "2026-11-10T09:00:00.000Z",
     lendable: false,
+    kind: "mcp",
+    keyLast4: null,
+    keyMode: null,
     bricks: [],
     ...over,
 });

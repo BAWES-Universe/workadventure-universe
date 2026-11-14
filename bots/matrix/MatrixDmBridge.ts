@@ -16,6 +16,7 @@ import {
     type BotNoteState,
     type NoteLanguage,
 } from './BotStatusNotes';
+import { holdsAKey, keyInChatReply } from './KeyInChat';
 import { ACCESS_CACHE_TTL_MS } from '../server/BotAccessGate';
 import { BotWokaAvatar } from './BotWokaAvatar';
 import { ARTIFACT_KEY, artifactDirectMessage } from '../ai/ArtifactTools';
@@ -1265,6 +1266,20 @@ export class MatrixDmBridge implements MatrixEventHandler {
         const read = await this.readMessage(botUserId, content);
         const { attachments, failed } = read;
         let text = read.text;
+        // A key typed into the chat (game #2044): never answered, never remembered, never given to the model. The Brick says where keys go.
+        if (holdsAKey(text) || holdsAKey(String(content.body ?? ''))) {
+            if (!catchUp) {
+                const key = `${event.room_id}|key_in_chat`;
+                if (!this.recentlySent(this.lastNote, key, NOTE_REPEAT_MS)) {
+                    const said = await this.client.sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body: keyInChatReply(language) }).then(
+                        () => true,
+                        () => false
+                    );
+                    if (!said) this.lastNote.delete(key);
+                }
+            }
+            return;
+        }
         if (read.note && this.deps.noteHearing) {
             // A voice note is heard once, here: the bot answers the words, and the note shows what was heard (or that it could not be)
             const heard = await this.hearNote(botUserId, botId, event, read.note, { userId: user.uuid, isGuest: user.isGuest });

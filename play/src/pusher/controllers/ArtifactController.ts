@@ -32,6 +32,9 @@ const ViewerBody = z.object({ chat: Chat.optional() });
 const InChatBody = z.object({ chat: Chat, offset: z.number().int().min(0).max(1_000_000).optional() });
 const OwnedBody = z.object({ offset: z.number().int().min(0).max(1_000_000).optional() });
 const RestoreBody = z.object({ chat: Chat.optional(), number: z.number().int().min(1) });
+const PayBody = z
+    .object({ chat: Chat.optional(), start: z.boolean().optional(), order: z.string().min(1).max(100).optional() })
+    .strict();
 const ShareBody = z
     .object({
         chat: Chat.optional(),
@@ -108,6 +111,9 @@ export class ArtifactController extends BaseHttpController {
             res.status(200).send("");
         });
         this.app.options("/artifacts/:id/share", (req: Request, res: Response) => {
+            res.status(200).send("");
+        });
+        this.app.options("/artifacts/:id/pay", (req: Request, res: Response) => {
             res.status(200).send("");
         });
 
@@ -259,6 +265,33 @@ export class ArtifactController extends BaseHttpController {
                 });
             }
         );
+
+        /**
+         * @openapi
+         * /artifacts/{id}/pay:
+         *   post:
+         *     description: The payment side of a page that takes payments (game #2044). With neither `start` nor `order`,
+         *       answers { enabled }. `start: true` starts a checkout for the amount its owner set (the body holds no amount)
+         *       and answers { orderId, checkoutUrl, app }. `order` answers where that order stands { status, checkoutUrl,
+         *       testPayment }. Whoever may open the artifact may pay on it.
+         *     responses:
+         *       200:
+         *         description: What was asked
+         *       404:
+         *         description: No such artifact, or the person may not open it
+         *       409:
+         *         description: Payments are unavailable on this page ("unavailable")
+         *       429:
+         *         description: Too many tries ("limit"), or too many requests
+         */
+        this.app.post("/artifacts/:id/pay", [authenticated], async (req: Request, res: ResponseWithUserIdentifier) => {
+            await this.answer(req, res, "pay on", async (viewer, id) => {
+                const body = PayBody.safeParse(req.body ?? {});
+                if (!body.success || (body.data.start && body.data.order)) throw new ArtifactsError("invalid_request", 400);
+                const { chat, ...request } = body.data;
+                return artifactsService.pay(id, request, viewer(chat));
+            });
+        });
     }
 
     private async answer(

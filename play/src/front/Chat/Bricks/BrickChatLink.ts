@@ -1,5 +1,6 @@
 import { get } from "svelte/store";
 import { APPS_LINK, openAppsPage } from "./Apps/OpenApps";
+import { keyFormLinkId, KEY_FORM_LINK, openKeyFormSheet } from "./Apps/KeyFormLink";
 import { openBrickChat } from "./BrickChat";
 import { loadMyBricks, myBricksStore } from "./MyBricksStore";
 
@@ -43,6 +44,13 @@ export function brickChatLinks(node: HTMLElement): { destroy: () => void } {
             // "[Apps](#apps)" in a Brick's words (#2001): the Apps page opens here
             event.preventDefault();
             openAppsPage();
+            return;
+        }
+        if (href?.startsWith(KEY_FORM_LINK)) {
+            // "[Add your Tap key](#key-form=<id>)": the safe form opens here. A broken one is never followed either.
+            event.preventDefault();
+            const formId = keyFormLinkId(href);
+            if (formId) openKeyFormSheet(formId);
             return;
         }
         if (!href?.startsWith(BRICK_CHAT_LINK)) return;

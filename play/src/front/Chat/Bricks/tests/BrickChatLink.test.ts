@@ -25,6 +25,8 @@ vi.mock("../Apps/OpenApps", () => ({ APPS_LINK: "#apps", openAppsPage }));
 vi.mock("../BrickChat", () => ({ openBrickChat }));
 vi.mock("../MyBricksStore", () => ({ myBricksStore: bricks, loadMyBricks }));
 
+import { get } from "svelte/store";
+import { closeKeyFormSheet, keyFormOpen } from "../Apps/KeyFormLink";
 import { BRICK_CHAT_LINK, brickChatLinkId, brickChatLinks, linksBrickChat, openBrickChatLink } from "../BrickChatLink";
 
 const flush = () =>
@@ -140,5 +142,29 @@ describe("the Apps link in what a Brick says after connecting an App", () => {
         expect(event.defaultPrevented).toBe(false);
         expect(openAppsPage).not.toHaveBeenCalled();
         action.destroy();
+    });
+});
+
+describe("the key form link in what a Brick says when it needs a key", () => {
+    it("opens the safe form here on a tap, and is never followed", () => {
+        const { list, link } = listWithLink("#key-form=f-1");
+        const action = brickChatLinks(list);
+        const event = tap(link.querySelector("b")!);
+        expect(event.defaultPrevented).toBe(true);
+        expect(get(keyFormOpen)).toBe("f-1");
+        expect(openBrickChat).not.toHaveBeenCalled();
+        closeKeyFormSheet();
+        // A middle click would open the game again in a new tab: it opens the form too
+        expect(tap(link, "auxclick").defaultPrevented).toBe(true);
+        expect(get(keyFormOpen)).toBe("f-1");
+        closeKeyFormSheet();
+        action.destroy();
+    });
+
+    it("opens nothing for a broken link, and still is not followed", () => {
+        const { list, link } = listWithLink("#key-form=a b");
+        brickChatLinks(list);
+        expect(tap(link).defaultPrevented).toBe(true);
+        expect(get(keyFormOpen)).toBeUndefined();
     });
 });

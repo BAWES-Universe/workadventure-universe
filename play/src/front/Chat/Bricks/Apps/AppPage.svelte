@@ -15,6 +15,7 @@
     import AppSection from "./AppSection.svelte";
     import AppsShell from "./AppsShell.svelte";
     import { loadMyApps } from "./AppsStore";
+    import { replaceKey } from "./KeyForm";
     import { mayLine, thingLabel } from "./AppWords";
     import LendSheet from "./LendSheet.svelte";
     import { reconnectApp } from "./Reconnect";
@@ -117,6 +118,16 @@
         if (await change(() => botApiService.disconnectMyApp(appId))) onBack();
     }
 
+    let openingKey = false;
+    async function replaceTheKey() {
+        if (openingKey) return;
+        openingKey = true;
+        const opened = await replaceKey(appId);
+        // eslint-disable-next-line require-atomic-updates
+        openingKey = false;
+        if (!opened) warningMessageStore.addWarningMessage(text.keyOpenFailed());
+    }
+
     async function reconnect() {
         if (signingIn) return;
         signingIn = true;
@@ -183,13 +194,25 @@
                 <span class="pg-ico"><svelte:component this={appIcon(app.name)} font-size="24" /></span>
                 <div class="pg-tx">
                     <span class="pg-cap">{app.reconnectRequired ? text.reconnectEndedTitle() : text.connected()}</span>
-                    <span class="pg-mid">{app.source === "link" ? text.addedByYouCard() : text.signedInAsYou()}</span>
+                    <span class="pg-mid" data-testid={app.kind === "direct" ? "appKeyEnds" : undefined}
+                        >{#if app.kind === "direct"}{app.keyLast4
+                                ? text.keyEnds({ last4: app.keyLast4 })
+                                : text.addedByYouCard()}{app.keyMode
+                                ? ` · ${app.keyMode === "live" ? text.keyKindLive() : text.keyKindTest()}`
+                                : ""}{:else}{app.source === "link" ? text.addedByYouCard() : text.signedInAsYou()}{/if}</span
+                    >
                     {#if app.connectedAt}<span class="pg-cn"
                             >{text.since({ day: dayOf(app.connectedAt, $locale) })}</span
                         >{/if}
                 </div>
             </div>
-            {#if app.reconnectRequired}
+            {#if app.kind === "direct"}
+                <div class="pg-pad pg-wide">
+                    <PageButton tall disabled={openingKey} testId="appReplaceKey" on:click={() => void replaceTheKey()}
+                        >{text.keyReplace()}</PageButton
+                    >
+                </div>
+            {:else if app.reconnectRequired}
                 <div class="pg-alert" data-testid="appSignInEnded">
                     <IconAlertTriangle font-size="20" />
                     <div class="pg-tx">

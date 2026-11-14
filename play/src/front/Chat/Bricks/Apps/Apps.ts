@@ -32,6 +32,11 @@ export interface MyApp {
     connectedAt: string;
     /** Whether it can be lent to a universe: only an app added with a link and a key or nothing, never one signed in as the person */
     lendable: boolean;
+    /** "direct" for an app with a key the person added on the safe form (game #2044); everything else signs in or is a link. */
+    kind: "mcp" | "direct";
+    /** For a key app: how the key ends, and whether it is a test key or a real one. Never more. */
+    keyLast4: string | null;
+    keyMode: "test" | "live" | null;
     bricks: AppBrick[];
 }
 
@@ -186,6 +191,9 @@ export function parseMyApp(value: unknown): MyApp | undefined {
         signInLostAt: when(value.signInLostAt),
         connectedAt: when(value.connectedAt) ?? "",
         lendable: value.lendable === true,
+        kind: value.kind === "direct" ? "direct" : "mcp",
+        keyLast4: text(value.keyLast4) ?? null,
+        keyMode: value.keyMode === "test" || value.keyMode === "live" ? value.keyMode : null,
         bricks,
     };
 }

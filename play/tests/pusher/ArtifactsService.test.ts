@@ -49,6 +49,30 @@ describe("ArtifactsService", () => {
         expect(http.post).not.toHaveBeenCalled();
     });
 
+    it("asks for a page's checkout and an order's state as the viewer, and keeps only what the window may know (game #2044)", async () => {
+        const answer = {
+            orderId: "o1",
+            checkoutUrl: "https://checkout.tap.company/c1",
+            app: "Tap",
+            amount: "1.000",
+            currency: "KWD",
+            apiKey: "sk_live_never",
+        };
+        const http = { put: vi.fn(), post: vi.fn(() => Promise.resolve({ data: answer })) };
+        const service = new ArtifactsService("https://orbit.test", "secret", http);
+        const started = await service.pay(ID, { start: true }, viewer);
+        expect(http.post).toHaveBeenCalledWith(
+            `https://orbit.test/api/artifacts/${ID}/pay`,
+            { viewer, start: true },
+            { headers: { Authorization: "secret" } }
+        );
+        expect(started).toEqual({ orderId: "o1", checkoutUrl: "https://checkout.tap.company/c1", app: "Tap" });
+        http.post.mockResolvedValueOnce({ data: { status: "paid", checkoutUrl: null, testPayment: true } });
+        expect(await service.pay(ID, { order: "o1" }, viewer)).toEqual({ status: "paid", checkoutUrl: null, testPayment: true });
+        http.post.mockRejectedValueOnce(orbitError(429, { error: "limit" }));
+        await expect(service.pay(ID, { start: true }, viewer)).rejects.toEqual(new ArtifactsError("limit", 429));
+    });
+
     it("opens an artifact as the viewer, with the admin token, and keeps only what the game uses", async () => {
         const http = { put: vi.fn(), post: vi.fn(() => Promise.resolve({ data: opened })) };
         const service = new ArtifactsService("https://orbit.test", "secret", http);

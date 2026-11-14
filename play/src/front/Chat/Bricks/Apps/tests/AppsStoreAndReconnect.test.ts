@@ -30,6 +30,9 @@ const app = (id: string) => ({
     signInLostAt: null,
     connectedAt: "2026-11-04T09:00:00.000Z",
     lendable: true,
+    kind: "mcp",
+    keyLast4: null,
+    keyMode: null,
     bricks: [],
 });
 
