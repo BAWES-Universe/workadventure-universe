@@ -398,7 +398,8 @@ export class NoteTurns {
 
     /**
      * The answer of a guest's note: kept at Orbit, encrypted, until the device says it has it (15 minutes at most). Throws when
-     * Orbit did not keep it, so the reply fails and is given back instead of going out as an answer a retry can't find.
+     * Orbit did not keep it. The guest reply path then still sends the answer and keeps the try counted (never given back), so
+     * a retry of the turn is refused by Orbit's count and the model never runs twice for one note.
      */
     answered(turnId: string, generation: number, answer: string): Promise<void> {
         return this.options.orbit.recordVoiceNote(turnId, { event: 'answered', generation, answer }, this.timeoutMs);
