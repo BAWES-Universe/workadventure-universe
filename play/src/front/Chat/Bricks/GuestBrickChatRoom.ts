@@ -171,6 +171,17 @@ export class GuestBrickChatRoom implements ChatRoom {
             .catch(() => this.taking.set({ files: false, notes: false }));
     }
 
+    /** Who a send started for: the guest, and the chat when there was one. */
+    private owner(): { guestId: string | null; startedAt: number | undefined } {
+        return { guestId: this.deps.guestId(), startedAt: this.chat?.startedAt };
+    }
+
+    /** Whether a send that took a while (an upload) still belongs to the chat here: not after sign-out, another guest or a new chat. */
+    private stillOwns(owner: { guestId: string | null; startedAt: number | undefined }): boolean {
+        if (this.deps.guestId() !== owner.guestId) return false;
+        return owner.startedAt === undefined || this.chat?.startedAt === owner.startedAt;
+    }
+
     private ensureChat(now: number): GuestChat {
         if (!this.chat) {
             this.chat = newGuestChat(this.deps.guestId() ?? "", now);
@@ -270,6 +281,7 @@ export class GuestBrickChatRoom implements ChatRoom {
         if (list.length === 0) return;
         const pending: PendingUpload = { texts: [] };
         this.pendingUpload = pending;
+        const owner = this.owner();
         let uploaded: PromiseSettledResult<GuestUploaded>[] = [];
         try {
             uploaded = upload
@@ -278,6 +290,8 @@ export class GuestBrickChatRoom implements ChatRoom {
         } finally {
             if (this.pendingUpload === pending) this.pendingUpload = undefined;
         }
+        // The chat was replaced while the files went up (signed out, another guest): none of it is said in the chat there now
+        if (!this.stillOwns(owner)) return;
         const text = pending.texts.join("\n");
         const failed = uploaded.find((result): result is PromiseRejectedResult => result.status === "rejected");
         if (failed) {
@@ -301,7 +315,9 @@ export class GuestBrickChatRoom implements ChatRoom {
     /** A recorded voice note, sent as the note (never also as a file). Throws when it could not be uploaded: the recorder keeps it. */
     readonly sendVoiceNote = async (file: File, details: VoiceNoteDetails): Promise<void> => {
         if (!this.deps.upload) throw new Error("No uploads here");
+        const owner = this.owner();
         const one = await this.deps.upload(file);
+        if (!this.stillOwns(owner)) return;
         this.addGuestLine("", [
             {
                 kind: "note",
@@ -335,9 +351,11 @@ export class GuestBrickChatRoom implements ChatRoom {
             await sleep(1000);
             return this.ask(request, index, startedAt, { ...tries, lost: tries.lost + 1, waited: tries.waited + 1000 });
         }
-        // Asked again after a lost connection, the first ask may still be running on the bot server ("busy" for this guest): keep
-        // waiting, a little longer each time, up to as long as one answer may take, and the note stays "Listening…" meanwhile
-        if (answer.kind === "busy" && tries.lost >= 1 && tries.waited < LOST_ANSWER_WAIT_MS) {
+        // Asked again after a lost connection, the first ask may still be running on the bot server ("busy" for this guest), or
+        // the uploader can't be read just now while Orbit still keeps the answer ("not heard: busy"): keep waiting, a little
+        // longer each time, up to as long as one answer may take, and the note stays "Listening…" meanwhile
+        const notNow = answer.kind === "busy" || (answer.kind === "unheard" && answer.why === "busy");
+        if (notNow && tries.lost >= 1 && tries.waited < LOST_ANSWER_WAIT_MS) {
             const delay = Math.min(1000 * 2 ** Math.max(0, tries.lost - 1), 8000);
             await sleep(delay);
             return this.ask(request, index, startedAt, {

@@ -123,6 +123,11 @@ export interface GuestChat {
     carryTaken?: true;
     /** How many lines, from the first, are already in the person's chat with their Brick: a carry cut short goes on from here. */
     carriedTo?: number;
+    /**
+     * Where the part on its way ends, kept before it is sent: a part whose answer was lost is sent again with the very same
+     * lines, so the bot server says it once, and lines said since come in the next part.
+     */
+    carryingTo?: number;
     lines: GuestLine[];
 }
 
@@ -168,7 +173,7 @@ export function parseGuestChat(
     try {
         const saved = JSON.parse(raw) as Record<string, unknown> | null;
         if (!saved || typeof saved !== "object") return undefined;
-        const { guestId: owner, startedAt, savedAt, saidNeedsAccount, carryTaken, carriedTo } = saved;
+        const { guestId: owner, startedAt, savedAt, saidNeedsAccount, carryTaken, carriedTo, carryingTo } = saved;
         if (typeof owner !== "string" || (guestId !== null && owner !== guestId)) return undefined;
         if (typeof startedAt !== "number" || typeof savedAt !== "number" || !Number.isFinite(savedAt)) return undefined;
         if (keepMs !== undefined && now - savedAt > keepMs) return undefined;
@@ -181,6 +186,7 @@ export function parseGuestChat(
             saidNeedsAccount: saidNeedsAccount === true,
             ...(carryTaken === true ? { carryTaken: true as const } : {}),
             ...(typeof carriedTo === "number" && Number.isInteger(carriedTo) && carriedTo > 0 ? { carriedTo } : {}),
+            ...(typeof carryingTo === "number" && Number.isInteger(carryingTo) && carryingTo > 0 ? { carryingTo } : {}),
             lines,
         };
     } catch {
@@ -356,8 +362,13 @@ export const CARRIED_BYTES_MAX = 20000;
 const CARRIED_MEDIA_BYTES = 400;
 /** The most pictures, files and notes one part brings (the bot server keeps to the same). */
 export const CARRIED_MEDIA_MAX = 20;
+/** The most one carried line brings, and the longest name or type an item keeps (the bot server keeps to the same). */
+const CARRIED_LINE_MEDIA_MAX = 10;
+const CARRIED_NAME_CHARS = 255;
 /** The words a carried note keeps. */
 const CARRIED_HEARD_CHARS = 4000;
+/** How short a name gets when a line of many items with long names has to be cut to fit. */
+const CARRIED_NAME_CUT_CHARS = 32;
 
 /** The stable name of a carried line: the chat it is from and its place in it, so a part sent twice is drawn once. */
 export const carriedLineId = (chat: Pick<GuestChat, "startedAt">, index: number): string =>
@@ -369,18 +380,28 @@ function carriedBytes(line: GuestChatLine): number {
     return 2 * new TextEncoder().encode(JSON.stringify(shown)).length + (line.media?.length ?? 0) * CARRIED_MEDIA_BYTES;
 }
 
-/** One line as it is carried, cut until it fits in a part on its own: a line is never left behind for being long. */
+/** An item's name as the bot server keeps it: trimmed, cut, and a plain name when there is none. */
+const carriedName = (kind: "file" | "note", name: string, chars: number): string =>
+    name.trim().slice(0, chars) || (kind === "note" ? "voice message" : "file");
+
+/**
+ * One line as it is carried, cut until it fits in a part on its own: a line is never left behind for being long. Its items are
+ * written as the bot server keeps them, so both count the same bytes.
+ */
 function carriedLine(chat: GuestChat, index: number): GuestChatLine {
     const one = chat.lines[index];
-    const media = (one.media ?? []).slice(0, CARRIED_MEDIA_MAX).map((item) => ({
-        kind: item.kind,
-        name: item.name,
-        type: item.type,
-        ...(item.size !== undefined ? { size: item.size } : {}),
-        ...(item.duration !== undefined ? { duration: item.duration } : {}),
-        ...(item.heard ? { heard: item.heard.slice(0, CARRIED_HEARD_CHARS) } : {}),
-        receipt: item.receipt,
-    }));
+    const media = (one.media ?? []).slice(0, CARRIED_LINE_MEDIA_MAX).map((item) => {
+        const heard = item.heard?.trim();
+        return {
+            kind: item.kind,
+            name: carriedName(item.kind, item.name, CARRIED_NAME_CHARS),
+            type: item.type ? item.type.slice(0, CARRIED_NAME_CHARS) : "application/octet-stream",
+            ...(item.size !== undefined ? { size: item.size } : {}),
+            ...(item.duration !== undefined ? { duration: item.duration } : {}),
+            ...(heard ? { heard: heard.slice(0, CARRIED_HEARD_CHARS) } : {}),
+            receipt: item.receipt,
+        };
+    });
     let line: GuestChatLine = {
         id: carriedLineId(chat, index),
         from: one.from,
@@ -405,6 +426,21 @@ function carriedLine(chat: GuestChat, index: number): GuestChatLine {
                 : {}),
         };
     }
+    // Many items with long names: their names are cut short, and their types to what they say
+    if (carriedBytes(line) > CARRIED_BYTES_MAX && line.media) {
+        line = {
+            ...line,
+            media: line.media.map((item) => ({
+                ...item,
+                name: carriedName(item.kind, item.name, CARRIED_NAME_CUT_CHARS),
+                type: item.type.slice(0, CARRIED_NAME_CUT_CHARS),
+            })),
+        };
+    }
+    // Never past the budget: the last items stay behind, so the line, and every part after it, still goes
+    while (carriedBytes(line) > CARRIED_BYTES_MAX && line.media && line.media.length > 1) {
+        line = { ...line, media: line.media.slice(0, -1) };
+    }
     return line;
 }
 
@@ -419,14 +455,16 @@ export interface CarriedPart {
 /**
  * The next part of a chat to bring along after sign-in, from line `from`: as many lines, in order, as fit in one message. A
  * guest's pictures, files and notes go with their receipts, so the bot server can copy them into the account; a note's words go
- * with it. The same chat and `from` always make the same part, so a part asked again is the same part.
+ * with it. The same chat and `from` always make the same part, so a part asked again is the same part; `upTo` holds a part
+ * already on its way to the lines it was sent with.
  */
-export function carriedPart(chat: GuestChat, from: number): CarriedPart {
+export function carriedPart(chat: GuestChat, from: number, upTo: number = chat.lines.length): CarriedPart {
     const lines: GuestChatLine[] = [];
     let bytes = 0;
     let media = 0;
     let to = from;
-    while (to < chat.lines.length && lines.length < CARRIED_LINES_MAX) {
+    const end = Math.min(upTo, chat.lines.length);
+    while (to < end && lines.length < CARRIED_LINES_MAX) {
         const line = carriedLine(chat, to);
         const size = carriedBytes(line);
         const count = line.media?.length ?? 0;

@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { i18nObject } from "../../../../i18n/i18n-util";
 import { loadLocale } from "../../../../i18n/i18n-util.sync";
-import { readGuestChat } from "../Brick";
+import { readGuestChat, type GuestChatLine } from "../Brick";
 import {
     GUEST_BRICK_ID,
     GUEST_KEEP_CARD,
@@ -275,6 +275,57 @@ describe("the Brick for guests: the chat a guest's device keeps (#1997)", () => 
             CARRIED_BYTES_MAX
         );
         expect(part.lines[0].text.length).toBeGreaterThan(0);
+    });
+
+    it("keeps a line of many items with long names within one message, written as the bot server keeps them", () => {
+        // As the bot server measures a line: twice, JSON-escaped, receipts left out, and 400 for each item's copy
+        const serverBytes = (line: GuestChatLine) =>
+            2 *
+                new TextEncoder().encode(
+                    JSON.stringify({ ...line, media: line.media?.map(({ receipt: _receipt, ...rest }) => rest) })
+                ).length +
+            (line.media?.length ?? 0) * 400;
+        let chat = newGuestChat(GUEST, 1);
+        chat = withLine(chat, {
+            from: "guest",
+            text: "",
+            at: 2,
+            media: Array.from({ length: 12 }, (_, n) => ({
+                kind: "file" as const,
+                name: `${"é".repeat(600)}${n}`,
+                type: "x".repeat(600),
+                url: `https://up.test/upload-file/${n}`,
+                receipt: `r.${n}`,
+            })),
+        });
+        chat = withLine(chat, { from: "brick", text: "Got them.", at: 3 });
+        chat = withLine(chat, {
+            from: "guest",
+            text: "",
+            at: 4,
+            media: [{ kind: "note", name: "  ", type: "", url: "https://up.test/upload-file/n", receipt: "r.n" }],
+        });
+        const first = carriedPart(chat, 0);
+        // The line goes, and so does every line after it
+        expect(first.lines.length).toBeGreaterThan(0);
+        expect(serverBytes(first.lines[0])).toBeLessThanOrEqual(CARRIED_BYTES_MAX);
+        expect(first.lines[0].media!.length).toBeLessThanOrEqual(10);
+        const all = [first];
+        while (!all[all.length - 1].last) all.push(carriedPart(chat, all[all.length - 1].to));
+        expect(all.flatMap((part) => part.lines).map((line) => line.at)).toEqual([2, 3, 4]);
+        for (const part of all)
+            expect(part.lines.reduce((sum, line) => sum + serverBytes(line), 0)).toBeLessThanOrEqual(CARRIED_BYTES_MAX);
+        // A blank name and type are counted as the bot server writes them
+        expect(all.flatMap((part) => part.lines).at(-1)!.media![0]).toMatchObject({
+            name: "voice message",
+            type: "application/octet-stream",
+        });
+    });
+
+    it("holds a part already on its way to the lines it was sent with", () => {
+        let chat = newGuestChat(GUEST, 1);
+        for (let at = 1; at <= 3; at++) chat = withLine(chat, { from: "guest", text: `line ${at}`, at });
+        expect(carriedPart(chat, 0, 2)).toMatchObject({ from: 0, to: 2, last: false });
     });
 
     it("brings along a guest's pictures and notes with their receipts, never their links, and at most 20 in a part", () => {

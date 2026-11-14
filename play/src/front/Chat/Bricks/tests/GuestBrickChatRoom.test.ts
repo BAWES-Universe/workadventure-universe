@@ -412,6 +412,34 @@ describe("pictures, files and voice notes to the Brick for guests (plan v3)", ()
         ]);
     });
 
+    it("says nothing of an upload that finishes after the guest changed: not the files, the words typed with them, or a note", async () => {
+        let guest = GUEST;
+        const waiting: Array<() => void> = [];
+        const upload = vi.fn(
+            (file: File) =>
+                new Promise<ReturnType<typeof uploaded>>((resolve) => {
+                    waiting.push(() => resolve(uploaded(file.name, file.type)));
+                })
+        );
+        const { room, asked, settle, device } = withMedia({ upload, guestId: () => guest });
+        const sending = room.sendFiles(files("menu.png"));
+        room.sendMessage("What is this?");
+        const noting = room.sendVoiceNote(new File(["ogg"], "voice message.oga", { type: "audio/ogg" }), {
+            duration: 2,
+            waveform: [0.5],
+        });
+        // Signed out, and someone else is the guest on this device now
+        guest = "9d9d9d9d-aaaa-4bbb-8ccc-0123456789ab";
+        room.refresh();
+        waiting.forEach((finish) => finish());
+        await sending;
+        await noting;
+        await settle();
+        expect(asked).toEqual([]);
+        expect(get(room.messages)).toEqual([]);
+        expect(device.saved).toBeNull();
+    });
+
     it("keeps the files to try again when an upload fails, and the words still go", async () => {
         const upload = vi.fn((file: File) =>
             file.name === "bad.png" ? Promise.reject(new Error("too big")) : Promise.resolve(uploaded(file.name))
@@ -510,6 +538,27 @@ describe("pictures, files and voice notes to the Brick for guests (plan v3)", ()
         expect(drawn.map((message) => get(message.content).body)).not.toContain(
             "Couldn't listen to this note. Type it instead."
         );
+    });
+
+    it("keeps asking for a kept answer while the note can't be read just now, after the connection dropped", async () => {
+        const sleep = vi.fn((_ms: number) => Promise.resolve());
+        const { room, asked, answers, settle } = withMedia({ sleep });
+        answers.push(() => Promise.reject(new Error("network")));
+        // The uploader is down for a moment: the bot server can't read the note again, while Orbit still keeps its answer
+        answers.push(() => Promise.resolve({ kind: "unheard", why: "busy" }));
+        answers.push(() =>
+            Promise.resolve({ kind: "reply", text: "Upstairs.", needsAccount: false, heard: "coffee?" })
+        );
+        await room.sendVoiceNote(new File(["ogg"], "voice message.oga", { type: "audio/ogg" }), {
+            duration: 2,
+            waveform: [],
+        });
+        await settle();
+        await settle();
+        await settle();
+        expect(asked).toHaveLength(3);
+        expect(new Set(asked.map((one) => one.turnId)).size).toBe(1);
+        expect(get(get(room.messages).at(-1)!.content).body).toBe("Upstairs.");
     });
 
     it.each([

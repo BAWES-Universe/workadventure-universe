@@ -950,18 +950,27 @@ export class FileParser {
         }
         let safe = true;
         let resolved = false;
+        let notNow: string | undefined;
         try {
             const v4 = await resolve4(hostname);
             resolved = true;
             if (v4.some(ip => FileParser.isPrivateIp(ip))) safe = false;
-        } catch { /* no A record */ }
+        } catch (error) { notNow ??= FileParser.dnsNotNow(error); /* no A record */ }
         try {
             const v6 = await resolve6(hostname);
             resolved = true;
             if (v6.some(ip => FileParser.isPrivateIp(ip))) safe = false;
-        } catch { /* no AAAA record */ }
+        } catch (error) { notNow ??= FileParser.dnsNotNow(error); /* no AAAA record */ }
+        // A resolver that did not answer just now is said as such (to ask again later), never as a private address; still fail-closed
+        if (!resolved && notNow) throw new Error(`DNS not answered for '${hostname}' just now (${notNow})`);
         // Fail-closed: if neither A nor AAAA resolved, we can't verify safety
         return resolved ? safe : false;
+    }
+
+    /** The code of a DNS failure that may pass on its own (a timeout, a resolver that failed or refused), or undefined. */
+    private static dnsNotNow(error: unknown): string | undefined {
+        const code = (error as { code?: unknown } | null)?.code;
+        return typeof code === 'string' && /^(ETIMEOUT|ESERVFAIL|ECONNREFUSED|EAI_AGAIN|ECANCELLED|ETIMEDOUT)$/.test(code) ? code : undefined;
     }
 
     /**

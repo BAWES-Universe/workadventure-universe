@@ -218,6 +218,43 @@ describe("a guest signs in, and their chat comes with them (#1997)", () => {
         expect(state.chat).toBeUndefined();
     });
 
+    it("sends a part whose answer was lost again with the very same lines, and brings a reply said since in the next part", async () => {
+        const { state, steps } = device();
+        // The bot server said lines 0-2, but the answer never came back; then the Brick for guests answered once more
+        vi.mocked(steps.carry).mockImplementationOnce(() => {
+            state.chat = withLine(state.chat!, { from: "brick", text: "Late answer.", at: 4 });
+            return Promise.reject(new Error("connection lost"));
+        });
+        await expect(carryGuestChatAlong(steps)).resolves.toBe("later");
+        vi.mocked(steps.carry).mockReset().mockResolvedValueOnce("already").mockResolvedValue("sent");
+        await expect(carryGuestChatAlong(steps)).resolves.toBe("carried");
+        const parts = vi.mocked(steps.carry).mock.calls.map(([, , part]) => part);
+        expect(parts).toEqual([
+            { from: 0, to: 2, last: false },
+            { from: 2, to: 3, last: true },
+        ]);
+        expect(state.chat).toBeUndefined();
+    });
+
+    it("leaves another guest's chat alone when a refusal comes back after the chat was replaced", async () => {
+        const { state, steps } = device();
+        const other = { ...chatWithWords(), guestId: "9e9e9e9e-aaaa-4bbb-8ccc-0123456789ab", startedAt: 50 };
+        let refuse: (value: "refused") => void = () => undefined;
+        vi.mocked(steps.carry).mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    refuse = resolve;
+                })
+        );
+        const carrying = carryGuestChatAlong(steps);
+        await vi.waitFor(() => expect(steps.carry).toHaveBeenCalled());
+        // Signed out and another guest started talking while the question was open
+        state.chat = other;
+        refuse("refused");
+        await expect(carrying).resolves.toBe("none");
+        expect(state.chat).toBe(other);
+    });
+
     it("counts a chat the bot server already said as brought", async () => {
         const { steps } = device();
         vi.mocked(steps.carry).mockResolvedValue("already");

@@ -89,3 +89,40 @@ describe("BotApiService.guestBrickReply deadline (#1997)", () => {
         });
     });
 });
+
+describe("BotApiService.botServerCarriesParts (#1997)", () => {
+    const fetchMock = vi.fn();
+
+    beforeEach(() => {
+        sessionStorage.clear();
+        fetchMock.mockReset();
+        vi.stubGlobal("fetch", fetchMock);
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    function service(): BotApiService {
+        const api = new BotApiService();
+        api.initialize(
+            jwtWith({ identifier: "guest-uuid" }),
+            "https://orbit.example.com",
+            "https://play.example.com/@/u/w/r",
+            "https://bots.example.com"
+        );
+        return api;
+    }
+
+    it("says no for a bot server from before, which has no such route, so the chat comes as one message", async () => {
+        fetchMock.mockResolvedValue(new Response(JSON.stringify({ error: "Not found" }), { status: 404 }));
+        await expect(service().botServerCarriesParts()).resolves.toBe(false);
+    });
+
+    it("says yes when the bot server takes parts, and throws when it can't be asked", async () => {
+        fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ carryParts: true }), { status: 200 }));
+        await expect(service().botServerCarriesParts()).resolves.toBe(true);
+        fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ error: "down" }), { status: 503 }));
+        await expect(service().botServerCarriesParts()).rejects.toThrow();
+    });
+});

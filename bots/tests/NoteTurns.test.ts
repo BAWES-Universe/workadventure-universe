@@ -96,6 +96,13 @@ describe('a note for a bot', () => {
         await expect(turns().cleanUp('ua-soniox', null, { file: 'f-1', transcription: 't-1' })).resolves.toEqual({});
     });
 
+    it('says when Orbit did not keep a guest note\'s answer, while other events are only logged', async () => {
+        orbit.recordVoiceNote.mockRejectedValue(new Error('orbit down'));
+        const t = turns();
+        await expect(t.answered('turn-1', 1, 'the answer')).rejects.toThrow('orbit down');
+        await expect(t.answerFailed('turn-1', 1)).resolves.toBeUndefined();
+    });
+
     it('is the same answer when asked again on this server, never heard twice', async () => {
         const t = turns();
         await t.hear('bot-1', 'event-1', { bytes: new Uint8Array([1]) }, SENDER);

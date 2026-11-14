@@ -334,9 +334,12 @@ export class NoteTurns {
         }
     }
 
-    /** The answer of a guest's note: kept at Orbit, encrypted, until the device says it has it (15 minutes at most). */
+    /**
+     * The answer of a guest's note: kept at Orbit, encrypted, until the device says it has it (15 minutes at most). Throws when
+     * Orbit did not keep it, so the reply fails and is given back instead of going out as an answer a retry can't find.
+     */
     answered(turnId: string, generation: number, answer: string): Promise<void> {
-        return this.record(turnId, { event: 'answered', generation, answer });
+        return this.options.orbit.recordVoiceNote(turnId, { event: 'answered', generation, answer }, this.timeoutMs);
     }
 
     /** The model failed: the words stay, so the next try answers without hearing the note again. */

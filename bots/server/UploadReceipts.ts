@@ -76,10 +76,11 @@ export function uploaderPathOf(claims: Pick<ReceiptClaims, 'fid' | 'bkt'>, uploa
 }
 
 /**
- * What a fetch says when the uploader could not be asked just now: a 5xx, 408 or 429, a timeout or a dropped connection.
+ * What a fetch says when the uploader could not be asked just now: a 5xx, 408 or 429, a timeout, a dropped connection, or a DNS
+ * lookup that was not answered.
  * Anything else, a 4xx or a link the fetch refuses (an address it must not reach), is not going to change on its own.
  */
-const TRANSIENT_FETCH = /^HTTP (5\d\d|408|429)\b|timed? ?out|timeout|aborted|fetch failed|socket hang up|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|EPIPE|network/i;
+const TRANSIENT_FETCH = /^HTTP (5\d\d|408|429)\b|timed? ?out|timeout|aborted|fetch failed|socket hang up|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|EPIPE|network|DNS not answered/i;
 
 export type ReceiptFile = { ok: true; bytes: Uint8Array; claims: ReceiptClaims } | { ok: false; reason: 'gone' | 'changed' | 'too-big' | 'not-now' };
 

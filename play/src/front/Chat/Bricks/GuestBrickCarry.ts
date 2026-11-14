@@ -78,8 +78,11 @@ export async function carryGuestChatAlong(steps: CarrySteps): Promise<CarryOutco
             steps.drop();
             return "carried";
         }
-        // A bot server from before takes one message: the newest lines that fit, as it always did
-        const part = inParts ? carriedPart(now, from) : carriedTail(now);
+        // A bot server from before takes one message: the newest lines that fit, as it always did. A part that may have been
+        // said already (its answer lost) goes again with the very same lines; lines said since wait for the next part
+        const pending = now.carryingTo !== undefined && now.carryingTo > from ? now.carryingTo : undefined;
+        const part = inParts ? carriedPart(now, from, pending) : carriedTail(now);
+        if (inParts && pending === undefined) steps.keep({ ...now, carryingTo: part.to });
         let result: "sent" | "already" | "wait" | "refused";
         try {
             result = inParts
@@ -89,6 +92,9 @@ export async function carryGuestChatAlong(steps: CarrySteps): Promise<CarryOutco
             console.warn("Could not bring the chat this device had as a guest", error);
             return "later";
         }
+        // Signed out, or another guest's chat since the question went: what it answers is not about the chat there now
+        const after = steps.read();
+        if (!after || after.guestId !== chat.guestId || after.startedAt !== chat.startedAt) return "none";
         if (result === "refused") {
             steps.drop();
             return "none";
@@ -100,9 +106,8 @@ export async function carryGuestChatAlong(steps: CarrySteps): Promise<CarryOutco
             continue;
         }
         from = part.to;
-        const kept = steps.read();
-        if (kept && kept.guestId === chat.guestId && kept.startedAt === chat.startedAt)
-            steps.keep({ ...kept, carriedTo: from });
+        const { carryingTo: _said, ...kept } = after;
+        steps.keep({ ...kept, carriedTo: from });
     }
     /* eslint-enable no-await-in-loop */
 }

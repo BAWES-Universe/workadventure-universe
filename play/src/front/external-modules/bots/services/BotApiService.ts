@@ -1361,7 +1361,14 @@ export class BotApiService {
      * which takes it as one message. Throws when the bot server can't be asked.
      */
     async botServerCarriesParts(): Promise<boolean> {
-        const response = await this.fetchBotServer("/api/guest-brick/media", { method: "GET" });
+        let response: Response;
+        try {
+            response = await this.fetchBotServer("/api/guest-brick/media", { method: "GET" });
+        } catch (error) {
+            // A bot server from before has no such route at all
+            if ((error as { status?: number }).status === 404) return false;
+            throw error;
+        }
         const data = (await response.json().catch(() => null)) as { carryParts?: unknown } | null;
         return data?.carryParts === true;
     }

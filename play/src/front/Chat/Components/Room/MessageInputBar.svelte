@@ -429,7 +429,11 @@
                     })
                     .catch((error) => {
                         console.error("Error sending files:", error);
-                        const failure = new UploadFailure("other", undefined, "matrix-error");
+                        // The Brick for guests uploads here too: its refusal (too big, turned off) keeps its reason
+                        const failure =
+                            error instanceof UploadFailure
+                                ? error
+                                : new UploadFailure("other", undefined, "matrix-error");
                         const failures = [failure];
                         showUploadError(
                             uploadFailureLine(
