@@ -134,7 +134,11 @@ export class BotRegistry {
      * Without Redis this is a no-op and the caller keeps its own in-process copy.
      */
     async rememberDmRoom(roomId: string, botId: string): Promise<void> {
-        if (!this.redis?.isOpen) return;
+        if (!this.redis?.isOpen) {
+            // A store that was in use and is down did not keep it: said, so the caller writes it again (no store at all is not a failure)
+            if (this.sharedStoreSeen) throw new Error('The shared store is down');
+            return;
+        }
         await this.redis.hSet('bots:matrix:dm-rooms', roomId, botId);
     }
 
@@ -155,13 +159,22 @@ export class BotRegistry {
      * without a message from them first. Without Redis this is a no-op and the caller keeps its own in-process copy.
      */
     async rememberDmRoomOf(botId: string, matrixUserId: string, roomId: string): Promise<void> {
-        if (!this.redis?.isOpen) return;
+        if (!this.redis?.isOpen) {
+            if (this.sharedStoreSeen) throw new Error('The shared store is down');
+            return;
+        }
         await this.redis.hSet('bots:matrix:dm-room-of', `${botId}|${matrixUserId}`, roomId);
     }
 
-    /** The direct message room of a bot and a person, or null when unknown. */
+    /**
+     * The direct message room of a bot and a person, or null when unknown. Throws while a Redis that was in use is down:
+     * "unknown" would be a guess then, and a caller that must be certain (a reminder that says it has no chat) waits instead.
+     */
     async getDmRoomOf(botId: string, matrixUserId: string): Promise<string | null> {
-        if (!this.redis?.isOpen) return null;
+        if (!this.redis?.isOpen) {
+            if (this.sharedStoreSeen) throw new Error('The shared store is down');
+            return null;
+        }
         return (await this.redis.hGet('bots:matrix:dm-room-of', `${botId}|${matrixUserId}`)) ?? null;
     }
 
