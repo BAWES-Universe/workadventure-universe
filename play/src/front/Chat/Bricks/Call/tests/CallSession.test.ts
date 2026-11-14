@@ -17,6 +17,14 @@ const run = (state: CallState, ...events: CallEvent[]) => events.reduce(callRedu
 const live = (): CallState => run(startCall(T0), { type: "connected", now: T0 + 1000 });
 
 describe("a call starts and connects", () => {
+    it("walk-up-gone clears the card only for the person it asks about", () => {
+        const asked = run(live(), { type: "someone-here", id: "u1", name: "Sara" });
+        expect(run(asked, { type: "walk-up-gone", id: "u2" }).walkUp?.id).toBe("u1");
+        const cleared = run(asked, { type: "walk-up-gone", id: "u1" });
+        expect(cleared.walkUp).toBeUndefined();
+        expect(cleared.phase).toBe("on");
+    });
+
     it("waits for the bot to be heard before it is on", () => {
         const state = startCall(T0);
         expect(state.phase).toBe("connecting");

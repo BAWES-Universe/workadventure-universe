@@ -47,6 +47,12 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
     const evaluate = (): void => {
         const current = state();
         if (!running || !seeded || !current) return;
+        // The card goes when the person it asks about is no longer in the bubble: holding the call to talk to an empty
+        // bubble would be wrong
+        const asked = current.walkUp;
+        if (asked && (kind !== "bubble" || !people.some((person) => person.id === asked.id))) {
+            deps.store.send({ type: "walk-up-gone", id: asked.id });
+        }
         // A meeting puts the call on hold, once, as the person walks in (the person's tap on Resume is what brings it back)
         if (kind === "meeting" && lastKind !== "meeting") deps.store.send({ type: "meeting-joined" });
         lastKind = kind;

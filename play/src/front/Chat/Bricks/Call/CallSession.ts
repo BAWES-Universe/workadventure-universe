@@ -64,6 +64,7 @@ export type CallEvent =
     | { type: "bot-working"; work: BotStepKind | undefined; line?: string; now: number }
     | { type: "bot-waiting"; waiting: boolean; now: number }
     | { type: "someone-here"; id: string; name: string }
+    | { type: "walk-up-gone"; id: string }
     | { type: "not-now" }
     | { type: "hold-and-talk" }
     | { type: "meeting-joined" }
@@ -145,6 +146,10 @@ export function callReducer(state: CallState, event: CallEvent): CallState {
             // is on hold: it is already held for a person or a meeting, and joining someone else would overwrite that.
             if (state.walkUp || state.phase !== "on") return state;
             return { ...state, walkUp: { id: event.id, name: event.name } };
+        case "walk-up-gone":
+            // The person the card asks about has left the bubble: the card goes, and the call is left as it was.
+            if (state.walkUp?.id !== event.id) return state;
+            return { ...state, walkUp: undefined };
         case "not-now":
             // The call carries on untouched. The other person can still message.
             return { ...state, walkUp: undefined };

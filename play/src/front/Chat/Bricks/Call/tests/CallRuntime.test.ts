@@ -45,6 +45,31 @@ describe("someone walks up during a call", () => {
         t.runtime.destroy();
     });
 
+    it("takes the card away when that person leaves the bubble, and asks about whoever is next", () => {
+        const t = setup({ kind: "bubble" });
+        t.callOn();
+        t.nearby.set({ kind: "bubble", people: [ana, bo] });
+        expect(t.state()?.walkUp?.id).toBe("a");
+        t.nearby.set({ kind: "bubble", people: [bo] });
+        expect(t.state()?.walkUp?.id).toBe("b");
+        t.nearby.set({ kind: "bubble", people: [] });
+        expect(t.state()?.walkUp).toBeUndefined();
+        expect(t.state()?.phase).toBe("on");
+        t.runtime.destroy();
+    });
+
+    it("takes the card away when the bubble goes, and asks again if the person comes back", () => {
+        const t = setup({ kind: "bubble" });
+        t.callOn();
+        t.nearby.set({ kind: "bubble", people: [ana] });
+        expect(t.state()?.walkUp?.id).toBe("a");
+        t.nearby.set({ kind: "none", people: [] });
+        expect(t.state()?.walkUp).toBeUndefined();
+        t.nearby.set({ kind: "bubble", people: [ana] });
+        expect(t.state()?.walkUp?.id).toBe("a");
+        t.runtime.destroy();
+    });
+
     it("Not now leaves the call on, and does not ask about the same person again", () => {
         const t = setup({ kind: "bubble" });
         t.callOn();
