@@ -29,7 +29,7 @@
     import PersonSessionRow from "./PersonSessionRow.svelte";
     import { getPersonActions, isSelf } from "./PersonActions";
     import { bestStatus, isMyAccount } from "./PersonSessions";
-    import { statusLabel } from "./PersonStatus";
+    import { statusLabelOnACall } from "./PersonStatus";
     import {
         goToPersonRoom,
         locatePerson,
@@ -102,6 +102,11 @@
               )
             : availabilityStatus;
     $: userStatus = isMe ? availabilityStatusStore : sessionsStatus;
+    // On a call with a Brick on any of their sessions: a label next to the status, never a status (game #2004).
+    $: callStores = (sessions.length > 1 ? sessions : [user]).flatMap((session) =>
+        session.onACall ? [session.onACall] : []
+    );
+    $: onACall = callStores.length ? derived(callStores, (calls) => calls.some(Boolean)) : readable(false);
 
     // Under the toggle: your other sessions, or all of someone else's, each reachable on its own.
     // Only for someone with more than one session.
@@ -328,7 +333,7 @@
                                     style="background:{getColorHexOfStatus($userStatus)}"
                                 />
                             {/if}
-                            {statusLabel($userStatus, $LL)}
+                            {statusLabelOnACall($userStatus, $onACall, $LL)}
                         </div>
                     {:else if onlineElsewhere}
                         <div

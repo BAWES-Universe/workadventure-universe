@@ -1,3 +1,4 @@
+import { writable } from "svelte/store";
 import { afterEach, describe, expect, it } from "vitest";
 import type { SpaceUserExtended } from "../../Space/SpaceInterface";
 import { worldRolesStore } from "../Roles/WorldRoles";
@@ -29,6 +30,12 @@ describe("mapExtendedSpaceUserToChatUser", () => {
             reactiveUser: { availabilityStatus: undefined },
             spaceUserId: "space-1",
         } as unknown as SpaceUserExtended);
+
+    it("carries the 'On a call' label store of the person (game #2004)", () => {
+        const onACall = writable(true);
+        const user = { ...spaceUser("Ada"), reactiveUser: { availabilityStatus: undefined, onACall } };
+        expect(mapExtendedSpaceUserToChatUser(user as unknown as SpaceUserExtended).onACall).toBe(onACall);
+    });
 
     it("carries the name they have in the world right now as the name they go by in Universe", () => {
         expect(mapExtendedSpaceUserToChatUser(spaceUser("Ada")).gameName).toBe("Ada");

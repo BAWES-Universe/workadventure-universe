@@ -129,6 +129,7 @@ function mergeEntries(chatUserList: PartialAnyKindOfUser[]): AnyKindOfUser {
             gameName: user.gameName || acc.gameName,
             storedWoka: user.storedWoka || acc.storedWoka,
             availabilityStatus: user.availabilityStatus || acc.availabilityStatus,
+            onACall: user.onACall || acc.onACall,
             pictureStore: user.pictureStore || acc.pictureStore,
             roomName: user.roomName || acc.roomName,
             playUri: user.playUri || acc.playUri,

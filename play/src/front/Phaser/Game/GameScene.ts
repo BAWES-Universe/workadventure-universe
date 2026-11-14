@@ -69,6 +69,7 @@ import { getBotServerUrl } from "../../external-modules/bots/services/BotServerU
 import { refreshThisDeviceOnce } from "../../Notification/Push/PushDevice";
 import { clearHandsOffHere, myHandRaisedStore, raisedHandsStore } from "../../Space/RaiseHand/RaiseHandStore";
 import { attendeeCameraAreaSpacesStore, stopShowingCameraToSpeakers } from "../../Space/AttendeeCamera";
+import { shareOnACall } from "../../Chat/Bricks/Call/CallPresence";
 import { bindPodiumToRaiseHand, clearStageState } from "../../Space/RaiseHand/PodiumStore";
 import { Loader } from "../Components/Loader";
 import { RemotePlayer } from "../Entity/RemotePlayer";
@@ -430,6 +431,7 @@ export class GameScene extends DirtyScene {
     private stopKeepingNearbyShared: (() => void) | undefined;
     private _userProviderMergerDeferred: Deferred<UserProviderMerger> = new Deferred();
     private unsubscribeChatBlockSync: (() => void) | undefined;
+    private unsubscribeOnACall: (() => void) | undefined;
     private _worldUserCounter: ForwardableStore<number> = new ForwardableStore(0);
     private _worldPeopleCounter: ForwardableStore<number> = new ForwardableStore(0);
     // Everyone in the world space (the unfiltered source behind the People tab), undefined until the space is joined
@@ -1387,6 +1389,8 @@ export class GameScene extends DirtyScene {
     public cleanupClosingScene(reconnecting = false): void {
         this.unsubscribeChatBlockSync?.();
         this.unsubscribeChatBlockSync = undefined;
+        this.unsubscribeOnACall?.();
+        this.unsubscribeOnACall = undefined;
         // No broadcast join may land on a destroyed registry.
         this.broadcastSceneClosing = true;
         this.pendingBroadcastJoins.clear();
@@ -2245,11 +2249,13 @@ export class GameScene extends DirtyScene {
                     .joinSpace(
                         WORLD_SPACE_NAME,
                         FilterType.ALL_USERS,
-                        ["availabilityStatus", "chatID"],
+                        ["availabilityStatus", "chatID", "onACall"],
                         this.abortController.signal
                     )
                     .then((space) => {
                         this.allUserSpace = space;
+                        // Other people see "On a call" next to this person while a call with a Brick lasts (#2004)
+                        this.unsubscribeOnACall = shareOnACall(space);
                         worldUserProvider = new WorldUserProvider(space);
                         this._worldUserCounter.forward(worldUserProvider.userCount);
                         this._worldPeopleCounter.forward(worldUserProvider.peopleCount);

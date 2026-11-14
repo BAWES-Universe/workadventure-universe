@@ -70,6 +70,8 @@ export interface SpaceInterface {
     getSpaceUserByUuid(uuid: string): SpaceUserExtended | undefined;
     simplePeer: SimplePeerConnectionInterface | undefined;
     readonly onLeaveSpace: Observable<void>;
+    /** Fires each time the space was joined again after the connection to it was lost (our user there is new). */
+    readonly reconnected: Observable<void>;
     get spacePeerManager(): SpacePeerManager;
     dispatchSound(url: URL): Promise<void>;
     //userExist(userId: number): boolean;
