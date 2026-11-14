@@ -10,6 +10,7 @@ import { parseForgetNotice, parseItemForgets, type ItemForgetHandler, type Memor
 import { SOMEONE_UNKNOWN } from '../memory/Heard';
 import type { WokaList } from '../matrix/wokaPicture';
 import type { VoiceActiveAnswer, VoiceCredentialsAnswer, VoiceHealthReport, VoiceLimits } from '../voice/VoiceSettings';
+import { RUNNABLE_KINDS, dueRunOf, type DueRun, type RunCheck, type RunReport } from './BrickRunner';
 
 // Optional Sentry integration (uncomment if @sentry/node is installed)
 // import * as Sentry from '@sentry/node';
@@ -258,7 +259,7 @@ export interface BotFilesFound {
  * What people do with a bot, as Orbit's check names it. `change` and `deleteOrSend` are the two permissions a bot's tool
  * needs to change things or to delete or send something (Orbit #737, game #1656).
  */
-export type BotAccessAction = 'chat' | 'dm' | 'summon' | 'change' | 'deleteOrSend';
+export type BotAccessAction = 'chat' | 'dm' | 'call' | 'summon' | 'change' | 'deleteOrSend';
 
 /** Who is asking: a signed-in person is named by their uuid or email, a guest only by being a guest. */
 export interface BotAccessPerson {
@@ -365,6 +366,18 @@ export interface NewBrickAsk {
     /** They asked for a second one of a name they already have. */
     evenIfThere?: boolean;
 }
+
+/** What Orbit serves the bot server to run the Brick for guests in one room (game #1997). Universe AI's own credentials. */
+export interface GuestBrickSetup {
+    brick: { name: string; description: string; characterTextureId: string; chatInstructions: string };
+    credentials: Record<string, any> & { maxTokens?: number; limits?: Partial<import('../ai/types').BotLimits> };
+}
+
+/** May a guest get one more reply from the Brick for guests: yes, or which allowance is used up and when it opens again. */
+export type GuestBrickAllowance =
+    /** `counted` is false when Orbit already counted this very try and it did not fail: it is answered or being answered, so no model runs again. Absent from an Orbit that does not say: treated as counted. */
+    | { allowed: true; counted?: boolean }
+    | { allowed: false; limit: 'guest' | 'universe'; resetsAt: string };
 
 const BRICK_CALL_TIMEOUT_MS = 8_000;
 
@@ -893,7 +906,7 @@ export class AdminApiService {
         };
     }
 
-    private brickCall<T>(method: 'get' | 'post' | 'put', path: string, body?: unknown, params?: Record<string, string>): Promise<AxiosResponse<T>> {
+    private brickCall<T>(method: 'get' | 'post' | 'put' | 'patch', path: string, body?: unknown, params?: Record<string, string>): Promise<AxiosResponse<T>> {
         const botServiceToken = process.env.BOT_SERVICE_TOKEN;
         if (!this.isConfigured() || !botServiceToken) throw new Error('Orbit is not set up for Bricks');
         return axios.request<T>({
@@ -943,6 +956,92 @@ export class AdminApiService {
             return true;
         } catch (error) {
             console.warn('[AdminApiService] Could not keep the answer to a Brick suggestion:', error instanceof Error ? error.message : error);
+            return false;
+        }
+    }
+
+    /**
+     * The Brick for guests (game #1997) for the room a guest is in: what steers it, with the place added, and how it talks
+     * to its AI (Universe AI's, never a host's). Throws when Orbit says it is not available or cannot be reached.
+     */
+    async getGuestBrick(roomUrl: string): Promise<GuestBrickSetup> {
+        const response = await this.brickCall<Partial<GuestBrickSetup>>('get', 'api/guest-brick', undefined, { roomUrl });
+        const brick = response.data?.brick;
+        const credentials = response.data?.credentials;
+        if (!brick || typeof brick.chatInstructions !== 'string' || !brick.chatInstructions || !credentials || typeof credentials !== 'object') {
+            throw new Error('Orbit answered without the Brick for guests');
+        }
+        return { brick, credentials } as GuestBrickSetup;
+    }
+
+    /**
+     * May this guest get one more reply from the Brick for guests now (game #1997)? Orbit counts it at once, against the guest's
+     * own allowance and the universe's pool for guests, and never against a host's bot. Throws when it cannot say: no reply
+     * is made without an answer, so nothing is spent that is not counted.
+     */
+    async claimGuestBrickReply(input: { guestId: string; turnId: string; roomUrl: string }): Promise<GuestBrickAllowance> {
+        const body = (await this.brickCall<Partial<{ allowed: boolean; counted: boolean; limit: string; resetsAt: string }>>('post', 'api/guest-brick/replies', input)).data;
+        if (body?.allowed === true) return body.counted === false ? { allowed: true, counted: false } : { allowed: true };
+        const limit = body?.limit === 'guest' || body?.limit === 'universe' ? body.limit : null;
+        if (body?.allowed === false && limit && typeof body.resetsAt === 'string' && !Number.isNaN(Date.parse(body.resetsAt))) {
+            return { allowed: false, limit, resetsAt: body.resetsAt };
+        }
+        throw new Error('Orbit answered the guest allowance in a way that cannot be read');
+    }
+
+    /** Closes a counted turn: a reply that failed is given back, and what it took is kept as totals. Never throws. */
+    async finishGuestBrickReply(turnId: string, result: { failed?: boolean; tokensUsed?: number; costMicros?: number | null }): Promise<void> {
+        const body: Record<string, unknown> = {};
+        if (result.failed) body.failed = true;
+        if (typeof result.tokensUsed === 'number' && Number.isInteger(result.tokensUsed) && result.tokensUsed >= 0) body.tokensUsed = result.tokensUsed;
+        if (typeof result.costMicros === 'number' && Number.isInteger(result.costMicros) && result.costMicros >= 0) body.costMicros = result.costMicros;
+        await this.brickCall('patch', `api/guest-brick/replies/${encodeURIComponent(turnId)}`, body).catch((error) => {
+            console.warn('[AdminApiService] Could not close a turn of the Brick for guests:', error instanceof Error ? error.message : error);
+        });
+    }
+
+    /**
+     * The goals and tasks that fell due (game #2002): one run for each due time, claimed in Orbit's database so two bot servers or a
+     * retry never share one, and a run that was handed out and never reported, again with the same run id. Throws when Orbit cannot
+     * be asked: nothing is lost, the runs are handed out again.
+     */
+    async claimDueItems(): Promise<DueRun[]> {
+        const response = await this.brickCall<{ runs?: unknown }>('post', 'api/bricks/items/due', { kinds: RUNNABLE_KINDS });
+        const runs = Array.isArray(response.data?.runs) ? response.data.runs : [];
+        return runs.map(dueRunOf).filter((run): run is DueRun => run !== null);
+    }
+
+    /** May this run take its next step? No once its item was paused, finished, deleted or changed, or its Brick switched off or deleted. */
+    async checkItemRun(runId: string, attempt: number): Promise<RunCheck> {
+        try {
+            const response = await this.brickCall<{ ok?: unknown; reason?: unknown }>('get', `api/bricks/items/runs/${encodeURIComponent(runId)}`, undefined, { attempt: String(attempt) });
+            return response.data?.ok === true ? { ok: true } : { ok: false, reason: typeof response.data?.reason === 'string' ? response.data.reason : 'no' };
+        } catch (error) {
+            // A 404 or 409 answer says no; anything else says nothing, and the run goes on again when its lease is over
+            const status = (error as { response?: { status?: number; data?: { reason?: unknown } } })?.response;
+            if (status && (status.status === 404 || status.status === 409)) return { ok: false, reason: typeof status.data?.reason === 'string' ? status.data.reason : 'gone' };
+            throw error;
+        }
+    }
+
+    /** Keeps the chat event a run's message got. True when Orbit kept it (or already had this one). */
+    async keepItemDelivered(runId: string, eventId: string): Promise<boolean> {
+        try {
+            await this.brickCall('post', `api/bricks/items/runs/${encodeURIComponent(runId)}/delivered`, { eventId });
+            return true;
+        } catch (error) {
+            console.warn('[AdminApiService] Could not keep where a run spoke:', error instanceof Error ? error.message : error);
+            return false;
+        }
+    }
+
+    /** How a run went. True when Orbit recorded it. */
+    async reportItemRun(runId: string, report: RunReport): Promise<boolean> {
+        try {
+            await this.brickCall('post', `api/bricks/items/runs/${encodeURIComponent(runId)}`, report);
+            return true;
+        } catch (error) {
+            console.warn('[AdminApiService] Could not report a run:', error instanceof Error ? error.message : error);
             return false;
         }
     }

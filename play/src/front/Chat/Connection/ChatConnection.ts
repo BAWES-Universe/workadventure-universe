@@ -2,7 +2,7 @@ import type { Readable, Writable } from "svelte/store";
 import type { AvailabilityStatus } from "@workadventure/messages";
 import type { MapStore } from "@workadventure/store-utils";
 import type { StateEvents } from "matrix-js-sdk";
-import type { BrickOffer, MadeBrick } from "../Bricks/Brick";
+import type { BrickOffer, GuestChatLine, MadeBrick } from "../Bricks/Brick";
 import type { BotStatusNote } from "../Bots/BotChatStatus";
 import type { BotRoomLink } from "../Bots/BotRoomLink";
 import type { BotReplyLimit } from "../Bots/BotReplyLimit";
@@ -232,6 +232,15 @@ export interface ChatMessage {
     brickIdeas?: boolean;
     /** The Bricks a Brick made while writing this answer (#1996): each is one tap from its chat, under the answer. */
     brickMade?: MadeBrick[];
+    /**
+     * Set on the one message a Brick leaves when someone signs in with a chat they had with the Brick for guests
+     * (#1997): the lines of that chat, which the chat draws as they were said, then the Brick's welcome.
+     */
+    guestChat?: GuestChatLine[];
+    /** Set on a guest Brick's answer that says something needs an account (#1997): while it is the newest message, "Keep Brick?" shows above the message box. */
+    guestKeep?: boolean;
+    /** Set on a message the game drew itself on this device (#1997): nothing was sent, so there is nothing to react to, reply to, edit or delete. */
+    local?: boolean;
     /** Set on a Brick's suggestion of a Brick for a job that keeps coming back (#1996): while it is the newest message
      * it is a card above the message box, afterwards its question stays in the chat. */
     brickOffer?: BrickOffer;
