@@ -1276,6 +1276,154 @@ export class BotApiService {
         return response.json();
     }
 
+    /**
+     * One call about Apps (game #2001), with a deadline like a Brick's. Orbit answers some writes with nothing (204): that
+     * is `undefined`, not an error. Throws when Orbit refuses or can't be reached.
+     */
+    private async appsCall(endpoint: string, options: RequestInit = {}): Promise<unknown> {
+        const stop = new AbortController();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const late = new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => {
+                stop.abort();
+                reject(new Error("Orbit did not answer in time"));
+            }, BRICK_WRITE_TIMEOUT_MS);
+        });
+        try {
+            const answer = (async () => {
+                const response = await this.fetch(endpoint, { ...options, signal: stop.signal });
+                const body = await response.text();
+                return body ? (JSON.parse(body) as unknown) : undefined;
+            })();
+            return await Promise.race([answer, late]);
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
+    /** The apps the person connected, with the Bricks of theirs that use each, and the Bricks they have. */
+    async getMyApps(): Promise<unknown> {
+        return await this.appsCall("/api/me/apps");
+    }
+
+    /** One of the person's apps: its Bricks, where it is lent, and the universes it could still be lent to. */
+    async getMyApp(appId: string): Promise<unknown> {
+        return await this.appsCall(`/api/me/apps/${encodeURIComponent(appId)}`);
+    }
+
+    /** "Let it use Tavily": one of the person's own Bricks may use one of their own apps. */
+    async letBrickUseApp(appId: string, botId: string): Promise<unknown> {
+        return await this.appsCall(`/api/me/apps/${encodeURIComponent(appId)}/bricks`, {
+            method: "POST",
+            body: JSON.stringify({ botId }),
+        });
+    }
+
+    /** "Remove": the Brick stops using the app at once, also in a chat that is already open. */
+    async removeBrickFromApp(appId: string, botId: string): Promise<unknown> {
+        return await this.appsCall(`/api/me/apps/${encodeURIComponent(appId)}/bricks/${encodeURIComponent(botId)}`, {
+            method: "DELETE",
+        });
+    }
+
+    /** Disconnects one of the person's apps: every Brick and bot stops using it at once. */
+    async disconnectMyApp(appId: string): Promise<unknown> {
+        return await this.appsCall(`/api/me/apps/${encodeURIComponent(appId)}`, { method: "DELETE" });
+    }
+
+    /** "Lend": lends one of the person's apps to a universe where they manage bots. Asked again, it changes the limits. */
+    async lendApp(
+        appId: string,
+        lend: { universeId: string; things: string[] | null; usesPerDay: number | null }
+    ): Promise<unknown> {
+        return await this.appsCall(`/api/me/apps/${encodeURIComponent(appId)}/lends`, {
+            method: "POST",
+            body: JSON.stringify(lend),
+        });
+    }
+
+    /** "Change": the limits of a lend. */
+    async changeAppLend(
+        appId: string,
+        universeId: string,
+        change: { things: string[] | null; usesPerDay: number | null }
+    ): Promise<unknown> {
+        return await this.appsCall(
+            `/api/me/apps/${encodeURIComponent(appId)}/lends/${encodeURIComponent(universeId)}`,
+            { method: "PATCH", body: JSON.stringify(change) }
+        );
+    }
+
+    /** "Take back": every bot there stops at once, also in open chats. */
+    async takeAppBack(appId: string, universeId: string): Promise<unknown> {
+        return await this.appsCall(
+            `/api/me/apps/${encodeURIComponent(appId)}/lends/${encodeURIComponent(universeId)}`,
+            { method: "DELETE" }
+        );
+    }
+
+    /** "Your universes": the universes where the person manages bots, each with how many apps belong to it. */
+    async getMyAppUniverses(): Promise<unknown> {
+        return await this.appsCall("/api/me/universes");
+    }
+
+    /** The apps that belong to one universe, which the person manages. */
+    async getUniverseApps(universeId: string): Promise<unknown> {
+        return await this.appsCall(`/api/me/universes/${encodeURIComponent(universeId)}/apps`);
+    }
+
+    /** One app that belongs to a universe: who connected it, its managers, its bots, and who could be added as a manager. */
+    async getTeamApp(appId: string): Promise<unknown> {
+        return await this.appsCall(`/api/me/team-apps/${encodeURIComponent(appId)}`);
+    }
+
+    /** "Add a manager": a person who can manage bots in that universe. */
+    async addTeamAppManager(appId: string, userId: string): Promise<unknown> {
+        return await this.appsCall(`/api/me/team-apps/${encodeURIComponent(appId)}/managers`, {
+            method: "POST",
+            body: JSON.stringify({ userId }),
+        });
+    }
+
+    /** Takes a manager off a universe's app. */
+    async removeTeamAppManager(appId: string, personId: string): Promise<unknown> {
+        return await this.appsCall(
+            `/api/me/team-apps/${encodeURIComponent(appId)}/managers/${encodeURIComponent(personId)}`,
+            { method: "DELETE" }
+        );
+    }
+
+    /** Disconnects a universe's app: every bot stops using it at once. */
+    async disconnectTeamApp(appId: string): Promise<unknown> {
+        return await this.appsCall(`/api/me/team-apps/${encodeURIComponent(appId)}`, { method: "DELETE" });
+    }
+
+    /** The address of the app's own sign-in page, for Reconnect. The return fills the app once, for everyone who uses it. */
+    async startAppSignIn(appId: string, redirectUrl: string, callbackUrl: string): Promise<string> {
+        const answer = (await this.appsCall(
+            `/api/me/apps/${encodeURIComponent(appId)}/sign-in?redirectUrl=${encodeURIComponent(
+                redirectUrl
+            )}&callbackUrl=${encodeURIComponent(callbackUrl)}`
+        )) as { authorizeUrl?: unknown } | undefined;
+        if (typeof answer?.authorizeUrl !== "string" || !answer.authorizeUrl) {
+            throw new Error("The app's sign-in did not start");
+        }
+        return answer.authorizeUrl;
+    }
+
+    /** "More apps it can use here" on a room bot's page: apps lent to its universe by the asker, and the universe's own. */
+    async getAppsABotCouldUse(botId: string): Promise<unknown> {
+        return await this.appsCall(`/api/bots/${encodeURIComponent(botId)}/apps/available`);
+    }
+
+    /** "Let Guide use it". */
+    async letBotUseApp(botId: string, connectionId: string): Promise<unknown> {
+        return await this.appsCall(`/api/bots/${encodeURIComponent(botId)}/apps/available`, {
+            method: "POST",
+            body: JSON.stringify({ connectionId }),
+        });
+    }
+
     /** Deletes one of the person's own Bricks: it stops at once and waits under Deleted, with Undo. */
     async deleteMyBrick(brickId: string): Promise<unknown> {
         return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}`, { method: "DELETE" });

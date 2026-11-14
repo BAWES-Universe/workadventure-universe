@@ -27,6 +27,7 @@ import type { ToolSuggester } from '../mcp/ToolCatalog';
 import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision } from '../mcp/ToolGate';
 import { ToolPolicySource } from '../mcp/ToolPolicy';
 import type { ToolApprovals } from '../mcp/ToolApprovals';
+import { appNotUsedLine, type AppUseAnswer, type AppUseCheck, type AppUseRequest } from '../mcp/AppUse';
 import { cardTitle, outcomeOf } from '../mcp/ApprovalCard';
 import { quantityOf, type BatchKind } from '../mcp/ToolQuantity';
 import { CONFIRM_SYSTEM, isConfirm, tapInstead } from '../mcp/NearbyWords';
@@ -270,6 +271,8 @@ export class AIService {
     /** The card a tool that asks first shows in a direct message (#1657). Without it such a call is not run. */
     private approvals?: ToolApprovals;
     private nearbyAsks?: BotAsksPort;
+    /** Asks Orbit before every use of an App on a connection (#2001). Without it such an App is not used. */
+    private appUse?: AppUseCheck;
     /** The replies only one person saw, where other people were (#1993). */
     private readonly privateAnswers = new PrivateAnswers();
 
@@ -326,6 +329,11 @@ export class AIService {
         this.approvals = approvals;
     }
 
+    /** Where the check before every use of an App on a connection is asked (#2001). */
+    useAppUse(check: AppUseCheck): void {
+        this.appUse = check;
+    }
+
     /** Where an answer only one person saw in nearby chat is found again: their direct messages with the bot (#1993). */
     keepPrivateAnswersIn(copies: PrivateAnswerCopies | undefined): void {
         this.privateAnswers.keepCopiesIn(copies);
@@ -340,8 +348,17 @@ export class AIService {
     }
 
     /** Runs a tool call a person approved on a card (#1657), the way a reply would, with the bot's own Patience. */
-    async runApprovedTool(botId: string, entry: ToolServerEntry, toolName: string, args: Record<string, unknown>, playerUuid: string, toolTimeoutSeconds?: number | null): Promise<unknown> {
-        return this.callMcpTool(entry, toolName, args, playerUuid, undefined, toolTimeoutSeconds);
+    async runApprovedTool(
+        botId: string,
+        entry: ToolServerEntry,
+        toolName: string,
+        args: Record<string, unknown>,
+        playerUuid: string,
+        toolTimeoutSeconds?: number | null,
+        /** The saved action's heading and this attempt's id, for the check on an App on a connection (#2001). */
+        use?: Pick<AppUseRequest, 'heading' | 'callId'>
+    ): Promise<unknown> {
+        return this.callMcpTool(entry, toolName, args, playerUuid, undefined, toolTimeoutSeconds, use ? { botId, requesterKey: playerUuid, ...use } : undefined);
     }
 
     /** One call to a tool server's tool, and what comes back made ready for the bot: blobs uploaded, errors as results. */
@@ -351,9 +368,17 @@ export class AIService {
         args: Record<string, unknown>,
         playerUuid: string | undefined,
         abortSignal?: AbortSignal,
-        toolTimeoutSeconds?: number | null
+        toolTimeoutSeconds?: number | null,
+        /** Who is asking, which call this is and what heading the tool is under: needed when the App sits on a connection (#2001). */
+        use?: AppUseRequest & { botId: string }
     ): Promise<any> {
         try {
+            // An App on a connection is checked with Orbit on every use, right before it runs: a lend taken back, a day's uses
+            // spent or a switch turned off stops it at once. No answer is a no.
+            if (entry.connectionId) {
+                const answer: AppUseAnswer = use && this.appUse ? await this.appUse(use.botId, entry.serverId, use) : { allowed: false, reason: 'unavailable' };
+                if (!answer.allowed) return { error: appNotUsedLine(answer.reason ?? 'gone'), outcome: 'not_sent' };
+            }
             const rawResult = await MCPConnector.executeToolCall(
                 entry.serverId,
                 entry.serverUrl,
@@ -364,7 +389,11 @@ export class AIService {
                 entry.headers,
                 playerUuid,
                 abortSignal,
-                toolTimeoutMs(toolTimeoutSeconds)
+                toolTimeoutMs(toolTimeoutSeconds),
+                // A ready-made App is reached only through Orbit, which holds the key its link needs
+                entry.readyMade && entry.orbitUrl && use
+                    ? { orbitUrl: entry.orbitUrl, botId: use.botId, serverId: entry.serverId, callId: use.callId, ...(use.requesterKey ? { requesterKey: use.requesterKey } : {}), ...(use.forOwner ? { forOwner: true } : {}) }
+                    : undefined
             );
             // Process MCP resource blobs (base64 binary data) by uploading to CDN
             // and returning CDN URLs so the AI can use send_image/send_audio/etc.
@@ -4255,7 +4284,13 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 }
                                 release = counted.release;
                             }
-                            result = await this.callMcpTool(mcpServerConfig, toolCall.name, parsedArgs, playerUuid, abortSignal, toolTimeoutSeconds);
+                            const asker = this.gatePerson(botId, playerId, botClient, spaceName);
+                            result = await this.callMcpTool(mcpServerConfig, toolCall.name, parsedArgs, playerUuid, abortSignal, toolTimeoutSeconds, {
+                                botId: botId!,
+                                callId: toolCall.id,
+                                ...(verdict.heading ? { heading: verdict.heading } : {}),
+                                ...(asker.signedIn && asker.identifier ? { requesterKey: asker.identifier } : {}),
+                            });
                             // A call that proved it made nothing doesn't count toward the limit
                             if (release && ['failed', 'notSent'].includes(outcomeOf(result))) release();
                         } else {

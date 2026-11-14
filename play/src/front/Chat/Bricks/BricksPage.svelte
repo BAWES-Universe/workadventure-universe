@@ -21,10 +21,13 @@
         undoMyBrick,
     } from "./MyBricksStore";
     import NewBrickDialog from "./NewBrickDialog.svelte";
+    import AppsPage from "./Apps/AppsPage.svelte";
+    import { appsRowNames } from "./Apps/Apps";
+    import { loadMyApps, myAppsStore } from "./Apps/AppsStore";
     import UsagePage from "./UsagePage.svelte";
     import { fullAgainWhen } from "./Usage";
     import { loadMyUsage, myUsageStore } from "./UsageStore";
-    import { IconChartBar, IconChevronDown, IconPlus } from "@wa-icons";
+    import { IconApps, IconChartBar, IconChevronDown, IconPlus } from "@wa-icons";
 
     /**
      * The Bricks page (game #1995): the person's own Bricks, each with its switch. The Bricks button in the Chats footer
@@ -48,6 +51,8 @@
     let undoing = new Set<string>();
     // The Usage page, open over the list
     let usageOpen = false;
+    // The Apps page, open over the list
+    let appsOpen = false;
 
     $: list = $LL.mapEditor.edit.bots.page.list;
     $: bricks = $myBricksStore;
@@ -70,6 +75,13 @@
     $: usageText = $LL.chat.brick.usage;
     $: usageChat = $myUsageStore?.chat;
     $: usageBrief = usageBriefOf(usageChat, $locale);
+    // The Apps row says what is connected in a line, or what could be
+    $: appsText = $LL.chat.brick.apps;
+    $: myApps = $myAppsStore;
+    $: appsBrief =
+        myApps && myApps.length > 0
+            ? appsRowNames(myApps, appsText.and(), (count) => appsText.more({ count }))
+            : appsText.rowNone();
 
     function usageBriefOf(chat: typeof usageChat, language: string | undefined): string {
         if (!chat) return usageText.rowUnknown();
@@ -94,6 +106,8 @@
         loading = true;
         // The Usage row's line; the row works without it
         loadMyUsage().catch((error) => console.error(error));
+        // The Apps row's line; the row works without it
+        loadMyApps().catch((error) => console.error(error));
         loadMyBricks()
             .catch((error) => console.error(error))
             .finally(() => (loading = false));
@@ -121,7 +135,9 @@
     onMount(load);
 </script>
 
-{#if usageOpen}
+{#if appsOpen}
+    <AppsPage onBack={() => (appsOpen = false)} />
+{:else if usageOpen}
     <UsagePage onBack={() => (usageOpen = false)} />
 {:else if pageOf}
     <BrickPage brick={pageOf} onBack={() => (pageOfId = undefined)} onDeleted={() => (pageOfId = undefined)} />
@@ -229,15 +245,27 @@
                     {/each}
                 {/if}
             </div>
-            <div class="bk-use" data-testid="bricksUsageRow">
-                <PageGroup
-                    id="usage"
-                    icon={IconChartBar}
-                    title={usageText.title()}
-                    brief={usageBrief}
-                    link
-                    onToggle={() => (usageOpen = true)}
-                />
+            <div class="bk-use">
+                <div data-testid="bricksAppsRow">
+                    <PageGroup
+                        id="apps"
+                        icon={IconApps}
+                        title={appsText.title()}
+                        brief={appsBrief}
+                        link
+                        onToggle={() => (appsOpen = true)}
+                    />
+                </div>
+                <div data-testid="bricksUsageRow">
+                    <PageGroup
+                        id="usage"
+                        icon={IconChartBar}
+                        title={usageText.title()}
+                        brief={usageBrief}
+                        link
+                        onToggle={() => (usageOpen = true)}
+                    />
+                </div>
             </div>
         {/if}
     </div>
