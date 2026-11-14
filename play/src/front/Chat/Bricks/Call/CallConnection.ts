@@ -20,6 +20,8 @@ export interface CallSpaceLike {
     readonly observeUserLeft: Observable<unknown>;
     readonly observeUserJoined: Observable<unknown>;
     readonly onLeaveSpace: Observable<void>;
+    /** This person's own id in the space: the space lists them too, and they are not the bot. */
+    readonly mySpaceUserId?: string;
 }
 
 export interface CallDeps {
