@@ -112,15 +112,15 @@ describe("the call bar, the call button and the walk-up card (game #2004, mock P
         expect(text().toLowerCase()).not.toMatch(/nearest|closest|distance/);
     });
 
-    it("the walk-up card says who is here, with Not now and Hold call and talk, each on its own action (picture 10)", async () => {
+    it("the walk-up card says who walked up and names who each button is for, each on its own action (picture 10)", async () => {
         const onHoldAndTalk = vi.fn();
         const onNotNow = vi.fn();
         view = new WalkUpCard({ target, props: { name: "Sara", botName: "Brick", onHoldAndTalk, onNotNow } });
         await tick();
-        expect(text()).toContain("Sara is here");
-        expect(text()).toContain("Brick waits on hold until you tap Resume call.");
+        expect(text()).toContain("Sara walked up");
+        expect(text()).toContain("Your call with Brick goes on hold until you tap Resume call.");
         const buttons = [...target.querySelectorAll<HTMLButtonElement>("button")];
-        expect(buttons.map((b) => b.textContent?.trim())).toEqual(["Not now", "Hold call and talk"]);
+        expect(buttons.map((b) => b.textContent?.trim())).toEqual(["Stay with Brick", "Talk to Sara"]);
         buttons[0].click();
         expect(onNotNow).toHaveBeenCalledOnce();
         expect(onHoldAndTalk).not.toHaveBeenCalled();
