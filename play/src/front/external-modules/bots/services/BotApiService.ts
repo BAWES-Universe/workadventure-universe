@@ -1426,6 +1426,29 @@ export class BotApiService {
         return answer.authorizeUrl;
     }
 
+    /** "Connect another": the apps a super admin put on the list, which sign in on their own official page. */
+    async getAppCatalog(): Promise<unknown> {
+        return await this.appsCall("/api/me/apps/catalog");
+    }
+
+    /** The ready-made apps. Orbit answers 404 while there are none to offer, exactly like a route that is not there: that is an empty list. */
+    async getReadyMadeApps(): Promise<unknown> {
+        try {
+            return await this.appsCall("/api/me/apps/ready-made");
+        } catch (error) {
+            if ((error as { status?: number }).status === 404) return { apps: [] };
+            throw error;
+        }
+    }
+
+    /** "Connect" on a ready-made app: the person's connection and the address of the app's own sign-in page, unless already signed in. */
+    async connectReadyMadeApp(key: string, returnUrl: string): Promise<unknown> {
+        return await this.appsCall("/api/me/apps/ready-made", {
+            method: "POST",
+            body: JSON.stringify({ key, returnUrl }),
+        });
+    }
+
     /** "More apps it can use here" on a room bot's page: apps lent to its universe by the asker, and the universe's own. */
     async getAppsABotCouldUse(botId: string): Promise<unknown> {
         return await this.appsCall(`/api/bots/${encodeURIComponent(botId)}/apps/available`);
