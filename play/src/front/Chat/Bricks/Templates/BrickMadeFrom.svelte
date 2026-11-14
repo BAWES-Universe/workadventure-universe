@@ -34,12 +34,15 @@
     $: missing = view ? missingNeeds(view.setup.needs) : [];
     $: maker = view?.madeFrom.makerName ?? "";
 
+    // Counts reads: an older answer that comes back after a newer one is not shown
+    let reads = 0;
     function load() {
+        const mine = ++reads;
         readMadeFrom(brickId)
             .then((read) => {
                 // Not made from a template, or Orbit did not say: nothing shows, and the page is as it was
                 // eslint-disable-next-line svelte/infinite-reactive-loop
-                if (!gone && read.ok) view = read.value;
+                if (!gone && mine === reads && read.ok) view = read.value;
             })
             .catch((error) => console.error(error));
     }

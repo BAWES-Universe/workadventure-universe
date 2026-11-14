@@ -498,6 +498,34 @@ describe("Brick templates, the game half (#2008)", () => {
             expect(byId("brickSetupRequired")).toBeNull();
         });
 
+        it("shows the newest read, never an older answer that comes back late", async () => {
+            game.getMadeFrom.mockResolvedValueOnce(madeFrom());
+            part = new BrickMadeFrom({ target, props: props({ refreshKey: "a" }) });
+            await settle();
+            expect(byId("brickSetupRequired")).not.toBeNull();
+            // The page asks again, and that answer is slow
+            let answerSlow: (value: unknown) => void = () => undefined;
+            game.getMadeFrom.mockReturnValueOnce(
+                new Promise((resolve) => {
+                    answerSlow = resolve;
+                })
+            );
+            const set = (part as unknown as { $set: (props: Record<string, unknown>) => void }).$set;
+            set.call(part, { refreshKey: "b" });
+            await settle();
+            // It asks a third time, and that answer is quick: everything is connected
+            game.getMadeFrom.mockResolvedValueOnce(
+                madeFrom({ setup: { needs: [{ ...APP_NEED, ready: true }], setupRequired: false, routinesOff: 0 } })
+            );
+            set.call(part, { refreshKey: "c" });
+            await settle();
+            expect(byId("brickSetupRequired")).toBeNull();
+            // The slow, older answer arrives last and must not bring Setup required back
+            answerSlow(madeFrom());
+            await settle();
+            expect(byId("brickSetupRequired")).toBeNull();
+        });
+
         it("offers Review when the template was updated", async () => {
             game.getMadeFrom.mockResolvedValue(madeFrom({ update: UPDATE }));
             part = new BrickMadeFrom({ target, props: props() });

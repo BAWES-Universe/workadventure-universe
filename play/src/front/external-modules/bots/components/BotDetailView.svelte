@@ -36,6 +36,8 @@
     import BrickMadeFrom from "../../../Chat/Bricks/Templates/BrickMadeFrom.svelte";
     import BrickTemplateGroup from "../../../Chat/Bricks/Templates/BrickTemplateGroup.svelte";
     import type { UpdateField } from "../../../Chat/Bricks/Templates/Template";
+    import { brickComputers } from "../../../Chat/Bricks/Computer/BrickComputerStore";
+    import { warningMessageStore } from "../../../Stores/ErrorStore";
     import BrickLookPicker from "../../../Chat/Bricks/BrickLookPicker.svelte";
     import BotWokaPicker from "./BotWokaPicker.svelte";
     import BotCompanionPicker from "./BotCompanionPicker.svelte";
@@ -304,6 +306,7 @@
             lastSavedName = bot.name || null;
             brickSaved = brickSavedOf(bot);
             brickUnsaved.clear();
+            templateUnsynced = [];
         }
     } else {
         // Bot prop became null - clear currentBot to prevent errors
@@ -325,6 +328,8 @@
 
     /** The typed fields of this Brick whose last save failed: the error line stays until each is saved. */
     const brickUnsaved = new Set<string>();
+    // Whether the Brick has its computer on: the made-from card reads its setup again when that changes
+    $: computerOn = currentBot?.id ? $brickComputers.get(currentBot.id)?.on : undefined;
     const TYPED_FIELDS: ReadonlySet<string> = new Set(["description", "chatInstructions"]);
     /** The last save asked for each Brick: the next one waits for it, so changes reach Orbit in the order they were made. */
     const brickSaving = new Map<string, Promise<boolean>>();
@@ -369,6 +374,12 @@
         // a late answer never undoes what the person did while it was on its way
         brickQueue = brickQueue.then(async () => {
             if (!currentBot || currentBot.id !== botId) return;
+            // Taken template parts this page has not read yet: saving the line or the Personality now would put the old
+            // text back over them, so it waits until they are read
+            if (templateUnsynced.some((part) => part === "description" || part === "instructions")) {
+                if (!(await syncTemplateParts())) return;
+                if (!currentBot || currentBot.id !== botId) return;
+            }
             const now = brickSavedOf(currentBot);
             const change = brickChangeBetween(brickSaved, now);
             if (Object.keys(change).length === 0) return;
@@ -586,19 +597,35 @@
      * saved. A part the person is editing right now (it differs from what was saved) is theirs to keep.
      */
     async function takeFromTemplate(taken: UpdateField[]) {
-        if (!currentBot) return;
+        templateUnsynced = [...new Set([...templateUnsynced, ...taken])];
+        if (!(await syncTemplateParts())) warningMessageStore.addWarningMessage($LL.chat.brick.templates.syncFailed());
+    }
+
+    /** Parts taken from a template that this page has not read yet (Orbit could not be reached). */
+    let templateUnsynced: UpdateField[] = [];
+
+    /**
+     * Reads the Brick again and shows the parts taken. False when that could not be done: until it can, what the person
+     * types in the line or the Personality is not saved over what Orbit now has (see flushBrickFields).
+     */
+    async function syncTemplateParts(): Promise<boolean> {
+        if (templateUnsynced.length === 0 || !currentBot) return true;
         const botId = currentBot.id;
+        const taken = templateUnsynced;
         let fresh: BotData;
         try {
             fresh = await botApiService.getBot(botId);
         } catch (error) {
             console.warn("Could not read a Brick after a template update", error);
-            return;
+            return false;
         }
-        if (!currentBot || currentBot.id !== botId) return;
+        if (!currentBot || currentBot.id !== botId) return true;
         const after = brickAfterTemplate(currentBot, brickSaved, fresh, taken);
         currentBot = after.bot;
         brickSaved = after.saved;
+        // Parts taken while this read was on its way are read by the next one
+        templateUnsynced = templateUnsynced.filter((part) => !taken.includes(part));
+        return true;
     }
 
     /** A Brick's look, saved on the tap that picks it (no Save): true once Orbit has it. */
@@ -925,7 +952,7 @@
                     brickId={currentBot.id}
                     name={currentBot.name || "Brick"}
                     onConnect={(label) => brick?.openApps?.(label)}
-                    refreshKey={openGroup}
+                    refreshKey={`${openGroup}:${computerOn}`}
                     onTaken={takeFromTemplate}
                     onOpenGroup={(id) => {
                         openGroup = id;

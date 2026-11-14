@@ -1250,6 +1250,7 @@ const chat: BaseTranslation = {
             stopSharing: "Stop sharing",
             stopHint: "Nobody new can use it. Bricks already made from it stay as they are.",
             stopFailed: "Couldn't stop sharing. Try again.",
+            syncFailed: "Couldn't show the template changes on this page yet. Open the Brick again to see them.",
             // The look before sharing
             lookTitle: "What gets shared",
             lookSub: "Exactly this goes with the template. Nothing else leaves.",
