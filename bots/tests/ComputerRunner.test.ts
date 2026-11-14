@@ -28,6 +28,7 @@ const stream = (events: RunnerEvent[]): TurnOpened => ({ ok: true, events: (asyn
 function fakeOrbit(scripts: Array<RunnerEvent[] | TurnOpened | ((input: string) => RunnerEvent[] | TurnOpened)>, look: () => { status: string; control: string } | null = () => ({ status: 'running', control: 'brick' })) {
     const seen = { turns: [] as string[], streams: 0, prepares: [] as string[], actions: [] as Array<Record<string, unknown>>, cancels: 0, looks: 0 };
     let renewAnswer: (n: number) => Record<string, unknown> = () => ({ ok: true, renewInSeconds: 240 });
+    let handoverFails = 0;
     let prepareAnswer: () => { ok: true } | { ok: false; reason: string } = () => ({ ok: true });
     const nextScript = (input: string): TurnOpened => {
         const script = scripts.shift();
@@ -43,6 +44,10 @@ function fakeOrbit(scripts: Array<RunnerEvent[] | TurnOpened | ((input: string) 
         },
         action: async (_botId, _jobId, body) => {
             seen.actions.push(body);
+            if (body.action === 'handover' && handoverFails > 0) {
+                handoverFails--;
+                throw new Error('Orbit could not be reached');
+            }
             return body.action === 'renew' ? renewAnswer(seen.actions.filter((a) => a.action === 'renew').length) : { ok: true };
         },
         prepare: async (_jobId, relay) => {
@@ -61,7 +66,7 @@ function fakeOrbit(scripts: Array<RunnerEvent[] | TurnOpened | ((input: string) 
             seen.cancels++;
         },
     };
-    return { orbit, seen, setRenew: (fn: typeof renewAnswer) => (renewAnswer = fn), setPrepare: (fn: typeof prepareAnswer) => (prepareAnswer = fn) };
+    return { orbit, seen, setRenew: (fn: typeof renewAnswer) => (renewAnswer = fn), setPrepare: (fn: typeof prepareAnswer) => (prepareAnswer = fn), failHandovers: (n: number) => (handoverFails = n) };
 }
 
 const runJob = async (orbit: RunnerOrbit, job: RunnableJob = JOB, relayUrl: string | null = RELAY) => {
@@ -189,6 +194,22 @@ describe('a job that runs', () => {
 });
 
 describe('the person’s part', () => {
+    it('asks again when the handover did not go through, and does not take the job back as if the person had finished', async () => {
+        const { orbit, seen, failHandovers } = fakeOrbit([done('[[handover signin]]'), done('[[done]]')]);
+        failHandovers(RUNNER_GUARDS.maxBadTurns - 1);
+        await runJob(orbit);
+        expect(seen.actions.filter((a) => a.action === 'handover')).toHaveLength(RUNNER_GUARDS.maxBadTurns);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+    });
+
+    it('ends the job as failed when the handover never goes through, without resuming it', async () => {
+        const { orbit, seen, failHandovers } = fakeOrbit([done('[[handover signin]]')]);
+        failHandovers(50);
+        await runJob(orbit);
+        expect(seen.turns).toHaveLength(1);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed' }]);
+    });
+
     it('hands over with exactly what is ready to be put in, waits for the person, and carries on with a look at the page', async () => {
         let looks = 0;
         // running for the first look and the check after the turn, then waiting for the person, then Brick's again

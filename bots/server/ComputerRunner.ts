@@ -383,13 +383,28 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             if (ending.kind === 'failed') return void (await finish(job, 'failed'));
             if (ending.kind === 'handover') {
                 bad = 0;
-                await orbit
-                    .action(job.botId, job.jobId, {
-                        action: 'handover',
-                        waitingFor: ending.waitingFor,
-                        ...(ending.waitingFor === 'details' && ending.what && ending.where ? { ready: { what: ending.what, where: ending.where } } : {}),
-                    })
-                    .catch((error) => say('Could not hand over:', error));
+                // The person is only told to come when Orbit took the handover: if it did not, waiting would take the job straight
+                // back to Brick as if they had finished, so it is asked again, and a job that cannot be handed over is ended
+                let handed = false;
+                for (let attempt = 0; attempt < RUNNER_GUARDS.maxBadTurns && !handed; attempt++) {
+                    if (signal.aborted) return;
+                    if (attempt > 0) await sleep(timing.waitMs, signal);
+                    handed = await orbit
+                        .action(job.botId, job.jobId, {
+                            action: 'handover',
+                            waitingFor: ending.waitingFor,
+                            ...(ending.waitingFor === 'details' && ending.what && ending.where ? { ready: { what: ending.what, where: ending.where } } : {}),
+                        })
+                        .then(() => true)
+                        .catch((error) => {
+                            say('Could not hand over:', error);
+                            return false;
+                        });
+                }
+                if (!handed) {
+                    await finish(job, 'failed');
+                    return;
+                }
                 const back = await waitForBrick(job, signal);
                 if (back !== 'back') return;
                 input = RESUME_PROMPT;
