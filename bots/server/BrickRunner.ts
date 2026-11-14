@@ -483,10 +483,23 @@ export class BrickRunner {
 
     // --- what waits for usage ---------------------------------------------------------------------------------------------------------------
 
-    /** Said once for each wait; confirmed to Orbit only after it went out, so a lost answer is handed out again and a confirmed one never is. */
+    /**
+     * Said once for each wait; confirmed to Orbit only after it went out, so a lost answer is handed out again and a confirmed one never is.
+     * One that can never be said (no chat to say it in, or the chat refuses) is confirmed as told with a line in the log, so it does not come
+     * back for the whole wait; one that only could not be said just now (`unsure`) is left to be handed out again.
+     */
     private async sayHeld(notice: HeldNotice): Promise<void> {
-        if (!notice.matrixUserId) return;
+        if (!notice.matrixUserId) {
+            this.log.warn(`[BrickRunner] ${notice.itemId} waits for usage but its person has no chat to be told in; kept as told`);
+            await this.api.keepHeldTold(notice.itemId, notice.waitId);
+            return;
+        }
         const spoke = await this.speaker.say(notice.brickId, notice.matrixUserId, heldText(notice), transactionIdOfHeld(notice.itemId, notice.waitId));
-        if ('eventId' in spoke) await this.api.keepHeldTold(notice.itemId, notice.waitId);
+        if ('eventId' in spoke) {
+            await this.api.keepHeldTold(notice.itemId, notice.waitId);
+        } else if (spoke.reason !== 'unsure') {
+            this.log.warn(`[BrickRunner] ${notice.itemId} waits for usage and cannot be told in chat (${spoke.reason}); kept as told`);
+            await this.api.keepHeldTold(notice.itemId, notice.waitId);
+        }
     }
 }

@@ -435,14 +435,25 @@ describe('what waits for usage is said once', () => {
         expect(text).toContain('You can still chat with me as usual');
     });
 
-    it('does not keep it as told when it could not be said, so it is handed out again', async () => {
+    it('does not keep it as told when it could not be said just now, so it is handed out again', async () => {
         const blip = setUp([], result({ kind: 'unsure' }), { held: [heldNotice()], say: async () => ({ ok: false, reason: 'unsure' }) });
         await blip.runner.tick();
         expect(blip.api.keepHeldTold).not.toHaveBeenCalled();
+    });
+
+    it('keeps it as told, once and with a line in the log, when it can never be said: no chat, or a chat that refuses', async () => {
         const noChat = setUp([], result({ kind: 'unsure' }), { held: [heldNotice({ matrixUserId: null })] });
         await noChat.runner.tick();
         expect(noChat.say).not.toHaveBeenCalled();
-        expect(noChat.api.keepHeldTold).not.toHaveBeenCalled();
+        expect(noChat.api.keepHeldTold).toHaveBeenCalledTimes(1);
+        expect(noChat.api.keepHeldTold).toHaveBeenCalledWith('item-9', 'wait-1');
+        expect(noChat.warn).toHaveBeenCalledTimes(1);
+        for (const reason of ['no_chat', 'not_allowed'] as const) {
+            const refused = setUp([], result({ kind: 'unsure' }), { held: [heldNotice()], say: async () => ({ ok: false, reason }) });
+            await refused.runner.tick();
+            expect(refused.api.keepHeldTold).toHaveBeenCalledTimes(1);
+            expect(refused.warn).toHaveBeenCalledTimes(1);
+        }
     });
 });
 
