@@ -1113,12 +1113,12 @@ export class AdminApiService {
     async startComputerJob(
         viaBotId: string,
         userId: string,
-        ask: { title: string; writes?: boolean }
+        ask: { title: string; brief?: string; writes?: boolean }
     ): Promise<{ ok: true; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null } | { ok: false; reason: string }> {
         const response = await this.brickCall<{ ok?: unknown; reason?: unknown; job?: { id?: unknown; status?: unknown; queuedFor?: unknown }; restoredFrom?: unknown }>(
             'post',
             `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`,
-            { userId, title: ask.title, ...(ask.writes === undefined ? {} : { writes: ask.writes }) }
+            { userId, title: ask.title, ...(ask.brief ? { brief: ask.brief } : {}), ...(ask.writes === undefined ? {} : { writes: ask.writes }) }
         );
         const data = response.data;
         const job = data?.job;
@@ -1161,6 +1161,49 @@ export class AdminApiService {
             throw error;
         });
         return { status: response.status, data: response.data ?? {} };
+    }
+
+    /** The jobs Brick is working on now, with the words for the agent (#2000). Throws when Orbit cannot be reached. */
+    async computerRunningJobs(): Promise<Array<{ jobId: string; botId: string; title: string; brief: string | null; writes: boolean; hasTurn: boolean }>> {
+        const response = await this.brickCall<{ jobs?: unknown }>('get', 'api/computer/jobs/running');
+        const jobs = Array.isArray(response.data?.jobs) ? response.data.jobs : [];
+        return jobs.flatMap((job: Record<string, unknown>) =>
+            typeof job?.jobId === 'string' && typeof job.botId === 'string' && typeof job.title === 'string'
+                ? [{ jobId: job.jobId, botId: job.botId, title: job.title, brief: typeof job.brief === 'string' ? job.brief : null, writes: job.writes !== false, hasTurn: job.hasTurn === true }]
+                : []
+        );
+    }
+
+    /** One call to a computer's broker route in Orbit that answers with JSON (prepare, cancel): the status is passed on, never thrown for a 4xx or 5xx. */
+    async computerBroker(jobId: string, step: 'prepare' | 'cancel', body: Record<string, unknown>): Promise<{ status: number; data: Record<string, unknown> }> {
+        const response = await this.brickCall<Record<string, unknown>>('post', `api/computer/jobs/${encodeURIComponent(jobId)}/${step}`, body).catch((error: unknown) => {
+            if (axios.isAxiosError(error) && error.response) return error.response as AxiosResponse<Record<string, unknown>>;
+            throw error;
+        });
+        return { status: response.status, data: response.data ?? {} };
+    }
+
+    /**
+     * Opens a computer's turn in Orbit as a stream: `turn` sends the agent a message, `stream` reconnects to the turn it is on. A 200 is
+     * the events; any other answer is its JSON ({ reason, responseId? }). Throws when Orbit cannot be reached.
+     */
+    async computerOpenTurn(
+        jobId: string,
+        step: 'turn' | 'stream',
+        input: string | null,
+        signal: AbortSignal
+    ): Promise<{ ok: true; body: ReadableStream<Uint8Array> } | { ok: false; status: number; reason: string; responseId?: string }> {
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!this.isConfigured() || !botServiceToken) throw new Error('Orbit is not set up for Bricks');
+        const answer = await fetch(resolveAdminApiEndpoint(this.adminApiUrl, `api/computer/jobs/${encodeURIComponent(jobId)}/${step}`), {
+            method: step === 'turn' ? 'POST' : 'GET',
+            headers: { Authorization: `Bearer ${botServiceToken}`, 'Cache-Control': 'no-store', ...(step === 'turn' ? { 'Content-Type': 'application/json' } : {}), Accept: 'text/event-stream' },
+            ...(step === 'turn' ? { body: JSON.stringify({ input }) } : {}),
+            signal,
+        });
+        if (answer.ok && answer.body) return { ok: true, body: answer.body };
+        const data = (await answer.json().catch(() => ({}))) as { reason?: unknown; responseId?: unknown };
+        return { ok: false, status: answer.status, reason: typeof data.reason === 'string' ? data.reason : 'failed', ...(typeof data.responseId === 'string' ? { responseId: data.responseId } : {}) };
     }
 
     /** Has Orbit stop jobs that stopped renewing and try the ones in line again (#2000). Never throws. */

@@ -30,6 +30,8 @@ import { verifyMatrixRegistration } from '../matrix/verifyMatrixRegistration';
 import { MatrixAppServiceClient } from '../matrix/MatrixAppServiceClient';
 import { MatrixDmBridge, type CarriedPart, type DirectChatAnswer, type GuestChatNote } from '../matrix/MatrixDmBridge';
 import { createComputerModelRelay, relayOrbitFor } from './ComputerModelRelay';
+import { createComputerRunner, relayUrlFromEnv, runnerOrbitFor, type ComputerRunner } from './ComputerRunner';
+import { pretendRunnerOn } from '../ai/ComputerPretendRunner';
 import { createMatrixAppServiceRouter, type MatrixAppServiceRouter } from '../matrix/MatrixAppServiceRouter';
 import { uploadAttachment } from '../matrix/uploadAttachment';
 import { botWokaPicture } from '../matrix/wokaPicture';
@@ -157,8 +159,10 @@ let carryBrick: ((botId: string) => Promise<boolean>) | undefined;
 const BRICK_SWEEP_EVERY_MS = 60 * 60 * 1000;
 // A job that stopped renewing its room is stopped safely and jobs in line are tried again (#2000)
 const COMPUTER_SWEEP_EVERY_MS = 60 * 1000;
+const COMPUTER_RUNNER_EVERY_MS = 10 * 1000;
 let brickSweepInterval: NodeJS.Timeout | undefined;
 let computerSweepInterval: NodeJS.Timeout | undefined;
+let computerRunner: ComputerRunner | undefined;
 /** Ends the retries of listening for Brick changes from other bot servers, at shutdown. */
 let stopBrickListening: (() => void) | undefined;
 /** How often Orbit is asked for the goals and tasks that fell due (#2002). Nothing depends on exactly when: Orbit is the scheduler. */
@@ -243,6 +247,11 @@ async function setupMatrix(): Promise<void> {
     brickRunner.start(BRICK_DUE_EVERY_MS);
     computerSweepInterval = setInterval(() => void adminApiService.sweepComputers(), COMPUTER_SWEEP_EVERY_MS);
     computerSweepInterval.unref?.();
+    // Real computers: the runner works the jobs Orbit says are running. A development server that pretends (COMPUTER_PRETEND_RUNNER=yes) has none.
+    if (!pretendRunnerOn()) {
+        computerRunner = createComputerRunner({ orbit: runnerOrbitFor(adminApiService), relayUrl: relayUrlFromEnv() });
+        computerRunner.start(COMPUTER_RUNNER_EVERY_MS);
+    }
     console.log(`[BotServer] Matrix direct messages on for ${matrixConfig.domain}`);
 }
 // Made in start(), once direct messages are settled: their routes are part of the API.
@@ -469,6 +478,7 @@ function stopGameLoop(): void {
         clearInterval(gameLoopInterval);
         if (brickSweepInterval) clearInterval(brickSweepInterval);
         if (computerSweepInterval) clearInterval(computerSweepInterval);
+        computerRunner?.stop();
         gameLoopInterval = null;
         console.log('[BotServer] Game loop stopped');
     }

@@ -17,6 +17,7 @@ export function isComputerTool(name: string): boolean {
 }
 
 const TITLE_MAX = 120;
+const DETAILS_MAX = 4000;
 
 export function computerToolDefinitions(): { type: 'function'; function: { name: string; description: string; parameters: object } }[] {
     return [
@@ -33,6 +34,7 @@ export function computerToolDefinitions(): { type: 'function'; function: { name:
                     type: 'object',
                     properties: {
                         job: { type: 'string', description: 'What the job is, in a few plain words, as the bar will show it: "Visa form", "Shop website", "Taxi booking".' },
+                        details: { type: 'string', description: 'Everything the computer needs to do it, in the person\'s words: the site, what they asked for, the choices they made. Leave out passwords, card numbers and ID numbers: the computer asks the person for those when it needs them.' },
                         reads_only: { type: 'boolean', description: 'True when the job only looks and writes nothing anywhere (it may run beside another job). Leave out otherwise.' },
                     },
                     required: ['job'],
@@ -70,9 +72,10 @@ const day = (iso: string): string => {
 export async function runComputerTool(args: Record<string, unknown>, context: ComputerToolContext): Promise<Record<string, unknown>> {
     const job = text(args.job, TITLE_MAX);
     if (!job) return { error: 'Say in a few words what the job is.' };
+    const brief = typeof args.details === 'string' ? args.details.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ').trim().slice(0, DETAILS_MAX) : '';
     let started;
     try {
-        started = await context.admin.startComputerJob(context.botId, context.userId, { title: job, writes: args.reads_only === true ? false : undefined });
+        started = await context.admin.startComputerJob(context.botId, context.userId, { title: job, ...(brief ? { brief } : {}), writes: args.reads_only === true ? false : undefined });
     } catch (error) {
         console.warn('[ComputerTools] Could not start a job:', error instanceof Error ? error.message : error);
         return { started: false, success: false, note: "The computer could not be reached just now. Say so in one plain sentence; you can still chat and use their apps." };

@@ -54,6 +54,17 @@ describe('use_computer (#2000)', () => {
         expect(JSON.stringify(result)).not.toMatch(/\$|credit|\d+ ?%|machine|provider/i);
     });
 
+    it('hands the computer the person’s words as the job’s details, cleaned and cut, and nothing when there are none', async () => {
+        const admin = asking({ ok: true, job: job(), restoredFrom: null });
+        await run(admin, { job: 'Visa form', details: '  Two people\u0000, the Kuwait visa site  ' });
+        expect(admin.startComputerJob).toHaveBeenLastCalledWith(BRICK, 'uuid-alice', { title: 'Visa form', brief: 'Two people , the Kuwait visa site', writes: undefined });
+        await run(admin, { job: 'Visa form', details: 'x'.repeat(9000) });
+        expect((admin.startComputerJob.mock.calls.at(-1)?.[2] as { brief: string }).brief).toHaveLength(4000);
+        await run(admin, { job: 'Visa form', details: '   ' });
+        expect(admin.startComputerJob.mock.calls.at(-1)?.[2]).not.toHaveProperty('brief');
+        expect((computerToolDefinitions()[0].function.parameters as { properties: Record<string, unknown> }).properties).toHaveProperty('details');
+    });
+
     it('says a restored computer came back from the copy of that day', async () => {
         const result = await run(asking({ ok: true, job: job(), restoredFrom: '2026-11-09T23:00:00.000Z' }));
         expect(String(result.note)).toMatch(/copy of/);
