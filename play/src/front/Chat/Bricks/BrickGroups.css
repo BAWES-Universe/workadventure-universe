@@ -1,0 +1,131 @@
+/*
+ * The rows, lead, note and wide button of the groups on a Brick's page (game #2003): Memory and Files. Their values are
+ * the Voice group's own, so a new group looks like the ones the game already ships. Class names start with bkg-.
+ */
+.bkg {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 2px 4px 12px;
+    color: #fff;
+}
+.bkg-lead {
+    margin: 0 4px 6px;
+    font-size: 14px;
+    line-height: 1.45;
+    color: rgba(244, 242, 250, 0.86);
+}
+.bkg-cap {
+    padding: 0 4px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: rgba(244, 242, 250, 0.64);
+}
+.bkg-cap.gap {
+    margin-top: 10px;
+}
+.bkg-tap {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 56px;
+    margin: 0;
+    padding-block: 6px;
+    padding-inline: 4px 4px;
+    border: 0;
+    border-radius: 14px;
+    background: transparent;
+    color: #fff;
+    font: inherit;
+    text-align: start;
+}
+button.bkg-tap {
+    cursor: pointer;
+}
+@media (hover: hover) {
+    button.bkg-tap:hover {
+        background: rgba(255, 255, 255, 0.05);
+    }
+}
+button.bkg-tap:focus-visible {
+    outline: 2px solid #a78bfa;
+    outline-offset: -2px;
+}
+.bkg-tap > svg {
+    flex: none;
+    color: rgba(244, 242, 250, 0.64);
+}
+[dir="rtl"] .bkg-tap > svg.bkg-go {
+    transform: scaleX(-1);
+}
+.bkg-ico {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 32px;
+    height: 32px;
+    color: #fff;
+}
+.bkg-mtx {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+.bkg-t {
+    overflow-wrap: anywhere;
+    font-size: 14px;
+    font-weight: 600;
+}
+.bkg-cn {
+    font-size: 12.5px;
+    line-height: 1.35;
+    color: rgba(244, 242, 250, 0.64);
+}
+.bkg-cn.priv {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: #c4b5fd;
+}
+.bkg-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 0;
+    padding: 0 4px;
+    font-size: 12.5px;
+    line-height: 1.35;
+    color: rgba(244, 242, 250, 0.64);
+}
+.bkg-note svg {
+    flex: none;
+    margin-top: 1px;
+}
+.bkg-off {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    margin-top: 8px;
+    padding: 10px 4px 0;
+    border-top: 1px solid rgb(255 255 255 / 0.06);
+}
+.bkg-retry {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 4px;
+}
+.bkg-acts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 8px;
+    margin-top: 6px;
+}

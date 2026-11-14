@@ -12,6 +12,12 @@ vi.hoisted(() => {
     } as unknown as typeof ResizeObserver;
 });
 
+vi.hoisted(() => {
+    // The page reads the uploader's address from the page's environment
+    (globalThis as unknown as { window: { env: Record<string, string> } }).window.env = {
+        UPLOADER_URL: "http://uploader.test",
+    };
+});
 const game = vi.hoisted(() => ({
     ensureMyBrick: vi.fn<() => Promise<unknown>>(),
     listMyBricks: vi.fn<() => Promise<unknown>>(),
@@ -22,6 +28,8 @@ const game = vi.hoisted(() => ({
     undoMyBrick: vi.fn<(brickId: string) => Promise<unknown>>(),
     tellBrickChanged: vi.fn<(brickId: string) => Promise<void>>(),
     getMyUsage: vi.fn<() => Promise<unknown>>(),
+    getMyApps: vi.fn<() => Promise<unknown>>(),
+    getMyAppUniverses: vi.fn<() => Promise<unknown>>(),
     openModal: vi.fn<(component: unknown) => void>(),
     getBot: vi.fn<(brickId: string) => Promise<unknown>>(),
     changeMyBrick: vi.fn<(brickId: string, change: Record<string, unknown>) => Promise<unknown>>(),
@@ -71,7 +79,11 @@ vi.mock("../../../external-modules/bots/services/BotApiService", () => ({
         getMyVoiceKeys: game.getMyVoiceKeys,
         getBotPermissions: game.getBotPermissions,
         isInitialized: () => true,
+        getMyMemory: () => Promise.resolve({ items: [] }),
+        getBrickFiles: () => Promise.resolve({}),
         getMyUsage: game.getMyUsage,
+        getMyApps: game.getMyApps,
+        getMyAppUniverses: game.getMyAppUniverses,
         // The page reads a Brick's computer once its page is open: nothing to show here
         getBrickComputer: () => Promise.resolve(undefined),
     },
@@ -93,6 +105,8 @@ vi.mock("../../../external-modules/bots/stores/BotCompanionCatalogStore", async 
     };
 });
 vi.mock("../../../Enum/ComputedConst", () => ({ ABSOLUTE_PUSHER_URL: "http://pusher.test/" }));
+// A Brick's page has Memory and Files groups (#2003); their own tests are in MemoryAndFiles.test.ts
+vi.mock("../../../Artifacts/openYourArtifacts", () => ({ openYourArtifacts: vi.fn() }));
 vi.mock("../../../external-modules/bots/stores/BotWokaCatalogStore", () => ({
     botWokaCatalogStore: looks.catalog,
     ensureBotWokaCatalog: looks.ensure,
@@ -151,6 +165,7 @@ import { setLocale } from "../../../../i18n/i18n-svelte";
 import { bricksPageOpenStore } from "../../Stores/ChatStore";
 import { forgetMyBricks } from "../MyBricksStore";
 import { forgetMyUsage } from "../UsageStore";
+import { forgetMyApps } from "../Apps/AppsStore";
 import BricksPage from "../BricksPage.svelte";
 
 const BRICK = "0b7c1d2e-1111-4222-8333-944455556666";
@@ -195,6 +210,9 @@ describe("the Bricks page (#1995)", () => {
         vi.clearAllMocks();
         forgetMyBricks();
         forgetMyUsage();
+        forgetMyApps();
+        game.getMyApps.mockResolvedValue({ apps: [], bricks: [] });
+        game.getMyAppUniverses.mockResolvedValue({ universes: [] });
         game.getMyUsage.mockResolvedValue({
             chat: { left: 1, words: "plenty", fullAgainAt: null },
             computer: null,
@@ -564,7 +582,7 @@ describe("the Bricks page (#1995)", () => {
                 "Keeps the family recipes"
             );
             expect(target.querySelector<HTMLElement>('[data-testid="bot-switch"]')).not.toBeNull();
-            // The parts a Brick has so far, in the mock's order. The rest come with their own issues.
+            // The parts a Brick has so far, in the mock's order (Memory and Files after Behavior). The rest come with their own issues.
             const groups = [...target.querySelectorAll<HTMLElement>('[data-testid^="bot-page-group-"]')].map(
                 (group) => group.dataset.testid
             );
@@ -573,6 +591,8 @@ describe("the Bricks page (#1995)", () => {
                 "bot-page-group-say",
                 "bot-page-group-voice",
                 "bot-page-group-behavior",
+                "bot-page-group-memory",
+                "bot-page-group-files",
                 "bot-page-group-access",
                 "bot-page-group-companion",
                 "bot-page-group-advanced",
@@ -1044,6 +1064,51 @@ describe("the Bricks page (#1995)", () => {
             target.querySelector<HTMLElement>('[data-testid="edit-panel-back"]')?.click();
             await settle();
             expect(byId("usagePage")).toBeNull();
+            expect(rows()).toHaveLength(2);
+        });
+    });
+
+    describe("the Apps row (#2001)", () => {
+        const app = (name: string, id = name.toLowerCase()) => ({
+            id,
+            name,
+            authType: "oauth",
+            source: "catalog",
+            connected: true,
+            reconnectRequired: false,
+            signInLostAt: null,
+            connectedAt: "2026-11-10T09:00:00.000Z",
+            lendable: false,
+            bricks: [],
+        });
+
+        it("sits above the Usage row and says what could be connected while nothing is", async () => {
+            await open();
+            expect(byId("bricksAppsRow")?.textContent?.replace(/\s+/g, " ").trim()).toBe(
+                "Apps Connect email, calendar, GitHub and more"
+            );
+        });
+
+        it("names the connected apps, and counts the rest", async () => {
+            game.getMyApps.mockResolvedValue({
+                apps: [app("Gmail"), app("Google Calendar"), app("GitHub"), app("Notion"), app("Slack")],
+                bricks: [],
+            });
+            await open();
+            expect(byId("bricksAppsRow")?.textContent?.replace(/\s+/g, " ").trim()).toBe(
+                "Apps Gmail, Google Calendar, GitHub and 2 more"
+            );
+        });
+
+        it("opens the Apps page, and Back returns to the Bricks", async () => {
+            await open();
+            byId("bricksAppsRow")?.querySelector<HTMLElement>("button")?.click();
+            await settle();
+            expect(byId("appsPage")).not.toBeNull();
+            expect(byId("bricksPage")).toBeNull();
+            target.querySelector<HTMLElement>('[data-testid="edit-panel-back"]')?.click();
+            await settle();
+            expect(byId("appsPage")).toBeNull();
             expect(rows()).toHaveLength(2);
         });
     });
