@@ -743,6 +743,8 @@ export class Space implements SpaceInterface {
     private extendSpaceUser(user: SpaceUser): SpaceUserExtended {
         const extendedUser = {
             ...user,
+            // Always present, so the people list hears when it changes (a flag that is not there has no store to update)
+            onACall: user.onACall === true,
             pictureStore: readable<string | undefined>(undefined, (set) => {
                 CharacterLayerManager.wokaBase64(user.characterTextures)
                     .then((wokaBase64) => {

@@ -6,6 +6,7 @@ import { merge } from "lodash";
 import { applyFieldMask } from "protobuf-fieldmask";
 import type { Socket } from "../services/SocketManager";
 import { isMatrixAreaSpaceName } from "../services/MatrixAreaMembership";
+import { WORLD_SPACE_NAME } from "../services/SpaceJoinPolicy";
 import type { BackSpaceConnection } from "./Websocket/SocketData";
 import type { EventProcessor } from "./EventProcessor";
 import type { SpaceToBackForwarderInterface } from "./SpaceToBackForwarder";
@@ -41,6 +42,8 @@ export const CLIENT_UPDATABLE_SPACE_USER_FIELDS: ReadonlySet<string> = new Set<k
     "handRaisedAt",
     // In the Audience of a Stage that sees the audience's cameras: a player shows their own camera, or stops (#1623).
     "attendeeCamera",
+    // On a call with a Brick (game #2004): a passing label next to the person's status, only in the world space (see below).
+    "onACall",
 ]);
 
 /**
@@ -380,7 +383,9 @@ export class Space implements SpaceForSpaceConnectionInterface {
                     canGoLiveIn(this.localName, client.getUserData())) &&
                 (field !== "attendeeCamera" ||
                     !updateSpaceUserMessage.user?.attendeeCamera ||
-                    canShowCameraToSpeakersIn(this.localName, client.getUserData()))
+                    canShowCameraToSpeakersIn(this.localName, client.getUserData())) &&
+                // "On a call" is a label for the people list of the world, so it is taken nowhere else
+                (field !== "onACall" || this.localName === WORLD_SPACE_NAME)
         );
         if (changedFields.length !== updateSpaceUserMessage.updateMask.length) {
             const message = `[Space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage] User ${

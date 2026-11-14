@@ -908,3 +908,64 @@ describe("Space: showing a camera to the speakers (#1623)", () => {
         expect(space.stopCameraNoLongerAllowed(aliceSocket)).toBe(null);
     });
 });
+
+describe('Space: "On a call" for other people (game #2004)', () => {
+    const makeSpaceNamed = (localName: string) => {
+        const space = new Space(
+            `world.${localName}`,
+            localName,
+            new EventProcessor(),
+            FilterType.ALL_USERS,
+            vi.fn(),
+            mock<SpaceConnectionInterface>({ getSpaceStreamToBackPromise: vi.fn(), removeSpace: vi.fn() }),
+            "world",
+            [],
+            () => ({} as unknown as SpaceToBackForwarder),
+            () => ({} as unknown as SpaceToFrontDispatcher)
+        );
+        const alice = {
+            ...SpaceUser.fromPartial({ spaceUserId: "alice_1", uuid: "alice-uuid", name: "Alice" }),
+            lowercaseName: "alice",
+        };
+        const aliceSocket = mock<Socket>({ getUserData: vi.fn().mockReturnValue({ spaceUserId: "alice_1" }) });
+        space._localConnectedUserWithSpaceUser.set(aliceSocket, alice);
+        space._localConnectedUser.set("alice_1", aliceSocket);
+        return { space, alice, aliceSocket };
+    };
+
+    const onACall = (spaceName: string, value: boolean) => ({
+        spaceName,
+        user: SpaceUser.fromPartial({ spaceUserId: "alice_1", onACall: value }),
+        updateMask: ["onACall"],
+    });
+
+    it("lets a person say they are on a call, and that it ended, in the world space", () => {
+        const { space, alice, aliceSocket } = makeSpaceNamed("allWorldUser");
+
+        const started = space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(
+            aliceSocket,
+            onACall("world.allWorldUser", true)
+        );
+        expect(started?.changedFields).toEqual(["onACall"]);
+        expect(alice.onACall).toBe(true);
+
+        space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(
+            aliceSocket,
+            onACall("world.allWorldUser", false)
+        );
+        expect(alice.onACall).toBe(false);
+    });
+
+    it("takes it nowhere else: not in a bubble, not in a meeting room", () => {
+        for (const name of ["room#group#1", "area-space-meeting"]) {
+            const { space, alice, aliceSocket } = makeSpaceNamed(name);
+            expect(
+                space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(
+                    aliceSocket,
+                    onACall(`world.${name}`, true)
+                )
+            ).toBe(null);
+            expect(alice.onACall).toBeUndefined();
+        }
+    });
+});

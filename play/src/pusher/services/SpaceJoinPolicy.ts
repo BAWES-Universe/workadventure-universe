@@ -32,7 +32,7 @@ import { toGlobalSpaceName } from "./SpaceNames";
 export const WORLD_SPACE_NAME = "allWorldUser";
 
 /** The only properties the world space syncs. Asking for camera or microphone would turn it into a call. */
-export const WORLD_SPACE_PROPERTIES: ReadonlySet<string> = new Set(["availabilityStatus", "chatID"]);
+export const WORLD_SPACE_PROPERTIES: ReadonlySet<string> = new Set(["availabilityStatus", "chatID", "onACall"]);
 
 export class SpaceJoinRefusedError extends Error {
     constructor(localSpaceName: string, reason: string) {

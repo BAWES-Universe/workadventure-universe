@@ -449,6 +449,43 @@ describe("", () => {
         unsubscriber();
     });
 
+    it("tells a watcher when a person starts and ends a call, though the flag was not set when they were added (game #2004)", async () => {
+        const roomConnection = new MockRoomConnection();
+        const spaceRegistry = new SpaceRegistry(roomConnection, new Subject());
+        const spaceName = "space1";
+        const space = await spaceRegistry.joinSpace(
+            spaceName,
+            FilterType.ALL_USERS,
+            ["availabilityStatus", "chatID", "onACall"],
+            new AbortController().signal
+        );
+
+        roomConnection.addSpaceUserMessageStream.next({
+            spaceName,
+            user: SpaceUser.fromPartial({ spaceUserId: "foo_1", name: "testName", chatID: "chat@id.fr" }),
+        });
+        await flushPromises();
+
+        const person = get(space.usersStore).get("foo_1");
+        if (!person) assert.fail("user not found in store");
+        const calls = vi.fn();
+        const stop = person.reactiveUser.onACall?.subscribe(calls);
+        expect(calls).toHaveBeenLastCalledWith(false);
+
+        const update = (onACall: boolean) =>
+            roomConnection.updateSpaceUserMessageStream.next({
+                spaceName,
+                user: SpaceUser.fromPartial({ spaceUserId: "foo_1", onACall }),
+                updateMask: ["onACall"],
+            });
+        update(true);
+        expect(calls).toHaveBeenLastCalledWith(true);
+        update(false);
+        expect(calls).toHaveBeenLastCalledWith(false);
+
+        stop?.();
+    });
+
     it("should forward public events to the space", async () => {
         const roomConnection = new MockRoomConnection();
         const spaceRegistry = new SpaceRegistry(roomConnection, new Subject());
