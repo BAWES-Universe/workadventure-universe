@@ -57,6 +57,18 @@ describe('Soniox note hearing', () => {
         await expect(hear(async () => { throw new Error('orbit down'); }).then((urls) => urls.sort())).resolves.toEqual(['/files/file-1', '/transcriptions/tr-1']);
     });
 
+    it('still answers the words when a direct delete for a copy Orbit could not keep fails', async () => {
+        const fake = fakeSoniox();
+        const fetcher = (async (url: string, init: RequestInit = {}) => {
+            if (init.method === 'DELETE') throw new Error('soniox down');
+            return fake.fetcher(url, init);
+        }) as unknown as typeof fetch;
+        const heard = await new SonioxNotes({ fetch: fetcher, sleep: async () => undefined }).hear(soniox, { bytes: new Uint8Array([1]), filename: 'note.ogg' }, {
+            cleanup: async (refs) => refs,
+        });
+        expect(heard.text).toBe('hello there');
+    });
+
     it('deletes what it made even when the transcription fails', async () => {
         const fake = fakeSoniox({ errorState: true });
         await expect(run(fake)).rejects.toBeInstanceOf(HearingError);
