@@ -5,6 +5,7 @@
  */
 
 const MINUTE = 60 * 1000;
+const DAY = 24 * 60 * MINUTE;
 
 /** Whether the runtime knows this time zone ("Asia/Kuwait", "Europe/London", "UTC"). */
 export function isTimeZone(value: unknown): value is string {
@@ -52,9 +53,18 @@ export function localToInstant(local: unknown, timeZone: string): string | null 
     const check = new Date(wall);
     // 31 February, 25:00 and the like are not times
     if (check.getUTCFullYear() !== year || check.getUTCMonth() !== month - 1 || check.getUTCDate() !== day || hour > 23 || minute > 59) return null;
-    // The zone's offset at that wall time, found in two passes so a time just after a clock change gets the new offset
-    const guess = wall - offsetMinutes(wall, timeZone) * MINUTE;
-    return new Date(wall - offsetMinutes(guess, timeZone) * MINUTE).toISOString();
+    // The offsets the zone has the day before and the day after: one when nothing changes, two across a clock change
+    const before = offsetMinutes(wall - DAY, timeZone);
+    const after = offsetMinutes(wall + DAY, timeZone);
+    const real = [...new Set([before, after])]
+        .map((offset) => wall - offset * MINUTE)
+        .filter((at) => {
+            const back = wallOf(at, timeZone);
+            return Date.UTC(back.year, back.month - 1, back.day, back.hour, back.minute) === wall;
+        });
+    // A time that happens twice (the clock goes back) is the first time it happens; a time that never happens (the clock jumps
+    // forward) is read on the clock as it was before, which is the same moment as that much later on the new one
+    return new Date(real.length > 0 ? Math.min(...real) : wall - before * MINUTE).toISOString();
 }
 
 /** A moment in words on the person's clock: "Sun 15 Nov, 4:00 PM". Their own zone's name goes beside it where it matters. */

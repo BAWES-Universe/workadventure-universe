@@ -81,6 +81,19 @@ describe('time, on the person’s own clock', () => {
         expect(localToInstant('2026-12-01 09:30', 'America/New_York')).toBe('2026-12-01T14:30:00.000Z');
     });
 
+    it('reads a time the clock skips as the same moment on the new clock, and a time it repeats as the first one', () => {
+        // New York, 8 Mar 2026: 2:00 AM jumps to 3:00 AM
+        expect(localToInstant('2026-03-08 01:30', 'America/New_York')).toBe('2026-03-08T06:30:00.000Z');
+        expect(localToInstant('2026-03-08 02:30', 'America/New_York')).toBe('2026-03-08T07:30:00.000Z');
+        expect(localToInstant('2026-03-08 03:30', 'America/New_York')).toBe('2026-03-08T07:30:00.000Z');
+        // New York, 1 Nov 2026: 2:00 AM goes back to 1:00 AM
+        expect(localToInstant('2026-11-01 00:30', 'America/New_York')).toBe('2026-11-01T04:30:00.000Z');
+        expect(localToInstant('2026-11-01 01:30', 'America/New_York')).toBe('2026-11-01T05:30:00.000Z');
+        expect(localToInstant('2026-11-01 02:30', 'America/New_York')).toBe('2026-11-01T07:30:00.000Z');
+        // London, 29 Mar 2026: 1:00 AM jumps to 2:00 AM
+        expect(localToInstant('2026-03-29 01:30', 'Europe/London')).toBe('2026-03-29T01:30:00.000Z');
+    });
+
     it('is nothing for what is not a real date and time, or a zone nobody knows', () => {
         for (const bad of ['tomorrow', '2026-02-31 10:00', '2026-11-15 25:00', '2026-11-15', 12, null]) expect(localToInstant(bad, 'Asia/Kuwait')).toBeNull();
         expect(localToInstant('2026-11-15 16:00', 'Nowhere/Land')).toBeNull();
