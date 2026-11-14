@@ -202,7 +202,16 @@ export class DmReplyService extends BaseBehavior {
         return FileParser.withLoadedFiles(loaded, async () => {
             const galleryUrls = gallery.map((file) => file.url);
             const read = await this.formatParsedAttachment(text, primary.url, primary.type, mediaOf(primary.type), galleryUrls, undefined, undefined, readChars);
-            const images = await this.collectImageUrls(primary.url, mediaOf(primary.type), primary.type, galleryUrls);
+            const pictures = await this.collectImageUrls(primary.url, mediaOf(primary.type), primary.type, galleryUrls);
+            // The model gets each picture from its checked bytes, never its stored link: a signed link runs out long before its receipt
+            const { sniffedType } = await import('../ai/providers/inlineImages');
+            const images = pictures.map((url) => {
+                const file = loaded.get(url);
+                if (!file) return url;
+                const bytes = Buffer.from(file.bytes);
+                const type = file.type.startsWith('image/') ? file.type : (sniffedType(bytes) ?? 'image/png');
+                return `data:${type};base64,${bytes.toString('base64')}`;
+            });
             return { text: read, images };
         });
     }

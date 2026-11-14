@@ -14,6 +14,7 @@
  * gives the words already heard. Nothing here throws to the caller: every failure is a `HeardNote` with a reason.
  */
 import { createHash } from 'node:crypto';
+import { availableParallelism } from 'node:os';
 import { decryptApiKey } from '../ai/encryption';
 import { HearingError, type ClipHearer, type HeardNote, type HearHooks } from './NoteHearing';
 import type { NoteLength } from './NoteLength';
@@ -62,6 +63,8 @@ export interface NoteTurnsOptions {
     timeoutMs?: number;
     log?: (message: string) => void;
     now?: () => number;
+    /** How many notes this server reads and measures at once (each runs ffmpeg); one more is "busy", never queued. One per core by default. */
+    measureAtOnce?: number;
 }
 
 const CAPABILITIES_MS = 5 * 60_000;
@@ -78,6 +81,8 @@ export class NoteTurns {
     private readonly done = new Map<string, { at: number; result: Promise<TurnHeard> }>();
     private cleanupTimer: NodeJS.Timeout | undefined;
     private cleaning = false;
+    /** Notes being read and measured now, across bots and guests. */
+    private measuring = 0;
 
     constructor(private readonly options: NoteTurnsOptions) {}
 
@@ -147,20 +152,42 @@ export class NoteTurns {
         return result;
     }
 
+    /** A place to read and measure one note, or false when this server is measuring as many as it takes at once. */
+    private admit(): (() => void) | false {
+        const most = this.options.measureAtOnce ?? Math.max(2, availableParallelism());
+        if (this.measuring >= most) return false;
+        this.measuring++;
+        let freed = false;
+        return () => {
+            if (freed) return;
+            freed = true;
+            this.measuring--;
+        };
+    }
+
     private async run(botId: string, turnId: string, clip: { url?: string; bytes?: Uint8Array }, sender: NoteSender, onStart?: () => void): Promise<TurnHeard> {
         const started = this.now();
+        // A burst of notes never starts more ffmpeg runs than the server takes: one more is "busy", asked again later
+        const free = this.admit();
+        if (!free) return { ok: false, reason: 'busy' };
         let bytes: Uint8Array;
+        let measured: Awaited<ReturnType<NoteTurnsOptions['length']['measure']>>;
+        let downloadMs: number;
         try {
-            bytes = clip.bytes ?? (await this.options.fetchClip(clip.url ?? '', this.options.maxBytes));
-        } catch (error) {
-            if (/too large/i.test((error as Error)?.message ?? '')) return { ok: false, reason: 'too-big' };
-            throw error;
-        }
-        if (bytes.byteLength > this.options.maxBytes) return { ok: false, reason: 'too-big' };
-        const downloadMs = this.now() - started;
+            try {
+                bytes = clip.bytes ?? (await this.options.fetchClip(clip.url ?? '', this.options.maxBytes));
+            } catch (error) {
+                if (/too large/i.test((error as Error)?.message ?? '')) return { ok: false, reason: 'too-big' };
+                throw error;
+            }
+            if (bytes.byteLength > this.options.maxBytes) return { ok: false, reason: 'too-big' };
+            downloadMs = this.now() - started;
 
-        // The real length, for free, before anything is paid
-        const measured = await this.options.length.measure(bytes, await this.options.longestSeconds());
+            // The real length, for free, before anything is paid
+            measured = await this.options.length.measure(bytes, await this.options.longestSeconds());
+        } finally {
+            free();
+        }
         if ('reason' in measured) {
             if (measured.reason === 'unavailable') this.log('ffmpeg is not available: notes are not heard');
             return { ok: false, reason: measured.reason === 'too-long' ? 'too-long' : 'failed' };
@@ -232,13 +259,33 @@ export class NoteTurns {
         const owner = hearing.payer === 'owner';
         const providerId = hearing.provider.id;
         let submitted = !!lease.reconcile;
+        // What the provider holds is let go only once the words are kept at Orbit (or the hearing failed), so a paid transcript is
+        // never deleted before it is stored. The hearing hands its ids over here instead of deleting them itself
+        let left: { file?: string; transcription?: string } | undefined;
+        const region = hearing.provider.region;
+        const letGo = async (): Promise<void> => {
+            if (!left) return;
+            const unkept = await this.cleanUp(providerId, region, left);
+            left = undefined;
+            // What Orbit could not keep as a job is deleted at once, as before cleanup jobs
+            const remove = hearer.remove?.bind(hearer);
+            const direct: ['file' | 'transcription', string][] = [];
+            if (unkept.transcription) direct.push(['transcription', unkept.transcription]);
+            if (unkept.file) direct.push(['file', unkept.file]);
+            for (const [kind, id] of direct) {
+                await (remove ? remove({ key: settings.key ?? '', ...(settings.endpoint ? { endpoint: settings.endpoint } : {}) }, kind, id) : Promise.resolve(0)).catch(() => undefined);
+            }
+        };
         const hooks: HearHooks = {
             onSubmitted: async (refs) => {
                 submitted = true;
                 const ids = Object.fromEntries(Object.entries(refs).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
                 await this.record(turn.id, { event: 'submitted', generation: lease.generation, refs: ids });
             },
-            cleanup: (refs) => this.cleanUp(providerId, hearing.provider!.region, refs),
+            cleanup: async (refs) => {
+                left = { ...(refs.file ? { file: refs.file } : {}), ...(refs.transcription ? { transcription: refs.transcription } : {}) };
+                return {};
+            },
         };
 
         onStart?.();
@@ -246,6 +293,8 @@ export class NoteTurns {
             const heard = lease.reconcile && hearer.reconcile ? await hearer.reconcile(settings, lease.reconcile, hooks) : await hearer.hear(settings, { bytes: measured.bytes, filename: measured.filename }, hooks);
             if (owner && botId) this.options.report?.(botId, providerId, { ok: true });
             await this.record(turn.id, { event: 'heard', generation: lease.generation, transcript: heard.text, seconds: Math.max(0, Math.ceil(heard.seconds ?? measured.seconds)) });
+            // Kept (or Orbit could not be told, logged above): nothing stays at the provider either way, as the plan says
+            await letGo();
             const totalMs = this.now() - started;
             this.log(`heard a ${measured.seconds.toFixed(1)} s note with ${settings.adapter} in ${totalMs} ms (download ${downloadMs}, upload ${heard.uploadMs}, wait ${heard.waitMs})`);
             return { ok: true, text: heard.text, provider: settings.adapter, clipSeconds: measured.seconds, timings: { downloadMs, uploadMs: heard.uploadMs, waitMs: heard.waitMs, totalMs } };
@@ -253,6 +302,7 @@ export class NoteTurns {
             // Taken by the provider, or cut off by the clock: it may have been charged, so it stays counted
             const charged = submitted ? 'yes' : error instanceof HearingError && error.status !== 504 && error.status !== undefined ? 'no' : 'unknown';
             await this.record(turn.id, { event: 'hearing-failed', generation: lease.generation, charged });
+            await letGo();
             if (error instanceof HearingError) {
                 if (owner && botId) this.options.report?.(botId, providerId, { ok: false, ...(error.status !== undefined ? { status: error.status } : {}), ...(error.rejected ? { rejected: true } : {}) });
                 if (error.rejected) return { ok: false, reason: 'rejected', status: error.status };
@@ -285,7 +335,14 @@ export class NoteTurns {
     async guestNote(input: { guestId: string; roomUrl: string; turnId: string; bytes: Uint8Array; contentHash: string }): Promise<GuestNoteTurn> {
         try {
             if (!needsAll(await this.capabilities())) return { kind: 'refused', why: 'failed' };
-            const measured = await this.options.length.measure(input.bytes, await this.options.longestSeconds());
+            const free = this.admit();
+            if (!free) return { kind: 'refused', why: 'busy' };
+            let measured: Awaited<ReturnType<NoteTurnsOptions['length']['measure']>>;
+            try {
+                measured = await this.options.length.measure(input.bytes, await this.options.longestSeconds());
+            } finally {
+                free();
+            }
             if ('reason' in measured) {
                 if (measured.reason === 'unavailable') this.log('ffmpeg is not available: notes are not heard');
                 return { kind: 'refused', why: measured.reason === 'too-long' ? 'too-long' : 'failed' };

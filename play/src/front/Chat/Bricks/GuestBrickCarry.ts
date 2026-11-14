@@ -106,8 +106,9 @@ export async function carryGuestChatAlong(steps: CarrySteps): Promise<CarryOutco
             continue;
         }
         from = part.to;
-        const { carryingTo: _said, ...kept } = after;
-        steps.keep({ ...kept, carriedTo: from });
+        const kept: GuestChat = { ...after, carriedTo: from };
+        delete kept.carryingTo;
+        steps.keep(kept);
     }
     /* eslint-enable no-await-in-loop */
 }

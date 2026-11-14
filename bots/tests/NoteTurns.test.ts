@@ -28,7 +28,7 @@ let hearer: ClipHearer & { hear: ReturnType<typeof vi.fn>; reconcile: ReturnType
 let measure: ReturnType<typeof vi.fn>;
 let report: ReturnType<typeof vi.fn>;
 
-const turns = () =>
+const turns = (over: Partial<ConstructorParameters<typeof NoteTurns>[0]> = {}) =>
     new NoteTurns({
         orbit: orbit as unknown as VoiceNoteOrbit,
         hearers: { soniox: hearer },
@@ -37,6 +37,7 @@ const turns = () =>
         longestSeconds: async () => 300,
         maxBytes: 1000,
         report,
+        ...over,
     });
 const SENDER = { userId: 'uuid-sara', isGuest: false, source: 'universe-ai' as const };
 
@@ -101,6 +102,55 @@ describe('a note for a bot', () => {
         const t = turns();
         await expect(t.answered('turn-1', 1, 'the answer')).rejects.toThrow('orbit down');
         await expect(t.answerFailed('turn-1', 1)).resolves.toBeUndefined();
+    });
+
+    it('lets go of what the provider holds only once the words are kept at Orbit, and still lets go when the hearing fails', async () => {
+        const order: string[] = [];
+        orbit.recordVoiceNote.mockImplementation(async (_id: string, event: TurnEvent) => void order.push(event.event));
+        orbit.addVoiceNoteCleanup.mockImplementation(async (job: { kind: string }) => void order.push(`cleanup ${job.kind}`));
+        await turns().hear('bot-1', 'event-1', { bytes: new Uint8Array([1]) }, SENDER);
+        expect(order).toEqual(['submitted', 'heard', 'cleanup transcription', 'cleanup file']);
+
+        order.length = 0;
+        hearer.hear.mockImplementationOnce(async (_settings, _clip, hooks) => {
+            await hooks?.onSubmitted?.({ file: 'f-2', transcription: 't-2' });
+            await hooks?.cleanup?.({ file: 'f-2', transcription: 't-2' });
+            throw new HearingError('soniox could not read the note', 422);
+        });
+        await turns().hear('bot-1', 'event-2', { bytes: new Uint8Array([1]) }, SENDER);
+        expect(order).toEqual(['submitted', 'hearing-failed', 'cleanup transcription', 'cleanup file']);
+    });
+
+    it('deletes at once, through the provider, what Orbit could not keep as a cleanup job', async () => {
+        orbit.addVoiceNoteCleanup.mockImplementation(async (job: { kind: string }) => {
+            if (job.kind === 'file') throw new Error('orbit down');
+        });
+        await turns().hear('bot-1', 'event-1', { bytes: new Uint8Array([1]) }, SENDER);
+        expect(hearer.remove).toHaveBeenCalledTimes(1);
+        expect(hearer.remove).toHaveBeenCalledWith(expect.objectContaining({ key: 'key-of-enc' }), 'file', 'f-1');
+    });
+
+    it('measures only as many notes at once as the server takes, and says busy for one more instead of queueing it', async () => {
+        const finish: Array<() => void> = [];
+        measure.mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    finish.push(() => resolve({ ok: true, seconds: 3.9, bytes: new Uint8Array([9]), filename: 'note.ogg' }));
+                })
+        );
+        const t = turns({ measureAtOnce: 2 });
+        const first = t.hear('bot-1', 'event-1', { bytes: new Uint8Array([1]) }, SENDER);
+        const second = t.hear('bot-1', 'event-2', { bytes: new Uint8Array([2]) }, SENDER);
+        await vi.waitFor(() => expect(measure).toHaveBeenCalledTimes(2));
+        await expect(t.hear('bot-1', 'event-3', { bytes: new Uint8Array([3]) }, SENDER)).resolves.toEqual({ ok: false, reason: 'busy' });
+        await expect(t.guestNote({ guestId: 'g', roomUrl: '/@/a/b/c', turnId: 'gt-1', bytes: new Uint8Array([4]), contentHash: 'h' })).resolves.toEqual({ kind: 'refused', why: 'busy' });
+        expect(measure).toHaveBeenCalledTimes(2);
+        finish.forEach((done) => done());
+        await first;
+        await second;
+        // A place is free again once a note is measured
+        measure.mockResolvedValue({ ok: true, seconds: 3.9, bytes: new Uint8Array([9]), filename: 'note.ogg' });
+        await expect(t.hear('bot-1', 'event-3', { bytes: new Uint8Array([3]) }, SENDER)).resolves.toMatchObject({ ok: true });
     });
 
     it('is the same answer when asked again on this server, never heard twice', async () => {

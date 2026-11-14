@@ -151,7 +151,8 @@ describe("the guest Brick's reading is every bot's reading", () => {
         expect(read.text).toContain('What is on?');
         expect(read.text).toContain('Soup of the day: lentil');
         expect(read.text).toContain('[User also sent an image: https://cdn.test/b.png]');
-        expect(read.images).toEqual(['https://cdn.test/b.png']);
+        // The picture goes from its checked bytes, never its stored link (a signed link runs out long before its receipt)
+        expect(read.images).toEqual([`data:image/png;base64,${Buffer.from([1]).toString('base64')}`]);
     });
 });
 
