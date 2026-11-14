@@ -30,6 +30,10 @@
     import { UNIVERSE_AI_REF } from "../mindModel";
     import type { UsageScreen } from "../usageModel";
     import type { ToolsScreen } from "../toolsModel";
+    import BrickFilesGroup from "../../../Chat/Bricks/BrickFilesGroup.svelte";
+    import BrickMemoryGroup from "../../../Chat/Bricks/BrickMemoryGroup.svelte";
+    import ComputerGroup from "../../../Chat/Bricks/Computer/ComputerGroup.svelte";
+    import BrickLookPicker from "../../../Chat/Bricks/BrickLookPicker.svelte";
     import BotWokaPicker from "./BotWokaPicker.svelte";
     import BotCompanionPicker from "./BotCompanionPicker.svelte";
     import BotRuleScreen from "./BotRuleScreen.svelte";
@@ -52,6 +56,14 @@
     import BotToolsServerScreen from "./BotToolsServerScreen.svelte";
     import BotToolsHeadingScreen from "./BotToolsHeadingScreen.svelte";
     import BotToolsApprovalsScreen from "./BotToolsApprovalsScreen.svelte";
+    import {
+        brickChangeBetween,
+        brickPutBack,
+        brickSavedAfter,
+        brickSavedOf,
+        emptyBrickSaved,
+        type BrickSaved,
+    } from "./brickSaves";
     import { IconAdjustmentsHorizontal, IconCurrentLocation, IconPaw, IconPencil } from "@wa-icons";
 
     export let bot: BotData | null = null;
@@ -286,7 +298,8 @@
             }
             // Reset last saved name when bot changes
             lastSavedName = bot.name || null;
-            brickSaved = { description: bot.description ?? null, chatInstructions: bot.chatInstructions ?? null };
+            brickSaved = brickSavedOf(bot);
+            brickUnsaved.clear();
         }
     } else {
         // Bot prop became null - clear currentBot to prevent errors
@@ -298,42 +311,79 @@
     let autoSaveTimeout: ReturnType<typeof setTimeout> | null = null;
     let nameSaveTimeout: ReturnType<typeof setTimeout> | null = null;
     let lastSavedName: string | null = null;
-    /** What a Brick's page last saved of the fields it saves while typing, so only a real change is sent. */
-    let brickSaved: { description: string | null; chatInstructions: string | null } = {
-        description: null,
-        chatInstructions: null,
-    };
+    /**
+     * What a Brick's page last saved of the fields it saves from its groups (typing, a pick, a switch), so only a real
+     * change is sent and a refused one is put back.
+     */
+    let brickSaved: BrickSaved = emptyBrickSaved();
     /** Why a Brick's last change was not saved, in a line for the person; cleared by the next one that is. */
     let brickError: string | null = null;
 
-    /** Saves a change of a Brick's page through its own route. False when it was not saved. */
-    async function saveBrick(change: BrickChange): Promise<boolean> {
-        if (!brick) return false;
-        const saved = await brick.save(change).catch((error: unknown) => {
-            console.error("[BotDetailView] Failed to save a Brick:", error);
-            return false;
-        });
-        brickError = saved ? null : $LL.mapEditor.edit.bots.page.telemetry.saveFailed();
-        return saved;
+    /** The typed fields of this Brick whose last save failed: the error line stays until each is saved. */
+    const brickUnsaved = new Set<string>();
+    const TYPED_FIELDS: ReadonlySet<string> = new Set(["description", "chatInstructions"]);
+    /** The last save asked for each Brick: the next one waits for it, so changes reach Orbit in the order they were made. */
+    const brickSaving = new Map<string, Promise<boolean>>();
+
+    /** Saves a change of a Brick's page through its own route, after any save of it still on its way. False when it was not saved. */
+    function saveBrick(change: BrickChange): Promise<boolean> {
+        const way = brick;
+        const brickId = currentBot?.id;
+        if (!way || !brickId) return Promise.resolve(false);
+        const before = brickSaving.get(brickId) ?? Promise.resolve(true);
+        const run = before
+            .catch(() => false)
+            .then(() => way.save(change))
+            .catch((error: unknown) => {
+                console.error("[BotDetailView] Failed to save a Brick:", error);
+                return false;
+            })
+            .then((saved) => {
+                if (brickSaving.get(brickId) === run) brickSaving.delete(brickId);
+                // Typed text that failed stays on the page unsaved: the line says so until that text is saved, and a
+                // later save of another field does not clear it. A name or switch that failed goes back on its own.
+                const typed = Object.keys(change).filter((field) => TYPED_FIELDS.has(field));
+                if (saved) typed.forEach((field) => brickUnsaved.delete(field));
+                else typed.forEach((field) => brickUnsaved.add(field));
+                brickError =
+                    !saved || brickUnsaved.size > 0 ? $LL.mapEditor.edit.bots.page.telemetry.saveFailed() : null;
+                return saved;
+            });
+        brickSaving.set(brickId, run);
+        return run;
     }
 
-    /** A Brick's description and Personality, once typing stopped: only what changed since the last save. */
+    /**
+     * What a Brick's groups changed since the last save, once typing stopped or a pick was made: its description and
+     * Personality, what it runs on and its images (Mind), how it behaves, and its companion. Only what changed is sent. If
+     * Orbit refuses it, the page goes back to what was saved, as it does for the switch.
+     */
     function flushBrickFields() {
         if (!currentBot || !brick) return;
         const botId = currentBot.id;
-        const next = {
-            description: currentBot.description?.trim() || null,
-            chatInstructions: currentBot.chatInstructions?.trim() || null,
-        };
-        const change: BrickChange = {};
-        if (next.description !== brickSaved.description) change.description = next.description;
-        if (next.chatInstructions !== brickSaved.chatInstructions) change.chatInstructions = next.chatInstructions;
-        if (Object.keys(change).length === 0) return;
-        void saveBrick(change).then((saved) => {
-            if (!saved || currentBot?.id !== botId) return;
-            brickSaved = { ...brickSaved, ...change } as typeof brickSaved;
+        // One save at a time: each one works out what changed when its turn comes, after the one before it has landed, so
+        // a late answer never undoes what the person did while it was on its way
+        brickQueue = brickQueue.then(async () => {
+            if (!currentBot || currentBot.id !== botId) return;
+            const now = brickSavedOf(currentBot);
+            const change = brickChangeBetween(brickSaved, now);
+            if (Object.keys(change).length === 0) return;
+            const saved = await saveBrick(change);
+            if (currentBot?.id !== botId) return;
+            if (saved) {
+                brickSaved = brickSavedAfter(brickSaved, now, change);
+            } else {
+                // Typed text that was refused stays on the page, flagged unsaved: the next change sends it again. The
+                // rest (a pick, a switch) goes back to what was saved.
+                const rest: BrickChange = { ...change };
+                delete rest.description;
+                delete rest.chatInstructions;
+                currentBot = brickPutBack(currentBot, brickSaved, rest, now);
+            }
         });
     }
+    /** The Brick's field saves, in the order they were asked for */
+    let brickQueue: Promise<void> = Promise.resolve();
 
     // Auto-save when currentBot changes (debounced) - for AI config and behavior config only
     function autoSave() {
@@ -406,12 +456,18 @@
         const botId = currentBot?.id;
         const newName = currentBot?.name?.trim() || "";
         if (brick) {
-            if (!botId || !newName || newName === lastSavedName) return;
+            if (!botId || newName === lastSavedName) return;
+            // A Brick always has a name: a cleared one comes back as it was saved, and nothing is sent
+            if (!newName) {
+                if (currentBot && lastSavedName) currentBot = { ...currentBot, name: lastSavedName };
+                return;
+            }
             void saveBrick({ name: newName }).then((saved) => {
                 if (currentBot?.id !== botId) return;
                 if (saved) {
                     lastSavedName = newName;
-                } else {
+                } else if ((currentBot.name?.trim() || "") === newName) {
+                    // Only the name that failed goes back: one typed since stays, and saves in its turn
                     currentBot = { ...currentBot, name: lastSavedName || "" };
                 }
             });
@@ -521,6 +577,17 @@
         onSave();
     }
 
+    /** A Brick's look, saved on the tap that picks it (no Save): true once Orbit has it. */
+    async function pickBrickLook(textureId: string): Promise<boolean> {
+        if (!currentBot) return false;
+        const botId = currentBot.id;
+        const saved = await saveBrick({ characterTextureId: textureId });
+        if (saved && currentBot?.id === botId) {
+            currentBot = { ...currentBot, characterTexture: textureId, characterTextureIds: [textureId] };
+        }
+        return saved;
+    }
+
     /**
      * The companion that walks with the bot: picked (or cleared) on the page and saved right away. A companion
      * joins the bot when it connects, and the bot server respawns a running bot itself when the companion
@@ -532,6 +599,11 @@
         if ((currentBot.companionTextureId ?? null) === companionTextureId) return;
 
         currentBot = { ...currentBot, companionTextureId };
+        if (brick) {
+            // A Brick's companion is saved with its other parts, through its own route
+            apply(currentBot);
+            return;
+        }
         upsertBot(currentBot);
 
         if (currentBot.id && botApiService.isInitialized()) {
@@ -562,8 +634,6 @@
         : "";
 
     onMount(() => {
-        // A Brick's look is drawn by its page, and it has no companion yet: neither list is needed for it
-        if (brick) return;
         void ensureBotWokaCatalog();
         void ensureBotCompanionCatalog();
     });
@@ -603,7 +673,9 @@
         currentBot = { ...currentBot, enabled };
         saveBrick({ enabled })
             .then((saved) => {
-                if (!saved && currentBot?.id === botId) currentBot = { ...currentBot, enabled: was };
+                if (!saved && currentBot?.id === botId && currentBot.enabled === enabled) {
+                    currentBot = { ...currentBot, enabled: was };
+                }
             })
             .catch((error) => console.error(error))
             .finally(() => {
@@ -666,7 +738,14 @@
 
 <svelte:window on:keydown={handleTextureKeydown} />
 
-{#if currentBot && editingTexture}
+{#if currentBot && editingTexture && brick}
+    <BrickLookPicker
+        look={currentBot.characterTexture || ""}
+        name={currentBot.name || ""}
+        onPick={pickBrickLook}
+        onBack={() => (editingTexture = false)}
+    />
+{:else if currentBot && editingTexture}
     <BotWokaPicker
         selectedId={currentBot.characterTexture || ""}
         onSave={(textureId) => {
@@ -737,7 +816,16 @@
     <div class="bot-page" data-testid="bot-page">
         <div class="bp-hd">
             {#if brick}
-                <span class="bp-woka bp-look" data-testid="brick-look"><slot name="look" /></span>
+                <button
+                    type="button"
+                    class="bp-woka"
+                    aria-label={page.changeLooks()}
+                    title={page.changeLooks()}
+                    data-testid="brick-look"
+                    on:click={() => (editingTexture = true)}
+                >
+                    <slot name="look" look={currentBot.characterTexture || ""} />
+                </button>
             {:else}
                 <button
                     type="button"
@@ -812,9 +900,69 @@
 
         <div class="bp-groups">
             {#if brick}
-                <!-- A Brick's page so far: the parts a Brick has. Usage, Mind, Voice, Behavior, Apps, Computer, Goals and
-                     tasks, Memory, Files, Permissions, Companion and Template come with their own issues -->
+                <!-- A Brick's page, in the mock's order: Mind, Personality, Voice, Behavior, Computer, Memory, Files, Permissions
+                     and Companion are here. Usage, Apps, Goals and tasks and Template come with their own issues -->
+                <MindGroup
+                    bot={currentBot}
+                    open={openGroup === "mind"}
+                    onToggle={toggleGroup}
+                    onChange={(next) => apply(next)}
+                    onOptions={takeAiOptions}
+                    brick
+                />
                 <SayGroup bot={currentBot} open={openGroup === "say"} onToggle={toggleGroup} onChange={apply} />
+                <VoiceGroup bot={currentBot} open={openGroup === "voice"} onToggle={toggleGroup} brick />
+                <BehaviorGroup
+                    bot={currentBot}
+                    open={openGroup === "behavior"}
+                    onToggle={toggleGroup}
+                    onChange={(next) => apply(next)}
+                    onEditRoute={editRoute}
+                    brick
+                />
+                <!-- Computer, then Memory and Files, before Permissions and Companion: the mock's order (its Computer, Goals and
+                     tasks, Memory, Files come after Behavior and Apps) -->
+                {#if currentBot?.id}
+                    <ComputerGroup
+                        brick={{ id: currentBot.id, name: currentBot.name || "Brick" }}
+                        open={openGroup === "computer"}
+                        onToggle={toggleGroup}
+                    />
+                {/if}
+                <!-- What it remembers about its owner, and its files (game #2003) -->
+                <!-- Keyed by the Brick: each reads its list once, so another Brick must start them over -->
+                {#key currentBot.id}
+                    <BrickMemoryGroup
+                        botId={currentBot.id}
+                        name={currentBot.name || "Brick"}
+                        open={openGroup === "memory"}
+                        onToggle={toggleGroup}
+                    />
+                {/key}
+                {#key currentBot.id}
+                    <BrickFilesGroup
+                        brickId={currentBot.id}
+                        name={currentBot.name || "Brick"}
+                        open={openGroup === "files"}
+                        onToggle={toggleGroup}
+                    />
+                {/key}
+                <PermissionsGroup
+                    bot={currentBot}
+                    open={openGroup === "access"}
+                    onToggle={toggleGroup}
+                    onOpenRule={() => {}}
+                    onAdd={() => {}}
+                    brick
+                />
+                <PageGroup
+                    id="companion"
+                    icon={IconPaw}
+                    title={page.companion.title()}
+                    brief={companionLine}
+                    link
+                    onToggle={() => (editingCompanion = true)}
+                />
             {:else}
                 {#if askedUsage && currentBot}
                     <MakerAskedCard name={currentBot.name || "Bot"} usage={askedUsage} onUseKey={openMind} />
@@ -925,15 +1073,6 @@
     @media (hover: hover) {
         .bp-woka:hover {
             box-shadow: inset 0 0 0 2px rgba(196, 181, 253, 0.7);
-        }
-    }
-    /* A Brick's look, drawn by its page: not a button until a Brick's look can be changed */
-    .bp-look {
-        cursor: default;
-    }
-    @media (hover: hover) {
-        .bp-woka.bp-look:hover {
-            box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.28);
         }
     }
     .bp-woka:focus-visible {

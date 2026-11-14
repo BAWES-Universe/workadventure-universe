@@ -1,4 +1,5 @@
 import { get } from "svelte/store";
+import { APPS_LINK, openAppsPage } from "./Apps/OpenApps";
 import { openBrickChat } from "./BrickChat";
 import { loadMyBricks, myBricksStore } from "./MyBricksStore";
 
@@ -38,19 +39,28 @@ export function brickChatLinks(node: HTMLElement): { destroy: () => void } {
     const tap = (event: MouseEvent) => {
         const anchor = event.target instanceof Element ? event.target.closest("a") : null;
         const href = anchor?.getAttribute("href");
+        if (href === APPS_LINK) {
+            // "[Apps](#apps)" in a Brick's words (#2001): the Apps page opens here
+            event.preventDefault();
+            openAppsPage();
+            return;
+        }
         if (!href?.startsWith(BRICK_CHAT_LINK)) return;
         const brickId = brickChatLinkId(href);
         // Such a link is never followed, even a broken one: it would open the game again in a new tab
         event.preventDefault();
         if (brickId) openBrickChatLink(brickId).catch((error) => console.error(error));
     };
+    // A middle click would open the link in a new tab too; other buttons (a right click's menu) are left alone
+    const middleTap = (event: MouseEvent) => {
+        if (event.button === 1) tap(event);
+    };
     node.addEventListener("click", tap);
-    // A middle click would open the link in a new tab too
-    node.addEventListener("auxclick", tap);
+    node.addEventListener("auxclick", middleTap);
     return {
         destroy() {
             node.removeEventListener("click", tap);
-            node.removeEventListener("auxclick", tap);
+            node.removeEventListener("auxclick", middleTap);
         },
     };
 }

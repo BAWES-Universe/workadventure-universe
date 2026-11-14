@@ -11,6 +11,7 @@
     import type { ProximitySession } from "../../Connection/Proximity/ProximitySessions";
     import { selectedChatMessageToReply } from "../../Stores/ChatStore";
     import LL from "../../../../i18n/i18n-svelte";
+    import { GuestBrickChatRoom } from "../../Bricks/GuestBrickChatRoom";
     import { ProximityChatRoom } from "../../Connection/Proximity/ProximityChatRoom";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import {
@@ -28,6 +29,7 @@
     import LazyEmote from "../../../Components/EmoteMenu/LazyEmote.svelte";
     import { composerDraftStore } from "../../Stores/ComposerDraftStore";
     import { draftMessageService } from "../../Services/DraftMessageService";
+    import { GUEST_BRICK_ID } from "../../Bricks/GuestBrick";
     import { localUserStore } from "../../../Connection/LocalUserStore";
     import { MatrixChatRoom } from "../../Connection/Matrix/MatrixChatRoom";
     import { KLIPY_API_KEY, UPLOADER_URL } from "../../../Enum/EnvironmentVariable";
@@ -83,6 +85,8 @@
     export let inputHint: string | undefined = undefined;
     /** Whether the mic shows. A bot's direct messages hide it until bots can hear notes. */
     export let allowVoiceNotes = true;
+    /** Words only: no files, GIFs or voice notes. The Brick for guests (#1997) can only read what is written. */
+    export let textOnly = false;
 
     let message = "";
     // Links whose preview was closed above the message box: they are sent without one.
@@ -168,6 +172,9 @@
     const draftRoomId = room.id;
     const draftId = `${room.id}-${localUserStore.getChatId() ?? "0"}`;
     const hasSpaceDrafts = spaceGenerationOf(room) !== undefined;
+    // The chat with the Brick for guests is kept on the device for a guest and goes with them: an unsent line is not saved
+    // under a key every guest on the device would share, and nothing is left behind when the chat is dropped (#1997).
+    const keepsDraft = room.id !== GUEST_BRICK_ID;
     // The stay the composer opened in: text left when that stay ends is kept there as unsent, never sent on.
     const mountSessionId = room instanceof ProximityChatRoom ? room.currentSessionId : undefined;
     // Back with the same people within a few minutes: what you'd typed before walking away goes back in here.
@@ -422,7 +429,11 @@
                     })
                     .catch((error) => {
                         console.error("Error sending files:", error);
-                        const failure = new UploadFailure("other", undefined, "matrix-error");
+                        // The Brick for guests uploads here too: its refusal (too big, turned off) keeps its reason
+                        const failure =
+                            error instanceof UploadFailure
+                                ? error
+                                : new UploadFailure("other", undefined, "matrix-error");
                         const failures = [failure];
                         showUploadError(
                             uploadFailureLine(
@@ -506,27 +517,44 @@
     }
     const unsubscribeComposerFocusRequest = chatComposerFocusRequestStore.subscribe(focusOnRequest);
 
-    onMount(async () => {
-        // A request made before this box existed: the subscription ran before the input did.
-        focusOnRequest(get(chatComposerFocusRequestStore));
-        const isUploadEnabled = gameManager.getCurrentGameScene().room.isChatUploadEnabled;
+    // Whether files can be sent here. The Brick for guests says what it takes a moment after its chat opens: when that
+    // comes after this box, files are checked again, so the paperclip and the mic are not left off.
+    let uploadCheck = 0;
+    let checkedTextOnly: boolean | undefined;
+    async function checkUploads(textOnlyNow: boolean): Promise<void> {
+        const ask = ++uploadCheck;
+        const isUploadEnabled = !textOnlyNow && gameManager.getCurrentGameScene().room.isChatUploadEnabled;
+        let enabled = isUploadEnabled;
         // Check CDN config for proximity chat before enabling the button
-        if (room instanceof ProximityChatRoom && isUploadEnabled) {
+        // The nearby chat and the Brick for guests send files through the uploader: only when its bucket is set up
+        if ((room instanceof ProximityChatRoom || room instanceof GuestBrickChatRoom) && isUploadEnabled) {
             try {
                 const configResponse = await fetch(`${UPLOADER_URL}/config`);
                 if (configResponse.ok) {
                     const config = await configResponse.json();
-                    fileAttachementEnabled = config.cdnConfigured;
+                    enabled = config.cdnConfigured;
                 } else {
-                    fileAttachementEnabled = false;
+                    enabled = false;
                 }
             } catch {
-                fileAttachementEnabled = false;
+                enabled = false;
             }
-        } else {
-            fileAttachementEnabled = isUploadEnabled;
         }
-        const draft = hasSpaceDrafts
+        if (ask === uploadCheck) fileAttachementEnabled = enabled;
+    }
+    $: if (checkedTextOnly !== undefined && textOnly !== checkedTextOnly) {
+        checkedTextOnly = textOnly;
+        checkUploads(textOnly).catch((error) => console.error(error));
+    }
+
+    onMount(async () => {
+        // A request made before this box existed: the subscription ran before the input did.
+        focusOnRequest(get(chatComposerFocusRequestStore));
+        checkedTextOnly = textOnly;
+        await checkUploads(textOnly);
+        const draft = !keepsDraft
+            ? undefined
+            : hasSpaceDrafts
             ? composerDraftStore.load(draftRoomId, spaceGenerationOf(room))
             : await draftMessageService.loadDraft(draftId);
         if (draft) {
@@ -575,7 +603,7 @@
                 replyingToMessageId: replyMessageId ?? null,
                 spaceGeneration: spaceGenerationOf(room),
             });
-        } else {
+        } else if (keepsDraft) {
             draftMessageService.saveDraft({
                 id: draftId,
                 roomId: room.id,
@@ -715,6 +743,7 @@
     }
 
     export function handleFiles(event: CustomEvent<FileList>) {
+        if (textOnly) return;
         const incoming = [...event.detail];
 
         // Clear previous upload errors
@@ -901,6 +930,8 @@
                 }
             } else if (destination.room instanceof MatrixChatRoom) {
                 await destination.room.sendVoiceNote(file, details);
+            } else if (destination.room instanceof GuestBrickChatRoom) {
+                await destination.room.sendVoiceNote(file, details);
             } else {
                 return false;
             }
@@ -1069,7 +1100,9 @@
             dataText={inputHint ?? $LL.chat.enter()}
             dataTestid="messageInput"
         />
-        {#if room instanceof ProximityChatRoom}
+        {#if textOnly}
+            <!-- Words only: nothing to attach -->
+        {:else if room instanceof ProximityChatRoom}
             <input
                 type="file"
                 bind:this={fileInputElement}
@@ -1097,19 +1130,21 @@
                 }}
             />
         {/if}
-        <button
-            data-testid="quickFileAttachmentButton"
-            class="p-0 m-0 h-11 w-11 flex items-center justify-center text-white hover:bg-white/10 rounded-none"
-            class:disabled:opacity-30={room instanceof ProximityChatRoom}
-            disabled={room instanceof ProximityChatRoom
-                ? !fileAttachementEnabled || isUploading
-                : !fileAttachementEnabled}
-            on:click={() => fileInputElement?.click()}
-            title={$LL.chat.fileAttachment.title()}
-        >
-            <IconPaperclip font-size={18} />
-        </button>
-        {#if gifPickerAvailable}
+        {#if !textOnly}
+            <button
+                data-testid="quickFileAttachmentButton"
+                class="p-0 m-0 h-11 w-11 flex items-center justify-center text-white hover:bg-white/10 rounded-none"
+                class:disabled:opacity-30={room instanceof ProximityChatRoom}
+                disabled={room instanceof ProximityChatRoom
+                    ? !fileAttachementEnabled || isUploading
+                    : !fileAttachementEnabled}
+                on:click={() => fileInputElement?.click()}
+                title={$LL.chat.fileAttachment.title()}
+            >
+                <IconPaperclip font-size={18} />
+            </button>
+        {/if}
+        {#if gifPickerAvailable && !textOnly}
             <button
                 data-testid="gifPickerButton"
                 class="p-0 m-0 h-11 w-11 flex items-center justify-center text-white hover:bg-white/10 rounded-none {gifPickerOpen

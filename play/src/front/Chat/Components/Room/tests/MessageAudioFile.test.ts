@@ -17,7 +17,8 @@ vi.mock("../../../../../i18n/i18n-svelte", async () => {
         cantLoad: () => "Couldn't load this file. Reopen the chat to try again.",
         openInPlayer: () => "Open in player",
     };
-    return { default: readable({ chat: { voiceNote, audioFile } }) };
+    const file = { gone: () => "This file is gone" };
+    return { default: readable({ chat: { voiceNote, audioFile, file } }) };
 });
 
 import type { ChatMessage, ChatMessageContent } from "../../../Connection/ChatConnection";
@@ -184,6 +185,21 @@ describe("an audio file in chat", () => {
         expect(holder.querySelector("button[aria-label=Download]")).toBeNull();
         expect((holder.querySelector(".voice-play") as HTMLButtonElement).disabled).toBe(true);
         expect(holder.querySelector("audio")).toBeNull();
+    });
+
+    it("says a carried note that did not come along is gone, and keeps the words heard in it", async () => {
+        const holder = await show("Voice message", {
+            url: undefined,
+            mediaGone: true,
+            isVoice: true,
+            voiceDuration: 4,
+            transcript: { state: "heard", text: "Can you keep this menu?" },
+        });
+
+        expect(visibleText()).toContain("This file is gone");
+        expect(visibleText()).toContain("Can you keep this menu?");
+        expect(visibleText()).not.toContain("Loading");
+        expect((holder.querySelector(".voice-play") as HTMLButtonElement).disabled).toBe(true);
     });
 
     it("opens in the player from where the card was, and the card stops", async () => {

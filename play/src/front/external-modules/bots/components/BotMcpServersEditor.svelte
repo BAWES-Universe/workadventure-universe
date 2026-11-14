@@ -645,7 +645,7 @@
         if (!result) return "Not tested yet";
         if (!result.success) return testError[server.id] || result.error || "Can't connect";
         const count = result.toolCount ?? 0;
-        return `${count} tool${count !== 1 ? "s" : ""} · Connected`;
+        return `Can do ${count} thing${count !== 1 ? "s" : ""} · Connected`;
     }
 
     /** The first line on a server's own page: whether it is connected and how many tools it offers */
@@ -655,7 +655,7 @@
         if (!result) return "Not tested yet";
         if (!result.success) return testError[server.id] || result.error || "Can't connect";
         const count = result.toolCount ?? 0;
-        return `Connected · ${count} tool${count !== 1 ? "s" : ""}`;
+        return `Connected · it can do ${count} thing${count !== 1 ? "s" : ""}`;
     }
 
     function getStatusDot(server: McpServer): string {

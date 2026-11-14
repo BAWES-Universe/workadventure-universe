@@ -5,7 +5,9 @@
  */
 import type { AdminApiService } from '../server/AdminApiService';
 import { FileParser } from '../services/FileParser';
-import { NoteHearing, type Clip, type HeardNote, type HearingSettings, type NoteAllowance } from './NoteHearing';
+import { NoteHearing, type Clip, type HearingSettings, type NoteAllowance } from './NoteHearing';
+import { NoteLength } from './NoteLength';
+import { NoteTurns, needsAll, type GuestNotes, type NoteSender, type TurnHeard } from './NoteTurns';
 import { SonioxNotes } from './SonioxNotes';
 import { ListeningBudget } from './VoiceListening';
 import { BotVoiceSettings } from './VoiceSettings';
@@ -35,12 +37,30 @@ export function noteLimits(env: NodeJS.ProcessEnv = process.env): NoteLimits {
     };
 }
 
+/** What the bot's reply would run on, for the person's reply allowance: Universe AI, a server provider or the maker's own key. */
+export type ReplySourceOf = (botId: string) => Promise<'universe-ai' | 'provider' | 'own-key' | null>;
+
 /** What a chat needs of hearing: hear a note for a bot, and know whether the bot can hear at all. */
 export interface NoteHearingService {
-    hear(botId: string, messageId: string, clip: Clip): Promise<HeardNote>;
-    /** Whether this bot hears voice notes now (its voice is on, with a hearing provider that reads a file). Never throws. */
+    /**
+     * Hears one note. `sender` is who sent it (needed to count it on their allowances). `onStart` is called just before the note goes
+     * to the provider ("Listening…"), never for a note refused before that. A `reply-limit` failure means the person's replies are
+     * used up: nothing was heard, and the usual limit card is for the reply path to show.
+     */
+    hear(botId: string, messageId: string, clip: Clip, sender?: { userId?: string; isGuest?: boolean }, onStart?: () => void): Promise<TurnHeard>;
+    /**
+     * Whether this bot hears voice notes now. With an Orbit that has voice notes for every bot: whenever Orbit's hearing answer has a
+     * provider this server can send a file to, whatever the bot's Voice switch says. With an Orbit from before: only while the bot's
+     * voice is on, as before. Never throws.
+     */
     canHear(botId: string): Promise<boolean>;
+    /** Tells hearing what a bot's reply would run on (the bot server's AI service knows). */
+    useReplySource(source: ReplySourceOf): void;
+    /** Keeps deleting what the hearing provider still holds, until it confirms. */
+    startCleaning(): void;
     readonly limits: NoteLimits;
+    /** Voice notes to the Brick for guests: always the turns at Orbit (an Orbit from before has none, so it hears none). */
+    readonly guest: GuestNotes;
 }
 
 /** Null where hearing can't work: no Orbit set up for voice. */
@@ -87,10 +107,10 @@ export function buildNoteHearing(admin: AdminApiService, env: NodeJS.ProcessEnv 
         return entry;
     };
 
-    return {
-        limits,
-        hear: (botId, messageId, clip) => forBot(botId).hearing.hear(`${botId}:${messageId}`, clip),
-        canHear: async (botId) => {
+    // Before: hearing only while the bot talks live, on its live voice's provider
+    const before = {
+        hear: (botId: string, messageId: string, clip: Clip) => forBot(botId).hearing.hear(`${botId}:${messageId}`, clip),
+        canHear: async (botId: string) => {
             try {
                 const active = await forBot(botId).settings.active();
                 if (!active.speaks) return false;
@@ -100,6 +120,72 @@ export function buildNoteHearing(admin: AdminApiService, env: NodeJS.ProcessEnv 
                 return false;
             }
         },
+    };
+
+    // Now: every bot hears, apart from talking live, reserved at Orbit before anything is paid (NoteTurns)
+    let replySource: ReplySourceOf = async () => null;
+    let longest: { at: number; value: number | undefined } | undefined;
+    const turns = new NoteTurns({
+        orbit: admin,
+        hearers,
+        length: new NoteLength({ maxSeconds: limits.maxSeconds, maxBytes: limits.maxBytes }),
+        fetchClip: async (url, maxBytes) => new Uint8Array(await FileParser.fetchBytes(url, maxBytes)),
+        longestSeconds: async () => {
+            if (longest && Date.now() - longest.at < orbit.limitsCacheMs) return longest.value;
+            try {
+                const value = (await admin.getVoiceLimits(orbit.timeoutMs))?.longestNoteSeconds;
+                longest = { at: Date.now(), value: typeof value === 'number' && value > 0 ? value : undefined };
+            } catch {
+                longest = { at: Date.now(), value: longest?.value };
+            }
+            return longest.value;
+        },
+        maxBytes: limits.maxBytes,
+        report: (botId, providerId, outcome) => forBot(botId).settings.report(providerId, 'recognition', outcome),
+        timeoutMs: orbit.timeoutMs,
+        log,
+    });
+
+    /** "now" with an Orbit that has every part, "before" with one from before (no bundle), "none" when Orbit can't be asked. */
+    const way = async (): Promise<'now' | 'before' | 'none'> => {
+        try {
+            const caps = await turns.capabilities();
+            if (caps === null) return 'before';
+            // An Orbit with only some of the parts is never read as one from before: nothing broader than it says
+            return needsAll(caps) ? 'now' : 'none';
+        } catch {
+            return 'none';
+        }
+    };
+
+    return {
+        limits,
+        hear: async (botId, messageId, clip, sender, onStart) => {
+            const which = await way();
+            if (which === 'before') {
+                onStart?.();
+                return before.hear(botId, messageId, clip);
+            }
+            if (which === 'none' || !sender?.userId) return { ok: false, reason: 'failed' };
+            let source: NoteSender['source'];
+            try {
+                source = (await replySource(botId)) ?? undefined;
+            } catch {
+                source = undefined;
+            }
+            const who: NoteSender = { userId: sender.userId, ...(sender.isGuest !== undefined ? { isGuest: sender.isGuest } : {}), ...(source ? { source } : {}) };
+            return turns.hear(botId, messageId, clip, who, onStart);
+        },
+        canHear: async (botId) => {
+            const which = await way();
+            if (which === 'before') return before.canHear(botId);
+            return which === 'now' && turns.canHear(botId);
+        },
+        useReplySource: (source) => {
+            replySource = source;
+        },
+        startCleaning: () => turns.startCleaning(),
+        guest: turns,
     };
 }
 

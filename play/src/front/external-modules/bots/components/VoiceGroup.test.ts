@@ -186,8 +186,8 @@ describe("the bot page's Voice group (#1668)", () => {
     /** Voice is off and the voices are hidden: the switch opens them to pick one */
     const startChoosing = () => click("bot-voice-switch");
 
-    async function mount(open = true) {
-        const component = new VoiceGroup({ target, props: { bot, open, onToggle: vi.fn() } });
+    async function mount(open = true, brick = false) {
+        const component = new VoiceGroup({ target, props: { bot, open, onToggle: vi.fn(), brick } });
         destroy = () => component.$destroy();
         await settle();
     }
@@ -707,6 +707,43 @@ describe("the bot page's Voice group (#1668)", () => {
         expect(byTestId("bot-voice-add-keys")).toHaveLength(1);
         await click("bot-voice-add-keys");
         expect(mocks.openOrbitPage).toHaveBeenCalledWith("/admin/you/ai-keys");
+    });
+
+    describe("on a Brick's page, whose keys are its owner's own and lent to no universe", () => {
+        it("says to add a voice key, never to lend one to a universe", async () => {
+            mocks.api.getBotVoice.mockResolvedValue(answer({ universeAi: { recognition: null, speech: null } }));
+            await mount(true, true);
+            expect(text()).toContain("No voice is set up here yet");
+            expect(text()).toContain(
+                "Universe AI has no voice here yet. Add a voice key in AI keys: one key from a company that listens and speaks is enough, or use two companies."
+            );
+            expect(text()).not.toContain("lend");
+            expect(text()).not.toContain("this universe");
+        });
+
+        it("says a key that is gone is not there, and offers a Universe AI voice", async () => {
+            mocks.api.getBotVoice.mockResolvedValue(
+                turnedOn({ ...uaiProfile, speech: { ...uaiProfile.speech, providerId: "key-old" } })
+            );
+            mocks.api.getMyVoiceKeys.mockResolvedValue([{ id: "key-old", adapter: "elevenlabs" }]);
+            mocks.api.saveBotVoice.mockResolvedValue(turnedOn());
+            await mount(true, true);
+            expect(text()).toContain("Paused · your key is not available");
+            expect(text()).toContain("Your ElevenLabs key isn’t there any more");
+            expect(text()).toContain("Add the key again in AI keys, or pick a Universe AI voice.");
+            expect(text()).not.toContain("lent");
+            await click("bot-voice-use-universe-ai");
+            expect(mocks.api.saveBotVoice.mock.calls[0][1].speech.providerId).toBe("uai-speak");
+        });
+
+        it("names who pays on a key as 'You pay', without 'lent to this universe'", async () => {
+            mocks.api.getBotVoice.mockResolvedValue(answer({ lentKeys: [key()] }));
+            await mount(true, true);
+            await startChoosing();
+            await click("bot-voice-payer-change");
+            expect(text()).toContain("You pay");
+            expect(text()).not.toContain("lent to this universe");
+        });
     });
 
     it("turns voice on from a listening key and a speaking key when Universe AI has no voice, naming both keys", async () => {

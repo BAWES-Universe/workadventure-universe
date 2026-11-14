@@ -60,6 +60,7 @@ import * as Sentry from "@sentry/node";
 import type { WebSocket } from "uWebSockets.js";
 import { AbortError } from "@workadventure/shared-utils/src/Abort/AbortError";
 import { hasPermission, Permission } from "@workadventure/shared-utils/src/Permissions/permissions";
+import { isCallSpaceName } from "@workadventure/shared-utils/src/Space/callSpaceName";
 import { PusherRoom } from "../models/PusherRoom";
 import type { SocketData, BackConnection } from "../models/Websocket/SocketData";
 
@@ -90,7 +91,7 @@ import { chatIdVerifier, verifyChatId, withoutChatIdUpdate, withoutUncheckedChat
 import type { ShortMapDescription } from "./ShortMapDescription";
 import { matrixProvider } from "./MatrixProvider";
 import { MatrixAreaMembership } from "./MatrixAreaMembership";
-import { checkSpaceJoin } from "./SpaceJoinPolicy";
+import { checkCallSpaceRoom, checkSpaceJoin, otherCallAccounts } from "./SpaceJoinPolicy";
 import { toGlobalSpaceName } from "./SpaceNames";
 import { SocketsByIdentifier } from "./SocketsByIdentifier";
 import { BubbleSpaceGrants } from "./BubbleSpaceGrants";
@@ -480,6 +481,38 @@ export class SocketManager implements ZoneEventListener {
         });
     }
 
+    /**
+     * Before someone joins a call space: a new socket of an account already in the call replaces its old one (a dropped
+     * connection must not lock the person out of their own call), and what is left is counted as accounts besides the
+     * one joining, including the sockets this pusher has just taken in because the back's list of users lags a join by a
+     * round trip. Throws a SpaceJoinRefusedError when the call already has its two members.
+     */
+    private async makeRoomInCall(client: Socket, spaceName: string, localSpaceName: string): Promise<void> {
+        const account = client.getUserData().userUuid;
+        const held = this.spaces.get(spaceName);
+        const replaced = (held instanceof Space ? [...held._localConnectedUser.values()] : []).filter(
+            (other) => other !== client && other.getUserData().userUuid === account
+        );
+        await Promise.all(replaced.map((old) => this.handleLeaveSpace(old, spaceName)));
+        // Leaving may have emptied the space, which then closes and is forgotten: look again, never count in the one
+        // that was just closed
+        const space = this.spaces.get(spaceName);
+        if (!space) {
+            return;
+        }
+        const localSockets = space instanceof Space ? [...space._localConnectedUser.values()] : [];
+        checkCallSpaceRoom(
+            localSpaceName,
+            otherCallAccounts(
+                [
+                    ...[...space.users.values()].map((user) => user.uuid),
+                    ...localSockets.filter((other) => other !== client).map((other) => other.getUserData().userUuid),
+                ],
+                account
+            )
+        );
+    }
+
     public async handleJoinSpace(
         client: Socket,
 
@@ -493,6 +526,11 @@ export class SocketManager implements ZoneEventListener {
         const socketData = client.getUserData();
 
         checkSpaceJoin({ localSpaceName, filterType, propertiesToSync }, socketData);
+
+        // A call has its two members and no more, whoever else could name it (see makeRoomInCall)
+        if (isCallSpaceName(localSpaceName)) {
+            await this.makeRoomInCall(client, spaceName, localSpaceName);
+        }
 
         let space: SpaceInterface | undefined = this.spaces.get(spaceName);
 
@@ -599,15 +637,20 @@ export class SocketManager implements ZoneEventListener {
             socketData.keepAliveInterval = undefined;
         }
 
+        // A call-only connection never joined the room, so there is nothing to leave or to untrack
+        const roomless = socketData.callOnly === true;
+
         try {
-            this.leaveRoom(client);
+            if (!roomless) this.leaveRoom(client);
         } catch (e) {
             Sentry.captureException(e);
             console.error("Error while leaving room", e);
         }
         try {
-            this.socketsByIdentifier.remove(client.getUserData().userIdentifier, client);
-            this.friendsPresence.untrack(client);
+            if (!roomless) {
+                this.socketsByIdentifier.remove(client.getUserData().userIdentifier, client);
+                this.friendsPresence.untrack(client);
+            }
         } catch (e) {
             Sentry.captureException(e);
             console.error("Error while removing the friends presence", e);
@@ -1958,7 +2001,8 @@ export class SocketManager implements ZoneEventListener {
                 `Trying to send a public event to a space that does not exist: "${publicEvent.spaceName}".`
             );
         }
-        if (!socketData.userId) {
+        // A call-only connection has no room, so no room user id: it is known by its id in the space (spaceUserId)
+        if (!socketData.userId && !socketData.callOnly) {
             throw new Error("User id not found");
         }
 
@@ -1981,7 +2025,8 @@ export class SocketManager implements ZoneEventListener {
                 `Trying to send a private event to a space that does not exist: "${privateEvent.spaceName}"`
             );
         }
-        if (!socketData.userId) {
+        // A call-only connection has no room, so no room user id: it is known by its id in the space (spaceUserId)
+        if (!socketData.userId && !socketData.callOnly) {
             throw new Error("User id not found");
         }
 

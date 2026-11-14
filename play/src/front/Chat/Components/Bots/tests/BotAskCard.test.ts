@@ -524,6 +524,7 @@ describe("a Brick's own suggestions on the question card (#1995)", () => {
         expect(text()).toContain("Where shall we start?");
         expect(choices().map((choice) => choice.textContent?.replace(/\s+/g, " ").trim())).toEqual([
             "See what I can do A few ideas to start with",
+            "Connect my apps Email, calendar, GitHub and more",
             "Make another Brick One for a single job, like your recipes",
         ]);
         // Nothing to approve, and no clock on it

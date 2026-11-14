@@ -25,6 +25,8 @@
     /** A row was tapped: its screen opens in place of the page */
     export let onOpenRule: (rule: BotRule) => void;
     export let onAdd: () => void;
+    /** A Brick's page: it is on no map, so only its owner reaches it and there are no roles or rules to show yet */
+    export let brick = false;
 
     $: page = $LL.mapEditor.edit.bots.page;
     $: access = page.access;
@@ -34,7 +36,7 @@
     $: saveError = state?.botId === bot.id ? state.saveError : undefined;
 
     let loadedFor: string | undefined;
-    $: if (bot.id !== loadedFor) {
+    $: if (!brick && bot.id !== loadedFor) {
         loadedFor = bot.id;
         void loadBotPermissions(bot.id);
     }
@@ -65,7 +67,7 @@
             ? access.briefPrivateRules({ names: shown })
             : access.briefOpenRules({ names: shown });
     }
-    $: brief = briefOf(data, failed, ruleNames);
+    $: brief = brick ? access.brickBrief() : briefOf(data, failed, ruleNames);
 
     // Who can always use the bot, by name, so nobody reads "the owner" as being themselves
     // When the person who made the bot also owns the universe, they are named once (as the owner)
@@ -208,7 +210,14 @@
 </script>
 
 <PageGroup id="access" icon={IconLock} title={access.title()} {brief} {open} {onToggle}>
-    {#if failed}
+    {#if brick}
+        <div class="bp-set" data-testid="brick-access">
+            <span class="bp-tx">
+                <span class="bp-t">{access.brickTitle()}</span>
+                <span class="bp-m">{access.brickLine({ name: bot.name || access.thisBot() })}</span>
+            </span>
+        </div>
+    {:else if failed}
         <p class="bp-m" role="alert">{access.loadFailed()}</p>
         <button
             type="button"

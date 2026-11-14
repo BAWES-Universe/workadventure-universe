@@ -5,6 +5,7 @@
     import { chatSearchBarValue } from "../Stores/ChatStore";
     import { localUserStore } from "../../Connection/LocalUserStore";
     import { areaChatRooms, withoutAreaChatRooms } from "../Stores/AreaPresenceStore";
+    import { myDeletedBrickChatIds } from "../Bricks/MyBricksStore";
     import Room from "./Room/Room.svelte";
     import CreateRoomOrFolderOption from "./Room/CreateRoomOrFolderOption.svelte";
     import ShowMore from "./ShowMore.svelte";
@@ -13,6 +14,7 @@
     import { formatRowTime, formatUnreadCount } from "./OneList/OneListOrder";
     import type { ActivitySummary } from "./OneList/OneListOrder";
     import { minuteClock } from "./OneList/MinuteClock";
+    import { directRoomsWithStore } from "./OneList/OneListStore";
     import { IconChevronUp, IconFolder } from "@wa-icons";
 
     export let rootFolder: boolean;
@@ -27,7 +29,11 @@
     // Area chat rooms have their own row under the top row and never show in a folder either.
     const hiddenAreaRoomIds = areaChatRooms.hiddenRoomIds;
 
-    $: visibleRooms = withoutAreaChatRooms($rooms, $hiddenAreaRoomIds);
+    // The chat of a Brick its owner deleted waits out of sight for Undo (#1996), also when someone put it in a folder
+    $: deletedBrickRoomIds = directRoomsWithStore(rooms, myDeletedBrickChatIds);
+    $: visibleRooms = withoutAreaChatRooms($rooms, $hiddenAreaRoomIds).filter(
+        (room) => !$deletedBrickRoomIds.includes(room.id)
+    );
     $: filteredRoom = visibleRooms
         .filter(({ name }) => get(name).toLocaleLowerCase().includes($chatSearchBarValue.toLocaleLowerCase()))
         .sort((a: ChatRoom, b: ChatRoom) => (a.lastMessageTimestamp > b.lastMessageTimestamp ? -1 : 1));

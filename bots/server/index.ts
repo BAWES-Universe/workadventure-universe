@@ -16,16 +16,19 @@ import { BotManager } from './BotManager';
 import { BotAPI } from './BotAPI';
 import { AdminApiService } from './AdminApiService';
 import { BotRegistry } from './BotRegistry';
+import { brickChangedEverywhere, listenForBrickChanges } from './brickChanges';
+import { BrickRunner } from './BrickRunner';
 import { movementLogger } from '../utils/MovementLogger';
 import { DmReplyService, type DmRoomLink } from './DmReplyService';
 import { botMatrixId, readMatrixConfig } from '../matrix/MatrixConfig';
 import { OrbitActions } from '../mcp/OrbitActions';
+import { askOrbitAboutAppUse } from '../mcp/AppUse';
 import { ToolApprovals, type CardSurface } from '../mcp/ToolApprovals';
 import { NearbyAsks } from '../mcp/NearbyAsks';
 import { QuestionCards } from '../mcp/QuestionCards';
 import { verifyMatrixRegistration } from '../matrix/verifyMatrixRegistration';
 import { MatrixAppServiceClient } from '../matrix/MatrixAppServiceClient';
-import { MatrixDmBridge, type DirectChatAnswer } from '../matrix/MatrixDmBridge';
+import { MatrixDmBridge, type CarriedPart, type DirectChatAnswer, type GuestChatNote } from '../matrix/MatrixDmBridge';
 import { createMatrixAppServiceRouter, type MatrixAppServiceRouter } from '../matrix/MatrixAppServiceRouter';
 import { uploadAttachment } from '../matrix/uploadAttachment';
 import { botWokaPicture } from '../matrix/wokaPicture';
@@ -76,6 +79,16 @@ let dmCards: CardSurface | undefined;
 // bubble to the person who asked alone, with one plain line for everyone (#1658). Built before direct messages, so a bubble
 // has its cards with or without them.
 const aiService = botManager.getAIService();
+// Every bot hears voice notes (plan v3): what a bot's reply would run on decides whether the note is checked against the person's
+// replies before it is heard, and what the hearing provider still holds is deleted until it confirms
+{
+    const hearing = sharedNoteHearing(adminApiService);
+    hearing?.useReplySource(async (botId) => {
+        const config = botManager.getBot(botId)?.getFullConfig() ?? (await adminApiService.getBotConfiguration(botId, 5000, { bricks: true }).catch(() => null));
+        return config?.aiProviderRef ? aiService.replySource(config.aiProviderRef, botId) : null;
+    });
+    hearing?.startCleaning();
+}
 const nearbyAsks = new NearbyAsks({
     bot: (botId) => botManager.getBot(botId),
     quick: async (botId, system, prompt, timeoutMs) => {
@@ -89,6 +102,13 @@ const orbitActions = new OrbitActions(() => {
     const serviceToken = process.env.BOT_SERVICE_TOKEN;
     return ADMIN_API_URL && ADMIN_API_TOKEN && serviceToken ? { adminApiUrl: ADMIN_API_URL, adminApiToken: ADMIN_API_TOKEN, serviceToken } : null;
 });
+// Before every use of an App on a connection (a person's own, lent to a universe, or a universe's own), Orbit is asked (#2001)
+aiService.useAppUse(
+    askOrbitAboutAppUse(() => {
+        const serviceToken = process.env.BOT_SERVICE_TOKEN;
+        return ADMIN_API_URL && serviceToken ? { adminApiUrl: ADMIN_API_URL, serviceToken } : null;
+    })
+);
 const cardSurface: CardSurface = {
     send: (botId, roomId, content) => (dmCards ? dmCards.send(botId, roomId, content) : Promise.reject(new Error('Direct messages are off'))),
     say: (botId, roomId, text) => (dmCards ? dmCards.say(botId, roomId, text) : Promise.reject(new Error('Direct messages are off'))),
@@ -116,9 +136,9 @@ const approvals = new ToolApprovals({
     gate: aiService.gate,
     tools: {
         find: (botId, toolName) => aiService.findToolEntry(botId, toolName),
-        run: async (botId, entry, toolName, args, playerUuid) => {
+        run: async (botId, entry, toolName, args, playerUuid, use) => {
             const config = botManager.getBot(botId)?.getFullConfig() ?? (await dmReplies?.getBotConfig(botId).catch(() => null));
-            return aiService.runApprovedTool(botId, entry, toolName, args, playerUuid, config?.toolTimeoutSeconds);
+            return aiService.runApprovedTool(botId, entry, toolName, args, playerUuid, config?.toolTimeoutSeconds, use);
         },
     },
     followUp: (outcome) => matrixBridge?.sayHowItEnded(outcome) ?? Promise.resolve(),
@@ -128,9 +148,19 @@ aiService.useNearbyAsks(nearbyAsks);
 let dmRoom: ((botId: string) => Promise<DmRoomLink | undefined>) | undefined;
 let directChat: ((botId: string, chatId: string) => Promise<DirectChatAnswer>) | undefined;
 let brickChanged: ((botId: string, ownerId: string) => boolean) | undefined;
+let carryGuestChat: ((botId: string, chatId: string, carryId: string, lines: GuestChatNote[], part?: CarriedPart | null) => Promise<'sent' | 'already' | 'wait' | 'not_brick'>) | undefined;
+let carryBrick: ((botId: string) => Promise<boolean>) | undefined;
 /** How often Orbit is asked to remove deleted Bricks whose days are over (#1996). Nothing depends on when it runs. */
 const BRICK_SWEEP_EVERY_MS = 60 * 60 * 1000;
+// A job that stopped renewing its room is stopped safely and jobs in line are tried again (#2000)
+const COMPUTER_SWEEP_EVERY_MS = 60 * 1000;
 let brickSweepInterval: NodeJS.Timeout | undefined;
+let computerSweepInterval: NodeJS.Timeout | undefined;
+/** Ends the retries of listening for Brick changes from other bot servers, at shutdown. */
+let stopBrickListening: (() => void) | undefined;
+/** How often Orbit is asked for the goals and tasks that fell due (#2002). Nothing depends on exactly when: Orbit is the scheduler. */
+const BRICK_DUE_EVERY_MS = 60 * 1000;
+let brickRunner: BrickRunner | undefined;
 
 /** Turns direct messages on once Synapse accepts this bot server's registration; leaves them off otherwise. */
 async function setupMatrix(): Promise<void> {
@@ -184,9 +214,32 @@ async function setupMatrix(): Promise<void> {
     // One chat for a person and a bot across their devices (#1995)
     directChat = (botId, chatId) => bridge.directChatFor(botId, chatId);
     // A Brick that was just deleted, or taken back with Undo, is read again before its next message (#1996)
-    brickChanged = (botId, ownerId) => dmReplyService.forgetBrickOf(botId, ownerId);
+    // On every bot server, not only this one
+    brickChanged = brickChangedEverywhere(botRegistry, (botId, ownerId) => dmReplyService.forgetBrickOf(botId, ownerId));
+    // A guest's chat is brought into the Brick they now have (#1997), and only into the one Brick everyone gets
+    carryBrick = async (botId) => {
+        const config = await dmReplyService.getBotConfig(botId);
+        return Boolean(config?.brick?.isDefault && !config.brick.deleted);
+    };
+    carryGuestChat = async (botId, chatId, carryId, lines, part) => {
+        if (!(await carryBrick!(botId))) return 'not_brick';
+        return bridge.carryGuestChat(botId, chatId, carryId, lines, part);
+    };
     brickSweepInterval = setInterval(() => void adminApiService.sweepBricks(), BRICK_SWEEP_EVERY_MS);
     brickSweepInterval.unref?.();
+    // Reminders (#2002): what Orbit says is due is said in the owner's own chat with their Brick
+    brickRunner = new BrickRunner(
+        {
+            claimDue: () => adminApiService.claimDueItems(),
+            checkRun: (runId, attempt) => adminApiService.checkItemRun(runId, attempt),
+            keepDelivered: (runId, eventId) => adminApiService.keepItemDelivered(runId, eventId),
+            report: (runId, report) => adminApiService.reportItemRun(runId, report),
+        },
+        { say: (brickId, matrixUserId, text, transactionId) => bridge.speakInDirectChat(brickId, matrixUserId, text, transactionId) }
+    );
+    brickRunner.start(BRICK_DUE_EVERY_MS);
+    computerSweepInterval = setInterval(() => void adminApiService.sweepComputers(), COMPUTER_SWEEP_EVERY_MS);
+    computerSweepInterval.unref?.();
     console.log(`[BotServer] Matrix direct messages on for ${matrixConfig.domain}`);
 }
 // Made in start(), once direct messages are settled: their routes are part of the API.
@@ -228,6 +281,9 @@ async function shutdown(signal: string) {
     try {
         // Stop game loop
         stopGameLoop();
+        // No more tries at hearing Brick changes, even when the game loop never started
+        stopBrickListening?.();
+        brickRunner?.stop();
         
         // Stop movement analysis
         stopMovementAnalysis();
@@ -267,10 +323,18 @@ async function start() {
 
         // Before any bot connects: a bot shows Message only when Synapse accepted the registration
         await setupMatrix();
-        botAPI = new BotAPI(botManager, adminApiService, botRegistry, preRouters, { dmStatus, dmRoom, directChat, brickChanged, noteHearing: noteHearing ?? undefined });
+        botAPI = new BotAPI(botManager, adminApiService, botRegistry, preRouters, { dmStatus, dmRoom, directChat, brickChanged, carryGuestChat, carryBrick, noteHearing: noteHearing ?? undefined });
 
         // Initialize bot manager
         await botManager.initialize();
+        // A Brick deleted through another bot server stops here at once too (#1996). Without it, within the minute.
+        const replies = dmReplies;
+        if (replies) {
+            // The stop is kept before the first try ends, so a shutdown meanwhile ends the retries too
+            const listening = listenForBrickChanges(botRegistry, (botId, ownerId) => void replies.forgetBrickOf(botId, ownerId));
+            stopBrickListening = listening.stop;
+            await listening.firstTry;
+        }
 
         // Start API server
         botAPI.start(BOT_SERVER_PORT);
@@ -401,6 +465,7 @@ function stopGameLoop(): void {
     if (gameLoopInterval) {
         clearInterval(gameLoopInterval);
         if (brickSweepInterval) clearInterval(brickSweepInterval);
+        if (computerSweepInterval) clearInterval(computerSweepInterval);
         gameLoopInterval = null;
         console.log('[BotServer] Game loop stopped');
     }

@@ -210,5 +210,24 @@ export { default as IconRewindForward10 } from "~icons/tabler/rewind-forward-10"
 export { default as IconVolume } from "~icons/tabler/volume";
 export { default as IconVolume2 } from "~icons/tabler/volume-2";
 export { default as IconVolumeOff } from "~icons/tabler/volume-off";
+export { default as IconBrain } from "~icons/tabler/brain";
+export { default as IconFileText } from "~icons/tabler/file-text";
+export { default as IconHeart } from "~icons/tabler/heart";
+export { default as IconPlugConnected } from "~icons/tabler/plug-connected";
+// A Brick's computer (game #2000)
+export { default as IconDeviceDesktop } from "~icons/tabler/device-desktop";
+export { default as IconClipboardText } from "~icons/tabler/clipboard-text";
+export { default as IconTicket } from "~icons/tabler/ticket";
+export { default as IconFileSpreadsheet } from "~icons/tabler/file-spreadsheet";
+export { default as IconCircleCheck } from "~icons/tabler/circle-check";
+export { default as IconHandFinger } from "~icons/tabler/hand-finger";
 export { default as IconPhoneOff } from "~icons/tabler/phone-off";
 export { default as IconPhoneCall } from "~icons/tabler/phone-call";
+export { default as IconBrandGmail } from "~icons/tabler/brand-gmail";
+export { default as IconCalendarEvent } from "~icons/tabler/calendar-event";
+export { default as IconBrandGithub } from "~icons/tabler/brand-github";
+export { default as IconBrandNotion } from "~icons/tabler/brand-notion";
+export { default as IconBrandSlack } from "~icons/tabler/brand-slack";
+export { default as IconBrandGoogleDrive } from "~icons/tabler/brand-google-drive";
+export { default as IconBrandDropbox } from "~icons/tabler/brand-dropbox";
+export { default as IconCrown } from "~icons/tabler/crown";

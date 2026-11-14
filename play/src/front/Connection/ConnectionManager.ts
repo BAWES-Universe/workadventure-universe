@@ -229,6 +229,8 @@ class ConnectionManager {
         // save the current token to use it in the redirect logout url
         const tokenTmp = localUserStore.getAuthToken();
         localUserStore.dropGuestTokenAside();
+        // A chat a guest had with the Brick does not stay on the device for the next person
+        localUserStore.dropGuestBrickChat();
         // Read before the token goes: a guest whose token was refused is not an account that signs out.
         const wasSignedIn = localUserStore.isLogged();
         //remove token in localstorage

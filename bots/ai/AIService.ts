@@ -27,6 +27,7 @@ import type { ToolSuggester } from '../mcp/ToolCatalog';
 import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision } from '../mcp/ToolGate';
 import { ToolPolicySource } from '../mcp/ToolPolicy';
 import type { ToolApprovals } from '../mcp/ToolApprovals';
+import { appNotUsedLine, type AppUseAnswer, type AppUseCheck, type AppUseRequest } from '../mcp/AppUse';
 import { cardTitle, outcomeOf } from '../mcp/ApprovalCard';
 import { quantityOf, type BatchKind } from '../mcp/ToolQuantity';
 import { CONFIRM_SYSTEM, isConfirm, tapInstead } from '../mcp/NearbyWords';
@@ -125,7 +126,12 @@ import {
 } from './ArtifactTools';
 import { MAX_OUTGOING_MEDIA_BYTES, type BotPlayerMemory, type PendingMedia } from '../memory/ConversationMemory';
 import { FIND_FILES_TOOL, OPEN_FILE_TOOL, SEND_AGAIN_TOOL, fileToolDefinitions, formatFileResult, isFileTool, runFileTool } from './FileTools';
+import { FORGET_MEMORY_TOOL, WHAT_I_REMEMBER_TOOL, isMemoryTool, memoryToolDefinitions, memoryToolsNote, runMemoryTool } from './MemoryTools';
+import { COMPUTER_TOOL, computerToolDefinitions, computerToolsNote, isComputerTool, runComputerTool } from './ComputerTools';
+import { pretendRunnerOn, runPretendJob } from './ComputerPretendRunner';
+import { OFFER_APP_TOOL, appToolDefinitions, appsNote, isAppTool, runAppTool } from './AppTools';
 import { MAKE_BRICK_TOOL, SUGGEST_BRICK_TOOL, brickToolDefinitions, brickToolsNote, isBrickTool, runBrickTool, type BrickNote } from './BrickTools';
+import { CHANGE_TASK_TOOL, KEEP_WORKDAYS_TOOL, MY_TASKS_TOOL, SET_REMINDER_TOOL, isTaskTool, runTaskTool, taskSettingsFor, taskToolDefinitions, taskToolsNote, tasksAreOn, type TaskSettings } from './BrickTasks';
 import { linkOfStore } from '../services/ChatFiles';
 import { addTurnMedia, startTurnMedia, turnMediaNotice, type TurnMedia } from './ArtifactMedia';
 import { charsToFree, StepRoom, stepOf, stepsAsText, withStepsAsText, type ReplySteps } from './replySteps';
@@ -267,6 +273,8 @@ export class AIService {
     /** The card a tool that asks first shows in a direct message (#1657). Without it such a call is not run. */
     private approvals?: ToolApprovals;
     private nearbyAsks?: BotAsksPort;
+    /** Asks Orbit before every use of an App on a connection (#2001). Without it such an App is not used. */
+    private appUse?: AppUseCheck;
     /** The replies only one person saw, where other people were (#1993). */
     private readonly privateAnswers = new PrivateAnswers();
 
@@ -323,6 +331,11 @@ export class AIService {
         this.approvals = approvals;
     }
 
+    /** Where the check before every use of an App on a connection is asked (#2001). */
+    useAppUse(check: AppUseCheck): void {
+        this.appUse = check;
+    }
+
     /** Where an answer only one person saw in nearby chat is found again: their direct messages with the bot (#1993). */
     keepPrivateAnswersIn(copies: PrivateAnswerCopies | undefined): void {
         this.privateAnswers.keepCopiesIn(copies);
@@ -337,8 +350,17 @@ export class AIService {
     }
 
     /** Runs a tool call a person approved on a card (#1657), the way a reply would, with the bot's own Patience. */
-    async runApprovedTool(botId: string, entry: ToolServerEntry, toolName: string, args: Record<string, unknown>, playerUuid: string, toolTimeoutSeconds?: number | null): Promise<unknown> {
-        return this.callMcpTool(entry, toolName, args, playerUuid, undefined, toolTimeoutSeconds);
+    async runApprovedTool(
+        botId: string,
+        entry: ToolServerEntry,
+        toolName: string,
+        args: Record<string, unknown>,
+        playerUuid: string,
+        toolTimeoutSeconds?: number | null,
+        /** The saved action's heading and this attempt's id, for the check on an App on a connection (#2001). */
+        use?: Pick<AppUseRequest, 'heading' | 'callId'>
+    ): Promise<unknown> {
+        return this.callMcpTool(entry, toolName, args, playerUuid, undefined, toolTimeoutSeconds, use ? { botId, requesterKey: playerUuid, ...use } : undefined);
     }
 
     /** One call to a tool server's tool, and what comes back made ready for the bot: blobs uploaded, errors as results. */
@@ -348,9 +370,17 @@ export class AIService {
         args: Record<string, unknown>,
         playerUuid: string | undefined,
         abortSignal?: AbortSignal,
-        toolTimeoutSeconds?: number | null
+        toolTimeoutSeconds?: number | null,
+        /** Who is asking, which call this is and what heading the tool is under: needed when the App sits on a connection (#2001). */
+        use?: AppUseRequest & { botId: string }
     ): Promise<any> {
         try {
+            // An App on a connection is checked with Orbit on every use, right before it runs: a lend taken back, a day's uses
+            // spent or a switch turned off stops it at once. No answer is a no.
+            if (entry.connectionId) {
+                const answer: AppUseAnswer = use && this.appUse ? await this.appUse(use.botId, entry.serverId, use) : { allowed: false, reason: 'unavailable' };
+                if (!answer.allowed) return { error: appNotUsedLine(answer.reason ?? 'gone'), outcome: 'not_sent' };
+            }
             const rawResult = await MCPConnector.executeToolCall(
                 entry.serverId,
                 entry.serverUrl,
@@ -361,7 +391,11 @@ export class AIService {
                 entry.headers,
                 playerUuid,
                 abortSignal,
-                toolTimeoutMs(toolTimeoutSeconds)
+                toolTimeoutMs(toolTimeoutSeconds),
+                // A ready-made App is reached only through Orbit, which holds the key its link needs
+                entry.readyMade && entry.orbitUrl && use
+                    ? { orbitUrl: entry.orbitUrl, botId: use.botId, serverId: entry.serverId, callId: use.callId, ...(use.requesterKey ? { requesterKey: use.requesterKey } : {}), ...(use.forOwner ? { forOwner: true } : {}) }
+                    : undefined
             );
             // Process MCP resource blobs (base64 binary data) by uploading to CDN
             // and returning CDN URLs so the AI can use send_image/send_audio/etc.
@@ -1306,6 +1340,11 @@ export class AIService {
                 }
             }
 
+            // A Brick's own computer, in its owner's direct messages and only while it is on for them (game #2000)
+            const computerOn = channel === 'dm' && botId && playerId !== undefined ? await this.computerOnFor(botId, playerId, adminApiService) : false;
+            // The owner, in their own Brick's direct messages (#2002): Orbit says whether this person may ask it to keep reminders
+            const taskSettings = !options?.onlyForThem && channel === 'dm' && botId && playerId !== undefined ? await this.taskSettingsOf(botId, playerId, botClient, adminApiService) : null;
+
             // Build system prompt. Order matters for provider prompt caching
             // (issue #1333): see ai/systemPrompt.ts.
             // The ends of the parts that stay the same from message to message are where the Claude provider marks its cache
@@ -1321,6 +1360,13 @@ export class AIService {
                     artifactsEnabled() ? turnMediaNotice(turnMedia) : '',
                     // A person's own first Brick, in their direct messages: it can make Bricks, and what it already suggested (#1996)
                     channel === 'dm' && botId && playerId !== undefined ? await this.brickNoteFor(botId, playerId, adminApiService) : '',
+                    // A person's own Brick can lead them to connect an App (game #2001)
+                    channel === 'dm' && botId && playerId !== undefined ? await this.appsNoteFor(botId, playerId, botClient, adminApiService) : '',
+                    // Any bot, in a direct message: what it remembers about the person, and forgetting it (#2003)
+                    channel === 'dm' && this.memoryToolsOn(botId, botClient) ? memoryToolsNote() : '',
+                    computerOn ? computerToolsNote() : '',
+                    // The owner, in their own Brick's direct messages: it can set reminders when they ask (#2002)
+                    taskSettings ? taskToolsNote(taskSettings, Date.now()) : '',
                 ].filter(Boolean).join('\n\n') || undefined,
                 channel,
                 // A direct message with a bot that lives in no room, a Brick (#1995)
@@ -1343,17 +1389,19 @@ export class AIService {
                       adminApiService || this.adminApiService,
                       channel,
                       providerId,
-                      this.gatePerson(botId, playerId, botClient, spaceName)
+                      this.gatePerson(botId, playerId, botClient, spaceName),
+                      computerOn
                   );
             // A Brick standing in a room never uses its owner's apps, files or computer for anyone else (#2005)
             const forOthers = visit?.forOthers === true || (resolved as { forOthers?: boolean }).forOthers === true;
             if (forOthers) {
                 for (let at = tools.length - 1; at >= 0; at--) {
                     const name: string = tools[at]?.function?.name ?? '';
-                    if (toolServerMap.has(name) || isArtifactTool(name) || isFileTool(name)) tools.splice(at, 1);
+                    if (toolServerMap.has(name) || isArtifactTool(name) || isFileTool(name) || isComputerTool(name)) tools.splice(at, 1);
                 }
                 toolServerMap.clear();
             }
+            if (taskSettings && !forOthers) this.offerTaskTools(tools, toolServerMap);
             // In a bubble, what is on an approval card is for one person only: nothing is said before a tool that asks, and
             // nothing from a card is repeated in the chat (#1658). Added at the end, after what the provider caches.
             const nearbyRule = channel === 'world' && botClient && this.approvals && toolServerMap.size > 0 ? NEARBY_ASK_RULE : '';
@@ -1862,7 +1910,7 @@ export class AIService {
                             // Tool calls from a reply that hit its length cap may hold half a file (the repair of broken JSON would still
                             // pass it): the first round reads the cap from this chunk, later rounds from the previous round's last chunk
                             const replyCutOff = !!(followUpIterations === 1 ? chunk.metadata?.truncated : lastFollowUpDoneChunk?.metadata?.truncated);
-                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia, present);
+                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia, present, !!taskSettings);
                             // A card went to one person alone (#1658): the line everyone reads is the whole reply, said instead of the model's own words
                             const sharedLine = sharedLineOf(toolResults);
                             const sharedLineIds = sharedLineIdsOf(toolResults);
@@ -3155,7 +3203,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     /**
      * Build tool definitions for function calling
      */
-    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService, channel: 'world' | 'dm' = 'world', providerId?: string, asking?: BotAccessPerson): Promise<{ tools: any[]; toolServerMap: Map<string, ToolServerEntry> }> {
+    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService, channel: 'world' | 'dm' = 'world', providerId?: string, asking?: BotAccessPerson, computerOn = false): Promise<{ tools: any[]; toolServerMap: Map<string, ToolServerEntry> }> {
         const tools: any[] = [];
         const toolServerMap = new Map<string, ToolServerEntry>();
 
@@ -3354,6 +3402,14 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         // Tools: make another Brick, and suggest one (game #1996). Only a person's own first Brick has them, in its owner's direct messages.
         if (channel === 'dm' && this.brickToolsOn(botId, botClient, adminApiService)) tools.push(...brickToolDefinitions());
 
+        // Tool: offer to connect an App from the chat (game #2001). Any of a person's own Bricks, in its owner's direct messages.
+        if (channel === 'dm' && this.appToolsOn(botId, botClient, adminApiService)) tools.push(...appToolDefinitions());
+
+        // Tools: what the bot remembers about this person, and forgetting it (game #2003). Any bot, in a direct message only.
+        if (channel === 'dm' && this.memoryToolsOn(botId, botClient)) tools.push(...memoryToolDefinitions());
+        // Tool: a job on the Brick's own computer (game #2000), the last way after an answer and an app. Only when it is on for its owner.
+        if (channel === 'dm' && computerOn && !botClient) tools.push(...computerToolDefinitions());
+
         // Add MCP tools
         if (botId && adminApiService) {
             try {
@@ -3486,12 +3542,104 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         else this.brickOwners.delete(botId);
         if (brick?.isDefault && !brick.deleted) this.helperBricks.add(botId);
         else this.helperBricks.delete(botId);
+        if (brick && !brick.deleted) this.ownBricks.add(botId);
+        else this.ownBricks.delete(botId);
+    }
+
+    /** Every Brick that lives in no room and is not deleted: the ones that may have a computer (game #2000) or reminders (#2002). */
+    private ownBricks = new Set<string>();
+    private computerOnCache = new Map<string, { on: boolean; at: number }>();
+
+    /**
+     * Whether this Brick's computer is on for the person in this direct message. Orbit answers; the answer is kept a short while so
+     * chat stays fast, and a failure means off. Never wakes anything.
+     */
+    private async computerOnFor(botId: string, playerId: number, adminApiService?: AdminApiService): Promise<boolean> {
+        const admin = adminApiService ?? this.adminApiService;
+        const userId = this.conversationMemory?.getMemory(botId, playerId)?.userUuid;
+        if (!this.ownBricks.has(botId) || !admin?.isConfigured?.() || !userId) return false;
+        const key = `${botId}|${userId}`;
+        const known = this.computerOnCache.get(key);
+        if (known && Date.now() - known.at < 30_000) return known.on;
+        const on = await admin.computerIsOn(botId, userId).catch(() => false);
+        this.computerOnCache.set(key, { on, at: Date.now() });
+        return on;
+    }
+
+    /** Runs use_computer for the person in this direct message. Orbit starts the job and only for the Brick's owner. */
+    private async runComputerToolCall(args: Record<string, unknown>, where: { adminApiService?: AdminApiService; botId?: string; playerId?: number }): Promise<Record<string, unknown>> {
+        const admin = where.adminApiService ?? this.adminApiService;
+        const userId = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId)?.userUuid : undefined;
+        if (!admin || !where.botId || !userId || !this.ownBricks.has(where.botId)) return { error: "That can't be done in this chat right now." };
+        const botId = where.botId;
+        const result = await runComputerTool(args, {
+            admin,
+            botId,
+            userId,
+            onStarted: pretendRunnerOn() ? (jobId) => void runPretendJob(admin, botId, jobId) : undefined,
+        });
+        // A job started or queued changes what the bar says: read it fresh next time
+        this.computerOnCache.delete(`${botId}|${userId}`);
+        return result;
     }
 
     /** Whether this reply has the two Brick tools: a person's own first Brick, in a direct message, with Orbit to ask. */
     private brickToolsOn(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService): boolean {
         const admin = adminApiService ?? this.adminApiService;
         return !botClient && !!botId && this.helperBricks.has(botId) && !!admin?.isConfigured?.();
+    }
+
+    /**
+     * What Orbit says about this person and this Brick for reminders (#2002), or null: not the owner (a visitor, the Brick for guests), no
+     * Orbit, a room bot, or Orbit could not say. Only for the owner, in their own Brick's direct messages.
+     */
+    private async taskSettingsOf(botId: string, playerId: number, botClient?: BotClient, adminApiService?: AdminApiService): Promise<TaskSettings | null> {
+        if (botClient || !this.ownBricks.has(botId)) return null;
+        const memory = this.conversationMemory?.getMemory(botId, playerId);
+        if (!memory?.userUuid) return null;
+        return taskSettingsFor(adminApiService ?? this.adminApiService, botId, memory.userUuid);
+    }
+
+    /**
+     * Adds the reminder tools to what this reply offers. An App's tool of the same name is not offered beside them, and is not
+     * run for them either: only a reply that offered ours runs ours, so the schema the model sees is the one that runs.
+     */
+    private offerTaskTools(tools: any[], toolServerMap: Map<string, ToolServerEntry>): void {
+        const ours = taskToolDefinitions();
+        const names = new Set<string>(ours.map((tool) => tool.function.name));
+        for (let i = tools.length - 1; i >= 0; i--) if (names.has(tools[i].function.name)) tools.splice(i, 1);
+        for (const name of names) toolServerMap.delete(name);
+        tools.push(...ours);
+    }
+
+    /** Whether Orbit lately said this person is the owner of this Brick: only then is a tool of a reminder's name ours, anywhere else it is a tool server's. */
+    private taskToolsOn(botId?: string, playerId?: number, botClient?: BotClient): boolean {
+        if (botClient || !botId || playerId === undefined) return false;
+        const uuid = this.conversationMemory?.getMemory(botId, playerId)?.userUuid;
+        return !!uuid && this.ownBricks.has(botId) && tasksAreOn(botId, uuid);
+    }
+
+    /** Runs a reminder tool for the person in this direct message (Orbit refuses anyone but the owner). */
+    private async runTaskToolCall(name: string, args: Record<string, unknown>, where: { adminApiService?: AdminApiService; botId?: string; playerId?: number }): Promise<Record<string, unknown>> {
+        const admin = where.adminApiService ?? this.adminApiService;
+        const memory = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId) : undefined;
+        if (!admin || !where.botId || !memory?.userUuid) return { error: "That can't be done in this chat right now." };
+        return runTaskTool(name, args, { admin, botId: where.botId, userId: memory.userUuid });
+    }
+
+    /** Whether this reply has the two memory tools: a direct message, with a memory that can forget (one kept with Orbit). */
+    private memoryToolsOn(botId?: string, botClient?: BotClient): boolean {
+        return !botClient && !!botId && typeof this.conversationMemory?.forgetThings === 'function';
+    }
+
+    /** Runs what_i_remember or forget_memory for the person in this direct message. */
+    private async runMemoryToolCall(name: string, args: Record<string, unknown>, where: { botId?: string; playerId?: number }): Promise<Record<string, unknown>> {
+        const { botId, playerId } = where;
+        if (!botId || playerId === undefined) return { error: "That can't be done in this chat right now." };
+        return runMemoryTool(name, args, {
+            memory: this.conversationMemory.getMemory(botId, playerId),
+            forget: (keys, kinds) => (this.conversationMemory.forgetThingsReported ?? this.conversationMemory.forgetThings!).call(this.conversationMemory, botId, playerId, keys, kinds),
+        });
     }
 
     /** What such a Brick is told with its instructions: that it can make Bricks, and what it already suggested. */
@@ -3509,6 +3657,33 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const memory = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId) : undefined;
         if (!admin || !where.botId || !memory?.userUuid) return { error: "That can't be done in this chat right now." };
         return runBrickTool(name, args, { admin, botId: where.botId, userId: memory.userUuid, notes: (memory.pendingBricks ??= []) });
+    }
+
+    /** Whether this reply has offer_app: any of a person's own Bricks (one that lives in no room), in a direct message, with Orbit to ask. */
+    private appToolsOn(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService): boolean {
+        const admin = adminApiService ?? this.adminApiService;
+        return !botClient && !!botId && this.ownBricks.has(botId) && !!admin?.isConfigured?.();
+    }
+
+    /** What such a Brick is told about the Apps it may offer, with what was already offered. Empty when there is nothing to offer or Orbit cannot say. */
+    private async appsNoteFor(botId: string, playerId: number, botClient?: BotClient, adminApiService?: AdminApiService): Promise<string> {
+        if (!this.appToolsOn(botId, botClient, adminApiService)) return '';
+        const admin = adminApiService ?? this.adminApiService;
+        const userId = this.conversationMemory?.getMemory(botId, playerId)?.userUuid;
+        if (!admin || !userId) return '';
+        const [apps, offers] = await Promise.all([
+            admin.appsOfferableFor(botId, userId).catch(() => null),
+            admin.brickOffersFor(botId, userId).catch(() => null),
+        ]);
+        return appsNote(apps, offers?.topics ?? []);
+    }
+
+    /** Runs offer_app for the person in this direct message. What the game shows for it waits with the reply. */
+    private async runAppToolCall(args: Record<string, unknown>, where: { adminApiService?: AdminApiService; botId?: string; playerId?: number }): Promise<Record<string, unknown>> {
+        const admin = where.adminApiService ?? this.adminApiService;
+        const memory = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId) : undefined;
+        if (!admin || !where.botId || !memory?.userUuid) return { error: "That can't be done in this chat right now." };
+        return runAppTool(args, { admin, botId: where.botId, userId: memory.userUuid, notes: (memory.pendingBricks ??= []) });
     }
 
     private filesOn(botId?: string, adminApiService?: AdminApiService): boolean {
@@ -3845,7 +4020,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         /** This turn's media list (#1510), for an artifact to carry. */
         turnMedia?: TurnMedia[],
         /** Set when other people read the reply (#1993): everyone else who is there, by who they are. */
-        present?: readonly string[]
+        present?: readonly string[],
+        /** This reply was offered the reminder tools (#2002): a call to one of them from a reply that was not offered them is not run. */
+        taskToolsOffered = false
     ): Promise<Array<{ id: string; name: string; result: any }>> {
         // What this reply sends goes to its person alone unless other people read the reply (#1993)
         const only = present === undefined ? playerId : undefined;
@@ -3870,7 +4047,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 // With artifacts off, a tool of the same name belongs to an MCP server: send it down the default branch
                 // So does a file tool's name when Orbit doesn't keep files here (#1508)
                 // And a Brick tool's name anywhere but in a first Brick's direct messages (#1996)
-                switch ((isArtifactTool(toolCall.name) && !artifactsEnabled()) || (isFileTool(toolCall.name) && !this.filesOn(botId, adminApiService)) || (isBrickTool(toolCall.name) && !this.brickToolsOn(botId, botClient, adminApiService)) ? '' : toolCall.name) {
+                switch ((isArtifactTool(toolCall.name) && !artifactsEnabled()) || (isFileTool(toolCall.name) && !this.filesOn(botId, adminApiService)) || (isBrickTool(toolCall.name) && !this.brickToolsOn(botId, botClient, adminApiService)) || (isMemoryTool(toolCall.name) && !this.memoryToolsOn(botId, botClient)) || (isAppTool(toolCall.name) && !this.appToolsOn(botId, botClient, adminApiService)) || (isComputerTool(toolCall.name) && (!!botClient || !this.ownBricks.has(botId ?? ''))) || (isTaskTool(toolCall.name) && (!taskToolsOffered || !this.taskToolsOn(botId, playerId, botClient) || !!toolServerMap?.has(toolCall.name))) ? '' : toolCall.name) {
                     case 'get_people_on_map':
                         if (botClient) {
                             const people = botClient.getAllPeople();
@@ -4178,10 +4355,44 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         );
                         break;
 
+                    case SET_REMINDER_TOOL:
+                    case MY_TASKS_TOOL:
+                    case CHANGE_TASK_TOOL:
+                    case KEEP_WORKDAYS_TOOL:
+                        result = await this.runTaskToolCall(
+                            toolCall.name,
+                            typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
+                            { adminApiService, botId, playerId }
+                        );
+                        break;
+
                     case MAKE_BRICK_TOOL:
                     case SUGGEST_BRICK_TOOL:
                         result = await this.runBrickToolCall(
                             toolCall.name,
+                            typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
+                            { adminApiService, botId, playerId }
+                        );
+                        break;
+
+                    case OFFER_APP_TOOL:
+                        result = await this.runAppToolCall(
+                            typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
+                            { adminApiService, botId, playerId }
+                        );
+                        break;
+
+                    case WHAT_I_REMEMBER_TOOL:
+                    case FORGET_MEMORY_TOOL:
+                        result = await this.runMemoryToolCall(
+                            toolCall.name,
+                            typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
+                            { botId, playerId }
+                        );
+                        break;
+
+                    case COMPUTER_TOOL:
+                        result = await this.runComputerToolCall(
                             typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
                             { adminApiService, botId, playerId }
                         );
@@ -4240,7 +4451,13 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 }
                                 release = counted.release;
                             }
-                            result = await this.callMcpTool(mcpServerConfig, toolCall.name, parsedArgs, playerUuid, abortSignal, toolTimeoutSeconds);
+                            const asker = this.gatePerson(botId, playerId, botClient, spaceName);
+                            result = await this.callMcpTool(mcpServerConfig, toolCall.name, parsedArgs, playerUuid, abortSignal, toolTimeoutSeconds, {
+                                botId: botId!,
+                                callId: toolCall.id,
+                                ...(verdict.heading ? { heading: verdict.heading } : {}),
+                                ...(asker.signedIn && asker.identifier ? { requesterKey: asker.identifier } : {}),
+                            });
                             // A call that proved it made nothing doesn't count toward the limit
                             if (release && ['failed', 'notSent'].includes(outcomeOf(result))) release();
                         } else {
@@ -4528,7 +4745,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         for (const tr of toolResults) {
             // Skip results from media tools and built-in tools — they don't produce URLs to extract
             if (['send_image', 'send_file', 'send_audio', 'send_video', 'get_people_on_map',
-                 'get_bot_position', 'get_areas_on_map', 'navigate_to', READ_WEB_PAGE_TOOL].includes(tr.name) || (isArtifactTool(tr.name) && artifactsEnabled()) || isFileTool(tr.name)) {
+                 'get_bot_position', 'get_areas_on_map', 'navigate_to', READ_WEB_PAGE_TOOL].includes(tr.name) || (isArtifactTool(tr.name) && artifactsEnabled()) || isFileTool(tr.name) || isMemoryTool(tr.name) || isTaskTool(tr.name)) {
                 continue;
             }
 
@@ -4604,7 +4821,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         for (const tr of toolResults) {
             // Skip results from our own media tools (they already handled sending)
             if (['send_image', 'send_file', 'send_audio', 'send_video', 'get_people_on_map',
-                 'get_bot_position', 'get_areas_on_map', 'navigate_to', READ_WEB_PAGE_TOOL].includes(tr.name) || (isArtifactTool(tr.name) && artifactsEnabled()) || isFileTool(tr.name)) {
+                 'get_bot_position', 'get_areas_on_map', 'navigate_to', READ_WEB_PAGE_TOOL].includes(tr.name) || (isArtifactTool(tr.name) && artifactsEnabled()) || isFileTool(tr.name) || isMemoryTool(tr.name) || isTaskTool(tr.name)) {
                 continue;
             }
 
@@ -4960,7 +5177,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
      */
     private noteMadeMedia(toolCalls: ToolCall[], toolResults: Array<{ id: string; name: string; result: any }>): void {
         for (const tr of toolResults) {
-            if (MADE_NOTHING_TOOLS.has(tr.name) || isArtifactTool(tr.name) || isFileTool(tr.name) || LOOKS_UP.test(tr.name)) continue;
+            if (MADE_NOTHING_TOOLS.has(tr.name) || isArtifactTool(tr.name) || isFileTool(tr.name) || isMemoryTool(tr.name) || LOOKS_UP.test(tr.name)) continue;
             let urls: string[];
             try {
                 urls = this.extractUrlsFromResult(tr.result);

@@ -7,6 +7,7 @@
     import { botApiService, type McpServer } from "../../services/BotApiService";
     import { DEFAULT_TOOL_TIMEOUT_SECONDS, showsToolCalls, withShowToolCalls } from "../../behaviorModel";
     import BotMcpServersEditor from "../BotMcpServersEditor.svelte";
+    import MoreApps from "../../../../Chat/Bricks/Apps/MoreApps.svelte";
     import { shortName } from "../../modelPickerModel";
     import { botToolsStore, loadBotToolSettings } from "../../stores/BotToolsStore";
     import type { ToolsScreen } from "../../toolsModel";
@@ -24,7 +25,7 @@
         modelCapFor,
         tokensLabel,
     } from "./replyLimits";
-    import { IconChevronDown, IconTool } from "@wa-icons";
+    import { IconApps, IconChevronDown } from "@wa-icons";
 
     export let bot: BotData;
     export let open: boolean;
@@ -40,6 +41,8 @@
     export let onOpenScreen: (screen: ToolsScreen) => void;
 
     let servers: McpServer[] | undefined;
+    // Counts the apps a bot was let use from "More apps it can use here": the bot's own list reads again after each one
+    let appsLet = 0;
     $: if (servers) onToolCount?.(servers.length);
 
     // Asking for approvals says what the bot does today on its row; shown with Orbit's default until it has answered
@@ -79,7 +82,7 @@
             ? page.tools.none()
             : servers.length <= 2
             ? servers.map((s) => s.name).join(", ")
-            : page.tools.count({ count: servers.length });
+            : page.tools.apps({ count: servers.length });
     $: waits = page.tools.waits({ patience: durationLabel(patience) });
     $: brief = names ? `${names} · ${waits}` : waits;
     // What the bot runs on, as the model's limit below finds it: Orbit's current pick when the bot has none saved
@@ -105,12 +108,17 @@
     $: stepLimit = limitChips(ceiling?.steps ?? null, STEP_CHOICES, bot.maxSteps, String, page.tools);
 </script>
 
-<PageGroup id="tools" icon={IconTool} title={page.tools.title()} {brief} {open} {onToggle}>
-    <BotMcpServersEditor
-        botId={bot.id}
-        onServers={(loaded) => (servers = loaded)}
-        onOpenServer={(serverId) => onOpenScreen({ kind: "server", serverId })}
-    />
+<PageGroup id="tools" icon={IconApps} title={page.tools.title()} {brief} {open} {onToggle}>
+    {#key appsLet}
+        <BotMcpServersEditor
+            botId={bot.id}
+            onServers={(loaded) => (servers = loaded)}
+            onOpenServer={(serverId) => onOpenScreen({ kind: "server", serverId })}
+        />
+    {/key}
+    {#key bot.id}
+        <MoreApps botId={bot.id} botName={bot.name || "Bot"} onLet={() => (appsLet += 1)} />
+    {/key}
     <button
         type="button"
         class="bp-drill"

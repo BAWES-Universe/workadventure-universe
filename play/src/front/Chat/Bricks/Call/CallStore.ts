@@ -40,3 +40,9 @@ export const botCallStore = createCallStore();
 
 /** "On a call" for the game to show next to the person's name while the call lasts. Never changes their own status. */
 export const onACallStore: Readable<boolean> = derived(botCallStore, ($call) => !!$call && showsOnACall($call.state));
+
+/**
+ * True while the call bar is drawn at the top of the call's own chat. The floating bar shows the rest of the time, so
+ * there is always exactly one bar for one call.
+ */
+export const callBarInChatStore = writable(false);
