@@ -531,7 +531,13 @@ export class BotApiService {
      * loudly: when it cannot be sent the Brick simply asks once.
      */
     async keepTimeZone(): Promise<void> {
-        if (this.timeZoneKept || this.timeZoneSending || this.timeZoneTries >= 3 || !this.adminUrl || !this.accessToken) {
+        if (
+            this.timeZoneKept ||
+            this.timeZoneSending ||
+            this.timeZoneTries >= 3 ||
+            !this.adminUrl ||
+            !this.accessToken
+        ) {
             return;
         }
         let zone: string | undefined;
