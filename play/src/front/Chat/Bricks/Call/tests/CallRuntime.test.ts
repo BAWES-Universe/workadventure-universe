@@ -82,6 +82,17 @@ describe("someone walks up during a call", () => {
         t.runtime.destroy();
     });
 
+    it("asks again about someone answered with Not now who leaves and comes back", () => {
+        const t = setup({ kind: "bubble" });
+        t.callOn();
+        t.nearby.set({ kind: "bubble", people: [ana] });
+        t.runtime.notNow();
+        t.nearby.set({ kind: "none", people: [] });
+        t.nearby.set({ kind: "bubble", people: [ana] });
+        expect(t.state()?.walkUp?.id).toBe("a");
+        t.runtime.destroy();
+    });
+
     it("asks about the next person once a card is answered", () => {
         const t = setup({ kind: "bubble" });
         t.callOn();

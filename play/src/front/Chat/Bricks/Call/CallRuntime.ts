@@ -56,8 +56,9 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
         // A meeting puts the call on hold, once, as the person walks in (the person's tap on Resume is what brings it back)
         if (kind === "meeting" && lastKind !== "meeting") deps.store.send({ type: "meeting-joined" });
         lastKind = kind;
+        // Someone who left (or a bubble that is no longer a bubble) is forgotten, so coming back is walking up again
+        const newcomer = tracker.next(kind === "bubble" ? people : [], state() ?? current);
         if (kind !== "bubble") return;
-        const newcomer = tracker.next(people, state() ?? current);
         if (newcomer)
             deps.store.send({ type: "someone-here", id: newcomer.id, name: newcomer.name, uuid: newcomer.uuid });
     };
