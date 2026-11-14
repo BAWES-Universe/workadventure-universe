@@ -483,7 +483,14 @@ export function runnerOrbitFor(admin: Pick<AdminApiService, 'computerRunningJobs
 export function relayUrlFromEnv(env: NodeJS.ProcessEnv = process.env): string | null {
     const clean = (text: string) => text.trim().replace(/\/+$/, '').replace(/\/v1$/, '');
     const chosen = clean(env.COMPUTER_RELAY_URL || env.BOT_SERVER_URL || '');
-    if (chosen) return chosen;
+    if (chosen) {
+        // A bare host or a path is no address a machine can call: it is refused here rather than handed to the machine
+        try {
+            return /^https?:$/.test(new URL(chosen).protocol) ? chosen : null;
+        } catch {
+            return null;
+        }
+    }
     try {
         const pusher = new URL((env.PUSHER_URL || env.WORKADVENTURE_URL || '').trim());
         const labels = pusher.hostname.split('.');
