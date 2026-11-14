@@ -226,6 +226,13 @@ describe('the two tools of a Brick for keys', () => {
         expect(http.post).not.toHaveBeenCalled();
     });
 
+    it('do not set up a payment through an App whose key stopped working, and say what to do', async () => {
+        const broken = { ...context, apps: parseKeyApps({ apps: [{ ...APP, working: false }] }) };
+        const result = (await runKeyTool(PAYMENT_TOOL, { artifact: 'a', app: 'tap', amount: '1', currency: 'KWD' }, broken)) as { error: string };
+        expect(result.error).toMatch(/Replace key/);
+        expect(http.post).not.toHaveBeenCalled();
+    });
+
     it('say what Orbit said no to in words', async () => {
         for (const [status, match] of [[404, /not a page of theirs/], [403, /Only the owner/], [400, /Nothing was set up/]] as const) {
             http.post.mockResolvedValueOnce({ status, data: { error: 'The amount must be more than zero' } });

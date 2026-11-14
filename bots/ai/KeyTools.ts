@@ -144,6 +144,8 @@ async function takePayments(args: Record<string, unknown>, context: KeyToolConte
     const wanted = text(args.app, 60).toLowerCase();
     const app = context.apps.find((one) => one.payments && one.enabled && (one.short.toLowerCase() === wanted || one.name.toLowerCase() === wanted));
     if (!app) return { error: 'They have no App that can take payments by that name. Lead them to add one with ask_for_key first.' };
+    // A key that stopped working is said plainly, before a request that could only fail
+    if (!app.working) return { error: `Their ${app.short} key may have stopped working. Nothing was set up. Tell them to open Apps and tap Replace key, then try again.` };
     const artifact = text(args.artifact, 100);
     if (!artifact) return { error: 'Say which page, by its artifact id.' };
     const amount = typeof args.amount === 'number' ? String(args.amount) : text(args.amount, 30);
