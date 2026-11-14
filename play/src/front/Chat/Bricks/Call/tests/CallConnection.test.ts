@@ -139,6 +139,53 @@ describe("carrying a call with a Brick (game #2004)", () => {
         expect(t.deps.endCall).toHaveBeenCalledTimes(1);
     });
 
+    it("gives up when the bot server never answers, and a late answer is handed back", async () => {
+        const t = setup();
+        let answer: (result: CallResult) => void = () => undefined;
+        t.deps.startCall.mockImplementation(
+            () =>
+                new Promise<CallResult>((resolve) => {
+                    answer = resolve;
+                })
+        );
+        const begun = t.connection.begin("b1", "Nora");
+        vi.advanceTimersByTime(CALL_CONNECT_TIMEOUT_MS);
+        expect(t.state()).toMatchObject({ phase: "ended", endedBy: "unavailable" });
+        answer({ started: true, spaceName: SPACE });
+        expect(await begun).toEqual({ ok: false, failure: "cancelled" });
+        expect(t.deps.endCall).toHaveBeenCalledTimes(2);
+        expect(t.deps.joinSpace).not.toHaveBeenCalled();
+        expect(t.connection.isActive()).toBe(false);
+    });
+
+    it("gives up when the space is never joined", async () => {
+        const t = setup();
+        t.deps.joinSpace.mockImplementation(
+            (_name: string, signal: AbortSignal) =>
+                new Promise((_resolve, reject) => {
+                    signal.onabort = () => reject(new Error("aborted"));
+                })
+        );
+        const begun = t.connection.begin("b1", "Nora");
+        await vi.advanceTimersByTimeAsync(CALL_CONNECT_TIMEOUT_MS);
+        expect(t.state()).toMatchObject({ phase: "ended", endedBy: "unavailable" });
+        expect(await begun).toEqual({ ok: false, failure: "cancelled" });
+        expect(t.connection.isActive()).toBe(false);
+    });
+
+    it("turns the call's microphone off before the gate opens when the call ends", async () => {
+        const t = setup({ micOn: false });
+        const order: string[] = [];
+        await t.connection.begin("b1", "Nora");
+        t.deps.setGate.mockImplementation((gate: CallMicGate | undefined) => order.push(`gate:${gate?.spaceName}`));
+        t.microphone.turnOff.mockImplementation(() => {
+            order.push("mic off");
+            t.mic.on = false;
+        });
+        t.connection.end();
+        expect(order).toEqual(["mic off", "gate:undefined"]);
+    });
+
     it("gives up when the space is lost", async () => {
         const t = setup();
         await t.connection.begin("b1", "Nora");

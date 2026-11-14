@@ -115,6 +115,11 @@
         left: 0;
         right: 0;
         top: 12px;
+        /* It sits inside the game's layer, which lets clicks through to the map: only the bar itself takes them */
+        pointer-events: none;
+    }
+    .call-wrap.floating .call-bar {
+        pointer-events: auto;
     }
     @media (min-width: 768px) {
         .call-wrap.floating {

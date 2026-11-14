@@ -96,10 +96,11 @@ export function createCallConnection(deps: CallDeps) {
             deps.store.send({ type: "end", by });
             if (silently) deps.store.clear();
             for (const stop of cleanups.splice(0)) quietly(stop);
-            quietly(() => deps.setGate(undefined));
+            // The call's microphone goes off first, and only then does the gate open: no space is ever handed it on hang-up
             quietly(() => {
                 if (turnedMicrophoneOn && deps.microphone?.isOn()) deps.microphone.turnOff();
             });
+            quietly(() => deps.setGate(undefined));
             const left = space;
             space = undefined;
             if (left) quietly(() => deps.leaveSpace(left));
@@ -131,6 +132,12 @@ export function createCallConnection(deps: CallDeps) {
             }
         });
         cleanups.push(watch);
+        // One deadline for the whole connecting: asking the bot server, joining the space and the bot arriving. A bot
+        // server or a join that never answers ends the call as unavailable instead of leaving it connecting for ever.
+        const timer = setTimeout(() => {
+            if (!connected) finish("unavailable");
+        }, deps.connectTimeoutMs ?? CALL_CONNECT_TIMEOUT_MS);
+        cleanups.push(() => clearTimeout(timer));
 
         const started = await deps.startCall(botId);
         if (finished) {
@@ -182,10 +189,6 @@ export function createCallConnection(deps: CallDeps) {
         // The space lists this person too: the bot is anyone else in it
         if ([...get(live.usersStore).keys()].some((id) => id !== live.mySpaceUserId)) botIn();
 
-        const timer = setTimeout(() => {
-            if (!connected) finish("unavailable");
-        }, deps.connectTimeoutMs ?? CALL_CONNECT_TIMEOUT_MS);
-        cleanups.push(() => clearTimeout(timer));
         return { ok: true };
     }
 

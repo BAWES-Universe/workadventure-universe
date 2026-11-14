@@ -12,30 +12,39 @@ import { createCallConnection, type CallSpaceLike } from "./CallConnection";
  * The one call this browser can have with a bot (game #2004), wired to the real game: the bot server, the scene's spaces
  * and the microphone gate. Everything that decides when things happen is in CallConnection.
  */
-function spaces() {
+function currentScene() {
     const scene = get(gameSceneStore);
     if (!scene) throw new Error("There is no game scene to join a call in.");
-    return scene.spaceRegistry;
+    return scene;
 }
+
+// The scene the call was asked for in. The call's space belongs to that scene's registry: if the person moved to
+// another room meanwhile, the call is not joined (it ends as unavailable), and it is left where it was joined.
+let callScene: ReturnType<typeof currentScene> | undefined;
 
 const callerUuid = (): string => localUserStore.getLocalUser()?.uuid ?? "";
 
 export const callConnection = createCallConnection({
     store: botCallStore,
-    startCall: (botId) =>
-        callerUuid() === ""
-            ? Promise.resolve({ started: false as const, failure: "sign_in" as const })
-            : botApiService.startCall(botId, callerUuid()),
+    startCall: (botId) => {
+        if (callerUuid() === "") return Promise.resolve({ started: false as const, failure: "sign_in" as const });
+        callScene = get(gameSceneStore) ?? undefined;
+        return botApiService.startCall(botId, callerUuid());
+    },
     endCall: (botId) => botApiService.endCall(botId, callerUuid()),
     // Audio and nothing else: the call's space is no bubble on the map, and the gate keeps the camera out of it
-    joinSpace: (spaceName, signal) =>
-        spaces().joinSpace(
+    joinSpace: (spaceName, signal) => {
+        const scene = currentScene();
+        if (scene !== callScene)
+            return Promise.reject(new Error("The person left the room the call was asked for in."));
+        return scene.spaceRegistry.joinSpace(
             spaceName,
             FilterType.ALL_USERS,
             ["cameraState", "microphoneState", "screenShareState"],
             signal
-        ) as Promise<CallSpaceLike>,
-    leaveSpace: (space) => spaces().leaveSpace(space as never),
+        ) as Promise<CallSpaceLike>;
+    },
+    leaveSpace: (space) => (callScene ?? currentScene()).spaceRegistry.leaveSpace(space as never),
     setGate: setCallMicGate,
     microphone: {
         isOn: () => get(requestedMicrophoneState),

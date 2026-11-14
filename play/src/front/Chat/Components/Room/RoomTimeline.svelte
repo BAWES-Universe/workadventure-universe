@@ -480,7 +480,16 @@
     // Call: Orbit's rule says yes and the bot has a voice (#2004). The button is not drawn at all otherwise.
     $: canCall = partnerBotId ? botCallAccessCache.store(partnerBotId) : readable(false);
     $: callHere = !!$botCallStore && partnerBotId !== undefined && $botCallStore.botId === partnerBotId;
-    $: callBarInChatStore.set(callHere);
+    // The profile, details, shared items and artifacts pages sit over the conversation and hide the call bar with it, so
+    // then the floating bar carries the call (unless the person is peeking back at the conversation)
+    $: panelOverConversation =
+        ((profileOpen && matrixRoom && $directPartner) ||
+            roomDetailsOpen ||
+            nearbyDetailsOpen ||
+            sharedOpen ||
+            artifactsOpen) &&
+        $chatBackPeekStore !== "conversation";
+    $: callBarInChatStore.set(callHere && !panelOverConversation);
     $: roomPicture = room.pictureStore;
     $: botState = partnerBotId ? $botAvailability : undefined;
     $: botClosed = botChatClosed(botState);
