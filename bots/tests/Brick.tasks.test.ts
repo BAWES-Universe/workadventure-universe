@@ -253,6 +253,17 @@ describe('setting a reminder', () => {
         expect(admin.changeBrickItem.mock.calls[0][2]).toEqual({ userId: expect.any(String), action: 'change', change: { words: 'New words' } });
     });
 
+    it('changes only the words when the unused time fields come as null, empty or 0', async () => {
+        const { admin, context } = setUp();
+        const result = await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'change', text: 'Words only', when: null, in_minutes: 0 }, context);
+        expect(result).toMatchObject({ changed: true });
+        await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'change', text: 'Words again', when: '', in_minutes: null }, context);
+        expect(admin.changeBrickItem.mock.calls.map((call) => call[2])).toEqual([
+            { userId: expect.any(String), action: 'change', change: { words: 'Words only' } },
+            { userId: expect.any(String), action: 'change', change: { words: 'Words again' } },
+        ]);
+    });
+
     it('makes a repeating reminder one-off when repeat none comes with a new time', async () => {
         const { admin, context } = setUp();
         await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'change', repeat: 'none', when: '2026-11-16 09:00' }, context);

@@ -206,6 +206,9 @@ const text = (value: unknown, max: number): string => (typeof value === 'string'
 type Repeat = 'none' | 'every_day' | 'workdays';
 const repeatOf = (value: unknown): Repeat => (value === 'every_day' || value === 'workdays' ? value : 'none');
 
+/** Whether the model really gave a time: models fill a field they do not use with null, "" or 0, and that is not a change of time. */
+const timeGiven = (value: unknown): boolean => value !== undefined && value !== null && value !== '' && value !== 0;
+
 /** The wait "in N minutes" means, whole minutes, or null when none was given or it is not one a reminder can wait. */
 function inMinutesOf(args: Record<string, unknown>): number | null {
     const value = args.in_minutes;
@@ -378,7 +381,7 @@ async function changeTask(args: Record<string, unknown>, settings: TaskSettings,
             const change: Record<string, unknown> = {};
             const words = text(args.text, TEXT_MAX);
             if (words) change.words = words;
-            if (args.when !== undefined || args.in_minutes !== undefined || repeatOf(args.repeat) !== 'none') {
+            if (timeGiven(args.when) || timeGiven(args.in_minutes) || repeatOf(args.repeat) !== 'none') {
                 const timeZone = settings.timeZone;
                 if (!timeZone) return { needs: 'time_zone', note: 'No time zone is kept for them. Ask once which city or time zone they are in.' };
                 const built = cadenceFrom(args, settings, timeZone, now);
