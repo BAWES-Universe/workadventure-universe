@@ -5,7 +5,9 @@
 
 <div class="warning-toast" transition:fly={{ y: -200, duration: 500 }} data-testid="warning-toast">
     {#each $warningMessageStore as warningMessage, key (warningMessage.id ?? key)}
-        <div class="text-center flex justify-center text-danger h-6 whitespace-pre-line truncate text-ellipsis">
+        <div
+            class="text-center flex justify-center text-danger min-h-[1.5rem] whitespace-pre-line truncate text-ellipsis"
+        >
             ⚠️ {warningMessage.message} ⚠️
         </div>
     {/each}
