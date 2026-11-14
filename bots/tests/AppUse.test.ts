@@ -296,6 +296,25 @@ describe('a ready-made App', () => {
         });
     });
 
+    it('sends no call and says nothing ran when the link will not open a session', async () => {
+        vi.stubEnv('BOT_SERVICE_TOKEN', 'svc');
+        MCPConnector.clearCache();
+        const sent: any[] = [];
+        vi.spyOn(axios, 'post').mockImplementation(async (_url: string, body: any) => {
+            sent.push(body);
+            // Orbit answers 200 with what the link said: 401, its key is no longer good
+            return { data: { status: 401, contentType: null, sessionId: null, body: '' } };
+        });
+        const ai = service(async () => ({ allowed: true }));
+        const [result] = await ai['executeToolCalls']([{ id: 'c-401', name: 'send_email', arguments: '{}' }], signedIn as never, undefined, READY as never, undefined, 'room', 'bot-401', 7);
+        expect(result.result.outcome).toBe('not_sent');
+        expect(sent.map((b) => b.message.method)).toEqual(['initialize']);
+        // Nothing was kept: the next call opens a session again
+        sent.length = 0;
+        await ai['executeToolCalls']([{ id: 'c-401b', name: 'send_email', arguments: '{}' }], signedIn as never, undefined, READY as never, undefined, 'room', 'bot-401', 7);
+        expect(sent.map((b) => b.message.method)).toEqual(['initialize']);
+    });
+
     it('is not run when Orbit says no, and tells the bot nothing about why', async () => {
         vi.stubEnv('BOT_SERVICE_TOKEN', 'svc');
         vi.spyOn(console, 'warn').mockImplementation(() => undefined);

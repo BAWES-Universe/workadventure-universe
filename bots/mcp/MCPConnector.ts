@@ -364,8 +364,11 @@ async function sendViaOrbit(link: OrbitLink, method: string, params: Record<stri
                 { jsonrpc: '2.0', id: 'init', method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'workadventure-mcp-bot', version: '1.0.0', player_id: link.requesterKey || null } } },
                 undefined
             );
+            // The link refused to open a session (its key expired, say): nothing was asked of the App, so nothing is kept or sent
+            if (typeof opened.status === 'number' && opened.status >= 400) return NOT_SENT;
             sessionId = opened.sessionId || undefined;
-            await send({ jsonrpc: '2.0', method: 'notifications/initialized' }, sessionId);
+            const told = await send({ jsonrpc: '2.0', method: 'notifications/initialized' }, sessionId);
+            if (typeof told.status === 'number' && told.status >= 400) return NOT_SENT;
             mcpSessionInitCache.set(key, { sessionId, initializedAt: Date.now(), usedAt: Date.now() });
         }
         const requestId = method === 'tools/list' ? '1' : '2';
