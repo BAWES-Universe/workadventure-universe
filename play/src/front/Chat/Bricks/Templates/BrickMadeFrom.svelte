@@ -36,10 +36,14 @@
 
     // Counts reads: an older answer that comes back after a newer one is not shown
     let reads = 0;
+    // The newest read has come back (with a Brick made from a template or without)
+    let answered = false;
     function load() {
         const mine = ++reads;
         readMadeFrom(brickId)
             .then((read) => {
+                // eslint-disable-next-line svelte/infinite-reactive-loop
+                if (mine === reads) answered = true;
                 // Not made from a template, or Orbit did not say: nothing shows, and the page is as it was
                 // eslint-disable-next-line svelte/infinite-reactive-loop
                 if (!gone && mine === reads && read.ok) view = read.value;
@@ -52,9 +56,10 @@
     let seenKey = refreshKey;
     $: if (refreshKey !== seenKey) {
         seenKey = refreshKey;
-        // Only a Brick that is made from a template has anything to read again. Once per change of the key, so no loop.
+        // Only a Brick that is made from a template (or one whose first read is still on its way) has anything to read again.
+        // Once per change of the key, so no loop.
         // eslint-disable-next-line svelte/infinite-reactive-loop
-        if (view) load();
+        if (view || !answered) load();
     }
 
     function review() {

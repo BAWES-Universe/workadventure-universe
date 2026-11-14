@@ -526,6 +526,28 @@ describe("Brick templates, the game half (#2008)", () => {
             expect(byId("brickSetupRequired")).toBeNull();
         });
 
+        it("reads again when the page changes before the first read came back, so an early answer is not kept", async () => {
+            let answerFirst: (value: unknown) => void = () => undefined;
+            game.getMadeFrom.mockReturnValueOnce(
+                new Promise((resolve) => {
+                    answerFirst = resolve;
+                })
+            );
+            part = new BrickMadeFrom({ target, props: props({ refreshKey: "a" }) });
+            await settle();
+            // A computer was given while the first read was on its way: the second read says everything is connected
+            game.getMadeFrom.mockResolvedValue(
+                madeFrom({ setup: { needs: [{ ...APP_NEED, ready: true }], setupRequired: false, routinesOff: 0 } })
+            );
+            (part as unknown as { $set: (props: Record<string, unknown>) => void }).$set({ refreshKey: "b" });
+            await settle();
+            answerFirst(madeFrom());
+            await settle();
+            expect(game.getMadeFrom).toHaveBeenCalledTimes(2);
+            expect(byId("brickMadeFrom")).not.toBeNull();
+            expect(byId("brickSetupRequired")).toBeNull();
+        });
+
         it("offers Review when the template was updated", async () => {
             game.getMadeFrom.mockResolvedValue(madeFrom({ update: UPDATE }));
             part = new BrickMadeFrom({ target, props: props() });
