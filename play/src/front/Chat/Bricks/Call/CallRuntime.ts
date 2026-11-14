@@ -6,9 +6,9 @@ import { createWalkUpTracker, type Nearby } from "./WalkUpTracker";
 /**
  * A call with no one speaking for this long ends (a quiet stretch). Built in, not a setting: a call left open would keep
  * the bot's voice listening (and the owner's key paying), while someone who has simply stopped to think is not cut off
- * in the first ten minutes. Anything the bot says counts as someone speaking.
+ * in the first five minutes. Anything the bot says counts as someone speaking.
  */
-export const QUIET_STRETCH_MS = 10 * 60 * 1000;
+export const QUIET_STRETCH_MS = 5 * 60 * 1000;
 /** How often the call looks at the clock. */
 export const CALL_TICK_MS = 5000;
 
