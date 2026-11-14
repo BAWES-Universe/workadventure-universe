@@ -249,6 +249,8 @@ const chat: BaseTranslation = {
         tooBig: "{fileName} is too big {maxFileSize}.",
         notLogged: "You need to be logged in to upload a file.",
         clickToOpen: "Click to open",
+        // A guest's file that did not come along after sign-in
+        gone: "This file is gone",
     },
     codeView: {
         lines: "{count:number} {{line|lines}}",
@@ -1079,6 +1081,107 @@ const chat: BaseTranslation = {
         // The starter that opens the Apps page (#2001)
         connectMyApps: "Connect my apps",
         connectMyAppsLine: "Email, calendar, GitHub and more",
+        // What a bot remembers about the person, on a Brick's page and in the chat menu of anyone's bot (game #2003)
+        memory: {
+            title: "Memory",
+            brief: "{count:number} {{thing|things}} about you",
+            briefNone: "Nothing yet",
+            lead: "What {name} remembers about you, from your chats with it. Only you see this list.",
+            leadNone: "{name} doesn't remember anything about you yet. What you tell it shows up here.",
+            seeAll: "See all {count:number}",
+            note: "You can also just say “forget that” in its chat. It knows these everywhere you talk to it. With other people around, anything private is answered only to you.",
+            forget: "Forget",
+            forgetEverything: "Forget everything",
+            startsFresh: "{name} starts fresh with you. Your chats and files stay.",
+            forgotFailed: "Couldn't forget that. Try again.",
+            loadFailed: "Couldn't read what {name} remembers. Try again.",
+            retry: "Try again",
+            menu: "What {name} remembers about you",
+            sheetTitle: "What {name} remembers about you",
+            sheetOnlyYou: "Only you see this. {owner}, who made {name}, can't.",
+            sheetOnlyYouNoOwner: "Only you see this. Whoever made {name} can't.",
+            sheetOnlyYouOwn: "Only you see this.",
+            done: "Done",
+            close: "Close",
+            // How each thing reads, in the person's own terms
+            name: "Your name is {value}",
+            birthday: "Your birthday is {value}",
+            likes: "Likes {value}",
+            feeling: "Said you were {value}",
+            fromChat: "From a chat on {date}",
+            fromChatUndated: "From a chat",
+            private: "Said privately · kept out of group chats",
+        },
+        // A Brick's files in one place on its page (game #2003)
+        files: {
+            title: "Files",
+            brief: "{count:number} {{file|files}}",
+            briefSize: "{count:number} {{file|files}} · {size}",
+            briefNone: "Nothing yet",
+            made: "Made for you",
+            sent: "You sent it",
+            download: "Download",
+            delete: "Delete",
+            deleteFailed: "Couldn't delete the file. Try again.",
+            downloadFailed: "Couldn't download that. Try again.",
+            allMade: "All {count:number} things it made",
+            opensArtifacts: "Opens Your artifacts",
+            onlyYouAndBrick: "only {name} and you",
+            inNearbyChat: "sent in a nearby chat",
+            noneMade: "Nothing made for you yet. Ask {name} for something and it shows up here.",
+            noneSent: "Files you send {name} show up here.",
+            everything: "Download everything",
+            everythingLine:
+                "One file with all of the above. What a Brick keeps counts on your Usage page, in plain sizes.",
+            everythingFailed: "Couldn't put the files together. Try again.",
+            everythingPartial: "Some files couldn't be added to the download. Try again to get them.",
+            loadFailed: "Couldn't read the files. Try again.",
+            // What is on its computer (only once it has one)
+            onItsComputer: "On its computer",
+            browse: "Browse its computer's files",
+            fromItsComputerOff: "From its computer, which is off",
+            lastCopy: "Last saved copy",
+            lastCopyLine: "{date} · {size} · your code, downloads and work in progress",
+            looking: "Looking here never turns the computer on. Turn Computer on again to carry on where it stopped.",
+        },
+        // The Brick for someone who has not signed in (#1997): a taste of it, for this visit
+        guest: {
+            name: "Brick",
+            hello: "Hi, I'm Brick, a helper you can talk to. I can show you around and answer anything about this place.",
+            // What a tap on each starter sends, in the guest's words
+            thisPlaceLine: "A quick look around",
+            thisPlaceAsk: "What is this place?",
+            whatCanABrickDoLine: "And what changes when I'm yours",
+            whatCanABrickDoAsk: "What can a Brick do?",
+            // The card after an answer that says something needs an account
+            keepTitle: "Keep Brick?",
+            keepYes: "Make Brick mine",
+            keepYesLine: "Sign in. It's free, and this chat comes along",
+            keepNo: "Not now",
+            keepNoLine: "I'll still help while you're here",
+            // The game's own line when an answer could not be made: nothing was counted, so they can send it again
+            couldNotAnswer: "I couldn't answer that one. Send it again in a moment.",
+            // Voice notes and files sent to the Brick for guests (plan v3)
+            noteTooLong: "This note is over {minutes:number} minutes. Send a shorter one.",
+            couldNotListen: "Couldn't listen to this note. Type it instead.",
+            couldNotFinish: "Couldn't finish this one. Send it again.",
+            answerGone: "This answer is no longer available. Send it again.",
+            fileGone: "This file is gone. Send it again.",
+            fileTooBig: "These files are too big to read together. Send fewer at a time.",
+            // Said once, after signing in, with the chat that came along
+            welcome: "Welcome, {name}. I'm yours now, and this chat came with me. What shall we do next?",
+            welcomeNoName: "Welcome. I'm yours now, and this chat came with me. What shall we do next?",
+            // The sign-in card
+            signInTitle: "Make Brick yours",
+            signInBody: "Sign in and Brick stays with you, here and everywhere you go. It's free.",
+            signInRemembers: "Remembers you, and warms to you as you talk",
+            signInMakes: "Makes pages, pictures and songs you can keep and share",
+            signInApps: "Works with your apps once you connect them",
+            signInMore: "Makes more Bricks, one for each job you give it",
+            notNow: "Not now",
+            signIn: "Sign in",
+            close: "Close",
+        },
         // A Brick's computer (#2000): for the jobs no app can do. It says what it is for, what it is doing, how the month is
         // counted, where its files are and how to watch. Never a price, a count or the name of a provider.
         computer: {
@@ -1235,6 +1338,8 @@ const chat: BaseTranslation = {
             since: "Since {day:string}",
             bricksThatCanUse: "Bricks that can use it",
             letUse: "Let it use {app:string}",
+            brickMayNote: "Tap a Brick that uses it to change what it may do: right away, asks first or off.",
+            changeWhatItMay: "Change what {name:string} may do with {app:string}",
             remove: "Remove",
             rightAway: "{things:string} right away",
             everythingRightAway: "Everything right away",
@@ -1245,6 +1350,8 @@ const chat: BaseTranslation = {
             thingChange: "Changes things",
             thingDeleteSend: "Deletes or sends out",
             otherPeople: "Other people",
+            onlyYou: "Only you",
+            onlyYouLine: "People who chat with your Bricks can't use it",
             onlyForYou: "Only for you",
             onlyForYouLine:
                 "{app:string} is signed in as you. Nothing in it is safe to hand to other people, so it is never lent to a universe, and a Brick never uses it for anyone else.",
@@ -1324,7 +1431,7 @@ const chat: BaseTranslation = {
                 "Bots keep using it for now, on {name:string}'s sign-in. Reconnect it with the team's account so it no longer depends on {name:string}.",
             botsThatCanUse: "Bots that can use it",
             botsThatCanUseNote:
-                "Bots in {universe:string}. No bot gets it until a manager lets it, on that bot's own page under Apps.",
+                "Bots in {universe:string}. No bot gets it until a manager lets it. Tap one that uses it to change what it may do: right away, asks first or off.",
             botOff: "Turned off",
             botUsesIt: "Uses it",
             managers: "Managers",
@@ -1381,6 +1488,9 @@ const chat: BaseTranslation = {
         onACall: "On a call",
         endedQuiet: "The call ended after a quiet stretch.",
         endedUnavailable: "The call ended because voice isn't available now.",
+        failed: "The call couldn't start. Try again in a moment.",
+        noVoice: "{name} has no voice to call.",
+        signIn: "Sign in again to call.",
     },
     voiceDraft: {
         onlyYou: "Only you see this",

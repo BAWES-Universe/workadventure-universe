@@ -30,7 +30,17 @@ import {
 import {
   isValidPlayAuthToken,
   isValidPlayGameSession,
+  playGameIdentifier,
 } from "../Service/PlayAuthToken";
+import {
+  RECEIPT_PURPOSES,
+  RECEIPT_REFRESH_MS,
+  RECEIPT_TTL_MS,
+  readReceipt,
+  sha256Hex,
+  signReceipt,
+  type ReceiptPurpose,
+} from "../Service/UploadReceipt";
 import { HttpResponseDevice } from "./HttpResponseDevice";
 
 // Files a person may drop in chat at once, and the size of each (the front applies the same limits). multer stops
@@ -59,6 +69,22 @@ const uploadAudio = multer({
   limits: { fileSize: AUDIO_MESSAGE_MAX_FILE_SIZE, files: 1 },
 }).single("file");
 
+/** Where a stored chat file can be read: the bucket's public link, a signed one, or the uploader's own path. */
+async function locationOf(bucket: string | undefined, fileUuid: string): Promise<string> {
+  if (bucket === S3_CDN_USER_REFS_BUCKET && S3_CDN_USER_REFS_PUBLIC_URL) return `${S3_CDN_USER_REFS_PUBLIC_URL}/${fileUuid}`;
+  if (bucket === S3_CDN_BOT_GENS_BUCKET && S3_CDN_BOT_GENS_PUBLIC_URL) return `${S3_CDN_BOT_GENS_PUBLIC_URL}/${fileUuid}`;
+  if (bucket) {
+    const cdnProvider = getCdnProvider(bucket);
+    if (cdnProvider) return cdnProvider.getSignedUrl(fileUuid);
+  }
+  return `${UPLOADER_URL}/upload-file/${fileUuid}`;
+}
+
+/** What a player says an upload is for; anything else is a chat file. */
+function purposeOf(value: unknown): ReceiptPurpose {
+  return RECEIPT_PURPOSES.includes(value as ReceiptPurpose) ? (value as ReceiptPurpose) : "chat-file";
+}
+
 class DisabledChat extends Error {}
 class NotLoggedUser extends Error {}
 
@@ -76,6 +102,7 @@ export class FileController {
     this.downloadFile();
     this.chatFile();
     this.uploadFile();
+    this.refreshReceipt();
     this.deleteUploadedFile();
     this.ping();
     this.config();
@@ -314,6 +341,7 @@ export class FileController {
           size: number;
           lastModified: Date;
           type?: string;
+          receipt?: string;
         }[] = [];
 
         // Validate session token if admin API is configured (skip for bot uploads)
@@ -351,21 +379,30 @@ export class FileController {
             file.mimetype,
             bucket
           );
-          let location: string;
-          if (bucket === S3_CDN_USER_REFS_BUCKET && S3_CDN_USER_REFS_PUBLIC_URL) {
-            location = `${S3_CDN_USER_REFS_PUBLIC_URL}/${fileUuid}`;
-          } else if (bucket === S3_CDN_BOT_GENS_BUCKET && S3_CDN_BOT_GENS_PUBLIC_URL) {
-            location = `${S3_CDN_BOT_GENS_PUBLIC_URL}/${fileUuid}`;
-          } else if (bucket) {
-            const cdnProvider = getCdnProvider(bucket);
-            if (cdnProvider) {
-              location = await cdnProvider.getSignedUrl(fileUuid);
-            } else {
-              location = `${UPLOADER_URL}/upload-file/${fileUuid}`;
-            }
-          } else {
-            location = `${UPLOADER_URL}/upload-file/${fileUuid}`;
-          }
+          const location = await locationOf(bucket, fileUuid);
+          // A player's upload comes with a receipt: who uploaded which bytes, so a bot server can trust the file a guest names
+          const now = Date.now();
+          const uploader = !isBotUpload && SECRET_KEY ? playGameIdentifier(request.header("authorization"), SECRET_KEY) : null;
+          const receipt =
+            uploader && SECRET_KEY
+              ? signReceipt(
+                  {
+                    sub: uploader,
+                    aud: purposeOf(request.body?.purpose),
+                    fid: fileUuid,
+                    bkt: bucket ?? null,
+                    loc: location,
+                    sha256: sha256Hex(file.buffer),
+                    name: filename.slice(0, 255),
+                    type: file.mimetype || "application/octet-stream",
+                    size: file.buffer.byteLength,
+                    len: "unmeasured",
+                    iat: now,
+                    exp: now + RECEIPT_TTL_MS,
+                  },
+                  SECRET_KEY
+                )
+              : undefined;
           uploadedFiles.push({
             name: filename,
             id: fileUuid,
@@ -373,6 +410,7 @@ export class FileController {
             size: file.buffer.byteLength,
             lastModified: new Date(),
             type: file.mimetype,
+            ...(receipt ? { receipt } : {}),
           });
         }
 
@@ -424,6 +462,41 @@ export class FileController {
           return response.json({ message: "Internal server error" });
         }
       }
+    });
+  }
+
+  /**
+   * Renews the receipt of a file its uploader still holds (after a reconnect, so nothing is uploaded twice): the same game
+   * session as the upload's, and a receipt this uploader signed that ran out at most a week ago. The hash stays the upload's,
+   * so a file replaced since is still refused where it is read.
+   */
+  refreshReceipt() {
+    this.App.post("/receipt/refresh", (request, response) => {
+      if (!SECRET_KEY) {
+        response.status(503).json({ message: "uploads-not-configured" });
+        return;
+      }
+      const uploader = playGameIdentifier(request.header("authorization"), SECRET_KEY);
+      if (!uploader) {
+        response.status(401).json({ message: "not-logged" });
+        return;
+      }
+      const now = Date.now();
+      const claims = readReceipt(request.body?.receipt, SECRET_KEY, now, RECEIPT_REFRESH_MS);
+      if (!claims || claims.sub !== uploader) {
+        response.status(403).json({ message: "not-yours" });
+        return;
+      }
+      (async () => {
+        const location = await locationOf(claims.bkt ?? undefined, claims.fid);
+        const { iss: _iss, v: _v, kid: _kid, ...rest } = claims;
+        const receipt = signReceipt({ ...rest, loc: location, iat: now, exp: now + RECEIPT_TTL_MS }, SECRET_KEY);
+        response.json({ receipt, location });
+      })().catch((e) => {
+        console.error(e);
+        Sentry.captureException(e);
+        if (!response.headersSent) response.status(500).json({ message: "Internal server error" });
+      });
     });
   }
 

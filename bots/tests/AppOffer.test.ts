@@ -119,6 +119,21 @@ describe('The offer_app tool', () => {
         expect(notes).toHaveLength(1);
     });
 
+    it('offers one App only when two offers of a reply run at the same time', async () => {
+        const notes: BrickNote[] = [];
+        const both = await Promise.all([
+            run({ app: 'google-calendar', asked: false, ask: 'Connect your calendar?' }, admin(), notes),
+            run({ app: 'notion', asked: true }, admin(), notes),
+        ]);
+        expect(notes).toHaveLength(1);
+        expect(both.filter((one) => (one.result as { shown: boolean }).shown)).toHaveLength(1);
+    });
+
+    it('still lets them ask for an App by name after the Brick was told not to offer it on its own', () => {
+        expect(JSON.stringify(appToolDefinitions())).toContain('ask for it by name');
+        expect(appsNote([CALENDAR], [topicOf('google-calendar')])).toContain('if they ask for it by name');
+    });
+
     it('offers nothing, and says nothing about it, when Orbit cannot say what is on the list', async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => undefined);
         const down = { appsOfferableFor: vi.fn(async () => Promise.reject(new Error('down'))), brickOffersFor: vi.fn(async () => ({ after: 3, topics: [] })) };

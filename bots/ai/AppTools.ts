@@ -37,7 +37,7 @@ export function appToolDefinitions(): ToolDefinition[] {
                     '("what\'s on my calendar tomorrow?" with no calendar connected): say in one short sentence that you can\'t see it yet and that connecting takes one sign-in, then call this with asked false. ' +
                     '(2) They ask you to connect an App by name ("connect my Notion"): say in one short sentence that it takes one sign-in on the App\'s own page, then call this with asked true. ' +
                     'The App must be one of the Apps listed in your "Apps" note: use its key exactly. Never offer an App that is not listed, never offer one you may already use, and at most one in a reply. ' +
-                    'Never mention the card in your words, the card says it. If they said no to an App before, help another way and do not offer it again.',
+                    'Never mention the card in your words, the card says it. If they said no to an App before, do not offer it again on your own, and help another way; if they later ask for it by name, offer it with asked true.',
                 parameters: {
                     type: 'object',
                     properties: {
@@ -71,7 +71,7 @@ export function appsNote(apps: OfferableApp[] | null, declinedTopics: string[]):
     if (offerable.length === 0) return '';
     const declined = new Set(declinedTopics.map(topicWords));
     const lines = offerable.slice(0, NOTE_APPS_MAX).map((app) => {
-        const left = declined.has(topicWords(topicOf(app.key))) ? ' (already offered, they said not now: never offer it again, help another way)' : '';
+        const left = declined.has(topicWords(topicOf(app.key))) ? ' (already offered, they said not now: never offer it again on your own, help another way; if they ask for it by name, offer it with asked true)' : '';
         const here = app.connected ? ' (they connected it, you may not use it yet)' : '';
         return `- ${app.key}: ${app.name}${app.blurb ? `, ${app.blurb}` : ''}${here}${left}`;
     });
@@ -142,6 +142,8 @@ export async function runAppTool(args: Record<string, unknown>, context: AppTool
         asked,
         other: !asked && label && search ? { label, line: text(args.other_line, OTHER_LINE_MAX), search } : null,
     };
+    // Two calls of one reply run side by side and both waited on Orbit: the first check is only an early exit, this one has no await before the push
+    if (context.notes.some((one) => one.kind === 'app')) return { shown: false, note: 'One App offer in a reply is enough. Do not mention it.' };
     context.notes.push(note);
     return { shown: true, note: 'The card goes under your answer. Do not mention it in your words.' };
 }
