@@ -20,6 +20,7 @@
     import { readHadProximityChat, shouldShowSayHiCard } from "../Stores/SayHiCardStore";
     import { bricksWithoutChat } from "../Bricks/BrickChat";
     import { loadMyBricks, myBricksByChatId, myBricksSettled, refreshMyChatId } from "../Bricks/MyBricksStore";
+    import { guestBrickEntries } from "../Bricks/GuestBrickStore";
     import BricksPage from "../Bricks/BricksPage.svelte";
     import RoomTimeline from "./Room/RoomTimeline.svelte";
     import ChatLoader from "./ChatLoader.svelte";
@@ -115,12 +116,16 @@
         [bricksWithoutChat(chat, myBricksByChatId), chatSearchBarValue],
         ([$bricks, $search]) => $bricks.map((brick) => brickEntry(brick, $search))
     );
-    // A Brick's chat is a saved chat: its row shows only while the saved chat is connected.
+    // A Brick's chat is a saved chat: its row shows only while the saved chat is connected. The Brick for guests (#1997)
+    // is not a saved chat: its chat is the one the guest's device keeps, so its row shows whatever the connection says.
     const extraEntries: Readable<OneListEntry[]> = derived(
-        [proximityEntries, brickEntries, chatConnectionStatus],
-        ([$proximity, $bricks, $status]) =>
-            $status === "ONLINE" && $bricks.length > 0 ? [...$proximity, ...$bricks] : $proximity
+        [proximityEntries, brickEntries, chatConnectionStatus, guestBrickEntries],
+        ([$proximity, $bricks, $status, $guestBrick]) => {
+            const mine = $status === "ONLINE" && $bricks.length > 0 ? [...$proximity, ...$bricks] : $proximity;
+            return $guestBrick.length > 0 ? [...mine, ...$guestBrick] : mine;
+        }
     );
+    $: hasGuestBrick = $guestBrickEntries.length > 0;
     // Until the Bricks are read, an empty list is not known to be empty: the card for an empty list waits for them.
     $: bricksKnown = !$userIsConnected || $myBricksSettled;
 
@@ -244,7 +249,7 @@
                             {/if}
                         </section>
                     {/if}
-                    {#if $chatConnectionStatus === "ONLINE" || hasProximityHistory}
+                    {#if $chatConnectionStatus === "ONLINE" || hasProximityHistory || hasGuestBrick}
                         <!-- One list: proximity chats you had, DMs, groups, invitations and folders, newest first. -->
                         <div class="px-2 pb-2">
                             <OneList

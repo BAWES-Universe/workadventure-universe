@@ -31,7 +31,7 @@ export function parseForgetNotice(forget: unknown): MemoryForgetNotice | null {
         notice.rows = rows.flatMap((row) => {
             const { id, userUuid } = (row ?? {}) as { id?: unknown; userUuid?: unknown };
             if (typeof id !== 'string' || (userUuid !== null && typeof userUuid !== 'string')) return [];
-            return [{ id, userUuid }];
+            return [{ id, userUuid: userUuid as string | null }];
         });
     }
     return notice.everyone || notice.userUuids.length > 0 ? notice : null;
