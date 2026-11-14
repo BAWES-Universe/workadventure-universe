@@ -291,4 +291,18 @@ describe('the screen gateway', () => {
         expect(gateway.handleUpgrade({ url: '/other' } as never, socket as never, Buffer.alloc(0))).toBe(false);
         expect(socket.destroy).not.toHaveBeenCalled();
     });
+
+    it('survives the viewer’s connection erroring while Orbit is still being asked (the bot server must not go down for it)', async () => {
+        const { EventEmitter } = await import('node:events');
+        const socket = Object.assign(new EventEmitter(), { write: vi.fn(), destroy: vi.fn() });
+        let answer: (value: { ok: false; reason: string }) => void = () => undefined;
+        const slow: ScreenOrbit = { open: () => new Promise((resolve) => (answer = resolve as never)), check: async () => ({ ok: true, mode: 'watch' as ScreenMode }) };
+        const slowGateway = createScreenGateway({ orbit: slow });
+        expect(slowGateway.handleUpgrade({ url: '/computer/screen?ticket=t' } as never, socket as never, Buffer.alloc(0))).toBe(true);
+        expect(() => socket.emit('error', new Error('read ECONNRESET'))).not.toThrow();
+        answer({ ok: false, reason: 'denied' });
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(socket.destroy).toHaveBeenCalled();
+        slowGateway.close();
+    });
 });

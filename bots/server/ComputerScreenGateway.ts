@@ -263,6 +263,10 @@ export function createScreenGateway(options: ScreenGatewayOptions): ScreenGatewa
                 refuse(socket, 400, 'Bad Request');
                 return true;
             }
+            // While Orbit is asked, nobody listens for this socket's errors (Node drops its own on 'upgrade', and ws adds its own only once it takes
+            // the socket): a reset in that gap would be an unhandled error and bring the bot server down
+            const ignore = () => undefined;
+            socket.on('error', ignore);
             options.orbit
                 .open(ticket)
                 .then((opened) => {
@@ -272,6 +276,7 @@ export function createScreenGateway(options: ScreenGatewayOptions): ScreenGatewa
                         return;
                     }
                     wss.handleUpgrade(request, socket, head, (viewer) => {
+                        socket.off('error', ignore);
                         sockets.add(viewer);
                         carry(viewer, ticket, opened);
                     });

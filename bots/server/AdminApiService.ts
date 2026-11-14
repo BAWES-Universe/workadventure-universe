@@ -1133,13 +1133,16 @@ export class AdminApiService {
     }
 
     /** A job as it stands (#2000), or null when it is not there. */
+    /** The job as Orbit has it; null only when Orbit says it is not there (404). Any other failure throws, so the runner asks again rather than take a hiccup for a deleted job. */
     async getComputerJob(viaBotId: string, jobId: string): Promise<{ id: string; status: string; control: string } | null> {
         try {
             const response = await this.brickCall<{ job?: { id?: unknown; status?: unknown; control?: unknown } }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}`);
             const job = response.data?.job;
-            return job && typeof job.id === 'string' && typeof job.status === 'string' ? { id: job.id, status: job.status, control: typeof job.control === 'string' ? job.control : 'brick' } : null;
-        } catch {
-            return null;
+            if (job && typeof job.id === 'string' && typeof job.status === 'string') return { id: job.id, status: job.status, control: typeof job.control === 'string' ? job.control : 'brick' };
+            throw new Error('Orbit gave no job');
+        } catch (error) {
+            if (axios.isAxiosError(error) && error.response?.status === 404) return null;
+            throw error;
         }
     }
 

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createScreenSession, SCREEN_RETRIES, SCREEN_RETRY_MS, type ScreenMode, type ScreenSessionDeps } from "../Computer/BrickScreenSession";
+import { createScreenSession, SCREEN_RETRIES, SCREEN_RETRY_MS, SCREEN_SLOW_RETRY_MS, type ScreenMode, type ScreenSessionDeps } from "../Computer/BrickScreenSession";
 import type { RfbConnection, RfbConstructor } from "../Computer/novnc";
 
 class FakeRfb implements RfbConnection {
@@ -134,7 +134,7 @@ describe("a Brick's screen connection", () => {
         expect(timers.filter((timer) => timer.live)).toHaveLength(0);
     });
 
-    it("tries again when asking for a ticket does not go through, with a doubling wait, then stops after a few tries until something changes", async () => {
+    it("tries again when asking for a ticket does not go through, with a doubling wait, then slowly for as long as the screen is wanted", async () => {
         deps.ticket.mockResolvedValue("failed");
         const session = createScreenSession(deps, target, () => undefined);
         session.want("watch");
@@ -144,11 +144,11 @@ describe("a Brick's screen connection", () => {
             await runTimer();
         }
         expect(deps.ticket).toHaveBeenCalledTimes(SCREEN_RETRIES + 1);
-        expect(timers.filter((timer) => timer.live)).toHaveLength(0);
-        // A new want starts it afresh
+        // Not left stuck: a slow try is waiting, and when the ticket comes the screen opens without anyone touching the page
+        expect(timers.at(-1)?.ms).toBe(SCREEN_SLOW_RETRY_MS);
+        expect(timers.filter((timer) => timer.live)).toHaveLength(1);
         deps.ticket.mockResolvedValue({ ticket: "t-9" });
-        session.want("input");
-        await flush();
+        await runTimer();
         expect(FakeRfb.all.at(-1)?.url).toContain("t-9");
     });
 

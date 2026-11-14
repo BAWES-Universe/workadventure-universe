@@ -4,7 +4,8 @@ import type { RfbConnection, RfbConstructor } from "./novnc";
  * One Brick's screen connection, kept apart from the page so it can be tested. It asks for a ticket for what the person may do now
  * (watch, or input after they took over), opens the screen with it, and when the connection ends it asks again with the ticket that now
  * fits: nothing is cached, because a ticket is worth a minute and the server decides each time. A try that did not go through is asked
- * again after a wait that doubles, a few times, and then left until `want` is called with something new.
+ * again after a wait that doubles, a few times, and then every so often for as long as the screen is wanted (the computer may be waking, or the
+ * connection down for a while): it is never left stuck on the waiting picture.
  */
 
 export type ScreenMode = "watch" | "input";
@@ -26,6 +27,8 @@ export interface ScreenSession {
 
 export const SCREEN_RETRY_MS = 1000;
 export const SCREEN_RETRIES = 6;
+/** After the quick tries, how long between slower ones. */
+export const SCREEN_SLOW_RETRY_MS = 30_000;
 
 export function createScreenSession(deps: ScreenSessionDeps, target: HTMLElement, onLive: (live: boolean) => void): ScreenSession {
     const setTimer = deps.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
@@ -51,9 +54,9 @@ export function createScreenSession(deps: ScreenSessionDeps, target: HTMLElement
     }
 
     function again(mine: number) {
-        if (mine !== generation || failures >= SCREEN_RETRIES) return;
-        const wait = SCREEN_RETRY_MS * 2 ** failures;
-        failures += 1;
+        if (mine !== generation) return;
+        const wait = failures >= SCREEN_RETRIES ? SCREEN_SLOW_RETRY_MS : SCREEN_RETRY_MS * 2 ** failures;
+        if (failures < SCREEN_RETRIES) failures += 1;
         retry = setTimer(() => {
             if (mine === generation) void start(wanted as ScreenMode);
         }, wait);

@@ -1,3 +1,4 @@
+import { AdminApiService } from '../server/AdminApiService';
 import { describe, expect, it, vi } from 'vitest';
 import {
     CONTINUE_PROMPT,
@@ -156,6 +157,16 @@ describe('a job that runs', () => {
         await runJob(b.orbit);
         expect(b.seen.turns).toHaveLength(RUNNER_GUARDS.maxTurns);
         expect(finished(b.seen)).toEqual([{ action: 'finish', outcome: 'failed' }]);
+    });
+
+    it('does not count the time it waits for a machine as turns: a machine that is slow to come back never ends the job before it ran', async () => {
+        const { orbit, seen, setPrepare } = fakeOrbit([done('All set. [[done]]')]);
+        let asked = 0;
+        setPrepare(() => (++asked <= RUNNER_GUARDS.maxTurns + 3 ? { ok: false, reason: 'no_machine' } : { ok: true }));
+        await runJob(orbit);
+        expect(asked).toBeGreaterThan(RUNNER_GUARDS.maxTurns);
+        expect(seen.turns).toHaveLength(1);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
     });
 
     it('ends as failed, and says why in the log, when there is no relay address to give the machine', async () => {
@@ -397,6 +408,24 @@ describe('the bot server’s calls to Orbit', () => {
         // a server error is "failed", never a reason of Orbit's own
         admin.computerBroker.mockResolvedValueOnce({ status: 502, data: { ok: false, reason: 'failed' } });
         expect(await orbit.prepare('j', RELAY)).toEqual({ ok: false, reason: 'failed' });
+    });
+
+    it('says a job is gone only when Orbit says so (404); a hiccup is an error the runner waits out', async () => {
+        const service = Object.create(AdminApiService.prototype) as { getComputerJob: AdminApiService['getComputerJob']; brickCall: unknown };
+        const answer = { value: undefined as unknown };
+        service.brickCall = async () => {
+            if (answer.value instanceof Error) throw answer.value;
+            return { data: answer.value };
+        };
+        const http = (status: number) => Object.assign(new Error(`status ${status}`), { isAxiosError: true, response: { status } });
+        answer.value = { job: { id: 'j', status: 'running', control: 'brick' } };
+        expect(await service.getComputerJob('b', 'j')).toEqual({ id: 'j', status: 'running', control: 'brick' });
+        answer.value = http(404);
+        expect(await service.getComputerJob('b', 'j')).toBeNull();
+        answer.value = http(502);
+        await expect(service.getComputerJob('b', 'j')).rejects.toThrow('status 502');
+        answer.value = new Error('socket hang up');
+        await expect(service.getComputerJob('b', 'j')).rejects.toThrow('hang up');
     });
 
     it('takes the relay address from its own setting, else the bot server’s public address, without a trailing slash or /v1', () => {

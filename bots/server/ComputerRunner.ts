@@ -346,6 +346,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             const ready = await prepared(job, deps.relayUrl, signal);
             if (ready === 'stopped') return;
             if (ready === 'look') {
+                // Waiting for the machine is not a turn: it must not use up the turns a job is allowed
+                turns--;
                 await sleep(timing.waitMs, signal);
                 continue;
             }
