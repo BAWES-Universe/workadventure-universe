@@ -118,6 +118,7 @@ export { default as IconMusicShare } from "~icons/tabler/music-share";
 export { default as IconTableOptions } from "~icons/tabler/table-options";
 export { default as IconVideoOff } from "~icons/tabler/video-off";
 export { default as IconLock } from "~icons/tabler/lock";
+export { default as IconBuilding } from "~icons/tabler/building";
 export { default as IconLockOpen } from "~icons/tabler/lock-open";
 export { default as IconXIcon } from "~icons/tabler/x";
 export { default as IconWorldSearch } from "~icons/tabler/world-search";
