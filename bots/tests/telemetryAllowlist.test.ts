@@ -5,6 +5,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { sanitizedError, providerFailureLine } from "../utils/sanitizedError";
+import { withoutConsoleBreadcrumbs } from "../utils/sentryBreadcrumbs";
 import { allowed, AI_EVENT, spaceName, SERVER_EVENTS, errorClassOf, errorStatusOf, address, toolNames, id, label } from "../ai/telemetryAllowlist";
 
 const capture = vi.fn();
@@ -102,6 +103,19 @@ describe("sanitizedError", () => {
         expect(safe.stack!.startsWith("Error: MCP tool read_mail failed (Error)\n")).toBe(true);
     });
 
+    it("never keeps frame-like text from a multiline message, or from an error with no message", () => {
+        const sneaky = new Error("tool rejected\n    at canary_secret (/tmp/private-canary.txt:1:1)");
+        const safe = sanitizedError(sneaky, "MCP tool read_mail failed (Error)");
+        expect(safe.stack).not.toContain("canary");
+        expect(safe.stack).toContain("telemetryAllowlist.test");
+        const silent = sanitizedError(new Error(""), "x");
+        expect(silent.stack).toContain("telemetryAllowlist.test");
+        // A stack whose header was changed after the error was made is not trusted: no frames at all
+        const edited = new Error("original");
+        edited.stack = `Error: something else canary\n    at somewhere (/tmp/x.ts:1:1)`;
+        expect(sanitizedError(edited, "x").stack).not.toContain("canary");
+    });
+
     it("works for something that is not an error", () => {
         expect(sanitizedError("boom " + WORDS, "x").stack).not.toContain("hunter2");
     });
@@ -161,6 +175,17 @@ describe("the real client sends only what the allowlist keeps", () => {
         expect(providerFailureLine(odd)).toBe("provider failed (TypeError)");
         expect(providerFailureLine(odd)).not.toContain("hunter2");
         expect(providerFailureLine(WORDS)).toBe("provider failed (Error)");
+    });
+
+    it("keeps no console line as a Sentry breadcrumb, whatever it said", () => {
+        expect(withoutConsoleBreadcrumbs({ category: "console", message: WORDS })).toBeNull();
+        expect(withoutConsoleBreadcrumbs({ category: "http", message: "GET /x" })).toEqual({ category: "http", message: "GET /x" });
+    });
+
+    it("keeps a room address, a lone @ in it, and drops one with an email-shaped part", () => {
+        expect(address("https://play.example.com/@/uni/world/room?token=secret")).toBe("https://play.example.com/@/uni/world/room");
+        expect(address("https://play.example.com/@/uni/a.b@example.com")).toBeUndefined();
+        expect(address("https://play.example.com/@/uni/team@acme")).toBeUndefined();
     });
 
     it("keeps the voice worker's answer times per provider (#1865) as numbers, and nothing else under that name", () => {

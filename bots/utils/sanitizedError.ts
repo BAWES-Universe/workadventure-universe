@@ -6,8 +6,13 @@
 export function sanitizedError(original: unknown, summary: string): Error {
     const safe = new Error(summary);
     const stack = original instanceof Error ? original.stack : undefined;
-    const firstFrame = stack ? stack.search(/\n\s+at /) : -1;
-    if (stack && firstFrame >= 0) safe.stack = `Error: ${summary}${stack.slice(firstFrame)}`;
+    // The stack starts with the error's name and message, which can run over several lines and can look like frames
+    // themselves. Frames are kept only when that header is found whole, and only what follows it.
+    const header = original instanceof Error ? (original.message ? `${original.name}: ${original.message}` : original.name) : '';
+    const hasHeader = !!stack && header.length > 0 && stack.startsWith(header);
+    const framesFrom = hasHeader ? stack.slice(header.length) : '';
+    const firstFrame = framesFrom.search(/^\n\s+at /);
+    if (hasHeader && firstFrame === 0) safe.stack = `Error: ${summary}${framesFrom}`;
     return safe;
 }
 

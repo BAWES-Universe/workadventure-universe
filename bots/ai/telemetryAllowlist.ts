@@ -92,7 +92,8 @@ export const address: Check = (value) => {
             return undefined;
         }
         const segments = path.split('/').filter(Boolean);
-        if (!segments.every((segment) => URL_SEGMENT.test(segment))) return undefined;
+        // A lone "@" is a Universe room path part ("/@/universe/world"); an "@" inside a longer part is an email
+        if (!segments.every((segment) => URL_SEGMENT.test(segment) && (segment === '@' || !segment.includes('@')))) return undefined;
         const clean = `${url.protocol}//${url.host}/${segments.join('/')}`;
         return clean.length <= 300 ? clean : undefined;
     } catch {

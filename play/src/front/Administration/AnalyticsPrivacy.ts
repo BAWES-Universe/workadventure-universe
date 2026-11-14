@@ -5,7 +5,18 @@
 
 const EMAIL = /[^\s@/?#]+@[^\s@/?#]+\.[^\s@/?#]+/g;
 /** Properties PostHog adds itself that hold a page address. */
-const ADDRESS_PROPERTIES = ["$current_url", "$referrer", "$initial_current_url", "$initial_referrer"];
+const ADDRESS_PROPERTIES = [
+    "$current_url",
+    "$referrer",
+    "$initial_current_url",
+    "$initial_referrer",
+    // Where a click on a link to another site went (autocapture): it can carry an invitation token
+    "$external_click_url",
+];
+/** Attributes of a clicked element that hold an address; autocapture sends them in the element list and chain. */
+const ELEMENT_ADDRESS_ATTRIBUTES = ["attr__href", "href", "attr__src", "src", "attr__action", "action"];
+/** How deep a property may nest before the rest is dropped (a safeguard, no event is this deep). */
+const MAX_DEPTH = 6;
 /** Who an event is from. These are never edited: an edited id would merge different people into one. */
 const IDENTITY_PROPERTIES = ["distinct_id", "$user_id", "$anon_distinct_id"];
 /** Properties that must never leave the browser, whatever put them there. */
@@ -33,17 +44,52 @@ export function isSafeAnalyticsId(id: string | null | undefined): id is string {
     return typeof id === "string" && id.length > 0 && !id.includes("@");
 }
 
-function redact(properties: Record<string, unknown> | undefined): void {
+/** An autocapture element chain, with the addresses its elements carry (href, src, action) taken out. */
+function chainWithoutAddresses(chain: string): string {
+    return chain.replace(/attr__(?:href|src|action)="(?:[^"\\]|\\.)*"/g, "");
+}
+
+function redact(properties: Record<string, unknown> | undefined, depth = 0): void {
     if (!properties) return;
     for (const key of FORBIDDEN_PROPERTIES) delete properties[key];
     for (const [key, value] of Object.entries(properties)) {
         if (IDENTITY_PROPERTIES.includes(key)) continue;
         if (typeof value === "string" && ADDRESS_PROPERTIES.includes(key)) {
             properties[key] = withoutQueryOrHash(value);
+        } else if (typeof value === "string" && key === "$elements_chain") {
+            properties[key] = chainWithoutAddresses(value).replace(EMAIL, "[email]");
         } else if (typeof value === "string" && value.includes("@")) {
             properties[key] = value.replace(EMAIL, "[email]");
+        } else if (Array.isArray(value)) {
+            if (depth >= MAX_DEPTH) {
+                delete properties[key];
+                continue;
+            }
+            redactList(value, depth + 1);
+        } else if (value !== null && typeof value === "object") {
+            // $set, $set_once and any other nested properties get the same rules as the top level
+            if (depth >= MAX_DEPTH) {
+                delete properties[key];
+                continue;
+            }
+            redact(value as Record<string, unknown>, depth + 1);
         }
     }
+}
+
+function redactList(list: unknown[], depth: number): void {
+    list.forEach((item, index) => {
+        if (typeof item === "string") {
+            if (item.includes("@")) list[index] = item.replace(EMAIL, "[email]");
+        } else if (Array.isArray(item)) {
+            redactList(item, depth + 1);
+        } else if (item !== null && typeof item === "object") {
+            const element = item as Record<string, unknown>;
+            // The elements of a click (autocapture): an element's address attributes are never sent
+            for (const attribute of ELEMENT_ADDRESS_ATTRIBUTES) delete element[attribute];
+            redact(element, depth + 1);
+        }
+    });
 }
 
 /**
@@ -80,4 +126,12 @@ export function maskedNetworkRequest<T extends { name?: string }>(request: T): T
         responseHeaders: undefined,
         responseBody: undefined,
     };
+}
+
+/**
+ * The address of the page the session replay saw (PostHog's `maskNetworkRequestFn` also cleans the page addresses in a
+ * replay), without its query or hash: the hash carries chat room ids and the query sign-in codes.
+ */
+export function maskedReplayAddress<T extends { url?: string }>(request: T): T {
+    return { ...request, url: request.url === undefined ? request.url : withoutQueryOrHash(request.url) };
 }

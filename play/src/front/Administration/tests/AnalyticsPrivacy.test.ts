@@ -63,6 +63,36 @@ describe("keepPrivate", () => {
         expect(keepPrivate({ properties: { distinct_id: "anon", $anon_distinct_id: "sara@example.test" } })).toBeNull();
     });
 
+    it("cleans what is nested in an event, such as $set inside its properties", () => {
+        const cleaned = keepPrivate({
+            properties: {
+                distinct_id: "orbit-1",
+                $set: { email: "sara@example.test", note: "write to sara@example.test" },
+                $set_once: { $initial_current_url: "https://a.test/b?code=1" },
+                list: ["sara@example.test", { email: "x@example.test", name: "a@b.example" }],
+            },
+        });
+        expect(cleaned?.properties).toEqual({
+            distinct_id: "orbit-1",
+            $set: { note: "write to [email]" },
+            $set_once: { $initial_current_url: "https://a.test/b" },
+            list: ["[email]", { name: "[email]" }],
+        });
+    });
+
+    it("cleans where a click on a link went, and the addresses an autocaptured element carries", () => {
+        const cleaned = keepPrivate({
+            properties: {
+                $external_click_url: "https://external.test/join?invite=canary",
+                $elements: [{ tag_name: "a", text: "x", attr__href: "https://external.test/join?invite=canary", href: "https://x.test/?t=canary" }],
+                $elements_chain: 'a:attr__href="https://external.test/join?invite=canary"nth-child="1";div:attr__class="b"',
+            },
+        });
+        expect(cleaned?.properties?.$external_click_url).toBe("https://external.test/join");
+        expect(JSON.stringify(cleaned)).not.toContain("canary");
+        expect(cleaned?.properties?.$elements).toEqual([{ tag_name: "a", text: "x" }]);
+    });
+
     it("lets a missing event through", () => {
         expect(keepPrivate(null)).toBeNull();
     });

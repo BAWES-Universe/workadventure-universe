@@ -6,6 +6,7 @@ import {
     isSafeAnalyticsId,
     keepPrivate,
     maskedNetworkRequest,
+    maskedReplayAddress,
     withoutQueryOrHash,
 } from "./AnalyticsPrivacy";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -34,16 +35,21 @@ class AnalyticsClient {
                     before_send: (event) => keepPrivate(event),
                     // Console lines may hold anything: they are never recorded, whatever the project says.
                     enable_recording_console_log: false,
+                    // A browser an earlier version identified by email starts again as an anonymous one: PostHog keeps
+                    // that id in the browser, and every event would carry it. This runs before PostHog's first request
+                    // (the feature flags one reads the saved id and skips before_send). Past events stay as they are.
+                    loaded: (loadedPosthog) => {
+                        if (isEmailIdentity(loadedPosthog.get_distinct_id())) loadedPosthog.reset();
+                    },
                     session_recording: {
                         // Replays show every input and every piece of text as asterisks, and no request bodies.
                         maskAllInputs: true,
                         maskTextSelector: "*",
                         maskCapturedNetworkRequestFn: (request) => maskedNetworkRequest(request),
+                        // The page address in a replay (it carries chat room ids in its hash)
+                        maskNetworkRequestFn: (request) => maskedReplayAddress(request),
                     },
                 });
-                // A browser an earlier version identified by email starts again as an anonymous one: PostHog keeps that
-                // id in the browser, and every event would carry it. Past events stay as they are.
-                if (isEmailIdentity(posthog.get_distinct_id())) posthog.reset();
                 //the posthog toolbar need a reference in window to be able to work
                 window.posthog = posthog;
                 return posthog;
@@ -57,7 +63,15 @@ class AnalyticsClient {
      * the person stays anonymous.
      */
     identifyUser(orbitUserId: string | null | undefined): void {
-        if (!isSafeAnalyticsId(orbitUserId)) return;
+        if (!isSafeAnalyticsId(orbitUserId)) {
+            // No id from Orbit now: whoever this browser was identified as before is not this person
+            this.posthogPromise
+                ?.then((posthog) => {
+                    if (posthog.get_property("$user_state") === "identified") posthog.reset();
+                })
+                .catch((e) => console.error(e));
+            return;
+        }
         this.posthogPromise
             ?.then((posthog) => {
                 // The same person on the same browser is already known by this id.

@@ -6,6 +6,7 @@ const posthog = vi.hoisted(() => ({
     capture: vi.fn(),
     reset: vi.fn(),
     get_distinct_id: vi.fn(() => "anonymous-id"),
+    get_property: vi.fn((): unknown => "anonymous"),
 }));
 
 vi.mock("posthog-js", () => ({ default: posthog }));
@@ -28,6 +29,7 @@ describe("AnalyticsClient", () => {
         posthog.capture.mockClear();
         posthog.reset.mockClear();
         posthog.get_distinct_id.mockReturnValue("anonymous-id");
+        posthog.get_property.mockReturnValue("anonymous");
     });
 
     it("identifies by Orbit's id with nothing else about the person", async () => {
@@ -52,20 +54,44 @@ describe("AnalyticsClient", () => {
         expect(posthog.identify).not.toHaveBeenCalled();
     });
 
-    it("starts a browser that an earlier version identified by email again as an anonymous one", async () => {
-        vi.resetModules();
-        posthog.reset.mockClear();
-        posthog.get_distinct_id.mockReturnValue("sara@example.test");
-        await import("../AnalyticsClient");
+    it("starts a browser that an earlier version identified by email again as an anonymous one, before PostHog's first request", async () => {
         await settled();
+        const { loaded } = posthog.init.mock.calls[0][1];
+        // It runs in PostHog's own `loaded` callback, which comes before its feature-flags request
+        expect(typeof loaded).toBe("function");
+        expect(posthog.reset).not.toHaveBeenCalled();
+
+        posthog.get_distinct_id.mockReturnValue("sara@example.test");
+        loaded(posthog);
         expect(posthog.reset).toHaveBeenCalledTimes(1);
 
-        vi.resetModules();
         posthog.reset.mockClear();
-        posthog.get_distinct_id.mockReturnValue("anonymous-id");
-        await import("../AnalyticsClient");
+        posthog.get_distinct_id.mockReturnValue("orbit-id-1");
+        loaded(posthog);
+        expect(posthog.reset).not.toHaveBeenCalled();
+    });
+
+    it("forgets who the browser was when Orbit gives no id, and leaves an anonymous browser alone", async () => {
+        posthog.get_property.mockReturnValue("identified");
+        analyticsClient.identifyUser(null);
+        await settled();
+        expect(posthog.get_property).toHaveBeenCalledWith("$user_state");
+        expect(posthog.reset).toHaveBeenCalledTimes(1);
+        expect(posthog.identify).not.toHaveBeenCalled();
+
+        posthog.reset.mockClear();
+        posthog.get_property.mockReturnValue("anonymous");
+        analyticsClient.identifyUser(undefined);
         await settled();
         expect(posthog.reset).not.toHaveBeenCalled();
+    });
+
+    it("cleans the page address inside a session replay as well as in events", async () => {
+        await settled();
+        const { session_recording } = posthog.init.mock.calls[0][1];
+        expect(session_recording.maskNetworkRequestFn({ url: "https://a.test/room?code=1#chatRoomId=!private:matrix" })).toEqual({
+            url: "https://a.test/room",
+        });
     });
 
     it("sets PostHog up to mask text and inputs, record no console lines, and clean every event", async () => {
