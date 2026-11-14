@@ -568,9 +568,20 @@ describe('an App with a tool named like a reminder tool', () => {
         const theirs = vi.spyOn(MCPConnector, 'executeToolCall').mockResolvedValue('ok' as never);
         const map = new Map<string, unknown>([[SET_REMINDER_TOOL, server]]);
         service.offerTaskTools([], map);
-        await service.executeToolCalls([{ id: '1', name: SET_REMINDER_TOOL, arguments: '{}' }], undefined, undefined, map, undefined, undefined, BRICK, 1);
+        await service.executeToolCalls([{ id: '1', name: SET_REMINDER_TOOL, arguments: '{}' }], undefined, undefined, map, undefined, undefined, BRICK, 1, undefined, undefined, false, undefined, undefined, undefined, true);
         expect(own).toHaveBeenCalledTimes(1);
         expect(theirs).not.toHaveBeenCalled();
+    });
+
+    it('does not run when this reply was not offered them, with no App owning the name, though Orbit lately said they are the owner', async () => {
+        const { admin } = setUp();
+        await taskSettingsFor(admin as never, BRICK, SARA, NOW);
+        expect(tasksAreOn(BRICK, SARA)).toBe(true);
+        const service = owner();
+        const own = vi.spyOn(service, 'runTaskToolCall' as never).mockResolvedValue({ set: true } as never);
+        // Orbit could not be asked at the start of this reply, so ours were not offered; the model names one anyway
+        await service.executeToolCalls([{ id: '1', name: SET_REMINDER_TOOL, arguments: '{}' }], undefined, undefined, new Map(), undefined, undefined, BRICK, 1);
+        expect(own).not.toHaveBeenCalled();
     });
 });
 
