@@ -251,6 +251,8 @@ export class AIService {
      */
     private botCredentialCache: Map<string, { resolved: ResolvedProvider; expiresAt: number; staleUntil: number }> = new Map();
     private readonly BOT_CREDENTIAL_TTL = 30 * 1000;
+    /** How each Brick's computer reaches its AI, kept for the same short time (relayRoute). */
+    private readonly relayRouteCache = new Map<string, { route: { config: AIProviderConfig; source: 'universe-ai' | 'provider' | 'own-key'; keyOwnerId: string | null } | null; expiresAt: number }>();
     /** How long the last answer is still used while Orbit cannot be reached, and how soon Orbit is tried again meanwhile */
     private readonly BOT_CREDENTIAL_STALE_GRACE = 10 * 60 * 1000;
     private readonly BOT_CREDENTIAL_RETRY = 15 * 1000;
@@ -567,6 +569,26 @@ export class AIService {
         } catch {
             return null;
         }
+    }
+
+    /**
+     * How a Brick's computer reaches its AI (the model relay): the same answer a reply gets from Orbit, by Brick, with the key still
+     * encrypted. Null when Orbit does not know the Brick or its key is resting (nothing is called then). Kept for the same short
+     * time as a reply's, so a run of calls does not ask Orbit each time; a Brick moved to another AI is followed within seconds.
+     */
+    async relayRoute(botId: string): Promise<{ config: AIProviderConfig; source: 'universe-ai' | 'provider' | 'own-key'; keyOwnerId: string | null } | null> {
+        const cacheKey = `relay:${botId}`;
+        const cached = this.relayRouteCache.get(cacheKey);
+        if (cached && Date.now() < cached.expiresAt) return cached.route;
+        const answer = await this.adminApiService.getBotAiCredentials(botId);
+        let route: { config: AIProviderConfig; source: 'universe-ai' | 'provider' | 'own-key'; keyOwnerId: string | null } | null = null;
+        if (answer && answer.source !== 'resting') {
+            const resolved = this.resolvedFromAnswer(answer);
+            if ('config' in resolved) route = { config: resolved.config, source: resolved.source, keyOwnerId: answer.source === 'own-key' ? (answer.keyOwnerId ?? null) : null };
+        }
+        this.relayRouteCache.set(cacheKey, { route, expiresAt: Date.now() + this.BOT_CREDENTIAL_TTL });
+        if (this.relayRouteCache.size > 500) this.relayRouteCache.delete(this.relayRouteCache.keys().next().value!);
+        return route;
     }
 
     /** A bot's limits as Orbit last served them, the recommended ones until it has (Orbit #666). */

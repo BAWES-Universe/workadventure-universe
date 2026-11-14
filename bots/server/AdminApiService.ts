@@ -1149,6 +1149,20 @@ export class AdminApiService {
         return response.data ?? {};
     }
 
+    /**
+     * The three calls the model relay makes of Orbit about a computer's model call (identify the key, take room, settle). The relay
+     * says what to do with each answer, so a status Orbit gives is passed on (a refused key is a 200 with ok: false). Throws when
+     * Orbit cannot be reached or fails.
+     */
+    async computerRelayCall(step: 'identify' | 'authorize' | 'settle', body: Record<string, unknown>): Promise<{ status: number; data: Record<string, unknown> }> {
+        const response = await this.brickCall<Record<string, unknown>>('post', `api/computer/llm/${step}`, body).catch((error: unknown) => {
+            // A 404 from settle means "no such call" (nothing was written): an answer, not a failure
+            if (axios.isAxiosError(error) && error.response && error.response.status < 500) return error.response as AxiosResponse<Record<string, unknown>>;
+            throw error;
+        });
+        return { status: response.status, data: response.data ?? {} };
+    }
+
     /** Has Orbit stop jobs that stopped renewing and try the ones in line again (#2000). Never throws. */
     async sweepComputers(): Promise<void> {
         try {
