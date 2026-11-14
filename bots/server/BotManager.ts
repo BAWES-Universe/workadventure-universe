@@ -2,6 +2,8 @@
  * BotManager - Core service to spawn, manage, and coordinate bot instances
  */
 
+import os from 'node:os';
+import path from 'node:path';
 import { BotClient } from '../client/BotClient';
 import { AdminApiService } from './AdminApiService';
 import { BotAccessGate } from './BotAccessGate';
@@ -196,6 +198,8 @@ export class BotManager {
                 adminApiUrl: process.env.ADMIN_API_URL,
                 debounceInterval: 30000, // 30 seconds
                 immediateSaveEnabled: true,
+                // A forget Orbit has not taken survives a restart of the bot server (#2031). BOT_STATE_DIR can point at a kept folder.
+                forgetQueueFile: path.join(process.env.BOT_STATE_DIR || path.join(os.tmpdir(), 'universe-bot-state'), 'pending-forgets.json'),
             });
             this.conversationMemory = persistentMemory;
             // Orbit tells the bot server who a manager asked a private bot to forget (#435)
