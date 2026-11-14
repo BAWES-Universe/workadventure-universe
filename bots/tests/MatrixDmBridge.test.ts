@@ -121,6 +121,18 @@ describe('MatrixDmBridge', () => {
         expect(deps.reply).toHaveBeenCalledTimes(1);
     });
 
+    it('does not keep a pasted key for a resting Brick either, and says where keys go (game #2044)', async () => {
+        await bridge.onEvent(invite());
+        deps.getBotConfig.mockResolvedValue({ botId: BOT, name: 'Guide', enabled: false, aiProviderRef: 'p' } as never);
+        await bridge.onEvent(message(['here it is: sk_', 'live_51Habcdefghijklmnop12345'].join('')));
+        expect(deps.reply).not.toHaveBeenCalled();
+        expect((bridge as any).localWaiting.size).toBe(0);
+        expect(client.sendMessage.mock.calls.some((call: any[]) => /Keys don't go in chat/.test(String(call[2]?.body)))).toBe(true);
+        // An ordinary message to the resting Brick is still remembered
+        await bridge.onEvent(message('hello'));
+        expect((bridge as any).localWaiting.size).toBe(1);
+    });
+
     it('sends nothing for a message answered together with others', async () => {
         await bridge.onEvent(invite());
         deps.reply.mockResolvedValue({ text: '', media: [], answeredTogether: true });

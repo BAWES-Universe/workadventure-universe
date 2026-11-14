@@ -1252,6 +1252,22 @@ export class MatrixDmBridge implements MatrixEventHandler {
         }
         // Chats started before bots had pictures get theirs with the next message; after that this costs nothing.
         void this.avatars?.update(this.botUserId(botId), config);
+        // A key typed into the chat (game #2044): never answered, never remembered (not even for a resting Brick), never given to the
+        // model. The Brick says where keys go.
+        const refuseKey = async () => {
+            if (catchUp) return;
+            const key = `${event.room_id}|key_in_chat`;
+            if (this.recentlySent(this.lastNote, key, NOTE_REPEAT_MS)) return;
+            const said = await this.client.sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body: keyInChatReply(language) }).then(
+                () => true,
+                () => false
+            );
+            if (!said) this.lastNote.delete(key);
+        };
+        if (holdsAKey(String(content.body ?? ''))) {
+            await refuseKey();
+            return;
+        }
         if (config.enabled === false) {
             // Resting again is not a failed answer, so a message already tried keeps its count.
             await this.rememberWaiting(botId, event, attemptsOf(event));
@@ -1266,18 +1282,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
         const read = await this.readMessage(botUserId, content);
         const { attachments, failed } = read;
         let text = read.text;
-        // A key typed into the chat (game #2044): never answered, never remembered, never given to the model. The Brick says where keys go.
         if (holdsAKey(text) || holdsAKey(String(content.body ?? ''))) {
-            if (!catchUp) {
-                const key = `${event.room_id}|key_in_chat`;
-                if (!this.recentlySent(this.lastNote, key, NOTE_REPEAT_MS)) {
-                    const said = await this.client.sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body: keyInChatReply(language) }).then(
-                        () => true,
-                        () => false
-                    );
-                    if (!said) this.lastNote.delete(key);
-                }
-            }
+            await refuseKey();
             return;
         }
         if (read.note && this.deps.noteHearing) {
