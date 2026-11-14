@@ -104,6 +104,8 @@ export interface TeamApp {
 export interface TeamAppPage {
     app: TeamApp;
     canAddAsManager: Person[];
+    /** The bots in the universe that do not use it yet and that this person may let use it. Empty until Orbit says. */
+    canLetUse: BrickChoice[];
 }
 
 /** A universe in "Your universes": the ones where the person manages bots, with how many apps belong to it. */
@@ -314,7 +316,9 @@ export function parseTeamAppPage(value: unknown): TeamAppPage | undefined {
     if (!isRaw(value)) return undefined;
     const app = parseTeamApp(value.app);
     const canAddAsManager = list(value.canAddAsManager, person);
-    return app && canAddAsManager ? { app, canAddAsManager } : undefined;
+    // Absent until Orbit sends it: the page then has nothing to offer, as before. One that cannot be read offers nothing.
+    const canLetUse = list(value.canLetUse, parseBrickChoice) ?? [];
+    return app && canAddAsManager ? { app, canAddAsManager, canLetUse } : undefined;
 }
 
 /** `/api/me/universes`: "Your universes". Empty for anyone who manages bots nowhere, so the section does not show. */

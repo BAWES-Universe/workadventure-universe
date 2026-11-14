@@ -6,9 +6,11 @@
     import PageNote from "../../../external-modules/bots/components/page/PageNote.svelte";
     import { botApiService } from "../../../external-modules/bots/services/BotApiService";
     import { warningMessageStore } from "../../../Stores/ErrorStore";
+    import { refusalWords } from "./AppWords";
     import { dayOf, parseTeamAppPage, type Person, type TeamAppPage } from "./Apps";
     import { appIcon } from "./AppIcon";
     import AddManagerSheet from "./AddManagerSheet.svelte";
+    import AppBrickScreen from "./AppBrickScreen.svelte";
     import AppRow from "./AppRow.svelte";
     import AppSection from "./AppSection.svelte";
     import AppsShell from "./AppsShell.svelte";
@@ -30,6 +32,8 @@
     let busy = false;
     let sheet: "add" | "disconnect" | undefined;
     let signingIn = false;
+    // A bot of the universe whose way of using this app is open (right away, asks first or off), over the page
+    let botScreen: { botId: string; botName: string; serverId: string } | undefined;
 
     $: app = page?.app;
     $: universe = app?.universeName ?? "";
@@ -52,17 +56,20 @@
         if (busy) return false;
         busy = true;
         try {
-            await work();
-        } catch (error) {
-            console.warn("A change to the universe's app did not go through", error);
-            warningMessageStore.addWarningMessage(text.workFailed());
-            return false;
+            try {
+                await work();
+            } catch (error) {
+                console.warn("A change to the universe's app did not go through", error);
+                warningMessageStore.addWarningMessage(text.workFailed());
+                return false;
+            }
+            // Nothing else can be changed until the page is read again, so an older answer never lands over a newer one
+            await load();
+            return true;
         } finally {
             // eslint-disable-next-line require-atomic-updates
             busy = false;
         }
-        await load();
-        return true;
     }
 
     async function addManager(person: Person): Promise<boolean> {
@@ -71,9 +78,29 @@
         return done;
     }
 
+    async function letUse(botId: string) {
+        if (busy) return;
+        busy = true;
+        try {
+            try {
+                await botApiService.letBotUseApp(botId, appId);
+            } catch (error) {
+                console.warn("Could not let the bot use the universe's app", error);
+                warningMessageStore.addWarningMessage(refusalWords(error, text.workFailed()));
+                return;
+            }
+            await load();
+        } finally {
+            // eslint-disable-next-line require-atomic-updates
+            busy = false;
+        }
+    }
+
     const removeManager = (person: Person) => change(() => botApiService.removeTeamAppManager(appId, person.id));
 
     async function disconnect() {
+        // The confirmation stays open while another change is on its way: it is not dropped without being done
+        if (busy) return;
         sheet = undefined;
         if (await change(() => botApiService.disconnectTeamApp(appId))) onBack();
     }
@@ -81,9 +108,16 @@
     async function reconnect() {
         if (signingIn) return;
         signingIn = true;
-        const result = await reconnectApp(appId);
-        // eslint-disable-next-line require-atomic-updates
-        signingIn = false;
+        let result: Awaited<ReturnType<typeof reconnectApp>>;
+        try {
+            result = await reconnectApp(appId);
+        } catch (error) {
+            console.warn("The sign-in did not finish", error);
+            result = "blocked";
+        } finally {
+            // eslint-disable-next-line require-atomic-updates
+            signingIn = false;
+        }
         if (result === "blocked") warningMessageStore.addWarningMessage(text.reconnectFailed());
         await load();
     }
@@ -93,105 +127,147 @@
     });
 </script>
 
-<AppsShell title={app?.name ?? ""} backLabel={universe || text.backToApps()} {onBack} testId="teamAppPage">
-    {#if !page || !app}
-        {#if !loadFailed}
-            <PageNote>{text.loading()}</PageNote>
+{#if botScreen && app}
+    <AppBrickScreen
+        botId={botScreen.botId}
+        botName={botScreen.botName}
+        serverId={botScreen.serverId}
+        appName={app.name}
+        onBack={() => {
+            botScreen = undefined;
+            load().catch((error) => console.error(error));
+        }}
+    />
+{:else}
+    <AppsShell title={app?.name ?? ""} backLabel={universe || text.backToApps()} {onBack} testId="teamAppPage">
+        {#if !page || !app}
+            {#if !loadFailed}
+                <PageNote>{text.loading()}</PageNote>
+            {:else}
+                <p class="tp-bad" data-testid="teamAppLoadFailed">{text.loadFailed()}</p>
+                <div class="tp-pad">
+                    <PageButton tall testId="teamAppTryAgain" on:click={() => void load()}>{text.tryAgain()}</PageButton
+                    >
+                </div>
+            {/if}
         {:else}
-            <p class="tp-bad" data-testid="teamAppLoadFailed">{text.loadFailed()}</p>
-            <div class="tp-pad">
-                <PageButton tall testId="teamAppTryAgain" on:click={() => void load()}>{text.tryAgain()}</PageButton>
-            </div>
-        {/if}
-    {:else}
-        <div class="tp-card">
-            <span class="tp-ico"><svelte:component this={appIcon(app.name)} font-size="24" /></span>
-            <div class="tp-tx">
-                <span class="tp-cap">{text.belongsTo({ universe })}</span>
-                <span class="tp-mid"
-                    >{app.connectedBy ? text.connectedBy({ name: app.connectedBy.name }) : text.connectedByGone()}</span
-                >
-                {#if app.connectedAt}<span class="tp-cn">{text.since({ day: dayOf(app.connectedAt, $locale) })}</span
-                    >{/if}
-            </div>
-        </div>
-        {#if app.reconnectRequired}
-            <div class="tp-alert" data-testid="teamAppEnded">
-                <IconAlertTriangle font-size="20" />
-                <div class="tp-tx">
-                    <span class="tp-t"
-                        >{app.signInLostAt
-                            ? text.endedOn({ day: dayOf(app.signInLostAt, $locale) })
-                            : text.reconnectEndedTitle()}</span
-                    >
-                    <span class="tp-cn"
-                        >{text.endedLine({
-                            app: app.name,
-                            names: managerNames.join(` ${text.and()} `),
-                        })}</span
+            {#if loadFailed}
+                <!-- A change went through but reading the page again did not: what is shown may be out of date -->
+                <p class="tp-bad" data-testid="teamAppLoadFailed">{text.loadFailed()}</p>
+                <div class="tp-pad">
+                    <PageButton tall testId="teamAppTryAgain" on:click={() => void load()}>{text.tryAgain()}</PageButton
                     >
                 </div>
-            </div>
-        {:else if dependsOnConnector && app.connectedBy}
-            <div class="tp-alert" data-testid="teamAppLeft">
-                <IconAlertTriangle font-size="20" />
+            {/if}
+            <div class="tp-card">
+                <span class="tp-ico"><svelte:component this={appIcon(app.name)} font-size="24" /></span>
                 <div class="tp-tx">
-                    <span class="tp-t">{text.managerLeftTitle({ name: app.connectedBy.name, app: app.name })}</span>
-                    <span class="tp-cn">{text.managerLeftLine({ name: app.connectedBy.name })}</span>
+                    <span class="tp-cap">{text.belongsTo({ universe })}</span>
+                    <span class="tp-mid"
+                        >{app.connectedBy
+                            ? text.connectedBy({ name: app.connectedBy.name })
+                            : text.connectedByGone()}</span
+                    >
+                    {#if app.connectedAt}<span class="tp-cn"
+                            >{text.since({ day: dayOf(app.connectedAt, $locale) })}</span
+                        >{/if}
                 </div>
             </div>
-        {/if}
-        {#if app.authType === "oauth" && (app.reconnectRequired || dependsOnConnector)}
-            <div class="tp-pad tp-wide">
-                <PageButton tall go disabled={signingIn} testId="teamAppReconnect" on:click={() => void reconnect()}
-                    >{signingIn ? text.reconnecting() : text.reconnect({ app: app.name })}</PageButton
+            {#if app.reconnectRequired}
+                <div class="tp-alert" data-testid="teamAppEnded">
+                    <IconAlertTriangle font-size="20" />
+                    <div class="tp-tx">
+                        <span class="tp-t"
+                            >{app.signInLostAt
+                                ? text.endedOn({ day: dayOf(app.signInLostAt, $locale) })
+                                : text.reconnectEndedTitle()}</span
+                        >
+                        <span class="tp-cn"
+                            >{text.endedLine({
+                                app: app.name,
+                                names: managerNames.join(` ${text.and()} `),
+                            })}</span
+                        >
+                    </div>
+                </div>
+            {:else if dependsOnConnector && app.connectedBy}
+                <div class="tp-alert" data-testid="teamAppLeft">
+                    <IconAlertTriangle font-size="20" />
+                    <div class="tp-tx">
+                        <span class="tp-t">{text.managerLeftTitle({ name: app.connectedBy.name, app: app.name })}</span>
+                        <span class="tp-cn">{text.managerLeftLine({ name: app.connectedBy.name })}</span>
+                    </div>
+                </div>
+            {/if}
+            {#if app.authType === "oauth" && (app.reconnectRequired || dependsOnConnector)}
+                <div class="tp-pad tp-wide">
+                    <PageButton tall go disabled={signingIn} testId="teamAppReconnect" on:click={() => void reconnect()}
+                        >{signingIn ? text.reconnecting() : text.reconnect({ app: app.name })}</PageButton
+                    >
+                </div>
+            {/if}
+
+            <AppSection title={text.botsThatCanUse()} />
+            {#each app.bots as bot (bot.botId)}
+                <AppRow
+                    title={bot.botName}
+                    hint={bot.enabled ? text.botUsesIt() : text.botOff()}
+                    openLabel={text.changeWhatItMay({ name: bot.botName, app: app.name })}
+                    onOpen={() => (botScreen = { botId: bot.botId, botName: bot.botName, serverId: bot.serverId })}
+                    testId="teamAppBot"
+                />
+            {/each}
+            {#each page.canLetUse as bot (bot.id)}
+                <AppRow title={bot.name} hint={text.cantUse({ app: app.name })} testId="teamAppBotOff">
+                    <PageButton disabled={busy} testId="teamAppLetUse" on:click={() => void letUse(bot.id)}
+                        >{text.letUse({ app: app.name })}</PageButton
+                    >
+                </AppRow>
+            {/each}
+            <PageNote>{text.botsThatCanUseNote({ universe })}</PageNote>
+
+            <AppSection title={text.managers()} testId="teamAppManagers" />
+            {#each app.managers as person (person.id)}
+                <AppRow
+                    title={person.you ? text.you({ name: person.name }) : person.name}
+                    hint={person.owner ? text.ownsUniverse({ universe }) : undefined}
+                    testId="teamAppManager"
                 >
+                    {#if person.owner === false}
+                        <PageButton
+                            disabled={busy}
+                            testId="teamAppRemoveManager"
+                            on:click={() => void removeManager(person)}>{text.removeManager()}</PageButton
+                        >
+                    {:else if person.owner}
+                        <IconCrown font-size="16" />
+                    {/if}
+                </AppRow>
+            {/each}
+            <div class="tp-off nob">
+                <PageButton tall testId="teamAppAddManager" on:click={() => (sheet = "add")}
+                    ><IconPlus font-size="18" />{text.addManager()}</PageButton
+                >
+                <span class="tp-cn">{text.managersLine({ universe })}</span>
+            </div>
+
+            <AppSection title={text.thisMonth()} />
+            <p class="tp-wh" data-testid="teamAppUses">{text.usesThisMonth({ count: app.usesThisMonth })}</p>
+            <PageNote>{text.countedForUniverse({ universe })}</PageNote>
+
+            <div class="tp-off">
+                <PageButton
+                    tall
+                    danger
+                    disabled={busy}
+                    testId="teamAppDisconnect"
+                    on:click={() => (sheet = "disconnect")}>{text.disconnect({ app: app.name })}</PageButton
+                >
+                <span class="tp-cn">{text.teamDisconnectLine({ app: app.name })}</span>
             </div>
         {/if}
-
-        <AppSection title={text.botsThatCanUse()} />
-        {#each app.bots as bot (bot.botId)}
-            <AppRow title={bot.botName} hint={bot.enabled ? text.botUsesIt() : text.botOff()} testId="teamAppBot" />
-        {/each}
-        <PageNote>{text.botsThatCanUseNote({ universe })}</PageNote>
-
-        <AppSection title={text.managers()} testId="teamAppManagers" />
-        {#each app.managers as person (person.id)}
-            <AppRow
-                title={person.you ? text.you({ name: person.name }) : person.name}
-                hint={person.owner ? text.ownsUniverse({ universe }) : undefined}
-                testId="teamAppManager"
-            >
-                {#if person.owner === false}
-                    <PageButton
-                        disabled={busy}
-                        testId="teamAppRemoveManager"
-                        on:click={() => void removeManager(person)}>{text.removeManager()}</PageButton
-                    >
-                {:else if person.owner}
-                    <IconCrown font-size="16" />
-                {/if}
-            </AppRow>
-        {/each}
-        <div class="tp-off nob">
-            <PageButton tall testId="teamAppAddManager" on:click={() => (sheet = "add")}
-                ><IconPlus font-size="18" />{text.addManager()}</PageButton
-            >
-            <span class="tp-cn">{text.managersLine({ universe })}</span>
-        </div>
-
-        <AppSection title={text.thisMonth()} />
-        <p class="tp-wh" data-testid="teamAppUses">{text.usesThisMonth({ count: app.usesThisMonth })}</p>
-        <PageNote>{text.countedForUniverse({ universe })}</PageNote>
-
-        <div class="tp-off">
-            <PageButton tall danger testId="teamAppDisconnect" on:click={() => (sheet = "disconnect")}
-                >{text.disconnect({ app: app.name })}</PageButton
-            >
-            <span class="tp-cn">{text.teamDisconnectLine({ app: app.name })}</span>
-        </div>
-    {/if}
-</AppsShell>
+    </AppsShell>
+{/if}
 
 {#if app && sheet === "add"}
     <AddManagerSheet

@@ -30,6 +30,8 @@
     import { UNIVERSE_AI_REF } from "../mindModel";
     import type { UsageScreen } from "../usageModel";
     import type { ToolsScreen } from "../toolsModel";
+    import BrickFilesGroup from "../../../Chat/Bricks/BrickFilesGroup.svelte";
+    import BrickMemoryGroup from "../../../Chat/Bricks/BrickMemoryGroup.svelte";
     import ComputerGroup from "../../../Chat/Bricks/Computer/ComputerGroup.svelte";
     import BrickLookPicker from "../../../Chat/Bricks/BrickLookPicker.svelte";
     import BotWokaPicker from "./BotWokaPicker.svelte";
@@ -894,8 +896,8 @@
 
         <div class="bp-groups">
             {#if brick}
-                <!-- A Brick's page, in the mock's order: Mind, Personality, Voice, Behavior, Permissions and Companion are
-                     here. Usage, Apps, Computer, Goals and tasks, Memory, Files and Template come with their own issues -->
+                <!-- A Brick's page, in the mock's order: Mind, Personality, Voice, Behavior, Computer, Memory, Files, Permissions
+                     and Companion are here. Usage, Apps, Goals and tasks and Template come with their own issues -->
                 <MindGroup
                     bot={currentBot}
                     open={openGroup === "mind"}
@@ -914,6 +916,33 @@
                     onEditRoute={editRoute}
                     brick
                 />
+                <!-- Computer, then Memory and Files, before Permissions and Companion: the mock's order (its Computer, Goals and
+                     tasks, Memory, Files come after Behavior and Apps) -->
+                {#if currentBot?.id}
+                    <ComputerGroup
+                        brick={{ id: currentBot.id, name: currentBot.name || "Brick" }}
+                        open={openGroup === "computer"}
+                        onToggle={toggleGroup}
+                    />
+                {/if}
+                <!-- What it remembers about its owner, and its files (game #2003) -->
+                <!-- Keyed by the Brick: each reads its list once, so another Brick must start them over -->
+                {#key currentBot.id}
+                    <BrickMemoryGroup
+                        botId={currentBot.id}
+                        name={currentBot.name || "Brick"}
+                        open={openGroup === "memory"}
+                        onToggle={toggleGroup}
+                    />
+                {/key}
+                {#key currentBot.id}
+                    <BrickFilesGroup
+                        brickId={currentBot.id}
+                        name={currentBot.name || "Brick"}
+                        open={openGroup === "files"}
+                        onToggle={toggleGroup}
+                    />
+                {/key}
                 <PermissionsGroup
                     bot={currentBot}
                     open={openGroup === "access"}
@@ -930,14 +959,6 @@
                     link
                     onToggle={() => (editingCompanion = true)}
                 />
-                <!-- Computer comes after Companion, in the mock's order (game #2000) -->
-                {#if currentBot?.id}
-                    <ComputerGroup
-                        brick={{ id: currentBot.id, name: currentBot.name || "Brick" }}
-                        open={openGroup === "computer"}
-                        onToggle={toggleGroup}
-                    />
-                {/if}
             {:else}
                 {#if askedUsage && currentBot}
                     <MakerAskedCard name={currentBot.name || "Bot"} usage={askedUsage} onUseKey={openMind} />

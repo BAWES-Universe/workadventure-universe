@@ -145,7 +145,11 @@ beforeEach(() => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     hearing.canHear.mockReset().mockResolvedValue(true);
-    hearing.hear.mockReset().mockResolvedValue({ ok: true, text: 'what is on today', provider: 'soniox', timings: {} });
+    // "Listening…" shows when hearing starts (the note was reserved and is on its way to the provider)
+    hearing.hear.mockReset().mockImplementation(async (_bot: string, _id: string, _clip: unknown, _sender: unknown, onStart?: () => void) => {
+        onStart?.();
+        return { ok: true, text: 'what is on today', provider: 'soniox', timings: {} };
+    });
 });
 
 afterEach(() => {
@@ -217,7 +221,7 @@ describe('BotClient: a voice note in nearby chat', () => {
         expect(hearing.hear).not.toHaveBeenCalled();
     });
 
-    it('is left alone when the bot cannot hear (voice off, no hearing set up)', async () => {
+    it('is left alone when the bot cannot hear (no hearing set up)', async () => {
         hearing.canHear.mockResolvedValue(false);
         const t = setup();
         await t.receive(joined(KHALID));
@@ -226,8 +230,22 @@ describe('BotClient: a voice note in nearby chat', () => {
         expect(t.transcripts()).toEqual([]);
     });
 
+    it('leaves a note whose sender has no replies left to the reply path, with no Listening row', async () => {
+        hearing.hear.mockResolvedValue({ ok: false, reason: 'reply-limit', allowance: { limit: 'universe-ai', resetsAt: 'soon', who: 'member' } });
+        const t = setup();
+        await t.receive(joined(KHALID));
+        await t.receive(noteFrom(KHALID));
+        expect(t.transcripts()).toEqual([]);
+        // The reply path asks Orbit for the person's replies and shows the usual limit card
+        expect(t.onChatMessage).toHaveBeenCalledTimes(1);
+        expect(t.onChatMessage.mock.calls[0][1]).not.toContain('[Voice note]');
+    });
+
     it('shows that it could not be heard, and the bot does not answer a file it could not read', async () => {
-        hearing.hear.mockResolvedValue({ ok: false, reason: 'failed' });
+        hearing.hear.mockImplementation(async (_bot: string, _id: string, _clip: unknown, _sender: unknown, onStart?: () => void) => {
+            onStart?.();
+            return { ok: false, reason: 'failed' };
+        });
         const t = setup();
         await t.receive(joined(KHALID));
         await t.receive(noteFrom(KHALID));
