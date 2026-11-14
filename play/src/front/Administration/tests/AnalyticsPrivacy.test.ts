@@ -26,10 +26,13 @@ describe("withoutQueryOrHash", () => {
 
     it("blanks an email in the path, in events and in replays alike", () => {
         expect(withoutQueryOrHash("https://a.test/invite/sara@example.test?x=1")).toBe("https://a.test/invite/[email]");
-        expect(keepPrivate({ properties: { $current_url: "https://a.test/u/sara@example.test/room#h" } })?.properties?.$current_url).toBe(
-            "https://a.test/u/[email]/room"
+        expect(
+            keepPrivate({ properties: { $current_url: "https://a.test/u/sara@example.test/room#h" } })?.properties
+                ?.$current_url
+        ).toBe("https://a.test/u/[email]/room");
+        expect(maskedNetworkRequest({ name: "https://a.test/api/sara@example.test?x=1" }).name).toBe(
+            "https://a.test/api/[email]"
         );
-        expect(maskedNetworkRequest({ name: "https://a.test/api/sara@example.test?x=1" }).name).toBe("https://a.test/api/[email]");
     });
 
     it("returns what is not an address as it was", () => {
@@ -92,8 +95,16 @@ describe("keepPrivate", () => {
         const cleaned = keepPrivate({
             properties: {
                 $external_click_url: "https://external.test/join?invite=canary",
-                $elements: [{ tag_name: "a", text: "x", attr__href: "https://external.test/join?invite=canary", href: "https://x.test/?t=canary" }],
-                $elements_chain: 'a:attr__href="https://external.test/join?invite=canary"nth-child="1";div:attr__class="b"',
+                $elements: [
+                    {
+                        tag_name: "a",
+                        text: "x",
+                        attr__href: "https://external.test/join?invite=canary",
+                        href: "https://x.test/?t=canary",
+                    },
+                ],
+                $elements_chain:
+                    'a:attr__href="https://external.test/join?invite=canary"nth-child="1";div:attr__class="b"',
             },
         });
         expect(cleaned?.properties?.$external_click_url).toBe("https://external.test/join");

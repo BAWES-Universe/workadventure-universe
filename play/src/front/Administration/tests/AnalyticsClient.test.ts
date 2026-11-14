@@ -89,7 +89,9 @@ describe("AnalyticsClient", () => {
     it("cleans the page address inside a session replay as well as in events", async () => {
         await settled();
         const { session_recording } = posthog.init.mock.calls[0][1];
-        expect(session_recording.maskNetworkRequestFn({ url: "https://a.test/room?code=1#chatRoomId=!private:matrix" })).toEqual({
+        expect(
+            session_recording.maskNetworkRequestFn({ url: "https://a.test/room?code=1#chatRoomId=!private:matrix" })
+        ).toEqual({
             url: "https://a.test/room",
         });
     });
