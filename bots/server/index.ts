@@ -234,7 +234,7 @@ async function setupMatrix(): Promise<void> {
         {
             claimDue: (kinds) => adminApiService.claimDueItems(kinds),
             checkRun: (runId, attempt) => adminApiService.checkItemRun(runId, attempt),
-            keepDelivered: (runId, eventId) => adminApiService.keepItemDelivered(runId, eventId),
+            keepDelivered: (runId, eventId, report) => adminApiService.keepItemDelivered(runId, eventId, report),
             report: (runId, report) => adminApiService.reportItemRun(runId, report),
             keepTold: (runId) => adminApiService.keepItemTold(runId),
             keepHeldTold: (itemId, waitId) => adminApiService.keepItemHeldTold(itemId, waitId),

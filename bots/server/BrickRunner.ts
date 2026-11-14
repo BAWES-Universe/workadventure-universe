@@ -41,6 +41,8 @@ export interface DueRun {
     fresh: boolean;
     attempt: number;
     deliveredEventId: string | null;
+    /** With `deliveredEventId`, how the run was to be reported when its message went out, if Orbit kept that (an older Orbit does not). */
+    deliveredReport: KeptReport | null;
 }
 
 export type RunCheck = { ok: true } | { ok: false; reason: string };
@@ -56,6 +58,9 @@ export interface RunReport {
     /** A goal that reached the outcome the person named; the evidence is in `result`. */
     reached?: boolean;
 }
+
+/** How a run that said something was to be reported, kept with where its message went so a run handed out again after a restart reports that. */
+export type KeptReport = Pick<RunReport, 'outcome' | 'result' | 'progress' | 'reached'>;
 
 /** What Orbit answered to a report: whether the person is to be told of a row of failures. */
 export interface ReportAnswer {
@@ -80,8 +85,8 @@ export interface BrickRunnerApi {
     /** The runs that fell due, and the goals and tasks that wait for usage; throws when Orbit cannot be asked (nothing is lost: they are handed out again). */
     claimDue(kinds: readonly DueRun['kind'][]): Promise<{ runs: DueRun[]; held: HeldNotice[] }>;
     checkRun(runId: string, attempt: number): Promise<RunCheck>;
-    /** Keeps the chat event the run's message got. Returns whether Orbit kept it. */
-    keepDelivered(runId: string, eventId: string): Promise<boolean>;
+    /** Keeps the chat event the run's message got, and with it how the run is to be reported when it has said something that matters to that. Returns whether Orbit kept it. */
+    keepDelivered(runId: string, eventId: string, report?: KeptReport): Promise<boolean>;
     /** Null when Orbit did not record it. */
     report(runId: string, report: RunReport): Promise<ReportAnswer | null>;
     /** The person was told about a row of failures (the report said so). Only after it went out. */
@@ -146,7 +151,17 @@ export function dueRunOf(raw: unknown): DueRun | null {
         fresh: run.fresh === true,
         attempt: run.attempt,
         deliveredEventId: typeof run.deliveredEventId === 'string' && run.deliveredEventId ? run.deliveredEventId : null,
+        deliveredReport: keptReportOf(run.deliveredReport),
     };
+}
+
+/** What Orbit kept of how a run was to be reported, only when it has what a report needs. */
+function keptReportOf(raw: unknown): KeptReport | null {
+    if (typeof raw !== 'object' || raw === null) return null;
+    const kept = raw as Record<string, unknown>;
+    if ((kept.outcome !== 'spoke' && kept.outcome !== 'waiting') || typeof kept.result !== 'string' || kept.result.length === 0) return null;
+    const progress = typeof kept.progress === 'object' && kept.progress !== null ? (kept.progress as NonNullable<KeptReport['progress']>) : undefined;
+    return { outcome: kept.outcome, result: kept.result, ...(progress ? { progress } : {}), ...(kept.reached === true ? { reached: true } : {}) };
 }
 
 /** One held notice of Orbit's answer, kept only when it has what saying it needs. */
@@ -328,12 +343,12 @@ export class BrickRunner {
      * could be said (nothing is reported: the lease hands the run out again, and the same transaction id keeps it one message), 'failed' when
      * it never can be (reported failed), else the event id.
      */
-    private async say(run: DueRun, text: string, transactionId: string, keep = true): Promise<string> {
+    private async say(run: DueRun, text: string, transactionId: string, keep = true, report?: KeptReport): Promise<string> {
         if (!run.matrixUserId) return this.fail(run, 'no_chat').then(() => 'failed');
         const spoke = await this.speaker.say(run.brickId, run.matrixUserId, text, transactionId);
         if ('eventId' in spoke) {
             // Right after the send and before the report; a crash between the two leaves the same transaction id to say it again as one message
-            if (keep && !(await this.api.keepDelivered(run.runId, spoke.eventId))) {
+            if (keep && !(await (report ? this.api.keepDelivered(run.runId, spoke.eventId, report) : this.api.keepDelivered(run.runId, spoke.eventId)))) {
                 this.log.warn(`[BrickRunner] Orbit did not keep where run ${run.runId} spoke; it is reported all the same`);
             }
             return spoke.eventId;
@@ -393,8 +408,10 @@ export class BrickRunner {
         if (!this.model) return;
         // Said before and handed out again: it is not said (or run) a second time
         if (run.deliveredEventId) {
+            // Reported as it was meant to be: from this server's memory, else from what Orbit kept with the delivery, else as plain "said"
             const kept = this.unreported.get(run.runId);
-            const answer = await this.api.report(run.runId, kept ? { ...kept, attempt: run.attempt } : { attempt: run.attempt, state: 'done', outcome: 'spoke', result: 'Said in chat' });
+            const stored: RunReport | undefined = run.deliveredReport ? { ...run.deliveredReport, attempt: run.attempt, state: 'done' } : undefined;
+            const answer = await this.api.report(run.runId, kept ? { ...kept, attempt: run.attempt } : stored ?? { attempt: run.attempt, state: 'done', outcome: 'spoke', result: 'Said in chat' });
             if (answer !== null) this.unreported.delete(run.runId);
             return;
         }
@@ -425,8 +442,6 @@ export class BrickRunner {
         }
         // Something to say: nothing goes out for a run that was changed while the model worked
         if (!(await permit())) return;
-        const said = await this.say(run, result.message, transactionIdOfRun(run.runId));
-        if (said === 'left' || said === 'failed') return;
         const reached = result.kind === 'reached';
         const report: RunReport = {
             attempt: run.attempt,
@@ -437,6 +452,9 @@ export class BrickRunner {
             ...(reached ? { reached: true } : {}),
             ...(Object.keys(result.progress).length > 0 ? { progress: result.progress } : {}),
         };
+        // Kept with where the message went, so a run handed out again after a restart is reported as this, not as a plain "said"
+        const said = await this.say(run, result.message, transactionIdOfRun(run.runId), true, { outcome: report.outcome, result: report.result, progress: report.progress, reached: report.reached });
+        if (said === 'left' || said === 'failed') return;
         // It is already said: when Orbit did not take the report, it is kept to be reported whole when the run is handed out again
         if ((await this.api.report(run.runId, report)) === null) this.keepUnreported(run.runId, report);
     }

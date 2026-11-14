@@ -27,6 +27,7 @@ const run = (over: Partial<DueRun> = {}): DueRun => ({
     fresh: false,
     attempt: 1,
     deliveredEventId: null,
+    deliveredReport: null,
     ...over,
 });
 

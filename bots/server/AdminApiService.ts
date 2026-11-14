@@ -1148,15 +1148,26 @@ export class AdminApiService {
         }
     }
 
-    /** Keeps the chat event a run's message got. True when Orbit kept it (or already had this one). */
-    async keepItemDelivered(runId: string, eventId: string): Promise<boolean> {
-        try {
-            await this.brickCall('post', `api/bricks/items/runs/${encodeURIComponent(runId)}/delivered`, { eventId });
-            return true;
-        } catch (error) {
-            console.warn('[AdminApiService] Could not keep where a run spoke:', error instanceof Error ? error.message : error);
-            return false;
+    /**
+     * Keeps the chat event a run's message got, and with it how the run is to be reported (a goal that reached its outcome, its progress).
+     * True when Orbit kept it (or already had this one). An Orbit from before the report is kept refuses the call that carries one: the
+     * event id is then kept alone, because where the message went matters more than how the run is reported.
+     */
+    async keepItemDelivered(runId: string, eventId: string, report?: { outcome?: string; result?: string; progress?: unknown; reached?: boolean }): Promise<boolean> {
+        const path = `api/bricks/items/runs/${encodeURIComponent(runId)}/delivered`;
+        for (const body of report ? [{ eventId, report: this.withoutEmpty(report) }, { eventId }] : [{ eventId }]) {
+            try {
+                await this.brickCall('post', path, body);
+                return true;
+            } catch (error) {
+                console.warn('[AdminApiService] Could not keep where a run spoke:', error instanceof Error ? error.message : error);
+            }
         }
+        return false;
+    }
+
+    private withoutEmpty(report: Record<string, unknown>): Record<string, unknown> {
+        return Object.fromEntries(Object.entries(report).filter(([, value]) => value !== undefined));
     }
 
     /** How a run went. What Orbit answered (whether the person is to be told of a row of failures), or null when it did not record it. */

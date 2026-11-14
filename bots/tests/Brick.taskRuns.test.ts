@@ -46,6 +46,7 @@ const run = (over: Partial<DueRun> = {}): DueRun => ({
     fresh: false,
     attempt: 1,
     deliveredEventId: null,
+    deliveredReport: null,
     ...over,
 });
 
@@ -184,7 +185,8 @@ describe('a watch, a briefing or a goal runs on a model', () => {
         await runner.idle();
         expect(say).toHaveBeenCalledTimes(1);
         expect(say).toHaveBeenCalledWith('brick-1', '@sara:matrix.test', 'The flight is KWD 86 now.', 'brick-run:run-1');
-        expect(api.keepDelivered).toHaveBeenCalledWith('run-1', '$e1');
+        // Kept with how the run is to be reported, so a restart cannot turn it into a plain “said”
+        expect(api.keepDelivered).toHaveBeenCalledWith('run-1', '$e1', { outcome: 'spoke', result: 'The flight is KWD 86 now.' });
         expect(reports).toEqual([{ runId: 'run-1', report: { attempt: 1, state: 'done', outcome: 'spoke', result: 'The flight is KWD 86 now.' } }]);
         const order = [(api.keepDelivered as any).mock.invocationCallOrder[0], (api.report as any).mock.invocationCallOrder[0]];
         expect(order[0]).toBeLessThan(order[1]);
@@ -294,6 +296,33 @@ describe('a watch, a briefing or a goal runs on a model', () => {
         await runner.idle();
         expect(reports[1].report).toMatchObject({ attempt: 3, result: 'Said in chat' });
         expect(reports[1].report).not.toHaveProperty('reached');
+    });
+
+    it('reports a goal that reached its outcome whole after a restart, from what Orbit kept with the delivery', async () => {
+        const kept = { outcome: 'spoke' as const, result: 'The site shows Issued', reached: true, progress: { statusLine: 'Done' } };
+        const { runner, say, modelRun, reports } = setUp([run({ kind: 'goal', condition: null, outcome: 'My visa in hand', attempt: 2, deliveredEventId: '$e1', deliveredReport: kept })], result({ kind: 'unsure' }));
+        await runner.tick();
+        await runner.idle();
+        expect(modelRun).not.toHaveBeenCalled();
+        expect(say).not.toHaveBeenCalled();
+        expect(reports).toHaveLength(1);
+        expect(reports[0].report).toEqual({ attempt: 2, state: 'done', ...kept });
+    });
+
+    it('keeps a goal’s whole report with where it went, so it is there to be handed back', async () => {
+        const reached: TaskOutcome = { kind: 'result', result: { kind: 'reached', message: 'Your visa is approved', evidence: 'The site shows Issued', progress: { statusLine: 'Done' } } };
+        const { runner, api } = setUp([run({ kind: 'goal', condition: null, outcome: 'My visa in hand' })], result(reached));
+        await runner.tick();
+        await runner.idle();
+        expect(api.keepDelivered).toHaveBeenCalledWith('run-1', '$e1', { outcome: 'spoke', result: 'The site shows Issued', reached: true, progress: { statusLine: 'Done' } });
+    });
+
+    it('reads what Orbit kept only when it is well formed', () => {
+        const base = { runId: 'r', itemId: 'i', brickId: 'b', userId: 'u', words: 'w', timeZone: 'Asia/Kuwait', dueAt: '2026-11-15T09:00:00.000Z', kind: 'goal', attempt: 2, deliveredEventId: '$e' };
+        expect(dueRunOf({ ...base, deliveredReport: { outcome: 'spoke', result: 'x', reached: true } })?.deliveredReport).toEqual({ outcome: 'spoke', result: 'x', reached: true });
+        expect(dueRunOf({ ...base, deliveredReport: { outcome: 'quiet', result: 'x' } })?.deliveredReport).toBeNull();
+        expect(dueRunOf({ ...base, deliveredReport: { outcome: 'spoke' } })?.deliveredReport).toBeNull();
+        expect(dueRunOf(base)?.deliveredReport).toBeNull();
     });
 
     it('reports a person with no chat as failed, and leaves one it cannot tell about unreported', async () => {
