@@ -38,6 +38,8 @@ export interface BrickDeleteAsk {
 export interface BrickPageWay extends BrickDeleteAsk {
     /** Saves one change. False when Orbit refused it or could not be reached: the page goes back to what was saved. */
     save: (change: BrickChange) => Promise<boolean>;
+    /** Opens the Apps page, looking for this app (a Brick made from a template that needs one: "Connect Gmail"). */
+    openApps?: (search: string) => void;
 }
 
 export interface BotData {

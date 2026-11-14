@@ -33,6 +33,8 @@
     import BrickFilesGroup from "../../../Chat/Bricks/BrickFilesGroup.svelte";
     import BrickMemoryGroup from "../../../Chat/Bricks/BrickMemoryGroup.svelte";
     import ComputerGroup from "../../../Chat/Bricks/Computer/ComputerGroup.svelte";
+    import BrickMadeFrom from "../../../Chat/Bricks/Templates/BrickMadeFrom.svelte";
+    import BrickTemplateGroup from "../../../Chat/Bricks/Templates/BrickTemplateGroup.svelte";
     import BrickLookPicker from "../../../Chat/Bricks/BrickLookPicker.svelte";
     import BotWokaPicker from "./BotWokaPicker.svelte";
     import BotCompanionPicker from "./BotCompanionPicker.svelte";
@@ -894,10 +896,25 @@
             <p class="bp-error" role="alert" data-testid="brick-save-error">{brickError}</p>
         {/if}
 
+        {#if brick && currentBot.id}
+            <!-- A Brick made from a template says what it still needs and where it came from (game #2008) -->
+            {#key currentBot.id}
+                <BrickMadeFrom
+                    brickId={currentBot.id}
+                    name={currentBot.name || "Brick"}
+                    onConnect={(label) => brick?.openApps?.(label)}
+                    onOpenGroup={(id) => {
+                        openGroup = id;
+                        lastOpenGroup = id;
+                    }}
+                />
+            {/key}
+        {/if}
+
         <div class="bp-groups">
             {#if brick}
                 <!-- A Brick's page, in the mock's order: Mind, Personality, Voice, Behavior, Computer, Memory, Files, Permissions
-                     and Companion are here. Usage, Apps, Goals and tasks and Template come with their own issues -->
+                     and Companion are here. Usage, Apps and Goals and tasks come with their own issues; Template (#2008) is the last group before Advanced settings -->
                 <MindGroup
                     bot={currentBot}
                     open={openGroup === "mind"}
@@ -959,6 +976,17 @@
                     link
                     onToggle={() => (editingCompanion = true)}
                 />
+                <!-- Share this Brick so other people can make their own from it (game #2008) -->
+                {#if currentBot?.id}
+                    {#key currentBot.id}
+                        <BrickTemplateGroup
+                            brickId={currentBot.id}
+                            name={currentBot.name || "Brick"}
+                            open={openGroup === "template"}
+                            onToggle={toggleGroup}
+                        />
+                    {/key}
+                {/if}
             {:else}
                 {#if askedUsage && currentBot}
                     <MakerAskedCard name={currentBot.name || "Bot"} usage={askedUsage} onUseKey={openMind} />

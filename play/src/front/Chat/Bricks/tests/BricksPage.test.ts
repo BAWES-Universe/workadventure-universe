@@ -595,6 +595,7 @@ describe("the Bricks page (#1995)", () => {
                 "bot-page-group-files",
                 "bot-page-group-access",
                 "bot-page-group-companion",
+                "bot-page-group-template",
                 "bot-page-group-advanced",
             ]);
             // The rows say what the mock's say: Universe AI, none yet, stays put and waits, none yet
