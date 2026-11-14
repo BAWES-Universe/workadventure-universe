@@ -70,6 +70,7 @@
         emptyBrickSaved,
         type BrickSaved,
     } from "./brickSaves";
+    import { templateSync } from "./templateSync";
     import { IconAdjustmentsHorizontal, IconCurrentLocation, IconPaw, IconPencil } from "@wa-icons";
 
     export let bot: BotData | null = null;
@@ -306,7 +307,7 @@
             lastSavedName = bot.name || null;
             brickSaved = brickSavedOf(bot);
             brickUnsaved.clear();
-            templateUnsynced = [];
+            templateParts.clear();
         }
     } else {
         // Bot prop became null - clear currentBot to prevent errors
@@ -376,8 +377,8 @@
             if (!currentBot || currentBot.id !== botId) return;
             // Taken template parts this page has not read yet: saving the line or the Personality now would put the old
             // text back over them, so it waits until they are read
-            if (templateUnsynced.some((part) => part === "description" || part === "instructions")) {
-                if (!(await syncTemplateParts())) return;
+            if (templateParts.waitsFor(["description", "instructions"])) {
+                if (!(await templateParts.sync())) return;
                 if (!currentBot || currentBot.id !== botId) return;
             }
             const now = brickSavedOf(currentBot);
@@ -597,36 +598,28 @@
      * saved. A part the person is editing right now (it differs from what was saved) is theirs to keep.
      */
     async function takeFromTemplate(taken: UpdateField[]) {
-        templateUnsynced = [...new Set([...templateUnsynced, ...taken])];
-        if (!(await syncTemplateParts())) warningMessageStore.addWarningMessage($LL.chat.brick.templates.syncFailed());
+        templateParts.add(taken);
+        if (!(await templateParts.sync())) warningMessageStore.addWarningMessage($LL.chat.brick.templates.syncFailed());
     }
-
-    /** Parts taken from a template that this page has not read yet (Orbit could not be reached). */
-    let templateUnsynced: UpdateField[] = [];
 
     /**
-     * Reads the Brick again and shows the parts taken. False when that could not be done: until it can, what the person
-     * types in the line or the Personality is not saved over what Orbit now has (see flushBrickFields).
+     * Parts taken from a template that this page has not read yet (Orbit could not be reached): until they are read, what the
+     * person types in the line or the Personality is not saved over what Orbit now has (see flushBrickFields).
      */
-    async function syncTemplateParts(): Promise<boolean> {
-        if (templateUnsynced.length === 0 || !currentBot) return true;
-        const botId = currentBot.id;
-        const taken = templateUnsynced;
-        let fresh: BotData;
-        try {
-            fresh = await botApiService.getBot(botId);
-        } catch (error) {
-            console.warn("Could not read a Brick after a template update", error);
-            return false;
+    const templateParts = templateSync(
+        async () => {
+            const id = currentBot?.id;
+            if (!id) throw new Error("No Brick is open");
+            return { id, bot: await botApiService.getBot(id) };
+        },
+        (fresh, parts) => {
+            // Another Brick's page is open now: what was read is not for it
+            if (!currentBot || currentBot.id !== fresh.id) return;
+            const after = brickAfterTemplate(currentBot, brickSaved, fresh.bot, parts);
+            currentBot = after.bot;
+            brickSaved = after.saved;
         }
-        if (!currentBot || currentBot.id !== botId) return true;
-        const after = brickAfterTemplate(currentBot, brickSaved, fresh, taken);
-        currentBot = after.bot;
-        brickSaved = after.saved;
-        // Parts taken while this read was on its way are read by the next one
-        templateUnsynced = templateUnsynced.filter((part) => !taken.includes(part));
-        return true;
-    }
+    );
 
     /** A Brick's look, saved on the tap that picks it (no Save): true once Orbit has it. */
     async function pickBrickLook(textureId: string): Promise<boolean> {

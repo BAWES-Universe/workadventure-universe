@@ -64,15 +64,12 @@ export async function setTemplateStar(templateId: string, starred: boolean): Pro
     }
 }
 
-/** The template on the card of a Brick someone meets: undefined when it shares none, or when that could not be found out. */
+/**
+ * The template on the card of a Brick someone meets: undefined when it shares none. When that could not be found out it
+ * throws, so the card's answers are not kept (an answer that only meant Orbit did not say would hide the button for a while).
+ */
 export async function readTemplateOfBrick(botId: string): Promise<TemplateCard | undefined> {
-    try {
-        return parseTemplateOfBrick(await botApiService.getTemplateOfBrick(botId));
-    } catch (error) {
-        // A card without "Use template" is the safe answer when Orbit does not say
-        console.warn("Could not read the template of a Brick", error);
-        return undefined;
-    }
+    return parseTemplateOfBrick(await botApiService.getTemplateOfBrick(botId));
 }
 
 /* ------------------------------ sharing, for the Brick's owner ------------------------------ */

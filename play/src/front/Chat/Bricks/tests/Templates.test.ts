@@ -272,13 +272,13 @@ describe("Brick templates (#2008)", () => {
             expect(await setTemplateStar("t1", false)).toBe(false);
         });
 
-        it("puts nothing on a card when it cannot tell whether the Brick shares a template", async () => {
+        it("says nothing is shared when Orbit says so, and fails (so the card asks again next time) when it cannot tell", async () => {
             orbit.getTemplateOfBrick.mockResolvedValueOnce({ template: card() });
             expect((await readTemplateOfBrick("b1"))?.id).toBe("t1");
             orbit.getTemplateOfBrick.mockResolvedValueOnce({ template: null });
             expect(await readTemplateOfBrick("b1")).toBeUndefined();
             orbit.getTemplateOfBrick.mockRejectedValueOnce(new Error("offline"));
-            expect(await readTemplateOfBrick("b1")).toBeUndefined();
+            await expect(readTemplateOfBrick("b1")).rejects.toThrow("offline");
         });
     });
 
