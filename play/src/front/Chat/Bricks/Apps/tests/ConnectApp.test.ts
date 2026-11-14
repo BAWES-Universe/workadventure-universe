@@ -46,6 +46,9 @@ const row = (over: Record<string, unknown> = {}) => ({
     signInLostAt: null,
     connectedAt: "2026-11-13T09:00:00.000Z",
     lendable: false,
+    kind: "mcp",
+    keyLast4: null,
+    keyMode: null,
     bricks: [],
     ...over,
 });

@@ -106,6 +106,34 @@ describe('MatrixDmBridge', () => {
             .toBe("You've used your guest replies for now. Nora answers you again at 09:05 UTC.");
     });
 
+    it('never gives a pasted key to the model, remembers nothing of it, and says where keys go (game #2044)', async () => {
+        await bridge.onEvent(invite());
+        await bridge.onEvent(message(['here it is: sk_', 'live_51Habcdefghijklmnop12345'].join('')));
+        expect(deps.reply).not.toHaveBeenCalled();
+        expect((bridge as any).localWaiting.size).toBe(0);
+        const said = client.sendMessage.mock.calls.map((call: any[]) => call[2]).find((content: any) => /Keys don't go in chat/.test(String(content?.body)));
+        expect(said?.msgtype).toBe('m.text');
+        expect(JSON.stringify(client.sendMessage.mock.calls)).not.toContain('sk_live_51H');
+        // Every paste gets the note (the person is waiting on it); an ordinary message still gets its answer
+        await bridge.onEvent(message(['sk_', 'test_abcdefghijklmnopqrstu again'].join('')));
+        expect(client.sendMessage.mock.calls.filter((call: any[]) => /Keys don't go in chat/.test(String(call[2]?.body)))).toHaveLength(2);
+        expect(deps.reply).not.toHaveBeenCalled();
+        await bridge.onEvent(message('what can you do?'));
+        expect(deps.reply).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not keep a pasted key for a resting Brick either, and says where keys go (game #2044)', async () => {
+        await bridge.onEvent(invite());
+        deps.getBotConfig.mockResolvedValue({ botId: BOT, name: 'Guide', enabled: false, aiProviderRef: 'p' } as never);
+        await bridge.onEvent(message(['here it is: sk_', 'live_51Habcdefghijklmnop12345'].join('')));
+        expect(deps.reply).not.toHaveBeenCalled();
+        expect((bridge as any).localWaiting.size).toBe(0);
+        expect(client.sendMessage.mock.calls.some((call: any[]) => /Keys don't go in chat/.test(String(call[2]?.body)))).toBe(true);
+        // An ordinary message to the resting Brick is still remembered
+        await bridge.onEvent(message('hello'));
+        expect((bridge as any).localWaiting.size).toBe(1);
+    });
+
     it('sends nothing for a message answered together with others', async () => {
         await bridge.onEvent(invite());
         deps.reply.mockResolvedValue({ text: '', media: [], answeredTogether: true });

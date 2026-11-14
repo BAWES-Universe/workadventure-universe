@@ -12,6 +12,9 @@
     import { selectedChatMessageToReply } from "../../Stores/ChatStore";
     import LL from "../../../../i18n/i18n-svelte";
     import { GuestBrickChatRoom } from "../../Bricks/GuestBrickChatRoom";
+    import KeyPasteStrip from "../../Bricks/Apps/KeyPasteStrip.svelte";
+    import { looksLikeAKeyPastedWords } from "../../Bricks/Apps/KeyShapes";
+    import { openAppsPage } from "../../Bricks/Apps/OpenApps";
     import { ProximityChatRoom } from "../../Connection/Proximity/ProximityChatRoom";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import {
@@ -245,7 +248,17 @@
         }
     }
 
+    // Something that looks like a key, written to a Brick: held here and never sent (game #2044). The server takes it out too.
+    $: keyHeld = (partner?.isBot === true || room instanceof GuestBrickChatRoom) && looksLikeAKeyPastedWords(message);
+
+    function clearHeldKey() {
+        const held = message;
+        message = "";
+        composerDraftStore.clearIfUnchanged(draftRoomId, held);
+    }
+
     async function sendMessage(typedMessage: string) {
+        if (keyHeld) return;
         // Every send path (Enter, the Send button, files) ends the typing status.
         stopTypingNow();
         let messageToSend = withoutBlankEdges(
@@ -1082,6 +1095,9 @@
         <TypingUsers typingMembers={$typingMembers} />
         {#if $selectedChatMessageToReply !== null}
             <ReplyPreview message={$selectedChatMessageToReply} onClose={unselectChatMessageToReply} />
+        {/if}
+        {#if keyHeld}
+            <KeyPasteStrip onClear={clearHeldKey} onApps={() => openAppsPage()} />
         {/if}
         <ComposerLinkPreview {message} bind:closedLinks={closedLinkPreviews} />
     </div>

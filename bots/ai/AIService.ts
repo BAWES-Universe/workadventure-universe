@@ -129,6 +129,8 @@ import { FIND_FILES_TOOL, OPEN_FILE_TOOL, SEND_AGAIN_TOOL, fileToolDefinitions, 
 import { FORGET_MEMORY_TOOL, WHAT_I_REMEMBER_TOOL, isMemoryTool, memoryToolDefinitions, memoryToolsNote, runMemoryTool } from './MemoryTools';
 import { COMPUTER_TOOL, computerToolDefinitions, computerToolsNote, isComputerTool, runComputerTool } from './ComputerTools';
 import { pretendRunnerOn, runPretendJob } from './ComputerPretendRunner';
+import { callKeyApp, loadKeyAppList } from '../mcp/KeyApps';
+import { ASK_FOR_KEY_TOOL, PAYMENT_TOOL, isKeyTool, keyAppsNote, keyToolDefinitions, runKeyTool } from './KeyTools';
 import { OFFER_APP_TOOL, appToolDefinitions, appsNote, isAppTool, runAppTool } from './AppTools';
 import { MAKE_BRICK_TOOL, SUGGEST_BRICK_TOOL, brickToolDefinitions, brickToolsNote, isBrickTool, runBrickTool, type BrickNote } from './BrickTools';
 import { CHANGE_TASK_TOOL, KEEP_WORKDAYS_TOOL, MY_TASKS_TOOL, SET_REMINDER_TOOL, isTaskTool, runTaskTool, taskSettingsFor, taskToolDefinitions, taskToolsNote, tasksAreOn, type TaskSettings } from './BrickTasks';
@@ -375,6 +377,16 @@ export class AIService {
         use?: AppUseRequest & { botId: string }
     ): Promise<any> {
         try {
+            // An App with a key (#2044) is used only through Orbit, which holds the key, checks the use again and answers with the fields
+            // the App lists: nothing here ever reaches the service
+            if (entry.keyApp) {
+                return await callKeyApp(
+                    { adminApiUrl: this.adminApiUrl, serviceToken: process.env.BOT_SERVICE_TOKEN || '' },
+                    entry,
+                    args,
+                    { botId: use?.botId ?? '', callId: use?.callId ?? '', ...(use?.requesterKey ? { requesterKey: use.requesterKey } : {}), ...(use?.forOwner ? { forOwner: true } : {}) }
+                );
+            }
             // An App on a connection is checked with Orbit on every use, right before it runs: a lend taken back, a day's uses
             // spent or a switch turned off stops it at once. No answer is a no.
             if (entry.connectionId) {
@@ -1348,6 +1360,7 @@ export class AIService {
                     channel === 'dm' && botId && playerId !== undefined ? await this.brickNoteFor(botId, playerId, adminApiService) : '',
                     // A person's own Brick can lead them to connect an App (game #2001)
                     channel === 'dm' && botId && playerId !== undefined ? await this.appsNoteFor(botId, playerId, botClient, adminApiService) : '',
+                    channel === 'dm' && botId && playerId !== undefined ? await this.keyAppsNoteFor(botId, botClient, adminApiService) : '',
                     // Any bot, in a direct message: what it remembers about the person, and forgetting it (#2003)
                     channel === 'dm' && this.memoryToolsOn(botId, botClient) ? memoryToolsNote() : '',
                     computerOn ? computerToolsNote() : '',
@@ -3381,6 +3394,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
         // Tool: offer to connect an App from the chat (game #2001). Any of a person's own Bricks, in its owner's direct messages.
         if (channel === 'dm' && this.appToolsOn(botId, botClient, adminApiService)) tools.push(...appToolDefinitions());
+        // Tools: lead the owner to add a key for a service, and make a page take a payment (game #2044). The same Bricks, in the same chats.
+        if (channel === 'dm' && this.appToolsOn(botId, botClient, adminApiService)) tools.push(...keyToolDefinitions());
 
         // Tools: what the bot remembers about this person, and forgetting it (game #2003). Any bot, in a direct message only.
         if (channel === 'dm' && this.memoryToolsOn(botId, botClient)) tools.push(...memoryToolDefinitions());
@@ -3606,6 +3621,22 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             admin.brickOffersFor(botId, userId).catch(() => null),
         ]);
         return appsNote(apps, offers?.topics ?? []);
+    }
+
+    /** What such a Brick is told about Apps with a key: the services it can lead them to set up, and the ones they have. Empty when Orbit cannot say. */
+    private async keyAppsNoteFor(botId: string, botClient?: BotClient, adminApiService?: AdminApiService): Promise<string> {
+        if (!this.appToolsOn(botId, botClient, adminApiService)) return '';
+        const { apps, services } = await loadKeyAppList(botId, this.adminApiUrl, process.env.BOT_SERVICE_TOKEN || '');
+        return keyAppsNote(apps, services);
+    }
+
+    /** Runs ask_for_key or take_payments_on_page for the owner in this direct message. Never throws. */
+    private async runKeyToolCall(name: string, args: Record<string, unknown>, where: { botId?: string; playerId?: number }): Promise<Record<string, unknown>> {
+        const memory = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId) : undefined;
+        if (!where.botId || !memory?.userUuid) return { error: "That can't be done in this chat right now." };
+        const side = { adminApiUrl: this.adminApiUrl, serviceToken: process.env.BOT_SERVICE_TOKEN || '' };
+        const { apps } = await loadKeyAppList(where.botId, side.adminApiUrl, side.serviceToken);
+        return runKeyTool(name, args, { where: side, botId: where.botId, userId: memory.userUuid, apps });
     }
 
     /** Runs offer_app for the person in this direct message. What the game shows for it waits with the reply. */
@@ -3977,7 +4008,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 // With artifacts off, a tool of the same name belongs to an MCP server: send it down the default branch
                 // So does a file tool's name when Orbit doesn't keep files here (#1508)
                 // And a Brick tool's name anywhere but in a first Brick's direct messages (#1996)
-                switch ((isArtifactTool(toolCall.name) && !artifactsEnabled()) || (isFileTool(toolCall.name) && !this.filesOn(botId, adminApiService)) || (isBrickTool(toolCall.name) && !this.brickToolsOn(botId, botClient, adminApiService)) || (isMemoryTool(toolCall.name) && !this.memoryToolsOn(botId, botClient)) || (isAppTool(toolCall.name) && !this.appToolsOn(botId, botClient, adminApiService)) || (isComputerTool(toolCall.name) && (!!botClient || !this.ownBricks.has(botId ?? ''))) || (isTaskTool(toolCall.name) && (!taskToolsOffered || !this.taskToolsOn(botId, playerId, botClient) || !!toolServerMap?.has(toolCall.name))) ? '' : toolCall.name) {
+                switch ((isArtifactTool(toolCall.name) && !artifactsEnabled()) || (isFileTool(toolCall.name) && !this.filesOn(botId, adminApiService)) || (isBrickTool(toolCall.name) && !this.brickToolsOn(botId, botClient, adminApiService)) || (isMemoryTool(toolCall.name) && !this.memoryToolsOn(botId, botClient)) || (isAppTool(toolCall.name) && !this.appToolsOn(botId, botClient, adminApiService)) || (isKeyTool(toolCall.name) && !this.appToolsOn(botId, botClient, adminApiService)) || (isComputerTool(toolCall.name) && (!!botClient || !this.ownBricks.has(botId ?? ''))) || (isTaskTool(toolCall.name) && (!taskToolsOffered || !this.taskToolsOn(botId, playerId, botClient) || !!toolServerMap?.has(toolCall.name))) ? '' : toolCall.name) {
                     case 'get_people_on_map':
                         if (botClient) {
                             const people = botClient.getAllPeople();
@@ -4302,6 +4333,15 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             toolCall.name,
                             typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
                             { adminApiService, botId, playerId }
+                        );
+                        break;
+
+                    case ASK_FOR_KEY_TOOL:
+                    case PAYMENT_TOOL:
+                        result = await this.runKeyToolCall(
+                            toolCall.name,
+                            typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
+                            { botId, playerId }
                         );
                         break;
 

@@ -92,6 +92,20 @@ const Shared = z.object({ artifact: ArtifactView });
 export type SharedArtifact = z.infer<typeof Shared>;
 
 /** Who can open it: just its owner (game #1994), people in the chat it was made in, or anyone with the link. */
+/**
+ * A page that takes payments, as the game's window may know it (game #2044): whether it does, the checkout the owner's amount
+ * made, and where an order stands. Nothing of the key, the amount's terms or the service's own answer comes through.
+ */
+const PayAnswer = z.object({
+    enabled: z.boolean().optional(),
+    orderId: z.string().optional(),
+    checkoutUrl: z.string().nullable().optional(),
+    app: z.string().optional(),
+    status: z.enum(["checking", "paid", "not_paid", "cant_confirm"]).optional(),
+    testPayment: z.boolean().optional(),
+});
+export type ArtifactPayAnswer = z.infer<typeof PayAnswer>;
+
 export const OPEN_SCOPES = ["me", "chat", "link"] as const;
 /** Who can ask for changes: only its owner, or everyone who can open it, in its chat. */
 export const CHANGE_SCOPES = ["owner", "openers"] as const;
@@ -187,6 +201,14 @@ export class ArtifactsService {
     /** The owner says who can open it and who can ask for changes; the answer is the artifact as it now is. */
     share(id: string, sharing: ArtifactSharing, viewer: ArtifactViewer): Promise<SharedArtifact> {
         return this.call(`/api/artifacts/${encodeURIComponent(id)}/share`, { viewer, ...sharing }, Shared, "put");
+    }
+
+    /**
+     * The payment side of a page (game #2044). With neither `start` nor `order`: whether the page takes payments. `start`
+     * makes a checkout for the owner's amount (the viewer sends no amount); `order` asks where an order stands.
+     */
+    pay(id: string, request: { start?: boolean; order?: string }, viewer: ArtifactViewer): Promise<ArtifactPayAnswer> {
+        return this.call(`/api/artifacts/${encodeURIComponent(id)}/pay`, { viewer, ...request }, PayAnswer);
     }
 
     /** The code of one version, for the Code view. */

@@ -1,5 +1,6 @@
 <script lang="ts">
     import PanelHeader from "../../../Components/MapEditor/EditMode/PanelHeader.svelte";
+    import KeySheetHost from "./KeySheetHost.svelte";
 
     /**
      * The frame of every Apps page: the panel header (a back arrow and the page's name) over one scrolling body whose rows,
@@ -12,6 +13,7 @@
 </script>
 
 <div class="ax flex h-full min-h-0 flex-col" data-testid={testId}>
+    <KeySheetHost />
     <PanelHeader {title} {onBack} {backLabel} canHide={false} />
     <div class="ax-body">
         <slot />

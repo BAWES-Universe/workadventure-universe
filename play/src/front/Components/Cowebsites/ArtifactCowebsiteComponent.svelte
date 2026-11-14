@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onDestroy } from "svelte";
+    import { onDestroy, onMount } from "svelte";
     import LL from "../../../i18n/i18n-svelte";
     import type { ArtifactCoWebsite } from "../../WebRtc/CoWebsite/ArtifactCoWebsite";
     import {
@@ -15,6 +15,7 @@
         type OpenedArtifact,
     } from "../../Artifacts/ArtifactApi";
     import { artifactBadge } from "../../Artifacts/artifactBadge";
+    import { pagePayments, type PayProblem } from "../../Artifacts/PagePayments";
     import { nearbyPeopleNames } from "../../Artifacts/nearbyPeople";
     import type { ArtifactKind } from "../../Artifacts/artifactCard";
     import { whenLabel } from "../../Artifacts/whenLabel";
@@ -119,7 +120,35 @@
     /** The address on show has stopped and a new one is on its way: nothing is drawn from the old one meanwhile. */
     let addressOver = false;
 
+    // A page that takes payments asks for its checkout by message (game #2044); only this window's own frame is listened to
+    let frameElement: HTMLIFrameElement | undefined;
+    const payments = pagePayments({
+        artifactId: id,
+        chat: () => actualCowebsite.chat,
+        frame: () => frameElement?.contentWindow,
+        openWindow: () => window.open("about:blank", "_blank"),
+    });
+    const payLine = payments.line;
+    onMount(() => {
+        window.addEventListener("message", payments.onMessage);
+        return () => window.removeEventListener("message", payments.onMessage);
+    });
+
+    function payProblemText(problem: PayProblem): string {
+        switch (problem) {
+            case "limit":
+                return $LL.chat.artifacts.payLimit();
+            case "not_paid":
+                return $LL.chat.artifacts.payNotPaid();
+            case "cant_confirm":
+                return $LL.chat.artifacts.payCantConfirm();
+            default:
+                return $LL.chat.artifacts.payUnavailable();
+        }
+    }
+
     onDestroy(() => {
+        payments.destroy();
         destroyed = true;
         if (copiedTimer) clearTimeout(copiedTimer);
         renewIn(undefined);
@@ -687,8 +716,32 @@
                     referrerpolicy="no-referrer"
                     allow=""
                     data-testid="artifactFrame"
+                    bind:this={frameElement}
                     on:load={redrawIfStopped}
                 />
+                {#if $payLine.checking || $payLine.problem || $payLine.paid}
+                    <div class="pay-line" role="status" data-testid="artifactPayLine">
+                        {#if $payLine.paid}
+                            <p>{$payLine.paid.test ? $LL.chat.artifacts.payPaidTest() : $LL.chat.artifacts.payPaid()}</p>
+                        {:else if $payLine.problem}
+                            <p>{payProblemText($payLine.problem)}</p>
+                        {:else}
+                            <p>{$LL.chat.artifacts.payChecking()}</p>
+                            {#if $payLine.resume}
+                                <a
+                                    class="pay-go"
+                                    href={$payLine.resume.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    data-testid="artifactPayContinue"
+                                    >{$payLine.resume.app
+                                        ? $LL.chat.artifacts.payContinue({ app: $payLine.resume.app })
+                                        : $LL.chat.artifacts.payContinueDefault()}</a
+                                >
+                            {/if}
+                        {/if}
+                    </div>
+                {/if}
             {/if}
         {/if}
     </div>
@@ -874,6 +927,34 @@
         min-height: 0;
         background: #0a0814;
         overflow: auto;
+    }
+    .pay-line {
+        position: absolute;
+        bottom: max(12px, env(safe-area-inset-bottom));
+        left: 50%;
+        z-index: 2;
+        display: grid;
+        gap: 8px;
+        max-width: calc(100% - 24px);
+        padding: 12px 16px;
+        border-radius: 16px;
+        background: #15121f;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+        font-size: 14px;
+        color: #f3f1fa;
+        text-align: center;
+        transform: translateX(-50%);
+    }
+    .pay-line p {
+        margin: 0;
+    }
+    .pay-go {
+        padding: 8px 16px;
+        border-radius: 999px;
+        background: #f3f1fa;
+        font-weight: 600;
+        color: #0a0814;
+        text-decoration: none;
     }
     iframe {
         display: block;

@@ -1367,6 +1367,34 @@ export class BotApiService {
         return await this.appsCall("/api/me/apps");
     }
 
+    /** What the safe form for a key shows (game #2044): the service, where the key will be sent, and what is checked. Only for the person it was opened for. */
+    async getKeyForm(formId: string): Promise<unknown> {
+        return await this.appsCall(`/api/me/apps/key-forms/${encodeURIComponent(formId)}`);
+    }
+
+    /** Opens the safe form for a service Universe ships, or for replacing the key of an app of theirs. Answers the form's id. */
+    async openKeyForm(target: { service: string } | { connectionId: string }): Promise<string> {
+        const answer = (await this.appsCall("/api/me/apps/key-forms", { method: "POST", body: JSON.stringify(target) })) as
+            | { id?: unknown }
+            | undefined;
+        if (typeof answer?.id !== "string" || !answer.id) throw new Error("The form was not opened");
+        return answer.id;
+    }
+
+    /**
+     * The key, typed into the safe form. It goes straight to Orbit and nowhere else, and is never read back: the answer holds the
+     * app's id and name. A refusal is thrown with Orbit's `status` and `code` (rejected, mode_change, invalid_key, unreachable,
+     * expired, used, too_many).
+     */
+    async submitKey(formId: string, key: string, confirmChange = false): Promise<{ id: string; name: string }> {
+        const answer = (await this.appsCall(`/api/me/apps/key-forms/${encodeURIComponent(formId)}/key`, {
+            method: "POST",
+            body: JSON.stringify({ key, ...(confirmChange ? { confirmChange: true } : {}) }),
+        })) as { id?: unknown; name?: unknown } | undefined;
+        if (typeof answer?.id !== "string" || !answer.id) throw new Error("The key was not saved");
+        return { id: answer.id, name: typeof answer.name === "string" ? answer.name : "" };
+    }
+
     /** One of the person's apps: its Bricks, where it is lent, and the universes it could still be lent to. */
     async getMyApp(appId: string): Promise<unknown> {
         return await this.appsCall(`/api/me/apps/${encodeURIComponent(appId)}`);
