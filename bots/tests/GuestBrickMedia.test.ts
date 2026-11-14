@@ -269,8 +269,12 @@ describe('The Brick for guests reads what a guest sends', () => {
 
     it('runs the model once for a note asked twice whose answer was never recorded, and sends the totals once', async () => {
         const { generate, notes, admin, service } = makeService();
-        // The first try answers, but recording the answer at Orbit is lost; the reply to the device is lost too
-        expect(await service.reply(ask({ note: 'n1' }))).toMatchObject({ kind: 'reply' });
+        // The first try answers, but Orbit does not keep the answer; the reply to the device is lost too
+        notes.answered.mockRejectedValueOnce(new Error('orbit down'));
+        expect(await service.reply(ask({ note: 'n1' }))).toMatchObject({ kind: 'reply', text: 'It says the soup of the day.' });
+        // The model ran: the try stays counted, never given back or marked failed, so a retry is not counted again
+        expect(admin.finishGuestBrickReply).not.toHaveBeenCalledWith('turn-1', { failed: true });
+        expect(notes.answerFailed).not.toHaveBeenCalled();
         // The device asks again with the same turn: Orbit says it was counted already, and the note has its words but no answer
         admin.claimGuestBrickReply.mockResolvedValueOnce({ allowed: true, counted: false } as GuestBrickAllowance);
         expect(await service.reply(ask({ note: 'n1' }))).toEqual({ kind: 'unheard', why: 'uncertain' });

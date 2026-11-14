@@ -427,8 +427,17 @@ export class GuestBrickService {
             const answer = readMark(response.content);
             // An answer that was only the marker has nothing to show: it fails, and the allowance is given back
             if (!answer.text.trim()) throw new Error(AI_FAILED);
-            // A note's answer is kept at Orbit, encrypted, until the device says it has it, so a lost answer is never run again
-            if (held && this.media?.notes) await this.media.notes.answered(held.turnId, held.generation, response.content);
+            // A note's answer is kept at Orbit, encrypted, until the device says it has it, so a lost answer is never run again.
+            // When Orbit did not keep it, the model has still run and been paid for: the answer goes to the guest and the try
+            // stays counted (never given back, never marked failed), so a retry of this turn is refused by Orbit's count and the
+            // note's turn, and the model never runs twice for one note
+            if (held && this.media?.notes) {
+                try {
+                    await this.media.notes.answered(held.turnId, held.generation, response.content);
+                } catch (error) {
+                    console.warn('[GuestBrick] Orbit did not keep a note\'s answer; it goes to the guest, and is not run again:', error instanceof Error ? error.message : error);
+                }
+            }
             // What was said is never kept here: only what it took. Totals go once, for the try Orbit counted
             if (allowance.counted !== false) await this.admin.finishGuestBrickReply(ask.turnId, { tokensUsed: response.tokensUsed, costMicros: priced.cost.micros });
             return {
