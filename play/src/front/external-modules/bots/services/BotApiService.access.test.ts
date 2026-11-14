@@ -353,7 +353,11 @@ describe("an Orbit that does not answer about who may use a bot", () => {
             })
         );
         await expect(service().screenTicketForBrick("b1", "input")).resolves.toEqual({ ticket: "sct1.abc.def" });
-        const asked = fetched.mock.calls.find(([url]) => (typeof url === "string" ? url : url instanceof URL ? url.href : url.url).includes("/api/bricks/b1/computer/screen"));
+        const asked = fetched.mock.calls.find(([url]) =>
+            (typeof url === "string" ? url : url instanceof URL ? url.href : url.url).includes(
+                "/api/bricks/b1/computer/screen"
+            )
+        );
         expect(JSON.parse(asked?.[1]?.body as string)).toEqual({ mode: "input" });
     });
 

@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createScreenSession, SCREEN_RETRIES, SCREEN_RETRY_MS, SCREEN_SLOW_RETRY_MS, type ScreenMode, type ScreenSessionDeps } from "../Computer/BrickScreenSession";
+import {
+    createScreenSession,
+    SCREEN_RETRIES,
+    SCREEN_RETRY_MS,
+    SCREEN_SLOW_RETRY_MS,
+    type ScreenMode,
+    type ScreenSessionDeps,
+} from "../Computer/BrickScreenSession";
 import type { RfbConnection, RfbConstructor } from "../Computer/novnc";
 
 class FakeRfb implements RfbConnection {
@@ -11,11 +18,7 @@ class FakeRfb implements RfbConnection {
     background = "";
     disconnected = false;
     listeners: Record<string, Array<(event: Event) => void>> = {};
-    constructor(
-        public target: HTMLElement,
-        public url: string,
-        public options?: { wsProtocols?: string[] }
-    ) {
+    constructor(public target: HTMLElement, public url: string, public options?: { wsProtocols?: string[] }) {
         FakeRfb.all.push(this);
     }
     addEventListener(type: string, listener: (event: Event) => void) {
@@ -84,7 +87,12 @@ describe("a Brick's screen connection", () => {
         const [screen] = FakeRfb.all;
         expect(screen.url).toBe("wss://bots.test/computer/screen?ticket=t-1");
         expect(screen.options?.wsProtocols).toEqual(["binary"]);
-        expect(screen).toMatchObject({ viewOnly: true, scaleViewport: true, resizeSession: false, focusOnClick: false });
+        expect(screen).toMatchObject({
+            viewOnly: true,
+            scaleViewport: true,
+            resizeSession: false,
+            focusOnClick: false,
+        });
         expect(live.at(-1)).toBe(false);
         screen.fire("connect");
         expect(live.at(-1)).toBe(true);

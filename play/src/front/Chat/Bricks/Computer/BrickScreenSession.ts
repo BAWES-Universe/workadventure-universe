@@ -30,7 +30,11 @@ export const SCREEN_RETRIES = 6;
 /** After the quick tries, how long between slower ones. */
 export const SCREEN_SLOW_RETRY_MS = 30_000;
 
-export function createScreenSession(deps: ScreenSessionDeps, target: HTMLElement, onLive: (live: boolean) => void): ScreenSession {
+export function createScreenSession(
+    deps: ScreenSessionDeps,
+    target: HTMLElement,
+    onLive: (live: boolean) => void
+): ScreenSession {
     const setTimer = deps.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
     const clearTimer = deps.clearTimer ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>));
     let generation = 0;

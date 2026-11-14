@@ -1308,7 +1308,10 @@ export class BotApiService {
      * for the person who has taken over. Never wakes a machine: a resting computer, or input before a take over, answers 409, which is
      * `undefined` (nothing to show now). A request that did not go through is "failed", so the screen can ask again soon.
      */
-    async screenTicketForBrick(brickId: string, mode: "watch" | "input"): Promise<{ ticket: string } | undefined | "failed"> {
+    async screenTicketForBrick(
+        brickId: string,
+        mode: "watch" | "input"
+    ): Promise<{ ticket: string } | undefined | "failed"> {
         try {
             const data = (await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/computer/screen`, {
                 method: "POST",
@@ -1325,7 +1328,9 @@ export class BotApiService {
     screenSocketUrl(ticket: string): string | null {
         const base = this.getBotServerUrl();
         if (!base) return null;
-        return `${base.replace(/^http/, "ws").replace(/\/+$/, "")}/computer/screen?ticket=${encodeURIComponent(ticket)}`;
+        return `${base.replace(/^http/, "ws").replace(/\/+$/, "")}/computer/screen?ticket=${encodeURIComponent(
+            ticket
+        )}`;
     }
 
     /**

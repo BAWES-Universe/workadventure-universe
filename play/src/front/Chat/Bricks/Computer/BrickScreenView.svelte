@@ -31,14 +31,14 @@
                 load: loadNoVnc,
             },
             target,
-            (isLive) => (live = isLive),
+            (isLive) => (live = isLive)
         );
     });
     onDestroy(() => session?.destroy());
 </script>
 
 <div class="bsv" aria-label={title} data-testid="brickScreenView" data-live={live ? "yes" : "no"}>
-    <div class="bsv-target" bind:this={target}></div>
+    <div class="bsv-target" bind:this={target} />
     {#if !live}
         <div class="bsv-wait" data-testid="brickScreenConnecting"><IconLoader2 font-size="22" class="bsv-spin" /></div>
     {/if}
