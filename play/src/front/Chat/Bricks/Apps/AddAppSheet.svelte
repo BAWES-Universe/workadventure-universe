@@ -211,6 +211,9 @@
         }
     }
 
+    // The line about a refused header goes as soon as the header is removed or renamed
+    $: if (trouble === "reserved" && reservedHeader(headers) === undefined) trouble = "";
+
     function headersFine(): boolean {
         const refused = reservedHeader(headers);
         if (refused === undefined) return true;

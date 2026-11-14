@@ -498,11 +498,27 @@ describe("Add your own app (#2001, mock Part 13)", () => {
         expect(game.addMyApp).not.toHaveBeenCalled();
         expect(game.reconnect).not.toHaveBeenCalled();
         await type("addAppHeaderName", "X-Team");
+        // the line about the refused header goes as soon as the header is renamed
+        expect(byId("addAppReserved")).toBeNull();
         expect(words(byId("addAppExtra"))).toBe("Extra headers 1 header");
         await click("addAppSignIn");
         expect((game.addMyApp.mock.calls[0][0] as { headers: unknown }).headers).toEqual({
             "X-Team": "Bearer x",
         });
+    });
+
+    it("drops the line about a refused header when that header is removed", async () => {
+        await open();
+        await paste(ZAPIER);
+        await click("addAppExtra");
+        await click("addAppAddHeader");
+        await type("addAppHeaderName", "Cookie");
+        await click("addAppSignIn");
+        expect(byId("addAppReserved")).not.toBeNull();
+        document.querySelector<HTMLElement>(".hdr-x")?.click();
+        await settle();
+        expect(byId("addAppReserved")).toBeNull();
+        expect(game.addMyApp).not.toHaveBeenCalled();
     });
 
     it("never writes the key into the page's words", async () => {
