@@ -124,11 +124,13 @@ export function callReducer(state: CallState, event: CallEvent): CallState {
                     doing: "listening",
                     lastHeardAt: event.now,
                 };
-            return { ...state, phase: "on", doing: "listening", lastHeardAt: event.now };
+            return settle({ ...state, phase: "on", doing: "listening", lastHeardAt: event.now });
         case "heard":
             return state.phase === "on" ? { ...state, lastHeardAt: event.now } : state;
         case "bot-speaking":
-            if (state.phase !== "on") return state;
+            // Kept in every phase, so a bot that is already speaking as the call connects or resumes shows as speaking at
+            // once. Only a call that is on counts it as something happening, and shows it.
+            if (state.phase !== "on") return { ...state, speakingNow: event.speaking };
             return settle({ ...state, speakingNow: event.speaking, lastHeardAt: event.now });
         case "bot-working":
             if (state.phase !== "on") return state;
@@ -162,7 +164,6 @@ export function callReducer(state: CallState, event: CallEvent): CallState {
                 hold: { kind: "person", name: state.walkUp.name },
                 walkUp: undefined,
                 doing: "listening",
-                speakingNow: false,
                 waitingNow: false,
                 work: undefined,
                 workLine: undefined,
@@ -175,14 +176,13 @@ export function callReducer(state: CallState, event: CallEvent): CallState {
                 hold: { kind: "meeting" },
                 walkUp: undefined,
                 doing: "listening",
-                speakingNow: false,
                 waitingNow: false,
                 work: undefined,
                 workLine: undefined,
             };
         case "resume":
             if (state.phase !== "hold") return state;
-            return { ...state, phase: "on", hold: undefined, doing: "listening", lastHeardAt: event.now };
+            return settle({ ...state, phase: "on", hold: undefined, doing: "listening", lastHeardAt: event.now });
         case "tick":
             // A quiet stretch ends a call that is on and nothing is happening in. While the bot speaks, works or waits for
             // the person's OK the call is not quiet, however long that takes. A call on hold is never ended by quiet: only
