@@ -1698,7 +1698,7 @@ export class BotApiService {
      */
     async syncVisitingBrick(
         position?: { x: number; y: number },
-        options?: { ending?: boolean }
+        options?: { ending?: boolean; recheck?: boolean }
     ): Promise<boolean | undefined> {
         const roomId = this.roomId;
         if (!this.botServerUrl || !roomId) return undefined;
@@ -1719,8 +1719,17 @@ export class BotApiService {
             const present = typeof answer?.present === "boolean" ? answer.present : undefined;
             // While a Brick walks with its person here it is looked after: a Brick that dropped off the map (its connection
             // broke, the bot server restarted) is put back by the next sync, and Orbit hears the person is still here
-            if (options?.ending || present === false) this.stopVisitRecheck();
-            else if (present === true) this.startVisitRecheck();
+            if (options?.ending) this.stopVisitRecheck();
+            else if (present === true) {
+                this.visitRecheckMisses = 0;
+                this.startVisitRecheck();
+            } else if (present === false) {
+                // The bot server also says "not here" when it could not look (its room check failed for a moment): the
+                // looking after stops only after a few such answers in a row, not on the first
+                this.visitRecheckMisses += 1;
+                if (!options?.recheck || this.visitRecheckMisses >= BotApiService.VISIT_RECHECK_MISSES)
+                    this.stopVisitRecheck();
+            }
             return present;
         } catch (error) {
             console.warn("Could not put the Brick beside you", error);
@@ -1736,17 +1745,21 @@ export class BotApiService {
     private ownPlaceProvider: (() => { x: number; y: number } | undefined) | undefined;
     private visitRecheck: ReturnType<typeof setInterval> | undefined;
     private static readonly VISIT_RECHECK_MS = 60_000;
+    /** "Not here" this many times in a row from the looking after, and it stops (about three minutes). */
+    private static readonly VISIT_RECHECK_MISSES = 3;
+    private visitRecheckMisses = 0;
 
     private startVisitRecheck(): void {
         if (this.visitRecheck !== undefined) return;
         this.visitRecheck = setInterval(() => {
             const place = this.ownPlaceProvider?.();
             // Without a place the bot server would not put it back: tried again a minute on
-            if (place) void this.syncVisitingBrick(place);
+            if (place) void this.syncVisitingBrick(place, { recheck: true });
         }, BotApiService.VISIT_RECHECK_MS);
     }
 
     private stopVisitRecheck(): void {
+        this.visitRecheckMisses = 0;
         if (this.visitRecheck === undefined) return;
         clearInterval(this.visitRecheck);
         this.visitRecheck = undefined;

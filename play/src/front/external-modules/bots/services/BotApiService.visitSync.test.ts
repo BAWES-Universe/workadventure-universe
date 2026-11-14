@@ -128,6 +128,25 @@ describe("BotApiService.syncVisitingBrick tells the bot server when the player c
             expect(fetchMock).toHaveBeenCalledTimes(2);
         });
 
+        it("keeps looking after a Brick through a moment when the bot server could not look, and counts only answers in a row (Sentry on #2023)", async () => {
+            const api = signedIn();
+            api.setOwnPlaceProvider(() => ({ x: 1, y: 1 }));
+            answer(true);
+            await api.syncVisitingBrick({ x: 1, y: 1 });
+            const start = fetchMock.mock.calls.length;
+            // Two "not here" answers (a failed room check), then it is back: still looked after
+            answer(false);
+            await vi.advanceTimersByTimeAsync(120_000);
+            answer(true);
+            await vi.advanceTimersByTimeAsync(60_000);
+            answer(false);
+            await vi.advanceTimersByTimeAsync(120_000);
+            expect(fetchMock).toHaveBeenCalledTimes(start + 5);
+            answer(true);
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(fetchMock).toHaveBeenCalledTimes(start + 6);
+        });
+
         it("never starts for someone with no Brick on the map, and stops when the Brick is gone, the visit ends or the room changes", async () => {
             const api = signedIn();
             api.setOwnPlaceProvider(() => ({ x: 1, y: 1 }));
@@ -136,14 +155,15 @@ describe("BotApiService.syncVisitingBrick tells the bot server when the player c
             await vi.advanceTimersByTimeAsync(180_000);
             expect(fetchMock).toHaveBeenCalledTimes(1);
 
-            // Present, then not (the visit ended on another device): it stops
+            // Present, then not (the visit ended on another device): it stops after a few "not here" answers in a row
             answer(true);
             await api.syncVisitingBrick({ x: 1, y: 1 });
             answer(false);
-            await vi.advanceTimersByTimeAsync(60_000);
-            const afterGone = fetchMock.mock.calls.length;
+            const beforeGone = fetchMock.mock.calls.length;
             await vi.advanceTimersByTimeAsync(180_000);
-            expect(fetchMock).toHaveBeenCalledTimes(afterGone);
+            expect(fetchMock).toHaveBeenCalledTimes(beforeGone + 3);
+            await vi.advanceTimersByTimeAsync(180_000);
+            expect(fetchMock).toHaveBeenCalledTimes(beforeGone + 3);
 
             // Present, then the visit is ended here
             answer(true);
