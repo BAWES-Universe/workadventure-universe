@@ -31,6 +31,8 @@ export interface KeyApp {
     definitionHash: string;
     enabled: boolean;
     working: boolean;
+    /** The App can take a payment for a page. */
+    payments: boolean;
     operations: KeyAppOperation[];
 }
 
@@ -43,18 +45,35 @@ const text = (value: unknown, max: number): string => (typeof value === 'string'
 
 /** Orbit's list for one Brick (GET /api/bots/:id/key-apps), read defensively. Never throws: a Brick whose list cannot be read has no key apps this turn. */
 export async function loadKeyApps(botId: string, adminApiUrl: string, serviceToken: string): Promise<KeyApp[]> {
-    if (!adminApiUrl || !serviceToken) return [];
+    return (await loadKeyAppList(botId, adminApiUrl, serviceToken)).apps;
+}
+
+export interface KeyService {
+    service: string;
+    name: string;
+    short: string;
+}
+
+/** The same list with the services Universe ships a setup for. */
+export async function loadKeyAppList(botId: string, adminApiUrl: string, serviceToken: string): Promise<{ apps: KeyApp[]; services: KeyService[] }> {
+    const none = { apps: [], services: [] };
+    if (!adminApiUrl || !serviceToken) return none;
     try {
         const response = await axios.get(`${adminApiUrl}/api/bots/${encodeURIComponent(botId)}/key-apps`, {
             headers: { Authorization: `Bearer ${serviceToken}`, 'Cache-Control': 'no-store' },
             timeout: TIMEOUT_MS,
             validateStatus: (status) => status === 200 || status === 404,
         });
-        return parseKeyApps(response.status === 200 ? response.data : null);
+        return response.status === 200 ? { apps: parseKeyApps(response.data), services: parseServices(response.data) } : none;
     } catch (error) {
         console.warn('[KeyApps] Could not read the key apps:', error instanceof Error ? error.message : error);
-        return [];
+        return none;
     }
+}
+
+export function parseServices(data: unknown): KeyService[] {
+    const list = isRecord(data) && Array.isArray(data.services) ? data.services : [];
+    return list.flatMap((one) => (isRecord(one) && typeof one.service === 'string' && /^[a-z][a-z0-9-]{0,30}$/.test(one.service) ? [{ service: one.service, name: text(one.name, 60) || one.service, short: text(one.short, 30) || one.service }] : []));
 }
 
 export function parseKeyApps(data: unknown): KeyApp[] {
@@ -83,6 +102,7 @@ export function parseKeyApps(data: unknown): KeyApp[] {
             definitionHash: raw.definitionHash,
             enabled: raw.enabled !== false,
             working: raw.working !== false,
+            payments: raw.payments === true,
             operations,
         });
     }

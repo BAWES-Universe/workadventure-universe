@@ -176,3 +176,68 @@ describe('what the model is told', () => {
         for (const status of [200, 400, 403, 404, 409, 429, 500, 502]) expect(JSON.stringify(answerOf(status, { code: 'x', error: 'bad' }))).not.toMatch(/https?:\/\/|sk_|Bearer/);
     });
 });
+
+import { ASK_FOR_KEY_TOOL, PAYMENT_TOOL, keyAppsNote, keyToolDefinitions, runKeyTool, isKeyTool } from '../ai/KeyTools';
+
+describe('the two tools of a Brick for keys', () => {
+    const apps = parseKeyApps({ apps: [{ ...APP, payments: true }] });
+    const context = { where: { adminApiUrl: ORBIT, serviceToken: 'svc' }, botId: 'bot-1', userId: 'sara-uuid', apps };
+
+    it('are named and described without ever asking for a key in the chat', () => {
+        expect(keyToolDefinitions().map((tool) => tool.function.name)).toEqual([ASK_FOR_KEY_TOOL, PAYMENT_TOOL]);
+        expect(isKeyTool('ask_for_key') && isKeyTool('take_payments_on_page') && !isKeyTool('offer_app')).toBe(true);
+        expect(keyToolDefinitions()[0].function.description).toMatch(/NEVER ask them to type or paste a key into the chat/);
+    });
+
+    it('lead to the form with a link and give the model no key', async () => {
+        http.post.mockResolvedValueOnce({ status: 201, data: { id: 'form-123', replacing: false } });
+        const result = (await runKeyTool(ASK_FOR_KEY_TOOL, { service: 'tap' }, context)) as { shown: boolean; note: string };
+        expect(result.shown).toBe(true);
+        expect(result.note).toContain('(#key-form=form-123)');
+        expect(http.post).toHaveBeenCalledWith(`${ORBIT}/api/bots/bot-1/app-key-forms`, { requesterKey: 'sara-uuid', service: 'tap' }, expect.anything());
+    });
+
+    it('send a draft only with the docs it came from, and say plainly when Orbit refuses it', async () => {
+        expect(await runKeyTool(ASK_FOR_KEY_TOOL, { draft: { name: 'X' } }, context)).toHaveProperty('error');
+        expect(http.post).not.toHaveBeenCalled();
+        http.post.mockResolvedValueOnce({ status: 400, data: { error: 'The setup is not valid' } });
+        expect(((await runKeyTool(ASK_FOR_KEY_TOOL, { draft: { name: 'X', short: 'X' }, source: 'https://docs.x.com' }, context)) as { error: string }).error).toContain('not valid');
+        http.post.mockResolvedValueOnce({ status: 404, data: {} });
+        expect(await runKeyTool(ASK_FOR_KEY_TOOL, { service: 'tap' }, context)).toHaveProperty('error');
+        http.post.mockRejectedValueOnce(new Error('down'));
+        expect(((await runKeyTool(ASK_FOR_KEY_TOOL, { service: 'tap' }, context)) as { error: string }).error).toMatch(/Do not ask them for the key/);
+    });
+
+    it('never follow a form id that is not a plain id', async () => {
+        http.post.mockResolvedValueOnce({ status: 201, data: { id: 'x)](https://evil.test)' } });
+        expect(await runKeyTool(ASK_FOR_KEY_TOOL, { service: 'tap' }, context)).toHaveProperty('error');
+    });
+
+    it('set up a payment through an App that can take one, with the amount as text', async () => {
+        http.post.mockResolvedValueOnce({ status: 200, data: { job: { amount: '4.500', currency: 'KWD', app: 'Tap Payments' } } });
+        const result = (await runKeyTool(PAYMENT_TOOL, { artifact: 'art-1', app: 'tap', amount: '4.500', currency: 'KWD' }, context)) as { done: boolean; amount: string };
+        expect(result).toMatchObject({ done: true, amount: '4.500 KWD' });
+        expect(http.post).toHaveBeenCalledWith(`${ORBIT}/api/bots/bot-1/key-apps/grant-1/page-jobs`, { requesterKey: 'sara-uuid', artifactId: 'art-1', amount: '4.500', currency: 'KWD' }, expect.anything());
+    });
+
+    it('do not set up a payment through an App that cannot take one, or is off', async () => {
+        const none = { ...context, apps: parseKeyApps({ apps: [{ ...APP, payments: false }, { ...APP, serverId: 'g2', payments: true, enabled: false }] }) };
+        expect(await runKeyTool(PAYMENT_TOOL, { artifact: 'a', app: 'tap', amount: '1', currency: 'KWD' }, none)).toHaveProperty('error');
+        expect(http.post).not.toHaveBeenCalled();
+    });
+
+    it('say what Orbit said no to in words', async () => {
+        for (const [status, match] of [[404, /not a page of theirs/], [403, /Only the owner/], [400, /Nothing was set up/]] as const) {
+            http.post.mockResolvedValueOnce({ status, data: { error: 'The amount must be more than zero' } });
+            expect(((await runKeyTool(PAYMENT_TOOL, { artifact: 'a', app: 'tap', amount: '0', currency: 'KWD' }, context)) as { error: string }).error).toMatch(match);
+        }
+    });
+
+    it('give a note that names the Apps they have and never asks for a key', () => {
+        const note = keyAppsNote(apps, [{ service: 'tap', name: 'Tap Payments', short: 'Tap' }]);
+        expect(note).toContain('Tap Payments (service tap)');
+        expect(note).toContain('- Tap (can take payments for a page)');
+        expect(note).toMatch(/Never ask for a key in the chat/);
+        expect(keyAppsNote(parseKeyApps({ apps: [{ ...APP, working: false }] }), [])).toContain('Replace key');
+    });
+});

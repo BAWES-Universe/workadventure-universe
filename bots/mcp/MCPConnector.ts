@@ -9,7 +9,7 @@
  * - Auth: Bearer token or X-API-Key header
  */
 
-import { keyAppTools, loadKeyApps } from './KeyApps';
+import { keyAppTools, loadKeyApps, type KeyApp } from './KeyApps';
 import axios from 'axios';
 import * as Sentry from '@sentry/node';
 import { decryptApiKey } from '../ai/encryption';
@@ -800,11 +800,13 @@ export class MCPConnector {
         toolServerMap: Map<string, ToolServerEntry>;
     }> {
         const toolServerMap = new Map<string, ToolServerEntry>();
-
         // Fetch MCP server configs from admin API
         let servers: McpServerConfig[] = [];
+        const loading = this.loadServers(botId, adminApiUrl, adminApiToken);
+        // Asked at the same time as the servers (after their request is sent), so Apps with a key add no waiting of their own
+        const keyApps = loadKeyApps(botId, adminApiUrl, botServiceToken);
         try {
-            servers = await this.loadServers(botId, adminApiUrl, adminApiToken);
+            servers = await loading;
         } catch (error: any) {
             if (axios.isAxiosError(error) && error.response?.status === 404) {
                 // No MCP servers configured — not an error
@@ -819,7 +821,7 @@ export class MCPConnector {
                 );
             }
             // Apps with a key come from another list: this one failing does not take them away
-            return this.withKeyApps(botId, adminApiUrl, botServiceToken, { tools: [], toolServerMap });
+            return this.withKeyApps(keyApps, { tools: [], toolServerMap });
         }
 
         // Query each enabled server and collect tools
@@ -908,17 +910,15 @@ export class MCPConnector {
             }
         }
 
-        return this.withKeyApps(botId, adminApiUrl, botServiceToken, { tools: allTools, toolServerMap });
+        return this.withKeyApps(keyApps, { tools: allTools, toolServerMap });
     }
 
     /** Adds the Apps with a key (#2044) that this Brick has: their operations as tools, by name, behind the same gate. A name already taken keeps its first owner. */
     private static async withKeyApps(
-        botId: string,
-        adminApiUrl: string,
-        serviceToken: string,
+        keyApps: Promise<KeyApp[]>,
         found: { tools: McpToolDefinition[]; toolServerMap: Map<string, ToolServerEntry> }
     ): Promise<{ tools: McpToolDefinition[]; toolServerMap: Map<string, ToolServerEntry> }> {
-        const keyed = keyAppTools(await loadKeyApps(botId, adminApiUrl, serviceToken));
+        const keyed = keyAppTools(await keyApps);
         for (const tool of keyed.tools) {
             const name = tool.function.name;
             const entry = keyed.entries.get(name);
