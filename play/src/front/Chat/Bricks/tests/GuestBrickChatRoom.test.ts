@@ -469,6 +469,25 @@ describe("pictures, files and voice notes to the Brick for guests (plan v3)", ()
         expect(JSON.stringify(get(room.messages))).not.toContain("menu.png");
     });
 
+    it("never writes a new guest's words into the chat the last guest had, even when it was not looked at again", async () => {
+        let guest = GUEST;
+        const { room, asked, answers, settle, device } = withMedia({ guestId: () => guest });
+        answers.push(() => Promise.resolve({ kind: "reply", text: "Welcome back.", needsAccount: false }));
+        answers.push(() => Promise.resolve({ kind: "reply", text: "Hello.", needsAccount: false }));
+        room.sendMessage("My secret plan");
+        await settle();
+        expect(asked).toHaveLength(1);
+        // Signed out, and someone else is the guest on this device now: they write before the chat is looked at again
+        guest = "9d9d9d9d-aaaa-4bbb-8ccc-0123456789ab";
+        room.sendMessage("Hi");
+        await settle();
+        expect(asked).toHaveLength(2);
+        expect(asked[1].message).toBe("Hi");
+        expect(asked[1].history).toEqual([]);
+        expect(JSON.stringify(get(room.messages))).not.toContain("My secret plan");
+        expect(device.saved ?? "").not.toContain("My secret plan");
+    });
+
     it("sends the new guest's words on their own even when the chat was not looked at again", async () => {
         let guest = GUEST;
         const waiting: Array<() => void> = [];

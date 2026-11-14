@@ -82,6 +82,14 @@ export function uploaderPathOf(claims: Pick<ReceiptClaims, 'fid' | 'bkt'>, uploa
  */
 const TRANSIENT_FETCH = /^HTTP (5\d\d|408|429)\b|timed? ?out|timeout|aborted|fetch failed|socket hang up|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|EPIPE|network|DNS not answered/i;
 
+/**
+ * A fetch's error without the addresses it names (a link, a quoted host): those carry names a person chose, such as a file
+ * called "photo.timeout", and only what the fetch itself says decides whether to ask again.
+ */
+function withoutAddresses(message: string): string {
+    return message.replace(/\b[a-z][a-z0-9+.-]*:\/\/\S*/gi, '<link>').replace(/'[^']*'/g, "'<host>'");
+}
+
 export type ReceiptFile = { ok: true; bytes: Uint8Array; claims: ReceiptClaims } | { ok: false; reason: 'gone' | 'changed' | 'too-big' | 'not-now' };
 
 /**
@@ -100,7 +108,7 @@ export async function readReceiptFile(
     try {
         bytes = new Uint8Array(await fetchBytes(uploaderPathOf(claims, uploaderUrl), maxBytes));
     } catch (error) {
-        const message = (error as Error)?.message ?? '';
+        const message = withoutAddresses((error as Error)?.message ?? '');
         if (/too large/i.test(message)) return { ok: false, reason: 'too-big' };
         return { ok: false, reason: TRANSIENT_FETCH.test(message) ? 'not-now' : 'gone' };
     }

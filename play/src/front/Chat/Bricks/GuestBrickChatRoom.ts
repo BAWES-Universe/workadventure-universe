@@ -153,6 +153,16 @@ export class GuestBrickChatRoom implements ChatRoom {
      * gone, and a chat that is not this guest's is gone too.
      */
     refresh(): void {
+        this.reread();
+        this.publish();
+        this.deps
+            .takes?.()
+            .then((takes) => this.taking.set(takes))
+            .catch(() => this.taking.set({ files: false, notes: false }));
+    }
+
+    /** The chat this guest has: one kept for someone else, or too old, is let go and the device's own is read. */
+    private reread(): void {
         const now = this.deps.now();
         const guestId = this.deps.guestId();
         const held = this.chat;
@@ -168,11 +178,6 @@ export class GuestBrickChatRoom implements ChatRoom {
             // Kept for someone else, or too old: it does not stay on the device
             if (!this.chat && raw !== null) this.deps.drop();
         }
-        this.publish();
-        this.deps
-            .takes?.()
-            .then((takes) => this.taking.set(takes))
-            .catch(() => this.taking.set({ files: false, notes: false }));
     }
 
     /** Who a send started for: the guest, and the chat when there was one. */
@@ -187,6 +192,9 @@ export class GuestBrickChatRoom implements ChatRoom {
     }
 
     private ensureChat(now: number): GuestChat {
+        // Another guest since the chat was last looked at (signed out, someone else here): their chat is never written in
+        const guestId = this.deps.guestId();
+        if (this.chat && guestId !== null && this.chat.guestId !== guestId) this.reread();
         if (!this.chat) {
             this.chat = newGuestChat(this.deps.guestId() ?? "", now);
             this.waiting.clear();

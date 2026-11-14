@@ -96,6 +96,12 @@ describe('upload receipts', () => {
         if (!check.ok) throw new Error('receipt');
         const read = (error: Error) => readReceiptFile(check.claims, UPLOADER, 100, async () => Promise.reject(error));
         expect(await read(new Error('HTTP 410 fetching x'))).toEqual({ ok: false, reason: 'gone' });
+        // A name in the link (a file called "photo.timeout", a host called "network") never makes a 4xx or a refusal "not now"
+        expect(await read(new Error('HTTP 404 fetching https://cdn.test/chat/photo.timeout'))).toEqual({ ok: false, reason: 'gone' });
+        expect(await read(new Error('HTTP 403 fetching https://network.test/clip.aborted?x=fetch%20failed'))).toEqual({ ok: false, reason: 'gone' });
+        expect(await read(new Error('Too many redirects (5) fetching https://cdn.test/a-timeout'))).toEqual({ ok: false, reason: 'gone' });
+        expect(await read(new Error("URL hostname 'timeout.network' is a private or reserved address"))).toEqual({ ok: false, reason: 'gone' });
+        expect(await read(new Error("DNS not answered for 'cdn.test' just now (ETIMEOUT)"))).toEqual({ ok: false, reason: 'not-now' });
         // A link the fetch refuses (an address it must not reach) never changes on its own: never asked again and again
         expect(await read(new Error("URL hostname 'uploader' resolves to a private/internal IP address"))).toEqual({ ok: false, reason: 'gone' });
         expect(await read(new Error('Unsupported URL scheme: ftp:'))).toEqual({ ok: false, reason: 'gone' });
