@@ -185,6 +185,8 @@ export function createScreenGateway(options: ScreenGatewayOptions): ScreenGatewa
         const upstreamUrl = upstreamSocketUrl(opened.upstream);
         if (!upstreamUrl) {
             viewer.close(1011, 'The screen is not available');
+            // Nothing below is attached to it, so nothing else would take it out of the count
+            sockets.delete(viewer);
             return;
         }
         const machine = connect(upstreamUrl);

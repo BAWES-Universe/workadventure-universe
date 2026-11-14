@@ -286,6 +286,14 @@ describe('the screen gateway', () => {
         expect(connectedTo).toEqual([]);
     });
 
+    it('closes a viewer whose machine address is no address, and does not keep counting it', async () => {
+        orbit.open.mockResolvedValueOnce(opened('watch', { upstream: 'not an address' }));
+        const socket = await viewer();
+        expect(await closed(socket)).toBe(1011);
+        await until(() => gateway.open() === 0);
+        expect(connectedTo).toEqual([]);
+    });
+
     it('leaves every other upgrade alone', () => {
         const socket = { write: vi.fn(), destroy: vi.fn() };
         expect(gateway.handleUpgrade({ url: '/other' } as never, socket as never, Buffer.alloc(0))).toBe(false);
