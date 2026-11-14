@@ -165,6 +165,12 @@ export function forgetTaskSettings(botId?: string, userId?: string): void {
  * room bot, Orbit not set up) or Orbit could not be asked just now. A brief answer is kept, so a reply does not ask Orbit twice.
  */
 export async function taskSettingsFor(admin: Pick<AdminApiService, 'brickItemSettings' | 'isConfigured'> | undefined, botId: string, userId: string, now = Date.now()): Promise<TaskSettings | null> {
+    const answer = await askSettings(admin, botId, userId, now);
+    return answer === 'busy' ? null : answer;
+}
+
+/** As taskSettingsFor, but says 'busy' when Orbit could not be asked, which is not the same as "not the owner". */
+async function askSettings(admin: Pick<AdminApiService, 'brickItemSettings' | 'isConfigured'> | undefined, botId: string, userId: string, now: number): Promise<TaskSettings | null | 'busy'> {
     if (!admin?.isConfigured?.()) return null;
     const key = keyOf(botId, userId);
     const known = kept.get(key);
@@ -189,8 +195,8 @@ export async function taskSettingsFor(admin: Pick<AdminApiService, 'brickItemSet
         return settings;
     } catch (error) {
         console.warn('[BrickTasks] Could not ask Orbit what is kept for the owner:', error instanceof Error ? error.message : error);
-        owners.delete(key);
-        return null;
+        // Only Orbit's own answer changes who the owner is: a busy Orbit in the middle of a reply must not take the tools away from them
+        return 'busy';
     }
 }
 
@@ -293,7 +299,8 @@ const JUST_SET_MS = 60_000;
 export async function runTaskTool(name: string, args: Record<string, unknown>, context: TaskToolContext): Promise<Record<string, unknown>> {
     const now = (context.now ?? Date.now)();
     // Only for the owner, in their own chat: asked of Orbit, which keeps whose it is
-    const settings = await taskSettingsFor(context.admin, context.botId, context.userId, now);
+    const settings = await askSettings(context.admin, context.botId, context.userId, now);
+    if (settings === 'busy') return { error: 'That could not be done just now. Say so in one plain sentence and offer to try again.' };
     if (!settings) return { error: 'That cannot be done in this chat. Only the owner of this Brick can ask it to keep a reminder, in their own chat with it.' };
     try {
         switch (name) {

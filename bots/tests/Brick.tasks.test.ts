@@ -161,6 +161,18 @@ describe('what the Brick is told', () => {
         expect(note).toContain('Their workdays: sun, mon, tue, wed, thu');
     });
 
+    it('keeps the owner’s tools through a reply when Orbit is busy after the answer is no longer kept, and says so plainly', async () => {
+        const { admin, context } = setUp();
+        expect(await taskSettingsFor(admin as never, BRICK, SARA, NOW)).not.toBeNull();
+        admin.brickItemSettings.mockRejectedValueOnce(new Error('timeout'));
+        // The reply took longer than the answer is kept; Orbit stumbles on the next tool call of the same reply
+        const result = await runTaskTool(MY_TASKS_TOOL, {}, { ...context, now: () => NOW + 60_000 });
+        expect(result).toHaveProperty('error');
+        expect(String(result.error)).not.toContain('Only the owner');
+        expect(tasksAreOn(BRICK, SARA)).toBe(true);
+        expect(await taskSettingsFor(admin as never, BRICK, SARA, NOW + 61_000)).not.toBeNull();
+    });
+
     it('keeps a 404 (not the owner) as a no, but not a busy or lapsed Orbit', async () => {
         const busy = { isConfigured: () => true, brickItemSettings: vi.fn(async () => ({ ok: false as const, status: 429, error: 'Slow down' })) };
         expect(await taskSettingsFor(busy as never, 'bot-busy', SARA, NOW)).toBeNull();
