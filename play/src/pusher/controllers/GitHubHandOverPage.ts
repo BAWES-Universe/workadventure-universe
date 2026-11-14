@@ -28,7 +28,7 @@ export function gitHubHandOverPage(state: string, code: string): string {
 <body>
   <p id="github-message">Finishing your GitHub sign-in…</p>
   <script>
-    // Inside a function: a top-level "var opener" would be window.opener itself, and setting it would cut the link to that window
+    // Inside a function: a top-level variable named like window.opener would be that property itself, and setting it cuts the link
     (function () {
       var state = ${scriptValue(state)};
       var code = ${scriptValue(code)};
