@@ -1313,6 +1313,19 @@ export class BotApiService {
         return await this.appsCall(`/api/me/apps/${encodeURIComponent(appId)}`);
     }
 
+    /**
+     * "Connect" on an app of the list a super admin keeps (by its key): makes the person's connection to it, or answers
+     * the one they already have. Nothing signs in yet and no Brick uses it yet. Answers its id.
+     */
+    async connectListedApp(key: string): Promise<string> {
+        const answer = (await this.appsCall("/api/me/apps", {
+            method: "POST",
+            body: JSON.stringify({ catalogKey: key }),
+        })) as { id?: unknown } | undefined;
+        if (typeof answer?.id !== "string" || !answer.id) throw new Error("The app was not connected");
+        return answer.id;
+    }
+
     /** "Let it use Tavily": one of the person's own Bricks may use one of their own apps. */
     async letBrickUseApp(appId: string, botId: string): Promise<unknown> {
         return await this.appsCall(`/api/me/apps/${encodeURIComponent(appId)}/bricks`, {

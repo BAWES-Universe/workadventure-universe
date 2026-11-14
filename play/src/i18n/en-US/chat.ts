@@ -1060,6 +1060,27 @@ const chat: BaseTranslation = {
         offerMake: "Make {name}",
         offerNotNow: "Not now",
         offerNotNowLine: "I'll keep helping here, and won't ask again",
+        // A Brick leads you to connect an App (#2001), on the question card. The App is always called an App.
+        appCard: {
+            // "Connect Notion?" when they asked for it by name; the Brick's own question ("Connect your calendar?") otherwise
+            askByName: "Connect {name}?",
+            connect: "Connect {name}",
+            connectLine: "Opens {name}'s own sign-in page",
+            letUse: "Let it use {name}",
+            letUseLine: "You connected it already",
+            notNow: "Not now",
+            // Offered because a job needed it: the Brick helps another way and does not ask again
+            notNowOffered: "I'll help another way, and won't ask again",
+            // Asked for by name: nothing happens
+            notNowAsked: "Nothing is connected",
+            // The sign-in window was closed, blocked or did not start; the card stays so they can try again
+            signInStopped: "{name} was not connected. Try again when you're ready.",
+            signInBlocked: "The sign-in window did not open. Allow pop-ups for this page and try again.",
+            couldNotLet: "{name} is connected, but this Brick could not be let use it. Choose it in Apps.",
+        },
+        // The starter that opens the Apps page (#2001)
+        connectMyApps: "Connect my apps",
+        connectMyAppsLine: "Email, calendar, GitHub and more",
         // What a bot remembers about the person, on a Brick's page and in the chat menu of anyone's bot (game #2003)
         memory: {
             title: "Memory",

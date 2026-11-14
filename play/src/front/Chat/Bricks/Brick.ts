@@ -370,6 +370,66 @@ export function readBrickOffer(
     return read.topic && read.ask && read.name ? read : undefined;
 }
 
+/** A Brick's offer to connect an App (game #2001), on its own message after an answer: "Connect your calendar?". */
+export const APP_OFFER_KEY = "universe.app_offer";
+/** What the game sends the room once the person connected an App from that card: the Brick carries on with what they asked. */
+export const APP_CONNECTED_EVENT = "universe.app_connected";
+
+/** An offer to connect an App, as the card shows it and as the taps need it. */
+export interface AppOffer {
+    /** What Orbit keeps "Not now" under ("app google calendar"). */
+    topic: string;
+    /** The App on Orbit's list: its key and the name people see. */
+    app: string;
+    name: string;
+    /** "new": nothing is connected. "connected": they connected it already, and this Brick may not use it yet. */
+    state: "new" | "connected";
+    /** Their connection to it, when they have one. */
+    connectionId: string | null;
+    /** The card's question; empty when they asked for the App by name ("Connect Notion?"). */
+    ask: string;
+    asked: boolean;
+    /** A second choice when the kind of App has others: "Another calendar". Opens the Apps page searching for it. */
+    other: { label: string; line: string; search: string } | null;
+}
+
+const APP_ASK_MAX = 200;
+const APP_NAME_MAX = 60;
+const APP_OTHER_MAX = 80;
+
+/** The App offer a bot's message carries; undefined for anyone else's message or one that lacks a part. */
+export function readAppOffer(
+    sender: string | null | undefined,
+    content: Record<string, unknown>
+): AppOffer | undefined {
+    const offer = content[APP_OFFER_KEY];
+    if (botIdFromChatId(sender) === undefined || content.msgtype !== "m.text") return undefined;
+    if (!offer || typeof offer !== "object") return undefined;
+    const { topic, app, name, state, connectionId, ask, asked, other } = offer as Record<string, unknown>;
+    const read: AppOffer = {
+        topic: text(topic, TOPIC_MAX),
+        app: text(app, 80),
+        name: text(name, APP_NAME_MAX),
+        state: state === "connected" ? "connected" : "new",
+        connectionId: typeof connectionId === "string" && connectionId ? connectionId : null,
+        ask: text(ask, APP_ASK_MAX),
+        asked: asked === true,
+        other: null,
+    };
+    if (other && typeof other === "object") {
+        const { label, line, search } = other as Record<string, unknown>;
+        const second = {
+            label: text(label, APP_OTHER_MAX),
+            line: text(line, APP_OTHER_MAX),
+            search: text(search, APP_OTHER_MAX),
+        };
+        if (second.label && second.search) read.other = second;
+    }
+    // A card that "lets it use" an App it does not name a connection for cannot do that: it signs in instead
+    if (read.state === "connected" && !read.connectionId) read.state = "new";
+    return read.topic && read.app && read.name ? read : undefined;
+}
+
 const BOT_WORDS = new Set(["bot", "bots", "brick", "bricks"]);
 
 /**
