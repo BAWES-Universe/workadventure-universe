@@ -227,7 +227,7 @@ describe('the two tools of a Brick for keys', () => {
     });
 
     it('do not set up a payment through an App whose key stopped working, and say what to do', async () => {
-        const broken = { ...context, apps: parseKeyApps({ apps: [{ ...APP, working: false }] }) };
+        const broken = { ...context, apps: parseKeyApps({ apps: [{ ...APP, working: false, payments: true }] }) };
         const result = (await runKeyTool(PAYMENT_TOOL, { artifact: 'a', app: 'tap', amount: '1', currency: 'KWD' }, broken)) as { error: string };
         expect(result.error).toMatch(/Replace key/);
         expect(http.post).not.toHaveBeenCalled();
