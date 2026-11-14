@@ -202,6 +202,21 @@ describe("carrying a call with a Brick (game #2004)", () => {
         expect(await t.connection.begin("b2", "Max")).toEqual({ ok: true });
     });
 
+    it("still tells the bot, frees the microphone and lets the person call again when leaving the space throws at once", async () => {
+        const t = setup();
+        t.deps.leaveSpace.mockImplementation(() => {
+            throw new Error("There is no game scene to leave a call in.");
+        });
+        await t.connection.begin("b1", "Nora");
+        t.fake.joined.next({});
+        t.fake.gone.next();
+        expect(t.state()).toMatchObject({ phase: "ended", endedBy: "unavailable" });
+        expect(t.deps.endCall).toHaveBeenCalledWith("b1");
+        expect(t.gates.at(-1)).toBeUndefined();
+        expect(t.mic.on).toBe(false);
+        expect(t.connection.isActive()).toBe(false);
+    });
+
     it("tells the bot server when the person hangs up while it is still starting", async () => {
         const t = setup();
         let answer!: (value: CallResult) => void;

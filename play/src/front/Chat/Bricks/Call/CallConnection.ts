@@ -53,6 +53,19 @@ export type BeginResult =
 export const CALL_CONNECT_TIMEOUT_MS = 30_000;
 
 /**
+ * Runs a step that must never stop the ones after it, even when it throws at once (the game scene can be gone while a
+ * call is being cleaned up, and then asking it for anything throws before a promise exists).
+ */
+function quietly(step: () => unknown): void {
+    try {
+        const result = step();
+        if (result instanceof Promise) result.catch(() => undefined);
+    } catch {
+        // Cleanup carries on
+    }
+}
+
+/**
  * Until the call's own space is joined the gate names a space nothing else has, so the microphone goes nowhere: tapping
  * Call must never let the person's voice reach a nearby bubble while the call is still being set up.
  */
@@ -75,19 +88,22 @@ export function createCallConnection(deps: CallDeps) {
         const finish = (by: "you" | "bot" | "quiet" | "unavailable", silently = false): void => {
             if (finished) return;
             finished = true;
+            // First of all, so that whatever fails below, the person can call again
+            if (active?.botId === botId) active = undefined;
             abort.abort();
             // The state is ended first (so the one true line is shown), then the rest follows. A call that never
             // started has no line of its own: the failure is shown as the warning, and the person can try again at once.
             deps.store.send({ type: "end", by });
             if (silently) deps.store.clear();
-            for (const stop of cleanups.splice(0)) stop();
-            deps.setGate(undefined);
-            if (turnedMicrophoneOn && deps.microphone?.isOn()) deps.microphone.turnOff();
+            for (const stop of cleanups.splice(0)) quietly(stop);
+            quietly(() => deps.setGate(undefined));
+            quietly(() => {
+                if (turnedMicrophoneOn && deps.microphone?.isOn()) deps.microphone.turnOff();
+            });
             const left = space;
             space = undefined;
-            if (left) deps.leaveSpace(left).catch(() => undefined);
-            deps.endCall(botId).catch(() => undefined);
-            if (active?.botId === botId) active = undefined;
+            if (left) quietly(() => deps.leaveSpace(left));
+            quietly(() => deps.endCall(botId));
         };
         active = { botId, stop: () => finish("you") };
         // Before anything else: no space carries the microphone until the call's own space is joined
@@ -119,7 +135,7 @@ export function createCallConnection(deps: CallDeps) {
         const started = await deps.startCall(botId);
         if (finished) {
             // Ended while it was starting: the bot server must not keep a call nobody holds
-            if (started.started) deps.endCall(botId).catch(() => undefined);
+            if (started.started) quietly(() => deps.endCall(botId));
             return { ok: false, failure: "cancelled" };
         }
         if (!started.started) {
@@ -134,7 +150,8 @@ export function createCallConnection(deps: CallDeps) {
             return { ok: false, failure: "failed" };
         }
         if (finished) {
-            deps.leaveSpace(space).catch(() => undefined);
+            const joinedAfterEnd = space;
+            quietly(() => deps.leaveSpace(joinedAfterEnd));
             return { ok: false, failure: "cancelled" };
         }
         // Nothing but the call's own space carries the microphone from here on, connecting included
