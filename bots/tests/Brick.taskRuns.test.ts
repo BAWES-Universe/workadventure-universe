@@ -325,6 +325,42 @@ describe('a watch, a briefing or a goal runs on a model', () => {
         expect(dueRunOf(base)?.deliveredReport).toBeNull();
     });
 
+    it('carries on as the newer try when a run is handed out again while its first try is at work', async () => {
+        const due = [run({ attempt: 1 })];
+        let release: () => void = () => undefined;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const checks: number[] = [];
+        let handedAgain = false;
+        const { runner, modelRun, reports } = setUp(
+            due,
+            async (_run, permit) => {
+                await gate;
+                // Asked after the second try was handed out: it is asked for the try held now
+                expect(await permit()).toBe(true);
+                return { kind: 'result', result: { kind: 'nothing_new', progress: {} } };
+            },
+            { check: async () => ({ ok: true }) }
+        );
+        vi.mocked(runner['api'].checkRun).mockImplementation(async (_runId: string, attempt: number) => {
+            checks.push(attempt);
+            // Orbit: once it was handed out again, only the newer try may go on
+            return handedAgain && attempt === 1 ? { ok: false, reason: 'stale' } : { ok: true };
+        });
+        await runner.tick();
+        await vi.waitFor(() => expect(modelRun).toHaveBeenCalledTimes(1));
+        // The lease ran out: the same run, a newer try
+        due.splice(0, 1, run({ attempt: 2 }));
+        handedAgain = true;
+        await runner.tick();
+        release();
+        await runner.idle();
+        expect(modelRun).toHaveBeenCalledTimes(1);
+        expect(checks.at(-1)).toBe(2);
+        expect(reports).toEqual([{ runId: 'run-1', report: { attempt: 2, state: 'done', outcome: 'quiet', result: 'Nothing new' } }]);
+    });
+
     it('reports a person with no chat as failed, and leaves one it cannot tell about unreported', async () => {
         const noChat = setUp([run({ matrixUserId: null })], result({ kind: 'result', result: { kind: 'tell', message: 'x', needsYou: false, progress: {} } }));
         await noChat.runner.tick();

@@ -234,7 +234,8 @@ export class BrickRunner {
     private timer: NodeJS.Timeout | undefined;
     private stopped = false;
     /** Runs on a model that this server has in hand (Orbit may hand one out again while it is still being worked on: it is then left to the first). */
-    private readonly inFlight = new Set<string>();
+    /** The runs at work, by run id: a run handed out again while its first try is at work is the same run, now on a newer try. */
+    private readonly inFlight = new Map<string, DueRun>();
     /** What a run said and then could not report (Orbit did not take the report): reported whole, not as a plain "Said", when it is handed out again. */
     private readonly unreported = new Map<string, RunReport>();
     private readonly modelRuns = new Set<Promise<void>>();
@@ -372,8 +373,14 @@ export class BrickRunner {
 
     private startModelRun(run: DueRun): void {
         // Handed out again while the first try is still at work: that one goes on, and this one is left alone
-        if (this.inFlight.has(run.runId)) return;
-        this.inFlight.add(run.runId);
+        const running = this.inFlight.get(run.runId);
+        if (running) {
+            // Its lease ran out and Orbit handed it out again as a newer try, which makes the older one stale at the next check: the one at work
+            // goes on as the newer try (its checks and its report ask for the try it holds now), so it is neither dropped nor stopped
+            if (run.attempt > running.attempt) running.attempt = run.attempt;
+            return;
+        }
+        this.inFlight.set(run.runId, run);
         const work = (async () => {
             await this.waitForSlot();
             try {
