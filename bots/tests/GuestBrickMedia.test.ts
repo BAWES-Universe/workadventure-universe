@@ -180,7 +180,7 @@ const SETUP: GuestBrickSetup = {
     },
 };
 
-function makeService(over: Partial<{ allowance: GuestBrickAllowance; throws: boolean; note: unknown }> = {}) {
+function makeService(over: Partial<{ allowance: GuestBrickAllowance; throws: boolean; note: unknown; uploadsAtOnce: number }> = {}) {
     const generate = vi.fn(async (..._args: unknown[]) => {
         if (over.throws) throw new Error('provider down');
         return { content: 'It says the soup of the day.', tokensUsed: 120, latency: 5, usage: { promptTokens: 100, completionTokens: 20 } };
@@ -207,7 +207,7 @@ function makeService(over: Partial<{ allowance: GuestBrickAllowance; throws: boo
         readFiles: vi.fn(async (text: string, files: { url: string }[]) => ({ text: `${text}\n[User also sent an image: ${files[0].url}]`, images: files.map((file) => file.url) })),
     };
     const providers = { getOrCreateProvider: vi.fn(() => ({ isReady: () => true, generate })) };
-    const service = new GuestBrickService(admin as never, providers as never, () => new Date('2026-11-13T08:00:00Z'), media as unknown as GuestBrickMedia);
+    const service = new GuestBrickService(admin as never, providers as never, () => new Date('2026-11-13T08:00:00Z'), media as unknown as GuestBrickMedia, over.uploadsAtOnce !== undefined ? { uploadsAtOnce: over.uploadsAtOnce } : {});
     return { admin, generate, notes, media, service };
 }
 const ask = (over: Record<string, unknown> = {}) => ({ guestId: GUEST, turnId: 'turn-1', roomUrl: ROOM_URL, message: '', history: [], saidNeedsAccount: false, ...over });
@@ -234,6 +234,28 @@ describe('The Brick for guests reads what a guest sends', () => {
         expect(await service.reply(ask({ note: 'flaky' }))).toEqual({ kind: 'unheard', why: 'busy' });
         expect(admin.claimGuestBrickReply).not.toHaveBeenCalled();
         expect(generate).not.toHaveBeenCalled();
+    });
+
+    it('reads only so many guests\' files and notes at once, across guests, and says busy for one more instead of reading it', async () => {
+        const { media, generate, admin, service } = makeService({ uploadsAtOnce: 2 });
+        const finish: Array<() => void> = [];
+        const read = media.readUpload.getMockImplementation()!;
+        media.readUpload.mockImplementation((guestId: string, value: unknown) => new Promise((resolve) => finish.push(() => resolve(read(guestId, value)))) as never);
+        const first = service.reply(ask({ guestId: 'guest-a', files: ['r1'] }));
+        const second = service.reply(ask({ guestId: 'guest-b', note: 'n1' }));
+        expect(await service.reply(ask({ guestId: 'guest-c', files: ['r2'] }))).toEqual({ kind: 'busy' });
+        expect(await service.reply(ask({ guestId: 'guest-d', note: 'n2' }))).toEqual({ kind: 'unheard', why: 'busy' });
+        expect(media.readUpload).toHaveBeenCalledTimes(2);
+        // Words alone are never held back by others' files
+        expect(await service.reply(ask({ guestId: 'guest-e', message: 'Hi' }))).toMatchObject({ kind: 'reply' });
+        finish.forEach((go) => go());
+        await first;
+        await second;
+        // Room again once they are done
+        media.readUpload.mockImplementation(read);
+        expect(await service.reply(ask({ guestId: 'guest-c', files: ['r2'] }))).toMatchObject({ kind: 'reply' });
+        expect(generate).toHaveBeenCalled();
+        expect(admin.claimGuestBrickReply).not.toHaveBeenCalledWith(expect.objectContaining({ guestId: 'guest-d' }));
     });
 
     it('hears a voice note once, answers its words, and keeps the answer until the device has it', async () => {

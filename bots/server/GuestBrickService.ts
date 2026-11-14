@@ -14,6 +14,7 @@
  * The hello is the game's own fixed text and never comes through here.
  */
 import { createHash, createHmac, hkdfSync, timingSafeEqual } from 'node:crypto';
+import { availableParallelism } from 'node:os';
 import { AIProviderRegistry } from '../ai/AIProviderRegistry';
 import { readBotLimits, type AIProviderConfig, type BotLimits } from '../ai/types';
 import { priceMetadata } from '../ai/pricing/ledger';
@@ -250,13 +251,20 @@ const AI_FAILED = 'The AI did not answer';
 
 export class GuestBrickService {
     private readonly asking = new Set<string>();
+    /** Guests' turns with files or a note now, across every guest: each reads its uploads into memory before anything is counted. */
+    private withUploads = 0;
+    private readonly uploadsAtOnce: number;
 
     constructor(
         private readonly admin: Pick<AdminApiService, 'isConfigured' | 'getGuestBrick' | 'claimGuestBrickReply' | 'finishGuestBrickReply'>,
         private readonly providers: Pick<AIProviderRegistry, 'getOrCreateProvider'> = new AIProviderRegistry(),
         private readonly clock: () => Date = () => new Date(),
-        private readonly media: GuestBrickMedia | null = null
-    ) {}
+        private readonly media: GuestBrickMedia | null = null,
+        /** How many guests' turns with files or a note this server takes at once; one more is "busy", never queued. Two per core by default. */
+        options: { uploadsAtOnce?: number } = {}
+    ) {
+        this.uploadsAtOnce = Math.max(1, options.uploadsAtOnce ?? Math.max(4, 2 * availableParallelism()));
+    }
 
     /** What this server can take from a guest now: files (with receipts), and voice notes (heard through Orbit). */
     async canTake(): Promise<{ files: boolean; notes: boolean }> {
@@ -303,11 +311,17 @@ export class GuestBrickService {
     async reply(ask: GuestBrickAsk): Promise<GuestBrickAnswer> {
         // One answer at a time per guest: two taps never spend two replies on one question
         if (this.asking.has(ask.guestId)) return { kind: 'busy' };
+        // Files and notes are read before anything is counted, so how many are read at once is bounded across all guests: one
+        // more is told to try again in a moment, the way a busy uploader is
+        const uploads = ask.note !== undefined || (Array.isArray(ask.files) && ask.files.length > 0);
+        if (uploads && this.withUploads >= this.uploadsAtOnce) return ask.note !== undefined ? { kind: 'unheard', why: 'busy' } : { kind: 'busy' };
         this.asking.add(ask.guestId);
+        if (uploads) this.withUploads++;
         try {
             return await this.turn(ask);
         } finally {
             this.asking.delete(ask.guestId);
+            if (uploads) this.withUploads--;
         }
     }
 
