@@ -140,6 +140,15 @@ describe("the call bar, the call button and the walk-up card (game #2004, mock P
         });
         await tick();
         expect(byId("woka-stub")?.getAttribute("data-user-id")).toBe("sara-uuid");
+        expect(byId("follow-woka-initial")).toBeNull();
+        view.$destroy();
+        // The scene cannot find her Woka (a reconnect, a scene change): her initial fills the frame, not an empty ring
+        view = new WalkUpCard({
+            target,
+            props: { name: "Sara", wokaId: "missing", botName: "Brick", onHoldAndTalk: vi.fn(), onNotNow: vi.fn() },
+        });
+        await tick();
+        expect(byId("follow-woka-initial")?.textContent?.trim()).toBe("S");
         view.$destroy();
         view = new WalkUpCard({
             target,

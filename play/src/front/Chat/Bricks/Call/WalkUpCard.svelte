@@ -16,7 +16,7 @@
      * Not in the mock as confirmed: Claude's pick that Khalid and GPT have not confirmed (mock README).
      */
     export let name: string;
-    /** Their account id: the card shows their Woka the way the follow request card does. A coloured initial only when it is not known. */
+    /** Their account id: the card shows their Woka the way the follow request card does. A coloured initial until the Woka is found, or when the id is not known. */
     export let wokaId: string | undefined = undefined;
     export let botName: string;
     export let onHoldAndTalk: () => void;
@@ -37,7 +37,7 @@
         >
             <div class="flex items-center gap-3 px-4 pb-3 pt-3.5">
                 {#if wokaId}
-                    <FollowWoka userId={wokaId} />
+                    <FollowWoka userId={wokaId} fallbackName={name} />
                 {:else}
                     <Avatar pictureStore={picture} fallbackName={name} size="lg" />
                 {/if}
