@@ -4,6 +4,7 @@ import type { CallFailure, CallResult } from "../../../external-modules/bots/ser
 import type { CallMicGate } from "../../../Space/CallMicGate";
 import { micOwner, isLive } from "./CallSession";
 import type { botCallStore } from "./CallStore";
+import { watchBotSpeaking, type CallPeersLike } from "./CallSpeaking";
 
 /**
  * How one call is carried (game #2004): the bot server makes the bot join the call's private space, this browser joins
@@ -22,6 +23,8 @@ export interface CallSpaceLike {
     readonly onLeaveSpace: Observable<void>;
     /** This person's own id in the space: the space lists them too, and they are not the bot. */
     readonly mySpaceUserId?: string;
+    /** The peers of the space, where the bot's sound comes in (left out in a test that does not need them). */
+    readonly spacePeerManager?: CallPeersLike;
 }
 
 export interface CallDeps {
@@ -176,6 +179,17 @@ export function createCallConnection(deps: CallDeps) {
         deps.setGate({ spaceName: space.getName(), owner: "bot" });
 
         const live = space;
+        // The bot speaking is something happening in the call, so a quiet stretch does not begin while it talks
+        if (live.spacePeerManager) {
+            cleanups.push(
+                watchBotSpeaking(
+                    live.spacePeerManager,
+                    [...get(live.usersStore).keys()],
+                    (event) => deps.store.send(event),
+                    () => deps.now()
+                )
+            );
+        }
         const botIn = (): void => {
             if (connected || finished) return;
             connected = true;

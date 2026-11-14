@@ -5,6 +5,11 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 // eslint-disable-next-line svelte/no-svelte-internal
 vi.mock("svelte", async () => await import("svelte/internal"));
 
+// The real Woka picture needs a running game scene; a stub shows who it was asked for
+vi.mock("../../../../Components/Woka/WokaFromUserId.svelte", async () => ({
+    default: (await import("./WokaStub.svelte")).default,
+}));
+
 import { loadLocale } from "../../../../../i18n/i18n-util.sync";
 import { setLocale } from "../../../../../i18n/i18n-svelte";
 import { callReducer, startCall, type CallEvent, type CallState } from "../CallSession";
@@ -112,19 +117,45 @@ describe("the call bar, the call button and the walk-up card (game #2004, mock P
         expect(text().toLowerCase()).not.toMatch(/nearest|closest|distance/);
     });
 
-    it("the walk-up card says who is here, with Not now and Hold call and talk, each on its own action (picture 10)", async () => {
+    it("the walk-up card says who walked up and names who each button is for, each on its own action (picture 10)", async () => {
         const onHoldAndTalk = vi.fn();
         const onNotNow = vi.fn();
         view = new WalkUpCard({ target, props: { name: "Sara", botName: "Brick", onHoldAndTalk, onNotNow } });
         await tick();
-        expect(text()).toContain("Sara is here");
-        expect(text()).toContain("Brick waits on hold until you tap Resume call.");
+        expect(text()).toContain("Sara walked up");
+        expect(text()).toContain("Your call with Brick goes on hold until you tap Resume call.");
         const buttons = [...target.querySelectorAll<HTMLButtonElement>("button")];
-        expect(buttons.map((b) => b.textContent?.trim())).toEqual(["Not now", "Hold call and talk"]);
+        expect(buttons.map((b) => b.textContent?.trim())).toEqual(["Stay with Brick", "Talk to Sara"]);
         buttons[0].click();
         expect(onNotNow).toHaveBeenCalledOnce();
         expect(onHoldAndTalk).not.toHaveBeenCalled();
         buttons[1].click();
         expect(onHoldAndTalk).toHaveBeenCalledOnce();
+    });
+
+    it("the walk-up card shows the person's own Woka, like the follow request card, and a plain initial only when there is none", async () => {
+        view = new WalkUpCard({
+            target,
+            props: { name: "Sara", wokaId: "sara-uuid", botName: "Brick", onHoldAndTalk: vi.fn(), onNotNow: vi.fn() },
+        });
+        await tick();
+        expect(byId("woka-stub")?.getAttribute("data-user-id")).toBe("sara-uuid");
+        expect(byId("follow-woka-initial")).toBeNull();
+        view.$destroy();
+        // The scene cannot find her Woka (a reconnect, a scene change): her initial fills the frame, not an empty ring
+        view = new WalkUpCard({
+            target,
+            props: { name: "Sara", wokaId: "missing", botName: "Brick", onHoldAndTalk: vi.fn(), onNotNow: vi.fn() },
+        });
+        await tick();
+        expect(byId("follow-woka-initial")?.textContent?.trim()).toBe("S");
+        view.$destroy();
+        view = new WalkUpCard({
+            target,
+            props: { name: "Sara", botName: "Brick", onHoldAndTalk: vi.fn(), onNotNow: vi.fn() },
+        });
+        await tick();
+        expect(byId("woka-stub")).toBeNull();
+        expect(text()).toContain("S");
     });
 });
