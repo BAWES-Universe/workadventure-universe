@@ -6,7 +6,7 @@ describe("the GitHub sign-in return page", () => {
     it("hands the code to the window that opened it, on this site only, and takes it out of the address", () => {
         const page = gitHubHandOverPage("STATE", "CODE");
         expect(page).toContain(
-            'window.opener.postMessage({ type: "oauth-github", state: state, code: code }, window.location.origin)'
+            'opener.postMessage({ type: "oauth-github", state: state, code: code }, window.location.origin)'
         );
         expect(page).toContain('var state = "STATE";');
         expect(page).toContain('var code = "CODE";');
@@ -18,5 +18,10 @@ describe("the GitHub sign-in return page", () => {
         const page = gitHubHandOverPage("</script><script>alert(1)</script>", 'a"; alert(2); "');
         expect(page).not.toContain("</script><script>alert(1)");
         expect(page).toContain('var code = "a\\"; alert(2); \\"";');
+    });
+
+    it("tells the window that opened it to stop waiting when it came back without a code", () => {
+        const page = gitHubHandOverPage("", "");
+        expect(page).toContain('opener.postMessage({ type: "oauth-failure" }, window.location.origin)');
     });
 });

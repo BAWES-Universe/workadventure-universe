@@ -68,4 +68,26 @@ describe("finishing a GitHub sign-in from the window that started it", () => {
         expect(await result).toBe("stopped");
         expect(popup.close).toHaveBeenCalled();
     });
+
+    it("never calls a sign-in stopped while it is being finished, and is done when the window closes after it signed in", async () => {
+        let answer: (value: { installUrl: string | null }) => void = () => undefined;
+        game.finishGitHubSignIn.mockReturnValue(
+            new Promise((resolve) => {
+                answer = resolve;
+            })
+        );
+        let settled: string | null = null;
+        const result = signInInPopup("c1").then((value) => (settled = value));
+        await vi.waitFor(() => expect(popup.location.href).toContain("github.com"));
+        handOver({ type: "oauth-github", state: "S", code: "C" });
+        popup.closed = true;
+        window.dispatchEvent(new Event("focus"));
+        await Promise.resolve();
+        expect(settled).toBeNull();
+        answer({ installUrl: "https://github.com/apps/bawes-universe/installations/new" });
+        await vi.waitFor(() => expect(popup.location.href).toContain("installations/new"));
+        // They close the install page without picking anywhere: still signed in
+        window.dispatchEvent(new Event("focus"));
+        expect(await result).toBe("done");
+    });
 });

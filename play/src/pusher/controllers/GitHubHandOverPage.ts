@@ -31,14 +31,16 @@ export function gitHubHandOverPage(state: string, code: string): string {
     var state = ${scriptValue(state)};
     var code = ${scriptValue(code)};
     try { history.replaceState(null, "", location.pathname); } catch (e) { /* nothing to tidy */ }
-    var handed = false;
-    try {
-      if (window.opener && state && code) {
-        window.opener.postMessage({ type: "oauth-github", state: state, code: code }, window.location.origin);
-        handed = true;
-      }
-    } catch (e) { /* the window that opened this is gone */ }
-    if (!handed) {
+    var opener = null;
+    try { opener = window.opener; } catch (e) { /* the window that opened this is gone */ }
+    if (opener && state && code) {
+      opener.postMessage({ type: "oauth-github", state: state, code: code }, window.location.origin);
+    } else if (opener) {
+      // Came back without what it needs: the window that opened it stops waiting
+      opener.postMessage({ type: "oauth-failure" }, window.location.origin);
+      document.getElementById("github-message").textContent = "The GitHub sign-in did not finish. Go back to Universe and try again.";
+      setTimeout(function () { window.close(); }, 5000);
+    } else {
       document.getElementById("github-message").textContent = "This sign-in was not started here. Go back to Universe and press Connect GitHub again.";
     }
   </script>

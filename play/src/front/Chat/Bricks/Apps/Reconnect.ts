@@ -44,7 +44,9 @@ export async function signInInPopup(appId: string | Promise<string>): Promise<Re
             window.removeEventListener("focus", onFocus);
             resolve(result);
         };
+        // GitHub (game #2041): the sign-in is being finished, or already is and the window went on to pick where it works
         let finishing = false;
+        let signedIn = false;
         const onMessage = (event: MessageEvent) => {
             if (event.origin !== window.location.origin) return;
             const data = event.data as { type?: unknown; state?: unknown; code?: unknown } | null;
@@ -55,14 +57,17 @@ export async function signInInPopup(appId: string | Promise<string>): Promise<Re
                 finishing = true;
                 void finishGitHub(popup, data.state, data.code).then((result) => {
                     finishing = false;
-                    if (result !== "install") finish(result);
+                    if (result === "install") signedIn = true;
+                    else finish(result);
                 });
             }
         };
-        // The window closed by hand before it finished: noticed when this window gets focus back
+        // The window closed by hand before it finished: noticed when this window gets focus back. Not while a GitHub sign-in is
+        // being finished (its own answer decides), and "done" once it is signed in, even if they skip picking where it works.
         const onFocus = () => {
+            if (finishing) return;
             try {
-                if (popup.closed) finish("stopped");
+                if (popup.closed) finish(signedIn ? "done" : "stopped");
             } catch {
                 // the window is on another site while it signs in
             }
