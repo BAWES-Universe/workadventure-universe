@@ -25,6 +25,7 @@
     import { appsRowNames } from "./Apps/Apps";
     import { loadMyApps, myAppsStore } from "./Apps/AppsStore";
     import { appsPageRequest, takeAppsPageRequest } from "./Apps/OpenApps";
+    import { brickPageRequest, takeBrickPageRequest } from "./Templates/OpenBrick";
     import UsagePage from "./UsagePage.svelte";
     import { fullAgainWhen } from "./Usage";
     import { loadMyUsage, myUsageStore } from "./UsageStore";
@@ -57,6 +58,14 @@
     $: if ($appsPageRequest) {
         appsOpen = true;
         takeAppsPageRequest();
+    }
+
+    // A Brick just made from a template opens on its own page: that is where "Setup required" and "Made from" are
+    $: if ($brickPageRequest) {
+        appsOpen = false;
+        usageOpen = false;
+        pageOfId = $brickPageRequest;
+        takeBrickPageRequest();
     }
 
     $: list = $LL.mapEditor.edit.bots.page.list;

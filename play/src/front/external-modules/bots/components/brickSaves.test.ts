@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { BotData } from "../types";
-import { brickChangeBetween, brickPutBack, brickSavedAfter, brickSavedOf } from "./brickSaves";
+import { brickAfterTemplate, brickChangeBetween, brickPutBack, brickSavedAfter, brickSavedOf } from "./brickSaves";
 
 const bot = (over: Partial<BotData> = {}): BotData => ({
     id: "b1",
@@ -104,5 +104,40 @@ describe("what a Brick's page saves (Slice 13)", () => {
             bot({ behaviorConfig: { ...bot().behaviorConfig, loop: false, pauseAtWaypoints: 5 } })
         );
         expect(brickChangeBetween(saved, now)).toEqual({ behaviorConfig: { loop: false, pauseAtWaypoints: 5 } });
+    });
+});
+
+describe("a Brick's page after template parts were taken (#2008)", () => {
+    const fresh = bot({
+        description: "Songs and jingles",
+        chatInstructions: "You are a music companion.",
+        characterTexture: "brick-violet",
+        characterTextureIds: ["brick-violet"],
+    });
+
+    it("shows what was taken as saved, so the next edit starts from it and not from the old text", () => {
+        const here = bot();
+        const after = brickAfterTemplate(here, brickSavedOf(here), fresh, ["instructions", "look"]);
+        expect(after.bot.chatInstructions).toBe("You are a music companion.");
+        expect(after.bot.characterTexture).toBe("brick-violet");
+        // The line was not taken
+        expect(after.bot.description).toBe("Your own Brick");
+        expect(brickChangeBetween(after.saved, brickSavedOf(after.bot))).toEqual({});
+    });
+
+    it("keeps what the person is typing now, and still sends it", () => {
+        const here = bot({ chatInstructions: "Be brief, and funny." });
+        const after = brickAfterTemplate(here, brickSavedOf(bot()), fresh, ["instructions"]);
+        expect(after.bot.chatInstructions).toBe("Be brief, and funny.");
+        expect(brickChangeBetween(after.saved, brickSavedOf(after.bot))).toEqual({
+            chatInstructions: "Be brief, and funny.",
+        });
+    });
+
+    it("changes nothing when nothing that the page shows was taken", () => {
+        const here = bot();
+        const after = brickAfterTemplate(here, brickSavedOf(here), fresh, ["firstThing", "routines"]);
+        expect(after.bot).toEqual(here);
+        expect(after.saved).toEqual(brickSavedOf(here));
     });
 });
