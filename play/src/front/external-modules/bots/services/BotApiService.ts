@@ -168,6 +168,7 @@ export class BotApiService {
         if (this.accessToken !== nextAccessToken) {
             this.clearSessionCache();
             this.sessionTokenPromise = null;
+            this.resetTimeZoneKept();
         }
         this.accessToken = nextAccessToken;
         if (!userAccessToken) this.gameToken = null;
@@ -183,6 +184,7 @@ export class BotApiService {
         if (this.adminUrl !== previousAdminUrl) {
             this.clearSessionCache();
             this.sessionTokenPromise = null;
+            this.resetTimeZoneKept();
         }
 
         try {
@@ -520,6 +522,63 @@ export class BotApiService {
         }
 
         return response;
+    }
+
+    private timeZoneKept = false;
+    private timeZoneTries = 0;
+    private timeZoneSending = false;
+
+    /**
+     * Counts the times `initialize()` moved to another Orbit or account: an answer that belongs to an older count says
+     * nothing about the current one. A token renewed in the middle of a send does not change it.
+     */
+    private timeZoneGeneration = 0;
+
+    private resetTimeZoneKept(): void {
+        this.timeZoneGeneration++;
+        this.timeZoneKept = false;
+        this.timeZoneTries = 0;
+        this.timeZoneSending = false;
+    }
+
+    /**
+     * Tells Orbit the time zone this player's own device is in (preference `timeZone`), so a Brick reads "tomorrow at
+     * 9" on their clock without ever asking where they are (game #2002). Once per page load for a signed-in player,
+     * tried again on the next asks while it fails (a session still being set up), three times at most, and never
+     * loudly: when it cannot be sent the Brick simply asks once.
+     */
+    async keepTimeZone(): Promise<void> {
+        if (
+            this.timeZoneKept ||
+            this.timeZoneSending ||
+            this.timeZoneTries >= 3 ||
+            !this.adminUrl ||
+            !this.accessToken
+        ) {
+            return;
+        }
+        let zone: string | undefined;
+        try {
+            zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        } catch {
+            return;
+        }
+        if (typeof zone !== "string" || zone.length === 0 || zone.length > 64) return;
+        const generation = this.timeZoneGeneration;
+        this.timeZoneSending = true;
+        this.timeZoneTries++;
+        try {
+            await this.fetch("/api/me/preferences", {
+                method: "PUT",
+                body: JSON.stringify({ key: "timeZone", value: zone }),
+            });
+            // An answer from an Orbit or an account the player has since left says nothing about the new one
+            if (this.timeZoneGeneration === generation) this.timeZoneKept = true;
+        } catch {
+            // Not kept this time
+        } finally {
+            if (this.timeZoneGeneration === generation) this.timeZoneSending = false;
+        }
     }
 
     /**

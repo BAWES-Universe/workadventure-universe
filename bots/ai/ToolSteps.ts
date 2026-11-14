@@ -7,6 +7,7 @@ import { CHANGE_ARTIFACT_TOOL, MAKE_ARTIFACT_TOOL } from './ArtifactTools';
 import { MAKE_BRICK_TOOL } from './BrickTools';
 import { FORGET_MEMORY_TOOL } from './MemoryTools';
 import { COMPUTER_TOOL } from './ComputerTools';
+import { CHANGE_TASK_TOOL, SET_REMINDER_TOOL } from './BrickTasks';
 
 /** What a step is about, for the working emoji beside the bot's Woka (#1667): reading ("📖"), searching ("🔎") or writing ("✍️"). */
 export type StepKind = 'read' | 'search' | 'write';
@@ -98,6 +99,13 @@ const OWN_STEPS: Record<string, (args: Record<string, unknown>) => Omit<ToolStep
     [FORGET_MEMORY_TOOL]: (args) => ({ doing: 'Forgetting', done: 'Forgot', detail: shown(args.about), group: 'forget_memory', kind: 'write' }),
     // A job on the Brick's own computer (game #2000)
     [COMPUTER_TOOL]: (args) => ({ doing: 'Working on its computer', done: 'Worked on its computer', detail: shown(args.job), group: 'computer', kind: 'write' }),
+    // A reminder the person asked for (game #2002): "Set a reminder", with what it says under it. Reading what is kept is never a step.
+    [SET_REMINDER_TOOL]: (args) => ({ doing: 'Setting a reminder', done: 'Set a reminder', detail: shown(args.text), group: 'set_reminder', kind: 'write' }),
+    [CHANGE_TASK_TOOL]: (args) => {
+        const [doing, done] =
+            args.action === 'snooze' ? ['Snoozing a reminder', 'Snoozed a reminder'] : args.action === 'cancel' ? ['Stopping a reminder', 'Stopped a reminder'] : args.action === 'pause' ? ['Pausing a reminder', 'Paused a reminder'] : args.action === 'resume' ? ['Resuming a reminder', 'Resumed a reminder'] : ['Changing a reminder', 'Changed a reminder'];
+        return { doing, done, group: `change_task:${String(args.action ?? '')}`, kind: 'write' };
+    },
 };
 
 /** A Brick's line under its step: "Keeps your mum's recipes" reads "keeps your mum's recipes" there. */
