@@ -541,9 +541,11 @@ export class AIService {
             }
             // A Brick asked about for someone, and Orbit has nobody to serve (it is not visiting, or not anywhere that takes visits):
             // it never falls back to a provider found by id, which could be its owner's. It cannot answer them, and says so.
-            // Its owner, named by the same id this server knows them by, is not "someone": Orbit not knowing the Brick (an older
-            // Orbit without the route) is then what it always was, and the provider is found by id as before.
-            if (!answer && forOthers && forOthers.asker !== this.ownerRefOf(botId)) return { resting: true, line: KEY_NOT_LENT_LINE };
+            // Its owner is not "someone": Orbit not knowing the Brick (an older Orbit without the route) is then what it always was,
+            // and the provider is found by id as before. The owner is told by the id this server knows them by (a map's) or, off a
+            // map, by Orbit's own last answer for this person, which did not say "for others" (the ids differ off a map).
+            const orbitServedThemAsOwner = !!cached && Date.now() < cached.staleUntil && !cached.resolved.resting && cached.resolved.forOthers !== true;
+            if (!answer && forOthers && forOthers.asker !== this.ownerRefOf(botId) && !orbitServedThemAsOwner) return { resting: true, line: KEY_NOT_LENT_LINE };
             if (answer) {
                 const resolved = this.resolvedFromAnswer(answer);
                 this.botCredentialCache.set(cacheKey, {

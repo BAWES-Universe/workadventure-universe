@@ -232,4 +232,21 @@ describe("a Brick's reply is asked about by who it is for, wherever this server 
         expect(await other.quickGenerate("universe-ai", "sys", "prompt", "brick-1", undefined, OTHER)).toBe("");
         expect(admin.getAIProviderCredentials).not.toHaveBeenCalled();
     });
+
+    it("off a map, where this server knows its owner by another id than the talker's, the owner Orbit served a moment ago is still answered when Orbit then knows nothing (Sentry on #2023)", async () => {
+        let orbitKnows = true;
+        const { admin, memory } = build(OWNER, () => (orbitKnows ? served() : null));
+        mockGetOrCreateProvider.mockReturnValue({ generate: vi.fn(async () => ({ content: "ok" })) });
+        const service = new AIService(memory, admin, "http://admin.local");
+        service.noteBrick("brick-1", { ...ownersBrick, ownerId: "orbit-owner-id" });
+        expect(await service.quickGenerate("universe-ai", "sys", "prompt", "brick-1", undefined, OWNER)).toBe("ok");
+        orbitKnows = false;
+        vi.useFakeTimers();
+        vi.advanceTimersByTime(60_000);
+        expect(await service.quickGenerate("universe-ai", "sys", "prompt", "brick-1", undefined, OWNER)).toBe("ok");
+        expect(admin.getAIProviderCredentials).toHaveBeenCalled();
+        vi.useRealTimers();
+        // Someone Orbit never served as the owner is still told it cannot answer
+        expect(await service.quickGenerate("universe-ai", "sys", "prompt", "brick-1", undefined, OTHER)).toBe("");
+    });
 });
