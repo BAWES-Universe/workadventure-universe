@@ -23,3 +23,11 @@ export class BotUnavailableError extends Error {
         this.name = 'BotUnavailableError';
     }
 }
+
+/** The bot has no voice, so there is nothing to call: a call is a voice call. */
+export class BotCannotCallError extends Error {
+    constructor(message = 'This bot cannot take calls') {
+        super(message);
+        this.name = 'BotCannotCallError';
+    }
+}

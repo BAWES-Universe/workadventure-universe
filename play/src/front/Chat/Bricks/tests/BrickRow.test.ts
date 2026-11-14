@@ -7,6 +7,24 @@ const game = vi.hoisted(() => ({
     getDmStatus: vi.fn<(ids: string[]) => Promise<Record<string, string> | null>>(),
     playerName: "Khalid" as string | null,
 }));
+const guest = vi.hoisted(() => {
+    // The last thing said in the guest's chat, a tiny store made before the modules load
+    let value: unknown;
+    const subscribers = new Set<(value: unknown) => void>();
+    return {
+        last: {
+            subscribe(run: (value: unknown) => void) {
+                subscribers.add(run);
+                run(value);
+                return () => subscribers.delete(run);
+            },
+            set(next: unknown) {
+                value = next;
+                subscribers.forEach((run) => run(value));
+            },
+        },
+    };
+});
 const looks = vi.hoisted(() => {
     // A tiny store, made before the modules load: the WOKAs the game offers a bot
     let value: unknown = null;
@@ -52,6 +70,10 @@ vi.mock("../../../Phaser/Game/GameManager", () => ({ gameManager: { getPlayerNam
 vi.mock("../../Stores/ChatStore", async () => {
     const store = await import("svelte/store");
     return { chatSearchBarValue: store.writable("") };
+});
+vi.mock("../GuestBrickStore", async () => {
+    const store = await import("svelte/store");
+    return { guestBrickRoom: () => ({ last: guest.last }), guestBrickOnline: store.readable("online") };
 });
 vi.mock("../BrickChat", async () => {
     const store = await import("svelte/store");
@@ -162,5 +184,35 @@ describe("a person's own Brick in Chats, before its chat was ever opened (#1995)
         await show(brick({ name: "Recipe Brick" }));
         const marked = [...target.querySelectorAll(".text-light-blue")].map((part) => part.textContent);
         expect(marked).toEqual(["Rec"]);
+    });
+
+    describe("the Brick for guests (#1997)", () => {
+        const guestBrick = () => brick({ id: "guest-brick", isDefault: false, name: "Brick" });
+
+        it("says its own fixed hello under its name until something is said, and is always online", async () => {
+            guest.last.set(undefined);
+            await show(guestBrick());
+            expect(byId("roomRowPreview")?.textContent).toBe(
+                "Hi, I'm Brick, a helper you can talk to. I can show you around and answer anything about this place."
+            );
+            // Its state is Universe's own, so no bot server is asked about it
+            expect(game.getDmStatus).not.toHaveBeenCalled();
+        });
+
+        it("shows the last thing said in the chat the device keeps, as it changes", async () => {
+            guest.last.set({ from: "brick", text: "Second row, next to Zaatar & Co.", at: Date.now() });
+            await show(guestBrick());
+            expect(byId("roomRowPreview")?.textContent).toBe("Second row, next to Zaatar & Co.");
+            guest.last.set({ from: "guest", text: "Nice, thanks", at: Date.now() });
+            await tick();
+            expect(byId("roomRowPreview")?.textContent).toBe("Nice, thanks");
+        });
+
+        it("opens the chat on a tap, as every Brick's row does", async () => {
+            guest.last.set(undefined);
+            await show(guestBrick());
+            byId("brickRow")?.click();
+            expect(game.openBrickChat).toHaveBeenCalledWith("guest-brick");
+        });
     });
 });

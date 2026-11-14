@@ -1058,6 +1058,37 @@ const chat: BaseTranslation = {
         offerMake: "Make {name}",
         offerNotNow: "Not now",
         offerNotNowLine: "I'll keep helping here, and won't ask again",
+        // The Brick for someone who has not signed in (#1997): a taste of it, for this visit
+        guest: {
+            name: "Brick",
+            hello: "Hi, I'm Brick, a helper you can talk to. I can show you around and answer anything about this place.",
+            // What a tap on each starter sends, in the guest's words
+            thisPlaceLine: "A quick look around",
+            thisPlaceAsk: "What is this place?",
+            whatCanABrickDoLine: "And what changes when I'm yours",
+            whatCanABrickDoAsk: "What can a Brick do?",
+            // The card after an answer that says something needs an account
+            keepTitle: "Keep Brick?",
+            keepYes: "Make Brick mine",
+            keepYesLine: "Sign in. It's free, and this chat comes along",
+            keepNo: "Not now",
+            keepNoLine: "I'll still help while you're here",
+            // The game's own line when an answer could not be made: nothing was counted, so they can send it again
+            couldNotAnswer: "I couldn't answer that one. Send it again in a moment.",
+            // Said once, after signing in, with the chat that came along
+            welcome: "Welcome, {name}. I'm yours now, and this chat came with me. What shall we do next?",
+            welcomeNoName: "Welcome. I'm yours now, and this chat came with me. What shall we do next?",
+            // The sign-in card
+            signInTitle: "Make Brick yours",
+            signInBody: "Sign in and Brick stays with you, here and everywhere you go. It's free.",
+            signInRemembers: "Remembers you, and warms to you as you talk",
+            signInMakes: "Makes pages, pictures and songs you can keep and share",
+            signInApps: "Works with your apps once you connect them",
+            signInMore: "Makes more Bricks, one for each job you give it",
+            notNow: "Not now",
+            signIn: "Sign in",
+            close: "Close",
+        },
         // A Brick's computer (#2000): for the jobs no app can do. It says what it is for, what it is doing, how the month is
         // counted, where its files are and how to watch. Never a price, a count or the name of a provider.
         computer: {
