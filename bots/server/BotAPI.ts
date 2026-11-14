@@ -2315,8 +2315,13 @@ export class BotAPI {
         });
         // A socket upgrade goes to the first handler that takes it (the computer screen); one nobody takes is closed
         this.server.on('upgrade', (request: IncomingMessage, socket: Duplex, head: Buffer) => {
-            for (const handler of this.upgradeHandlers) {
-                if (handler(request, socket, head)) return;
+            // A request nobody can read (a strange address, a handler that throws) closes that one socket and never reaches the process
+            try {
+                for (const handler of this.upgradeHandlers) {
+                    if (handler(request, socket, head)) return;
+                }
+            } catch (error) {
+                console.warn('[BotAPI] An upgrade request could not be handled:', error instanceof Error ? error.message : 'unknown');
             }
             socket.destroy();
         });

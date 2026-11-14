@@ -305,4 +305,11 @@ describe('the screen gateway', () => {
         expect(socket.destroy).toHaveBeenCalled();
         slowGateway.close();
     });
+
+    it('does not take, and does not throw on, a request address that cannot be read', () => {
+        const socket = { write: vi.fn(), destroy: vi.fn() };
+        const throwing = createScreenGateway({ orbit: { open: async () => ({ ok: false, reason: 'x' }) as never, check: async () => ({ ok: true, mode: 'watch' as ScreenMode }) } });
+        for (const bad of ['//', '///', 'http://[', '//host:99999999/x']) expect(() => throwing.handleUpgrade({ url: bad } as never, socket as never, Buffer.alloc(0))).not.toThrow();
+        throwing.close();
+    });
 });

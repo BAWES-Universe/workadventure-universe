@@ -256,7 +256,13 @@ export function createScreenGateway(options: ScreenGatewayOptions): ScreenGatewa
 
     return {
         handleUpgrade(request, socket, head) {
-            const url = new URL(request.url ?? '/', 'http://screen.invalid');
+            let url: URL;
+            try {
+                url = new URL(request.url ?? '/', 'http://screen.invalid');
+            } catch {
+                // An address that cannot be read is nobody's screen
+                return false;
+            }
             if (url.pathname !== SCREEN_PATH) return false;
             const ticket = url.searchParams.get('ticket') ?? '';
             if (!ticket || ticket.length > 1000) {
