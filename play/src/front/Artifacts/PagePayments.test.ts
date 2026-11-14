@@ -138,6 +138,19 @@ describe("a page that takes payments, in the game's window", () => {
         expect(pay).toHaveBeenCalledTimes(3);
     });
 
+    it("says it could not confirm the payment when it is still not known after twenty minutes", async () => {
+        const pay = vi
+            .fn()
+            .mockResolvedValueOnce({ orderId: "o1", checkoutUrl: "https://checkout.tap.company/c1", app: "Tap" })
+            .mockResolvedValue({ status: "checking" });
+        const payments = make(pay, () => null);
+        ask(payments);
+        await flush();
+        await vi.advanceTimersByTimeAsync(21 * 60_000);
+        expect(get(payments.line)).toMatchObject({ checking: false, problem: "cant_confirm" });
+        expect(told().at(-1)).toBe("cant_confirm");
+    });
+
     it("stops asking when the window is closed", async () => {
         const pay = vi
             .fn()

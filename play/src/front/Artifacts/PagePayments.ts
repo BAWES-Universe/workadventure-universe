@@ -89,11 +89,8 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                 // Try again on the next turn
             }
             if (now() < until) timer = setTimeout(poll, POLL_MS);
-            else {
-                busy = false;
-                line.update((value) => ({ ...value, checking: false }));
-                tell("checking");
-            }
+            // Twenty minutes without an answer: said plainly, never a silent end. The order may still be counted later.
+            else end({ problem: "cant_confirm" }, "cant_confirm");
         };
         timer = setTimeout(poll, POLL_MS);
     };
