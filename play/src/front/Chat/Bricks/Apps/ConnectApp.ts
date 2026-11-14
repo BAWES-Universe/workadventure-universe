@@ -34,12 +34,23 @@ function closeQuietly(popup: Window) {
     }
 }
 
+/** How often a window that was closed by hand is looked for, since closing it sends nothing */
+const CLOSED_CHECK_MS = 500;
+
 /** Waits for the window to say it finished (`oauth-success` / `oauth-failure`), or to be closed by hand. */
 function waitForPopup(popup: Window): Promise<"done" | "stopped"> {
     return new Promise((resolve) => {
+        const isClosed = () => {
+            try {
+                return popup.closed;
+            } catch {
+                // the window is on another site while it signs in
+                return false;
+            }
+        };
         const finish = (result: "done" | "stopped") => {
             window.removeEventListener("message", onMessage);
-            window.removeEventListener("focus", onFocus);
+            clearInterval(timer);
             resolve(result);
         };
         const onMessage = (event: MessageEvent) => {
@@ -48,16 +59,13 @@ function waitForPopup(popup: Window): Promise<"done" | "stopped"> {
             if (type === "oauth-success") finish("done");
             else if (type === "oauth-failure") finish("stopped");
         };
-        // The window closed by hand before it finished: noticed when this window gets focus back
-        const onFocus = () => {
-            try {
-                if (popup.closed) finish("stopped");
-            } catch {
-                // the window is on another site while it signs in
-            }
-        };
+        // The window may already have been closed while the sign-in was being started, and closing sends nothing: so it is
+        // looked at now and then, never only when this window gets focus back
+        const timer = setInterval(() => {
+            if (isClosed()) finish("stopped");
+        }, CLOSED_CHECK_MS);
         window.addEventListener("message", onMessage);
-        window.addEventListener("focus", onFocus);
+        if (isClosed()) finish("stopped");
     });
 }
 

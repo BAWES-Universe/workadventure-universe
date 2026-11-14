@@ -127,6 +127,22 @@ describe("Connect on an app (#2001)", () => {
         expect(game.getMyApps).toHaveBeenCalledTimes(2);
     });
 
+    it("says stopped when the window was closed while the sign-in was still being started", async () => {
+        game.connectReadyMadeApp.mockImplementation(() => {
+            popup.closed = true;
+            return Promise.resolve({ id: "c9", redirectUrl: "https://provider.test/sign-in" });
+        });
+        expect(await connectApp(ready)).toEqual({ status: "stopped" });
+    });
+
+    it("says stopped when the window is closed by hand while it waits, without this window getting focus", async () => {
+        game.connectReadyMadeApp.mockResolvedValue({ id: "c9", redirectUrl: "https://provider.test/sign-in" });
+        const result = connectApp(ready);
+        await vi.waitFor(() => expect(popup.location.href).not.toBe(""));
+        popup.closed = true;
+        expect(await result).toEqual({ status: "stopped" });
+    });
+
     it("says stopped when a ready-made sign-in fails", async () => {
         game.connectReadyMadeApp.mockResolvedValue({ id: "c9", redirectUrl: "https://provider.test/sign-in" });
         const result = connectApp(ready);
