@@ -230,6 +230,9 @@
         creating.catch(() => undefined);
         try {
             const result = await signInInPopup(creating);
+            // A window that could not open answers before the app is made: the sheet stays busy until Orbit has answered, so a
+            // second tap cannot make a second app
+            await creating.catch(() => undefined);
             // `create()` said so on the sheet while the window was open: the type system cannot see that
             if ((trouble as Trouble) === "failed") return;
             if (result === "done") await connected();

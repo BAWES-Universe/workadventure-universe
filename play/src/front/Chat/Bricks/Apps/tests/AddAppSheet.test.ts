@@ -427,6 +427,32 @@ describe("Add your own app (#2001, mock Part 13)", () => {
         expect(words(byId("addAppBlocked"))).toContain("Couldn't open the sign-in page");
     });
 
+    it("stays busy until Orbit has made the app when the window can't open, so a second tap does not make a second app", async () => {
+        let answer: (value: unknown) => void = () => {};
+        game.addMyApp.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    answer = resolve;
+                })
+        );
+        // a blocked window answers at once, before the app exists
+        game.reconnect.mockResolvedValueOnce("blocked");
+        await open();
+        await paste(ZAPIER);
+        void click("addAppSignIn");
+        await settle();
+        void click("addAppSignIn");
+        await settle();
+        expect(game.addMyApp).toHaveBeenCalledTimes(1);
+        answer({ id: "app-1" });
+        await settle();
+        expect(words(byId("addAppBlocked"))).toContain("Couldn't open the sign-in page");
+        // the next tap reuses the app that was made
+        await click("addAppSignIn");
+        expect(game.addMyApp).toHaveBeenCalledTimes(1);
+        expect(byId("addAppConnected")).not.toBeNull();
+    });
+
     it("takes an app that never got signed in away again when the sheet closes", async () => {
         game.reconnect.mockImplementationOnce(async (app) => {
             await app;
