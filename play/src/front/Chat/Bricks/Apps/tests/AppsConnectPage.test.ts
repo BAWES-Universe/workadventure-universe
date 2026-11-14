@@ -200,11 +200,14 @@ describe("Search apps and Connect another (#2001)", () => {
 
     it("narrows both lists by what is typed and counts the apps it found", async () => {
         await open();
-        await type("dr");
-        expect(words(byId("appsFound"))).toBe("2 apps");
-        expect(names("appsConnectRow")).toEqual(["Google Drive", "Dropbox"]);
+        await type("dro");
+        expect(words(byId("appsFound"))).toBe("1 app");
+        expect(names("appsConnectRow")).toEqual(["Dropbox"]);
         expect(allById("appsRow")).toHaveLength(0);
         expect(byId("appsAnother")).toBeNull();
+        await type("goo");
+        expect(words(byId("appsFound"))).toBe("1 app");
+        expect(names("appsConnectRow")).toEqual(["Google Drive"]);
         await type("gma");
         expect(words(byId("appsFound"))).toBe("1 app");
         // a connected app is found too, and opens its page
@@ -216,6 +219,13 @@ describe("Search apps and Connect another (#2001)", () => {
         await open();
         await type("notes");
         expect(names("appsConnectRow")).toEqual(["Notion"]);
+    });
+
+    it("finds a connected app by the line it has in the list, though that app is no longer listed under Connect another", async () => {
+        await open();
+        await type("draft");
+        expect(names("appsRow")).toEqual(["Gmail"]);
+        expect(allById("appsConnectRow")).toHaveLength(0);
     });
 
     it("says so when nothing matches, and still shows the note", async () => {
@@ -289,6 +299,30 @@ describe("Search apps and Connect another (#2001)", () => {
         expect(words(byId("appsConnectListFailed"))).toBe("Couldn't load the apps you can connect.");
         await click("appsConnectListTryAgain");
         expect(byId("appsConnectListFailed")).toBeNull();
+    });
+
+    it("keeps the ready-made apps and says so when the list of other apps could not be read", async () => {
+        game.getAppCatalog.mockRejectedValueOnce(new Error("down"));
+        game.getReadyMadeApps.mockResolvedValue({ apps: [{ key: "linear", name: "Linear" }] });
+        await open();
+        expect(names("appsConnectRow")).toEqual(["Linear"]);
+        expect(words(byId("appsConnectListFailed"))).toBe("Couldn't load the apps you can connect.");
+    });
+
+    it("keeps every Connect button still while a connected app's list is read again, until its page opens", async () => {
+        let readAgain: (value: unknown) => void = () => undefined;
+        game.connectApp.mockResolvedValue({ status: "connected", appId: "notion-c" });
+        await open();
+        game.getMyApps.mockReturnValue(
+            new Promise((resolve) => {
+                readAgain = resolve;
+            })
+        );
+        await click("appsConnect", 0);
+        expect(allById("appsConnect").every((button) => (button as HTMLButtonElement).disabled)).toBe(true);
+        readAgain({ apps: [mine({ id: "notion-c", name: "Notion" })], bricks: [] });
+        await settle();
+        expect(byId("appPage")).not.toBeNull();
     });
 
     it("says the list could not be read, and reads it again on Try again", async () => {

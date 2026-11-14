@@ -54,7 +54,10 @@
     $: connectedApps = mine.filter(isConnectedApp);
     $: another = connectable ? toConnectAnother(connectable, mine) : [];
     $: searching = query.trim() !== "";
-    $: shownConnected = connectedApps.filter((app) => matchesSearch(query, app.name));
+    // A connected app's line lives on the catalog entry it was made from, so Search finds it by that line too
+    const blurbOf = (list: Connectable[] | undefined, id: string) =>
+        (list ?? []).find((app) => app.connectionId === id)?.blurb ?? "";
+    $: shownConnected = connectedApps.filter((app) => matchesSearch(query, app.name, blurbOf(connectable, app.id)));
     $: shownAnother = another.filter((app) => matchesSearch(query, app.name, app.blurb));
 
     // Both lists may hold the same key: the kind tells them apart
@@ -80,23 +83,28 @@
                 }),
         ]);
         connectListFailed = !listed || !readyMade;
-        connectable = listed ? [...listed, ...(readyMade ?? [])] : undefined;
+        // Whichever list came is shown: a failed one does not take the other's Connect buttons away
+        connectable = listed || readyMade ? [...(listed ?? []), ...(readyMade ?? [])] : undefined;
     }
 
     async function connect(app: Connectable) {
         if (connectingKey) return;
         connectingKey = keyOf(app);
         connectNote = undefined;
-        const result = await connectApp(app);
-        // eslint-disable-next-line require-atomic-updates
-        connectingKey = undefined;
-        if (result.status !== "connected") {
-            connectNote = result.status;
-            return;
+        try {
+            const result = await connectApp(app);
+            if (result.status !== "connected") {
+                connectNote = result.status;
+                return;
+            }
+            // It is theirs now: its own page opens to choose which of their Bricks use it. The other Connect buttons stay
+            // off until then, so a second sign-in cannot start under the page this one opens.
+            await loadMyApps(true);
+            openAppId = result.appId;
+        } finally {
+            // eslint-disable-next-line require-atomic-updates
+            connectingKey = undefined;
         }
-        // It is theirs now: its own page opens to choose which of their Bricks use it
-        await loadMyApps(true);
-        openAppId = result.appId;
     }
 
     function load() {
