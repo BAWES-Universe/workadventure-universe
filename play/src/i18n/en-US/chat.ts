@@ -1436,7 +1436,8 @@ const chat: BaseTranslation = {
             keyOpenFailed: "Couldn't open the form. Try again.",
             // The strip over the message box when a key is pasted into a Brick's chat
             keyPasteTitle: "That looks like a key. Keys don't go in chat.",
-            keyPasteLine: "Add it in Apps: it is stored safely there and your Brick can use it. This message was not sent.",
+            keyPasteLine:
+                "Add it in Apps: it is stored safely there and your Brick can use it. This message was not sent.",
             keyPasteClear: "Clear message",
             keyPasteApps: "Open Apps",
             // Lend sheet

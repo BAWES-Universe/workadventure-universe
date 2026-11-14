@@ -114,4 +114,3 @@ export async function replaceKey(connectionId: string): Promise<boolean> {
         return false;
     }
 }
-

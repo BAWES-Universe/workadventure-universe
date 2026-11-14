@@ -4,7 +4,14 @@
     import PageButton from "../../../external-modules/bots/components/page/PageButton.svelte";
     import { botApiService } from "../../../external-modules/bots/services/BotApiService";
     import AppSheet from "./AppSheet.svelte";
-    import { afterKeySaved, isModeChange, keyProblemOf, parseKeyForm, type KeyFormView, type KeyProblem } from "./KeyForm";
+    import {
+        afterKeySaved,
+        isModeChange,
+        keyProblemOf,
+        parseKeyForm,
+        type KeyFormView,
+        type KeyProblem,
+    } from "./KeyForm";
 
     /**
      * The safe form for a key (Keys for Apps, game #2044), the same sheet from the Brick's link and from "Replace key" on an
@@ -35,7 +42,7 @@
     });
 
     $: short = form?.short ?? "";
-    $: shownHost = form ? (form.hostReadable ?? form.host) : "";
+    $: shownHost = form ? form.hostReadable ?? form.host : "";
     $: title = form
         ? form.replacing
             ? text.keyReplaceTitle({ short })
@@ -137,8 +144,12 @@
                 disabled={busy}
             />
             {#if form.helpUrl}
-                <a class="ks-find" href={form.helpUrl} target="_blank" rel="noopener noreferrer" data-testid="keySheetFind"
-                    >{text.keyFind()}</a
+                <a
+                    class="ks-find"
+                    href={form.helpUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    data-testid="keySheetFind">{text.keyFind()}</a
                 >
             {/if}
         </form>

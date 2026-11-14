@@ -19,7 +19,9 @@
         <span class="kp-t">{text.keyPasteTitle()}</span>
         <span class="kp-l">{text.keyPasteLine()}</span>
         <span class="kp-b">
-            <button type="button" class="kp-btn" data-testid="keyPasteApps" on:click={onApps}>{text.keyPasteApps()}</button>
+            <button type="button" class="kp-btn" data-testid="keyPasteApps" on:click={onApps}
+                >{text.keyPasteApps()}</button
+            >
             <button type="button" class="kp-btn" data-testid="keyPasteClear" on:click={onClear}
                 >{text.keyPasteClear()}</button
             >

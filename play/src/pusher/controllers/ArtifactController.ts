@@ -287,7 +287,8 @@ export class ArtifactController extends BaseHttpController {
         this.app.post("/artifacts/:id/pay", [authenticated], async (req: Request, res: ResponseWithUserIdentifier) => {
             await this.answer(req, res, "pay on", async (viewer, id) => {
                 const body = PayBody.safeParse(req.body ?? {});
-                if (!body.success || (body.data.start && body.data.order)) throw new ArtifactsError("invalid_request", 400);
+                if (!body.success || (body.data.start && body.data.order))
+                    throw new ArtifactsError("invalid_request", 400);
                 const { chat, ...request } = body.data;
                 return artifactsService.pay(id, request, viewer(chat));
             });

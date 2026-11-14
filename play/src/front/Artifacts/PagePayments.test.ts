@@ -16,13 +16,20 @@ vi.mock("./ArtifactApi", () => {
 const frameWindow = { postMessage: vi.fn() } as unknown as Window;
 const otherWindow = { postMessage: vi.fn() } as unknown as Window;
 
-function ask(payments: ReturnType<typeof pagePayments>, source: Window = frameWindow, data: unknown = { universe: "use-app", app: "tap" }) {
+function ask(
+    payments: ReturnType<typeof pagePayments>,
+    source: Window = frameWindow,
+    data: unknown = { universe: "use-app", app: "tap" }
+) {
     payments.onMessage({ source, data } as unknown as MessageEvent);
 }
 const flush = async () => {
     await vi.advanceTimersByTimeAsync(0);
 };
-const told = () => (frameWindow.postMessage as ReturnType<typeof vi.fn>).mock.calls.map((call) => (call[0] as { status: string }).status);
+const told = () =>
+    (frameWindow.postMessage as ReturnType<typeof vi.fn>).mock.calls.map(
+        (call) => (call[0] as { status: string }).status
+    );
 
 describe("a page that takes payments, in the game's window", () => {
     beforeEach(() => {
@@ -84,11 +91,15 @@ describe("a page that takes payments, in the game's window", () => {
         expect(get(payments.line)).toMatchObject({ checking: false, paid: { test: true } });
         expect(told()).toEqual(["started", "paid"]);
         // Nothing but a status went to the page
-        expect(JSON.stringify((frameWindow.postMessage as ReturnType<typeof vi.fn>).mock.calls)).not.toContain("checkout");
+        expect(JSON.stringify((frameWindow.postMessage as ReturnType<typeof vi.fn>).mock.calls)).not.toContain(
+            "checkout"
+        );
     });
 
     it("goes on in a new tab with the same checkout when the pop-up was blocked", async () => {
-        const pay = vi.fn().mockResolvedValueOnce({ orderId: "o1", checkoutUrl: "https://checkout.tap.company/c1", app: "Tap" });
+        const pay = vi
+            .fn()
+            .mockResolvedValueOnce({ orderId: "o1", checkoutUrl: "https://checkout.tap.company/c1", app: "Tap" });
         const payments = make(pay, () => null);
         ask(payments);
         await flush();
@@ -114,7 +125,9 @@ describe("a page that takes payments, in the game's window", () => {
         await flush();
         expect(get(limited.line).problem).toBe("limit");
 
-        const unsafe = make(vi.fn().mockResolvedValueOnce({ orderId: "o1", checkoutUrl: "http://x.example/c", app: "Tap" }));
+        const unsafe = make(
+            vi.fn().mockResolvedValueOnce({ orderId: "o1", checkoutUrl: "http://x.example/c", app: "Tap" })
+        );
         ask(unsafe);
         await flush();
         expect(get(unsafe.line).problem).toBe("unavailable");

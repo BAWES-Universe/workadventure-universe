@@ -722,7 +722,9 @@
                 {#if $payLine.checking || $payLine.problem || $payLine.paid}
                     <div class="pay-line" role="status" data-testid="artifactPayLine">
                         {#if $payLine.paid}
-                            <p>{$payLine.paid.test ? $LL.chat.artifacts.payPaidTest() : $LL.chat.artifacts.payPaid()}</p>
+                            <p>
+                                {$payLine.paid.test ? $LL.chat.artifacts.payPaidTest() : $LL.chat.artifacts.payPaid()}
+                            </p>
                         {:else if $payLine.problem}
                             <p>{payProblemText($payLine.problem)}</p>
                         {:else}

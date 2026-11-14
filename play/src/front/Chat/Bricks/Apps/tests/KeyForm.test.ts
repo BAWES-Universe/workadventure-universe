@@ -46,7 +46,10 @@ describe("reading the safe form", () => {
     });
 
     it("never carries more than the words and the key's end", () => {
-        const read = parseKeyForm({ ...form, key: "sk_live_secret", secret: "x" }) as unknown as Record<string, unknown>;
+        const read = parseKeyForm({ ...form, key: "sk_live_secret", secret: "x" }) as unknown as Record<
+            string,
+            unknown
+        >;
         expect(JSON.stringify(read)).not.toContain("sk_live_secret");
     });
 });

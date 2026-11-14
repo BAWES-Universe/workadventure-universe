@@ -15,4 +15,3 @@ const KEY_SHAPES = [
 export function looksLikeAKeyPastedWords(words: string): boolean {
     return KEY_SHAPES.some((shape) => shape.test(words));
 }
-

@@ -1374,9 +1374,10 @@ export class BotApiService {
 
     /** Opens the safe form for a service Universe ships, or for replacing the key of an app of theirs. Answers the form's id. */
     async openKeyForm(target: { service: string } | { connectionId: string }): Promise<string> {
-        const answer = (await this.appsCall("/api/me/apps/key-forms", { method: "POST", body: JSON.stringify(target) })) as
-            | { id?: unknown }
-            | undefined;
+        const answer = (await this.appsCall("/api/me/apps/key-forms", {
+            method: "POST",
+            body: JSON.stringify(target),
+        })) as { id?: unknown } | undefined;
         if (typeof answer?.id !== "string" || !answer.id) throw new Error("The form was not opened");
         return answer.id;
     }

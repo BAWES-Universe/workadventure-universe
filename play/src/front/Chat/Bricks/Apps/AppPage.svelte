@@ -199,7 +199,9 @@
                                 ? text.keyEnds({ last4: app.keyLast4 })
                                 : text.addedByYouCard()}{app.keyMode
                                 ? ` · ${app.keyMode === "live" ? text.keyKindLive() : text.keyKindTest()}`
-                                : ""}{:else}{app.source === "link" ? text.addedByYouCard() : text.signedInAsYou()}{/if}</span
+                                : ""}{:else}{app.source === "link"
+                                ? text.addedByYouCard()
+                                : text.signedInAsYou()}{/if}</span
                     >
                     {#if app.connectedAt}<span class="pg-cn"
                             >{text.since({ day: dayOf(app.connectedAt, $locale) })}</span
