@@ -141,6 +141,14 @@ function sessionCacheKey(serverUrl: string, authType: string, authConfig?: strin
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** The name of the first header whose value cannot be sent (a character above 255, or a line break), or null when all can. */
+export function unsendableHeader(headers: Record<string, string>): string | null {
+    for (const [name, value] of Object.entries(headers)) {
+        if (typeof value === 'string' && /[^\t\x20-\x7e\x80-\xff]/.test(value)) return name;
+    }
+    return null;
+}
+
 /**
  * Build proper auth headers based on server config.
  */
@@ -441,6 +449,14 @@ async function sendJsonRpc(
     }
 
     const baseHeaders = buildAuthHeaders(authType, authConfig, extraHeaders);
+
+    // A header with a character above 255 (an em dash pasted into a key) cannot be sent: the request would fail inside the HTTP
+    // client with an error that names nothing. Nothing is sent, and the log says which header it is.
+    const unsendable = unsendableHeader(baseHeaders);
+    if (unsendable) {
+        console.warn(`[MCPConnector] Not sent: the "${unsendable}" header has text that cannot be sent (${method} to ${serverUrl})`);
+        return NOT_SENT;
+    }
 
     // Auto-initialize MCP session (required by MCP Streamable HTTP spec).
     // Some servers (like Linear) tolerate tools/list without initialize,
