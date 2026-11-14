@@ -95,7 +95,12 @@ describe("keeping the player's time zone in Orbit", () => {
         let release: (response: Response) => void = () => undefined;
         const fetchMock = vi
             .spyOn(globalThis, "fetch")
-            .mockImplementationOnce(() => new Promise<Response>((resolve) => (release = resolve)))
+            .mockImplementationOnce(
+                () =>
+                    new Promise<Response>((resolve) => {
+                        release = resolve;
+                    })
+            )
             .mockImplementation(() => Promise.resolve(ok()));
         const api = service(SIGNED_IN);
         const first = api.keepTimeZone();
