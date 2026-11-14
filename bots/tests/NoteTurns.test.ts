@@ -86,6 +86,16 @@ describe('a note for a bot', () => {
         expect(orbit.addVoiceNoteCleanup).toHaveBeenCalledWith(expect.objectContaining({ providerId: 'ua-soniox', kind: 'file', objectId: 'f-1' }), expect.any(Number));
     });
 
+    it('answers the copies Orbit could not keep as cleanup jobs, so the hearing deletes those itself', async () => {
+        orbit.addVoiceNoteCleanup.mockImplementation(async (job: { kind: string }) => {
+            if (job.kind === 'file') throw new Error('orbit down');
+        });
+        const unkept = await turns().cleanUp('ua-soniox', null, { file: 'f-1', transcription: 't-1' });
+        expect(unkept).toEqual({ file: 'f-1' });
+        orbit.addVoiceNoteCleanup.mockImplementation(async () => undefined);
+        await expect(turns().cleanUp('ua-soniox', null, { file: 'f-1', transcription: 't-1' })).resolves.toEqual({});
+    });
+
     it('is the same answer when asked again on this server, never heard twice', async () => {
         const t = turns();
         await t.hear('bot-1', 'event-1', { bytes: new Uint8Array([1]) }, SENDER);

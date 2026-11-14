@@ -159,13 +159,15 @@ export class SonioxNotes implements ClipHearer {
 
     /**
      * Nothing stays at the provider: the clip and its words are deleted whether or not they were read. With `hooks.cleanup` the
-     * deletes are kept as jobs that are tried until the provider confirms; without it they are tried once, as before.
+     * deletes are kept as jobs that are tried until the provider confirms; without it, or for any copy the jobs could not keep,
+     * they are tried once here, as before.
      */
-    private async leave(call: typeof fetch, api: string, headers: Record<string, string>, refs: { file?: string; transcription?: string }, hooks: HearHooks): Promise<void> {
+    private async leave(call: typeof fetch, api: string, headers: Record<string, string>, given: { file?: string; transcription?: string }, hooks: HearHooks): Promise<void> {
+        let refs = given;
         if (!refs.file && !refs.transcription) return;
         if (hooks.cleanup) {
-            await hooks.cleanup(refs).catch(() => undefined);
-            return;
+            refs = await hooks.cleanup(refs).catch(() => refs);
+            if (!refs.file && !refs.transcription) return;
         }
         const gone: Promise<unknown>[] = [];
         const cleanup = AbortSignal.timeout(this.options.cleanupMs ?? 10_000);

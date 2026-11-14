@@ -28,8 +28,11 @@ export type HeardNote =
 export interface HearHooks {
     /** The provider took the note: its ids, before the wait for the words. */
     onSubmitted?: (refs: { file?: string; transcription?: string }) => Promise<void> | void;
-    /** Hands the provider's copies to the cleanup jobs instead of deleting them once here. Never throws to the hearing. */
-    cleanup?: (refs: { file?: string; transcription?: string }) => Promise<void>;
+    /**
+     * Hands the provider's copies to the cleanup jobs instead of deleting them once here. Answers the copies it could not keep
+     * (Orbit down or refusing), which the hearing then deletes itself at once, so nothing is left behind unrecorded.
+     */
+    cleanup?: (refs: { file?: string; transcription?: string }) => Promise<{ file?: string; transcription?: string }>;
 }
 
 /** What a hearing provider does with a clip. One per adapter that can read a file. */

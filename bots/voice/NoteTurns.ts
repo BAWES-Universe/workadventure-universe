@@ -370,19 +370,25 @@ export class NoteTurns {
     // What the provider still holds
     // ---------------------------------------------------------------------------------------------------------------------
 
-    /** Hands the provider's copies to Orbit's cleanup jobs, then tries them at once. Never throws. */
-    async cleanUp(providerId: string, region: string | null, refs: { file?: string; transcription?: string }): Promise<void> {
+    /**
+     * Hands the provider's copies to Orbit's cleanup jobs, then tries them at once. Answers the copies Orbit could not keep, so
+     * the hearing deletes those itself instead of leaving them unrecorded. Never throws.
+     */
+    async cleanUp(providerId: string, region: string | null, refs: { file?: string; transcription?: string }): Promise<{ file?: string; transcription?: string }> {
         const jobs: { kind: 'file' | 'transcription'; objectId: string }[] = [];
         if (refs.transcription) jobs.push({ kind: 'transcription', objectId: refs.transcription });
         if (refs.file) jobs.push({ kind: 'file', objectId: refs.file });
+        const unkept: { file?: string; transcription?: string } = {};
         for (const job of jobs) {
             try {
                 await this.options.orbit.addVoiceNoteCleanup({ providerId, region, ...job }, this.timeoutMs);
             } catch (error) {
-                this.log(`could not keep a ${job.kind} to delete (${describe(error)})`);
+                unkept[job.kind] = job.objectId;
+                this.log(`could not keep a ${job.kind} to delete, deleting it at once instead (${describe(error)})`);
             }
         }
         void this.cleanNow();
+        return unkept;
     }
 
     /** Deletes what is due, until the provider confirms each. Runs one round at a time; never throws. */
