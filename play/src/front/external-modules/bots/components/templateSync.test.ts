@@ -60,6 +60,22 @@ describe("parts taken from a template that a Brick's page has not read yet (#200
         expect(sync.waitsFor(["description", "instructions"])).toBe(false);
     });
 
+    it("keeps a part that is taken again while a read of it is on its way, so the newer text is read too", async () => {
+        const first = later<string>();
+        const read = vi.fn().mockReturnValueOnce(first.promise).mockResolvedValue("newer");
+        const apply = vi.fn();
+        const sync = templateSync(read, apply);
+        sync.add(["instructions"]);
+        const done = sync.sync();
+        sync.add(["instructions"]);
+        expect(sync.waitsFor(["instructions"])).toBe(true);
+        first.resolve("older");
+        expect(await done).toBe(true);
+        expect(read).toHaveBeenCalledTimes(2);
+        expect(apply).toHaveBeenNthCalledWith(2, "newer", ["instructions"]);
+        expect(sync.waitsFor(["instructions"])).toBe(false);
+    });
+
     it("says it could not, keeps what is waiting, and succeeds on the next try", async () => {
         const read = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValue("fresh");
         const apply = vi.fn();

@@ -10,12 +10,15 @@ export function templateSync<Fresh>(
     /** Shows the parts on the page. */
     apply: (fresh: Fresh, parts: string[]) => void
 ) {
-    let unsynced: string[] = [];
+    // Each time a part is taken it gets a new stamp, so a part taken again while a read is on its way is not counted as read
+    let unsynced = new Map<string, number>();
+    let stamp = 0;
     let running: Promise<boolean> | undefined;
 
     async function once(): Promise<boolean> {
-        const parts = unsynced;
-        if (parts.length === 0) return true;
+        const taken = new Map(unsynced);
+        if (taken.size === 0) return true;
+        const parts = [...taken.keys()];
         let fresh: Fresh;
         try {
             fresh = await read();
@@ -24,15 +27,15 @@ export function templateSync<Fresh>(
             return false;
         }
         apply(fresh, parts);
-        // Parts taken while this read was on its way stay for the next one
-        unsynced = unsynced.filter((part) => !parts.includes(part));
+        // Parts taken (or taken again) while this read was on its way stay for the next one
+        for (const [part, seen] of taken) if (unsynced.get(part) === seen) unsynced.delete(part);
         return true;
     }
 
     /** Reads until nothing is left: true once the page shows everything that was taken, false when Orbit could not be reached. */
     async function sync(): Promise<boolean> {
         for (let round = 0; round < 3; round++) {
-            if (unsynced.length === 0) return true;
+            if (unsynced.size === 0) return true;
             if (!running) {
                 running = once().finally(() => {
                     running = undefined;
@@ -41,21 +44,21 @@ export function templateSync<Fresh>(
             // eslint-disable-next-line no-await-in-loop
             if (!(await running)) return false;
         }
-        return unsynced.length === 0;
+        return unsynced.size === 0;
     }
 
     return {
         /** Parts taken: they are unread until `sync` says so. */
         add(parts: readonly string[]) {
-            unsynced = [...new Set([...unsynced, ...parts])];
+            for (const part of parts) unsynced.set(part, ++stamp);
         },
         /** Another Brick's page: nothing is waiting any more. */
         clear() {
-            unsynced = [];
+            unsynced = new Map();
         },
         /** Whether one of these parts is waiting to be read. */
         waitsFor(parts: readonly string[]): boolean {
-            return unsynced.some((part) => parts.includes(part));
+            return parts.some((part) => unsynced.has(part));
         },
         sync,
     };
