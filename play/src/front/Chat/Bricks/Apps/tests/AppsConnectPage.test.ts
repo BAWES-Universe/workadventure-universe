@@ -31,6 +31,16 @@ vi.mock("../../../../external-modules/bots/services/BotApiService", () => ({
         getMyAppUniverses: game.getMyAppUniverses,
     },
 }));
+// A Brick wearing a WOKA is drawn by the game's picture loader, and the person's Bricks come from their own store: neither
+// has anything to do with this page, and the picture loader reaches code the tests cannot load
+vi.mock("../../BrickLookPicture", async () => {
+    const store = await import("svelte/store");
+    return { brickPicture: () => store.readable(undefined) };
+});
+vi.mock("../../MyBricksStore", async () => {
+    const store = await import("svelte/store");
+    return { myBricksStore: store.writable([]), loadMyBricks: vi.fn(() => Promise.resolve()) };
+});
 vi.mock("../ConnectApp", () => ({ connectApp: game.connectApp }));
 vi.mock("../../../../Stores/ErrorStore", () => ({ warningMessageStore: { addWarningMessage: vi.fn() } }));
 vi.mock("../../../../Stores/MenuStore", async () => {
@@ -128,7 +138,7 @@ describe("Search apps and Connect another (#2001)", () => {
         document.body.appendChild(target);
         game.getMyApps.mockResolvedValue({ apps: [mine()], bricks: [] });
         game.getAppCatalog.mockResolvedValue(CATALOG);
-        game.getReadyMadeApps.mockRejectedValue(new Error("API error: 404"));
+        game.getReadyMadeApps.mockResolvedValue({ apps: [] });
         game.getMyAppUniverses.mockResolvedValue({ universes: [] });
         game.getMyApp.mockResolvedValue({ app: mine(), canLetUse: [], lentTo: [], canLendTo: [] });
         game.connectApp.mockResolvedValue({ status: "stopped" });
@@ -182,7 +192,7 @@ describe("Search apps and Connect another (#2001)", () => {
         document.body.innerHTML = "";
         target = document.createElement("div");
         document.body.appendChild(target);
-        game.getReadyMadeApps.mockRejectedValue(new Error("API error: 404"));
+        game.getReadyMadeApps.mockResolvedValue({ apps: [] });
         await open();
         expect(names("appsConnectRow")).not.toContain("Linear");
         expect(byId("appsConnectListFailed")).toBeNull();
@@ -190,11 +200,14 @@ describe("Search apps and Connect another (#2001)", () => {
 
     it("narrows both lists by what is typed and counts the apps it found", async () => {
         await open();
-        await type("dr");
-        expect(words(byId("appsFound"))).toBe("2 apps");
-        expect(names("appsConnectRow")).toEqual(["Google Drive", "Dropbox"]);
+        await type("dro");
+        expect(words(byId("appsFound"))).toBe("1 app");
+        expect(names("appsConnectRow")).toEqual(["Dropbox"]);
         expect(allById("appsRow")).toHaveLength(0);
         expect(byId("appsAnother")).toBeNull();
+        await type("goo");
+        expect(words(byId("appsFound"))).toBe("1 app");
+        expect(names("appsConnectRow")).toEqual(["Google Drive"]);
         await type("gma");
         expect(words(byId("appsFound"))).toBe("1 app");
         // a connected app is found too, and opens its page
@@ -206,6 +219,13 @@ describe("Search apps and Connect another (#2001)", () => {
         await open();
         await type("notes");
         expect(names("appsConnectRow")).toEqual(["Notion"]);
+    });
+
+    it("finds a connected app by the line it has in the list, though that app is no longer listed under Connect another", async () => {
+        await open();
+        await type("draft");
+        expect(names("appsRow")).toEqual(["Gmail"]);
+        expect(allById("appsConnectRow")).toHaveLength(0);
     });
 
     it("says so when nothing matches, and still shows the note", async () => {
@@ -270,6 +290,39 @@ describe("Search apps and Connect another (#2001)", () => {
         expect(words(byId("appsConnectNote"))).toBe(
             "Couldn't open the sign-in page. Allow pop-ups for this site and try again."
         );
+    });
+
+    it("keeps the listed apps and says so when the ready-made apps could not be read", async () => {
+        game.getReadyMadeApps.mockRejectedValueOnce(new Error("down"));
+        await open();
+        expect(names("appsConnectRow")).toHaveLength(4);
+        expect(words(byId("appsConnectListFailed"))).toBe("Couldn't load the apps you can connect.");
+        await click("appsConnectListTryAgain");
+        expect(byId("appsConnectListFailed")).toBeNull();
+    });
+
+    it("keeps the ready-made apps and says so when the list of other apps could not be read", async () => {
+        game.getAppCatalog.mockRejectedValueOnce(new Error("down"));
+        game.getReadyMadeApps.mockResolvedValue({ apps: [{ key: "linear", name: "Linear" }] });
+        await open();
+        expect(names("appsConnectRow")).toEqual(["Linear"]);
+        expect(words(byId("appsConnectListFailed"))).toBe("Couldn't load the apps you can connect.");
+    });
+
+    it("keeps every Connect button still while a connected app's list is read again, until its page opens", async () => {
+        let readAgain: (value: unknown) => void = () => undefined;
+        game.connectApp.mockResolvedValue({ status: "connected", appId: "notion-c" });
+        await open();
+        game.getMyApps.mockReturnValue(
+            new Promise((resolve) => {
+                readAgain = resolve;
+            })
+        );
+        await click("appsConnect", 0);
+        expect(allById("appsConnect").every((button) => (button as HTMLButtonElement).disabled)).toBe(true);
+        readAgain({ apps: [mine({ id: "notion-c", name: "Notion" })], bricks: [] });
+        await settle();
+        expect(byId("appPage")).not.toBeNull();
     });
 
     it("says the list could not be read, and reads it again on Try again", async () => {

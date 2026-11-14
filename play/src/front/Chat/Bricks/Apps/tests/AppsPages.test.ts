@@ -32,6 +32,7 @@ const game = vi.hoisted(() => ({
     discoverMcpOAuthEndpoints: vi.fn<(url: string, callback: string) => Promise<unknown>>(),
     addMyApp: vi.fn<(app: unknown) => Promise<unknown>>(),
     getMyAppThings: vi.fn<(id: string) => Promise<unknown>>(),
+    getBotMcpServers: vi.fn<(botId: string) => Promise<unknown>>(),
     warn: vi.fn<(message: string) => void>(),
 }));
 // The tests run Svelte's server build, where onMount does nothing; the pages read on mount.
@@ -61,8 +62,24 @@ vi.mock("../../../../external-modules/bots/services/BotApiService", () => ({
         discoverMcpOAuthEndpoints: game.discoverMcpOAuthEndpoints,
         addMyApp: game.addMyApp,
         getMyAppThings: game.getMyAppThings,
+        getBotMcpServers: game.getBotMcpServers,
+        // What the Brick's own screens ask for once opened: these tests only check that they open
+        getMcpServerTools: () => new Promise(() => {}),
     },
 }));
+// A Brick wearing a WOKA is drawn by the game's picture loader, which has nothing to do with these pages
+vi.mock("../../BrickLookPicture", async () => {
+    const store = await import("svelte/store");
+    return { brickPicture: () => store.readable(undefined) };
+});
+// The pictures of the person's Bricks: only what the page reads from the store
+vi.mock("../../MyBricksStore", async () => {
+    const store = await import("svelte/store");
+    return {
+        myBricksStore: store.writable([{ id: "b1", name: "Brick", characterTextureId: "brick-orange" }]),
+        loadMyBricks: vi.fn(() => Promise.resolve()),
+    };
+});
 vi.mock("../../../../Stores/ErrorStore", () => ({ warningMessageStore: { addWarningMessage: game.warn } }));
 vi.mock("../../../../Stores/MenuStore", async () => {
     const store = await import("svelte/store");
@@ -184,7 +201,7 @@ describe("the Apps pages (#2001)", () => {
         game.getMyApps.mockResolvedValue({ apps: [gmail, tavily()], bricks: [] });
         game.getMyAppUniverses.mockResolvedValue({ universes: [] });
         game.getAppCatalog.mockResolvedValue({ apps: [] });
-        game.getReadyMadeApps.mockRejectedValue(new Error("API error: 404"));
+        game.getReadyMadeApps.mockResolvedValue({ apps: [] });
         game.getMyApp.mockResolvedValue(appPage());
         game.lendApp.mockResolvedValue({});
         game.changeAppLend.mockResolvedValue({});
@@ -204,6 +221,7 @@ describe("the Apps pages (#2001)", () => {
         game.disconnectTeamApp.mockResolvedValue(undefined);
         game.getAppsABotCouldUse.mockResolvedValue({ apps: [] });
         game.letBotUseApp.mockResolvedValue({});
+        game.getBotMcpServers.mockResolvedValue([]);
     });
 
     afterEach(() => {
@@ -320,6 +338,32 @@ describe("the Apps pages (#2001)", () => {
             );
             expect(byId("appLendGo")).not.toBeNull();
             expect(byId("appOnlyForYou")).toBeNull();
+        });
+
+        it("says Only you under Other people, with no button, for an app that can be lent", async () => {
+            await open();
+            expect(words(byId("appOnlyYou"))).toBe("Only you People who chat with your Bricks can't use it");
+            expect(byId("appOnlyYou")?.querySelector("button")).toBeNull();
+            expect(words(byId("appPage"))).toContain("Other people");
+        });
+
+        it("shows each Brick's picture, and opens what that Brick may do from its row and its arrow", async () => {
+            await open();
+            const row = byId("appBrickRow");
+            expect(row?.querySelector("img.bk-look")).not.toBeNull();
+            expect(words(byId("appPage"))).toContain("Tap a Brick that uses it to change what it may do");
+            expect(byId("appBrickScreen")).toBeNull();
+            await click("appRowGo");
+            expect(byId("appBrickScreen")).not.toBeNull();
+            expect(byId("appPage")).toBeNull();
+            // Back goes to the app's page, and reads it again
+            const callsBefore = game.getMyApp.mock.calls.length;
+            byId("appBrickScreen")?.querySelector<HTMLElement>("button")?.click();
+            await settle();
+            expect(byId("appPage")).not.toBeNull();
+            expect(game.getMyApp.mock.calls.length).toBeGreaterThan(callsBefore);
+            await click("appRowOpen");
+            expect(byId("appBrickScreen")).not.toBeNull();
         });
 
         it("says Only for you, and has no Lent to at all, for an app signed in as the person", async () => {
@@ -476,11 +520,65 @@ describe("the Apps pages (#2001)", () => {
             expect(text).toContain("Connected by Khalid");
             expect(text).toContain("Since 12 Nov");
             expect(words(byId("teamAppBot"))).toBe("Guide Uses it");
+            expect(words(byId("teamAppPage"))).toContain("Tap one that uses it to change what it may do");
             expect(allById("teamAppManager").map(words)).toEqual(["Khalid (you) Owns BAWES Universe", "Sara Remove"]);
             expect(words(byId("teamAppUses"))).toBe("212 uses");
             expect(text).toContain("Counted for BAWES Universe, in Orbit's costs.");
             expect(byId("teamAppEnded")).toBeNull();
             expect(byId("teamAppLeft")).toBeNull();
+        });
+
+        it("opens what a bot may do with the app from its row", async () => {
+            await open();
+            await click("appRowGo");
+            expect(byId("appBrickScreen")).not.toBeNull();
+            expect(byId("teamAppPage")).toBeNull();
+        });
+
+        it("offers Let it use for the bots in the universe that cannot use it yet, and reads the page again", async () => {
+            game.getTeamApp.mockResolvedValue({
+                app: teamApp(),
+                canAddAsManager: [],
+                canLetUse: [{ id: "h", name: "Hala" }],
+            });
+            await open();
+            expect(words(byId("teamAppBotOff"))).toBe("Hala Can't use Notion Let it use Notion");
+            await click("teamAppLetUse");
+            expect(game.letBotUseApp).toHaveBeenCalledWith("h", "notion");
+            expect(game.getTeamApp).toHaveBeenCalledTimes(2);
+        });
+
+        it("says the page could not be read again, and offers Try again, when it did not come back after a change", async () => {
+            game.getTeamApp.mockResolvedValueOnce({
+                app: teamApp(),
+                canAddAsManager: [],
+                canLetUse: [{ id: "h", name: "Hala" }],
+            });
+            await open();
+            game.getTeamApp.mockRejectedValueOnce(new Error("offline"));
+            await click("teamAppLetUse");
+            // What was read before is still shown, with a line that it may be out of date
+            expect(byId("teamAppLoadFailed")).not.toBeNull();
+            expect(byId("teamAppTryAgain")).not.toBeNull();
+            expect(words(byId("teamAppPage"))).toContain("Belongs to BAWES Universe");
+        });
+
+        it("offers no Let it use when Orbit sends nobody, and says Orbit's line when it refuses", async () => {
+            await open();
+            expect(byId("teamAppBotOff")).toBeNull();
+            page?.$destroy();
+            page = undefined;
+            game.getTeamApp.mockResolvedValue({
+                app: teamApp(),
+                canAddAsManager: [],
+                canLetUse: [{ id: "h", name: "Hala" }],
+            });
+            game.letBotUseApp.mockRejectedValue(
+                Object.assign(new Error("Maximum of 5 apps per bot reached"), { status: 422 })
+            );
+            await open();
+            await click("teamAppLetUse");
+            expect(game.warn).toHaveBeenCalledWith("Maximum of 5 apps per bot reached");
         });
 
         it("offers Remove only for someone Orbit says does not own the universe", async () => {
@@ -635,6 +733,41 @@ describe("the Apps pages (#2001)", () => {
             warn.mockRestore();
             expect(game.warn).toHaveBeenCalledWith("That didn't go through. Nothing changed.");
             expect(onLet).not.toHaveBeenCalled();
+        });
+
+        it("shows Orbit's own words when the bot already has all the apps it may have", async () => {
+            game.getAppsABotCouldUse.mockResolvedValue({
+                apps: [{ connectionId: "c1", name: "Tavily", kind: "lent" }],
+            });
+            game.letBotUseApp.mockRejectedValue(
+                Object.assign(new Error("Maximum of 5 apps per bot reached"), { status: 422 })
+            );
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            const onLet = vi.fn();
+            page = new MoreApps({ target, props: { botId: "guide", botName: "Guide", onLet } });
+            await settle();
+            await click("moreAppsLet");
+            warn.mockRestore();
+            expect(game.warn).toHaveBeenCalledWith("Maximum of 5 apps per bot reached");
+            expect(onLet).not.toHaveBeenCalled();
+        });
+
+        it("shows the line Orbit gives for a cap other than 5, and not a 500's words", async () => {
+            game.getAppsABotCouldUse.mockResolvedValue({
+                apps: [{ connectionId: "c1", name: "Tavily", kind: "lent" }],
+            });
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            page = new MoreApps({ target, props: { botId: "guide", botName: "Guide", onLet: vi.fn() } });
+            await settle();
+            game.letBotUseApp.mockRejectedValueOnce(
+                Object.assign(new Error("Maximum of 8 apps per bot reached"), { status: 422 })
+            );
+            await click("moreAppsLet");
+            expect(game.warn).toHaveBeenLastCalledWith("Maximum of 8 apps per bot reached");
+            game.letBotUseApp.mockRejectedValueOnce(Object.assign(new Error("prisma exploded"), { status: 500 }));
+            await click("moreAppsLet");
+            warn.mockRestore();
+            expect(game.warn).toHaveBeenLastCalledWith("That didn't go through. Nothing changed.");
         });
     });
 

@@ -34,8 +34,32 @@
         };
     }
 
-    // Caught before the page's own Escape handler, so Escape closes this sheet and not the page behind it
+    // Caught before the page's own Escape handler, so Escape closes this sheet and not the page behind it. Tab and Shift+Tab
+    // go round inside the sheet, never to the page behind the dimmed layer.
     function onKeydown(event: KeyboardEvent) {
+        if (event.key === "Tab" && sheet) {
+            const stops = Array.from(
+                sheet.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled]), [tabindex='0']")
+            );
+            const first = stops[0];
+            const last = stops[stops.length - 1];
+            if (!first || !last) {
+                event.preventDefault();
+                return;
+            }
+            const active = document.activeElement;
+            if (!sheet.contains(active) || (active === sheet && event.shiftKey)) {
+                event.preventDefault();
+                (event.shiftKey ? last : first).focus();
+            } else if (event.shiftKey && active === first) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && active === last) {
+                event.preventDefault();
+                first.focus();
+            }
+            return;
+        }
         if (event.key !== "Escape") return;
         event.stopPropagation();
         onClose();

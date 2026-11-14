@@ -1,6 +1,6 @@
 import { get } from "svelte/store";
 import { botApiService } from "../../../external-modules/bots/services/BotApiService";
-import { loadMyApps, myAppsStore } from "./AppsStore";
+import { loadMyApps, myAppsFailed, myAppsStore } from "./AppsStore";
 import type { Connectable } from "./Connectable";
 import { signInInPopup } from "./Reconnect";
 
@@ -12,10 +12,16 @@ import { signInInPopup } from "./Reconnect";
  * - "connected": the app is theirs now; `appId` is its connection, so the Apps page can open it to choose Bricks.
  * - "stopped": the window was closed or the sign-in failed. Nothing was connected.
  * - "blocked": the window could not open, or the sign-in did not start.
+ * - "unchecked": the sign-in finished, but Orbit could not be asked whether it counted (twice). It may well be connected, so
+ *   the page says to look again instead of saying nothing was connected.
  *
  * Call it straight from the tap: the window is opened first, before anything is awaited, so the browser does not block it.
  */
-export type ConnectResult = { status: "connected"; appId: string } | { status: "stopped" } | { status: "blocked" };
+export type ConnectResult =
+    | { status: "connected"; appId: string }
+    | { status: "stopped" }
+    | { status: "blocked" }
+    | { status: "unchecked" };
 
 /** Where the window is sent back to after a ready-made app's sign-in: the game's own page that tells this window and closes. */
 const RETURN_PAGE = "/oauth-popup-callback.html?oauth=success";
@@ -28,12 +34,23 @@ function closeQuietly(popup: Window) {
     }
 }
 
+/** How often a window that was closed by hand is looked for, since closing it sends nothing */
+const CLOSED_CHECK_MS = 500;
+
 /** Waits for the window to say it finished (`oauth-success` / `oauth-failure`), or to be closed by hand. */
 function waitForPopup(popup: Window): Promise<"done" | "stopped"> {
     return new Promise((resolve) => {
+        const isClosed = () => {
+            try {
+                return popup.closed;
+            } catch {
+                // the window is on another site while it signs in
+                return false;
+            }
+        };
         const finish = (result: "done" | "stopped") => {
             window.removeEventListener("message", onMessage);
-            window.removeEventListener("focus", onFocus);
+            clearInterval(timer);
             resolve(result);
         };
         const onMessage = (event: MessageEvent) => {
@@ -42,16 +59,13 @@ function waitForPopup(popup: Window): Promise<"done" | "stopped"> {
             if (type === "oauth-success") finish("done");
             else if (type === "oauth-failure") finish("stopped");
         };
-        // The window closed by hand before it finished: noticed when this window gets focus back
-        const onFocus = () => {
-            try {
-                if (popup.closed) finish("stopped");
-            } catch {
-                // the window is on another site while it signs in
-            }
-        };
+        // The window may already have been closed while the sign-in was being started, and closing sends nothing: so it is
+        // looked at now and then, never only when this window gets focus back
+        const timer = setInterval(() => {
+            if (isClosed()) finish("stopped");
+        }, CLOSED_CHECK_MS);
         window.addEventListener("message", onMessage);
-        window.addEventListener("focus", onFocus);
+        if (isClosed()) finish("stopped");
     });
 }
 
@@ -98,6 +112,9 @@ async function connectReadyMade(app: Connectable): Promise<ConnectResult> {
     }
     if ((await waitForPopup(popup)) === "stopped") return { status: "stopped" };
     await loadMyApps(true);
+    // A read that failed leaves the list as it was, so it cannot say whether the sign-in counted: once more, then say so
+    if (get(myAppsFailed)) await loadMyApps(true);
+    if (get(myAppsFailed)) return { status: "unchecked" };
     // A ready-made app is connected only once its provider confirms the sign-in, which Orbit says when it lists the app: the
     // return alone is not enough
     return get(myAppsStore)?.some((one) => one.id === appId && one.connected)

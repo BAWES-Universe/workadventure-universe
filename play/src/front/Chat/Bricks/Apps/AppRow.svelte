@@ -16,6 +16,10 @@
     /** A small mark in front of the hint line (the crown of the universe's owner) */
     export let hintIcon: ComponentType | undefined = undefined;
     export let testId: string | undefined = undefined;
+    /** The row has its own button inside it and also opens something, by its words and by an arrow at its end (what a Brick may do) */
+    export let onOpen: (() => void) | undefined = undefined;
+    export let openLabel: string | undefined = undefined;
+    // A Brick's own picture goes in the `picture` slot, in place of an icon (the page that has the Brick draws it)
 </script>
 
 {#if onTap}
@@ -32,14 +36,34 @@
     </button>
 {:else}
     <div class="ar" data-testid={testId}>
-        {#if icon}<span class="ar-ico"><svelte:component this={icon} font-size="22" /></span>{/if}
-        <span class="ar-tx">
-            <span class="ar-t">{title}</span>
-            {#if hint}<span class="ar-m" class:warn class:ar-with-icon={!!hintIcon}
-                    >{#if hintIcon}<svelte:component this={hintIcon} font-size="13" />{/if}{hint}</span
-                >{/if}
-        </span>
+        {#if $$slots.picture}<span class="ar-ico"><slot name="picture" /></span>{:else if icon}<span class="ar-ico"
+                ><svelte:component this={icon} font-size="22" /></span
+            >{/if}
+        {#if onOpen}
+            <button
+                type="button"
+                class="ar-open ar-tx"
+                aria-label={openLabel}
+                data-testid="appRowOpen"
+                on:click={onOpen}
+            >
+                <span class="ar-t">{title}</span>
+                {#if hint}<span class="ar-m" class:warn>{hint}</span>{/if}
+            </button>
+        {:else}
+            <span class="ar-tx">
+                <span class="ar-t">{title}</span>
+                {#if hint}<span class="ar-m" class:warn class:ar-with-icon={!!hintIcon}
+                        >{#if hintIcon}<svelte:component this={hintIcon} font-size="13" />{/if}{hint}</span
+                    >{/if}
+            </span>
+        {/if}
         <slot />
+        {#if onOpen}
+            <button type="button" class="ar-chev ar-go" aria-label={openLabel} data-testid="appRowGo" on:click={onOpen}
+                ><IconChevronRight font-size="18" /></button
+            >
+        {/if}
     </div>
 {/if}
 
@@ -105,6 +129,29 @@
     }
     .ar-m.warn {
         color: #f5c451;
+    }
+    .ar-open {
+        padding: 0;
+        border: 0;
+        background: transparent;
+        font: inherit;
+        color: inherit;
+        text-align: start;
+        cursor: pointer;
+    }
+    .ar-open:focus-visible,
+    .ar-go:focus-visible {
+        outline: 2px solid #a78bfa;
+        outline-offset: 2px;
+        border-radius: 8px;
+    }
+    .ar-go {
+        width: 32px;
+        height: 32px;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        cursor: pointer;
     }
     .ar-chev {
         display: grid;

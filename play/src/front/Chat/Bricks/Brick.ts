@@ -208,6 +208,89 @@ export function readBrickIdeas(sender: string | null | undefined, content: Recor
     return botIdFromChatId(sender) !== undefined && content.msgtype === "m.text" && content[BRICK_IDEAS_KEY] === true;
 }
 
+/** On the one message a Brick leaves in its owner's chat with the chat they had with the Brick for guests (#1997). */
+export const GUEST_CHAT_KEY = "universe.guest_chat";
+
+/** One line of a chat a guest had with the Brick for guests, as it comes along when they sign in. */
+export interface GuestChatLine {
+    /** Its stable name in a chat carried in parts: a line sent twice is drawn once. None in a chat carried as one message. */
+    id?: string;
+    from: "guest" | "brick";
+    text: string;
+    /** When it was said (ms), on the guest's device. */
+    at: number;
+    /** The guest's pictures, files and voice note on this line, as they came along (plan v3). */
+    media?: CarriedChatMedia[];
+    /** The line's text only stands in for its media: it is not drawn. */
+    label?: true;
+}
+
+/**
+ * A guest's picture, file or note in a carried chat: copied into the person's own storage (`url`), or `gone` when the file no
+ * longer existed. On its way in, the device names it by its receipt; the message the Brick leaves never holds one.
+ */
+export interface CarriedChatMedia {
+    kind: "file" | "note";
+    name: string;
+    type: string;
+    url?: string;
+    gone?: true;
+    size?: number;
+    duration?: number;
+    heard?: string;
+    receipt?: string;
+}
+
+const CARRIED_MEDIA_MAX = 20;
+
+function readCarriedChatMedia(value: unknown): CarriedChatMedia[] {
+    if (!Array.isArray(value)) return [];
+    const media: CarriedChatMedia[] = [];
+    for (const one of value.slice(0, CARRIED_MEDIA_MAX)) {
+        if (!one || typeof one !== "object") continue;
+        const { kind, name, type, url, gone, size, duration, heard } = one as Record<string, unknown>;
+        if (kind !== "file" && kind !== "note") continue;
+        const link = typeof url === "string" && /^https?:\/\//.test(url) ? url : undefined;
+        if (!link && gone !== true) continue;
+        media.push({
+            kind,
+            name: typeof name === "string" ? name.slice(0, 255) : "file",
+            type: typeof type === "string" ? type.slice(0, 255) : "application/octet-stream",
+            ...(link ? { url: link } : { gone: true as const }),
+            ...(typeof size === "number" && Number.isFinite(size) && size >= 0 ? { size } : {}),
+            ...(typeof duration === "number" && Number.isFinite(duration) && duration >= 0 ? { duration } : {}),
+            ...(typeof heard === "string" && heard.trim() ? { heard: heard.trim().slice(0, 4000) } : {}),
+        });
+    }
+    return media;
+}
+
+const GUEST_CHAT_LINES_MAX = 500;
+const GUEST_LINE_MAX = 4000;
+
+/** The lines of a guest's chat a bot's message carries; none for anyone else's message or anything malformed. */
+export function readGuestChat(sender: string | null | undefined, content: Record<string, unknown>): GuestChatLine[] {
+    const list = content[GUEST_CHAT_KEY];
+    if (botIdFromChatId(sender) === undefined || content.msgtype !== "m.text" || !Array.isArray(list)) return [];
+    const lines: GuestChatLine[] = [];
+    for (const one of list.slice(-GUEST_CHAT_LINES_MAX)) {
+        if (!one || typeof one !== "object") continue;
+        const { from, text: said, at, label, id } = one as Record<string, unknown>;
+        const media = from === "guest" ? readCarriedChatMedia((one as Record<string, unknown>).media) : [];
+        if ((from !== "guest" && from !== "brick") || typeof said !== "string" || (!said.trim() && !media.length))
+            continue;
+        lines.push({
+            ...(typeof id === "string" && /^[A-Za-z0-9._-]{1,64}$/.test(id) ? { id } : {}),
+            from,
+            text: said.trim().slice(0, GUEST_LINE_MAX),
+            at: typeof at === "number" && Number.isFinite(at) && at > 0 ? Math.floor(at) : 0,
+            ...(media.length ? { media } : {}),
+            ...(media.length && label === true ? { label: true as const } : {}),
+        });
+    }
+    return lines;
+}
+
 /** On a Brick's answer: the Bricks it made while answering (#1996). The chat shows a line for each, one tap from its chat. */
 export const BRICK_MADE_KEY = "universe.brick_made";
 /** A Brick's suggestion of a Brick for a job that keeps coming back (#1996): its own message, right after an answer. */
@@ -285,6 +368,66 @@ export function readBrickOffer(
         instructions: typeof instructions === "string" ? instructions.trim().slice(0, INSTRUCTIONS_MAX) : "",
     };
     return read.topic && read.ask && read.name ? read : undefined;
+}
+
+/** A Brick's offer to connect an App (game #2001), on its own message after an answer: "Connect your calendar?". */
+export const APP_OFFER_KEY = "universe.app_offer";
+/** What the game sends the room once the person connected an App from that card: the Brick carries on with what they asked. */
+export const APP_CONNECTED_EVENT = "universe.app_connected";
+
+/** An offer to connect an App, as the card shows it and as the taps need it. */
+export interface AppOffer {
+    /** What Orbit keeps "Not now" under ("app google calendar"). */
+    topic: string;
+    /** The App on Orbit's list: its key and the name people see. */
+    app: string;
+    name: string;
+    /** "new": nothing is connected. "connected": they connected it already, and this Brick may not use it yet. */
+    state: "new" | "connected";
+    /** Their connection to it, when they have one. */
+    connectionId: string | null;
+    /** The card's question; empty when they asked for the App by name ("Connect Notion?"). */
+    ask: string;
+    asked: boolean;
+    /** A second choice when the kind of App has others: "Another calendar". Opens the Apps page searching for it. */
+    other: { label: string; line: string; search: string } | null;
+}
+
+const APP_ASK_MAX = 200;
+const APP_NAME_MAX = 60;
+const APP_OTHER_MAX = 80;
+
+/** The App offer a bot's message carries; undefined for anyone else's message or one that lacks a part. */
+export function readAppOffer(
+    sender: string | null | undefined,
+    content: Record<string, unknown>
+): AppOffer | undefined {
+    const offer = content[APP_OFFER_KEY];
+    if (botIdFromChatId(sender) === undefined || content.msgtype !== "m.text") return undefined;
+    if (!offer || typeof offer !== "object") return undefined;
+    const { topic, app, name, state, connectionId, ask, asked, other } = offer as Record<string, unknown>;
+    const read: AppOffer = {
+        topic: text(topic, TOPIC_MAX),
+        app: text(app, 80),
+        name: text(name, APP_NAME_MAX),
+        state: state === "connected" ? "connected" : "new",
+        connectionId: typeof connectionId === "string" && connectionId ? connectionId : null,
+        ask: text(ask, APP_ASK_MAX),
+        asked: asked === true,
+        other: null,
+    };
+    if (other && typeof other === "object") {
+        const { label, line, search } = other as Record<string, unknown>;
+        const second = {
+            label: text(label, APP_OTHER_MAX),
+            line: text(line, APP_OTHER_MAX),
+            search: text(search, APP_OTHER_MAX),
+        };
+        if (second.label && second.search) read.other = second;
+    }
+    // A card that "lets it use" an App it does not name a connection for cannot do that: it signs in instead
+    if (read.state === "connected" && !read.connectionId) read.state = "new";
+    return read.topic && read.app && read.name ? read : undefined;
 }
 
 const BOT_WORDS = new Set(["bot", "bots", "brick", "bricks"]);

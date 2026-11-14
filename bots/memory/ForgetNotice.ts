@@ -31,8 +31,32 @@ export function parseForgetNotice(forget: unknown): MemoryForgetNotice | null {
         notice.rows = rows.flatMap((row) => {
             const { id, userUuid } = (row ?? {}) as { id?: unknown; userUuid?: unknown };
             if (typeof id !== 'string' || (userUuid !== null && typeof userUuid !== 'string')) return [];
-            return [{ id, userUuid }];
+            return [{ id, userUuid: userUuid as string | null }];
         });
     }
     return notice.everyone || notice.userUuids.length > 0 ? notice : null;
+}
+
+/**
+ * One thing a person forgot through Orbit (their list there, or "forget that" said in the chat), by its key (#2003).
+ * Orbit sends these with a memory save and with the privacy check until the bot server reports it dropped the thing.
+ */
+export interface ItemForgetNotice {
+    id: string;
+    userUuid: string;
+    itemKey: string;
+    /** When it was forgotten (milliseconds). What the person said again after this stays. */
+    at: number;
+}
+
+export type ItemForgetHandler = (botId: string, items: ItemForgetNotice[]) => void;
+
+/** Read the `forgetItems` part of an Orbit answer. A missing or malformed one is no notice, as is an entry that is not whole. */
+export function parseItemForgets(value: unknown): ItemForgetNotice[] {
+    if (!Array.isArray(value)) return [];
+    return value.flatMap((entry) => {
+        const { id, userUuid, itemKey, at } = (entry ?? {}) as Record<string, unknown>;
+        if (typeof id !== 'string' || typeof userUuid !== 'string' || typeof itemKey !== 'string' || itemKey === '') return [];
+        return [{ id, userUuid, itemKey, at: typeof at === 'number' && Number.isFinite(at) && at > 0 ? at : 0 }];
+    });
 }
