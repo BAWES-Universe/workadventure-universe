@@ -29,7 +29,7 @@
         call?.state.phase === "ended"
             ? call.state.endedBy === "quiet"
                 ? $LL.chat.brickCall.endedQuiet()
-                : call.state.endedBy === "unavailable"
+                : call.state.endedBy === "unavailable" || call.state.endedBy === "bot"
                 ? $LL.chat.brickCall.endedUnavailable()
                 : undefined
             : undefined;

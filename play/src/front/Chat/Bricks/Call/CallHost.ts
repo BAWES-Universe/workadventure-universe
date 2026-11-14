@@ -54,7 +54,8 @@ export const callConnection = createCallConnection({
     now: () => Date.now(),
 });
 
-// A call that ended by itself says why for a few seconds, then goes; one the person or the bot ended just goes
+// A call that ended by itself says why for a few seconds, then goes (the bot leaving the call is the voice being gone:
+// the same line as when it is not available); one the person ended just goes
 let clearing: ReturnType<typeof setTimeout> | undefined;
 // Lives as long as the page does
 export const stopClearingEndedCalls = botCallStore.subscribe((call) => {
@@ -64,7 +65,7 @@ export const stopClearingEndedCalls = botCallStore.subscribe((call) => {
         return;
     }
     if (clearing) return;
-    const says = call.state.endedBy === "quiet" || call.state.endedBy === "unavailable";
+    const says = call.state.endedBy === "quiet" || call.state.endedBy === "unavailable" || call.state.endedBy === "bot";
     clearing = setTimeout(
         () => {
             clearing = undefined;
