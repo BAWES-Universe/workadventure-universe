@@ -10,6 +10,7 @@ export interface RfbConnection {
     focusOnClick: boolean;
     background: string;
     addEventListener(type: "connect" | "disconnect" | "securityfailure", listener: (event: Event) => void): void;
+    removeEventListener(type: "connect" | "disconnect" | "securityfailure", listener: (event: Event) => void): void;
     disconnect(): void;
 }
 

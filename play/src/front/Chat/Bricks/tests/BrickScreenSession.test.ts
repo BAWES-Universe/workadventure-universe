@@ -21,6 +21,9 @@ class FakeRfb implements RfbConnection {
     addEventListener(type: string, listener: (event: Event) => void) {
         (this.listeners[type] ??= []).push(listener);
     }
+    removeEventListener(type: string, listener: (event: Event) => void) {
+        this.listeners[type] = (this.listeners[type] ?? []).filter((one) => one !== listener);
+    }
     disconnect() {
         this.disconnected = true;
     }
@@ -30,7 +33,12 @@ class FakeRfb implements RfbConnection {
 }
 
 const flush = async () => {
-    for (let i = 0; i < 6; i++) await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
 };
 
 describe("a Brick's screen connection", () => {
@@ -52,9 +60,9 @@ describe("a Brick's screen connection", () => {
         timers = [];
         live = [];
         deps = {
-            ticket: vi.fn(async () => ({ ticket: "t-1" })),
+            ticket: vi.fn(() => Promise.resolve({ ticket: "t-1" })),
             socketUrl: (ticket: string) => `wss://bots.test/computer/screen?ticket=${ticket}`,
-            load: vi.fn(async () => FakeRfb as unknown as RfbConstructor),
+            load: vi.fn(() => Promise.resolve(FakeRfb as unknown as RfbConstructor)),
             setTimer: (fn, ms) => {
                 const timer = { fn, ms, live: true };
                 timers.push(timer);
@@ -139,10 +147,12 @@ describe("a Brick's screen connection", () => {
         const session = createScreenSession(deps, target, () => undefined);
         session.want("watch");
         await flush();
-        for (let i = 0; i < SCREEN_RETRIES; i++) {
+        const quick = Array.from({ length: SCREEN_RETRIES }, (_, i) => i);
+        await quick.reduce(async (before, i) => {
+            await before;
             expect(timers.at(-1)?.ms).toBe(SCREEN_RETRY_MS * 2 ** i);
             await runTimer();
-        }
+        }, Promise.resolve());
         expect(deps.ticket).toHaveBeenCalledTimes(SCREEN_RETRIES + 1);
         // Not left stuck: a slow try is waiting, and when the ticket comes the screen opens without anyone touching the page
         expect(timers.at(-1)?.ms).toBe(SCREEN_SLOW_RETRY_MS);
@@ -164,7 +174,11 @@ describe("a Brick's screen connection", () => {
 
     it("drops a ticket that comes after the wish changed, and a connection that ends after it was let go", async () => {
         let resolve: (value: { ticket: string }) => void = () => undefined;
-        deps.ticket.mockReturnValueOnce(new Promise((done) => (resolve = done)));
+        deps.ticket.mockReturnValueOnce(
+            new Promise((done) => {
+                resolve = done;
+            })
+        );
         const session = createScreenSession(deps, target, () => undefined);
         session.want("watch");
         await flush();

@@ -78,17 +78,21 @@ export function createScreenSession(deps: ScreenSessionDeps, target: HTMLElement
             next.viewOnly = mode === "watch";
             next.focusOnClick = mode === "input";
             next.background = "transparent";
-            next.addEventListener("connect", () => {
+            const onConnect = () => {
                 if (mine !== generation) return;
                 failures = 0;
                 onLive(true);
-            });
-            next.addEventListener("disconnect", () => {
+            };
+            const onDisconnect = () => {
+                next.removeEventListener("connect", onConnect);
+                next.removeEventListener("disconnect", onDisconnect);
                 if (mine !== generation) return;
                 connection = undefined;
                 onLive(false);
                 again(mine);
-            });
+            };
+            next.addEventListener("connect", onConnect);
+            next.addEventListener("disconnect", onDisconnect);
             connection = next;
         } catch (error) {
             console.error(error);

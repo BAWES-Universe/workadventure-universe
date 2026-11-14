@@ -5,9 +5,9 @@
     // When the connection ends (the job moved on, the keyboard was handed back) it asks again with the ticket that now fits.
     import { onDestroy, onMount } from "svelte";
     import { botApiService } from "../../../external-modules/bots/services/BotApiService";
-    import { IconLoader2 } from "@wa-icons";
     import { loadNoVnc } from "./novnc";
     import { createScreenSession, type ScreenSession } from "./BrickScreenSession";
+    import { IconLoader2 } from "@wa-icons";
 
     export let brickId: string;
     export let title: string;
