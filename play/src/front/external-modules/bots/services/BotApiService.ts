@@ -1560,6 +1560,77 @@ export class BotApiService {
         return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/undo`, { method: "POST" });
     }
 
+    /* ---- Brick templates (game #2008). Every call has a Brick's deadline, so no button waits for good. ---- */
+
+    /** "Start from a template": the person's starred ones, a few picks, and Bricks they met that share one. */
+    async getTemplateLists(): Promise<unknown> {
+        return await this.brickWrite("/api/brick-templates", {});
+    }
+
+    /** The look before creating a Brick from a template (`{ template }`). Rejects with status 404 when it is not there. */
+    async getTemplatePreview(templateId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/brick-templates/${encodeURIComponent(templateId)}`, {});
+    }
+
+    /** "Create Brick": the person's own new Brick from a template. Answers with its card and where it came from. */
+    async useTemplate(templateId: string, name?: string): Promise<unknown> {
+        return await this.brickWrite(`/api/brick-templates/${encodeURIComponent(templateId)}/use`, {
+            method: "POST",
+            body: JSON.stringify(name ? { name } : {}),
+        });
+    }
+
+    /** Star keeps a template for later; starring twice is the same star. */
+    async starTemplate(templateId: string, starred: boolean): Promise<unknown> {
+        return await this.brickWrite(`/api/brick-templates/${encodeURIComponent(templateId)}/star`, {
+            method: starred ? "PUT" : "DELETE",
+        });
+    }
+
+    /** The template on the card of a Brick someone meets (`{ template }`, null when it shares none). */
+    async getTemplateOfBrick(botId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/brick-templates/for-brick/${encodeURIComponent(botId)}`, {});
+    }
+
+    /** A Brick's own "Template" group, for its owner. */
+    async getMakerTemplate(brickId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/template`, {});
+    }
+
+    /** The look before sharing: exactly what would go with the template. Writes nothing. */
+    async lookAtTemplate(brickId: string, choices: Record<string, unknown>): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/template/look`, {
+            method: "POST",
+            body: JSON.stringify(choices),
+        });
+    }
+
+    /** "Share as a template" / "Share your latest changes": shares exactly the look the `token` names. */
+    async shareTemplate(brickId: string, request: Record<string, unknown>): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/template`, {
+            method: "PUT",
+            body: JSON.stringify(request),
+        });
+    }
+
+    /** "Stop sharing": nobody new can use it; no Brick is touched. */
+    async stopSharingTemplate(brickId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/template`, { method: "DELETE" });
+    }
+
+    /** A Brick made from a template: where it came from, what it still needs, and a "Template updated" to review. */
+    async getMadeFrom(brickId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/made-from`, {});
+    }
+
+    /** "Template updated": the owner takes some parts, all or none of what the maker changed. */
+    async takeTemplateUpdate(brickId: string, version: number, take: string[]): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/made-from/update`, {
+            method: "POST",
+            body: JSON.stringify({ version, take }),
+        });
+    }
+
     /**
      * Tells the bot server that a Brick was deleted or brought back, so it reads the Brick again now instead of within
      * the minute. Never throws: without it the change still arrives, a little later.

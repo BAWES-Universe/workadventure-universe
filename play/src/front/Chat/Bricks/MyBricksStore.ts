@@ -15,6 +15,7 @@ import {
     type DeletedBrickCard,
 } from "./Brick";
 import { brickPicture } from "./BrickLookPicture";
+import { parseUsedTemplate, type UsedTemplate } from "./Templates/Template";
 
 export { brickPicture };
 
@@ -200,6 +201,24 @@ export async function makeMyBrick(name: string, look: string): Promise<BrickCard
         console.warn("Could not make a Brick", error);
         return undefined;
     }
+}
+
+/**
+ * Makes a Brick from a template (#2008): "Create Brick" on a template's look. It is a new Brick with its own name and
+ * identity, in the list (and so in Chats) as soon as Orbit made it. Rejects with Orbit's refusal (its `status` says 404
+ * for a template that stopped being shared), so the dialog can say so; undefined when the answer was not a Brick.
+ */
+export async function makeMyBrickFromTemplate(
+    templateId: string,
+    name?: string
+): Promise<{ brick: BrickCard; used: UsedTemplate } | undefined> {
+    const asked = generation;
+    const used = parseUsedTemplate(await botApiService.useTemplate(templateId, name));
+    const made = parseBrickCard(used?.brick);
+    if (!used || !made || asked !== generation) return undefined;
+    changed();
+    bricks.update((list) => [...(list ?? []).filter((brick) => brick.id !== made.id), made]);
+    return { brick: made, used };
 }
 
 /**

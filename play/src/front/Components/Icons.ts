@@ -231,3 +231,6 @@ export { default as IconBrandSlack } from "~icons/tabler/brand-slack";
 export { default as IconBrandGoogleDrive } from "~icons/tabler/brand-google-drive";
 export { default as IconBrandDropbox } from "~icons/tabler/brand-dropbox";
 export { default as IconCrown } from "~icons/tabler/crown";
+export { default as IconTemplate } from "~icons/tabler/template";
+export { default as IconPlugConnectedX } from "~icons/tabler/plug-connected-x";
+export { default as IconBolt } from "~icons/tabler/bolt";
