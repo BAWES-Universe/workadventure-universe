@@ -31,6 +31,7 @@ import { MatrixAppServiceClient } from '../matrix/MatrixAppServiceClient';
 import { MatrixDmBridge, type CarriedPart, type DirectChatAnswer, type GuestChatNote } from '../matrix/MatrixDmBridge';
 import { createComputerModelRelay, relayOrbitFor } from './ComputerModelRelay';
 import { createComputerRunner, relayUrlFromEnv, runnerOrbitFor, type ComputerRunner } from './ComputerRunner';
+import { createScreenGateway, screenOrbitFor, type ScreenGateway } from './ComputerScreenGateway';
 import { pretendRunnerOn } from '../ai/ComputerPretendRunner';
 import { createMatrixAppServiceRouter, type MatrixAppServiceRouter } from '../matrix/MatrixAppServiceRouter';
 import { uploadAttachment } from '../matrix/uploadAttachment';
@@ -256,6 +257,7 @@ async function setupMatrix(): Promise<void> {
 }
 // Made in start(), once direct messages are settled: their routes are part of the API.
 let botAPI: BotAPI | undefined;
+let screenGateway: ScreenGateway | undefined;
 
 // Start autopilot improvement system (DEVELOPMENT ONLY - fully autonomous)
 // This system runs tests every 30 seconds and creates improvement task files for AI analysis
@@ -350,6 +352,9 @@ async function start() {
 
         // Start API server
         botAPI.start(BOT_SERVER_PORT);
+        // The screen of a Brick's computer: the socket lives here, every decision is Orbit's
+        screenGateway = createScreenGateway({ orbit: screenOrbitFor(adminApiService) });
+        botAPI.addUpgradeHandler((request, socket, head) => screenGateway?.handleUpgrade(request, socket, head) ?? false);
         matrixBridge?.start();
 
         console.log(`[BotServer] Bot server started on port ${BOT_SERVER_PORT}`);
@@ -479,6 +484,7 @@ function stopGameLoop(): void {
         if (brickSweepInterval) clearInterval(brickSweepInterval);
         if (computerSweepInterval) clearInterval(computerSweepInterval);
         computerRunner?.stop();
+        screenGateway?.close();
         gameLoopInterval = null;
         console.log('[BotServer] Game loop stopped');
     }

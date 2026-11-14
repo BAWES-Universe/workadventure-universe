@@ -1163,6 +1163,15 @@ export class AdminApiService {
         return { status: response.status, data: response.data ?? {} };
     }
 
+    /** The screen gateway's two calls to Orbit (open a socket with a ticket, check an open one): the status is passed on, never thrown for a 4xx. */
+    async computerScreenCall(step: 'open' | 'check', body: Record<string, unknown>): Promise<{ status: number; data: Record<string, unknown> }> {
+        const response = await this.brickCall<Record<string, unknown>>('post', `api/computer/screen/${step}`, body).catch((error: unknown) => {
+            if (axios.isAxiosError(error) && error.response && error.response.status < 500) return error.response as AxiosResponse<Record<string, unknown>>;
+            throw error;
+        });
+        return { status: response.status, data: response.data ?? {} };
+    }
+
     /** The jobs Brick is working on now, with the words for the agent (#2000). Throws when Orbit cannot be reached. */
     async computerRunningJobs(): Promise<Array<{ jobId: string; botId: string; title: string; brief: string | null; writes: boolean; hasTurn: boolean }>> {
         const response = await this.brickCall<{ jobs?: unknown }>('get', 'api/computer/jobs/running');

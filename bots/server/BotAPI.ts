@@ -4,6 +4,8 @@
 
 import express, { type Request, type Response, type NextFunction } from 'express';
 import { timingSafeEqual } from 'crypto';
+import type { IncomingMessage } from 'http';
+import type { Duplex } from 'stream';
 import jwt from 'jsonwebtoken';
 import { BotManager } from './BotManager';
 import { AdminApiService, BotConfigRefused } from './AdminApiService';
@@ -2311,6 +2313,20 @@ export class BotAPI {
         this.server = this.app.listen(port, () => {
             console.log(`[BotAPI] Server running on port ${port}`);
         });
+        // A socket upgrade goes to the first handler that takes it (the computer screen); one nobody takes is closed
+        this.server.on('upgrade', (request: IncomingMessage, socket: Duplex, head: Buffer) => {
+            for (const handler of this.upgradeHandlers) {
+                if (handler(request, socket, head)) return;
+            }
+            socket.destroy();
+        });
+    }
+
+    private upgradeHandlers: Array<(request: IncomingMessage, socket: Duplex, head: Buffer) => boolean> = [];
+
+    /** Adds a handler for socket upgrades. It answers whether it took the request. */
+    addUpgradeHandler(handler: (request: IncomingMessage, socket: Duplex, head: Buffer) => boolean): void {
+        this.upgradeHandlers.push(handler);
     }
     
     /**
