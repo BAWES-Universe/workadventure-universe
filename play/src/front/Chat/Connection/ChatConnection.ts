@@ -304,6 +304,8 @@ export type ChatMessageContent = {
     voiceWaveform?: number[];
     /** The file could not be fetched (gone, or the network failed). It is tried again the next time it is shown. */
     mediaFailed?: boolean;
+    /** The file no longer exists (a guest's file that did not come along after sign-in): its bubble says it is gone. */
+    mediaGone?: boolean;
     /** What a bot heard in a voice message (shown inside the note's bubble), once it was asked to listen. */
     transcript?: NoteTranscript;
 };

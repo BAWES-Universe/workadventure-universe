@@ -188,6 +188,34 @@ export class DmReplyService extends BaseBehavior {
     private queues = new Map<string, Promise<unknown>>();
     /** Per chat, the words that wait behind the answer in progress, to be answered together once it is done. */
     private waiting = new Map<string, { texts: string[]; pointed: string[]; note: boolean; starter: boolean; answer: Promise<DmReply | null> }>();
+    /**
+     * What a model reads of the files a guest sent the Brick for guests (plan v3 section 5): the same reading every bot does (the
+     * text of each file, then the pictures for a model that sees them), from bytes the caller already read and checked. Nothing
+     * else is fetched while it reads, so a document that names other addresses never reaches the network.
+     */
+    async readCheckedFiles(text: string, files: { url: string; type: string; bytes: ArrayBuffer }[], readChars: number): Promise<{ text: string; images: string[] }> {
+        const [primary, ...gallery] = files;
+        if (!primary) return { text, images: [] };
+        const { FileParser } = await import('../services/FileParser');
+        const loaded = new Map(files.map((file) => [file.url, { bytes: file.bytes, type: file.type }]));
+        const mediaOf = (type: string) => (type.startsWith('image/') ? 'image' : type.startsWith('audio/') ? 'audio' : type.startsWith('video/') ? 'video' : 'file');
+        return FileParser.withLoadedFiles(loaded, async () => {
+            const galleryUrls = gallery.map((file) => file.url);
+            const read = await this.formatParsedAttachment(text, primary.url, primary.type, mediaOf(primary.type), galleryUrls, undefined, undefined, readChars);
+            const pictures = await this.collectImageUrls(primary.url, mediaOf(primary.type), primary.type, galleryUrls);
+            // The model gets each picture from its checked bytes, never its stored link: a signed link runs out long before its receipt
+            const { sniffedType } = await import('../ai/providers/inlineImages');
+            const images = pictures.map((url) => {
+                const file = loaded.get(url);
+                if (!file) return url;
+                const bytes = Buffer.from(file.bytes);
+                const type = file.type.startsWith('image/') ? file.type : (sniffedType(bytes) ?? 'image/png');
+                return `data:${type};base64,${bytes.toString('base64')}`;
+            });
+            return { text: read, images };
+        });
+    }
+
     /** Bricks whose settings must be read again before their next answer (#1996): one that was just deleted stops at once. */
     forgetConfig(botId: string): void {
         this.configCache.delete(botId);

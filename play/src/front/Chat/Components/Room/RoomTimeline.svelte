@@ -284,6 +284,8 @@
     $: matrixRoom = room instanceof MatrixChatRoom ? room : undefined;
     // The Brick for guests (#1997): a chat this device keeps, drawn by the same timeline as every chat
     $: guestRoom = room instanceof GuestBrickChatRoom ? room : undefined;
+    // What the Brick for guests takes now (plan v3): the same paperclip, GIFs and mic as every bot chat, where its server has them
+    $: guestTakes = guestRoom ? guestRoom.takes : readable({ files: false, notes: false });
     $: guestBrick = guestRoom ? guestBrickCard($LL, 0) : undefined;
 
     // Counts the chat objects shown here: a chat can be made again under the same id (its type found out later, or a new
@@ -1683,8 +1685,8 @@
                         {room}
                         partner={$directPartner}
                         inputHint={botPlaceholder}
-                        allowVoiceNotes={partnerBotId === undefined || $botHears}
-                        textOnly={guestRoom !== undefined}
+                        allowVoiceNotes={guestRoom ? $guestTakes.notes : partnerBotId === undefined || $botHears}
+                        textOnly={guestRoom !== undefined && !$guestTakes.files}
                         bind:this={messageInputBarRef}
                     />
                 {/key}

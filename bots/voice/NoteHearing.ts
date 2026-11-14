@@ -24,10 +24,29 @@ export type HeardNote =
     | { ok: true; text: string; provider: string; clipSeconds?: number; timings: NoteTimings }
     | { ok: false; reason: NoteFailure; status?: number };
 
+/** What a hearing tells its caller along the way. */
+export interface HearHooks {
+    /** The provider took the note: its ids, before the wait for the words. */
+    onSubmitted?: (refs: { file?: string; transcription?: string }) => Promise<void> | void;
+    /**
+     * Hands the provider's copies to the cleanup jobs instead of deleting them once here. Answers the copies it could not keep
+     * (Orbit down or refusing), which the hearing then deletes itself at once, so nothing is left behind unrecorded.
+     */
+    cleanup?: (refs: { file?: string; transcription?: string }) => Promise<{ file?: string; transcription?: string }>;
+}
+
 /** What a hearing provider does with a clip. One per adapter that can read a file. */
 export interface ClipHearer {
     /** Reads the clip; throws a `HearingError` when the provider says no. The clip's seconds come back when the provider knows them. */
-    hear(settings: RecognitionConfig, clip: { bytes: Uint8Array; filename: string }): Promise<{ text: string; seconds?: number; uploadMs: number; waitMs: number }>;
+    hear(
+        settings: RecognitionConfig,
+        clip: { bytes: Uint8Array; filename: string },
+        hooks?: HearHooks
+    ): Promise<{ text: string; seconds?: number; uploadMs: number; waitMs: number }>;
+    /** The words of a hearing that was started and lost, looked up by the provider's ids; never sends the note again. */
+    reconcile?(settings: RecognitionConfig, refs: Record<string, unknown>, hooks?: HearHooks): Promise<{ text: string; seconds?: number; uploadMs: number; waitMs: number }>;
+    /** Deletes one object the provider still holds; the status it answered. */
+    remove?(settings: { key: string; endpoint?: string }, kind: 'file' | 'transcription', id: string): Promise<number>;
 }
 
 /** A provider's refusal: its HTTP status when it had one, and whether it refused the key itself or ran out of room. */

@@ -28,7 +28,7 @@ import { NearbyAsks } from '../mcp/NearbyAsks';
 import { QuestionCards } from '../mcp/QuestionCards';
 import { verifyMatrixRegistration } from '../matrix/verifyMatrixRegistration';
 import { MatrixAppServiceClient } from '../matrix/MatrixAppServiceClient';
-import { MatrixDmBridge, type DirectChatAnswer, type GuestChatNote } from '../matrix/MatrixDmBridge';
+import { MatrixDmBridge, type CarriedPart, type DirectChatAnswer, type GuestChatNote } from '../matrix/MatrixDmBridge';
 import { createMatrixAppServiceRouter, type MatrixAppServiceRouter } from '../matrix/MatrixAppServiceRouter';
 import { uploadAttachment } from '../matrix/uploadAttachment';
 import { botWokaPicture } from '../matrix/wokaPicture';
@@ -79,6 +79,16 @@ let dmCards: CardSurface | undefined;
 // bubble to the person who asked alone, with one plain line for everyone (#1658). Built before direct messages, so a bubble
 // has its cards with or without them.
 const aiService = botManager.getAIService();
+// Every bot hears voice notes (plan v3): what a bot's reply would run on decides whether the note is checked against the person's
+// replies before it is heard, and what the hearing provider still holds is deleted until it confirms
+{
+    const hearing = sharedNoteHearing(adminApiService);
+    hearing?.useReplySource(async (botId) => {
+        const config = botManager.getBot(botId)?.getFullConfig() ?? (await adminApiService.getBotConfiguration(botId, 5000, { bricks: true }).catch(() => null));
+        return config?.aiProviderRef ? aiService.replySource(config.aiProviderRef, botId) : null;
+    });
+    hearing?.startCleaning();
+}
 const nearbyAsks = new NearbyAsks({
     bot: (botId) => botManager.getBot(botId),
     quick: async (botId, system, prompt, timeoutMs) => {
@@ -138,7 +148,8 @@ aiService.useNearbyAsks(nearbyAsks);
 let dmRoom: ((botId: string) => Promise<DmRoomLink | undefined>) | undefined;
 let directChat: ((botId: string, chatId: string) => Promise<DirectChatAnswer>) | undefined;
 let brickChanged: ((botId: string, ownerId: string) => boolean) | undefined;
-let carryGuestChat: ((botId: string, chatId: string, carryId: string, lines: GuestChatNote[]) => Promise<'sent' | 'already' | 'wait' | 'not_brick'>) | undefined;
+let carryGuestChat: ((botId: string, chatId: string, carryId: string, lines: GuestChatNote[], part?: CarriedPart | null) => Promise<'sent' | 'already' | 'wait' | 'not_brick'>) | undefined;
+let carryBrick: ((botId: string) => Promise<boolean>) | undefined;
 /** How often Orbit is asked to remove deleted Bricks whose days are over (#1996). Nothing depends on when it runs. */
 const BRICK_SWEEP_EVERY_MS = 60 * 60 * 1000;
 // A job that stopped renewing its room is stopped safely and jobs in line are tried again (#2000)
@@ -206,10 +217,13 @@ async function setupMatrix(): Promise<void> {
     // On every bot server, not only this one
     brickChanged = brickChangedEverywhere(botRegistry, (botId, ownerId) => dmReplyService.forgetBrickOf(botId, ownerId));
     // A guest's chat is brought into the Brick they now have (#1997), and only into the one Brick everyone gets
-    carryGuestChat = async (botId, chatId, carryId, lines) => {
+    carryBrick = async (botId) => {
         const config = await dmReplyService.getBotConfig(botId);
-        if (!config?.brick?.isDefault || config.brick.deleted) return 'not_brick';
-        return bridge.carryGuestChat(botId, chatId, carryId, lines);
+        return Boolean(config?.brick?.isDefault && !config.brick.deleted);
+    };
+    carryGuestChat = async (botId, chatId, carryId, lines, part) => {
+        if (!(await carryBrick!(botId))) return 'not_brick';
+        return bridge.carryGuestChat(botId, chatId, carryId, lines, part);
     };
     brickSweepInterval = setInterval(() => void adminApiService.sweepBricks(), BRICK_SWEEP_EVERY_MS);
     brickSweepInterval.unref?.();
@@ -309,7 +323,7 @@ async function start() {
 
         // Before any bot connects: a bot shows Message only when Synapse accepted the registration
         await setupMatrix();
-        botAPI = new BotAPI(botManager, adminApiService, botRegistry, preRouters, { dmStatus, dmRoom, directChat, brickChanged, carryGuestChat, noteHearing: noteHearing ?? undefined });
+        botAPI = new BotAPI(botManager, adminApiService, botRegistry, preRouters, { dmStatus, dmRoom, directChat, brickChanged, carryGuestChat, carryBrick, noteHearing: noteHearing ?? undefined });
 
         // Initialize bot manager
         await botManager.initialize();

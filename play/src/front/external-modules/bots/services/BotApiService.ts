@@ -11,6 +11,7 @@ import {
 import { resolveCredentialUrl } from "../../admin-api/iframeAuth";
 import { freshOrbitAccessToken, type GameTokenHolder } from "../../admin-api/orbitAccessToken";
 import type { PushOverview, PushSettings } from "../../../Notification/Push/PushSettings";
+import type { GuestChatLine } from "../../../Chat/Bricks/Brick";
 import { ChatPusherSchema, type ChatPusher, type PushActivityReport } from "../../../Notification/Push/PushChat";
 import { readBotUsage, type BotUsage, type UsageRange } from "../usageModel";
 import {
@@ -1499,6 +1500,8 @@ export class BotApiService {
         message: string;
         history: { from: "guest" | "brick"; text: string }[];
         saidNeedsAccount: boolean;
+        files?: string[];
+        note?: string;
     }): Promise<unknown> {
         // The request and the reading of the answer both stop at the deadline: a call that hangs would hold back every later turn
         const stop = new AbortController();
@@ -1520,6 +1523,39 @@ export class BotApiService {
         }
     }
 
+    /** What the Brick for guests takes now (plan v3): files, and voice notes. Nothing when it can't say. */
+    async guestBrickTakes(): Promise<{ files: boolean; notes: boolean }> {
+        try {
+            const response = await this.fetchBotServer("/api/guest-brick/media", { method: "GET" });
+            const data = (await response.json()) as { files?: unknown; notes?: unknown } | null;
+            return { files: data?.files === true, notes: data?.notes === true };
+        } catch {
+            return { files: false, notes: false };
+        }
+    }
+
+    /**
+     * Whether the bot server takes a guest's chat in parts after sign-in (plan v3 section 7). False for a bot server from before,
+     * which takes it as one message. Throws when the bot server can't be asked.
+     */
+    async botServerCarriesParts(): Promise<boolean> {
+        let response: Response;
+        try {
+            response = await this.fetchBotServer("/api/guest-brick/media", { method: "GET" });
+        } catch (error) {
+            // A bot server from before has no such route at all
+            if ((error as { status?: number }).status === 404) return false;
+            throw error;
+        }
+        const data = (await response.json().catch(() => null)) as { carryParts?: unknown } | null;
+        return data?.carryParts === true;
+    }
+
+    /** This device has the answer to a guest's voice note: its kept copy is deleted. */
+    async guestBrickDelivered(delivery: string): Promise<void> {
+        await this.fetchBotServer("/api/guest-brick/delivered", { method: "POST", body: JSON.stringify({ delivery }) });
+    }
+
     /**
      * After signing in: asks Orbit whether the chat this device had as a guest was handed to this account (once, and only
      * to the device that held that guest id). `true` when it is this device's to bring along. Throws when Orbit could not be asked.
@@ -1533,18 +1569,19 @@ export class BotApiService {
     }
 
     /**
-     * Has the bot server say a guest's chat in the person's own chat with their Brick (game #1997), once. Answers
-     * `sent`, `already` (it was said already) or `wait` (their chat is not there yet: ask again in a moment).
+     * Has the bot server say one part of a guest's chat in the person's own chat with their Brick (game #1997, plan v3 section
+     * 7), once. Answers `sent`, `already` (it was said already) or `wait` (their chat is not there yet: ask again in a moment).
      */
     async carryGuestChat(
         brickId: string,
         chatId: string,
         carryId: string,
-        lines: { from: "guest" | "brick"; text: string; at: number }[]
+        lines: GuestChatLine[],
+        part?: { from: number; to: number; last: boolean }
     ): Promise<"sent" | "already" | "wait"> {
         const response = await this.fetchBotServer(`/api/bots/${encodeURIComponent(brickId)}/carried-chat`, {
             method: "POST",
-            body: JSON.stringify({ chatId, carryId, lines }),
+            body: JSON.stringify({ chatId, carryId, lines, ...(part ? { part } : {}) }),
         });
         const result = ((await response.json()) as { result?: unknown } | null)?.result;
         if (result === "sent" || result === "already" || result === "wait") return result;
@@ -1658,6 +1695,8 @@ export class BotApiService {
             endpoint === "/api/bots/room-enter" ||
             endpoint === "/api/bots/room-leave" ||
             endpoint === "/api/guest-brick/reply" ||
+            endpoint === "/api/guest-brick/media" ||
+            endpoint === "/api/guest-brick/delivered" ||
             /^\/api\/bots\/[^/]+\/(summon|access)$/.test(endpoint);
         const gameToken = this.getGameToken();
         if (gameToken) {

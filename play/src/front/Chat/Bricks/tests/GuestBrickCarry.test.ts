@@ -47,12 +47,107 @@ describe("a guest signs in, and their chat comes with them (#1997)", () => {
         const { state, steps } = device();
         await expect(carryGuestChatAlong(steps)).resolves.toBe("carried");
         expect(steps.take).toHaveBeenCalledWith(GUEST);
-        expect(steps.carry).toHaveBeenCalledWith(GUEST, [
-            { from: "guest", text: "Remember I take it without sugar", at: 2 },
-            { from: "brick", text: "I can only remember once I'm yours.", at: 3 },
-        ]);
+        expect(steps.carry).toHaveBeenCalledWith(
+            GUEST,
+            [
+                { id: "1.0", from: "guest", text: "Remember I take it without sugar", at: 2 },
+                { id: "1.1", from: "brick", text: "I can only remember once I'm yours.", at: 3 },
+            ],
+            { from: 0, to: 2, last: true }
+        );
         // Said once: what the device kept goes, so it is never said again
         expect(state.chat).toBeUndefined();
+    });
+
+    it("brings a long chat in parts, in order, and keeps the chat until every line is in", async () => {
+        let long = newGuestChat(GUEST, 1);
+        for (let at = 1; at <= 450; at++) long = withLine(long, { from: "guest", text: `line ${at}`, at });
+        const { state, steps } = device(long);
+        const kept: (number | undefined)[] = [];
+        vi.mocked(steps.carry).mockImplementation(() => {
+            kept.push(state.chat?.carriedTo);
+            return Promise.resolve("sent");
+        });
+        await expect(carryGuestChatAlong(steps)).resolves.toBe("carried");
+        const parts = vi.mocked(steps.carry).mock.calls.map(([, lines, part]) => ({ lines, part: part! }));
+        expect(parts.length).toBeGreaterThan(2);
+        expect(parts.flatMap(({ lines }) => lines.map((line) => line.at))).toEqual(
+            Array.from({ length: 450 }, (_, i) => i + 1)
+        );
+        // Each part starts where the one before ended; only the last says so
+        parts.forEach(({ part }, n) => expect(part.from).toBe(n === 0 ? 0 : parts[n - 1].part.to));
+        expect(parts.map(({ part }) => part.last)).toEqual(parts.map((_, n) => n === parts.length - 1));
+        // The device kept its chat, and where it got to, until the last part was in
+        expect(kept).toEqual([undefined, ...parts.slice(0, -1).map(({ part }) => part.to)]);
+        expect(state.chat).toBeUndefined();
+    });
+
+    it("goes on from the part it got to when a carry was cut short, never sending a part that is in twice", async () => {
+        let long = newGuestChat(GUEST, 1);
+        for (let at = 1; at <= 450; at++) long = withLine(long, { from: "guest", text: `line ${at}`, at });
+        const { state, steps } = device(long);
+        vi.mocked(steps.carry).mockResolvedValueOnce("sent").mockRejectedValueOnce(new Error("offline"));
+        await expect(carryGuestChatAlong(steps)).resolves.toBe("later");
+        const firstEnd = vi.mocked(steps.carry).mock.calls[0][2]!.to;
+        expect(state.chat?.carriedTo).toBe(firstEnd);
+        vi.mocked(steps.carry).mockReset().mockResolvedValue("sent");
+        await expect(carryGuestChatAlong(steps)).resolves.toBe("carried");
+        expect(vi.mocked(steps.carry).mock.calls[0][2]!.from).toBe(firstEnd);
+        expect(steps.take).toHaveBeenCalledTimes(1);
+    });
+
+    it("brings an answer that came back during sign-in in a part of its own, before the chat goes", async () => {
+        const { state, steps } = device();
+        vi.mocked(steps.carry)
+            .mockImplementationOnce(() => {
+                // The Brick for guests answered while the first part was on its way
+                state.chat = withLine(state.chat!, { from: "brick", text: "Late answer.", at: 4 });
+                return Promise.resolve("sent");
+            })
+            .mockResolvedValue("sent");
+        await expect(carryGuestChatAlong(steps)).resolves.toBe("carried");
+        expect(steps.carry).toHaveBeenCalledTimes(2);
+        expect(vi.mocked(steps.carry).mock.calls[1][1]).toEqual([
+            { id: "1.2", from: "brick", text: "Late answer.", at: 4 },
+        ]);
+        expect(vi.mocked(steps.carry).mock.calls[1][2]).toEqual({ from: 2, to: 3, last: true });
+        expect(state.chat).toBeUndefined();
+    });
+
+    it("sends the very same parts from two tabs at once, so the bot server says each once", async () => {
+        let long = newGuestChat(GUEST, 1);
+        for (let at = 1; at <= 300; at++) long = withLine(long, { from: "guest", text: `line ${at}`, at });
+        const shared = device(long);
+        const other: CarrySteps = { ...shared.steps, carry: vi.fn<CarrySteps["carry"]>().mockResolvedValue("already") };
+        await Promise.all([carryGuestChatAlong(shared.steps), carryGuestChatAlong(other)]);
+        const parts = (calls: Parameters<CarrySteps["carry"]>[]) =>
+            calls.map(([, lines, part]) => ({ ids: lines.map((line) => line.id), part }));
+        const mine = parts(vi.mocked(shared.steps.carry).mock.calls);
+        const theirs = parts(vi.mocked(other.carry).mock.calls);
+        // Whatever each tab sent is a part the other made the same way: same lines, same names
+        for (const part of theirs) expect(mine).toContainEqual(part);
+        expect(shared.state.chat).toBeUndefined();
+    });
+
+    it("brings the newest lines that fit as one message to a bot server from before, which takes no parts", async () => {
+        let long = newGuestChat(GUEST, 1);
+        for (let at = 1; at <= 450; at++) long = withLine(long, { from: "guest", text: `line ${at}`, at });
+        const { state, steps } = device(long);
+        steps.parts = vi.fn(() => Promise.resolve(false));
+        await expect(carryGuestChatAlong(steps)).resolves.toBe("carried");
+        expect(steps.carry).toHaveBeenCalledTimes(1);
+        const [, lines, part] = vi.mocked(steps.carry).mock.calls[0];
+        expect(part).toBeUndefined();
+        expect(lines.at(-1)?.at).toBe(450);
+        expect(state.chat).toBeUndefined();
+    });
+
+    it("tries again later when it can't ask the bot server how it takes the chat", async () => {
+        const { state, steps } = device();
+        steps.parts = vi.fn(() => Promise.reject(new Error("offline")));
+        await expect(carryGuestChatAlong(steps)).resolves.toBe("later");
+        expect(steps.carry).not.toHaveBeenCalled();
+        expect(state.chat).toBeDefined();
     });
 
     it("keeps nothing when the chat was taken off the device while Orbit was being asked (signed out meanwhile)", async () => {
@@ -121,6 +216,43 @@ describe("a guest signs in, and their chat comes with them (#1997)", () => {
         vi.mocked(steps.carry).mockResolvedValue("refused");
         await expect(carryGuestChatAlong(steps)).resolves.toBe("none");
         expect(state.chat).toBeUndefined();
+    });
+
+    it("sends a part whose answer was lost again with the very same lines, and brings a reply said since in the next part", async () => {
+        const { state, steps } = device();
+        // The bot server said lines 0-2, but the answer never came back; then the Brick for guests answered once more
+        vi.mocked(steps.carry).mockImplementationOnce(() => {
+            state.chat = withLine(state.chat!, { from: "brick", text: "Late answer.", at: 4 });
+            return Promise.reject(new Error("connection lost"));
+        });
+        await expect(carryGuestChatAlong(steps)).resolves.toBe("later");
+        vi.mocked(steps.carry).mockReset().mockResolvedValueOnce("already").mockResolvedValue("sent");
+        await expect(carryGuestChatAlong(steps)).resolves.toBe("carried");
+        const parts = vi.mocked(steps.carry).mock.calls.map(([, , part]) => part);
+        expect(parts).toEqual([
+            { from: 0, to: 2, last: false },
+            { from: 2, to: 3, last: true },
+        ]);
+        expect(state.chat).toBeUndefined();
+    });
+
+    it("leaves another guest's chat alone when a refusal comes back after the chat was replaced", async () => {
+        const { state, steps } = device();
+        const other = { ...chatWithWords(), guestId: "9e9e9e9e-aaaa-4bbb-8ccc-0123456789ab", startedAt: 50 };
+        let refuse: (value: "refused") => void = () => undefined;
+        vi.mocked(steps.carry).mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    refuse = resolve;
+                })
+        );
+        const carrying = carryGuestChatAlong(steps);
+        await vi.waitFor(() => expect(steps.carry).toHaveBeenCalled());
+        // Signed out and another guest started talking while the question was open
+        state.chat = other;
+        refuse("refused");
+        await expect(carrying).resolves.toBe("none");
+        expect(state.chat).toBe(other);
     });
 
     it("counts a chat the bot server already said as brought", async () => {
