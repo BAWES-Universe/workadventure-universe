@@ -126,6 +126,7 @@ import {
 } from './ArtifactTools';
 import { MAX_OUTGOING_MEDIA_BYTES, type BotPlayerMemory, type PendingMedia } from '../memory/ConversationMemory';
 import { FIND_FILES_TOOL, OPEN_FILE_TOOL, SEND_AGAIN_TOOL, fileToolDefinitions, formatFileResult, isFileTool, runFileTool } from './FileTools';
+import { FORGET_MEMORY_TOOL, WHAT_I_REMEMBER_TOOL, isMemoryTool, memoryToolDefinitions, memoryToolsNote, runMemoryTool } from './MemoryTools';
 import { COMPUTER_TOOL, computerToolDefinitions, computerToolsNote, isComputerTool, runComputerTool } from './ComputerTools';
 import { pretendRunnerOn, runPretendJob } from './ComputerPretendRunner';
 import { OFFER_APP_TOOL, appToolDefinitions, appsNote, isAppTool, runAppTool } from './AppTools';
@@ -1344,6 +1345,8 @@ export class AIService {
                     channel === 'dm' && botId && playerId !== undefined ? await this.brickNoteFor(botId, playerId, adminApiService) : '',
                     // A person's own Brick can lead them to connect an App (game #2001)
                     channel === 'dm' && botId && playerId !== undefined ? await this.appsNoteFor(botId, playerId, botClient, adminApiService) : '',
+                    // Any bot, in a direct message: what it remembers about the person, and forgetting it (#2003)
+                    channel === 'dm' && this.memoryToolsOn(botId, botClient) ? memoryToolsNote() : '',
                     computerOn ? computerToolsNote() : '',
                 ].filter(Boolean).join('\n\n') || undefined,
                 channel,
@@ -3373,6 +3376,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         // Tool: offer to connect an App from the chat (game #2001). Any of a person's own Bricks, in its owner's direct messages.
         if (channel === 'dm' && this.appToolsOn(botId, botClient, adminApiService)) tools.push(...appToolDefinitions());
 
+        // Tools: what the bot remembers about this person, and forgetting it (game #2003). Any bot, in a direct message only.
+        if (channel === 'dm' && this.memoryToolsOn(botId, botClient)) tools.push(...memoryToolDefinitions());
         // Tool: a job on the Brick's own computer (game #2000), the last way after an answer and an app. Only when it is on for its owner.
         if (channel === 'dm' && computerOn && !botClient) tools.push(...computerToolDefinitions());
 
@@ -3506,6 +3511,21 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     private brickToolsOn(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService): boolean {
         const admin = adminApiService ?? this.adminApiService;
         return !botClient && !!botId && this.helperBricks.has(botId) && !!admin?.isConfigured?.();
+    }
+
+    /** Whether this reply has the two memory tools: a direct message, with a memory that can forget (one kept with Orbit). */
+    private memoryToolsOn(botId?: string, botClient?: BotClient): boolean {
+        return !botClient && !!botId && typeof this.conversationMemory?.forgetThings === 'function';
+    }
+
+    /** Runs what_i_remember or forget_memory for the person in this direct message. */
+    private async runMemoryToolCall(name: string, args: Record<string, unknown>, where: { botId?: string; playerId?: number }): Promise<Record<string, unknown>> {
+        const { botId, playerId } = where;
+        if (!botId || playerId === undefined) return { error: "That can't be done in this chat right now." };
+        return runMemoryTool(name, args, {
+            memory: this.conversationMemory.getMemory(botId, playerId),
+            forget: (keys, kinds) => (this.conversationMemory.forgetThingsReported ?? this.conversationMemory.forgetThings!).call(this.conversationMemory, botId, playerId, keys, kinds),
+        });
     }
 
     /** What such a Brick is told with its instructions: that it can make Bricks, and what it already suggested. */
@@ -3911,7 +3931,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 // With artifacts off, a tool of the same name belongs to an MCP server: send it down the default branch
                 // So does a file tool's name when Orbit doesn't keep files here (#1508)
                 // And a Brick tool's name anywhere but in a first Brick's direct messages (#1996)
-                switch ((isArtifactTool(toolCall.name) && !artifactsEnabled()) || (isFileTool(toolCall.name) && !this.filesOn(botId, adminApiService)) || (isBrickTool(toolCall.name) && !this.brickToolsOn(botId, botClient, adminApiService)) || (isAppTool(toolCall.name) && !this.appToolsOn(botId, botClient, adminApiService)) || (isComputerTool(toolCall.name) && (!!botClient || !this.ownBricks.has(botId ?? ''))) ? '' : toolCall.name) {
+                switch ((isArtifactTool(toolCall.name) && !artifactsEnabled()) || (isFileTool(toolCall.name) && !this.filesOn(botId, adminApiService)) || (isBrickTool(toolCall.name) && !this.brickToolsOn(botId, botClient, adminApiService)) || (isMemoryTool(toolCall.name) && !this.memoryToolsOn(botId, botClient)) || (isAppTool(toolCall.name) && !this.appToolsOn(botId, botClient, adminApiService)) || (isComputerTool(toolCall.name) && (!!botClient || !this.ownBricks.has(botId ?? ''))) ? '' : toolCall.name) {
                     case 'get_people_on_map':
                         if (botClient) {
                             const people = botClient.getAllPeople();
@@ -4232,6 +4252,15 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         result = await this.runAppToolCall(
                             typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
                             { adminApiService, botId, playerId }
+                        );
+                        break;
+
+                    case WHAT_I_REMEMBER_TOOL:
+                    case FORGET_MEMORY_TOOL:
+                        result = await this.runMemoryToolCall(
+                            toolCall.name,
+                            typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
+                            { botId, playerId }
                         );
                         break;
 
@@ -4589,7 +4618,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         for (const tr of toolResults) {
             // Skip results from media tools and built-in tools — they don't produce URLs to extract
             if (['send_image', 'send_file', 'send_audio', 'send_video', 'get_people_on_map',
-                 'get_bot_position', 'get_areas_on_map', 'navigate_to', READ_WEB_PAGE_TOOL].includes(tr.name) || (isArtifactTool(tr.name) && artifactsEnabled()) || isFileTool(tr.name)) {
+                 'get_bot_position', 'get_areas_on_map', 'navigate_to', READ_WEB_PAGE_TOOL].includes(tr.name) || (isArtifactTool(tr.name) && artifactsEnabled()) || isFileTool(tr.name) || isMemoryTool(tr.name)) {
                 continue;
             }
 
@@ -4665,7 +4694,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         for (const tr of toolResults) {
             // Skip results from our own media tools (they already handled sending)
             if (['send_image', 'send_file', 'send_audio', 'send_video', 'get_people_on_map',
-                 'get_bot_position', 'get_areas_on_map', 'navigate_to', READ_WEB_PAGE_TOOL].includes(tr.name) || (isArtifactTool(tr.name) && artifactsEnabled()) || isFileTool(tr.name)) {
+                 'get_bot_position', 'get_areas_on_map', 'navigate_to', READ_WEB_PAGE_TOOL].includes(tr.name) || (isArtifactTool(tr.name) && artifactsEnabled()) || isFileTool(tr.name) || isMemoryTool(tr.name)) {
                 continue;
             }
 
@@ -5021,7 +5050,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
      */
     private noteMadeMedia(toolCalls: ToolCall[], toolResults: Array<{ id: string; name: string; result: any }>): void {
         for (const tr of toolResults) {
-            if (MADE_NOTHING_TOOLS.has(tr.name) || isArtifactTool(tr.name) || isFileTool(tr.name) || LOOKS_UP.test(tr.name)) continue;
+            if (MADE_NOTHING_TOOLS.has(tr.name) || isArtifactTool(tr.name) || isFileTool(tr.name) || isMemoryTool(tr.name) || LOOKS_UP.test(tr.name)) continue;
             let urls: string[];
             try {
                 urls = this.extractUrlsFromResult(tr.result);

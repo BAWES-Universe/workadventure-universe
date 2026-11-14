@@ -1442,6 +1442,35 @@ export class BotApiService {
         return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}`, { method: "DELETE" });
     }
 
+    /**
+     * What a bot remembers about the signed-in person (game #2003), one thing at a time. Only their own list: Orbit
+     * never answers this for anyone else, whoever owns or manages the bot.
+     */
+    async getMyMemory(botId: string): Promise<unknown> {
+        // With the deadline brickWrite gives: a read that never answers shows Retry instead of loading for good
+        return await this.brickWrite(`/api/bots/${encodeURIComponent(botId)}/my-memory`, {});
+    }
+
+    /** The person makes a bot forget one thing from their list, or everything it remembers about them. */
+    async forgetMyMemory(botId: string, what: { itemId: string } | { everything: true }): Promise<unknown> {
+        return await this.brickWrite(`/api/bots/${encodeURIComponent(botId)}/my-memory/forget`, {
+            method: "POST",
+            body: JSON.stringify(what),
+        });
+    }
+
+    /** A Brick's files for its owner (game #2003): what it made, what they sent it, and what is on its computer. */
+    async getBrickFiles(brickId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/files`, {});
+    }
+
+    /** Deletes a file the owner sent their Brick: the one change the files list allows. */
+    async deleteBrickFile(brickId: string, fileId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/files/${encodeURIComponent(fileId)}`, {
+            method: "DELETE",
+        });
+    }
+
     /** Brings a deleted Brick back while it still waits. Answers with the Brick as it is now. */
     async undoMyBrick(brickId: string): Promise<unknown> {
         return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/undo`, { method: "POST" });

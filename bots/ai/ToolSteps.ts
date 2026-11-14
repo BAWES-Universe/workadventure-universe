@@ -5,6 +5,7 @@
  */
 import { CHANGE_ARTIFACT_TOOL, MAKE_ARTIFACT_TOOL } from './ArtifactTools';
 import { MAKE_BRICK_TOOL } from './BrickTools';
+import { FORGET_MEMORY_TOOL } from './MemoryTools';
 import { COMPUTER_TOOL } from './ComputerTools';
 
 /** What a step is about, for the working emoji beside the bot's Woka (#1667): reading ("📖"), searching ("🔎") or writing ("✍️"). */
@@ -37,6 +38,8 @@ export interface ToolStepResult {
     unknown?: boolean;
     /** Why it didn't work, short and without links. */
     note?: string;
+    /** What the step says once it has ended, when "Forgot" or "Read a page" would be untrue ("Didn't forget anything"). */
+    done?: string;
 }
 
 /** unknown: the call went out and no answer came back, so it may have run (#1692). */
@@ -91,6 +94,8 @@ const OWN_STEPS: Record<string, (args: Record<string, unknown>) => Omit<ToolStep
         const name = shown(args.name);
         return { doing: name ? `Making ${name}` : 'Making a Brick', done: name ? `Made ${name}` : 'Made a Brick', detail: asDetail(shown(args.line)), group: `make_brick:${name ?? ''}`, kind: 'write' };
     },
+    // Forgetting something about the person (game #2003): "Forgot", with their own words under it
+    [FORGET_MEMORY_TOOL]: (args) => ({ doing: 'Forgetting', done: 'Forgot', detail: shown(args.about), group: 'forget_memory', kind: 'write' }),
     // A job on the Brick's own computer (game #2000)
     [COMPUTER_TOOL]: (args) => ({ doing: 'Working on its computer', done: 'Worked on its computer', detail: shown(args.job), group: 'computer', kind: 'write' }),
 };
@@ -170,6 +175,11 @@ export function resultOf(id: string, result: unknown): ToolStepResult {
         const r = result as Record<string, unknown>;
         // A card is waiting for someone's OK: nothing ran, so the step must not read "Used ..." (#1657)
         if (r.status === 'waiting_for_ok') return { id, ok: false, note: 'Waiting for your OK. Nothing ran yet' };
+        // Forgetting that removed nothing (asked which memory they mean, a question, already gone): the step must not read
+        // "Forgot" while the memory is still there (game #2020)
+        if (Array.isArray(r.forgotten) && r.forgotten.length === 0 && !r.error) {
+            return { id, ok: false, done: 'Forgot nothing yet', note: r.unclear === true ? 'Asked which one. Nothing forgotten yet' : 'Nothing was forgotten' };
+        }
         if (r.error || r.success === false || r.isError === true) {
             const why = typeof r.error === 'string' ? r.error : typeof r.message === 'string' ? r.message : undefined;
             // A tool server call that may have run is not a failure; a cancelled turn stays as it was
@@ -222,6 +232,7 @@ export class ReplySteps {
             if (!step) continue;
             step.state = result.ok ? 'done' : result.unknown ? 'unknown' : 'failed';
             if (result.note) step.note = result.note;
+            if (result.done) step.done = result.done;
             changed = true;
         }
         return changed;
