@@ -11,7 +11,7 @@ import { SOMEONE_UNKNOWN } from '../memory/Heard';
 import type { WokaList } from '../matrix/wokaPicture';
 import type { VoiceActiveAnswer, VoiceCredentialsAnswer, VoiceHealthReport, VoiceLimits } from '../voice/VoiceSettings';
 import type { CleanupJob, CleanupOutcome, Lease, NoteHearingAnswer, Reservation, ReserveInput, TurnEvent, VoiceNoteCapabilities } from '../voice/VoiceNoteOrbit';
-import { RUNNABLE_KINDS, dueRunOf, type DueRun, type RunCheck, type RunReport } from './BrickRunner';
+import { dueRunOf, heldNoticeOf, type DueRun, type HeldNotice, type ReportAnswer, type RunCheck, type RunReport } from './BrickRunner';
 
 // Optional Sentry integration (uncomment if @sentry/node is installed)
 // import * as Sentry from '@sentry/node';
@@ -1125,10 +1125,14 @@ export class AdminApiService {
      * retry never share one, and a run that was handed out and never reported, again with the same run id. Throws when Orbit cannot
      * be asked: nothing is lost, the runs are handed out again.
      */
-    async claimDueItems(): Promise<DueRun[]> {
-        const response = await this.brickCall<{ runs?: unknown }>('post', 'api/bricks/items/due', { kinds: RUNNABLE_KINDS });
+    async claimDueItems(kinds: readonly DueRun['kind'][]): Promise<{ runs: DueRun[]; held: HeldNotice[] }> {
+        const response = await this.brickCall<{ runs?: unknown; held?: unknown }>('post', 'api/bricks/items/due', { kinds });
         const runs = Array.isArray(response.data?.runs) ? response.data.runs : [];
-        return runs.map(dueRunOf).filter((run): run is DueRun => run !== null);
+        const held = Array.isArray(response.data?.held) ? response.data.held : [];
+        return {
+            runs: runs.map(dueRunOf).filter((run): run is DueRun => run !== null),
+            held: held.map(heldNoticeOf).filter((notice): notice is HeldNotice => notice !== null),
+        };
     }
 
     /** May this run take its next step? No once its item was paused, finished, deleted or changed, or its Brick switched off or deleted. */
@@ -1155,13 +1159,35 @@ export class AdminApiService {
         }
     }
 
-    /** How a run went. True when Orbit recorded it. */
-    async reportItemRun(runId: string, report: RunReport): Promise<boolean> {
+    /** How a run went. What Orbit answered (whether the person is to be told of a row of failures), or null when it did not record it. */
+    async reportItemRun(runId: string, report: RunReport): Promise<ReportAnswer | null> {
         try {
-            await this.brickCall('post', `api/bricks/items/runs/${encodeURIComponent(runId)}`, report);
-            return true;
+            const response = await this.brickCall<{ tellPerson?: unknown }>('post', `api/bricks/items/runs/${encodeURIComponent(runId)}`, report);
+            return { tellPerson: response.data?.tellPerson === true };
         } catch (error) {
             console.warn('[AdminApiService] Could not report a run:', error instanceof Error ? error.message : error);
+            return null;
+        }
+    }
+
+    /** The person was told about a row of failures. Called only after the tell went out. True when Orbit kept it. */
+    async keepItemTold(runId: string): Promise<boolean> {
+        try {
+            await this.brickCall('post', `api/bricks/items/runs/${encodeURIComponent(runId)}/told`, {});
+            return true;
+        } catch (error) {
+            console.warn('[AdminApiService] Could not keep that a run told its person:', error instanceof Error ? error.message : error);
+            return false;
+        }
+    }
+
+    /** The person was told their goal or task waits for usage. Called only after it went out. True when Orbit kept it. */
+    async keepItemHeldTold(itemId: string, waitId: string): Promise<boolean> {
+        try {
+            await this.brickCall('post', `api/bricks/items/held/${encodeURIComponent(itemId)}/told`, { waitId });
+            return true;
+        } catch (error) {
+            console.warn('[AdminApiService] Could not keep that a wait was told:', error instanceof Error ? error.message : error);
             return false;
         }
     }
@@ -2131,7 +2157,10 @@ export class AdminApiService {
         error?: boolean;
         timestamp?: string;
         /** Where the reply was given: direct messages or nearby chat (Orbit #491). */
-        channel?: "dm" | "nearby";
+        channel?: "dm" | "nearby" | "task";
+        /** A call a goal or task made (channel "task"): the run it was for and this call's own id, so a retried report is one call (Orbit #930, #938). */
+        runId?: string;
+        eventId?: string;
         /** Who it was for, as the bot knows them (WorkAdventure uuid or email); Orbit matches it to their account. */
         userId?: string;
         isGuest?: boolean;
@@ -2167,6 +2196,8 @@ export class AdminApiService {
                 error: usage.error || false,
                 timestamp: usage.timestamp || new Date().toISOString(),
                 ...(usage.channel ? { channel: usage.channel } : {}),
+                ...(usage.runId ? { runId: usage.runId } : {}),
+                ...(usage.eventId ? { eventId: usage.eventId } : {}),
                 ...(usage.userId ? { userId: usage.userId } : {}),
                 ...(typeof usage.isGuest === "boolean" ? { isGuest: usage.isGuest } : {}),
                 // A greeting the bot made on its own: the payer's usage, never counted against the person it greeted

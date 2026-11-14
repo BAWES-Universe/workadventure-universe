@@ -19,7 +19,9 @@ import { BotRegistry } from './BotRegistry';
 import { brickChangedEverywhere, listenForBrickChanges } from './brickChanges';
 import { BrickRunner } from './BrickRunner';
 import { movementLogger } from '../utils/MovementLogger';
-import { DmReplyService, type DmRoomLink } from './DmReplyService';
+import { DmReplyService, instructionsFor, type DmRoomLink } from './DmReplyService';
+import { ModelTaskRunner } from './BrickTaskModel';
+import { readWebPageForTool } from '../ai/AIService';
 import { botMatrixId, readMatrixConfig } from '../matrix/MatrixConfig';
 import { OrbitActions } from '../mcp/OrbitActions';
 import { askOrbitAboutAppUse } from '../mcp/AppUse';
@@ -230,12 +232,25 @@ async function setupMatrix(): Promise<void> {
     // Reminders (#2002): what Orbit says is due is said in the owner's own chat with their Brick
     brickRunner = new BrickRunner(
         {
-            claimDue: () => adminApiService.claimDueItems(),
+            claimDue: (kinds) => adminApiService.claimDueItems(kinds),
             checkRun: (runId, attempt) => adminApiService.checkItemRun(runId, attempt),
             keepDelivered: (runId, eventId) => adminApiService.keepItemDelivered(runId, eventId),
             report: (runId, report) => adminApiService.reportItemRun(runId, report),
+            keepTold: (runId) => adminApiService.keepItemTold(runId),
+            keepHeldTold: (itemId, waitId) => adminApiService.keepItemHeldTold(itemId, waitId),
         },
-        { say: (brickId, matrixUserId, text, transactionId) => bridge.speakInDirectChat(brickId, matrixUserId, text, transactionId) }
+        { say: (brickId, matrixUserId, text, transactionId) => bridge.speakInDirectChat(brickId, matrixUserId, text, transactionId) },
+        console,
+        // Watches, briefings and goals run on the Brick's own model, as system jobs
+        new ModelTaskRunner({
+            ai: aiService,
+            brick: async (brickId) => {
+                const config = await dmReplyService.getBotConfig(brickId);
+                if (!config || !config.brick) return null;
+                return { name: config.name || 'Brick', instructions: instructionsFor(config), providerId: config.aiProviderRef ?? null, deleted: config.brick.deleted === true };
+            },
+            readPage: (brickId, url) => readWebPageForTool(url, aiService.readCharsFor(brickId)),
+        })
     );
     brickRunner.start(BRICK_DUE_EVERY_MS);
     computerSweepInterval = setInterval(() => void adminApiService.sweepComputers(), COMPUTER_SWEEP_EVERY_MS);

@@ -17,9 +17,14 @@ const run = (over: Partial<DueRun> = {}): DueRun => ({
     matrixUserId: '@sara:matrix.test',
     kind: 'reminder',
     words: 'Pick up the car',
+    condition: null,
+    outcome: null,
+    steps: [],
+    statusLine: null,
     timeZone: 'Asia/Kuwait',
     dueAt: '2026-11-15T13:00:00.000Z',
     late: false,
+    fresh: false,
     attempt: 1,
     deliveredEventId: null,
     ...over,
@@ -28,15 +33,17 @@ const run = (over: Partial<DueRun> = {}): DueRun => ({
 function setUp(due: DueRun[] | Error, over: { check?: () => Promise<{ ok: boolean; reason?: string }>; say?: BrickSpeaker['say']; kept?: boolean } = {}) {
     const reports: Array<{ runId: string; report: RunReport }> = [];
     const api: BrickRunnerApi = {
-        claimDue: vi.fn(async () => {
+        claimDue: vi.fn(async (_kinds?: unknown) => {
             if (due instanceof Error) throw due;
-            return due;
+            return { runs: due, held: [] };
         }),
         checkRun: vi.fn((over.check ?? (async () => ({ ok: true }))) as BrickRunnerApi['checkRun']),
         keepDelivered: vi.fn(async () => over.kept ?? true),
+        keepTold: vi.fn(async () => true),
+        keepHeldTold: vi.fn(async () => true),
         report: vi.fn(async (runId, report) => {
             reports.push({ runId, report });
-            return true;
+            return { tellPerson: false };
         }),
     };
     const say = vi.fn(over.say ?? (async () => ({ ok: true as const, eventId: '$event-1' })));
@@ -325,10 +332,12 @@ describe('the Brick speaks in the owner’s own chat, on its own account', () =>
         const orbitRun = dueRunOf({ runId: 'run-9', itemId: 'item-9', brickId: BRICK, userId: 'sara-uuid', matrixUserId: SARA, kind: 'reminder', words: 'Pick up the car', timeZone: 'Asia/Kuwait', dueAt: '2026-11-15T13:00:00.000Z', late: false, attempt: 1 })!;
         const runner = new BrickRunner(
             {
-                claimDue: async () => [orbitRun],
+                claimDue: async () => ({ runs: [orbitRun], held: [] }),
                 checkRun: async () => ({ ok: true }),
                 keepDelivered: async () => true,
-                report: async () => true,
+                keepTold: async () => true,
+                keepHeldTold: async () => true,
+                report: async () => ({ tellPerson: false }),
             },
             { say: (brickId, matrixUserId, text, transactionId) => bridge.speakInDirectChat(brickId, matrixUserId, text, transactionId) },
             { warn: () => undefined }
@@ -345,7 +354,7 @@ describe('the bot server asks Orbit only for what it can run', () => {
         const request = vi.spyOn(axios, 'request').mockResolvedValue({ data: { runs: [] } } as never);
         vi.stubEnv('BOT_SERVICE_TOKEN', 'token');
         const service = new AdminApiService('https://orbit.test/', 'admin-token');
-        await service.claimDueItems();
+        await service.claimDueItems(RUNNABLE_KINDS);
         expect(RUNNABLE_KINDS).toEqual(['reminder']);
         expect(request).toHaveBeenCalledTimes(1);
         const sent = request.mock.calls[0][0] as { method: string; url: string; data: unknown };
