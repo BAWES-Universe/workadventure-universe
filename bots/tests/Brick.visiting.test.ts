@@ -15,7 +15,7 @@ import { BotAccessGate } from '../server/BotAccessGate';
 import { BotManager } from '../server/BotManager';
 import { AIService } from '../ai/AIService';
 import { visitingRule } from '../ai/systemPrompt';
-import { VisitingBrickBehavior, spotBeside, VISIT_GONE_AFTER_MS, VISIT_LOOK_ACROSS_AFTER_MS, VISIT_SEEN_EVERY_MS, VISIT_WALK_AFTER } from '../behaviors/VisitingBrickBehavior';
+import { VisitingBrickBehavior, spotBeside, spotsAround, VISIT_RETRY_AFTER_MS, VISIT_GONE_AFTER_MS, VISIT_LOOK_ACROSS_AFTER_MS, VISIT_SEEN_EVERY_MS, VISIT_WALK_AFTER } from '../behaviors/VisitingBrickBehavior';
 
 const KHALID = 'uuid-khalid';
 const NOURA = 'uuid-noura';
@@ -150,15 +150,18 @@ describe('a visiting Brick on the map', () => {
 
     function brickAt(position: { x: number; y: number }, person: { x: number; y: number } | undefined, onOwnerSeen?: () => void) {
         const walks: { x: number; y: number }[] = [];
+        const path = { following: false, reachable: (_x: number, _y: number) => true };
         const bot = {
             getPlayerPositionByUuid: vi.fn(() => person),
             getState: () => ({ getPosition: () => position, isMoving: () => false }),
-            getIsFollowingPath: () => false,
+            getIsFollowingPath: () => path.following,
             lookAcrossTheRoom: vi.fn(),
             moveToWithPathfinding: vi.fn(async (x: number, y: number) => {
                 walks.push({ x, y });
-                return true;
+                path.following = path.reachable(x, y);
+                return path.reachable(x, y);
             }),
+            stopAndUpdate: vi.fn(),
             getBotId: () => 'brick-1',
             getNearbyPlayers: () => [],
             cancelPathfinding: vi.fn(),
@@ -167,7 +170,7 @@ describe('a visiting Brick on the map', () => {
         const gone = vi.fn();
         const behavior = new VisitingBrickBehavior(config(gone, onOwnerSeen));
         (behavior as unknown as { bot: unknown }).bot = bot;
-        return { behavior, bot, walks, gone };
+        return { behavior, bot, walks, gone, path };
     }
 
     it('tells the manager it sees its person, at most every half minute, and never while they are not seen (it keeps the visit alive)', () => {
@@ -206,6 +209,52 @@ describe('a visiting Brick on the map', () => {
         behavior.update(16);
         expect(walks).toEqual([{ x: 444, y: 100 }]);
         vi.useRealTimers();
+    });
+
+    it('stands still, and says so once, when its walk ends: its path ending alone does not stop it (Sentry on #2023)', async () => {
+        vi.useFakeTimers();
+        const { behavior, bot, path } = brickAt({ x: 100, y: 100 }, { x: 500, y: 100 });
+        behavior.update(16);
+        await Promise.resolve();
+        vi.advanceTimersByTime(1000);
+        behavior.update(16);
+        expect(bot.stopAndUpdate).not.toHaveBeenCalled();
+        path.following = false;
+        vi.advanceTimersByTime(1000);
+        behavior.update(16);
+        expect(bot.stopAndUpdate).toHaveBeenCalledTimes(1);
+        vi.advanceTimersByTime(1000);
+        behavior.update(16);
+        expect(bot.stopAndUpdate).toHaveBeenCalledTimes(1);
+        vi.useRealTimers();
+    });
+
+    it('does not search again at once for a spot it cannot reach, and tries another side of its person next (Sentry on #2023)', async () => {
+        vi.useFakeTimers();
+        const person = { x: 500, y: 100 };
+        const { behavior, bot, walks, path } = brickAt({ x: 100, y: 100 }, person);
+        const sides = spotsAround(person, { x: 100, y: 100 });
+        path.reachable = (x, y) => !(x === sides[0].x && y === sides[0].y);
+        behavior.update(16);
+        await Promise.resolve();
+        await Promise.resolve();
+        for (let i = 0; i < 3; i++) {
+            vi.advanceTimersByTime(800);
+            behavior.update(16);
+        }
+        expect(walks).toEqual([sides[0]]);
+        vi.advanceTimersByTime(VISIT_RETRY_AFTER_MS);
+        behavior.update(16);
+        await Promise.resolve();
+        expect(walks).toEqual([sides[0], sides[1]]);
+        expect(bot.stopAndUpdate).not.toHaveBeenCalled();
+        vi.useRealTimers();
+    });
+
+    it('keeps every spot the same distance from its person', () => {
+        for (const spot of spotsAround({ x: 100, y: 100 }, { x: 300, y: 100 })) {
+            expect(Math.round(Math.hypot(spot.x - 100, spot.y - 100))).toBe(56);
+        }
     });
 
     it('leaves the map once its person has not been seen in the room for a while, and says so once', () => {
