@@ -114,9 +114,10 @@ describe('MatrixDmBridge', () => {
         const said = client.sendMessage.mock.calls.map((call: any[]) => call[2]).find((content: any) => /Keys don't go in chat/.test(String(content?.body)));
         expect(said?.msgtype).toBe('m.text');
         expect(JSON.stringify(client.sendMessage.mock.calls)).not.toContain('sk_live_51H');
-        // The same words again do not repeat the note at once; an ordinary message still gets its answer
+        // Every paste gets the note (the person is waiting on it); an ordinary message still gets its answer
         await bridge.onEvent(message(['sk_', 'test_abcdefghijklmnopqrstu again'].join('')));
-        expect(client.sendMessage.mock.calls.filter((call: any[]) => /Keys don't go in chat/.test(String(call[2]?.body)))).toHaveLength(1);
+        expect(client.sendMessage.mock.calls.filter((call: any[]) => /Keys don't go in chat/.test(String(call[2]?.body)))).toHaveLength(2);
+        expect(deps.reply).not.toHaveBeenCalled();
         await bridge.onEvent(message('what can you do?'));
         expect(deps.reply).toHaveBeenCalledTimes(1);
     });

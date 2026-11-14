@@ -1256,13 +1256,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
         // model. The Brick says where keys go.
         const refuseKey = async () => {
             if (catchUp) return;
-            const key = `${event.room_id}|key_in_chat`;
-            if (this.recentlySent(this.lastNote, key, NOTE_REPEAT_MS)) return;
-            const said = await this.client.sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body: keyInChatReply(language) }).then(
-                () => true,
-                () => false
-            );
-            if (!said) this.lastNote.delete(key);
+            // Every paste gets the answer: the person is waiting on this message, like any other, and a dropped one would leave them guessing
+            await this.client.sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body: keyInChatReply(language) }).catch(() => undefined);
         };
         if (holdsAKey(String(content.body ?? ''))) {
             await refuseKey();
