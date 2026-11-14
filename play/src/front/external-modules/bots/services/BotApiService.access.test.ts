@@ -312,12 +312,31 @@ describe("an Orbit that does not answer about who may use a bot", () => {
             (api) => api.brickComputerAction("b1", "fill-details", { what: "x", where: "y" }),
         ],
         ["dismissing a computer notice", (api) => api.dismissBrickComputerNotice("b1", "j1")],
-        ["asking for a screen ticket", (api) => api.screenTicketForBrick("b1", "input")],
     ];
 
     it.each(brickWrites)("fails %s in time when Orbit never answers", async (_name, call) => {
         vi.spyOn(globalThis, "fetch").mockImplementation((_url, init) => untilCancelled(init?.signal));
         const failed = expect(call(service())).rejects.toThrow("Orbit did not answer in time");
+        await vi.advanceTimersByTimeAsync(20000);
+        await failed;
+    });
+
+    it("says a screen request whose answer never ends failed, as it does when there is no answer", async () => {
+        const stalled = {
+            ok: true,
+            status: 200,
+            headers: new Headers({ "Content-Type": "application/json" }),
+            json: () =>
+                new Promise(() => {
+                    // the body never ends
+                }),
+            text: () =>
+                new Promise(() => {
+                    // the body never ends
+                }),
+        } as unknown as Response;
+        vi.spyOn(globalThis, "fetch").mockResolvedValue(stalled);
+        const failed = expect(service().screenTicketForBrick("b1", "input")).resolves.toBe("failed");
         await vi.advanceTimersByTimeAsync(20000);
         await failed;
     });
