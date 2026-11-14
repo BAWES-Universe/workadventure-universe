@@ -62,6 +62,11 @@
         }
     }
 
+    // The key is emptied in one place, so a slow save can never write an old value back
+    function clearKey() {
+        key = "";
+    }
+
     async function send(confirmChange = false) {
         if (!canSend) return;
         busy = true;
@@ -70,7 +75,7 @@
         try {
             const saved = await botApiService.submitKey(formId, typed, confirmChange);
             // The key leaves this window the moment it is saved
-            key = "";
+            clearKey();
             confirming = false;
             done = { name: saved.name || form?.name || short };
             await afterKeySaved();
@@ -80,7 +85,7 @@
             } else {
                 confirming = false;
                 problem = keyProblemOf(error);
-                if (problem === "invalid" || problem === "rejected") key = "";
+                if (problem === "invalid" || problem === "rejected") clearKey();
             }
         } finally {
             busy = false;

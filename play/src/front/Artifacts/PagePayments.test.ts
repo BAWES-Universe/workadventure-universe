@@ -52,7 +52,7 @@ describe("a page that takes payments, in the game's window", () => {
     });
 
     it("listens only to its own frame, and only to the one message", async () => {
-        const pay = vi.fn(async () => ({}) as ArtifactPay);
+        const pay = vi.fn(() => Promise.resolve({} as ArtifactPay));
         const payments = make(pay);
         ask(payments, otherWindow);
         ask(payments, frameWindow, { universe: "other", app: "tap" });
@@ -97,12 +97,13 @@ describe("a page that takes payments, in the game's window", () => {
     });
 
     it("says so, and closes the pop-up, when the checkout cannot be made", async () => {
-        const popup = { location: { href: "" }, close: vi.fn() } as unknown as Window;
+        const close = vi.fn();
+        const popup = { location: { href: "" }, close } as unknown as Window;
         const pay = vi.fn().mockRejectedValueOnce(new ArtifactRequestError(409, "unavailable"));
         const payments = make(pay, () => popup);
         ask(payments);
         await flush();
-        expect(popup.close).toHaveBeenCalled();
+        expect(close).toHaveBeenCalled();
         expect(get(payments.line).problem).toBe("unavailable");
         expect(told()).toEqual(["unavailable"]);
     });

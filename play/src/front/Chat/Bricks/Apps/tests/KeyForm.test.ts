@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../../../../external-modules/bots/services/BotApiService", () => ({
-    botApiService: { openKeyForm: vi.fn(async () => "form-1") },
+    botApiService: { openKeyForm: vi.fn(() => Promise.resolve("form-1")) },
 }));
-vi.mock("../AppsStore", () => ({ loadMyApps: vi.fn(async () => undefined) }));
+vi.mock("../AppsStore", () => ({ loadMyApps: vi.fn(() => Promise.resolve(undefined)) }));
 
 import { isModeChange, keyProblemOf, parseKeyForm } from "../KeyForm";
 
