@@ -548,6 +548,27 @@ describe("Brick templates, the game half (#2008)", () => {
             expect(byId("brickSetupRequired")).toBeNull();
         });
 
+        it("reads again after a first read that failed, but not after one that said this Brick has no template", async () => {
+            game.getMadeFrom.mockRejectedValueOnce(Object.assign(new Error("offline"), { status: 500 }));
+            part = new BrickMadeFrom({ target, props: props({ refreshKey: "a" }) });
+            await settle();
+            expect(byId("brickMadeFrom")).toBeNull();
+            game.getMadeFrom.mockResolvedValue(madeFrom());
+            const set = (part as unknown as { $set: (props: Record<string, unknown>) => void }).$set;
+            set.call(part, { refreshKey: "b" });
+            await settle();
+            expect(byId("brickMadeFrom")).not.toBeNull();
+        });
+
+        it("does not keep asking about a Brick that is not made from a template", async () => {
+            game.getMadeFrom.mockRejectedValue(Object.assign(new Error("nope"), { status: 404 }));
+            part = new BrickMadeFrom({ target, props: props({ refreshKey: "a" }) });
+            await settle();
+            (part as unknown as { $set: (props: Record<string, unknown>) => void }).$set({ refreshKey: "b" });
+            await settle();
+            expect(game.getMadeFrom).toHaveBeenCalledTimes(1);
+        });
+
         it("offers Review when the template was updated", async () => {
             game.getMadeFrom.mockResolvedValue(madeFrom({ update: UPDATE }));
             part = new BrickMadeFrom({ target, props: props() });

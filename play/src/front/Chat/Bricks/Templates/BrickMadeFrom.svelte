@@ -42,8 +42,10 @@
         const mine = ++reads;
         readMadeFrom(brickId)
             .then((read) => {
+                // Answered means Orbit said something: this Brick is made from a template, or it is not. A read that
+                // failed says nothing, so the next change of the key reads again.
                 // eslint-disable-next-line svelte/infinite-reactive-loop
-                if (mine === reads) answered = true;
+                if (mine === reads && (read.ok || read.why === "gone")) answered = true;
                 // Not made from a template, or Orbit did not say: nothing shows, and the page is as it was
                 // eslint-disable-next-line svelte/infinite-reactive-loop
                 if (!gone && mine === reads && read.ok) view = read.value;
