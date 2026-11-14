@@ -84,6 +84,7 @@ export function taskToolDefinitions(): ToolDefinition[] {
                         when: { type: 'string', description: 'change: the new date and time on THEIR clock, like "2026-11-15 16:00".' },
                         in_minutes: { type: 'integer', description: 'change: the new time as minutes from now.' },
                         repeat: { type: 'string', enum: ['none', 'every_day', 'workdays'], description: 'change: how often.' },
+                        time_zone: { type: 'string', description: 'Only when no time zone is kept for them yet, they told you where they are and the new time is a date and time: a name like "Asia/Kuwait".' },
                     },
                     required: ['id', 'action'],
                 },
@@ -382,9 +383,14 @@ async function changeTask(args: Record<string, unknown>, settings: TaskSettings,
             const words = text(args.text, TEXT_MAX);
             if (words) change.words = words;
             if (timeGiven(args.when) || timeGiven(args.in_minutes) || repeatOf(args.repeat) !== 'none') {
-                const timeZone = settings.timeZone;
-                if (!timeZone) return { needs: 'time_zone', note: 'No time zone is kept for them. Ask once which city or time zone they are in.' };
-                const built = cadenceFrom(args, settings, timeZone, now);
+                const given = text(args.time_zone, 64);
+                const timeZone = settings.timeZone ?? (isTimeZone(given) ? given : null);
+                // Only a date and time on their clock needs the zone: "in 20 minutes" and "every day at 9" do not
+                const onTheirClock = repeatOf(args.repeat) === 'none' && inMinutesOf(args) === null && timeGiven(args.when);
+                if (!timeZone && onTheirClock) {
+                    return { needs: 'time_zone', note: 'No time zone is kept for them. Ask once which city or time zone they are in, then call again with time_zone (a name like "Asia/Kuwait").' };
+                }
+                const built = cadenceFrom(args, settings, timeZone ?? 'UTC', now);
                 if ('problem' in built) return built.problem;
                 change.cadence = built.cadence;
             }

@@ -277,6 +277,17 @@ describe('setting a reminder', () => {
         ]);
     });
 
+    it('changes the time with no time zone kept: in minutes and every day need none, a date and time asks once and takes one', async () => {
+        const { admin, context } = setUp({ settings: { timeZone: null } });
+        await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'change', in_minutes: 30 }, context);
+        expect(admin.changeBrickItem).toHaveBeenCalledTimes(1);
+        const ask = await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'change', when: '2026-11-16 09:00' }, context);
+        expect(ask).toMatchObject({ needs: 'time_zone' });
+        expect(admin.changeBrickItem).toHaveBeenCalledTimes(1);
+        await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'change', when: '2026-11-16 09:00', time_zone: 'Asia/Kuwait' }, context);
+        expect(admin.changeBrickItem.mock.calls[1][2]).toMatchObject({ change: { cadence: { type: 'once', at: '2026-11-16T06:00:00.000Z' } } });
+    });
+
     it('makes a repeating reminder one-off when repeat none comes with a new time', async () => {
         const { admin, context } = setUp();
         await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'change', repeat: 'none', when: '2026-11-16 09:00' }, context);
