@@ -43,6 +43,8 @@ vi.mock(
 );
 vi.mock("../../../Stores/ErrorStore", () => ({ warningMessageStore: { addWarningMessage: game.warn } }));
 vi.mock("../BrickChat", () => ({ openBrickChat: game.openBrickChat }));
+// The template sheets are tested on their own (TemplateScreens.test.ts)
+vi.mock("../Templates/OpenTemplates", () => ({ openTemplateList: vi.fn() }));
 vi.mock("../MyBricksStore", async () => {
     const store = await import("svelte/store");
     return { makeMyBrick: game.makeMyBrick, myBricksStore: store.readable(game.bricks) };

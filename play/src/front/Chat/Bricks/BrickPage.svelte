@@ -6,6 +6,7 @@
     import { botApiService } from "../../external-modules/bots/services/BotApiService";
     import type { BotData, BrickChange, BrickPageWay } from "../../external-modules/bots/types";
     import { warningMessageStore } from "../../Stores/ErrorStore";
+    import { openAppsPage } from "./Apps/OpenApps";
     import { brickPageBot, shortDay, type BrickCard } from "./Brick";
     import BrickPicture from "./BrickPicture.svelte";
     import { brickUndoDays, changeMyBrick, deleteMyBrick } from "./MyBricksStore";
@@ -51,6 +52,7 @@
     $: undoUntil = $brickUndoDays ? shortDay(Date.now() + $brickUndoDays * DAY_MS, $locale) : "";
     $: way = {
         save: (change: BrickChange) => changeMyBrick(brick.id, change),
+        openApps: (search: string) => openAppsPage({ search }),
         undoLine: undoUntil ? $LL.chat.brick.undoUntil({ day: undoUntil }) : $LL.chat.brick.undoLater(),
         // Its computer's files are offered here once a Brick has a computer (game #2000)
         files: undefined,

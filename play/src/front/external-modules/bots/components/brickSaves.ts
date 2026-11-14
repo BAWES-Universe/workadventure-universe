@@ -129,3 +129,32 @@ export function brickPutBack(
     }
     return back;
 }
+
+/**
+ * A Brick's page after the owner took parts of a template's update (game #2008): what Orbit has now (`fresh`) for the
+ * parts taken, shown and counted as saved. A part the person is editing right now (it differs from what was saved) is
+ * theirs to keep, and the next save sends it.
+ */
+export function brickAfterTemplate(
+    bot: BotData,
+    saved: BrickSaved,
+    fresh: BotData,
+    taken: readonly string[]
+): { bot: BotData; saved: BrickSaved } {
+    const now = brickSavedOf(bot);
+    const theirs = brickSavedOf(fresh);
+    let next: BotData = bot;
+    const after: BrickSaved = { ...saved, behavior: { ...saved.behavior } };
+    if (taken.includes("description") && now.description === saved.description) {
+        next = { ...next, description: fresh.description };
+        after.description = theirs.description;
+    }
+    if (taken.includes("instructions") && now.chatInstructions === saved.chatInstructions) {
+        next = { ...next, chatInstructions: fresh.chatInstructions };
+        after.chatInstructions = theirs.chatInstructions;
+    }
+    if (taken.includes("look") && fresh.characterTexture) {
+        next = { ...next, characterTexture: fresh.characterTexture, characterTextureIds: fresh.characterTextureIds };
+    }
+    return { bot: next, saved: after };
+}

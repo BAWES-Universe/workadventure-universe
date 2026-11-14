@@ -14,7 +14,8 @@
     import BrickPicture from "./BrickPicture.svelte";
     import { firstFreeLook, lookColour } from "./NewBrick";
     import { makeMyBrick, myBricksStore } from "./MyBricksStore";
-    import { IconCheck, IconChevronDown, IconX } from "@wa-icons";
+    import { openTemplateList } from "./Templates/OpenTemplates";
+    import { IconCheck, IconChevronDown, IconChevronRight, IconTemplate, IconX } from "@wa-icons";
 
     /**
      * New Brick (game #1996), in the game's own dialog: today's new bot form with a name and a look, then Create. The
@@ -132,6 +133,12 @@
                 <IconX font-size="20" />
             </button>
             <h2 id="new-brick-title" class="u-display nbd-title">{$LL.chat.brick.newBrick()}</h2>
+
+            <!-- Someone else's Brick as the start (game #2008): its own look comes first, here only the way in -->
+            <button type="button" class="nbd-tpl" data-testid="newBrickFromTemplate" on:click={openTemplateList}>
+                <IconTemplate font-size="20" /><span>{$LL.chat.brick.templates.start()}</span>
+                <IconChevronRight class="nbd-tpl-go" font-size="18" />
+            </button>
 
             <label class="nbd-l" for="new-brick-name">{create.name()}</label>
             <div class="nbd-namerow">
@@ -305,6 +312,40 @@
     }
     :global([dir="rtl"]) .nbd-title {
         padding: 4px 4px 0 48px;
+    }
+    .nbd-tpl {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex: none;
+        width: 100%;
+        min-height: 48px;
+        margin: 0;
+        padding: 0 8px 0 12px;
+        border: 0;
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.06);
+        font: inherit;
+        font-size: 14px;
+        font-weight: 600;
+        color: #fff;
+        text-align: start;
+        cursor: pointer;
+    }
+    .nbd-tpl span {
+        flex: 1;
+    }
+    .nbd-tpl:focus-visible {
+        outline: 2px solid #a78bfa;
+        outline-offset: 2px;
+    }
+    :global([dir="rtl"]) .nbd-tpl :global(.nbd-tpl-go) {
+        transform: scaleX(-1);
+    }
+    @media (hover: hover) {
+        .nbd-tpl:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
     }
     .nbd-l {
         padding: 0 4px;

@@ -12,6 +12,7 @@ import { gameManager } from "../../Phaser/Game/GameManager";
 import { wokaMenuStore, type WokaMenuData, type WokaMenuAction } from "../../Stores/WokaMenuStore";
 import { warningMessageStore } from "../../Stores/ErrorStore";
 import { refreshThisDeviceOnce } from "../../Notification/Push/PushDevice";
+import { addTemplateAction } from "../../Chat/Bricks/Templates/TemplateCardAction";
 import { getBotServerUrl } from "./services/BotServerUrl";
 import { botApiService } from "./services/BotApiService";
 import { summonFailureLine, type SummonFailure } from "./services/summonFailure";
@@ -864,6 +865,7 @@ function setupWokaMenuHook() {
                 // Mark as processed immediately
                 lastProcessedMenu = currentState;
                 const opening = ++wokaMenuOpening;
+                addTemplateAction(menuData.userUuid, () => opening === wokaMenuOpening);
 
                 // Check if "Summon" action already exists (safety check)
                 const hasSummon = menuData.actions.some((a) => a.actionName === "Summon");
