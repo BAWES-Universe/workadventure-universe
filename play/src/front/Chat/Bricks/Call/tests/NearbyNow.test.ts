@@ -21,4 +21,17 @@ describe("who is with the person now", () => {
         spaceKind.set("meeting");
         expect(get(now).kind).toBe("meeting");
     });
+
+    it("leaves out another tab or device of the person's own account", () => {
+        const participants = writable([
+            { id: "tab2", name: "Khalid", bot: false, uuid: "me" },
+            { id: "tab3", name: "Khalid", bot: false, chatId: "@me:x" },
+            { id: "sara", name: "Sara", bot: false, uuid: "sara", chatId: "@sara:x" },
+        ]);
+        const now = nearbyNowOf({ participants, spaceKind: writable("bubble") }, () => ({
+            uuid: "me",
+            chatId: "@me:x",
+        }));
+        expect(get(now).people).toEqual([{ id: "sara", name: "Sara" }]);
+    });
 });

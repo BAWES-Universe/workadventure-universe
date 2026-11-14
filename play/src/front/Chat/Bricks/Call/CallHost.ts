@@ -8,7 +8,7 @@ import { localVoiceIndicatorStore, requestedMicrophoneState } from "../../../Sto
 import { botCallStore } from "./CallStore";
 import { createCallConnection, type CallSpaceLike } from "./CallConnection";
 import { createCallRuntime } from "./CallRuntime";
-import { nearbyNow } from "./NearbyNow";
+import { nearbyNowFor } from "./NearbyNow";
 
 /**
  * The one call this browser can have with a bot (game #2004), wired to the real game: the bot server, the scene's spaces
@@ -83,7 +83,10 @@ export const stopClearingEndedCalls = botCallStore.subscribe((call) => {
  */
 export const callRuntime = createCallRuntime({
     store: botCallStore,
-    nearby: nearbyNow,
+    nearby: nearbyNowFor(() => ({
+        uuid: localUserStore.getLocalUser()?.uuid,
+        chatId: localUserStore.getChatId() ?? undefined,
+    })),
     speaking: localVoiceIndicatorStore,
     now: () => Date.now(),
 });
