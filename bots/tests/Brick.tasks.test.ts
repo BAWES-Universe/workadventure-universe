@@ -161,6 +161,17 @@ describe('what the Brick is told', () => {
         expect(note).toContain('Their workdays: sun, mon, tue, wed, thu');
     });
 
+    it('keeps a 404 (not the owner) as a no, but not a busy or lapsed Orbit', async () => {
+        const busy = { isConfigured: () => true, brickItemSettings: vi.fn(async () => ({ ok: false as const, status: 429, error: 'Slow down' })) };
+        expect(await taskSettingsFor(busy as never, 'bot-busy', SARA, NOW)).toBeNull();
+        expect(await taskSettingsFor(busy as never, 'bot-busy', SARA, NOW + 1000)).toBeNull();
+        expect(busy.brickItemSettings).toHaveBeenCalledTimes(2);
+        const notOwner = { isConfigured: () => true, brickItemSettings: vi.fn(async () => ({ ok: false as const, status: 404, error: 'Brick not found' })) };
+        expect(await taskSettingsFor(notOwner as never, 'bot-no', SARA, NOW)).toBeNull();
+        expect(await taskSettingsFor(notOwner as never, 'bot-no', SARA, NOW + 1000)).toBeNull();
+        expect(notOwner.brickItemSettings).toHaveBeenCalledTimes(1);
+    });
+
     it('says to ask once for a time zone and for workdays when none are kept, and never to guess', () => {
         const note = taskToolsNote({ timeZone: null, workdays: null, limits: {} }, NOW);
         expect(note).toContain('No time zone is kept');
@@ -286,6 +297,13 @@ describe('setting a reminder', () => {
         expect(admin.changeBrickItem).toHaveBeenCalledTimes(1);
         await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'change', when: '2026-11-16 09:00', time_zone: 'Asia/Kuwait' }, context);
         expect(admin.changeBrickItem.mock.calls[1][2]).toMatchObject({ change: { cadence: { type: 'once', at: '2026-11-16T06:00:00.000Z' } } });
+    });
+
+    it('tells a changed date and time on the clock it was read on, even when the item was made on another', async () => {
+        const { admin, context } = setUp();
+        admin.changeBrickItem.mockResolvedValueOnce({ ok: true as const, item: item({ timeZone: 'America/New_York', nextDueAt: '2026-11-16T06:00:00.000Z' }) });
+        const result = await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'change', when: '2026-11-16 09:00' }, context);
+        expect(result).toMatchObject({ changed: true, time_zone: 'Asia/Kuwait', next: 'Mon, Nov 16, 9:00 AM' });
     });
 
     it('makes a repeating reminder one-off when repeat none comes with a new time', async () => {

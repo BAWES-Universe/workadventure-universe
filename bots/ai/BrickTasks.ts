@@ -171,6 +171,8 @@ export async function taskSettingsFor(admin: Pick<AdminApiService, 'brickItemSet
     if (known && now - known.at < SETTINGS_KEPT_MS) return known.settings;
     try {
         const answer = await admin.brickItemSettings(botId, userId);
+        // Only Orbit's 404 says "not the owner"; any other refusal (a busy Orbit, a session that lapsed) is not kept as a no
+        if (refused(answer) && answer.status !== 404) throw new Error(`Orbit answered ${answer.status}: ${answer.error}`);
         const settings: TaskSettings | null = !refused(answer)
             ? {
                   timeZone: isTimeZone(answer.timeZone) ? answer.timeZone : null,
@@ -269,17 +271,17 @@ const cadenceWords = (cadence: BrickItemView['cadence'], workdays: number[] | nu
     return `on ${cadence.days.map((day) => DAY_NAMES[day]).join(', ')}`;
 };
 
-function view(item: BrickItemView, now: number, workdays: number[] | null): Record<string, unknown> {
+function view(item: BrickItemView, now: number, workdays: number[] | null, zone: string = item.timeZone): Record<string, unknown> {
     const repeats = cadenceWords(item.cadence, workdays);
     return {
         id: item.id,
         kind: item.kind,
         says: item.words,
         state: item.state,
-        ...(item.nextDueAt ? { next: sayMoment(item.nextDueAt, item.timeZone, now) } : {}),
+        ...(item.nextDueAt ? { next: sayMoment(item.nextDueAt, zone, now) } : {}),
         ...(repeats ? { repeats } : {}),
-        ...(item.lastRunAt ? { went_off: sayMoment(item.lastRunAt, item.timeZone, now) } : {}),
-        time_zone: item.timeZone,
+        ...(item.lastRunAt ? { went_off: sayMoment(item.lastRunAt, zone, now) } : {}),
+        time_zone: zone,
     };
 }
 
@@ -369,6 +371,8 @@ async function changeTask(args: Record<string, unknown>, settings: TaskSettings,
     const action = args.action;
     const base = { userId: context.userId };
     let body: Record<string, unknown>;
+    // The clock a new date and time was read on, which is the clock the answer is told on
+    let readOn: string | undefined;
     switch (action) {
         case 'snooze':
         case 'pause':
@@ -393,6 +397,7 @@ async function changeTask(args: Record<string, unknown>, settings: TaskSettings,
                 const built = cadenceFrom(args, settings, timeZone ?? 'UTC', now);
                 if ('problem' in built) return built.problem;
                 change.cadence = built.cadence;
+                if (onTheirClock && timeZone) readOn = timeZone;
             }
             if (Object.keys(change).length === 0) return { error: 'Say what to change: its words, or its time.' };
             body = { ...base, action: 'change', change };
@@ -407,5 +412,5 @@ async function changeTask(args: Record<string, unknown>, settings: TaskSettings,
     // Whatever was just set under this id is no longer what a repeat of the same ask would find
     for (const [key, kept] of justSet) if (kept.result.id === item.id) justSet.delete(key);
     const done = action === 'cancel' ? 'cancelled' : action === 'snooze' ? 'snoozed' : action === 'pause' ? 'paused' : action === 'resume' ? 'resumed' : 'changed';
-    return { [done]: true, ...view(item, now, settings.workdays), note: item.nextDueAt ? 'Tell them plainly what you did, and when it comes next.' : 'Tell them plainly what you did.' };
+    return { [done]: true, ...view(item, now, settings.workdays, readOn), note: item.nextDueAt ? 'Tell them plainly what you did, and when it comes next.' : 'Tell them plainly what you did.' };
 }

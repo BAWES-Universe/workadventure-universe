@@ -24,6 +24,8 @@ function service(jwt: string): BotApiService {
 const ok = () =>
     new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "Content-Type": "application/json" } });
 
+const refused = (status: number) => new Response(JSON.stringify({ error: "no" }), { status });
+
 describe("keeping the player's time zone in Orbit", () => {
     beforeEach(() => {
         sessionStorage.clear();
@@ -52,8 +54,25 @@ describe("keeping the player's time zone in Orbit", () => {
         expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it("never fails loudly when Orbit says no", async () => {
-        vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ error: "no" }), { status: 400 }));
-        await expect(service(SIGNED_IN).keepTimeZone()).resolves.toBeUndefined();
+    it("never fails loudly when Orbit says no, and tries again later, three times at most", async () => {
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() => Promise.resolve(refused(400)));
+        const api = service(SIGNED_IN);
+        await expect(api.keepTimeZone()).resolves.toBeUndefined();
+        await api.keepTimeZone();
+        await api.keepTimeZone();
+        await api.keepTimeZone();
+        expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+
+    it("keeps trying until it is kept, then stops", async () => {
+        const fetchMock = vi
+            .spyOn(globalThis, "fetch")
+            .mockResolvedValueOnce(refused(429))
+            .mockImplementation(() => Promise.resolve(ok()));
+        const api = service(SIGNED_IN);
+        await api.keepTimeZone();
+        await api.keepTimeZone();
+        await api.keepTimeZone();
+        expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 });

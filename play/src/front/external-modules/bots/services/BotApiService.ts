@@ -521,14 +521,19 @@ export class BotApiService {
     }
 
     private timeZoneKept = false;
+    private timeZoneTries = 0;
+    private timeZoneSending = false;
 
     /**
      * Tells Orbit the time zone this player's own device is in (preference `timeZone`), so a Brick reads "tomorrow at
-     * 9" on their clock without ever asking where they are (game #2002). Once per page load, only for a signed-in
-     * player, and never loudly: when it cannot be sent the Brick simply asks once.
+     * 9" on their clock without ever asking where they are (game #2002). Once per page load for a signed-in player,
+     * tried again on the next asks while it fails (a session still being set up), three times at most, and never
+     * loudly: when it cannot be sent the Brick simply asks once.
      */
     async keepTimeZone(): Promise<void> {
-        if (this.timeZoneKept || !this.adminUrl || !this.accessToken) return;
+        if (this.timeZoneKept || this.timeZoneSending || this.timeZoneTries >= 3 || !this.adminUrl || !this.accessToken) {
+            return;
+        }
         let zone: string | undefined;
         try {
             zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -536,14 +541,18 @@ export class BotApiService {
             return;
         }
         if (typeof zone !== "string" || zone.length === 0 || zone.length > 64) return;
-        this.timeZoneKept = true;
+        this.timeZoneSending = true;
+        this.timeZoneTries++;
         try {
             await this.fetch("/api/me/preferences", {
                 method: "PUT",
                 body: JSON.stringify({ key: "timeZone", value: zone }),
             });
+            this.timeZoneKept = true;
         } catch {
-            // Not sent this time; tried again when the page loads next
+            // Not kept this time
+        } finally {
+            this.timeZoneSending = false;
         }
     }
 
