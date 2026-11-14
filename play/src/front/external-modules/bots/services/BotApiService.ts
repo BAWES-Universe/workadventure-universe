@@ -1327,6 +1327,23 @@ export class BotApiService {
         return await this.appsCall("/api/me/apps/github/key", { method: "POST", body: JSON.stringify({ key }) });
     }
 
+    /**
+     * Finishes a GitHub sign-in that came back to the sign-in window, as the signed-in person (only the person who started it can).
+     * `installUrl` when Universe's GitHub App is not added anywhere of theirs yet: the page to pick where it works.
+     */
+    async finishGitHubSignIn(state: string, code: string): Promise<{ installUrl: string | null }> {
+        const answer = (await this.appsCall("/api/me/apps/github/finish", {
+            method: "POST",
+            body: JSON.stringify({ state, code }),
+        })) as { installUrl?: unknown } | undefined;
+        return {
+            installUrl:
+                typeof answer?.installUrl === "string" && answer.installUrl.startsWith("https://github.com/")
+                    ? answer.installUrl
+                    : null,
+        };
+    }
+
     /** "Switch back to GitHub sign-in": the pasted key is deleted from Universe; the person signs in on GitHub again. */
     async dropGitHubKey(): Promise<unknown> {
         return await this.appsCall("/api/me/apps/github/key", { method: "DELETE" });

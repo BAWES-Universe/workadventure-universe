@@ -44,11 +44,20 @@ export async function signInInPopup(appId: string | Promise<string>): Promise<Re
             window.removeEventListener("focus", onFocus);
             resolve(result);
         };
+        let finishing = false;
         const onMessage = (event: MessageEvent) => {
             if (event.origin !== window.location.origin) return;
-            const type = (event.data as { type?: unknown } | null)?.type;
-            if (type === "oauth-success") finish("done");
-            else if (type === "oauth-failure") finish("stopped");
+            const data = event.data as { type?: unknown; state?: unknown; code?: unknown } | null;
+            if (data?.type === "oauth-success") finish("done");
+            else if (data?.type === "oauth-failure") finish("stopped");
+            else if (data?.type === "oauth-github" && typeof data.state === "string" && typeof data.code === "string") {
+                if (finishing) return;
+                finishing = true;
+                void finishGitHub(popup, data.state, data.code).then((result) => {
+                    finishing = false;
+                    if (result !== "install") finish(result);
+                });
+            }
         };
         // The window closed by hand before it finished: noticed when this window gets focus back
         const onFocus = () => {
@@ -61,4 +70,39 @@ export async function signInInPopup(appId: string | Promise<string>): Promise<Re
         window.addEventListener("message", onMessage);
         window.addEventListener("focus", onFocus);
     });
+}
+
+/**
+ * GitHub's sign-in came back to the window (game #2041): it is finished here, with the person's own sign-in, so only the person who
+ * started it can finish it (a sign-in address someone else made never lands their GitHub on this person's account, or this person's
+ * on theirs). When Universe's GitHub App is not added anywhere of theirs yet, the same window goes on to pick where it works, and
+ * that page's own return says "done".
+ */
+async function finishGitHub(popup: Window, state: string, code: string): Promise<ReconnectResult | "install"> {
+    let installUrl: string | null = null;
+    try {
+        installUrl = (await botApiService.finishGitHubSignIn(state, code)).installUrl;
+    } catch (error) {
+        console.warn("Could not finish the GitHub sign-in", error);
+        closeQuietly(popup);
+        return "stopped";
+    }
+    if (installUrl) {
+        try {
+            popup.location.href = installUrl;
+            return "install";
+        } catch {
+            // the window was closed meanwhile: signed in all the same
+        }
+    }
+    closeQuietly(popup);
+    return "done";
+}
+
+function closeQuietly(popup: Window): void {
+    try {
+        popup.close();
+    } catch {
+        // already closed
+    }
 }
