@@ -246,6 +246,13 @@ describe('setting a reminder', () => {
         expect(String(second.note)).toContain('Do not set it again');
     });
 
+    it('changes only the words when the model also says repeat none', async () => {
+        const { admin, context } = setUp();
+        const result = await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'change', text: 'New words', repeat: 'none' }, context);
+        expect(result).toMatchObject({ changed: true });
+        expect(admin.changeBrickItem.mock.calls[0][2]).toEqual({ userId: expect.any(String), action: 'change', change: { words: 'New words' } });
+    });
+
     it('sets it again when it was cancelled a moment ago and is asked for again', async () => {
         const { admin, context } = setUp();
         const first = await runTaskTool(SET_REMINDER_TOOL, { text: 'Cancel then again', when: '2026-11-15 17:00' }, context);

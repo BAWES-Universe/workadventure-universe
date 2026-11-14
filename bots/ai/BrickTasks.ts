@@ -378,7 +378,7 @@ async function changeTask(args: Record<string, unknown>, settings: TaskSettings,
             const change: Record<string, unknown> = {};
             const words = text(args.text, TEXT_MAX);
             if (words) change.words = words;
-            if (args.when !== undefined || args.in_minutes !== undefined || args.repeat !== undefined) {
+            if (args.when !== undefined || args.in_minutes !== undefined || repeatOf(args.repeat) !== 'none') {
                 const timeZone = settings.timeZone;
                 if (!timeZone) return { needs: 'time_zone', note: 'No time zone is kept for them. Ask once which city or time zone they are in.' };
                 const built = cadenceFrom(args, settings, timeZone, now);
