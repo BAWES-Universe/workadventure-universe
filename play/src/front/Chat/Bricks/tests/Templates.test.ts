@@ -258,6 +258,8 @@ describe("Brick templates (#2008)", () => {
             expect(await readTemplateLists()).toEqual({ ok: false, why: "failed" });
             orbit.getTemplateLists.mockResolvedValueOnce(null);
             expect(await readTemplateLists()).toEqual({ ok: false, why: "failed" });
+            orbit.getTemplateLists.mockResolvedValueOnce({ error: "unavailable" });
+            expect(await readTemplateLists()).toEqual({ ok: false, why: "failed" });
             orbit.getTemplateLists.mockResolvedValueOnce({ starred: [], picks: [], met: [] });
             expect(await readTemplateLists()).toEqual({ ok: true, value: { starred: [], picks: [], met: [] } });
         });

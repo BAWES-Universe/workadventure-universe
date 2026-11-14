@@ -46,8 +46,10 @@ export function readTemplatePreview(templateId: string): Promise<Read<TemplatePr
 export function readTemplateLists(): Promise<Read<TemplateLists>> {
     return read(async () => {
         const answer = await botApiService.getTemplateLists();
-        // Not a list at all (null, or something else): that is a failed read with Try again, not three empty lists
-        return isRecord(answer) ? parseTemplateLists(answer) : undefined;
+        // Not a list at all (null, or an answer like { error }): that is a failed read with Try again, not three empty lists.
+        // Orbit always sends all three lists, empty or not.
+        const isList = isRecord(answer) && [answer.starred, answer.picks, answer.met].every(Array.isArray);
+        return isList ? parseTemplateLists(answer) : undefined;
     });
 }
 
