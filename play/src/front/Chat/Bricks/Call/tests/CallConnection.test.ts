@@ -103,6 +103,7 @@ describe("carrying a call with a Brick (game #2004)", () => {
         expect(t.state()).toMatchObject({ phase: "ended", endedBy: "bot" });
         expect(t.deps.endCall).toHaveBeenCalledWith("b1");
         expect(t.deps.leaveSpace).toHaveBeenCalledWith(t.fake.space);
+        await Promise.resolve();
         expect(t.gates.at(-1)).toBeUndefined();
         expect(t.connection.isActive()).toBe(false);
     });
@@ -126,6 +127,7 @@ describe("carrying a call with a Brick (game #2004)", () => {
         t.store.send({ type: "tick", now: 1_000_000, quietMs: 1000 });
         expect(t.state()).toMatchObject({ phase: "ended", endedBy: "quiet" });
         expect(t.deps.endCall).toHaveBeenCalledTimes(1);
+        await Promise.resolve();
         expect(t.gates.at(-1)).toBeUndefined();
     });
 
@@ -183,7 +185,18 @@ describe("carrying a call with a Brick (game #2004)", () => {
             t.mic.on = false;
         });
         t.connection.end();
+        expect(order).toEqual(["mic off"]);
+        await Promise.resolve();
         expect(order).toEqual(["mic off", "gate:undefined"]);
+    });
+
+    it("does not open the gate under a call that started in between", async () => {
+        const t = setup({ micOn: false });
+        await t.connection.begin("b1", "Nora");
+        t.connection.end();
+        await t.connection.begin("b1", "Nora");
+        await Promise.resolve();
+        expect(t.gates.at(-1)).toMatchObject({ owner: "bot" });
     });
 
     it("gives up when the space is lost", async () => {
@@ -278,6 +291,7 @@ describe("carrying a call with a Brick (game #2004)", () => {
         t.fake.gone.next();
         expect(t.state()).toMatchObject({ phase: "ended", endedBy: "unavailable" });
         expect(t.deps.endCall).toHaveBeenCalledWith("b1");
+        await Promise.resolve();
         expect(t.gates.at(-1)).toBeUndefined();
         expect(t.mic.on).toBe(false);
         expect(t.connection.isActive()).toBe(false);

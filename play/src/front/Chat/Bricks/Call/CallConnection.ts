@@ -96,11 +96,20 @@ export function createCallConnection(deps: CallDeps) {
             deps.store.send({ type: "end", by });
             if (silently) deps.store.clear();
             for (const stop of cleanups.splice(0)) quietly(stop);
-            // The call's microphone goes off first, and only then does the gate open: no space is ever handed it on hang-up
+            // The call's microphone goes off first, and only then does the gate open: no space is ever handed it on hang-up.
+            // The stores that carry the microphone settle after this step when it runs inside a store's own update, so
+            // when this call turned the microphone on, the gate opens one turn later, once they have; until then it keeps
+            // the call's own space (and nothing else) carrying the microphone. A call started in between has its own gate.
             quietly(() => {
                 if (turnedMicrophoneOn && deps.microphone?.isOn()) deps.microphone.turnOff();
             });
-            quietly(() => deps.setGate(undefined));
+            if (turnedMicrophoneOn) {
+                void Promise.resolve().then(() => {
+                    if (!active) quietly(() => deps.setGate(undefined));
+                });
+            } else {
+                quietly(() => deps.setGate(undefined));
+            }
             const left = space;
             space = undefined;
             if (left) quietly(() => deps.leaveSpace(left));
