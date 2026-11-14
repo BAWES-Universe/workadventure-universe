@@ -253,6 +253,19 @@ describe('setting a reminder', () => {
         expect(admin.changeBrickItem.mock.calls[0][2]).toEqual({ userId: expect.any(String), action: 'change', change: { words: 'New words' } });
     });
 
+    it('makes a repeating reminder one-off when repeat none comes with a new time', async () => {
+        const { admin, context } = setUp();
+        await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'change', repeat: 'none', when: '2026-11-16 09:00' }, context);
+        expect(admin.changeBrickItem.mock.calls[0][2]).toMatchObject({ change: { cadence: { type: 'once', at: '2026-11-16T06:00:00.000Z' } } });
+    });
+
+    it('still asks for the time of day when a change only says it repeats every day', async () => {
+        const { admin, context } = setUp();
+        const result = await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'change', repeat: 'every_day' }, context);
+        expect(admin.changeBrickItem).not.toHaveBeenCalled();
+        expect(String(result.error)).toContain('time of day');
+    });
+
     it('sets it again when it was cancelled a moment ago and is asked for again', async () => {
         const { admin, context } = setUp();
         const first = await runTaskTool(SET_REMINDER_TOOL, { text: 'Cancel then again', when: '2026-11-15 17:00' }, context);
