@@ -84,7 +84,8 @@ describe("carrying a call with a Brick (game #2004)", () => {
     it("keeps the microphone out of the call until it is on, gives it to the call while on, and back to the people on hold", async () => {
         const t = setup();
         await t.connection.begin("b1", "Nora");
-        expect(t.gates.at(-1)).toEqual({ spaceName: SPACE, owner: "people" });
+        // Still connecting: nothing but the call's own space carries the microphone
+        expect(t.gates.at(-1)).toEqual({ spaceName: SPACE, owner: "bot" });
         t.fake.joined.next({});
         expect(t.gates.at(-1)).toEqual({ spaceName: SPACE, owner: "bot" });
         t.store.send({ type: "someone-here", id: "p", name: "Sam" });
@@ -213,7 +214,8 @@ describe("carrying a call with a Brick (game #2004)", () => {
         const begun = t.connection.begin("b1", "Nora");
         t.connection.end();
         answer({ started: true, spaceName: SPACE });
-        await begun;
+        // The person hung up: nothing failed, so there is nothing to say
+        expect(await begun).toEqual({ ok: false, failure: "cancelled" });
         expect(t.deps.joinSpace).not.toHaveBeenCalled();
         expect(t.deps.endCall).toHaveBeenCalled();
     });

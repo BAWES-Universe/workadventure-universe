@@ -9,6 +9,7 @@ export function callFailureLine(result: Extract<BeginResult, { ok: false }>, bot
     const text = get(LL).chat.brickCall;
     switch (result.failure) {
         case "already_on_a_call":
+        case "cancelled":
             return undefined;
         case "not_allowed":
         case "cannot_check":

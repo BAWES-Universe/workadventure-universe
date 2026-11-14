@@ -46,6 +46,8 @@ export interface CallDeps {
 export type BeginResult =
     | { ok: true }
     | { ok: false; failure: "already_on_a_call" }
+    /** The person hung up while it was still starting: nothing failed, so nothing is said. */
+    | { ok: false; failure: "cancelled" }
     | { ok: false; failure: CallFailure; reason?: string };
 
 export const CALL_CONNECT_TIMEOUT_MS = 30_000;
@@ -105,7 +107,11 @@ export function createCallConnection(deps: CallDeps) {
                 return;
             }
             if (space) {
-                deps.setGate({ spaceName: space.getName(), owner: micOwner(call.state) === "bot" ? "bot" : "people" });
+                // Only a call on hold gives the microphone back to the people: while it is still connecting it stays with the call
+                deps.setGate({
+                    spaceName: space.getName(),
+                    owner: micOwner(call.state) === "people" ? "people" : "bot",
+                });
             }
         });
         cleanups.push(watch);
@@ -114,7 +120,7 @@ export function createCallConnection(deps: CallDeps) {
         if (finished) {
             // Ended while it was starting: the bot server must not keep a call nobody holds
             if (started.started) deps.endCall(botId).catch(() => undefined);
-            return { ok: false, failure: "failed" };
+            return { ok: false, failure: "cancelled" };
         }
         if (!started.started) {
             finish("unavailable", true);
@@ -129,10 +135,10 @@ export function createCallConnection(deps: CallDeps) {
         }
         if (finished) {
             deps.leaveSpace(space).catch(() => undefined);
-            return { ok: false, failure: "failed" };
+            return { ok: false, failure: "cancelled" };
         }
-        // The call's space carries nothing of the microphone until the call is on: set the gate before anything is heard
-        deps.setGate({ spaceName: space.getName(), owner: "people" });
+        // Nothing but the call's own space carries the microphone from here on, connecting included
+        deps.setGate({ spaceName: space.getName(), owner: "bot" });
 
         const live = space;
         const botIn = (): void => {
