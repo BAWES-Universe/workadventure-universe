@@ -30,7 +30,8 @@ const FORBIDDEN_PROPERTIES = ["email", "$email", "uuid"];
 export function withoutQueryOrHash(address: string): string {
     try {
         const url = new URL(address);
-        return `${url.origin}${url.pathname}`;
+        // An email in the path (/invite/sara@example.com) is blanked too: the path stays, the email does not
+        return `${url.origin}${url.pathname}`.replace(EMAIL, "[email]");
     } catch {
         return address;
     }
