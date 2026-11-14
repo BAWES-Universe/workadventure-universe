@@ -67,7 +67,7 @@ describe("ArtifactsService", () => {
             { headers: { Authorization: "secret" } }
         );
         expect(started).toEqual({ orderId: "o1", checkoutUrl: "https://checkout.tap.company/c1", app: "Tap" });
-        http.post.mockResolvedValueOnce({ data: { status: "paid", checkoutUrl: null, testPayment: true } });
+        http.post.mockResolvedValueOnce({ data: { status: "paid", checkoutUrl: null, testPayment: true } } as never);
         expect(await service.pay(ID, { order: "o1" }, viewer)).toEqual({ status: "paid", checkoutUrl: null, testPayment: true });
         http.post.mockRejectedValueOnce(orbitError(429, { error: "limit" }));
         await expect(service.pay(ID, { start: true }, viewer)).rejects.toEqual(new ArtifactsError("limit", 429));
