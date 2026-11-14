@@ -5,6 +5,11 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 // eslint-disable-next-line svelte/no-svelte-internal
 vi.mock("svelte", async () => await import("svelte/internal"));
 
+// The real Woka picture needs a running game scene; a stub shows who it was asked for
+vi.mock("../../../../Components/Woka/WokaFromUserId.svelte", async () => ({
+    default: (await import("./WokaStub.svelte")).default,
+}));
+
 import { loadLocale } from "../../../../../i18n/i18n-util.sync";
 import { setLocale } from "../../../../../i18n/i18n-svelte";
 import { callReducer, startCall, type CallEvent, type CallState } from "../CallSession";
@@ -126,5 +131,22 @@ describe("the call bar, the call button and the walk-up card (game #2004, mock P
         expect(onHoldAndTalk).not.toHaveBeenCalled();
         buttons[1].click();
         expect(onHoldAndTalk).toHaveBeenCalledOnce();
+    });
+
+    it("the walk-up card shows the person's own Woka, like the follow request card, and a plain initial only when there is none", async () => {
+        view = new WalkUpCard({
+            target,
+            props: { name: "Sara", wokaId: "sara-uuid", botName: "Brick", onHoldAndTalk: vi.fn(), onNotNow: vi.fn() },
+        });
+        await tick();
+        expect(byId("woka-stub")?.getAttribute("data-user-id")).toBe("sara-uuid");
+        view.$destroy();
+        view = new WalkUpCard({
+            target,
+            props: { name: "Sara", botName: "Brick", onHoldAndTalk: vi.fn(), onNotNow: vi.fn() },
+        });
+        await tick();
+        expect(byId("woka-stub")).toBeNull();
+        expect(text()).toContain("S");
     });
 });

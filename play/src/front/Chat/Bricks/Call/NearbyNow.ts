@@ -38,7 +38,11 @@ export function nearbyNowOf(room: NearbyRoomLike, me?: () => MyAccount | undefin
         kind,
         people: participants
             .filter((participant) => !participant.bot && !isMine(participant, me?.()))
-            .map((participant) => ({ id: participant.id, name: participant.name.trim() || participant.id })),
+            .map((participant) => ({
+                id: participant.id,
+                name: participant.name.trim() || participant.id,
+                uuid: participant.uuid,
+            })),
     }));
 }
 

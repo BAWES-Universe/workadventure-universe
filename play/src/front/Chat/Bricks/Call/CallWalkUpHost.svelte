@@ -15,6 +15,7 @@
 {#if walkUp}
     <WalkUpCard
         name={walkUp.name}
+        wokaId={walkUp.uuid}
         {botName}
         onHoldAndTalk={() => callRuntime.holdAndTalk()}
         onNotNow={() => callRuntime.notNow()}

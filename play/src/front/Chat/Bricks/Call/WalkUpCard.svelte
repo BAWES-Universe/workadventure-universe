@@ -2,6 +2,7 @@
     import { readable } from "svelte/store";
     import LL from "../../../../i18n/i18n-svelte";
     import Avatar from "../../Components/Avatar.svelte";
+    import FollowWoka from "../../../Components/PopUp/FollowWoka.svelte";
 
     /**
      * Someone walked up while the person is on a call with a bot (game #2004, mock v10 Part 18 picture 10, Desktop 17).
@@ -15,6 +16,8 @@
      * Not in the mock as confirmed: Claude's pick that Khalid and GPT have not confirmed (mock README).
      */
     export let name: string;
+    /** Their account id: the card shows their Woka the way the follow request card does. A coloured initial only when it is not known. */
+    export let wokaId: string | undefined = undefined;
     export let botName: string;
     export let onHoldAndTalk: () => void;
     export let onNotNow: () => void;
@@ -33,7 +36,11 @@
             aria-labelledby="walk-up-title"
         >
             <div class="flex items-center gap-3 px-4 pb-3 pt-3.5">
-                <Avatar pictureStore={picture} fallbackName={name} size="lg" />
+                {#if wokaId}
+                    <FollowWoka userId={wokaId} />
+                {:else}
+                    <Avatar pictureStore={picture} fallbackName={name} size="lg" />
+                {/if}
                 <div class="min-w-0">
                     <p id="walk-up-title" class="m-0 text-base font-semibold normal-case leading-[22px]">
                         {$LL.chat.brickCall.walkUpTitle({ name })}

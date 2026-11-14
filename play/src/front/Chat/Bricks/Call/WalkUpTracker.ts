@@ -4,6 +4,8 @@ import type { CallState } from "./CallSession";
 export interface Nearby {
     id: string;
     name: string;
+    /** Their account id, for finding their Woka. */
+    uuid?: string;
 }
 
 /**

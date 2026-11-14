@@ -1,7 +1,7 @@
 <script lang="ts">
     import WokaFromUserId from "../Woka/WokaFromUserId.svelte";
 
-    export let userId: number;
+    export let userId: number | string;
     // 44px in the cards, 30px in the pills, the notes and the list rows.
     export let small = false;
 </script>

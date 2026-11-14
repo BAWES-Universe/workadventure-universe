@@ -32,6 +32,6 @@ describe("who is with the person now", () => {
             uuid: "me",
             chatId: "@me:x",
         }));
-        expect(get(now).people).toEqual([{ id: "sara", name: "Sara" }]);
+        expect(get(now).people).toEqual([{ id: "sara", name: "Sara", uuid: "sara" }]);
     });
 });

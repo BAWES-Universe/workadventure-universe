@@ -29,6 +29,8 @@ export type CallEnd = "you" | "bot" | "quiet" | "unavailable";
 export interface WalkUp {
     id: string;
     name: string;
+    /** Their account id, which finds their Woka on the map (the picture the other request cards show). */
+    uuid?: string;
 }
 
 export interface CallState {
@@ -63,7 +65,7 @@ export type CallEvent =
     | { type: "bot-speaking"; speaking: boolean; now: number }
     | { type: "bot-working"; work: BotStepKind | undefined; line?: string; now: number }
     | { type: "bot-waiting"; waiting: boolean; now: number }
-    | { type: "someone-here"; id: string; name: string }
+    | { type: "someone-here"; id: string; name: string; uuid?: string }
     | { type: "walk-up-gone"; id: string }
     | { type: "not-now" }
     | { type: "hold-and-talk" }
@@ -147,7 +149,7 @@ export function callReducer(state: CallState, event: CallEvent): CallState {
             // One card at a time: a second person is not shown until the first card is answered. No card while the call
             // is on hold: it is already held for a person or a meeting, and joining someone else would overwrite that.
             if (state.walkUp || state.phase !== "on") return state;
-            return { ...state, walkUp: { id: event.id, name: event.name } };
+            return { ...state, walkUp: { id: event.id, name: event.name, uuid: event.uuid } };
         case "walk-up-gone":
             // The person the card asks about has left the bubble: the card goes, and the call is left as it was.
             if (state.walkUp?.id !== event.id) return state;

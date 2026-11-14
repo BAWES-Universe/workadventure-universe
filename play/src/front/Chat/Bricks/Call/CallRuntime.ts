@@ -58,7 +58,8 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
         lastKind = kind;
         if (kind !== "bubble") return;
         const newcomer = tracker.next(people, state() ?? current);
-        if (newcomer) deps.store.send({ type: "someone-here", id: newcomer.id, name: newcomer.name });
+        if (newcomer)
+            deps.store.send({ type: "someone-here", id: newcomer.id, name: newcomer.name, uuid: newcomer.uuid });
     };
 
     const begin = (): void => {
