@@ -112,6 +112,22 @@ describe("keepPrivate", () => {
         expect(cleaned?.properties?.$elements).toEqual([{ tag_name: "a", text: "x" }]);
     });
 
+    it("cleans an address in any property, such as the ones PostHog adds for a session, and in lists", () => {
+        const event = keepPrivate({
+            properties: {
+                $session_entry_url: "https://play.test/@/uni/room?token=secret#chat=!x",
+                $session_entry_referrer: "https://other.test/join?invite=canary",
+                visited: ["https://play.test/@/uni/a?x=1", "plain text"],
+                note: "see https://play.test/@/uni/room?token=secret for details",
+            },
+        });
+        expect(event?.properties?.$session_entry_url).toBe("https://play.test/@/uni/room");
+        expect(event?.properties?.$session_entry_referrer).toBe("https://other.test/join");
+        expect(event?.properties?.visited).toEqual(["https://play.test/@/uni/a", "plain text"]);
+        // A sentence that holds an address is not an address: only emails are blanked in it
+        expect(event?.properties?.note).toBe("see https://play.test/@/uni/room?token=secret for details");
+    });
+
     it("leaves the replay recording whole, however deep the page nests, and still cleans the rest of that event", () => {
         let node: Record<string, unknown> = { tagName: "span", text: "*****" };
         for (let level = 0; level < 20; level++) node = { tagName: "div", childNodes: [node] };

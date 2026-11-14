@@ -13,6 +13,8 @@ const ADDRESS_PROPERTIES = [
     // Where a click on a link to another site went (autocapture): it can carry an invitation token
     "$external_click_url",
 ];
+/** A value that is a web address by itself (not a sentence that holds one). */
+const WEB_ADDRESS = /^https?:\/\/\S+$/i;
 /** Attributes of a clicked element that hold an address; autocapture sends them in the element list and chain. */
 const ELEMENT_ADDRESS_ATTRIBUTES = ["attr__href", "href", "attr__src", "src", "attr__action", "action"];
 /** How deep a property may nest before the rest is dropped (a safeguard, no event is this deep). */
@@ -60,7 +62,8 @@ function redact(properties: Record<string, unknown> | undefined, depth = 0): voi
     for (const key of FORBIDDEN_PROPERTIES) delete properties[key];
     for (const [key, value] of Object.entries(properties)) {
         if (IDENTITY_PROPERTIES.includes(key) || key === REPLAY_PAYLOAD) continue;
-        if (typeof value === "string" && ADDRESS_PROPERTIES.includes(key)) {
+        // Any property that holds an address, not only the ones listed: PostHog adds more ($session_entry_url, ...)
+        if (typeof value === "string" && (ADDRESS_PROPERTIES.includes(key) || WEB_ADDRESS.test(value))) {
             properties[key] = withoutQueryOrHash(value);
         } else if (typeof value === "string" && key === "$elements_chain") {
             properties[key] = chainWithoutAddresses(value).replace(EMAIL, "[email]");
@@ -86,7 +89,8 @@ function redact(properties: Record<string, unknown> | undefined, depth = 0): voi
 function redactList(list: unknown[], depth: number): void {
     list.forEach((item, index) => {
         if (typeof item === "string") {
-            if (item.includes("@")) list[index] = item.replace(EMAIL, "[email]");
+            if (WEB_ADDRESS.test(item)) list[index] = withoutQueryOrHash(item);
+            else if (item.includes("@")) list[index] = item.replace(EMAIL, "[email]");
         } else if (Array.isArray(item)) {
             redactList(item, depth + 1);
         } else if (item !== null && typeof item === "object") {
