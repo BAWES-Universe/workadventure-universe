@@ -8,6 +8,8 @@ import { warningMessageStore } from "../../Stores/ErrorStore";
 import type { ChatConnectionInterface, ChatRoom, RoomFolder } from "../Connection/ChatConnection";
 import { openChatRoom, openDirectChatRoom } from "../Utils";
 import { openBrickChatWith, type BrickCard, type MakeItMemory } from "./Brick";
+import { GUEST_BRICK_ID } from "./GuestBrick";
+import { openGuestBrickChat } from "./GuestBrickStore";
 
 /** The Bricks whose chat is being opened right now, so their row can say so and a second tap does nothing more. */
 const opening = writable<ReadonlySet<string>>(new Set());
@@ -25,6 +27,8 @@ function listed(connection: ChatConnectionInterface, roomId: string): boolean {
 
 /** Opens the chat with one of the person's own Bricks: the one chat they have, on every device (see openBrickChatWith). */
 export function openBrickChat(brickId: string): Promise<ChatRoom | undefined> {
+    // The Brick for guests has no chat on any server: its chat is the one this device keeps
+    if (brickId === GUEST_BRICK_ID) return Promise.resolve(openGuestBrickChat());
     const already = running.get(brickId);
     if (already) return already;
     opening.update((ids) => new Set([...ids, brickId]));

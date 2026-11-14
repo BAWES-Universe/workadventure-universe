@@ -14,6 +14,11 @@ import { MCPConnector } from '../mcp/MCPConnector';
 import { BotBusyError, BotUnavailableError } from '../utils/summonErrors';
 import { helloSourceOf, typedVoiceName, type HelloSource, type VoiceHello } from '../voice/VoiceHello';
 import { buildVoiceHello } from '../voice/VoiceHelloWiring';
+import { GuestBrickService, isGuestBrickId, readCarriedLines } from './GuestBrickService';
+import type { GuestChatNote } from '../matrix/MatrixDmBridge';
+
+/** The id the game makes for a guest at their first visit (a uuid): a member's token names an email or an account instead. */
+const GUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface BotAPIRequest extends Request {
     /** Who the game token says the caller is (its `identifier`): a guest's uuid, a member's email or id. */
@@ -253,10 +258,17 @@ export interface BotAPIOptions {
      */
     directChat?: (botId: string, chatId: string) => Promise<{ roomId: string } | { create: true } | { wait: true }>;
     /**
+     * Brings a guest's chat with the Brick for guests into the signed-in person's own Brick (game #1997): `chatId` is the
+     * person's chat address, already checked to be theirs, and `botId` already checked to be their own Brick.
+     */
+    carryGuestChat?: (botId: string, chatId: string, carryId: string, lines: GuestChatNote[]) => Promise<'sent' | 'already' | 'wait' | 'not_brick'>;
+    /**
      * A Brick was deleted or taken back with Undo (game #1996): its settings are read again before its next message.
      * Only when it is a Brick of `ownerId` (Orbit's id of the person); says whether it was.
      */
     brickChanged?: (botId: string, ownerId: string) => boolean;
+    /** What answers a guest in their Brick (game #1997). Left out, it is built from the bot server's own parts the first time it is asked for; null: off. */
+    guestBrick?: GuestBrickService | null;
     /** "Hear this voice say hello" on the bot page (#1852). Left out, it is built from the bot server's own parts the first time it is asked for; null: not available. */
     voiceHello?: VoiceHello | null;
 }
@@ -297,9 +309,11 @@ export class BotAPI {
     private dmRoom: BotAPIOptions['dmRoom'];
     private directChat: BotAPIOptions['directChat'];
     private brickChanged: BotAPIOptions['brickChanged'];
+    private carryGuestChat: BotAPIOptions['carryGuestChat'];
     /** Per person, how many Brick changes they told in the current minute. */
     private brickChangedCounts = new Map<string, { count: number; since: number }>();
     private voiceHelloOption: BotAPIOptions['voiceHello'];
+    private guestBrickOption: BotAPIOptions['guestBrick'];
 
     constructor(
         botManager: BotManager,
@@ -318,7 +332,9 @@ export class BotAPI {
         this.dmRoom = options.dmRoom;
         this.directChat = options.directChat;
         this.brickChanged = options.brickChanged;
+        this.carryGuestChat = options.carryGuestChat;
         this.voiceHelloOption = options.voiceHello;
+        this.guestBrickOption = options.guestBrick;
 
         // Routers with their own auth and body limits (the Matrix application service) go before the shared parser.
         for (const router of preRouters) {
@@ -328,6 +344,11 @@ export class BotAPI {
         // Keep constructor simple - no route registration here
         this.setupMiddleware();
         this.setupRoutes();
+    }
+
+    private guestBrick(): GuestBrickService | null {
+        if (this.guestBrickOption === undefined) this.guestBrickOption = new GuestBrickService(this.adminApiService);
+        return this.guestBrickOption;
     }
 
     /** At most 30 Brick changes a minute for one person: far more than tapping Delete and Undo, too few to keep Orbit busy. */
@@ -942,6 +963,91 @@ export class BotAPI {
             } catch (error) {
                 console.error(`[BotAPI] Error finding the direct chat of bot ${botId}:`, error);
                 res.status(500).json({ error: 'Could not find the chat' });
+            }
+        });
+
+        // The Brick for guests answers a guest who writes to it (game #1997). The guest is the one the game token names, never
+        // one the request names, and only a guest's own id counts: a member has their own Brick. The chat lives on the
+        // guest's device, which sends the lines it holds with each message; nothing of it is kept here.
+        this.app.post('/api/guest-brick/reply', identifySummoner, async (req: BotAPIRequest, res: Response) => {
+            const brick = this.guestBrick();
+            if (!brick?.available()) {
+                res.status(404).json({ error: 'Not available' });
+                return;
+            }
+            const guestId = req.gameIdentifier;
+            // A request that comes with a signed-in Orbit session is a member's, even when their game identifier looks like a guest's (a member without an email)
+            if (req.isLogged || typeof guestId !== 'string' || !GUEST_ID.test(guestId)) {
+                res.status(403).json({ error: 'Only for guests' });
+                return;
+            }
+            const { turnId, roomUrl, message, history, saidNeedsAccount } = req.body ?? {};
+            if (!isGuestBrickId(turnId) || typeof roomUrl !== 'string' || !roomUrl || roomUrl.length > 2000 || typeof message !== 'string' || !message.trim()) {
+                res.status(400).json({ error: 'Not a message' });
+                return;
+            }
+            try {
+                const answer = await brick.reply({
+                    guestId,
+                    turnId,
+                    roomUrl,
+                    message,
+                    history: Array.isArray(history) ? history : [],
+                    saidNeedsAccount: saidNeedsAccount === true,
+                });
+                if (answer.kind === 'busy') res.status(429).json(answer);
+                else if (answer.kind === 'failed') res.status(502).json(answer);
+                else res.json(answer);
+            } catch (error) {
+                console.error('[BotAPI] Error answering a guest:', error instanceof Error ? error.message : error);
+                res.status(502).json({ kind: 'failed' });
+            }
+        });
+
+        // A guest signed in, and Orbit handed their chat with the Brick for guests to this account (game #1997). The device that held
+        // the chat brings it here and the Brick says it, once, in the person's own chat with their Brick. The person is the one the
+        // Orbit session names; the chat address counts only when Orbit says it is theirs, and the bot must be their own Brick, so
+        // nobody can put words in another chat or in a host bot's.
+        this.app.post('/api/bots/:botId/carried-chat', requireSession, async (req: BotAPIRequest, res: Response) => {
+            if (!this.carryGuestChat) {
+                res.status(404).json({ error: 'Direct messages are off' });
+                return;
+            }
+            const { botId } = req.params;
+            const { chatId, carryId, lines } = req.body ?? {};
+            if (!/^[A-Za-z0-9_-]{1,64}$/.test(botId) || typeof chatId !== 'string' || !/^@[^\s:]{1,255}:[^\s]{1,255}$/.test(chatId) || chatId.length > 255) {
+                res.status(400).json({ error: 'Not a chat address' });
+                return;
+            }
+            if (!isGuestBrickId(carryId) || !Array.isArray(lines)) {
+                res.status(400).json({ error: 'Not a chat to bring' });
+                return;
+            }
+            try {
+                const access = await this.adminApiService.checkDmAccess(botId, chatId);
+                // Orbit could not say: not a refusal, so the device keeps the chat and asks again
+                if (!access.allowed && (access.reason ?? '').startsWith('admin_api_')) {
+                    res.status(503).json({ error: 'Could not check right now', code: 'cannot_check' });
+                    return;
+                }
+                if (!access.allowed || !access.user || !req.sessionUuid || access.user.uuid !== req.sessionUuid) {
+                    res.status(403).json({ error: 'Not your chat', code: 'not_allowed' });
+                    return;
+                }
+                const kept = readCarriedLines(lines);
+                if (kept.length === 0) {
+                    res.status(400).json({ error: 'Nothing to bring' });
+                    return;
+                }
+                const result = await this.carryGuestChat(botId, chatId, carryId, kept);
+                if (result === 'not_brick') {
+                    res.status(403).json({ error: 'Not your Brick', code: 'not_allowed' });
+                    return;
+                }
+                res.json({ result });
+            } catch (error) {
+                console.error(`[BotAPI] Error bringing a guest's chat into ${botId}:`, error instanceof Error ? error.message : error);
+                res.status(500).json({ error: 'Could not bring the chat' });
             }
         });
 
