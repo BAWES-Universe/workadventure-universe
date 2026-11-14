@@ -52,6 +52,9 @@ const PERMISSIONS_TIMEOUT_MS = 20000;
 const HELLO_TIMEOUT_MS = 60000;
 /** How long a lookup of bot states waits before it counts as failed (and is asked again on the next look) */
 const DM_STATUS_TIMEOUT_MS = 10000;
+// A guest's answer from the Brick for guests: writing it can take a while; past this it is not coming, and the next turn goes on.
+// The bot server never lets the model take longer than 90 s for one (GUEST_REPLY_CEILING_MS), and this leaves room for its calls to Orbit.
+const GUEST_REPLY_TIMEOUT_MS = 130000;
 /** How long a device waits to be told who makes a chat (#1995) before it opens the chat the way it always did */
 const DIRECT_CHAT_TIMEOUT_MS = 5000;
 /** How long a change to one of the person's Bricks may take before it counts as failed, so no switch or button hangs. */
@@ -1469,6 +1472,69 @@ export class BotApiService {
     }
 
     /**
+     * What the Brick for guests answers a guest's message (game #1997). The guest and the place are the game token's and
+     * this room's: the request names neither. Answers with what the bot server said, `{ kind: "reply" | "limit" | "busy" | "failed" }`;
+     * throws when it could not be asked at all (no bot server, no answer).
+     */
+    async guestBrickReply(request: {
+        turnId: string;
+        roomUrl: string;
+        message: string;
+        history: { from: "guest" | "brick"; text: string }[];
+        saidNeedsAccount: boolean;
+    }): Promise<unknown> {
+        // The request and the reading of the answer both stop at the deadline: a call that hangs would hold back every later turn
+        const stop = new AbortController();
+        const timer = setTimeout(() => stop.abort(), GUEST_REPLY_TIMEOUT_MS);
+        try {
+            const response = await this.fetchBotServer("/api/guest-brick/reply", {
+                method: "POST",
+                body: JSON.stringify(request),
+                signal: stop.signal,
+            });
+            return (await response.json()) as unknown;
+        } catch (error) {
+            // A guest who must wait, or an answer that failed, comes with its own kind: it is the answer, not a fault
+            const body = (error as { body?: unknown }).body;
+            if (body && typeof body === "object" && "kind" in body) return body;
+            throw error;
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
+    /**
+     * After signing in: asks Orbit whether the chat this device had as a guest was handed to this account (once, and only
+     * to the device that held that guest id). `true` when it is this device's to bring along. Throws when Orbit could not be asked.
+     */
+    async takeGuestChat(guestId: string): Promise<boolean> {
+        const response = await this.fetch("/api/bricks/default/guest-chat", {
+            method: "POST",
+            body: JSON.stringify({ guestId }),
+        });
+        return ((await response.json()) as { carried?: unknown } | null)?.carried === true;
+    }
+
+    /**
+     * Has the bot server say a guest's chat in the person's own chat with their Brick (game #1997), once. Answers
+     * `sent`, `already` (it was said already) or `wait` (their chat is not there yet: ask again in a moment).
+     */
+    async carryGuestChat(
+        brickId: string,
+        chatId: string,
+        carryId: string,
+        lines: { from: "guest" | "brick"; text: string; at: number }[]
+    ): Promise<"sent" | "already" | "wait"> {
+        const response = await this.fetchBotServer(`/api/bots/${encodeURIComponent(brickId)}/carried-chat`, {
+            method: "POST",
+            body: JSON.stringify({ chatId, carryId, lines }),
+        });
+        const result = ((await response.json()) as { result?: unknown } | null)?.result;
+        if (result === "sent" || result === "already" || result === "wait") return result;
+        throw new Error("The bot server answered with something the game does not understand");
+    }
+
+    /**
      * The one chat of this person and a bot (game #1995), asked by a device that has no chat with it yet, before it
      * makes one: the bot server answers with the chat they already have, "make it" (one device at a time is told so),
      * or "ask again in a moment". Undefined when it can't say (direct messages off, an older bot server, any error):
@@ -1570,10 +1636,11 @@ export class BotApiService {
             "Content-Type": "application/json",
             ...(options.headers as Record<string, string>),
         };
-        // Room enter/leave, Summon and "may I?" are for every player, guests included: the game token is enough for them.
+        // Room enter/leave, Summon, "may I?" and the Brick for guests are for every player, guests included: the game token is enough for them.
         const isPublicRoomLifecycle =
             endpoint === "/api/bots/room-enter" ||
             endpoint === "/api/bots/room-leave" ||
+            endpoint === "/api/guest-brick/reply" ||
             /^\/api\/bots\/[^/]+\/(summon|access)$/.test(endpoint);
         const gameToken = this.getGameToken();
         if (gameToken) {

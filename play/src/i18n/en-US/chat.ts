@@ -1079,6 +1079,37 @@ const chat: BaseTranslation = {
         // The starter that opens the Apps page (#2001)
         connectMyApps: "Connect my apps",
         connectMyAppsLine: "Email, calendar, GitHub and more",
+        // The Brick for someone who has not signed in (#1997): a taste of it, for this visit
+        guest: {
+            name: "Brick",
+            hello: "Hi, I'm Brick, a helper you can talk to. I can show you around and answer anything about this place.",
+            // What a tap on each starter sends, in the guest's words
+            thisPlaceLine: "A quick look around",
+            thisPlaceAsk: "What is this place?",
+            whatCanABrickDoLine: "And what changes when I'm yours",
+            whatCanABrickDoAsk: "What can a Brick do?",
+            // The card after an answer that says something needs an account
+            keepTitle: "Keep Brick?",
+            keepYes: "Make Brick mine",
+            keepYesLine: "Sign in. It's free, and this chat comes along",
+            keepNo: "Not now",
+            keepNoLine: "I'll still help while you're here",
+            // The game's own line when an answer could not be made: nothing was counted, so they can send it again
+            couldNotAnswer: "I couldn't answer that one. Send it again in a moment.",
+            // Said once, after signing in, with the chat that came along
+            welcome: "Welcome, {name}. I'm yours now, and this chat came with me. What shall we do next?",
+            welcomeNoName: "Welcome. I'm yours now, and this chat came with me. What shall we do next?",
+            // The sign-in card
+            signInTitle: "Make Brick yours",
+            signInBody: "Sign in and Brick stays with you, here and everywhere you go. It's free.",
+            signInRemembers: "Remembers you, and warms to you as you talk",
+            signInMakes: "Makes pages, pictures and songs you can keep and share",
+            signInApps: "Works with your apps once you connect them",
+            signInMore: "Makes more Bricks, one for each job you give it",
+            notNow: "Not now",
+            signIn: "Sign in",
+            close: "Close",
+        },
         // A Brick's computer (#2000): for the jobs no app can do. It says what it is for, what it is doing, how the month is
         // counted, where its files are and how to watch. Never a price, a count or the name of a provider.
         computer: {
@@ -1235,6 +1266,8 @@ const chat: BaseTranslation = {
             since: "Since {day:string}",
             bricksThatCanUse: "Bricks that can use it",
             letUse: "Let it use {app:string}",
+            brickMayNote: "Tap a Brick that uses it to change what it may do: right away, asks first or off.",
+            changeWhatItMay: "Change what {name:string} may do with {app:string}",
             remove: "Remove",
             rightAway: "{things:string} right away",
             everythingRightAway: "Everything right away",
@@ -1245,6 +1278,8 @@ const chat: BaseTranslation = {
             thingChange: "Changes things",
             thingDeleteSend: "Deletes or sends out",
             otherPeople: "Other people",
+            onlyYou: "Only you",
+            onlyYouLine: "People who chat with your Bricks can't use it",
             onlyForYou: "Only for you",
             onlyForYouLine:
                 "{app:string} is signed in as you. Nothing in it is safe to hand to other people, so it is never lent to a universe, and a Brick never uses it for anyone else.",
@@ -1324,7 +1359,7 @@ const chat: BaseTranslation = {
                 "Bots keep using it for now, on {name:string}'s sign-in. Reconnect it with the team's account so it no longer depends on {name:string}.",
             botsThatCanUse: "Bots that can use it",
             botsThatCanUseNote:
-                "Bots in {universe:string}. No bot gets it until a manager lets it, on that bot's own page under Apps.",
+                "Bots in {universe:string}. No bot gets it until a manager lets it. Tap one that uses it to change what it may do: right away, asks first or off.",
             botOff: "Turned off",
             botUsesIt: "Uses it",
             managers: "Managers",

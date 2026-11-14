@@ -24,7 +24,7 @@ export function brickHello(
 }
 
 /** A card the game makes itself never runs out and is never edited by the bot server. */
-function ownCard(id: string, title: string, choices: { id: string; label: string; line: string }[]): BotAsk {
+export function ownCard(id: string, title: string, choices: { id: string; label: string; line: string }[]): BotAsk {
     return {
         id,
         revision: 0,
