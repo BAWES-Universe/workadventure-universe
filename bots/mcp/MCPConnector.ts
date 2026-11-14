@@ -354,6 +354,9 @@ async function sendViaOrbit(link: OrbitLink, method: string, params: Record<stri
             const check = await send({ jsonrpc: '2.0', id: 'check', method: 'tools/list' }, cached.sessionId);
             if (typeof check.status === 'number' && check.status >= 400) {
                 mcpSessionInitCache.delete(key);
+                // Only "the link does not know this session" is answered by opening another; any other refusal (its key, an
+                // outage) means the call cannot go out now, and nothing was asked of the App
+                if (![400, 404, 410].includes(check.status)) return NOT_SENT;
                 cached = undefined;
             }
         }

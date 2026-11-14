@@ -273,6 +273,31 @@ describe('a ready-made App', () => {
             expect(sent.map((b) => b.message.method)).toEqual(['tools/call']);
         });
 
+        it('sends no call and keeps no session when the check is refused for another reason than a gone session', async () => {
+            vi.stubEnv('BOT_SERVICE_TOKEN', 'svc');
+            MCPConnector.clearCache();
+            vi.useFakeTimers({ toFake: ['Date'] });
+            try {
+                const sessions = { live: new Set<string>(), made: [] as string[] };
+                const sent: any[] = [];
+                const spy = vi.spyOn(axios, 'post').mockImplementation(link(sessions, sent) as never);
+                const ai = service(async () => ({ allowed: true }));
+                await callWith(ai, 'first');
+                vi.setSystemTime(Date.now() + 60_000);
+                sent.length = 0;
+                // The link now refuses everything: its key is no longer good
+                spy.mockImplementation((async (_url: string, body: any) => {
+                    sent.push(body);
+                    return { data: { status: 401, contentType: null, sessionId: null, body: '' } };
+                }) as never);
+                const result = (await callWith(ai, 'second')).result as { outcome: string };
+                expect(result.outcome).toBe('not_sent');
+                expect(sent.map((b) => b.message.method)).toEqual(['tools/list']);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
         it('sends no call and says nothing ran when the check cannot reach Orbit', async () => {
             vi.stubEnv('BOT_SERVICE_TOKEN', 'svc');
             vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -313,6 +338,24 @@ describe('a ready-made App', () => {
         sent.length = 0;
         await ai['executeToolCalls']([{ id: 'c-401b', name: 'send_email', arguments: '{}' }], signedIn as never, undefined, READY as never, undefined, 'room', 'bot-401', 7);
         expect(sent.map((b) => b.message.method)).toEqual(['initialize']);
+    });
+
+    it('sends no call and keeps no session when the link refuses the "initialized" message', async () => {
+        vi.stubEnv('BOT_SERVICE_TOKEN', 'svc');
+        MCPConnector.clearCache();
+        const sent: any[] = [];
+        vi.spyOn(axios, 'post').mockImplementation(async (_url: string, body: any) => {
+            sent.push(body);
+            if (body.message.method === 'initialize') return { data: { status: 200, contentType: 'application/json', sessionId: 'sess-r', body: '{}' } };
+            return { data: { status: 500, contentType: null, sessionId: null, body: '' } };
+        });
+        const ai = service(async () => ({ allowed: true }));
+        const [result] = await ai['executeToolCalls']([{ id: 'c-init', name: 'send_email', arguments: '{}' }], signedIn as never, undefined, READY as never, undefined, 'room', 'bot-init', 7);
+        expect(result.result.outcome).toBe('not_sent');
+        expect(sent.map((b) => b.message.method)).toEqual(['initialize', 'notifications/initialized']);
+        sent.length = 0;
+        await ai['executeToolCalls']([{ id: 'c-init2', name: 'send_email', arguments: '{}' }], signedIn as never, undefined, READY as never, undefined, 'room', 'bot-init', 7);
+        expect(sent[0].message.method).toBe('initialize');
     });
 
     it('is not run when Orbit says no, and tells the bot nothing about why', async () => {
