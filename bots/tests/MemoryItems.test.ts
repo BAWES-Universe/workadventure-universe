@@ -601,6 +601,32 @@ describe('PersistentMemory: a forget Orbit has not taken survives a restart (#20
         warn.mockRestore();
     });
 
+    it('lets go of one Orbit has answered with a client error for over a week, but never one it could not reach (Sentry)', async () => {
+        const memory = start();
+        await forgetWhileDown(memory);
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const [entry] = [...memory.unreportedItemForgets.values()];
+        entry.first = Date.now() - 8 * 24 * 60 * 60 * 1000;
+        // An outage, however long, keeps it
+        down();
+        await memory.reportUnreportedForgets();
+        expect(memory.unreportedItemForgets.size).toBe(1);
+        hoisted.axios.post.mockReset().mockRejectedValue(new Error('no answer'));
+        await memory.reportUnreportedForgets();
+        expect(memory.unreportedItemForgets.size).toBe(1);
+        // A 404 that lasts over a week is let go; the same 404 a day after is kept (an Orbit not yet updated says 404 too)
+        hoisted.axios.post.mockReset().mockRejectedValue({ isAxiosError: true, message: 'no route', response: { status: 404 } });
+        entry.first = Date.now() - 24 * 60 * 60 * 1000;
+        await memory.reportUnreportedForgets();
+        expect(memory.unreportedItemForgets.size).toBe(1);
+        entry.first = Date.now() - 8 * 24 * 60 * 60 * 1000;
+        await memory.reportUnreportedForgets();
+        clearTimeout(memory.unreportedRetryTimer);
+        expect(memory.unreportedItemForgets.size).toBe(0);
+        expect(saved()).toEqual([]);
+        warn.mockRestore();
+    });
+
     it('starts with nothing waiting when the file is missing or damaged', () => {
         expect(existsSync(file)).toBe(false);
         expect(start().unreportedItemForgets.size).toBe(0);

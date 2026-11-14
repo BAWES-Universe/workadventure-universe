@@ -49,6 +49,8 @@ export class PersistentMemory extends ConversationMemory {
     private unreportedRetryTimer: NodeJS.Timeout | null = null;
     private forgetQueueFile: ForgetQueueFile | null = null;
     private static readonly UNREPORTED_RETRY_MS = 30 * 1000;
+    /** Orbit answering the request itself with a 4xx (not 408/429) for this long means it will not take it: a safety guard so it is not tried for ever. */
+    private static readonly CLIENT_ERROR_GIVE_UP_MS = 7 * 24 * 60 * 60 * 1000;
     /** An older Orbit repeats a Forget for a minute: longer than that plus one 30-second privacy check */
     private static readonly FORGET_REPEAT_WINDOW_MS = 2 * 60 * 1000;
     /**
@@ -250,12 +252,18 @@ export class PersistentMemory extends ConversationMemory {
         let changed = false;
         await Promise.all(
             waiting.map(async ([mapKey, entry]) => {
-                const taken = await this.memoryStorage.reportForgottenItem(entry.botId, entry.userUuid, entry.itemKey, entry.kind, entry.since);
+                const { taken, status } = await this.memoryStorage.reportForgottenItemOutcome(entry.botId, entry.userUuid, entry.itemKey, entry.kind, entry.since);
                 // A later ask for the same thing may have been kept while Orbit was answering (it carries a later time): only the
                 // ask Orbit just answered is let go. Compared by that time, not by the object, which a re-arming may have copied.
                 // One Orbit has not taken is kept however long that takes (it is let go only when Orbit refuses it for good, which
                 // reads as taken here), so a long outage never leaves a saved thing free to come back.
-                if (taken && this.unreportedItemForgets.get(mapKey)?.since === entry.since) {
+                const own = this.unreportedItemForgets.get(mapKey)?.since === entry.since;
+                // Orbit that keeps answering "no" to the request itself (a 4xx other than "slow down") is let go after a long
+                // time, so a report it can never take is not tried for ever. An outage (no answer, or a 5xx) never ends it.
+                const refusedForLong =
+                    !taken && own && status !== undefined && status >= 400 && status < 500 && status !== 408 && status !== 429 && Date.now() - entry.first > PersistentMemory.CLIENT_ERROR_GIVE_UP_MS;
+                if (refusedForLong) console.warn(`[PersistentMemory] Orbit has refused a forget for bot ${entry.botId} (HTTP ${status}) for over a week; letting it go`);
+                if ((taken || refusedForLong) && own) {
                     this.unreportedItemForgets.delete(mapKey);
                     changed = true;
                 }

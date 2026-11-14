@@ -231,20 +231,25 @@ export class MemoryStorage {
      * forgotten whether or not it has saved the thing yet. True when Orbit took it, or when it never can (no Orbit set up).
      */
     async reportForgottenItem(botId: string, userUuid: string, itemKey: string, kind: string, at?: number): Promise<boolean> {
+        return (await this.reportForgottenItemOutcome(botId, userUuid, itemKey, kind, at)).taken;
+    }
+
+    /** As reportForgottenItem, and the status Orbit answered with when it did not take it (none when it could not be reached). */
+    async reportForgottenItemOutcome(botId: string, userUuid: string, itemKey: string, kind: string, at?: number): Promise<{ taken: boolean; status?: number }> {
         // No Orbit to tell, or nothing to name: this never changes, so there is nothing to try again later (not a failure)
-        if (!this.isConfigured() || !this.botServiceToken || !botId || !userUuid || !itemKey) return true;
+        if (!this.isConfigured() || !this.botServiceToken || !botId || !userUuid || !itemKey) return { taken: true };
         try {
             await axios.post(
                 `${this.adminApiUrl}/api/bots/memory/${encodeURIComponent(botId)}/items`,
                 { userUuid, itemKey, kind, ...(at ? { at } : {}) },
                 { headers: { Authorization: `Bearer ${this.botServiceToken}`, 'Content-Type': 'application/json' }, timeout: 10000 }
             );
-            return true;
+            return { taken: true };
         } catch (error) {
             console.warn(`[MemoryStorage] Could not tell Orbit what was forgotten for bot ${botId}: ${describeSaveError(error)}`);
             // Orbit answered that this can never be taken (gone, or cannot be processed): telling it again changes nothing, so it is let go
             const status = axios.isAxiosError(error) ? error.response?.status : undefined;
-            return status !== undefined && PERMANENT_REFUSALS.has(status);
+            return { taken: status !== undefined && PERMANENT_REFUSALS.has(status), status };
         }
     }
 
