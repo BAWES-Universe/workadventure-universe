@@ -11,6 +11,7 @@
     import type { ProximitySession } from "../../Connection/Proximity/ProximitySessions";
     import { selectedChatMessageToReply } from "../../Stores/ChatStore";
     import LL from "../../../../i18n/i18n-svelte";
+    import { GuestBrickChatRoom } from "../../Bricks/GuestBrickChatRoom";
     import { ProximityChatRoom } from "../../Connection/Proximity/ProximityChatRoom";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import {
@@ -428,7 +429,11 @@
                     })
                     .catch((error) => {
                         console.error("Error sending files:", error);
-                        const failure = new UploadFailure("other", undefined, "matrix-error");
+                        // The Brick for guests uploads here too: its refusal (too big, turned off) keeps its reason
+                        const failure =
+                            error instanceof UploadFailure
+                                ? error
+                                : new UploadFailure("other", undefined, "matrix-error");
                         const failures = [failure];
                         showUploadError(
                             uploadFailureLine(
@@ -512,26 +517,41 @@
     }
     const unsubscribeComposerFocusRequest = chatComposerFocusRequestStore.subscribe(focusOnRequest);
 
-    onMount(async () => {
-        // A request made before this box existed: the subscription ran before the input did.
-        focusOnRequest(get(chatComposerFocusRequestStore));
-        const isUploadEnabled = !textOnly && gameManager.getCurrentGameScene().room.isChatUploadEnabled;
+    // Whether files can be sent here. The Brick for guests says what it takes a moment after its chat opens: when that
+    // comes after this box, files are checked again, so the paperclip and the mic are not left off.
+    let uploadCheck = 0;
+    let checkedTextOnly: boolean | undefined;
+    async function checkUploads(textOnlyNow: boolean): Promise<void> {
+        const ask = ++uploadCheck;
+        const isUploadEnabled = !textOnlyNow && gameManager.getCurrentGameScene().room.isChatUploadEnabled;
+        let enabled = isUploadEnabled;
         // Check CDN config for proximity chat before enabling the button
-        if (room instanceof ProximityChatRoom && isUploadEnabled) {
+        // The nearby chat and the Brick for guests send files through the uploader: only when its bucket is set up
+        if ((room instanceof ProximityChatRoom || room instanceof GuestBrickChatRoom) && isUploadEnabled) {
             try {
                 const configResponse = await fetch(`${UPLOADER_URL}/config`);
                 if (configResponse.ok) {
                     const config = await configResponse.json();
-                    fileAttachementEnabled = config.cdnConfigured;
+                    enabled = config.cdnConfigured;
                 } else {
-                    fileAttachementEnabled = false;
+                    enabled = false;
                 }
             } catch {
-                fileAttachementEnabled = false;
+                enabled = false;
             }
-        } else {
-            fileAttachementEnabled = isUploadEnabled;
         }
+        if (ask === uploadCheck) fileAttachementEnabled = enabled;
+    }
+    $: if (checkedTextOnly !== undefined && textOnly !== checkedTextOnly) {
+        checkedTextOnly = textOnly;
+        checkUploads(textOnly).catch((error) => console.error(error));
+    }
+
+    onMount(async () => {
+        // A request made before this box existed: the subscription ran before the input did.
+        focusOnRequest(get(chatComposerFocusRequestStore));
+        checkedTextOnly = textOnly;
+        await checkUploads(textOnly);
         const draft = !keepsDraft
             ? undefined
             : hasSpaceDrafts
@@ -909,6 +929,8 @@
                     );
                 }
             } else if (destination.room instanceof MatrixChatRoom) {
+                await destination.room.sendVoiceNote(file, details);
+            } else if (destination.room instanceof GuestBrickChatRoom) {
                 await destination.room.sendVoiceNote(file, details);
             } else {
                 return false;

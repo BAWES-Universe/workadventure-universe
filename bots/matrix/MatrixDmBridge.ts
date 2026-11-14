@@ -53,8 +53,42 @@ export const BRICK_OFFER_KEY = 'universe.brick_offer';
  * message of the Brick in their own Brick's chat. The game draws each line as it was said and ends with the Brick's welcome.
  */
 export const GUEST_CHAT_KEY = 'universe.guest_chat';
+/** On a message that holds one part of a chat carried in parts (plan v3 section 7): `{ v: 1, from, to, last }`. */
+export const GUEST_CHAT_PART_KEY = 'universe.guest_chat_part';
+/** One part of a chat carried in parts: its lines' place in the chat, and whether it is the last. */
+export interface CarriedPart {
+    from: number;
+    to: number;
+    last: boolean;
+}
 /** On a person's message: they tapped "Make it" on that card, and this is the Brick it described (game #1996). */
 export const BRICK_MAKE_KEY = 'universe.brick_make';
+
+/**
+ * A Brick's offer to connect an App (game #2001), on its own message after the answer: `{ topic, app, name, state,
+ * connectionId, ask, asked, other }`. The game shows it as a card ("Connect your calendar?"); the sign-in happens in the game.
+ */
+export const APP_OFFER_KEY = 'universe.app_offer';
+/**
+ * The event the game sends once the person connected an App from that card and the Brick may use it: `{ app, name }`. The
+ * Brick carries on with what they asked, and then says what it may do with it. No message of the person's goes with it.
+ */
+export const APP_CONNECTED_EVENT = 'universe.app_connected';
+/** On the synthesized message that carries a Brick on after an App was connected: `{ app, name }` (never sent by a person). */
+export const APP_CONNECTED_KEY = 'universe.app_connected';
+
+/** What a Brick says once an App is connected: what it may do with it, and where the rest is chosen. Fixed words, no model. */
+export function appConnectedLine(name: string): string {
+    return `I can look things up in ${name} right away. Changing or sending anything in it asks you first. For now only I can use it: choose which of your Bricks can in [Apps](#apps).`;
+}
+
+/** The App a "connected" event names, when it is whole. */
+export function connectedAppOf(value: unknown): { app: string; name: string } | null {
+    if (!value || typeof value !== 'object') return null;
+    const { app, name } = value as Record<string, unknown>;
+    if (typeof app !== 'string' || !app.trim() || typeof name !== 'string' || !name.trim()) return null;
+    return { app: app.trim().slice(0, 80), name: name.replace(/\s+/g, ' ').trim().slice(0, 60) };
+}
 
 /** The Brick a tapped suggestion described, when the message carries one that is whole. */
 function offeredBrickOf(value: unknown): OfferedBrick | null {
@@ -197,11 +231,46 @@ const TYPING_REFRESH_MS = 20 * 1000;
 const ONLY_DIRECT = 'I only take direct messages.';
 /** One line of a guest's chat that is brought along when they sign in. */
 export interface GuestChatNote {
+    /** Its stable name in a chat carried in parts: the game draws a line sent twice once. */
+    id?: string;
     from: 'guest' | 'brick';
     text: string;
     /** When it was said (ms), on the guest's device. */
     at: number;
+    /** The pictures, files and voice note the guest sent with this line, copied into the person's own chat (plan v3). */
+    media?: CarriedMedia[];
+    /** The line's text only stands in for its media. */
+    label?: true;
 }
+
+/**
+ * A guest's picture, file or note as a carried chat holds it: copied into the person's own storage (`url`), or `gone` when the
+ * guest's file no longer exists, which keeps its line and words with a "file is gone" bubble. While it is on its way in, it is
+ * named by the guest's receipt only, which never reaches the chat.
+ */
+export interface CarriedMedia {
+    kind: 'file' | 'note';
+    name: string;
+    type: string;
+    url?: string;
+    gone?: true;
+    size?: number;
+    duration?: number;
+    /** What the Brick heard in a note. */
+    heard?: string;
+    receipt?: string;
+}
+/** A carried line as words, for the message's text: what was written, a note's words, and a mark for each file. */
+export function carriedWords(line: GuestChatNote): string {
+    const parts: string[] = [];
+    if (!line.label && line.text.trim()) parts.push(line.text.trim());
+    for (const one of line.media ?? []) {
+        if (one.kind === 'note') parts.push(one.heard ? `(voice note) ${one.heard}` : '(voice note)');
+        else parts.push(one.type.startsWith('image/') ? `(sent a picture: ${one.name})` : `(sent a file: ${one.name})`);
+    }
+    return parts.join(' ');
+}
+
 /** How many hand-overs of a guest's chat are remembered as brought, so one is never brought twice. */
 const CARRIED_CHATS_MAX = 5000;
 /** An answer made in nearby chat waits this long for its person's direct chat to be known, and no more than these at once (#1993). */
@@ -333,6 +402,35 @@ export class MatrixDmBridge implements MatrixEventHandler {
         }
         if (event.type === ANSWER_EVENT) {
             await this.onTap(event);
+            return;
+        }
+        if (event.type === APP_CONNECTED_EVENT) {
+            await this.onAppConnected(event);
+        }
+    }
+
+    /**
+     * The person connected an App from a Brick's card (game #2001): the Brick carries on with what they asked, exactly as it
+     * would with a message from them (access, steps and all), told in a line that is from the system and not their words. Only
+     * from a person in their own two-person chat with the bot; whether they may chat with it is checked as for any message.
+     * Never throws; a lost answer costs nothing, since the card already said what happened.
+     */
+    private async onAppConnected(event: MatrixEvent): Promise<void> {
+        if (botIdFromMatrixId(this.config.domain, event.sender)) return;
+        const connected = connectedAppOf(event.content);
+        if (!connected || !this.firstSighting(event.event_id)) return;
+        const note = `[The person signed in to ${connected.name} on its own page, and you may use ${connected.name} now. Carry on with what they asked just before, using it. This line is from the system, not words they typed.]`;
+        try {
+            await this.onMessage({
+                type: 'm.room.message',
+                room_id: event.room_id,
+                sender: event.sender,
+                event_id: `$app-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
+                origin_server_ts: Date.now(),
+                content: { msgtype: 'm.text', body: note, [APP_CONNECTED_KEY]: connected },
+            });
+        } catch (error: any) {
+            console.warn(`[MatrixDmBridge] Could not carry on after an App was connected in ${event.room_id}:`, error?.message ?? error);
         }
     }
 
@@ -573,15 +671,16 @@ export class MatrixDmBridge implements MatrixEventHandler {
      * person's and that the bot is their own Brick. `carryId` is the guest id Orbit handed over, so one hand-over is brought once
      * however many times a device asks. `wait` when the chat is not there yet: the device asks again in a moment.
      */
-    async carryGuestChat(botId: string, matrixUserId: string, carryId: string, lines: GuestChatNote[]): Promise<'sent' | 'already' | 'wait'> {
+    async carryGuestChat(botId: string, matrixUserId: string, carryId: string, lines: GuestChatNote[], part?: CarriedPart | null): Promise<'sent' | 'already' | 'wait'> {
         if (botIdFromMatrixId(this.config.domain, matrixUserId)) return 'wait';
-        const key = `${MatrixDmBridge.pair(botId, matrixUserId)}|${carryId}`;
+        // A chat carried in parts (plan v3 section 7): each part is its own message, said once however often it is asked
+        const key = `${MatrixDmBridge.pair(botId, matrixUserId)}|${carryId}${part ? `|${part.from}-${part.to}` : ''}`;
         if (this.carriedChats.has(key)) return 'already';
         // Taken before anything is looked at or sent, so two asks at once bring it once; the second waits for how the first ends
         // and says "already" only if it was sent (a device is told to drop its copy on "already", so it must be there)
         const inFlight = this.carrying.get(key);
         if (inFlight) return (await inFlight) === 'sent' ? 'already' : 'wait';
-        const sending = this.sendCarried(botId, matrixUserId, carryId, lines);
+        const sending = this.sendCarried(botId, matrixUserId, carryId, lines, part ?? null);
         this.carrying.set(key, sending);
         try {
             const result = await sending;
@@ -595,13 +694,15 @@ export class MatrixDmBridge implements MatrixEventHandler {
         }
     }
 
-    private async sendCarried(botId: string, matrixUserId: string, carryId: string, lines: GuestChatNote[]): Promise<'sent' | 'wait'> {
+    private async sendCarried(botId: string, matrixUserId: string, carryId: string, lines: GuestChatNote[], part: CarriedPart | null): Promise<'sent' | 'wait'> {
         const known = await this.lookUpDirectRoom(botId, matrixUserId);
         if (!known.roomId) return 'wait';
-        const body = lines.map((line) => `${line.from === 'guest' ? 'You' : 'Brick'}: ${line.text}`).join('\n');
-        // The same transaction id for every try of this hand-over: a try that failed after the homeserver had taken the message is not sent twice
-        const txnId = createHash('sha256').update(`guest-chat|${botId}|${matrixUserId}|${carryId}`).digest('hex');
-        await this.client.sendMessage(this.botUserId(botId), known.roomId, { msgtype: 'm.text', body, [GUEST_CHAT_KEY]: lines }, txnId);
+        const body = lines.map((line) => `${line.from === 'guest' ? 'You' : 'Brick'}: ${carriedWords(line)}`).join('\n');
+        // The same transaction id for every try of this hand-over (of this part): a try that failed after the homeserver had taken
+        // the message is not sent twice. Past the homeserver's memory of it, the game still draws a named line once
+        const txnId = createHash('sha256').update(`guest-chat|${botId}|${matrixUserId}|${carryId}${part ? `|${part.from}-${part.to}` : ''}`).digest('hex');
+        const content = { msgtype: 'm.text', body, [GUEST_CHAT_KEY]: lines, ...(part ? { [GUEST_CHAT_PART_KEY]: { v: 1, from: part.from, to: part.to, last: part.last } } : {}) };
+        await this.client.sendMessage(this.botUserId(botId), known.roomId, content, txnId);
         return 'sent';
     }
 
@@ -1166,7 +1267,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         let text = read.text;
         if (read.note && this.deps.noteHearing) {
             // A voice note is heard once, here: the bot answers the words, and the note shows what was heard (or that it could not be)
-            const heard = await this.hearNote(botUserId, botId, event, read.note);
+            const heard = await this.hearNote(botUserId, botId, event, read.note, { userId: user.uuid, isGuest: user.isGuest });
             if (heard === 'unheard') return;
             if (heard) text = text ? `${text}\n[Voice note] ${heard}` : `[Voice note] ${heard}`;
         }
@@ -1208,6 +1309,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 ...(content[STARTER_KEY] === STARTER_IDEAS && !catchUp ? { starter: STARTER_IDEAS } : {}),
                 // "Make it" tapped on the Brick's suggestion (#1996)
                 ...(!catchUp && offeredBrickOf(content[BRICK_MAKE_KEY]) ? { makeOffered: offeredBrickOf(content[BRICK_MAKE_KEY])! } : {}),
+                // An App was connected from a card (game #2001): a line from the system, nothing is learned about the person from it
+                ...(event.sender && !botIdFromMatrixId(this.config.domain, event.sender) && connectedAppOf(content[APP_CONNECTED_KEY]) ? { note: true } : {}),
                 onInterimMessage: async (interim) => {
                     // A lost "let me look" line must not cost the person the real answer, so it never throws.
                     try {
@@ -1293,6 +1396,25 @@ export class MatrixDmBridge implements MatrixEventHandler {
                     .sendMessage(botUserId, event.room_id, content, txnId)
                     .catch(() => this.client.sendMessage(botUserId, event.room_id, content, txnId))
                     .catch((error) => console.warn(`[MatrixDmBridge] Could not send a Brick suggestion from bot ${botId}:`, error?.message ?? error));
+            }
+            // The offer to connect an App (game #2001), after the answer like the one above. Asked once, right before it is sent.
+            const appOffer = reply.text ? reply.bricks?.find((note) => note.kind === 'app') : undefined;
+            const appTopic = appOffer && appOffer.kind === 'app' && reply.claimApp ? await reply.claimApp() : null;
+            if (appOffer && appOffer.kind === 'app' && appTopic) {
+                const { app, name, state, connectionId, ask, asked, other } = appOffer;
+                const content = { msgtype: 'm.text', body: ask || name, [APP_OFFER_KEY]: { topic: appTopic, app, name, state, connectionId, ask, asked, other } };
+                const txnId = randomUUID();
+                await this.client
+                    .sendMessage(botUserId, event.room_id, content, txnId)
+                    .catch(() => this.client.sendMessage(botUserId, event.room_id, content, txnId))
+                    .catch((error) => console.warn(`[MatrixDmBridge] Could not send an App offer from bot ${botId}:`, error?.message ?? error));
+            }
+            // Once the Brick carried on after an App was connected, what it may do with it (fixed words)
+            const justConnected = reply.text ? connectedAppOf(content[APP_CONNECTED_KEY]) : null;
+            if (justConnected) {
+                await this.client
+                    .sendText(botUserId, event.room_id, appConnectedLine(justConnected.name))
+                    .catch((error) => console.warn(`[MatrixDmBridge] Could not say what bot ${botId} may do with an App:`, error?.message ?? error));
             }
             for (const card of reply.artifacts ?? []) {
                 // A live artifact the bot made or changed: the game shows a card to open it
@@ -1403,6 +1525,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
         if (typeof content.info?.duration === 'number') info.duration = content.info.duration;
         if (Object.keys(info).length > 0) kept.info = info;
         for (const key of ['org.matrix.msc3245.voice', 'm.voice'] as const) if (content[key] !== undefined) kept[key] = {};
+        // A line from the system after an App was connected (game #2001) must still be told apart from the person's own words
+        const connected = connectedAppOf(content[APP_CONNECTED_KEY]);
+        if (connected) kept[APP_CONNECTED_KEY] = connected;
         const message = JSON.stringify({
             event_id: event.event_id,
             room_id: event.room_id,
@@ -1561,7 +1686,13 @@ export class MatrixDmBridge implements MatrixEventHandler {
      * the bot, '' when the bot has no hearing to use (the note reaches it as the file, as before), or 'unheard' when it was meant to
      * be heard and could not be (the person is told under the note; the bot is not made to answer a file it cannot read).
      */
-    private async hearNote(botUserId: string, botId: string, event: MatrixEvent, note: { data: Buffer; filename: string; seconds?: number }): Promise<string> {
+    private async hearNote(
+        botUserId: string,
+        botId: string,
+        event: MatrixEvent,
+        note: { data: Buffer; filename: string; seconds?: number },
+        sender: { userId?: string; isGuest?: boolean }
+    ): Promise<string> {
         const hearing = this.deps.noteHearing;
         // A bot with no hearing to use is not promised anything: no row, and the note reaches it as the file, as before
         if (!hearing || !(await hearing.canHear(botId))) return '';
@@ -1586,10 +1717,21 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 console.warn(`[MatrixDmBridge] Could not show a transcript in ${roomId}:`, error?.message ?? error);
             }
         };
-        // "Listening…" is only worth showing when the answer takes a moment, but the person should never wonder: it goes out at once
-        const listening = show('listening');
-        const heard = await hearing.hear(botId, event.event_id, { bytes: note.data, filename: note.filename, ...(note.seconds !== undefined ? { seconds: note.seconds } : {}) });
+        // "Listening…" goes out the moment the note is on its way to be heard, so the person never wonders; a note refused before
+        // that (a used-up allowance) never shows it
+        let listening: Promise<void> | undefined;
+        const heard = await hearing.hear(
+            botId,
+            event.event_id,
+            { bytes: note.data, filename: note.filename, ...(note.seconds !== undefined ? { seconds: note.seconds } : {}) },
+            sender,
+            () => {
+                listening ??= show('listening');
+            }
+        );
         await listening;
+        // The person's replies are used up: nothing was heard, and the reply path shows the usual limit card for the note
+        if ('reason' in heard && heard.reason === 'reply-limit') return '';
         if (heard.ok) {
             const words = tidyTranscript(heard.text, hearing.limits.maxChars);
             if (!words) {

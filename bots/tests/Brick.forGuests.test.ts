@@ -397,6 +397,20 @@ describe("A guest's chat, brought along when they sign in", () => {
         return { client, bridge: new MatrixDmBridge({ homeserverUrl: 'http://hs', domain: 'matrix.test', asToken: 'as', hsToken: 'hs' }, client as never, deps) };
     }
 
+    it('says each part of a chat carried in parts once, as its own message that names its place', async () => {
+        const { bridge, client } = bridgeWithChat(true);
+        const named = LINES.map((line, index) => ({ ...line, id: `1.${index}` }));
+        expect(await bridge.carryGuestChat(BRICK, ALICE, GUEST, [named[0]], { from: 0, to: 1, last: false })).toBe('sent');
+        expect(await bridge.carryGuestChat(BRICK, ALICE, GUEST, [named[0]], { from: 0, to: 1, last: false })).toBe('already');
+        expect(await bridge.carryGuestChat(BRICK, ALICE, GUEST, [named[1]], { from: 1, to: 2, last: true })).toBe('sent');
+        expect(client.sendMessage).toHaveBeenCalledTimes(2);
+        const [first, second] = client.sendMessage.mock.calls;
+        expect(first[2]).toMatchObject({ [GUEST_CHAT_KEY]: [named[0]], 'universe.guest_chat_part': { v: 1, from: 0, to: 1, last: false } });
+        expect(second[2]).toMatchObject({ [GUEST_CHAT_KEY]: [named[1]], 'universe.guest_chat_part': { v: 1, from: 1, to: 2, last: true } });
+        // Each part its own transaction, the same for every try of that part
+        expect(first[3]).not.toBe(second[3]);
+    });
+
     it("says the Brick's one message in the person's own chat, with each line as it was said", async () => {
         const { bridge, client } = bridgeWithChat(true);
 
@@ -531,7 +545,16 @@ describe("A guest's chat, brought along when they sign in", () => {
             expect(response.status).toBe(200);
             expect(await response.json()).toEqual({ result: 'sent' });
             expect(adminApiService.checkDmAccess).toHaveBeenCalledWith(BRICK, ALICE);
-            expect(carryGuestChat).toHaveBeenCalledWith(BRICK, ALICE, GUEST, [...LINES]);
+            expect(carryGuestChat).toHaveBeenCalledWith(BRICK, ALICE, GUEST, [...LINES], null);
+        });
+
+        it('brings a part of a chat carried in parts with its place, and refuses a part that is not one', async () => {
+            const named = LINES.map((line, index) => ({ ...line, id: `1.${index}` }));
+            expect((await carry({ ...body, lines: named, part: { from: 0, to: 2, last: true } })).status).toBe(200);
+            expect(carryGuestChat).toHaveBeenLastCalledWith(BRICK, ALICE, GUEST, named, { from: 0, to: 2, last: true });
+            for (const part of [{ from: 2, to: 2, last: true }, { from: -1, to: 2, last: true }, { from: 0, to: 2 }, 'all']) {
+                expect((await carry({ ...body, part })).status).toBe(400);
+            }
         });
 
         it("refuses a chat that is someone else's, a bot that is not their own Brick, and nobody", async () => {

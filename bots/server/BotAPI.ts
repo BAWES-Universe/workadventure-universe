@@ -14,8 +14,9 @@ import { MCPConnector } from '../mcp/MCPConnector';
 import { BotBusyError, BotCannotCallError, BotUnavailableError } from '../utils/summonErrors';
 import { helloSourceOf, typedVoiceName, type HelloSource, type VoiceHello } from '../voice/VoiceHello';
 import { buildVoiceHello } from '../voice/VoiceHelloWiring';
-import { GuestBrickService, isGuestBrickId, readCarriedLines } from './GuestBrickService';
-import type { GuestChatNote } from '../matrix/MatrixDmBridge';
+import { GuestBrickService, GUEST_FILES_MAX, isGuestBrickId, readCarriedLines, readCarriedPart } from './GuestBrickService';
+import { buildCarryCopy, buildGuestBrickMedia, CarryNotNowError, copyCarriedMedia, type CarryCopy } from './GuestBrickMedia';
+import type { CarriedPart, GuestChatNote } from '../matrix/MatrixDmBridge';
 
 /** The id the game makes for a guest at their first visit (a uuid): a member's token names an email or an account instead. */
 const GUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -261,12 +262,16 @@ export interface BotAPIOptions {
      * Brings a guest's chat with the Brick for guests into the signed-in person's own Brick (game #1997): `chatId` is the
      * person's chat address, already checked to be theirs, and `botId` already checked to be their own Brick.
      */
-    carryGuestChat?: (botId: string, chatId: string, carryId: string, lines: GuestChatNote[]) => Promise<'sent' | 'already' | 'wait' | 'not_brick'>;
+    carryGuestChat?: (botId: string, chatId: string, carryId: string, lines: GuestChatNote[], part?: CarriedPart | null) => Promise<'sent' | 'already' | 'wait' | 'not_brick'>;
+    /** Whether a guest's chat may be brought into this bot (the one Brick everyone gets, not deleted): asked before anything is copied. */
+    carryBrick?: (botId: string) => Promise<boolean>;
     /**
      * A Brick was deleted or taken back with Undo (game #1996): its settings are read again before its next message.
      * Only when it is a Brick of `ownerId` (Orbit's id of the person); says whether it was.
      */
     brickChanged?: (botId: string, ownerId: string) => boolean;
+    /** How a carried guest chat's media is copied (plan v3). Left out, built from the bot server's own parts. */
+    carryCopy?: (guestId: string, userUuid: string) => CarryCopy | null;
     /** What answers a guest in their Brick (game #1997). Left out, it is built from the bot server's own parts the first time it is asked for; null: off. */
     guestBrick?: GuestBrickService | null;
     /** "Hear this voice say hello" on the bot page (#1852). Left out, it is built from the bot server's own parts the first time it is asked for; null: not available. */
@@ -310,10 +315,12 @@ export class BotAPI {
     private directChat: BotAPIOptions['directChat'];
     private brickChanged: BotAPIOptions['brickChanged'];
     private carryGuestChat: BotAPIOptions['carryGuestChat'];
+    private carryBrick: BotAPIOptions['carryBrick'];
     /** Per person, how many Brick changes they told in the current minute. */
     private brickChangedCounts = new Map<string, { count: number; since: number }>();
     private voiceHelloOption: BotAPIOptions['voiceHello'];
     private guestBrickOption: BotAPIOptions['guestBrick'];
+    private carryCopyOption: BotAPIOptions['carryCopy'];
 
     constructor(
         botManager: BotManager,
@@ -333,8 +340,10 @@ export class BotAPI {
         this.directChat = options.directChat;
         this.brickChanged = options.brickChanged;
         this.carryGuestChat = options.carryGuestChat;
+        this.carryBrick = options.carryBrick;
         this.voiceHelloOption = options.voiceHello;
         this.guestBrickOption = options.guestBrick;
+        this.carryCopyOption = options.carryCopy;
 
         // Routers with their own auth and body limits (the Matrix application service) go before the shared parser.
         for (const router of preRouters) {
@@ -346,8 +355,15 @@ export class BotAPI {
         this.setupRoutes();
     }
 
+    /** How a carried chat's media is copied for this person; tests give their own. */
+    private carryCopy(guestId: string, userUuid: string): CarryCopy | null {
+        return (this.carryCopyOption ?? ((g, u) => buildCarryCopy(this.adminApiService, g, u)))(guestId, userUuid);
+    }
+
     private guestBrick(): GuestBrickService | null {
-        if (this.guestBrickOption === undefined) this.guestBrickOption = new GuestBrickService(this.adminApiService);
+        if (this.guestBrickOption === undefined) {
+            this.guestBrickOption = new GuestBrickService(this.adminApiService, undefined, undefined, buildGuestBrickMedia(this.botManager, this.adminApiService));
+        }
         return this.guestBrickOption;
     }
 
@@ -1059,8 +1075,21 @@ export class BotAPI {
                 res.status(403).json({ error: 'Only for guests' });
                 return;
             }
-            const { turnId, roomUrl, message, history, saidNeedsAccount } = req.body ?? {};
-            if (!isGuestBrickId(turnId) || typeof roomUrl !== 'string' || !roomUrl || roomUrl.length > 2000 || typeof message !== 'string' || !message.trim()) {
+            const { turnId, roomUrl, message, history, saidNeedsAccount, files, note } = req.body ?? {};
+            // A picture, a file or a voice note may come with no words; a message with nothing at all is refused
+            const named = Array.isArray(files) ? files : [];
+            const hasMedia = named.length > 0 || (typeof note === 'string' && note.length > 0);
+            if (
+                !isGuestBrickId(turnId) ||
+                typeof roomUrl !== 'string' ||
+                !roomUrl ||
+                roomUrl.length > 2000 ||
+                typeof message !== 'string' ||
+                (!message.trim() && !hasMedia) ||
+                (files !== undefined && !Array.isArray(files)) ||
+                named.length > GUEST_FILES_MAX ||
+                (note !== undefined && typeof note !== 'string')
+            ) {
                 res.status(400).json({ error: 'Not a message' });
                 return;
             }
@@ -1072,6 +1101,8 @@ export class BotAPI {
                     message,
                     history: Array.isArray(history) ? history : [],
                     saidNeedsAccount: saidNeedsAccount === true,
+                    ...(named.length > 0 ? { files: named } : {}),
+                    ...(typeof note === 'string' && note ? { note } : {}),
                 });
                 if (answer.kind === 'busy') res.status(429).json(answer);
                 else if (answer.kind === 'failed') res.status(502).json(answer);
@@ -1079,6 +1110,38 @@ export class BotAPI {
             } catch (error) {
                 console.error('[BotAPI] Error answering a guest:', error instanceof Error ? error.message : error);
                 res.status(502).json({ kind: 'failed' });
+            }
+        });
+
+        // What the Brick for guests takes from a guest now (plan v3): files with their upload receipts, and voice notes when Orbit
+        // has every part of them. The game shows the paperclip and the mic only for what is here.
+        this.app.get('/api/guest-brick/media', identifySummoner, async (req: BotAPIRequest, res: Response) => {
+            const brick = this.guestBrick();
+            // `carryParts`: a guest's chat is brought in parts after sign-in (plan v3 section 7), whatever the guest Brick takes
+            if (!brick?.available()) {
+                res.json({ files: false, notes: false, carryParts: true });
+                return;
+            }
+            res.json({ ...(await brick.canTake()), carryParts: true });
+        });
+
+        // The guest's device has the answer to a voice note: its kept copy at Orbit is deleted. Only the guest it was for can say it.
+        this.app.post('/api/guest-brick/delivered', identifySummoner, async (req: BotAPIRequest, res: Response) => {
+            const brick = this.guestBrick();
+            const guestId = req.gameIdentifier;
+            if (!brick?.available() || req.isLogged || typeof guestId !== 'string' || !GUEST_ID.test(guestId)) {
+                res.status(404).json({ error: 'Not available' });
+                return;
+            }
+            try {
+                if (!(await brick.delivered(guestId, req.body?.delivery))) {
+                    res.status(403).json({ error: 'Not yours' });
+                    return;
+                }
+                res.status(204).end();
+            } catch (error) {
+                console.error('[BotAPI] Error closing a guest answer:', error instanceof Error ? error.message : error);
+                res.status(502).json({ error: 'Could not say it now' });
             }
         });
 
@@ -1093,11 +1156,13 @@ export class BotAPI {
             }
             const { botId } = req.params;
             const { chatId, carryId, lines } = req.body ?? {};
+            // A chat carried in parts names each part; one carried as a single message (a game from before) names none
+            const part = readCarriedPart(req.body?.part);
             if (!/^[A-Za-z0-9_-]{1,64}$/.test(botId) || typeof chatId !== 'string' || !/^@[^\s:]{1,255}:[^\s]{1,255}$/.test(chatId) || chatId.length > 255) {
                 res.status(400).json({ error: 'Not a chat address' });
                 return;
             }
-            if (!isGuestBrickId(carryId) || !Array.isArray(lines)) {
+            if (!isGuestBrickId(carryId) || !Array.isArray(lines) || part === 'bad') {
                 res.status(400).json({ error: 'Not a chat to bring' });
                 return;
             }
@@ -1112,18 +1177,35 @@ export class BotAPI {
                     res.status(403).json({ error: 'Not your chat', code: 'not_allowed' });
                     return;
                 }
-                const kept = readCarriedLines(lines);
-                if (kept.length === 0) {
+                const read = readCarriedLines(lines);
+                if (read.length === 0) {
                     res.status(400).json({ error: 'Nothing to bring' });
                     return;
                 }
-                const result = await this.carryGuestChat(botId, chatId, carryId, kept);
+                // Not their Brick: refused before anything is copied, so no copy is left behind with nothing pointing at it
+                if (this.carryBrick && !(await this.carryBrick(botId))) {
+                    res.status(403).json({ error: 'Not your Brick', code: 'not_allowed' });
+                    return;
+                }
+                // The guest's pictures, files and notes are copied into this person's own storage, only when Orbit handed that
+                // guest's chat (`carryId` is the guest id) to them; without a way to copy, they come as words and "gone" bubbles
+                const copy = this.carryCopy(carryId, req.sessionUuid);
+                const kept = copy
+                    ? await copyCarriedMedia(carryId, read, copy)
+                    : read.map((line) => (line.media ? { ...line, media: line.media.map(({ receipt: _r, ...one }) => ({ ...one, gone: true as const })) } : line));
+                const result = await this.carryGuestChat(botId, chatId, carryId, kept, part);
                 if (result === 'not_brick') {
                     res.status(403).json({ error: 'Not your Brick', code: 'not_allowed' });
                     return;
                 }
                 res.json({ result });
             } catch (error) {
+                // The hand-over or the storage can't be asked now: nothing was said, and the device keeps its chat and asks again
+                if (error instanceof CarryNotNowError) {
+                    console.warn(`[BotAPI] Not bringing a guest's chat into ${botId} just now:`, error.message);
+                    res.status(503).json({ error: 'Could not check right now', code: 'cannot_check' });
+                    return;
+                }
                 console.error(`[BotAPI] Error bringing a guest's chat into ${botId}:`, error instanceof Error ? error.message : error);
                 res.status(500).json({ error: 'Could not bring the chat' });
             }

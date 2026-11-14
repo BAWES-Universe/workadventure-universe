@@ -2,7 +2,7 @@ import type { Readable, Writable } from "svelte/store";
 import type { AvailabilityStatus } from "@workadventure/messages";
 import type { MapStore } from "@workadventure/store-utils";
 import type { StateEvents } from "matrix-js-sdk";
-import type { BrickOffer, GuestChatLine, MadeBrick } from "../Bricks/Brick";
+import type { AppOffer, BrickOffer, GuestChatLine, MadeBrick } from "../Bricks/Brick";
 import type { BotStatusNote } from "../Bots/BotChatStatus";
 import type { BotRoomLink } from "../Bots/BotRoomLink";
 import type { BotReplyLimit } from "../Bots/BotReplyLimit";
@@ -244,6 +244,8 @@ export interface ChatMessage {
     /** Set on a Brick's suggestion of a Brick for a job that keeps coming back (#1996): while it is the newest message
      * it is a card above the message box, afterwards its question stays in the chat. */
     brickOffer?: BrickOffer;
+    /** Set on a Brick's offer to connect an App (#2001): while it is the newest message it is a card above the message box. */
+    appOffer?: AppOffer;
     /** Set when a bot's direct message is a card that waits for one answer (#1657): pinned above the message box while
      * it waits, then drawn in the chat as it ended. The bot server edits the same notice. */
     ask?: Readable<BotAsk | undefined>;
@@ -304,6 +306,8 @@ export type ChatMessageContent = {
     voiceWaveform?: number[];
     /** The file could not be fetched (gone, or the network failed). It is tried again the next time it is shown. */
     mediaFailed?: boolean;
+    /** The file no longer exists (a guest's file that did not come along after sign-in): its bubble says it is gone. */
+    mediaGone?: boolean;
     /** What a bot heard in a voice message (shown inside the note's bubble), once it was asked to listen. */
     transcript?: NoteTranscript;
 };

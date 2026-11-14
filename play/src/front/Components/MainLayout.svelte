@@ -46,6 +46,7 @@
     import { inputFormFocusStore } from "../Stores/UserInputStore";
     import { isExploringTheRoom, leaveExploreTheRoom } from "../Phaser/Game/MapEditor/ExploreTheRoom";
     import RingOverlay from "../Chat/Components/UserList/RingOverlay.svelte";
+    import CallFloatingBar from "../Chat/Bricks/Call/CallFloatingBar.svelte";
     import { expressTrayStore } from "../Stores/ExpressStore";
     import ActionBar from "./ActionBar/ActionBar.svelte";
     import EditMode from "./MapEditor/EditMode/EditMode.svelte";
@@ -328,6 +329,7 @@
             {/if}
 
             <RingOverlay />
+            <CallFloatingBar />
 
             <ExternalComponents zone="popup" />
             {#if $requestVisitCardsStore || $wokaMenuStore || $actionsMenuStore}

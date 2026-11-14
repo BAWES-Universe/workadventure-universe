@@ -24,6 +24,7 @@
     import AppsPage from "./Apps/AppsPage.svelte";
     import { appsRowNames } from "./Apps/Apps";
     import { loadMyApps, myAppsStore } from "./Apps/AppsStore";
+    import { appsPageRequest, takeAppsPageRequest } from "./Apps/OpenApps";
     import UsagePage from "./UsagePage.svelte";
     import { fullAgainWhen } from "./Usage";
     import { loadMyUsage, myUsageStore } from "./UsageStore";
@@ -51,8 +52,12 @@
     let undoing = new Set<string>();
     // The Usage page, open over the list
     let usageOpen = false;
-    // The Apps page, open over the list
+    // The Apps page, open over the list. A link or a card elsewhere (a Brick's "Connect my apps") asks for it to open.
     let appsOpen = false;
+    $: if ($appsPageRequest) {
+        appsOpen = true;
+        takeAppsPageRequest();
+    }
 
     $: list = $LL.mapEditor.edit.bots.page.list;
     $: bricks = $myBricksStore;

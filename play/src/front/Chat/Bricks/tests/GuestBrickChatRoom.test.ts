@@ -304,9 +304,8 @@ describe("a guest's chat with the Brick for guests (#1997)", () => {
         expect(noPlace.asked).toEqual([]);
     });
 
-    it("takes no files, and has nothing unread or older to load", async () => {
+    it("has nothing unread or older to load", async () => {
         const { room } = setup();
-        await expect(room.sendFiles()).resolves.toBeUndefined();
         await expect(room.loadMorePreviousMessages()).resolves.toBeUndefined();
         expect(get(room.hasUnreadMessages)).toBe(false);
         expect(get(room.unreadNotificationCount)).toBe(0);
@@ -328,5 +327,365 @@ describe("a guest's chat with the Brick for guests (#1997)", () => {
         expect(mine.sender).toBeUndefined();
         expect(brick.sender?.username).toBe("Brick");
         expect(brick.sender?.chatId).toBe("guest-brick");
+    });
+});
+
+describe("pictures, files and voice notes to the Brick for guests (plan v3)", () => {
+    beforeAll(() => {
+        loadLocale("en-US");
+    });
+    beforeEach(() => {
+        vi.restoreAllMocks();
+        vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    });
+
+    const uploaded = (name: string, type = "image/png") => ({
+        location: `https://cdn.test/${name}`,
+        name,
+        type,
+        size: 3,
+        receipt: `receipt-of-${name}`,
+    });
+    const files = (...names: string[]) =>
+        names.map((name) => new File(["abc"], name, { type: "image/png" })) as unknown as FileList;
+    const withMedia = (over: Partial<GuestBrickDeps> = {}) =>
+        setup({
+            upload: vi.fn((file: File) => Promise.resolve(uploaded(file.name, file.type))),
+            refreshReceipt: vi.fn((receipt: string) =>
+                Promise.resolve({
+                    receipt: `${receipt}-fresh`,
+                    location: "https://cdn.test/fresh",
+                })
+            ),
+            delivered: vi.fn(() => Promise.resolve()),
+            takes: vi.fn(() => Promise.resolve({ files: true, notes: true })),
+            sleep: () => Promise.resolve(),
+            ...over,
+        });
+
+    it("says what it takes, for the paperclip and the mic", async () => {
+        const { room, settle } = withMedia();
+        await settle();
+        expect(get(room.takes)).toEqual({ files: true, notes: true });
+        const old = setup();
+        await old.settle();
+        expect(get(old.room.takes)).toEqual({ files: false, notes: false });
+    });
+
+    it("sends files and the words typed with them as one message, by their receipts, and draws them as every chat does", async () => {
+        const { room, asked, answers, settle, device } = withMedia();
+        answers.push(() => Promise.resolve({ kind: "reply", text: "That is the lunch menu.", needsAccount: false }));
+        const sending = room.sendFiles(files("menu.png", "door.png"));
+        room.sendMessage("What is this?");
+        await sending;
+        await settle();
+        expect(asked).toHaveLength(1);
+        expect(asked[0]).toMatchObject({
+            message: "What is this?",
+            files: ["receipt-of-menu.png", "receipt-of-door.png"],
+            turnId: "turn-1",
+        });
+        const drawn = get(room.messages);
+        expect(drawn.map((message) => message.type)).toEqual(["gallery", "text", "text"]);
+        expect(get(drawn[0].content).urls).toEqual(["https://cdn.test/menu.png", "https://cdn.test/door.png"]);
+        expect(get(drawn[1].content).body).toBe("What is this?");
+        // Kept on the device with a version, so it loads again; a game from before still reads the line's words
+        const saved = JSON.parse(device.saved ?? "{}");
+        expect(saved.v).toBe(2);
+        expect(saved.lines[0].media).toHaveLength(2);
+    });
+
+    it("sends a picture with no words; a later message reads it as words, never as a file again", async () => {
+        const { room, asked, answers, settle } = withMedia();
+        answers.push(() => Promise.resolve({ kind: "reply", text: "A cat.", needsAccount: false }));
+        answers.push(() => Promise.resolve({ kind: "reply", text: "Yes.", needsAccount: false }));
+        await room.sendFiles(files("cat.png"));
+        await settle();
+        expect(asked[0]).toMatchObject({ message: "", files: ["receipt-of-cat.png"] });
+        expect(get(room.messages).map((message) => message.type)).toEqual(["image", "text"]);
+        room.sendMessage("Cute?");
+        await settle();
+        expect(asked[1].files).toBeUndefined();
+        expect(asked[1].history).toEqual([
+            { from: "guest", text: "(sent a picture: cat.png)" },
+            { from: "brick", text: "A cat." },
+        ]);
+    });
+
+    it("says nothing of an upload that finishes after the guest changed: not the files, the words typed with them, or a note", async () => {
+        let guest = GUEST;
+        const waiting: Array<() => void> = [];
+        const upload = vi.fn(
+            (file: File) =>
+                new Promise<ReturnType<typeof uploaded>>((resolve) => {
+                    waiting.push(() => resolve(uploaded(file.name, file.type)));
+                })
+        );
+        const { room, asked, settle, device } = withMedia({ upload, guestId: () => guest });
+        const sending = room.sendFiles(files("menu.png"));
+        room.sendMessage("What is this?");
+        const noting = room.sendVoiceNote(new File(["ogg"], "voice message.oga", { type: "audio/ogg" }), {
+            duration: 2,
+            waveform: [0.5],
+        });
+        // Signed out, and someone else is the guest on this device now
+        guest = "9d9d9d9d-aaaa-4bbb-8ccc-0123456789ab";
+        room.refresh();
+        waiting.forEach((finish) => finish());
+        await sending;
+        await noting;
+        await settle();
+        expect(asked).toEqual([]);
+        expect(get(room.messages)).toEqual([]);
+        expect(device.saved).toBeNull();
+    });
+
+    it("sends the new guest's words on their own while the old guest's files are still going up", async () => {
+        let guest = GUEST;
+        const waiting: Array<() => void> = [];
+        const upload = vi.fn(
+            (file: File) =>
+                new Promise<ReturnType<typeof uploaded>>((resolve) => {
+                    waiting.push(() => resolve(uploaded(file.name, file.type)));
+                })
+        );
+        const { room, asked, answers, settle } = withMedia({ upload, guestId: () => guest });
+        answers.push(() => Promise.resolve({ kind: "reply", text: "Hi.", needsAccount: false }));
+        const sending = room.sendFiles(files("menu.png"));
+        room.sendMessage("Old words");
+        // Signed out, and someone else is the guest on this device now: they write before the old files are up
+        guest = "9d9d9d9d-aaaa-4bbb-8ccc-0123456789ab";
+        room.refresh();
+        room.sendMessage("Hello there");
+        await settle();
+        expect(asked).toHaveLength(1);
+        expect(asked[0].message).toBe("Hello there");
+        expect(asked[0].files).toBeUndefined();
+        waiting.forEach((finish) => finish());
+        await sending;
+        await settle();
+        expect(asked).toHaveLength(1);
+        expect(JSON.stringify(get(room.messages))).not.toContain("Old words");
+        expect(JSON.stringify(get(room.messages))).not.toContain("menu.png");
+    });
+
+    it("never writes a new guest's words into the chat the last guest had, even when it was not looked at again", async () => {
+        let guest = GUEST;
+        const { room, asked, answers, settle, device } = withMedia({ guestId: () => guest });
+        answers.push(() => Promise.resolve({ kind: "reply", text: "Welcome back.", needsAccount: false }));
+        answers.push(() => Promise.resolve({ kind: "reply", text: "Hello.", needsAccount: false }));
+        room.sendMessage("My secret plan");
+        await settle();
+        expect(asked).toHaveLength(1);
+        // Signed out, and someone else is the guest on this device now: they write before the chat is looked at again
+        guest = "9d9d9d9d-aaaa-4bbb-8ccc-0123456789ab";
+        room.sendMessage("Hi");
+        await settle();
+        expect(asked).toHaveLength(2);
+        expect(asked[1].message).toBe("Hi");
+        expect(asked[1].history).toEqual([]);
+        expect(JSON.stringify(get(room.messages))).not.toContain("My secret plan");
+        expect(device.saved ?? "").not.toContain("My secret plan");
+    });
+
+    it("sends the new guest's words on their own even when the chat was not looked at again", async () => {
+        let guest = GUEST;
+        const waiting: Array<() => void> = [];
+        const upload = vi.fn(
+            (file: File) =>
+                new Promise<ReturnType<typeof uploaded>>((resolve) => {
+                    waiting.push(() => resolve(uploaded(file.name, file.type)));
+                })
+        );
+        const { room, asked, answers, settle } = withMedia({ upload, guestId: () => guest });
+        answers.push(() => Promise.resolve({ kind: "reply", text: "Hi.", needsAccount: false }));
+        const sending = room.sendFiles(files("menu.png"));
+        guest = "9d9d9d9d-aaaa-4bbb-8ccc-0123456789ab";
+        room.sendMessage("Hello there");
+        await settle();
+        expect(asked).toHaveLength(1);
+        expect(asked[0].message).toBe("Hello there");
+        waiting.forEach((finish) => finish());
+        await sending;
+        await settle();
+        expect(asked).toHaveLength(1);
+    });
+
+    it("keeps the files to try again when an upload fails, and the words still go", async () => {
+        const upload = vi.fn((file: File) =>
+            file.name === "bad.png" ? Promise.reject(new Error("too big")) : Promise.resolve(uploaded(file.name))
+        );
+        const { room, asked, answers, settle } = withMedia({ upload });
+        answers.push(() => Promise.resolve({ kind: "reply", text: "Hi.", needsAccount: false }));
+        const sending = room.sendFiles(files("ok.png", "bad.png"));
+        room.sendMessage("Look");
+        await expect(sending).rejects.toThrow("too big");
+        await settle();
+        expect(asked).toHaveLength(1);
+        expect(asked[0].files).toBeUndefined();
+        expect(asked[0].message).toBe("Look");
+    });
+
+    it("hears a voice note: Listening… while it is heard, then the words in its bubble, and the device says it has the answer", async () => {
+        const { room, asked, answers, settle, deps } = withMedia();
+        let release: (value: unknown) => void = () => undefined;
+        answers.push(
+            () =>
+                new Promise((resolve) => {
+                    release = resolve;
+                })
+        );
+        await room.sendVoiceNote(new File(["ogg"], "voice message.oga", { type: "audio/ogg" }), {
+            duration: 4,
+            waveform: [0.2, 1],
+        });
+        await settle();
+        expect(asked[0]).toMatchObject({ note: "receipt-of-voice message.oga", message: "" });
+        const note = () => get(room.messages).find((message) => message.type === "audio");
+        expect(get(note()!.content)).toMatchObject({
+            isVoice: true,
+            voiceDuration: 4,
+            transcript: { state: "listening" },
+        });
+        // The chat draws a message once by its id and keeps reading the content it was given: that content changes
+        const drawn = note()!;
+        release({
+            kind: "reply",
+            text: "The coffee is upstairs.",
+            needsAccount: false,
+            heard: "where is the coffee",
+            delivery: "d-1",
+        });
+        await settle();
+        expect(note()).toBe(drawn);
+        expect(get(drawn.content).transcript).toEqual({ state: "heard", text: "where is the coffee" });
+        expect(deps.delivered).toHaveBeenCalledWith("d-1");
+        expect(get(room.messages).at(-1) && get(get(room.messages).at(-1)!.content).body).toBe(
+            "The coffee is upstairs."
+        );
+    });
+
+    it("asks a note once more with the same turn when the connection drops, and gets the kept answer", async () => {
+        const { room, asked, answers, settle } = withMedia();
+        answers.push(() => Promise.reject(new Error("network")));
+        answers.push(() =>
+            Promise.resolve({ kind: "reply", text: "Upstairs.", needsAccount: false, heard: "coffee?" })
+        );
+        await room.sendVoiceNote(new File(["ogg"], "voice message.oga", { type: "audio/ogg" }), {
+            duration: 2,
+            waveform: [],
+        });
+        await settle();
+        await settle();
+        expect(asked).toHaveLength(2);
+        expect(asked[0].turnId).toBe(asked[1].turnId);
+        expect(get(get(room.messages).at(-1)!.content).body).toBe("Upstairs.");
+    });
+
+    it("keeps waiting while the first ask of a note is still running after the connection dropped, with one sent note", async () => {
+        const sleep = vi.fn((_ms: number) => Promise.resolve());
+        const { room, asked, answers, settle } = withMedia({ sleep });
+        answers.push(() => Promise.reject(new Error("network")));
+        answers.push(() => Promise.resolve({ kind: "busy" }));
+        answers.push(() => Promise.resolve({ kind: "busy" }));
+        answers.push(() =>
+            Promise.resolve({ kind: "reply", text: "Upstairs.", needsAccount: false, heard: "coffee?" })
+        );
+        await room.sendVoiceNote(new File(["ogg"], "voice message.oga", { type: "audio/ogg" }), {
+            duration: 2,
+            waveform: [],
+        });
+        await settle();
+        await settle();
+        await settle();
+        await settle();
+        expect(asked).toHaveLength(4);
+        expect(new Set(asked.map((one) => one.turnId)).size).toBe(1);
+        // A little longer each time: 1 s after the lost connection, then 1 s and 2 s while busy
+        expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([1000, 1000, 2000]);
+        const drawn = get(room.messages);
+        expect(drawn.filter((message) => message.type === "audio")).toHaveLength(1);
+        expect(get(drawn.at(-1)!.content).body).toBe("Upstairs.");
+        expect(drawn.map((message) => get(message.content).body)).not.toContain(
+            "Couldn't listen to this note. Type it instead."
+        );
+    });
+
+    it("keeps asking for a kept answer while the note can't be read just now, after the connection dropped", async () => {
+        const sleep = vi.fn((_ms: number) => Promise.resolve());
+        const { room, asked, answers, settle } = withMedia({ sleep });
+        answers.push(() => Promise.reject(new Error("network")));
+        // The uploader is down for a moment: the bot server can't read the note again, while Orbit still keeps its answer
+        answers.push(() => Promise.resolve({ kind: "unheard", why: "busy" }));
+        answers.push(() =>
+            Promise.resolve({ kind: "reply", text: "Upstairs.", needsAccount: false, heard: "coffee?" })
+        );
+        await room.sendVoiceNote(new File(["ogg"], "voice message.oga", { type: "audio/ogg" }), {
+            duration: 2,
+            waveform: [],
+        });
+        await settle();
+        await settle();
+        await settle();
+        expect(asked).toHaveLength(3);
+        expect(new Set(asked.map((one) => one.turnId)).size).toBe(1);
+        expect(get(get(room.messages).at(-1)!.content).body).toBe("Upstairs.");
+    });
+
+    it.each([
+        [{ kind: "unheard", why: "too-long", longestSeconds: 300 }, "This note is over 5 minutes. Send a shorter one."],
+        [{ kind: "unheard", why: "uncertain" }, "Couldn't finish this one. Send it again."],
+        [{ kind: "unheard", why: "expired" }, "This answer is no longer available. Send it again."],
+    ])(
+        "says in plain words why a note got no answer, and its bubble does not say it was not heard (%o)",
+        async (answer, words) => {
+            const { room, answers, settle } = withMedia();
+            answers.push(() => Promise.resolve(answer));
+            await room.sendVoiceNote(new File(["ogg"], "voice message.oga", { type: "audio/ogg" }), {
+                duration: 2,
+                waveform: [],
+            });
+            await settle();
+            const drawn = get(room.messages);
+            expect(get(drawn.at(-1)!.content).body).toBe(words);
+            expect(get(drawn.find((message) => message.type === "audio")!.content).transcript).toBeUndefined();
+        }
+    );
+
+    it.each([[{ kind: "unheard", why: "failed" }], [{ kind: "unheard", why: "busy" }]])(
+        "says a note was not heard in its own bubble, once (%o)",
+        async (answer) => {
+            const { room, answers, settle } = withMedia();
+            answers.push(() => Promise.resolve(answer));
+            await room.sendVoiceNote(new File(["ogg"], "voice message.oga", { type: "audio/ogg" }), {
+                duration: 2,
+                waveform: [],
+            });
+            await settle();
+            const drawn = get(room.messages);
+            expect(drawn).toHaveLength(1);
+            expect(get(drawn[0].content).transcript).toEqual({ state: "failed", text: undefined });
+        }
+    );
+
+    it("renews a receipt that ran out and sends the same message again, once", async () => {
+        const { room, asked, answers, settle, deps } = withMedia();
+        answers.push(() => Promise.resolve({ kind: "upload", why: "expired" }));
+        answers.push(() => Promise.resolve({ kind: "reply", text: "Got it.", needsAccount: false }));
+        await room.sendFiles(files("menu.png"));
+        await settle();
+        await settle();
+        expect(deps.refreshReceipt).toHaveBeenCalledWith("receipt-of-menu.png");
+        expect(asked).toHaveLength(2);
+        expect(asked[1]).toMatchObject({ turnId: asked[0].turnId, files: ["receipt-of-menu.png-fresh"] });
+        expect(get(get(room.messages).at(-1)!.content).body).toBe("Got it.");
+    });
+
+    it("says a file is gone when the bot server can't read it", async () => {
+        const { room, answers, settle } = withMedia();
+        answers.push(() => Promise.resolve({ kind: "upload", why: "refused" }));
+        await room.sendFiles(files("menu.png"));
+        await settle();
+        expect(get(get(room.messages).at(-1)!.content).body).toBe("This file is gone. Send it again.");
     });
 });

@@ -249,6 +249,8 @@ const chat: BaseTranslation = {
         tooBig: "{fileName} is too big {maxFileSize}.",
         notLogged: "You need to be logged in to upload a file.",
         clickToOpen: "Click to open",
+        // A guest's file that did not come along after sign-in
+        gone: "This file is gone",
     },
     codeView: {
         lines: "{count:number} {{line|lines}}",
@@ -1058,6 +1060,27 @@ const chat: BaseTranslation = {
         offerMake: "Make {name}",
         offerNotNow: "Not now",
         offerNotNowLine: "I'll keep helping here, and won't ask again",
+        // A Brick leads you to connect an App (#2001), on the question card. The App is always called an App.
+        appCard: {
+            // "Connect Notion?" when they asked for it by name; the Brick's own question ("Connect your calendar?") otherwise
+            askByName: "Connect {name}?",
+            connect: "Connect {name}",
+            connectLine: "Opens {name}'s own sign-in page",
+            letUse: "Let it use {name}",
+            letUseLine: "You connected it already",
+            notNow: "Not now",
+            // Offered because a job needed it: the Brick helps another way and does not ask again
+            notNowOffered: "I'll help another way, and won't ask again",
+            // Asked for by name: nothing happens
+            notNowAsked: "Nothing is connected",
+            // The sign-in window was closed, blocked or did not start; the card stays so they can try again
+            signInStopped: "{name} was not connected. Try again when you're ready.",
+            signInBlocked: "The sign-in window did not open. Allow pop-ups for this page and try again.",
+            couldNotLet: "{name} is connected, but this Brick could not be let use it. Choose it in Apps.",
+        },
+        // The starter that opens the Apps page (#2001)
+        connectMyApps: "Connect my apps",
+        connectMyAppsLine: "Email, calendar, GitHub and more",
         // What a bot remembers about the person, on a Brick's page and in the chat menu of anyone's bot (game #2003)
         memory: {
             title: "Memory",
@@ -1138,6 +1161,13 @@ const chat: BaseTranslation = {
             keepNoLine: "I'll still help while you're here",
             // The game's own line when an answer could not be made: nothing was counted, so they can send it again
             couldNotAnswer: "I couldn't answer that one. Send it again in a moment.",
+            // Voice notes and files sent to the Brick for guests (plan v3)
+            noteTooLong: "This note is over {minutes:number} minutes. Send a shorter one.",
+            couldNotListen: "Couldn't listen to this note. Type it instead.",
+            couldNotFinish: "Couldn't finish this one. Send it again.",
+            answerGone: "This answer is no longer available. Send it again.",
+            fileGone: "This file is gone. Send it again.",
+            fileTooBig: "These files are too big to read together. Send fewer at a time.",
             // Said once, after signing in, with the chat that came along
             welcome: "Welcome, {name}. I'm yours now, and this chat came with me. What shall we do next?",
             welcomeNoName: "Welcome. I'm yours now, and this chat came with me. What shall we do next?",
@@ -1458,6 +1488,9 @@ const chat: BaseTranslation = {
         onACall: "On a call",
         endedQuiet: "The call ended after a quiet stretch.",
         endedUnavailable: "The call ended because voice isn't available now.",
+        failed: "The call couldn't start. Try again in a moment.",
+        noVoice: "{name} has no voice to call.",
+        signIn: "Sign in again to call.",
     },
     voiceDraft: {
         onlyYou: "Only you see this",

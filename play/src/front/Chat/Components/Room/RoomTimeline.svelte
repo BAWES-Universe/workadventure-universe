@@ -30,7 +30,11 @@
     import LL, { locale } from "../../../../i18n/i18n-svelte";
     import { formatPeopleNames } from "../TopRow/TopRowSummary";
     import { availabilityFromNote, botChatClosed, botHeaderState, botIdFromChatId } from "../../Bots/BotChatStatus";
-    import { botHearsCache, botStatusCache } from "../../Bots/BotStatusStore";
+    import { botCallAccessCache, botHearsCache, botStatusCache } from "../../Bots/BotStatusStore";
+    import CallButton from "../../Bricks/Call/CallButton.svelte";
+    import CallBarHost from "../../Bricks/Call/CallBarHost.svelte";
+    import { botCallStore, callBarInChatStore } from "../../Bricks/Call/CallStore";
+    import { startCallWith } from "../../Bricks/Call/startCallWith";
     import { nextReplyLimitExpiry, shownReplyLimitIds } from "../../Bots/BotReplyLimit";
     import BotStatusNoteCard from "../Bots/BotStatusNoteCard.svelte";
     import BotReplyLimitCard from "../Bots/BotReplyLimitCard.svelte";
@@ -76,16 +80,26 @@
     import PrivateReplyNote from "../../Bots/PrivateReplyNote.svelte";
     import { STARTER_IDEAS } from "../../Bricks/Brick";
     import {
+        APP_CONNECT,
+        APP_OTHER,
+        BRICK_APP_CARD,
         BRICK_OFFER_CARD,
         BRICK_STARTERS_CARD,
+        STARTER_APPS,
         STARTER_MAKE,
         OFFER_MAKE,
+        brickAppCard,
         brickHello,
         brickIdeaWords,
         brickIdeasCard,
         brickOfferCard,
         brickStartersCard,
     } from "../../Bricks/BrickHello";
+    import { connectFromCard } from "../../Bricks/Apps/ChatConnect";
+    import { openAppsPage } from "../../Bricks/Apps/OpenApps";
+    import { signInInPopup } from "../../Bricks/Apps/Reconnect";
+    import { loadMyApps } from "../../Bricks/Apps/AppsStore";
+    import { warningMessageStore } from "../../../Stores/ErrorStore";
     import BrickMadeLinks from "../../Bricks/BrickMadeLinks.svelte";
     import { GuestBrickChatRoom } from "../../Bricks/GuestBrickChatRoom";
     import GuestBrickSignIn from "../../Bricks/GuestBrickSignIn.svelte";
@@ -106,6 +120,7 @@
     import { botApiService } from "../../../external-modules/bots/services/BotApiService";
     import { brickHelloMessage } from "../../Bricks/BrickHelloMessage";
     import {
+        appCardKey,
         closeBrickCard,
         closedBrickCards,
         ideasCardKey,
@@ -272,6 +287,7 @@
         );
     }
     onDestroy(() => voiceWordsSubscription?.unsubscribe());
+    onDestroy(() => callBarInChatStore.set(false));
     function editVoiceDraft(turnId: string) {
         const words = proximityRoom?.editVoiceDraft(turnId);
         if (words !== undefined) messageInputBarRef?.putText(words);
@@ -279,6 +295,8 @@
     $: matrixRoom = room instanceof MatrixChatRoom ? room : undefined;
     // The Brick for guests (#1997): a chat this device keeps, drawn by the same timeline as every chat
     $: guestRoom = room instanceof GuestBrickChatRoom ? room : undefined;
+    // What the Brick for guests takes now (plan v3): the same paperclip, GIFs and mic as every bot chat, where its server has them
+    $: guestTakes = guestRoom ? guestRoom.takes : readable({ files: false, notes: false });
     $: guestBrick = guestRoom ? guestBrickCard($LL, 0) : undefined;
 
     // Counts the chat objects shown here: a chat can be made again under the same id (its type found out later, or a new
@@ -472,6 +490,20 @@
     $: botAvailability = partnerBotId ? botStatusCache.store(partnerBotId) : readable(undefined);
     // The mic shows in a bot's chat only when that bot can hear the note
     $: botHears = partnerBotId ? botHearsCache.store(partnerBotId) : readable(false);
+    // Call: Orbit's rule says yes and the bot has a voice (#2004). The button is not drawn at all otherwise.
+    $: canCall = partnerBotId ? botCallAccessCache.store(partnerBotId) : readable(false);
+    $: callHere = !!$botCallStore && partnerBotId !== undefined && $botCallStore.botId === partnerBotId;
+    // The profile, details, shared items and artifacts pages sit over the conversation and hide the call bar with it, so
+    // then the floating bar carries the call (unless the person is peeking back at the conversation)
+    $: panelOverConversation =
+        ((profileOpen && matrixRoom && $directPartner) ||
+            roomDetailsOpen ||
+            nearbyDetailsOpen ||
+            sharedOpen ||
+            artifactsOpen) &&
+        $chatBackPeekStore !== "conversation";
+    $: callBarInChatStore.set(callHere && !panelOverConversation);
+    $: roomPicture = room.pictureStore;
     $: botState = partnerBotId ? $botAvailability : undefined;
     $: botClosed = botChatClosed(botState);
     $: lastBotMessage = partnerBotId ? [...$messages].reverse().find((message) => !message.isMyMessage) : undefined;
@@ -597,10 +629,14 @@
         ? ideasCardKey(newestLive.id)
         : newestLive?.brickOffer
         ? offerCardKey(newestLive.id)
+        : newestLive?.appOffer
+        ? appCardKey(newestLive.id)
         : undefined;
     // A Brick's suggestion (#1996) is a card only while it is the newest message: once the person wrote on, tapped
     // or closed it, its question stays in the chat as the Brick's words.
     $: shownOffer = newestLive?.brickOffer && brickCardKey === offerCardKey(newestLive.id) ? newestLive : undefined;
+    // A Brick's offer to connect an App (#2001) is a card the same way: only while it is the newest message
+    $: shownApp = newestLive?.appOffer && brickCardKey === appCardKey(newestLive.id) ? newestLive : undefined;
     $: brickCard =
         brickCardKey === undefined || !brickAnswers || shownAsk || $closedBrickCards.has(brickCardKey)
             ? undefined
@@ -612,7 +648,11 @@
             ? guestKeepCard($LL)
             : shownOffer?.brickOffer
             ? brickOfferCard(shownOffer.brickOffer, $LL)
+            : shownApp?.appOffer
+            ? brickAppCard(shownApp.appOffer, $LL)
             : brickIdeasCard($LL);
+    // The App being connected from the card: the card stays, and a second tap does nothing, until it ends
+    let connectingApp = false;
     // A Brick the Brick just made (#1996) is in Chats at once: the list is read again when an answer names one this
     // device does not know yet.
     $: newestMade = newestMessage?.brickMade ?? [];
@@ -633,6 +673,7 @@
         if (guestRoom && tap.action === "pick") return tapGuestCard(card, tap.choices);
         if (tap.action !== "pick" || !matrixRoom) return false;
         try {
+            if (card.id === BRICK_APP_CARD) return tapAppCard(tap.choices[0]);
             if (card.id === BRICK_OFFER_CARD) {
                 const offer = shownOffer?.brickOffer;
                 // The card that was tapped: a message that arrives meanwhile changes brickCardKey, not which card closes
@@ -649,6 +690,11 @@
                 return true;
             }
             if (card.id === BRICK_STARTERS_CARD) {
+                if (tap.choices[0] === STARTER_APPS) {
+                    // Nothing is sent: the Apps page opens, to connect and to choose which Bricks use what
+                    openAppsPage();
+                    return true;
+                }
                 if (tap.choices[0] === STARTER_MAKE) {
                     // Plain words from the person: the Brick asks what the new one is for, and makes it
                     matrixRoom.sendMessage($LL.chat.brick.makeAnotherAsk());
@@ -666,6 +712,64 @@
             console.error("Could not send a Brick's starter", error);
             return false;
         }
+    }
+    // A tap on a Brick's offer to connect an App (#2001). Called straight from the tap: the App's sign-in window opens in
+    // the same tap, before anything is awaited, so the browser does not block it.
+    function tapAppCard(choice: string | undefined): boolean | Promise<boolean> {
+        const offer = shownApp?.appOffer;
+        const tappedKey = brickCardKey;
+        if (!offer || !ownBrick || !tappedKey || !matrixRoom) return false;
+        const brickId = ownBrick.id;
+        const room = matrixRoom;
+        if (choice === APP_OTHER) {
+            // Another kind of the same thing: the Apps page opens with the search already filled in
+            openAppsPage({ search: offer.other?.search });
+            closeBrickCard(tappedKey);
+            return true;
+        }
+        if (choice !== APP_CONNECT) {
+            // "Not now": kept with their account when the Brick offered it, so it is not offered again anywhere. One they
+            // asked for by name was never offered, so there is nothing to keep.
+            closeBrickCard(tappedKey);
+            if (!offer.asked) {
+                botApiService
+                    .declineBrickOffer(brickId, offer.topic)
+                    .catch((error) => console.warn("Could not keep Not now", error));
+            }
+            return true;
+        }
+        if (connectingApp) return true;
+        connectingApp = true;
+        const text = $LL.chat.brick.appCard;
+        return connectFromCard(offer, brickId, {
+            connectListedApp: (key) => botApiService.connectListedApp(key),
+            signIn: (appId) => signInInPopup(appId),
+            isConnected: async (appId) => {
+                const answer = (await botApiService.getMyApp(appId)) as { app?: { connected?: unknown } } | undefined;
+                return answer?.app?.connected === true;
+            },
+            letBrickUse: (appId, id) => botApiService.letBrickUseApp(appId, id),
+            carryOn: (app) => room.sendAppConnected(app),
+            refresh: () => loadMyApps(true),
+        })
+            .then((result) => {
+                if (result === "connected") closeBrickCard(tappedKey);
+                else if (result === "stopped")
+                    warningMessageStore.addWarningMessage(text.signInStopped({ name: offer.name }));
+                else if (result === "blocked") warningMessageStore.addWarningMessage(text.signInBlocked());
+                else warningMessageStore.addWarningMessage(text.couldNotLet({ name: offer.name }));
+                // Connected but not let: the card goes, the Apps page is where to finish
+                if (result === "not_let") closeBrickCard(tappedKey);
+                return true;
+            })
+            .catch((error: unknown) => {
+                console.error("Could not connect an App from a card", error);
+                warningMessageStore.addWarningMessage(text.signInBlocked());
+                return true;
+            })
+            .finally(() => {
+                connectingApp = false;
+            });
     }
     // A tap on a card of the Brick for guests (#1997): a starter says what it says in the guest's words; "Make Brick mine"
     // opens the sign-in card and "Not now" closes the card.
@@ -1344,6 +1448,11 @@
                         </svelte:element>
                     {/if}
                 </div>
+                {#if partnerBotId !== undefined && $canCall && !$botCallStore}
+                    <div class="flex h-12 w-12 shrink-0 items-center justify-center">
+                        <CallButton onCall={() => void startCallWith(partnerBotId, $roomName)} />
+                    </div>
+                {/if}
                 {#if matrixRoom}
                     <div class="flex h-12 w-12 shrink-0 items-center justify-center">
                         <RoomMenu room={matrixRoom} inHeader />
@@ -1372,6 +1481,10 @@
                             directPartner ? openProfileRoomIdStore.set(room.id) : openRoomDetailsIdStore.set(room.id)}
                     />
                 {/key}
+            {/if}
+            {#if callHere}
+                <!-- The call bar, at the top of this bot's chat (#2004); with another chat open it floats on screen -->
+                <CallBarHost picture={$roomPicture} />
             {/if}
             {#if ownBrick}
                 <BrickComputerBar brick={ownBrick} />
@@ -1527,7 +1640,7 @@
                                     onTap={tapAsk}
                                 />
                             {/if}
-                        {:else if shownOffer?.id === entry.message.id && brickCard}
+                        {:else if (shownOffer?.id === entry.message.id || shownApp?.id === entry.message.id) && brickCard}
                             <!-- A Brick's suggestion (#1996) is the card above the message box while it waits there,
                                  so the chat does not say it twice. -->
                         {:else if entry.message.botStatus}
@@ -1655,8 +1768,8 @@
                         {room}
                         partner={$directPartner}
                         inputHint={botPlaceholder}
-                        allowVoiceNotes={partnerBotId === undefined || $botHears}
-                        textOnly={guestRoom !== undefined}
+                        allowVoiceNotes={guestRoom ? $guestTakes.notes : partnerBotId === undefined || $botHears}
+                        textOnly={guestRoom !== undefined && !$guestTakes.files}
                         bind:this={messageInputBarRef}
                     />
                 {/key}

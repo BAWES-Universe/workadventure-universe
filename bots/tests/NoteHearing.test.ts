@@ -42,6 +42,33 @@ describe('Soniox note hearing', () => {
         expect(fake.calls.filter((c) => c.method === 'DELETE').map((c) => c.url).sort()).toEqual(['/files/file-1', '/transcriptions/tr-1']);
     });
 
+    it('leaves the deletes to the cleanup jobs when Orbit keeps them, and deletes at once what Orbit could not keep', async () => {
+        const hear = (cleanup: NonNullable<Parameters<SonioxNotes['hear']>[2]>['cleanup']) => {
+            const fake = fakeSoniox();
+            return new SonioxNotes({ fetch: fake.fetcher, sleep: async () => undefined })
+                .hear(soniox, { bytes: new Uint8Array([1]), filename: 'note.ogg' }, { cleanup })
+                .then(() => fake.calls.filter((c) => c.method === 'DELETE').map((c) => c.url));
+        };
+        // Both kept as jobs: nothing deleted here
+        await expect(hear(async () => ({}))).resolves.toEqual([]);
+        // Orbit kept only the words: the file is deleted at once
+        await expect(hear(async () => ({ file: 'file-1' }))).resolves.toEqual(['/files/file-1']);
+        // The hook itself failed: both are deleted at once
+        await expect(hear(async () => { throw new Error('orbit down'); }).then((urls) => urls.sort())).resolves.toEqual(['/files/file-1', '/transcriptions/tr-1']);
+    });
+
+    it('still answers the words when a direct delete for a copy Orbit could not keep fails', async () => {
+        const fake = fakeSoniox();
+        const fetcher = (async (url: string, init: RequestInit = {}) => {
+            if (init.method === 'DELETE') throw new Error('soniox down');
+            return fake.fetcher(url, init);
+        }) as unknown as typeof fetch;
+        const heard = await new SonioxNotes({ fetch: fetcher, sleep: async () => undefined }).hear(soniox, { bytes: new Uint8Array([1]), filename: 'note.ogg' }, {
+            cleanup: async (refs) => refs,
+        });
+        expect(heard.text).toBe('hello there');
+    });
+
     it('deletes what it made even when the transcription fails', async () => {
         const fake = fakeSoniox({ errorState: true });
         await expect(run(fake)).rejects.toBeInstanceOf(HearingError);

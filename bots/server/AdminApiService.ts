@@ -10,6 +10,7 @@ import { parseForgetNotice, parseItemForgets, type ItemForgetHandler, type Memor
 import { SOMEONE_UNKNOWN } from '../memory/Heard';
 import type { WokaList } from '../matrix/wokaPicture';
 import type { VoiceActiveAnswer, VoiceCredentialsAnswer, VoiceHealthReport, VoiceLimits } from '../voice/VoiceSettings';
+import type { CleanupJob, CleanupOutcome, Lease, NoteHearingAnswer, Reservation, ReserveInput, TurnEvent, VoiceNoteCapabilities } from '../voice/VoiceNoteOrbit';
 import { RUNNABLE_KINDS, dueRunOf, type DueRun, type RunCheck, type RunReport } from './BrickRunner';
 
 // Optional Sentry integration (uncomment if @sentry/node is installed)
@@ -367,6 +368,19 @@ function brickOf(data: unknown): { ownerId: string; isDefault: boolean; deleted?
     if (!brick || typeof brick !== 'object') return null;
     const { ownerId, isDefault, deleted } = brick as { ownerId?: unknown; isDefault?: unknown; deleted?: unknown };
     return typeof ownerId === 'string' && ownerId ? { ownerId, isDefault: isDefault === true, ...(deleted === true ? { deleted: true } : {}) } : null;
+}
+
+/** One App on Orbit's list as a Brick may offer it (game #2001): what a person sees of it, and where they stand with it. */
+export interface OfferableApp {
+    key: string;
+    name: string;
+    blurb: string;
+    /** The person's own connection to it, when they have one. */
+    connectionId: string | null;
+    /** That connection is signed in and works. */
+    connected: boolean;
+    /** This Brick already has it. */
+    usable: boolean;
 }
 
 /** A person's Brick as Orbit lists it (#1996): what the game needs to show it, nothing that steers it. */
@@ -970,6 +984,30 @@ export class AdminApiService {
         return { show: response.data?.show === true, topic: typeof response.data?.topic === 'string' ? response.data.topic : topic };
     }
 
+    /**
+     * The Apps a Brick of this person could offer to connect (game #2001): the list a super admin keeps in Orbit, with the
+     * person's own connection to each when they have one, whether it works, and whether this Brick may already use it. Orbit
+     * answers only for the Brick's owner. Throws when Orbit says no or cannot be reached: the caller offers nothing then.
+     */
+    async appsOfferableFor(viaBotId: string, userId: string): Promise<OfferableApp[]> {
+        const response = await this.brickCall<{ apps?: unknown }>('get', `api/bots/${encodeURIComponent(viaBotId)}/apps/offerable`, undefined, { userId });
+        const apps = Array.isArray(response.data?.apps) ? response.data.apps : [];
+        const out: OfferableApp[] = [];
+        for (const one of apps) {
+            const app = one as Record<string, unknown> | null;
+            if (!app || typeof app.key !== 'string' || !app.key || typeof app.name !== 'string' || !app.name) continue;
+            out.push({
+                key: app.key,
+                name: app.name,
+                blurb: typeof app.blurb === 'string' ? app.blurb : '',
+                connectionId: typeof app.connectionId === 'string' && app.connectionId ? app.connectionId : null,
+                connected: app.connected === true,
+                usable: app.usable === true,
+            });
+        }
+        return out;
+    }
+
     /** What the person tapped on the suggestion (#1996). Kept for the record; never throws, the topic is closed either way. */
     async answerBrickOffer(viaBotId: string, userId: string, topic: string, answer: 'made' | 'not_now'): Promise<boolean> {
         // Never throws, and says whether Orbit kept it: brickCall throws before it asks when Orbit is not set up for
@@ -1055,6 +1093,20 @@ export class AdminApiService {
             return { allowed: false, limit, resetsAt: body.resetsAt };
         }
         throw new Error('Orbit answered the guest allowance in a way that cannot be read');
+    }
+
+    /** Whether Orbit handed this guest's chat to the person with this uuid (plan v3: their uploads go with it). False when Orbit can't say. */
+    async guestChatHandedTo(guestId: string, userUuid: string): Promise<boolean> {
+        try {
+            const body = (await this.brickCall<{ handed?: unknown }>('post', 'api/guest-brick/handover', { guestId, userUuid })).data;
+            return body?.handed === true;
+        } catch (error) {
+            // Orbit said no (an Orbit from before has no such route): not handed. Anything else is "can't say now", and throws
+            const status = (error as { response?: { status?: number } })?.response?.status;
+            if (typeof status === 'number' && status >= 400 && status < 500 && status !== 408 && status !== 429) return false;
+            console.warn('[AdminApiService] Could not check a hand-over of a guest chat:', error instanceof Error ? error.message : error);
+            throw error;
+        }
     }
 
     /** Closes a counted turn: a reply that failed is given back, and what it took is kept as totals. Never throws. */
@@ -1285,6 +1337,88 @@ export class AdminApiService {
             timeout: timeoutMs,
         });
         return response.data?.limits ?? null;
+    }
+
+    // -----------------------------------------------------------------------------------------------------------------
+    // Voice notes for every bot (Orbit /api/voice-notes/*): see voice/VoiceNoteOrbit.ts
+    // -----------------------------------------------------------------------------------------------------------------
+
+    /** Which parts of voice notes Orbit has. Null only for an Orbit from before (404); anything else that fails throws. */
+    async voiceNoteCapabilities(timeoutMs: number): Promise<VoiceNoteCapabilities | null> {
+        try {
+            const response: AxiosResponse<{ voiceNotes?: VoiceNoteCapabilities }> = await axios.get(resolveAdminApiEndpoint(this.adminApiUrl, 'api/voice-notes/capabilities'), {
+                headers: { ...this.voiceHeaders(), 'Cache-Control': 'no-store' },
+                timeout: timeoutMs,
+            });
+            return response.data?.voiceNotes ?? null;
+        } catch (error) {
+            if (axios.isAxiosError(error) && error.response?.status === 404) return null;
+            throw error;
+        }
+    }
+
+    /** What a bot hears voice notes with now, whatever its Voice switch says. Null when Orbit does not know the bot. */
+    async noteHearing(botId: string, adapters: string[], timeoutMs: number): Promise<NoteHearingAnswer | null> {
+        try {
+            const response: AxiosResponse<NoteHearingAnswer> = await axios.get(resolveAdminApiEndpoint(this.adminApiUrl, `api/bots/${encodeURIComponent(botId)}/voice/hearing`), {
+                headers: { ...this.voiceHeaders(), 'Cache-Control': 'no-store' },
+                params: { adapters: adapters.join(',') },
+                timeout: timeoutMs,
+            });
+            return response.data;
+        } catch (error) {
+            if (axios.isAxiosError(error) && error.response?.status === 404) return null;
+            throw error;
+        }
+    }
+
+    /** What the Brick for guests hears a guest's voice notes with: Universe AI only. */
+    async guestBrickHearing(adapters: string[], timeoutMs: number): Promise<NoteHearingAnswer> {
+        const response: AxiosResponse<NoteHearingAnswer> = await axios.get(resolveAdminApiEndpoint(this.adminApiUrl, 'api/guest-brick/hearing'), {
+            headers: { ...this.voiceHeaders(), 'Cache-Control': 'no-store' },
+            params: { adapters: adapters.join(',') },
+            timeout: timeoutMs,
+        });
+        return response.data;
+    }
+
+    /** Reserves one voice note before anything is paid. */
+    async reserveVoiceNote(input: ReserveInput, timeoutMs: number): Promise<Reservation> {
+        const response: AxiosResponse<Reservation> = await axios.post(resolveAdminApiEndpoint(this.adminApiUrl, 'api/voice-notes/turns'), input, { headers: this.voiceHeaders(), timeout: timeoutMs });
+        return response.data;
+    }
+
+    /** Asks to run a stage of a voice note turn. */
+    async leaseVoiceNote(turnId: string, input: { stage: 'hearing' | 'answer'; adapters?: string[] }, timeoutMs: number): Promise<Lease> {
+        const response: AxiosResponse<Lease> = await axios.post(resolveAdminApiEndpoint(this.adminApiUrl, `api/voice-notes/turns/${encodeURIComponent(turnId)}/lease`), input, {
+            headers: this.voiceHeaders(),
+            timeout: timeoutMs,
+        });
+        return response.data;
+    }
+
+    /** Says what happened in the stage this server holds. Throws on a refusal (409: another server has it now). */
+    async recordVoiceNote(turnId: string, event: TurnEvent, timeoutMs: number): Promise<void> {
+        await axios.patch(resolveAdminApiEndpoint(this.adminApiUrl, `api/voice-notes/turns/${encodeURIComponent(turnId)}`), event, { headers: this.voiceHeaders(), timeout: timeoutMs });
+    }
+
+    /** Something a listening provider still holds after a note, to delete until it is gone. */
+    async addVoiceNoteCleanup(job: { providerId: string; region?: string | null; kind: 'file' | 'transcription'; objectId: string }, timeoutMs: number): Promise<void> {
+        await axios.post(resolveAdminApiEndpoint(this.adminApiUrl, 'api/voice-notes/cleanups'), job, { headers: this.voiceHeaders(), timeout: timeoutMs });
+    }
+
+    /** The cleanups that are due, each held for this server for a moment. */
+    async claimVoiceNoteCleanups(limit: number, timeoutMs: number): Promise<CleanupJob[]> {
+        const response: AxiosResponse<{ jobs?: CleanupJob[] }> = await axios.post(resolveAdminApiEndpoint(this.adminApiUrl, 'api/voice-notes/cleanups/claim'), { limit }, {
+            headers: this.voiceHeaders(),
+            timeout: timeoutMs,
+        });
+        return response.data?.jobs ?? [];
+    }
+
+    /** What the provider answered a delete with. Throws on a refusal (409: this server's hold ran out and another has the job). */
+    async settleVoiceNoteCleanup(id: string, outcome: CleanupOutcome, timeoutMs: number): Promise<void> {
+        await axios.patch(resolveAdminApiEndpoint(this.adminApiUrl, `api/voice-notes/cleanups/${encodeURIComponent(id)}`), outcome, { headers: this.voiceHeaders(), timeout: timeoutMs });
     }
 
     /** How a call to a voice provider went. A provider of the server's own has no health to keep: Orbit answers 404, which is fine. */
