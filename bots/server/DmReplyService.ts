@@ -275,7 +275,8 @@ export class DmReplyService extends BaseBehavior {
         const waiting = this.waiting.get(key);
         // A note the system wrote is never answered together with what a person typed: the two are kept and learned from differently.
         // Nor is a starter they tapped (#1995): its answer is fixed words, which would leave what they typed unanswered
-        if (waiting && attachments.length === 0 && waiting.note === !!hooks.note && !waiting.starter && !hooks.starter && !hooks.makeOffered) {
+        // Nor an App they just connected: each one gets its own steps line ("Connected Notion"), which one batch cannot show twice
+        if (waiting && attachments.length === 0 && waiting.note === !!hooks.note && !waiting.starter && !hooks.starter && !hooks.makeOffered && !hooks.connectedApp) {
             waiting.texts.push(text);
             // A card replied to in a message that waits is pointed at by the one answer that covers it (game #1781)
             waiting.pointed.push(...(hooks.pointedArtifactIds ?? []));
@@ -286,7 +287,7 @@ export class DmReplyService extends BaseBehavior {
             }));
         }
         const previous = this.queues.get(key);
-        const batch = { texts: [text], pointed: [...(hooks.pointedArtifactIds ?? [])], note: !!hooks.note, starter: !!hooks.starter || !!hooks.makeOffered } as {
+        const batch = { texts: [text], pointed: [...(hooks.pointedArtifactIds ?? [])], note: !!hooks.note, starter: !!hooks.starter || !!hooks.makeOffered || !!hooks.connectedApp } as {
             texts: string[];
             pointed: string[];
             note: boolean;

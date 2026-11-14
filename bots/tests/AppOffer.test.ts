@@ -330,6 +330,31 @@ describe('The line that says an App was connected', () => {
         expect(shown.at(-1)![1]).toBe('Connected Notion');
     });
 
+    it('gives each App connected in a row its own line, and never answers them as one batch', async () => {
+        const service = await serviceFor(async function* () {
+            yield { content: '', done: true, metadata: {} };
+        }, true);
+        let release: () => void = () => undefined;
+        const gate = new Promise<void>((resolve) => (release = resolve));
+        const replyNow = vi.fn(async () => {
+            await gate;
+            return { text: 'ok', media: [] };
+        });
+        Object.assign(service, { waiting: new Map(), queues: new Map(), replyNow });
+        const apps = [
+            { app: 'google-calendar', name: 'Google Calendar' },
+            { app: 'notion', name: 'Notion' },
+            { app: 'github', name: 'GitHub' },
+        ];
+        // The first is being answered; the other two arrive while it is, one after the other
+        const answers = apps.map((connectedApp) => service.reply(BRICK, person, 'note', [], { note: true, connectedApp }));
+        release();
+        const replies = await Promise.all(answers);
+        expect(replyNow).toHaveBeenCalledTimes(3);
+        expect((replyNow.mock.calls as any[][]).map((call) => call[4].connectedApp)).toEqual(apps);
+        expect(replies.some((reply) => reply?.answeredTogether)).toBe(false);
+    });
+
     it('adds nothing to an ordinary reply, and tells the Brick to start with "Connected."', async () => {
         const service = await serviceFor(async function* () {
             yield { content: 'Hi.', done: false };
