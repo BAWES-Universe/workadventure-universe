@@ -55,8 +55,8 @@ export interface InputFilter {
 
 /**
  * Reads the viewer's side of the screen protocol (RFB) so it can be filtered. After the handshake (version, the security choice, the
- * client's hello) every message is one of a few kinds with a known size. Watch mode drops key events (4), pointer events (5) and clipboard
- * text (6) and sends the rest on (pixel format, encodings, update requests). A message of a kind not listed here is not understood:
+ * client's hello) every message is one of a few kinds with a known size. Watch mode drops key events (4, and the QEMU form, 255), pointer
+ * events (5), clipboard text (6) and size changes (251), and sends the rest on (pixel format, encodings, update requests). A message of a kind not listed here is not understood:
  * the socket closes rather than carrying what cannot be checked.
  */
 export function createInputFilter(mode: ScreenMode): InputFilter {
@@ -100,17 +100,31 @@ export function createInputFilter(mode: ScreenMode): InputFilter {
                     } else if (type === 3) size = 10;
                     else if (type === 4) size = 8;
                     else if (type === 5) size = 6;
-                    else if (type === 6) {
+                    // Extensions the viewer uses when the machine offers them: continuous updates (150), fence (248, up to 64 bytes
+                    // of text), a change of the screen's size (251), and the QEMU key event (255, subtype 0)
+                    else if (type === 150) size = 10;
+                    else if (type === 248) {
+                        if (buffer.length < 9) break;
+                        size = 9 + buffer[8];
+                    } else if (type === 251) {
                         if (buffer.length < 8) break;
-                        const length = buffer.readUInt32BE(4);
+                        size = 8 + 16 * buffer[6];
+                    } else if (type === 255) {
+                        if (buffer.length < 2) break;
+                        if (buffer[1] !== 0) return { forward, close: true };
+                        size = 12;
+                    } else if (type === 6) {
+                        if (buffer.length < 8) break;
+                        // A negative length is the extended clipboard form: its size is the length without the sign
+                        const length = Math.abs(buffer.readInt32BE(4));
                         if (length > CUT_TEXT_MAX) return { forward, close: true };
                         size = 8 + length;
                     } else return { forward, close: true };
                     if (buffer.length < size) break;
                     const message = buffer.subarray(0, size);
                     buffer = buffer.subarray(size);
-                    // Watch: nothing the viewer types, moves or pastes is sent on
-                    if (mode === 'input' || (type !== 4 && type !== 5 && type !== 6)) forward.push(message);
+                    // Watch: nothing the viewer types, moves, pastes or resizes is sent on (keys 4 and 255, pointer 5, clipboard 6, size 251)
+                    if (mode === 'input' || (type !== 4 && type !== 5 && type !== 6 && type !== 251 && type !== 255)) forward.push(message);
                 }
             }
             return { forward, close: false };

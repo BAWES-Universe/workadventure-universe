@@ -49,15 +49,47 @@ describe('what a viewer may send', () => {
     it('closes on a message it does not understand, on a security choice other than none, on a strange hello and on huge clipboard text', () => {
         const odd = createInputFilter('watch');
         shake(odd);
-        expect(odd.push(Buffer.from([251, 0, 0, 0])).close).toBe(true);
+        expect(odd.push(Buffer.from([99, 0, 0, 0])).close).toBe(true);
         const security = createInputFilter('watch');
         security.push(hello);
         expect(security.push(Buffer.from([2])).close).toBe(true);
         expect(createInputFilter('watch').push(Buffer.from('GET / HTTP/1.1\r\n')).close).toBe(true);
         const big = createInputFilter('input');
         shake(big);
-        const header = Buffer.from([6, 0, 0, 0, 0xff, 0xff, 0xff, 0xff]);
+        const header = Buffer.from([6, 0, 0, 0, 0x7f, 0xff, 0xff, 0xff]);
         expect(big.push(header).close).toBe(true);
+    });
+
+    it('understands the extensions a viewer sends when the machine offers them: watch drops the QEMU key and the resize, and sends fence and continuous updates on', () => {
+        const continuous = Buffer.from([150, 1, 0, 0, 0, 0, 3, 32, 2, 88]);
+        const fence = Buffer.concat([Buffer.from([248, 0, 0, 0, 0, 0, 0, 1, 3]), Buffer.from('abc')]);
+        const qemuKey = Buffer.concat([Buffer.from([255, 0, 0, 1]), Buffer.alloc(8)]);
+        const resize = Buffer.concat([Buffer.from([251, 0, 3, 32, 2, 88, 1, 0]), Buffer.alloc(16)]);
+        const watch = createInputFilter('watch');
+        shake(watch);
+        const result = watch.push(joined([continuous, qemuKey, fence, resize, update]));
+        expect(result.close).toBe(false);
+        expect(joined(result.forward)).toEqual(joined([continuous, fence, update]));
+        const input = createInputFilter('input');
+        shake(input);
+        const all = joined([continuous, qemuKey, fence, resize]);
+        expect(joined(input.push(all).forward)).toEqual(all);
+        // A QEMU message of another kind is not understood
+        const other = createInputFilter('input');
+        shake(other);
+        expect(other.push(Buffer.from([255, 1, 0, 0])).close).toBe(true);
+    });
+
+    it('reads the extended clipboard form (a negative length) by its size, and drops it when watching', () => {
+        const extended = Buffer.concat([Buffer.from([6, 0, 0, 0, 0xff, 0xff, 0xff, 0xf8]), Buffer.from('12345678')]);
+        const watch = createInputFilter('watch');
+        shake(watch);
+        const result = watch.push(joined([extended, update]));
+        expect(result.close).toBe(false);
+        expect(joined(result.forward)).toEqual(update);
+        const input = createInputFilter('input');
+        shake(input);
+        expect(joined(input.push(joined([extended, update])).forward)).toEqual(joined([extended, update]));
     });
 
     it('version 3.3 has no choice of security, so the next byte is the hello', () => {
@@ -198,7 +230,7 @@ describe('the screen gateway', () => {
         const socket = await viewer();
         const code = closed(socket);
         for (const part of handshake) socket.send(part);
-        socket.send(Buffer.from([251, 0, 0, 0]));
+        socket.send(Buffer.from([99, 0, 0, 0]));
         expect(await code).toBe(1008);
         await until(() => machineSockets[0].readyState === WebSocket.CLOSED || machineSockets[0].readyState === WebSocket.CLOSING);
     });

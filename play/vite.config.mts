@@ -14,6 +14,9 @@ import { scopePdfViewerCss } from "./src/front/FileViewer/scopePdfViewerCss";
 
 // The folder of the PDF reader package, wherever npm put it (here or hoisted to the repository root).
 const pdfjsDir = dirname(createRequire(import.meta.url).resolve("pdfjs-dist/package.json"));
+// The folder of the screen viewer that shows a Brick's computer (noVNC), wherever npm put it.
+// (the package exports only its main file, core/rfb.js, so the folder is two levels up from it)
+const novncDir = dirname(dirname(createRequire(import.meta.url).resolve("@novnc/novnc")));
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
@@ -103,6 +106,9 @@ export default defineConfig(({ mode }) => {
                     { src: `${pdfjsDir}/standard_fonts/*`, dest: "static/pdfjs/standard_fonts" },
                     { src: [`${pdfjsDir}/wasm/*`, `!${pdfjsDir}/wasm/quickjs-eval.*`], dest: "static/pdfjs/wasm" },
                     { src: `${pdfjsDir}/iccs/*`, dest: "static/pdfjs/iccs" },
+                    // The Brick screen viewer's own files, as they are (the package's ES modules and the one library they use)
+                    { src: `${novncDir}/core`, dest: "static/novnc" },
+                    { src: `${novncDir}/vendor`, dest: "static/novnc" },
                 ],
             }),
         ],

@@ -312,6 +312,7 @@ describe("an Orbit that does not answer about who may use a bot", () => {
             (api) => api.brickComputerAction("b1", "fill-details", { what: "x", where: "y" }),
         ],
         ["dismissing a computer notice", (api) => api.dismissBrickComputerNotice("b1", "j1")],
+        ["asking for a screen ticket", (api) => api.screenTicketForBrick("b1", "input")],
     ];
 
     it.each(brickWrites)("fails %s in time when Orbit never answers", async (_name, call) => {
@@ -323,7 +324,7 @@ describe("an Orbit that does not answer about who may use a bot", () => {
 
     it("says a screen request that never gets an answer failed, and a computer with no screen has none", async () => {
         vi.spyOn(globalThis, "fetch").mockImplementation((_url, init) => untilCancelled(init?.signal));
-        const failed = expect(service().watchBrickComputer("b1")).resolves.toBe("failed");
+        const failed = expect(service().screenTicketForBrick("b1", "watch")).resolves.toBe("failed");
         await vi.advanceTimersByTimeAsync(20000);
         await failed;
         vi.restoreAllMocks();
@@ -333,7 +334,7 @@ describe("an Orbit that does not answer about who may use a bot", () => {
                 headers: { "Content-Type": "application/json" },
             })
         );
-        await expect(service().watchBrickComputer("b1")).resolves.toBeUndefined();
+        await expect(service().screenTicketForBrick("b1", "watch")).resolves.toBeUndefined();
         vi.restoreAllMocks();
         vi.spyOn(globalThis, "fetch").mockResolvedValue(
             new Response(JSON.stringify({ error: "down" }), {
@@ -341,7 +342,19 @@ describe("an Orbit that does not answer about who may use a bot", () => {
                 headers: { "Content-Type": "application/json" },
             })
         );
-        await expect(service().watchBrickComputer("b1")).resolves.toBe("failed");
+        await expect(service().screenTicketForBrick("b1", "watch")).resolves.toBe("failed");
+    });
+
+    it("gives the screen ticket Orbit made, and asks for the mode the person is in", async () => {
+        const fetched = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+            new Response(JSON.stringify({ ticket: "sct1.abc.def", mode: "input" }), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+            })
+        );
+        await expect(service().screenTicketForBrick("b1", "input")).resolves.toEqual({ ticket: "sct1.abc.def" });
+        const asked = fetched.mock.calls.find(([url]) => String(url).includes("/api/bricks/b1/computer/screen"));
+        expect(JSON.parse(String(asked?.[1]?.body))).toEqual({ mode: "input" });
     });
 
     it.each(brickWrites)("fails %s in time when Orbit answers but its body never ends", async (_name, call) => {

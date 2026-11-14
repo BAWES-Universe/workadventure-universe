@@ -7,18 +7,15 @@
     import LL from "../../../../i18n/i18n-svelte";
     import PanelHeader from "../../../Components/MapEditor/EditMode/PanelHeader.svelte";
     import PageButton from "../../../external-modules/bots/components/page/PageButton.svelte";
-    import { botApiService } from "../../../external-modules/bots/services/BotApiService";
     import { warningMessageStore } from "../../../Stores/ErrorStore";
     import { brickComputerAction, brickComputers, followBrickComputer } from "./BrickComputerStore";
     import { canWatch, holdsComputer, sentenceStart } from "./BrickComputer";
     import type { BrickRef } from "./BrickScreenStore";
+    import BrickScreenView from "./BrickScreenView.svelte";
     import { IconCircleCheck, IconHandFinger, IconId, IconLoader2 } from "@wa-icons";
 
     export let brick: BrickRef;
     export let onClose: () => void;
-
-    /** A watch link lasts a few minutes. A screen that has none (it was never given one, or gave up asking) asks again this often. */
-    const RENEW_MS = 4 * 60 * 1000;
 
     $: view = $brickComputers.get(brick.id);
     $: job = view?.job ?? null;
@@ -26,8 +23,6 @@
     $: watching = canWatch(view);
     $: lastStep = job?.waitingFor === "pay" || job?.waitingFor === "submit";
 
-    let url: string | undefined;
-    let looked = false;
     let busy = false;
     // The person tapped "Fill in my details" for what Brick named: once Brick has put it in, the tray says so
     let tapped = false;
@@ -45,100 +40,8 @@
     $: noteReady(readyKey);
     $: if (tapped && readyKey && tappedRound !== round) tapped = false;
 
-    // Counts the times the screen was let go. A link that was asked for before that, and arrives after, belongs to a job that
-    // is over: it is dropped, so the next job never shows it.
-    let letGo = 0;
-
-    // A watch request that did not go through is asked again soon, a few times, then left until the computer has new work
-    // or the link would have been renewed anyway. A computer that has no screen to show yet is asked again as it is read, but
-    // for a minute or so, not for good. Only one request is on its way at a time.
-    const RETRY_MS = 2000;
-    const RETRIES = 4;
-    const NO_LINK_ASKS = 15;
-    let failures = 0;
-    let noLink = 0;
-    let gaveUp = false;
-    let retry: ReturnType<typeof setTimeout> | undefined;
-    // The screen's "let go" count the request on its way was asked in: a request asked in an older one does not hold up a new one
-    let onItsWay: number | undefined;
-
-    function look() {
-        const asked = letGo;
-        if (onItsWay === asked) return;
-        onItsWay = asked;
-        clearTimeout(retry);
-        botApiService
-            .watchBrickComputer(brick.id)
-            .then((answer) => {
-                if (answer === "failed") {
-                    if (asked !== letGo) {
-                        looked = true;
-                    } else if (failures < RETRIES) {
-                        looked = false;
-                        retry = setTimeout(look, RETRY_MS * 2 ** failures);
-                        failures += 1;
-                    } else {
-                        looked = true;
-                        gaveUp = true;
-                    }
-                    return;
-                }
-                looked = true;
-                failures = 0;
-                if (asked !== letGo) return;
-                url = answer?.url;
-                if (url) {
-                    noLink = 0;
-                } else {
-                    noLink += 1;
-                    if (noLink >= NO_LINK_ASKS) gaveUp = true;
-                }
-            })
-            .catch((error) => console.error(error))
-            .finally(() => {
-                if (onItsWay === asked) onItsWay = undefined;
-            });
-    }
-
-    function renew() {
-        failures = 0;
-        noLink = 0;
-        gaveUp = false;
-        // A screen that is showing keeps its link: a new one would load the frame again and break in on whoever is using it
-        if (!url) look();
-    }
-
-    function forget() {
-        url = undefined;
-        letGo += 1;
-        // The next job starts afresh: its own link, and its own few tries
-        clearTimeout(retry);
-        failures = 0;
-        noLink = 0;
-        gaveUp = false;
-        looked = true;
-    }
-
-    onMount(() => {
-        const stop = followBrickComputer(brick.id);
-        look();
-        const renewing = setInterval(renew, RENEW_MS);
-        // The computer got work again after the screen was open with nothing to show: ask for its screen once more
-        const again = brickComputers.subscribe((all) => {
-            if (looked && !url && !gaveUp && canWatch(all.get(brick.id))) look();
-        });
-        return () => {
-            stop();
-            again();
-            clearInterval(renewing);
-            clearTimeout(retry);
-        };
-    });
-
-    // The job ended or the computer rested while the screen was open: there is nothing to watch, and nothing is woken.
-    // The link is let go too, so a job that starts later asks for a fresh one instead of showing one that may have run out.
-    $: if (!watching) forget();
-    $: shownUrl = watching ? url : undefined;
+    // The computer's own page opens the screen (see BrickScreenView); this page only follows what the job is doing
+    onMount(() => followBrickComputer(brick.id));
 
     function act(action: "stop" | "take-over" | "hand-back" | "fill-details") {
         if (busy) return;
@@ -175,14 +78,12 @@
         canHide={false}
     />
     <div class="bs-screen" class:ctl={inControl}>
-        {#if shownUrl}
-            <iframe
-                class="bs-frame"
+        {#if watching}
+            <BrickScreenView
+                brickId={brick.id}
                 title={$LL.chat.brick.computer.machine({ name: brick.name })}
-                src={shownUrl}
-                sandbox="allow-scripts allow-same-origin allow-forms"
-                referrerpolicy="no-referrer"
-                data-testid="brickScreenFrame"
+                {inControl}
+                active={watching}
             />
         {:else}
             <p class="bs-none" data-testid="brickScreenNone">{$LL.chat.brick.computer.screenNone()}</p>
@@ -283,13 +184,6 @@
     /* In control the screen is outlined: it is yours now. */
     .bs-screen.ctl {
         box-shadow: 0 0 0 2px #8629fc, 0 0 18px rgba(134, 41, 252, 0.45);
-    }
-    .bs-frame {
-        display: block;
-        width: 100%;
-        height: 100%;
-        border: 0;
-        background: #fff;
     }
     .bs-none {
         display: grid;

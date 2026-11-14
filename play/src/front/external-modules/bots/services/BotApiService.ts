@@ -1245,19 +1245,28 @@ export class BotApiService {
     }
 
     /**
-     * The screen of a computer that is working. Never wakes a machine: a resting one answers 409 and nothing starts, which is
-     * `undefined` (no screen to show). A request that did not go through (Orbit down, too slow, refused) is "failed", so the
-     * screen can tell the two apart and ask again soon.
+     * A ticket for the screen of the person's own computer, to open on the bot server within a minute. Watch by default; input is only
+     * for the person who has taken over. Never wakes a machine: a resting computer, or input before a take over, answers 409, which is
+     * `undefined` (nothing to show now). A request that did not go through is "failed", so the screen can ask again soon.
      */
-    async watchBrickComputer(brickId: string): Promise<{ url: string } | undefined | "failed"> {
+    async screenTicketForBrick(brickId: string, mode: "watch" | "input"): Promise<{ ticket: string } | undefined | "failed"> {
         try {
-            const data = (await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/computer/watch`, {
+            const data = (await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/computer/screen`, {
                 method: "POST",
-            })) as { url?: unknown };
-            return typeof data.url === "string" ? { url: data.url } : undefined;
+                body: JSON.stringify({ mode }),
+            })) as { ticket?: unknown; resting?: unknown; notTakenOver?: unknown };
+            if (typeof data.ticket === "string") return { ticket: data.ticket };
+            return data.resting === true || data.notTakenOver === true ? undefined : "failed";
         } catch (error) {
             return (error as { status?: number }).status === 409 ? undefined : "failed";
         }
+    }
+
+    /** Where the screen socket is on the bot server for a ticket (wss on a secure page), or null when the bot server's address was refused. */
+    screenSocketUrl(ticket: string): string | null {
+        const base = this.getBotServerUrl();
+        if (!base) return null;
+        return `${base.replace(/^http/, "ws").replace(/\/+$/, "")}/computer/screen?ticket=${encodeURIComponent(ticket)}`;
     }
 
     /**
