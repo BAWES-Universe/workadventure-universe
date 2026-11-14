@@ -34,6 +34,7 @@ import {
     type VoiceListPart,
 } from "../voiceModel";
 import { classifySummonFailure, type SummonResult } from "./summonFailure";
+import { classifyCallFailure, type CallResult } from "./callFailure";
 
 interface AuthError extends Error {
     isAuthError: boolean;
@@ -1902,6 +1903,47 @@ export class BotApiService {
     }
 
     /**
+     * Call a bot (game #2004): the bot server opens the bot's call-only connection and joins the call's private space,
+     * and answers with the space's name for this browser to join. The owner's "Call" rule is checked there (Orbit).
+     * Never throws: a refusal comes back as `failure`, so the caller can tell the person why.
+     */
+    async startCall(botId: string, playerUuid: string): Promise<CallResult> {
+        try {
+            const response = await this.fetchBotServer(`/api/bots/${encodeURIComponent(botId)}/call`, {
+                method: "POST",
+                body: JSON.stringify({ playerUuid }),
+            });
+            const body = (await response.json()) as { started?: unknown; spaceName?: unknown } | null;
+            if (body?.started === true && typeof body.spaceName === "string" && body.spaceName !== "") {
+                return { started: true, spaceName: body.spaceName };
+            }
+            return { started: false, failure: "failed" };
+        } catch (error) {
+            if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+                console.error("[BotApiService] Error calling bot:", error);
+            }
+            const failure = classifyCallFailure(error);
+            if ((failure === "not_allowed" || failure === "cannot_check") && error instanceof Error) {
+                return { started: false, failure, reason: error.message };
+            }
+            return { started: false, failure };
+        }
+    }
+
+    /** The person hangs up: the bot leaves the call. Never throws: the bot also leaves when this browser does. */
+    async endCall(botId: string, playerUuid: string): Promise<boolean> {
+        try {
+            const response = await this.fetchBotServer(`/api/bots/${encodeURIComponent(botId)}/call/end`, {
+                method: "POST",
+                body: JSON.stringify({ playerUuid }),
+            });
+            return ((await response.json()) as { ended?: unknown } | null)?.ended === true;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
      * Get available AI providers (for bot editor UI)
      */
     async getAvailableAIProviders(enabled: boolean = true): Promise<
@@ -1968,7 +2010,11 @@ export class BotApiService {
         });
     }
 
-    async getBotAccess(botId: string, action: "summon" | "chat" | "dm", playerUuid?: string): Promise<BotAccessAnswer> {
+    async getBotAccess(
+        botId: string,
+        action: "summon" | "chat" | "dm" | "call",
+        playerUuid?: string
+    ): Promise<BotAccessAnswer> {
         // A bot server or sign-in that stalls must not hold the Summon button back: after a few seconds it is "unknown"
         const stop = new AbortController();
         let timer: ReturnType<typeof setTimeout> | undefined;
@@ -1985,7 +2031,7 @@ export class BotApiService {
 
     private async askBotAccess(
         botId: string,
-        action: "summon" | "chat" | "dm",
+        action: "summon" | "chat" | "dm" | "call",
         playerUuid: string | undefined,
         signal: AbortSignal
     ): Promise<BotAccessAnswer> {
