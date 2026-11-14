@@ -129,6 +129,7 @@ import { FIND_FILES_TOOL, OPEN_FILE_TOOL, SEND_AGAIN_TOOL, fileToolDefinitions, 
 import { FORGET_MEMORY_TOOL, WHAT_I_REMEMBER_TOOL, isMemoryTool, memoryToolDefinitions, memoryToolsNote, runMemoryTool } from './MemoryTools';
 import { COMPUTER_TOOL, computerToolDefinitions, computerToolsNote, isComputerTool, runComputerTool } from './ComputerTools';
 import { pretendRunnerOn, runPretendJob } from './ComputerPretendRunner';
+import { callKeyApp } from '../mcp/KeyApps';
 import { OFFER_APP_TOOL, appToolDefinitions, appsNote, isAppTool, runAppTool } from './AppTools';
 import { MAKE_BRICK_TOOL, SUGGEST_BRICK_TOOL, brickToolDefinitions, brickToolsNote, isBrickTool, runBrickTool, type BrickNote } from './BrickTools';
 import { CHANGE_TASK_TOOL, KEEP_WORKDAYS_TOOL, MY_TASKS_TOOL, SET_REMINDER_TOOL, isTaskTool, runTaskTool, taskSettingsFor, taskToolDefinitions, taskToolsNote, tasksAreOn, type TaskSettings } from './BrickTasks';
@@ -375,6 +376,16 @@ export class AIService {
         use?: AppUseRequest & { botId: string }
     ): Promise<any> {
         try {
+            // An App with a key (#2044) is used only through Orbit, which holds the key, checks the use again and answers with the fields
+            // the App lists: nothing here ever reaches the service
+            if (entry.keyApp) {
+                return await callKeyApp(
+                    { adminApiUrl: this.adminApiUrl, serviceToken: process.env.BOT_SERVICE_TOKEN || '' },
+                    entry,
+                    args,
+                    { botId: use?.botId ?? '', callId: use?.callId ?? '', ...(use?.requesterKey ? { requesterKey: use.requesterKey } : {}), ...(use?.forOwner ? { forOwner: true } : {}) }
+                );
+            }
             // An App on a connection is checked with Orbit on every use, right before it runs: a lend taken back, a day's uses
             // spent or a switch turned off stops it at once. No answer is a no.
             if (entry.connectionId) {

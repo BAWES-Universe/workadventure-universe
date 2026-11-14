@@ -9,6 +9,7 @@
  * - Auth: Bearer token or X-API-Key header
  */
 
+import { keyAppTools, loadKeyApps } from './KeyApps';
 import axios from 'axios';
 import * as Sentry from '@sentry/node';
 import { decryptApiKey } from '../ai/encryption';
@@ -89,6 +90,8 @@ export interface ToolServerEntry {
     /** A ready-made App: its messages go through Orbit's link route, never to the stored link (#2001). */
     readyMade?: boolean;
     orbitUrl?: string;
+    /** An App with a key (#2044): the operation and the version of its definition. Every call goes through Orbit, which holds the key; there is no address here. */
+    keyApp?: { definitionHash: string; operation: string };
 }
 
 // ---------------------------------------------------------------------------
@@ -796,7 +799,6 @@ export class MCPConnector {
         tools: McpToolDefinition[];
         toolServerMap: Map<string, ToolServerEntry>;
     }> {
-        void botServiceToken;
         const toolServerMap = new Map<string, ToolServerEntry>();
 
         // Fetch MCP server configs from admin API
@@ -816,7 +818,8 @@ export class MCPConnector {
                     error instanceof Error ? error : new Error(String(error))
                 );
             }
-            return { tools: [], toolServerMap };
+            // Apps with a key come from another list: this one failing does not take them away
+            return this.withKeyApps(botId, adminApiUrl, botServiceToken, { tools: [], toolServerMap });
         }
 
         // Query each enabled server and collect tools
@@ -905,7 +908,25 @@ export class MCPConnector {
             }
         }
 
-        return { tools: allTools, toolServerMap };
+        return this.withKeyApps(botId, adminApiUrl, botServiceToken, { tools: allTools, toolServerMap });
+    }
+
+    /** Adds the Apps with a key (#2044) that this Brick has: their operations as tools, by name, behind the same gate. A name already taken keeps its first owner. */
+    private static async withKeyApps(
+        botId: string,
+        adminApiUrl: string,
+        serviceToken: string,
+        found: { tools: McpToolDefinition[]; toolServerMap: Map<string, ToolServerEntry> }
+    ): Promise<{ tools: McpToolDefinition[]; toolServerMap: Map<string, ToolServerEntry> }> {
+        const keyed = keyAppTools(await loadKeyApps(botId, adminApiUrl, serviceToken));
+        for (const tool of keyed.tools) {
+            const name = tool.function.name;
+            const entry = keyed.entries.get(name);
+            if (!entry || found.toolServerMap.has(name)) continue;
+            found.tools.push(tool);
+            found.toolServerMap.set(name, entry);
+        }
+        return found;
     }
 
     /** Saves one server's list to Orbit in the background. A failure is logged; Orbit keeps what it had. */
