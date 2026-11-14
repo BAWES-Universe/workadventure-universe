@@ -22,6 +22,7 @@ import { linkExternalAbort } from './abortUtils';
 import { tooLongOf, withStepsAsText, type ReplySteps } from '../replySteps';
 import { resolveVisionSupport } from './visionModels';
 import * as Sentry from '@sentry/node';
+import { providerFailureLine } from '../../utils/sanitizedError';
 
 const ANTHROPIC_VERSION = '2023-06-01';
 
@@ -597,7 +598,7 @@ export class AnthropicProvider implements AIProvider {
                         truncated: data.stop_reason === 'max_tokens',
                     };
                 } catch (error: any) {
-                    span.setStatus({ code: 2, message: error.message || 'Unknown error' });
+                    span.setStatus({ code: 2, message: providerFailureLine(error) });
 
                     // External cancellation is not a provider failure — propagate it so callers treat it as a clean stop
                     if (externalSignal?.aborted) {

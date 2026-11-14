@@ -22,6 +22,7 @@ import { AIProviderRegistry } from './AIProviderRegistry';
 import { sortToolsByName } from './toolOrder';
 import type { MapDataService } from '../server/MapDataService';
 import * as Sentry from '@sentry/node';
+import { sanitizedError } from '../utils/sanitizedError';
 import { MCPConnector, toolTimeoutMs, type ToolServerEntry } from '../mcp/MCPConnector';
 import type { ToolSuggester } from '../mcp/ToolCatalog';
 import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision } from '../mcp/ToolGate';
@@ -404,8 +405,11 @@ export class AIService {
             }
             return rawResult;
         } catch (mcpError: any) {
-            console.error(`[AIService] Error executing MCP tool ${toolName}:`, mcpError);
-            Sentry.captureException(mcpError instanceof Error ? mcpError : new Error(String(mcpError)));
+            // The error's words can quote what was passed to the tool or what came back (an email, a file), and logs and
+            // Sentry keep what they are given: only the tool's name and the kind of error leave this function
+            const kind = mcpError instanceof Error ? mcpError.name : 'Error';
+            console.error(`[AIService] Error executing MCP tool ${toolName}: ${kind}`);
+            Sentry.captureException(sanitizedError(mcpError, `MCP tool ${toolName} failed (${kind})`), { tags: { area: 'bot-tools' } });
             return { error: `MCP tool error: ${mcpError.message || 'Unknown error'}` };
         }
     }
@@ -1114,9 +1118,6 @@ export class AIService {
         let usageProviderId = providerId;
         // A reply through a person's own key tells Orbit how it went, so a key that keeps failing is marked Down
         let reportHealth = false;
-        // A private bot's failure is logged without the error's words, which could quote what was said (#1166). Until the
-        // bot is known not to be private, a failure counts as private.
-        let privateTurn = true;
 
         try {
             // Get provider credentials. A bot on Universe AI or a person's own key is resolved by Orbit for this bot (#374).
@@ -1390,9 +1391,8 @@ export class AIService {
             let completionTokens = 0;
             let error = false;
             let errorStatus: number | undefined;
-            // What the provider said when a call failed, and why the reply's call ended, for the line logged when a
-            // reply comes back with nothing (#1498)
-            let errorText: string | undefined;
+            // Why the reply's call ended, for the line logged when a reply comes back with nothing (#1498). What the
+            // provider said when a call failed is not kept: it can quote the conversation.
             let finishReason: string | undefined;
             let streamCompleted = false;
             let accumulatedContent = '';
@@ -1405,6 +1405,8 @@ export class AIService {
             let followUpStartTime = 0;
             let firstCallStartTime = 0;
             let hadToolCalls = false;
+            // Names of the tools this turn used, for the PostHog trace: names only, never what was passed or came back
+            const turnToolNames: string[] = [];
             let pendingToolCalls: ToolCall[] = [];
             let initialGenCaptured = false;
             let followUpGenCaptured = false;
@@ -1417,7 +1419,7 @@ export class AIService {
             let askedAgainForLength = false;
             // The error a failed call's $ai_generation carries, like the turn's trace does (#1498)
             const failedCall = (failed: boolean, status?: number) =>
-                failed ? { error: replyProblem({ error: true, errorStatus: status, errorText, answered: false, outputTokens: 0, reasoningTokens: 0 }) } : {};
+                failed ? { error: replyProblem({ error: true, errorStatus: status, answered: false, outputTokens: 0, reasoningTokens: 0 }) } : {};
             // skipping code after the loop but still reaching the finally block.
             let followUpInput = '';
             let overallFollowUpStartTime = 0;
@@ -1458,7 +1460,6 @@ export class AIService {
             // text to PostHog. Anything else (usage counts, memory, errors) is unchanged.
             // An answer only its person reads is kept out of them the same way (#1993)
             const privateBot = options?.onlyForThem === true || (await this.isPrivateBot(botId));
-            privateTurn = privateBot;
             // Every PostHog capture of this turn goes through here, so a private bot cannot miss one
             const captureGeneration: typeof captureAiGeneration = (params) => {
                 if (!privateBot) captureAiGeneration(params);
@@ -1661,7 +1662,6 @@ export class AIService {
                         if (chunk.metadata?.error) {
                             followUpFailedForHealth = true;
                             if (chunk.metadata.errorStatus) followUpErrorStatus = chunk.metadata.errorStatus;
-                            errorText ??= chunk.metadata.errorText;
                         }
 
                         // Capture $ai_generation for the initial LLM call NOW —
@@ -1679,8 +1679,7 @@ export class AIService {
                                 sessionId: `conversation-${botId}-player-${playerId}`,
                                 model: config.model,
                                 provider: config.type,
-                                input: userMessageForQwen,
-                                output: firstCallContent,
+                                toolNames: Array.from(toolCallAccumulator.values()).map(tc => tc.name).filter(Boolean),
                                 inputTokens: promptTokens,
                                 cachedInputTokens: cachedPromptTokens,
                                 outputTokens: completionTokens,
@@ -1773,7 +1772,6 @@ export class AIService {
                                     if (retryChunk.done && retryChunk.metadata?.error) {
                                         followUpFailedForHealth = true;
                                         if (retryChunk.metadata.errorStatus) followUpErrorStatus = retryChunk.metadata.errorStatus;
-                                        errorText ??= retryChunk.metadata.errorText;
                                     }
                                 }
                             } catch (retryError) {
@@ -1949,6 +1947,7 @@ export class AIService {
                             );
                             stepRoom.add(step);
 
+                            turnToolNames.push(...pendingToolCalls.map(tc => tc.name).filter(Boolean));
                             pendingToolCalls = [];
                             toolCallAccumulator.clear();
                             hadToolCalls = true;
@@ -1980,7 +1979,6 @@ export class AIService {
                                 const errorBefore = followUpError;
                                 const failedBefore = followUpFailedForHealth;
                                 const errorStatusBefore = followUpErrorStatus;
-                                const errorTextBefore = errorText;
                                 let refusedForLength = false;
                                 for await (const resultChunk of sharedLine ? this.saySharedLine(sharedLine, sharedLineIds) : this.meteredStream(
                                     ledger,
@@ -2015,7 +2013,6 @@ export class AIService {
                                         followUpError = true;
                                         followUpFailedForHealth = true;
                                         if (resultChunk.metadata.errorStatus) followUpErrorStatus = resultChunk.metadata.errorStatus;
-                                        errorText ??= resultChunk.metadata.errorText;
                                     }
                                     // Accumulate content from follow-up response (same as main stream)
                                     if (resultChunk.content) {
@@ -2081,7 +2078,6 @@ export class AIService {
                                 followUpError = errorBefore;
                                 followUpFailedForHealth = failedBefore;
                                 followUpErrorStatus = errorStatusBefore;
-                                errorText = errorTextBefore;
                                 lastFollowUpDoneChunk = null;
                             }
 
@@ -2115,8 +2111,7 @@ export class AIService {
                                             sessionId: `conversation-${botId}-player-${playerId}`,
                                             model: config.model,
                                             provider: config.type,
-                                            input: followUpInput,
-                                            output: followUpContent,
+                                            toolNames: pendingToolCalls.map(tc => tc.name).filter(Boolean),
                                             inputTokens: followUpPromptTokens,
                                             cachedInputTokens: followUpCachedPromptTokens,
                                             outputTokens: followUpCompletionTokens,
@@ -2374,7 +2369,6 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                         if (retryChunk.done && retryChunk.metadata?.error) {
                                             followUpFailedForHealth = true;
                                             if (retryChunk.metadata.errorStatus) followUpErrorStatus = retryChunk.metadata.errorStatus;
-                                            errorText ??= retryChunk.metadata.errorText;
                                         }
                                     }
                                 } catch (retryError) {
@@ -2485,8 +2479,6 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     sessionId: `conversation-${botId}-player-${playerId}`,
                                     model: config.model,
                                     provider: config.type,
-                                    input: followUpInput,
-                                    output: followUpContent,
                                     inputTokens: followUpPromptTokens,
                                     cachedInputTokens: followUpCachedPromptTokens,
                                     outputTokens: followUpCompletionTokens,
@@ -2556,7 +2548,6 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     if (chunk.metadata?.error) {
                         error = true;
                         if (chunk.metadata.errorStatus) errorStatus = chunk.metadata.errorStatus;
-                        errorText ??= chunk.metadata.errorText;
                     }
                     if (chunk.done) {
                         streamCompleted = true;
@@ -2627,8 +2618,6 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                               // is no problem, and any call that ended the reply failing is, whatever was said before it
                               error: !!lastCall?.failed,
                               errorStatus: lastCall?.status,
-                              // A private bot's provider text can quote the conversation: only its status is kept
-                              errorText: privateBot ? 'details left out for a private bot' : lastCall?.errorText,
                               finishReason,
                               answered: !!accumulatedContent.trim() || hadToolCalls,
                               outputTokens: completionTokens,
@@ -2651,8 +2640,6 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             sessionId: `conversation-${botId}-player-${playerId}`,
                             model: config.model,
                             provider: config.type,
-                            input: userMessageForQwen,
-                            output: firstCallContent,
                             inputTokens: followUpPromptTokens > 0 ? (promptTokens - followUpPromptTokens) : promptTokens,
                             cachedInputTokens: followUpCachedPromptTokens !== undefined && cachedPromptTokens !== undefined ? cachedPromptTokens - followUpCachedPromptTokens : cachedPromptTokens,
                             outputTokens: followUpCompletionTokens > 0 ? (completionTokens - followUpCompletionTokens) : completionTokens,
@@ -2683,8 +2670,6 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             sessionId: `conversation-${botId}-player-${playerId}`,
                             model: config.model,
                             provider: config.type,
-                            input: followUpInput,
-                            output: followUpContent,
                             inputTokens: followUpPromptTokens,
                             cachedInputTokens: followUpCachedPromptTokens,
                             outputTokens: followUpCompletionTokens,
@@ -2709,14 +2694,13 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     if (!privateBot && streamCompleted && (accumulatedContent || error || problem)) {
                         const generationLatency = (Date.now() - startTime) / 1000;
                         captureAiTrace({
+                            toolNames: turnToolNames,
                             ...(cacheLedger.read || cacheLedger.write ? { cacheReadTokens: cacheLedger.read, cacheWriteTokens: cacheLedger.write } : {}),
                             distinctId: `bot-${botId}`,
                             traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
                             sessionId: `conversation-${botId}-player-${playerId}`,
                             model: config.model,
                             provider: config.type,
-                            input: message,
-                            output: accumulatedContent || '',
                             inputTokens: promptTokens,
                             cachedInputTokens: cachedPromptTokens,
                             outputTokens: completionTokens,
@@ -2845,7 +2829,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 console.error('[AIService] Error generating response:', error);
             }
             // Before this, a reply that broke here left no trace outside debug mode (#1498)
-            console.error(`[AIService] Bot ${botId} could not answer: ${privateTurn ? (error?.name ?? 'Error') : providerErrorText(error)}`);
+            console.error(`[AIService] Bot ${botId} could not answer: ${error?.name ?? 'Error'}`);
 
             // Track error. What an earlier answer to the same message cost is on the same ledger, so it is kept (#1993).
             if (options?.usage) options.usage.held = undefined;

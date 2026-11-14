@@ -39,6 +39,7 @@ import type { ChatUpload, SentMedia } from '../services/ChatFiles';
 import { extractChatLinks } from '../utils/chatLinks';
 import { resolve4, resolve6 } from 'dns/promises';
 import * as Sentry from '@sentry/node';
+import { sanitizedError } from '../utils/sanitizedError';
 import { VoiceCalls } from '../voice/VoiceCalls';
 import { WorkerLink } from '../voice/VoiceLink';
 import { VOICE_BOT_TAG } from '../voice/VoiceBotTag';
@@ -2538,8 +2539,9 @@ export class BotClient {
         if (this.isMeetingSpace(spaceName)) return false;
         if (this.accessGate && !(await this.chatAllowed(this.accessGate, spaceName, playerId))) return false;
         this.behavior.onChatMessage(spaceName, text, playerId).catch((error) => {
-            console.error(`[Bot ${this.config.botId}] onChatMessage error for a card answer:`, error);
-            Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
+            // What went wrong while answering, not its words: an error message can quote what was said (#1841)
+            console.error(`[Bot ${this.config.botId}] onChatMessage error for a card answer: ${error?.name ?? 'Error'}`);
+            Sentry.captureException(sanitizedError(error, `onChatMessage failed for a card answer (${error?.name ?? 'Error'})`));
         });
         return true;
     }
@@ -3773,8 +3775,9 @@ export class BotClient {
                             undefined,
                             heardAt
                         ).catch(error => {
-                            console.error(`[Bot ${this.config.botId}] onChatMessage error:`, error);
-                            Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
+                            // What went wrong while answering, not its words: an error message can quote what was said (#1841)
+                            console.error(`[Bot ${this.config.botId}] onChatMessage error: ${error?.name ?? 'Error'}`);
+                            Sentry.captureException(sanitizedError(error, `onChatMessage failed (${error?.name ?? 'Error'})`));
                         });
                     }
                 }
@@ -3924,8 +3927,9 @@ export class BotClient {
                             BotClient.uploadsOf(spaceMessage, detectedMime),
                             heardAt
                         ).catch(error => {
-                            console.error(`[Bot ${this.config.botId}] onChatMessage error:`, error);
-                            Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
+                            // What went wrong while answering, not its words: an error message can quote what was said (#1841)
+                            console.error(`[Bot ${this.config.botId}] onChatMessage error: ${error?.name ?? 'Error'}`);
+                            Sentry.captureException(sanitizedError(error, `onChatMessage failed (${error?.name ?? 'Error'})`));
                         });
                     } else {
                         if (senderId === 0) {
