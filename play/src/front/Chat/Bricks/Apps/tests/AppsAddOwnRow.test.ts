@@ -36,6 +36,16 @@ vi.mock("../../../../external-modules/bots/services/BotApiService", () => ({
         getMyAppThings: game.getMyAppThings,
     },
 }));
+// A Brick wearing a WOKA is drawn by the game's picture loader, and the person's Bricks come from their own store: neither
+// has anything to do with this page, and the picture loader reaches code the tests cannot load
+vi.mock("../../BrickLookPicture", async () => {
+    const store = await import("svelte/store");
+    return { brickPicture: () => store.readable(undefined) };
+});
+vi.mock("../../MyBricksStore", async () => {
+    const store = await import("svelte/store");
+    return { myBricksStore: store.writable([]), loadMyBricks: vi.fn(() => Promise.resolve()) };
+});
 vi.mock("../../../../Stores/ErrorStore", () => ({ warningMessageStore: { addWarningMessage: vi.fn() } }));
 vi.mock("../../../../Stores/MenuStore", async () => {
     const store = await import("svelte/store");
