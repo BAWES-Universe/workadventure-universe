@@ -425,10 +425,10 @@ describe("the Permissions screens", () => {
             "Manage this bot",
         ]);
         expect(text()).toContain(
-            "With this bot's tools under Makes new things and Changes things, like adding a Linear issue"
+            "With this bot's apps under Makes new things and Changes things, like adding a Linear issue"
         );
         expect(text()).toContain(
-            "With this bot's tools under Deletes or sends out, like sending an email or deleting a page"
+            "With this bot's apps under Deletes or sends out, like sending an email or deleting a page"
         );
         expect(text()).toContain("Member then goes back to the Member role's settings in Orbit");
         // Member's role gives changing but not deleting or sending, so Default means Yes for one and No for the other
