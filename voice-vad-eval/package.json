@@ -19,7 +19,10 @@
     "worker-load": "sh scripts/worker-load.sh \"$PWD/data\" \"$PWD/out/worker-load\"",
     "worker-soak": "sh scripts/worker-soak.sh \"$PWD/data\" \"$PWD/out/worker-soak\" && python3 -I scripts/worker-soak-table.py \"$PWD/out/worker-soak\"",
     "image-check": "bash scripts/image-check.sh \"$PWD/data\" \"$PWD/out/image-check\"",
-    "room-rehear": "tsx src/room-rehear.ts"
+    "room-rehear": "tsx src/room-rehear.ts",
+    "yield-sweep": "for w in 300 600 1000 1500; do tsx src/yield-replay.ts data results/raw.jsonl.gz out/sweep tune $w & done; wait; tsx src/yield-report.ts sweep out/sweep && cp out/sweep/yield-sweep.md results/yield-sweep.md",
+    "yield-replay": "tsx src/yield-replay.ts data results/raw.jsonl.gz out report 1500 && tsx src/yield-report.ts report out/yield-replay-report-1500.jsonl results/yield-replay.md",
+    "soniox-check": "tsx src/soniox-record.ts data out/yield-replay-report-1500.jsonl out/soniox && tsx src/soniox-connect.ts out/soniox/connect.json 10 && tsx src/played-probs.ts data out/soniox/soniox-record.jsonl out/soniox/played.jsonl.gz && tsx src/yield-replay.ts data out/soniox/played.jsonl.gz out/soniox recorded 1500 out/soniox/soniox-record.jsonl && tsx src/soniox-report.ts out/soniox/soniox-record.jsonl out/soniox/soniox-record-cost.json out/soniox/yield-replay-recorded-1500.jsonl results/soniox/soniox-check.md"
   },
   "dependencies": {
     "@evan/opus": "1.0.3",

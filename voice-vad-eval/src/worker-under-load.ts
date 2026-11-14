@@ -3,7 +3,7 @@
 // (volume gate, turns, partials) with no provider and no key. Signals: USR2 = start measuring, USR1 = write the
 // summary, TERM = close the worker and say how long that took. Memory and CPU are the container's own figures
 // (cgroup), not this process's guess.
-//   VOICE_SPEECH_OBSERVER=1 VOICE_SPEECH_OBSERVER_MODEL=... decide whether the observer is on, exactly as in production
+//   VOICE_SPEECH_OBSERVER_MODEL=... (and VOICE_SPEECH_OBSERVER=0 to switch it off) decide whether the observer is on, exactly as in production
 //   WORKER_ROOT=/app runs the worker code of a built image (this file mounted into it) instead of the repository's
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';

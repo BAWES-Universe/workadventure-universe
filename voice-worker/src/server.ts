@@ -16,6 +16,7 @@ import type { RecognizerFactory } from './recognizer.ts';
 import type { RoomTransport } from './roomTransport.ts';
 import { type OutgoingMessage, Session } from './session.ts';
 import { SpeechObserver, type SpeechObserverSettings } from './speechObserver.ts';
+import type { YieldPolicy } from './yieldControl.ts';
 import type { InputSink } from './transport.ts';
 import { ASSEMBLYAI_ADAPTER, AssemblyAiRecognition } from './assemblyai.ts';
 import { ASYNC_ADAPTER, AsyncSpeech } from './async.ts';
@@ -99,6 +100,12 @@ export interface WorkerOptions {
     maxPreviews?: number;
     /** Internal, off when absent: a second listener that only counts what a speech detector says (speechObserver.ts). It changes nothing anyone hears. */
     speechObserver?: SpeechObserverSettings;
+    /**
+     * Internal (yieldControl.ts): the bots whose voice pauses on a loud sound and stops only once it is speech, and how.
+     * Only with the speech observer on. No `botIds`: every bot (what the image does by default). With `botIds`, only those
+     * (tests compare a bot with and without it); any other bot keeps today's rule. Not a user setting.
+     */
+    yieldBots?: { botIds?: ReadonlySet<string>; policy: YieldPolicy };
     engineId?: string;
 }
 
@@ -389,6 +396,7 @@ export class VoiceWorker {
     sessionHost(send: (message: OutgoingMessage) => void, sessionId?: string) {
         return {
             ...(this.observer && sessionId !== undefined ? { observerFor: this.observer.session.bind(this.observer, sessionId) } : {}),
+            ...(this.observer && this.options.yieldBots ? { yieldPolicyFor: (botId: string) => (!this.options.yieldBots!.botIds || this.options.yieldBots!.botIds.has(botId) ? this.options.yieldBots!.policy : undefined) } : {}),
             engineId: this.engineId,
             counters: this.counters,
             latency: this.latency,

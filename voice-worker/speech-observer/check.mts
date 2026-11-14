@@ -17,7 +17,7 @@ console.log(
     JSON.stringify({
         ok: check.ok,
         failures: check.failures,
-        switchedOn: process.env.VOICE_SPEECH_OBSERVER === '1',
+        switchedOn: process.env.VOICE_SPEECH_OBSERVER !== '0',
         reportingOff: process.env.ORT_DISABLE_TELEMETRY === '1',
         modelPath,
         runtime,
