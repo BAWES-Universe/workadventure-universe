@@ -35,6 +35,7 @@
     import ComputerGroup from "../../../Chat/Bricks/Computer/ComputerGroup.svelte";
     import BrickMadeFrom from "../../../Chat/Bricks/Templates/BrickMadeFrom.svelte";
     import BrickTemplateGroup from "../../../Chat/Bricks/Templates/BrickTemplateGroup.svelte";
+    import type { UpdateField } from "../../../Chat/Bricks/Templates/Template";
     import BrickLookPicker from "../../../Chat/Bricks/BrickLookPicker.svelte";
     import BotWokaPicker from "./BotWokaPicker.svelte";
     import BotCompanionPicker from "./BotCompanionPicker.svelte";
@@ -59,6 +60,7 @@
     import BotToolsHeadingScreen from "./BotToolsHeadingScreen.svelte";
     import BotToolsApprovalsScreen from "./BotToolsApprovalsScreen.svelte";
     import {
+        brickAfterTemplate,
         brickChangeBetween,
         brickPutBack,
         brickSavedAfter,
@@ -579,6 +581,26 @@
         onSave();
     }
 
+    /**
+     * The owner took parts of a template's update (game #2008): Orbit has them now, so the page shows them and counts them as
+     * saved. A part the person is editing right now (it differs from what was saved) is theirs to keep.
+     */
+    async function takeFromTemplate(taken: UpdateField[]) {
+        if (!currentBot) return;
+        const botId = currentBot.id;
+        let fresh: BotData;
+        try {
+            fresh = await botApiService.getBot(botId);
+        } catch (error) {
+            console.warn("Could not read a Brick after a template update", error);
+            return;
+        }
+        if (!currentBot || currentBot.id !== botId) return;
+        const after = brickAfterTemplate(currentBot, brickSaved, fresh, taken);
+        currentBot = after.bot;
+        brickSaved = after.saved;
+    }
+
     /** A Brick's look, saved on the tap that picks it (no Save): true once Orbit has it. */
     async function pickBrickLook(textureId: string): Promise<boolean> {
         if (!currentBot) return false;
@@ -903,6 +925,8 @@
                     brickId={currentBot.id}
                     name={currentBot.name || "Brick"}
                     onConnect={(label) => brick?.openApps?.(label)}
+                    refreshKey={openGroup}
+                    onTaken={takeFromTemplate}
                     onOpenGroup={(id) => {
                         openGroup = id;
                         lastOpenGroup = id;

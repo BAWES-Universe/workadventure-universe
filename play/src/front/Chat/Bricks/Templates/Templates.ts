@@ -1,4 +1,5 @@
 import { botApiService } from "../../../external-modules/bots/services/BotApiService";
+import { isRecord } from "./isRecord";
 import {
     NO_CHOICES,
     parseMadeFromView,
@@ -43,7 +44,11 @@ export function readTemplatePreview(templateId: string): Promise<Read<TemplatePr
 
 /** The three short lists under "Start from a template". */
 export function readTemplateLists(): Promise<Read<TemplateLists>> {
-    return read(async () => parseTemplateLists(await botApiService.getTemplateLists()));
+    return read(async () => {
+        const answer = await botApiService.getTemplateLists();
+        // Not a list at all (null, or something else): that is a failed read with Try again, not three empty lists
+        return isRecord(answer) ? parseTemplateLists(answer) : undefined;
+    });
 }
 
 /** Star keeps a template for later. False when Orbit refused or could not be reached. */

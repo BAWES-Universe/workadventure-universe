@@ -28,6 +28,8 @@
     let phase: Phase = "loading";
     let template: MakerTemplate | undefined;
     let look: TemplateLook | undefined;
+    // The look is being read, was read, or could not be: "needs nothing" is only said after a read that found nothing
+    let lookState: "reading" | "read" | "failed" = "reading";
     let choices: MakerChoices = NO_CHOICES;
     let editingFirst = false;
     let firstDraft = "";
@@ -65,10 +67,29 @@
 
     async function readLook() {
         const mine = ++reading;
+        lookState = "reading";
         const answer = await readTemplateLook(brickId, choices, template?.audience);
         if (gone || mine !== reading) return;
         // Not readable (the look comes back when the group opens again): the rows that need it say nothing
         look = answer.ok ? answer.value : undefined;
+        lookState = answer.ok ? "read" : "failed";
+    }
+
+    // The group opens: what the maker changed on the page since (so "Share your latest changes" shows) is read again.
+    // Only the template's own state is taken; what was chosen here stays.
+    let wasOpen = open;
+    let refreshing = 0;
+    $: if (open !== wasOpen) {
+        wasOpen = open;
+        if (open && phase === "ready") refresh().catch((error) => console.error(error));
+    }
+
+    async function refresh() {
+        const mine = ++refreshing;
+        const read = await readMakerTemplate(brickId);
+        if (gone || mine !== refreshing || !read.ok) return;
+        template = read.value;
+        await readLook();
     }
 
     onMount(() => {
@@ -254,6 +275,13 @@
                         >
                     </div>
                 {/each}
+            {:else if lookState === "reading"}
+                <p class="bkg-note" data-testid="templateNeedsLoading">{$LL.chat.brick.loading()}</p>
+            {:else if lookState === "failed"}
+                <p class="bkg-note" data-testid="templateNeedsFailed">{t.lookFailed()}</p>
+                <PageButton testId="templateNeedsRetry" on:click={() => readLook()}
+                    >{$LL.chat.brick.tryAgain()}</PageButton
+                >
             {:else}
                 <div class="bkg-tap" data-testid="templateNoNeeds">
                     <span class="bkg-ico"><IconPlugConnected font-size="20" /></span>

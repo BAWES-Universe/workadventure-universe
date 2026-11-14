@@ -24,8 +24,11 @@
     export let name: string;
     export let makerName: string;
     export let update: TemplateUpdate;
-    /** Called with the Brick's page data once the owner has chosen, or when the offer turned out to be gone. */
-    export let onDone: (view: MadeFromView | undefined) => void;
+    /**
+     * Called with the Brick's page data once the owner has chosen (and the parts that were taken), or when the offer
+     * turned out to be gone.
+     */
+    export let onDone: (view: MadeFromView | undefined, taken?: UpdateField[]) => void;
 
     let taken = new Set<UpdateField>();
     let busy = false;
@@ -69,7 +72,7 @@
             if (answer.routinesLeftOut > 0) {
                 warningMessageStore.addWarningMessage(t.routinesLeftOut({ count: answer.routinesLeftOut }));
             }
-            onDone(answer.view);
+            onDone(answer.view, take);
             closeModal();
             return;
         }

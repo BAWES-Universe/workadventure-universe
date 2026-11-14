@@ -414,6 +414,37 @@ describe("Brick templates, the game half (#2008)", () => {
             await open();
             expect(byId("templateShareLatest")).not.toBeNull();
         });
+
+        it("does not say it needs nothing when what it needs could not be read, and reads it again on Try again", async () => {
+            game.getMakerTemplate.mockResolvedValue({ template: maker() });
+            game.lookAtTemplate.mockRejectedValueOnce(new Error("offline"));
+            await open();
+            expect(byId("templateNoNeeds")).toBeNull();
+            expect(byId("templateNeedsFailed")).not.toBeNull();
+            game.lookAtTemplate.mockResolvedValue({ look: look({ needs: [] }) });
+            await click("templateNeedsRetry");
+            expect(byId("templateNeedsFailed")).toBeNull();
+            expect(byId("templateNoNeeds")).not.toBeNull();
+        });
+
+        it("reads the template again when the group opens, so Share your latest changes shows after an edit", async () => {
+            game.getMakerTemplate.mockResolvedValueOnce({
+                template: maker({ shared: true, version: 2, madeFrom: 3, hasChanges: false, latest: look() }),
+            });
+            game.lookAtTemplate.mockResolvedValue({ look: look() });
+            part = new BrickTemplateGroup({
+                target,
+                props: { brickId: "b1", name: "Beat", open: false, onToggle: () => undefined },
+            });
+            await settle();
+            expect(byId("templateShareLatest")).toBeNull();
+            game.getMakerTemplate.mockResolvedValue({
+                template: maker({ shared: true, version: 2, madeFrom: 3, hasChanges: true, latest: look() }),
+            });
+            (part as unknown as { $set: (props: Record<string, unknown>) => void }).$set({ open: true });
+            await settle();
+            expect(byId("templateShareLatest")).not.toBeNull();
+        });
     });
 
     describe("the card at the top of a Brick made from a template", () => {
@@ -454,6 +485,19 @@ describe("Brick templates, the game half (#2008)", () => {
             expect(byId("brickMadeFrom")).toBeNull();
         });
 
+        it("reads the setup again when the page says something changed, so a computer that was given stops being asked for", async () => {
+            game.getMadeFrom.mockResolvedValueOnce(madeFrom());
+            part = new BrickMadeFrom({ target, props: props({ refreshKey: "computer" }) });
+            await settle();
+            expect(byId("brickSetupRequired")).not.toBeNull();
+            game.getMadeFrom.mockResolvedValue(
+                madeFrom({ setup: { needs: [{ ...APP_NEED, ready: true }], setupRequired: false, routinesOff: 0 } })
+            );
+            (part as unknown as { $set: (props: Record<string, unknown>) => void }).$set({ refreshKey: undefined });
+            await settle();
+            expect(byId("brickSetupRequired")).toBeNull();
+        });
+
         it("offers Review when the template was updated", async () => {
             game.getMadeFrom.mockResolvedValue(madeFrom({ update: UPDATE }));
             part = new BrickMadeFrom({ target, props: props() });
@@ -492,12 +536,14 @@ describe("Brick templates, the game half (#2008)", () => {
 
         it("takes only what was picked", async () => {
             game.takeTemplateUpdate.mockResolvedValue(madeFrom());
-            part = new TemplateUpdateSheet({ target, props: props() });
+            const given = props();
+            part = new TemplateUpdateSheet({ target, props: given });
             await settle();
             all("templateUpdateChange")[1].click();
             await tick();
             await click("templateTake");
             expect(game.takeTemplateUpdate).toHaveBeenCalledWith("n1", 2, ["firstThing"]);
+            expect(given.onDone).toHaveBeenCalledWith(expect.anything(), ["firstThing"]);
         });
 
         it("says the template changed again when Orbit answers 409, and keeps the sheet open", async () => {

@@ -256,6 +256,10 @@ describe("Brick templates (#2008)", () => {
             expect(await readTemplateLists()).toMatchObject({ ok: true, value: { starred: [{ id: "t1" }] } });
             orbit.getTemplateLists.mockRejectedValueOnce(new Error("offline"));
             expect(await readTemplateLists()).toEqual({ ok: false, why: "failed" });
+            orbit.getTemplateLists.mockResolvedValueOnce(null);
+            expect(await readTemplateLists()).toEqual({ ok: false, why: "failed" });
+            orbit.getTemplateLists.mockResolvedValueOnce({ starred: [], picks: [], met: [] });
+            expect(await readTemplateLists()).toEqual({ ok: true, value: { starred: [], picks: [], met: [] } });
         });
 
         it("stars and unstars, and says when that did not work", async () => {

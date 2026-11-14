@@ -3,7 +3,7 @@
     import { openModal } from "svelte-modals";
     import LL from "../../../../i18n/i18n-svelte";
     import PageButton from "../../../external-modules/bots/components/page/PageButton.svelte";
-    import { joinNames, missingNeeds, type MadeFromView } from "./Template";
+    import { joinNames, missingNeeds, type MadeFromView, type UpdateField } from "./Template";
     import TemplateUpdateSheet from "./TemplateUpdateSheet.svelte";
     import { readMadeFrom } from "./Templates";
     import { IconPlugConnectedX, IconSparkles, IconTemplate } from "@wa-icons";
@@ -21,6 +21,10 @@
     export let onOpenGroup: (id: string) => void;
     /** Opens the Apps page looking for this app: "Connect Gmail". */
     export let onConnect: (label: string) => void;
+    /** Called with the parts the owner took from an update, so the page can show them (its Personality, its line, its look). */
+    export let onTaken: (taken: UpdateField[]) => void = () => undefined;
+    /** When this changes, the page is read again (a computer was given, a group moved): the setup it shows is never old. */
+    export let refreshKey: unknown = undefined;
 
     let view: MadeFromView | undefined;
     let gone = false;
@@ -30,14 +34,25 @@
     $: missing = view ? missingNeeds(view.setup.needs) : [];
     $: maker = view?.madeFrom.makerName ?? "";
 
-    onMount(() => {
+    function load() {
         readMadeFrom(brickId)
             .then((read) => {
                 // Not made from a template, or Orbit did not say: nothing shows, and the page is as it was
+                // eslint-disable-next-line svelte/infinite-reactive-loop
                 if (!gone && read.ok) view = read.value;
             })
             .catch((error) => console.error(error));
-    });
+    }
+
+    onMount(load);
+
+    let seenKey = refreshKey;
+    $: if (refreshKey !== seenKey) {
+        seenKey = refreshKey;
+        // Only a Brick that is made from a template has anything to read again. Once per change of the key, so no loop.
+        // eslint-disable-next-line svelte/infinite-reactive-loop
+        if (view) load();
+    }
 
     function review() {
         const update = view?.update;
@@ -47,8 +62,10 @@
             name,
             makerName: maker,
             update,
-            onDone: (next: MadeFromView | undefined) => {
-                if (!gone) view = next ?? view;
+            onDone: (next: MadeFromView | undefined, taken: UpdateField[] = []) => {
+                if (gone) return;
+                view = next ?? view;
+                if (taken.length > 0) onTaken(taken);
             },
         });
     }
