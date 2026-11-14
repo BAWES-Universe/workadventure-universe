@@ -21,6 +21,7 @@ import {
 } from "../enums/EnvironmentVariable";
 import { validateQuery } from "../services/QueryValidator";
 import { BaseHttpController } from "./BaseHttpController";
+import { gitHubHandOverPage } from "./GitHubHandOverPage";
 
 const debug = Debug("pusher:requests");
 
@@ -237,6 +238,17 @@ export class FrontController extends BaseHttpController {
         // The order of this route relative to others doesn't matter since it has
         // a unique static path that won't conflict with any dynamic routes.
         this.app.get("/oauth-popup-callback.html", (req: Request, res: Response) => {
+            // GitHub's sign-in (game #2041) is finished by the window that started it, with the person's own sign-in:
+            // this page only hands the code over to that window, and to no other site
+            if (req.query.oauth === "github") {
+                res.type("html").send(
+                    gitHubHandOverPage(
+                        typeof req.query.state === "string" ? req.query.state : "",
+                        typeof req.query.code === "string" ? req.query.code : ""
+                    )
+                );
+                return;
+            }
             const isSuccess = (req.query.oauth as string) === "success";
             const errorMessage = (req.query.message as string) || "";
             const iconClass = isSuccess ? "success" : "error";

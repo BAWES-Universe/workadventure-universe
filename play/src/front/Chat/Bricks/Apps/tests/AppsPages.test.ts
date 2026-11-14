@@ -32,6 +32,8 @@ const game = vi.hoisted(() => ({
     discoverMcpOAuthEndpoints: vi.fn<(url: string, callback: string) => Promise<unknown>>(),
     addMyApp: vi.fn<(app: unknown) => Promise<unknown>>(),
     getMyAppThings: vi.fn<(id: string) => Promise<unknown>>(),
+    saveGitHubKey: vi.fn<(key: string) => Promise<unknown>>(),
+    dropGitHubKey: vi.fn<() => Promise<unknown>>(),
     warn: vi.fn<(message: string) => void>(),
 }));
 // The tests run Svelte's server build, where onMount does nothing; the pages read on mount.
@@ -61,6 +63,8 @@ vi.mock("../../../../external-modules/bots/services/BotApiService", () => ({
         discoverMcpOAuthEndpoints: game.discoverMcpOAuthEndpoints,
         addMyApp: game.addMyApp,
         getMyAppThings: game.getMyAppThings,
+        saveGitHubKey: game.saveGitHubKey,
+        dropGitHubKey: game.dropGitHubKey,
     },
 }));
 vi.mock("../../../../Stores/ErrorStore", () => ({ warningMessageStore: { addWarningMessage: game.warn } }));
@@ -81,6 +85,7 @@ vi.mock("../Reconnect", () => ({
     signInInPopup: vi.fn(() => Promise.resolve("done")),
 }));
 
+import { reconnectApp } from "../Reconnect";
 import { loadLocale } from "../../../../../i18n/i18n-util.sync";
 import { setLocale } from "../../../../../i18n/i18n-svelte";
 import AddManagerSheet from "../AddManagerSheet.svelte";
@@ -460,6 +465,156 @@ describe("the Apps pages (#2001)", () => {
             await open("gmail");
             expect(words(byId("appSignInEnded"))).toContain("Your Bricks can't use Gmail until you reconnect it.");
             expect(words(byId("appReconnect"))).toBe("Reconnect Gmail");
+        });
+    });
+
+    describe("GitHub (#2041)", () => {
+        const github = (over: Record<string, unknown> = {}) =>
+            appPage({
+                app: tavily({ id: "gh", name: "GitHub", authType: "oauth", source: "github", lendable: false }),
+                canLendTo: [],
+                canLetUse: [],
+                github: {
+                    login: "BAWES",
+                    ownKey: false,
+                    places: [
+                        {
+                            account: "BAWES",
+                            type: "User",
+                            repos: "all",
+                            manageUrl: "https://github.com/settings/installations/1",
+                        },
+                        {
+                            account: "BAWES-Universe",
+                            type: "Organization",
+                            repos: "all",
+                            manageUrl: "https://github.com/x/2",
+                        },
+                    ],
+                    waiting: [{ account: "acme-corp", type: "Organization" }],
+                    addPlaceUrl: "https://github.com/apps/bawes-universe/installations/select_target",
+                    installUrl: "https://github.com/apps/bawes-universe/installations/new",
+                    ownKeyPage: "https://github.com/settings/tokens/new",
+                    known: true,
+                    ...over,
+                },
+            });
+        const open = async () => {
+            page = new AppPage({ target, props: { appId: "gh", onBack: () => {} } });
+            await settle();
+        };
+        const type = async (value: string) => {
+            const input = byId("gitHubKeyInput") as HTMLInputElement;
+            input.value = value;
+            input.dispatchEvent(new Event("input"));
+            await settle();
+        };
+
+        beforeEach(() => {
+            game.getMyApp.mockResolvedValue(github());
+            game.saveGitHubKey.mockResolvedValue({ id: "gh", login: "BAWES" });
+            game.dropGitHubKey.mockResolvedValue({ id: "gh" });
+        });
+
+        it("says who it is signed in as, where it works, what waits for an owner, and that Bricks work as the person", async () => {
+            await open();
+            expect(words(byId("appPage"))).toContain("Signed in as @BAWES");
+            expect(allById("gitHubPlace").map(words)).toEqual([
+                "BAWES Your account · all repos",
+                "BAWES-Universe All repos",
+            ]);
+            expect(words(byId("gitHubWaiting"))).toBe("acme-corp Waiting for an owner's OK");
+            expect(words(byId("gitHubAddPlace"))).toBe("Add a place or change repos Opens GitHub");
+            expect(words(byId("appPage"))).toContain(
+                "Your Bricks work as you. What they push, open and merge shows as @BAWES on GitHub."
+            );
+            expect(words(byId("appOnlyForYou"))).toContain("GitHub is signed in as you");
+            expect(words(byId("gitHubUseKey"))).toContain("Use my own GitHub key instead");
+            expect(words(byId("appPage"))).toContain(
+                "Every Brick stops using it at once. Nothing on GitHub is deleted."
+            );
+            expect(byId("gitHubKeyEverywhere")).toBeNull();
+        });
+
+        it("says it could not check with GitHub, and says when it is added nowhere yet", async () => {
+            game.getMyApp.mockResolvedValue(github({ known: false, places: [], waiting: [] }));
+            await open();
+            expect(words(byId("appPage"))).toContain("Couldn't check with GitHub just now.");
+            page?.$destroy();
+            game.getMyApp.mockResolvedValue(github({ places: [], waiting: [] }));
+            await open();
+            expect(words(byId("appPage"))).toContain("Not added anywhere yet.");
+        });
+
+        it("opens GitHub to add a place, and reads the page again on coming back", async () => {
+            const opened = vi.spyOn(window, "open").mockReturnValue(null);
+            await open();
+            await click("gitHubAddPlace");
+            expect(opened).toHaveBeenCalledWith(
+                "https://github.com/apps/bawes-universe/installations/select_target",
+                "_blank",
+                "noopener"
+            );
+            game.getMyApp.mockClear();
+            window.dispatchEvent(new Event("focus"));
+            await settle();
+            expect(game.getMyApp).toHaveBeenCalledTimes(1);
+            window.dispatchEvent(new Event("focus"));
+            await settle();
+            expect(game.getMyApp).toHaveBeenCalledTimes(1);
+            opened.mockRestore();
+        });
+
+        it("shows the waiting sheet with the link to send, and goes on to the key from there", async () => {
+            await open();
+            await click("gitHubWaiting");
+            expect(words(byId("gitHubWaitingSheet"))).toContain("Waiting for acme-corp");
+            expect(words(byId("gitHubInstallLink"))).toBe("github.com/apps/bawes-universe/installations/new");
+            await click("gitHubCantWait");
+            expect(byId("gitHubWaitingSheet")).toBeNull();
+            expect(byId("gitHubKeySheet")).not.toBeNull();
+        });
+
+        it("saves a pasted key cleaned of spaces, says when GitHub refuses one, and closes when it is taken", async () => {
+            await open();
+            await click("gitHubUseKey");
+            expect((byId("gitHubKeySave") as HTMLButtonElement).disabled).toBe(true);
+            game.saveGitHubKey.mockRejectedValueOnce(
+                Object.assign(new Error("GitHub did not take this key"), { code: "refused" })
+            );
+            await type(" ghp_abcdefghij\n1234 ");
+            await click("gitHubKeySave");
+            expect(game.saveGitHubKey).toHaveBeenCalledWith("ghp_abcdefghij1234");
+            expect(words(byId("gitHubKeyProblem"))).toContain("GitHub didn't take this key");
+            game.saveGitHubKey.mockRejectedValueOnce(new Error("Orbit did not answer in time"));
+            await click("gitHubKeySave");
+            expect(words(byId("gitHubKeyProblem"))).toContain("Couldn't reach GitHub just now");
+            game.getMyApp.mockResolvedValue(github({ ownKey: true }));
+            await click("gitHubKeySave");
+            expect(byId("gitHubKeySheet")).toBeNull();
+            expect(words(byId("appPage"))).toContain("Your own key · @BAWES");
+        });
+
+        it("with the person's own key: works everywhere it does, switches back through GitHub's sign-in, and offers no key", async () => {
+            game.getMyApp.mockResolvedValue(github({ ownKey: true }));
+            await open();
+            expect(words(byId("gitHubKeyEverywhere"))).toBe(
+                "Everywhere your key works Every repo you can reach on GitHub"
+            );
+            expect(byId("gitHubPlace")).toBeNull();
+            expect(byId("gitHubAddPlace")).toBeNull();
+            expect(byId("gitHubUseKey")).toBeNull();
+            await click("gitHubSwitchBack");
+            expect(reconnectApp).toHaveBeenCalledWith("gh");
+            expect(game.dropGitHubKey).toHaveBeenCalledTimes(1);
+        });
+
+        it("keeps the key when the sign-in is stopped", async () => {
+            vi.mocked(reconnectApp).mockResolvedValueOnce("stopped");
+            game.getMyApp.mockResolvedValue(github({ ownKey: true }));
+            await open();
+            await click("gitHubSwitchBack");
+            expect(game.dropGitHubKey).not.toHaveBeenCalled();
         });
     });
 

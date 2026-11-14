@@ -5,6 +5,8 @@
  * whether it still works.
  */
 
+import { parseGitHubWhere, type GitHubWhere } from "./GitHub";
+
 /** The four things bots may use an app for, as Orbit names them for a lend. */
 export const THINGS = ["lookUp", "make", "change", "deleteSend"] as const;
 export type Thing = (typeof THINGS)[number];
@@ -72,6 +74,8 @@ export interface MyAppPage {
     canLetUse: BrickChoice[];
     lentTo: Lend[];
     canLendTo: UniverseChoice[];
+    /** The person's GitHub (game #2041): where it works, and where it waits for an owner's OK */
+    github?: GitHubWhere;
 }
 
 export interface Person {
@@ -251,7 +255,9 @@ export function parseMyAppPage(value: unknown): MyAppPage | undefined {
     const canLetUse = list(value.canLetUse, parseBrickChoice);
     const lentTo = list(value.lentTo, lend);
     const canLendTo = list(value.canLendTo, universeChoice);
-    return app && canLetUse && lentTo && canLendTo ? { app, canLetUse, lentTo, canLendTo } : undefined;
+    if (!app || !canLetUse || !lentTo || !canLendTo) return undefined;
+    const github = app.source === "github" ? parseGitHubWhere(value.github) : undefined;
+    return { app, canLetUse, lentTo, canLendTo, ...(github ? { github } : {}) };
 }
 
 function person(value: unknown): Person | undefined {

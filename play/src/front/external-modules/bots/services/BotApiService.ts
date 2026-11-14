@@ -1319,6 +1319,36 @@ export class BotApiService {
         return await this.appsCall(`/api/me/apps/${encodeURIComponent(appId)}/things`);
     }
 
+    /**
+     * "Use my own GitHub key instead" (game #2041): the key goes to Orbit, which checks it with GitHub and keeps it locked; it is
+     * never shown again. Answers `{ id, login }`. Throws with `code` "refused" when GitHub did not take the key.
+     */
+    async saveGitHubKey(key: string): Promise<unknown> {
+        return await this.appsCall("/api/me/apps/github/key", { method: "POST", body: JSON.stringify({ key }) });
+    }
+
+    /**
+     * Finishes a GitHub sign-in that came back to the sign-in window, as the signed-in person (only the person who started it can).
+     * `installUrl` when Universe's GitHub App is not added anywhere of theirs yet: the page to pick where it works.
+     */
+    async finishGitHubSignIn(state: string, code: string): Promise<{ installUrl: string | null }> {
+        const answer = (await this.appsCall("/api/me/apps/github/finish", {
+            method: "POST",
+            body: JSON.stringify({ state, code }),
+        })) as { installUrl?: unknown } | undefined;
+        return {
+            installUrl:
+                typeof answer?.installUrl === "string" && answer.installUrl.startsWith("https://github.com/")
+                    ? answer.installUrl
+                    : null,
+        };
+    }
+
+    /** "Switch back to GitHub sign-in": the pasted key is deleted from Universe; the person signs in on GitHub again. */
+    async dropGitHubKey(): Promise<unknown> {
+        return await this.appsCall("/api/me/apps/github/key", { method: "DELETE" });
+    }
+
     /** One of the person's apps: its Bricks, where it is lent, and the universes it could still be lent to. */
     async getMyApp(appId: string): Promise<unknown> {
         return await this.appsCall(`/api/me/apps/${encodeURIComponent(appId)}`);
@@ -1449,7 +1479,10 @@ export class BotApiService {
 
     /** "Connect" on a ready-made app: the person's connection and the address of the app's own sign-in page, unless already signed in. */
     async connectReadyMadeApp(key: string, returnUrl: string): Promise<unknown> {
-        return await this.appsCall("/api/me/apps/ready-made", { method: "POST", body: JSON.stringify({ key, returnUrl }) });
+        return await this.appsCall("/api/me/apps/ready-made", {
+            method: "POST",
+            body: JSON.stringify({ key, returnUrl }),
+        });
     }
 
     /** "More apps it can use here" on a room bot's page: apps lent to its universe by the asker, and the universe's own. */
