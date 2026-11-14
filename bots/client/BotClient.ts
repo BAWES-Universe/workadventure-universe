@@ -39,6 +39,7 @@ import type { ChatUpload, SentMedia } from '../services/ChatFiles';
 import { extractChatLinks } from '../utils/chatLinks';
 import { resolve4, resolve6 } from 'dns/promises';
 import * as Sentry from '@sentry/node';
+import { sanitizedError } from '../utils/sanitizedError';
 import { VoiceCalls } from '../voice/VoiceCalls';
 import { WorkerLink } from '../voice/VoiceLink';
 import { VOICE_BOT_TAG } from '../voice/VoiceBotTag';
@@ -1558,7 +1559,7 @@ export class BotClient {
         if (!to) return;
 
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-            console.log(`[Bot ${this.config.botId}] Sending chat message to space ${spaceName}: "${message}"`);
+            console.log(`[Bot ${this.config.botId}] Sending chat message to space ${spaceName} (${message.length} characters)`);
         }
 
         // Chat messages are sent via PublicEvent with spaceMessage, not updateSpaceUserMessage
@@ -2201,7 +2202,7 @@ export class BotClient {
         }
 
         if (process.env.ENABLE_BOT_DEBUG === 'true') {
-            console.log(`[Bot ${this.config.botId}] Sending stream chunk to space ${spaceName}: token="${token.substring(0, 30)}", isFinal=${isFinal}`);
+            console.log(`[Bot ${this.config.botId}] Sending stream chunk to space ${spaceName} (${token.length} characters), isFinal=${isFinal}`);
         }
 
         // A reply written for someone alone with the bot is delivered to them and nobody else, to its last piece (#1993)
@@ -2538,8 +2539,9 @@ export class BotClient {
         if (this.isMeetingSpace(spaceName)) return false;
         if (this.accessGate && !(await this.chatAllowed(this.accessGate, spaceName, playerId))) return false;
         this.behavior.onChatMessage(spaceName, text, playerId).catch((error) => {
-            console.error(`[Bot ${this.config.botId}] onChatMessage error for a card answer:`, error);
-            Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
+            // What went wrong while answering, not its words: an error message can quote what was said (#1841)
+            console.error(`[Bot ${this.config.botId}] onChatMessage error for a card answer: ${error?.name ?? 'Error'}`);
+            Sentry.captureException(sanitizedError(error, `onChatMessage failed for a card answer (${error?.name ?? 'Error'})`));
         });
         return true;
     }
@@ -3749,7 +3751,7 @@ export class BotClient {
                     // When the line reached the bot, before anything is asked about it: a card shown after is not answered by it (#1661)
                     const heardAt = Date.now();
                     if (chatMessage && this.behavior) {
-                        console.log(`[Bot ${this.config.botId}] Received chat via updateSpaceUserMessage: "${chatMessage}" from user ${message.updateSpaceUserMessage.userId}`);
+                        console.log(`[Bot ${this.config.botId}] Received chat via updateSpaceUserMessage (${chatMessage.length} characters) from user ${message.updateSpaceUserMessage.userId}`);
                         // With others in the bubble, only what is said to the bot reaches it (#1220)
                         if (!this.attention.hears(message.updateSpaceUserMessage.spaceName, message.updateSpaceUserMessage.userId ?? 0, chatMessage)) {
                             break;
@@ -3773,8 +3775,9 @@ export class BotClient {
                             undefined,
                             heardAt
                         ).catch(error => {
-                            console.error(`[Bot ${this.config.botId}] onChatMessage error:`, error);
-                            Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
+                            // What went wrong while answering, not its words: an error message can quote what was said (#1841)
+                            console.error(`[Bot ${this.config.botId}] onChatMessage error: ${error?.name ?? 'Error'}`);
+                            Sentry.captureException(sanitizedError(error, `onChatMessage failed (${error?.name ?? 'Error'})`));
                         });
                     }
                 }
@@ -3792,7 +3795,7 @@ export class BotClient {
                     const senderUserId = message.publicEvent.senderUserId; // spaceUserId format: "roomID_userID"
                     
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[Bot ${this.config.botId}] publicEvent spaceMessage: "${spaceMessage.message}" from ${senderName}, senderUserId: ${senderUserId}, players map size: ${this.players.size}`);
+                        console.log(`[Bot ${this.config.botId}] publicEvent spaceMessage (${spaceMessage.message.length} characters) from ${senderName}, senderUserId: ${senderUserId}, players map size: ${this.players.size}`);
                     }
                     
                     // Extract numeric userId from senderUserId (format: "roomID_userID")
@@ -3892,7 +3895,7 @@ export class BotClient {
                         // Said out loud, not typed, to this bot and let through: a card waiting for an answer says so (#1661)
                         if (spaceMessage.spoken) this.noteSpoken(spaceName, senderId);
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                            console.log(`[Bot ${this.config.botId}] Calling behavior.onChatMessage: "${spaceMessage.message}" from ${senderName} (userId: ${senderId})`);
+                            console.log(`[Bot ${this.config.botId}] Calling behavior.onChatMessage (${spaceMessage.message.length} characters) from ${senderName} (userId: ${senderId})`);
                         }
                         // Detect URL from message text independently of uploads —
                         // previously `url || extractUrlFromText` short-circuited,
@@ -3924,8 +3927,9 @@ export class BotClient {
                             BotClient.uploadsOf(spaceMessage, detectedMime),
                             heardAt
                         ).catch(error => {
-                            console.error(`[Bot ${this.config.botId}] onChatMessage error:`, error);
-                            Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
+                            // What went wrong while answering, not its words: an error message can quote what was said (#1841)
+                            console.error(`[Bot ${this.config.botId}] onChatMessage error: ${error?.name ?? 'Error'}`);
+                            Sentry.captureException(sanitizedError(error, `onChatMessage failed (${error?.name ?? 'Error'})`));
                         });
                     } else {
                         if (senderId === 0) {
