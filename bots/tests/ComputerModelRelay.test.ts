@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import express from 'express';
-import { createComputerModelRelay, estimateCallMicros, outputCapOf, relayOrbitFor, type RelayOrbit, type RelayRoute, type SettleInput } from '../server/ComputerModelRelay';
+import { createComputerModelRelay, estimateCallMicros, neverReached, RELAY_GUARDS, outputCapOf, relayOrbitFor, type RelayOrbit, type RelayRoute, type SettleInput } from '../server/ComputerModelRelay';
 import type { AIProviderConfig } from '../ai/types';
 
 vi.mock('../ai/encryption', () => ({ decryptApiKey: (value: string | null | undefined) => (value ? `plain-${value}` : null) }));
@@ -196,6 +196,74 @@ describe('the call', () => {
         const { answer } = await askAndSettle({ messages });
         expect(answer.status).toBe(502);
         expect(settled()).toEqual([{ jobId: JOB, callId: expect.any(String), sent: false }]);
+    });
+
+    it('a connection that broke after the request went out is owed, not given back; only "never connected" is', async () => {
+        expect(neverReached(Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('x'), { code: 'ECONNREFUSED' }) }))).toBe(true);
+        expect(neverReached(Object.assign(new Error('x'), { code: 'ENOTFOUND' }))).toBe(true);
+        expect(neverReached(Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('x'), { code: 'ECONNRESET' }) }))).toBe(false);
+        expect(neverReached(new Error('socket hang up'))).toBe(false);
+        // the upstream hangs up mid-request
+        upstreamHandler = (req) => req.socket.destroy();
+        const answer = await ask({ messages });
+        await answer.text();
+        await vi.waitFor(() => expect(orbit.settle).toHaveBeenCalledTimes(1), { timeout: 3000 });
+        expect(settled()[0]).toMatchObject({ sent: true, cutShort: true });
+    });
+
+    it('a port with nothing listening gives the room back too', async () => {
+        const closed = await listen(express());
+        const address = `${urlOf(closed)}/v1`;
+        await new Promise<void>((resolve) => closed.close(() => resolve()));
+        route = { config: config({ endpoint: address }), source: 'universe-ai', keyOwnerId: null };
+        const { answer } = await askAndSettle({ messages });
+        expect(answer.status).toBe(502);
+        expect(settled()).toEqual([{ jobId: JOB, callId: expect.any(String), sent: false }]);
+    });
+
+    it('a key that cannot be read gives the room back, as nothing was sent', async () => {
+        const encryption = await import('../ai/encryption');
+        const spy = vi.spyOn(encryption, 'decryptApiKey').mockImplementation(() => {
+            throw new Error('bad key');
+        });
+        try {
+            const { answer } = await askAndSettle({ messages });
+            expect(answer.status).toBe(502);
+            expect(settled()).toEqual([{ jobId: JOB, callId: expect.any(String), sent: false }]);
+            expect(upstreamRequests).toHaveLength(0);
+        } finally {
+            spy.mockRestore();
+        }
+    });
+
+    it('holds a job to its calls in flight even when they arrive together, and gives the places back', async () => {
+        const cap = RELAY_GUARDS.maxCallsInFlight;
+        const release: Array<() => void> = [];
+        orbit.authorize.mockImplementation(() => new Promise((resolve) => release.push(() => resolve({ ok: true }))));
+        const burst = Array.from({ length: cap + 2 }, () => ask({ messages }));
+        await vi.waitFor(() => expect(release).toHaveLength(cap), { timeout: 3000 });
+        // the ones over the cap were turned away at once, without asking Orbit
+        const refused = await Promise.race(burst.map(async (p, i) => ({ i, status: (await p).status })));
+        expect(refused.status).toBe(429);
+        expect(orbit.authorize).toHaveBeenCalledTimes(cap);
+        release.forEach((go) => go());
+        const answers = await Promise.all(burst);
+        expect(answers.filter((a) => a.status === 429)).toHaveLength(2);
+        expect(answers.filter((a) => a.status === 200)).toHaveLength(cap);
+        await vi.waitFor(() => expect(orbit.settle).toHaveBeenCalledTimes(cap), { timeout: 3000 });
+        // all places are back: a new call is let in
+        orbit.authorize.mockResolvedValue({ ok: true });
+        expect((await ask({ messages })).status).toBe(200);
+    });
+
+    it('gives the place back when Orbit refuses or cannot be reached', async () => {
+        const cap = RELAY_GUARDS.maxCallsInFlight;
+        orbit.authorize.mockResolvedValue({ ok: false, reason: 'allowance' });
+        for (let i = 0; i < cap + 3; i++) expect((await ask({ messages })).status).toBe(429);
+        orbit.authorize.mockRejectedValue(new Error('down'));
+        for (let i = 0; i < cap + 3; i++) expect((await ask({ messages })).status).toBe(503);
+        orbit.authorize.mockResolvedValue({ ok: true });
+        expect((await ask({ messages })).status).toBe(200);
     });
 
     it('refuses an AI it cannot talk to directly, before taking any room', async () => {

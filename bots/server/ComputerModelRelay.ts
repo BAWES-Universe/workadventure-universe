@@ -163,6 +163,19 @@ function factsOf(cost: CallCost, estimated: boolean): { costMicros: number | nul
     return { costMicros: cost.micros, basis: estimated ? 'estimated' : 'measured' };
 }
 
+/** Errors that mean the request never left (no address, nothing listening, no route). Anything else, such as a reset, may have come after the provider took the request. */
+const NEVER_REACHED_CODES = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'UND_ERR_CONNECT_TIMEOUT', 'ERR_INVALID_URL']);
+export function neverReached(error: unknown): boolean {
+    for (let current: unknown = error, depth = 0; current && typeof current === 'object' && depth < 4; depth++) {
+        const code = (current as { code?: unknown }).code;
+        if (typeof code === 'string' && NEVER_REACHED_CODES.has(code)) return true;
+        // fetch itself refused the address before any connection (a port it blocks, an address it cannot read)
+        if (current instanceof Error && /^(bad port|invalid url)/i.test(current.message)) return true;
+        current = (current as { cause?: unknown }).cause;
+    }
+    return false;
+}
+
 interface Ended {
     usage: CallMetadata | undefined;
     /** What came through, when the provider said nothing of its own use: the output is read from it. */
@@ -233,40 +246,50 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
         // Only OpenAI-format providers are reached directly here; others come with their own translation
         if (config.type !== 'openai') return problem(res, 501, 'This Brick’s AI cannot be used from a computer yet.', 'provider_not_supported', 'server_error');
 
+        // Check and take the place in one step, before anything is awaited: calls arriving together cannot all read the same count
         const running = inFlight.get(jobId) ?? 0;
         if (running >= RELAY_GUARDS.maxCallsInFlight) return problem(res, 429, 'Too many calls at once. Slow down.', 'rate_limit_exceeded', 'rate_limit_error');
+        inFlight.set(jobId, running + 1);
+        let held = true;
+        const release = () => {
+            if (!held) return;
+            held = false;
+            const left = (inFlight.get(jobId) ?? 1) - 1;
+            if (left <= 0) inFlight.delete(jobId);
+            else inFlight.set(jobId, left);
+        };
 
         const now = new Date();
         const outputCap = outputCapOf(body, config);
         const callId = randomUUID();
         const payer = source === 'own-key' ? 'own-key' : 'universe';
-        let allowed: Awaited<ReturnType<RelayOrbit['authorize']>>;
-        try {
-            allowed = await deps.orbit.authorize({ token, callId, estimateMicros: estimateCallMicros(body, config, outputCap, now), payer });
-        } catch {
-            return problem(res, 503, 'The service is busy. Try again in a moment.', 'service_unavailable', 'server_error');
-        }
-        if (!allowed.ok) {
-            const reason = 'reason' in allowed ? allowed.reason : 'refused';
-            if (reason === 'allowance') return problem(res, 429, 'This computer’s allowance is used up.', 'insufficient_quota', 'insufficient_quota');
-            if (reason === 'pool') return problem(res, 503, 'Computers are busy right now. Try again in a moment.', 'overloaded', 'server_error');
-            return problem(res, 401, 'Invalid API key.', 'invalid_api_key', 'authentication_error');
-        }
-
-        inFlight.set(jobId, running + 1);
-        const payerPersonId = source === 'own-key' ? route.keyOwnerId : null;
         let ended: Ended = { usage: undefined, outputChars: 0, cutShort: false, notSent: false };
         try {
-            ended = await callProvider({ body, config, streaming, outputCap, res });
-        } catch (error) {
-            console.error('[ComputerRelay] A call failed:', providerErrorText(error));
-            if (!res.headersSent) problem(res, 502, 'The AI did not answer.', 'upstream_error', 'server_error');
-            else res.end();
-            ended = { usage: undefined, outputChars: 0, cutShort: true, notSent: false };
+            let allowed: Awaited<ReturnType<RelayOrbit['authorize']>>;
+            try {
+                allowed = await deps.orbit.authorize({ token, callId, estimateMicros: estimateCallMicros(body, config, outputCap, now), payer });
+            } catch {
+                return problem(res, 503, 'The service is busy. Try again in a moment.', 'service_unavailable', 'server_error');
+            }
+            if (!allowed.ok) {
+                const reason = 'reason' in allowed ? allowed.reason : 'refused';
+                if (reason === 'allowance') return problem(res, 429, 'This computer’s allowance is used up.', 'insufficient_quota', 'insufficient_quota');
+                if (reason === 'pool') return problem(res, 503, 'Computers are busy right now. Try again in a moment.', 'overloaded', 'server_error');
+                return problem(res, 401, 'Invalid API key.', 'invalid_api_key', 'authentication_error');
+            }
+
+            try {
+                ended = await callProvider({ body, config, streaming, outputCap, res });
+            } catch (error) {
+                console.error('[ComputerRelay] A call failed:', providerErrorText(error));
+                if (!res.headersSent) problem(res, 502, 'The AI did not answer.', 'upstream_error', 'server_error');
+                else res.end();
+                ended = { usage: undefined, outputChars: 0, cutShort: true, notSent: false };
+            }
         } finally {
-            inFlight.set(jobId, Math.max(0, (inFlight.get(jobId) ?? 1) - 1));
-            if ((inFlight.get(jobId) ?? 0) === 0) inFlight.delete(jobId);
+            release();
         }
+        const payerPersonId = source === 'own-key' ? route.keyOwnerId : null;
 
         if (ended.notSent) {
             await settleOnce({ jobId, callId, sent: false });
@@ -298,7 +321,15 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
     /** Makes the call and gives the answer back as it comes. */
     async function callProvider(call: { body: Record<string, unknown>; config: AIProviderConfig; streaming: boolean; outputCap: number; res: Response }): Promise<Ended> {
         const { body, config, streaming, outputCap, res } = call;
-        const key = config.apiKeyEncrypted ? decryptApiKey(config.apiKeyEncrypted) : null;
+        // A key that cannot be read means nothing was sent: the room goes back
+        let key: string | null;
+        try {
+            key = config.apiKeyEncrypted ? decryptApiKey(config.apiKeyEncrypted) : null;
+        } catch (error) {
+            console.error('[ComputerRelay] A key could not be read:', providerErrorText(error));
+            problem(res, 502, 'The AI could not be reached.', 'upstream_unreachable', 'server_error');
+            return { usage: undefined, outputChars: 0, cutShort: false, notSent: true };
+        }
         const url = `${(config.endpoint || 'https://api.openai.com/v1').replace(/\/$/, '')}/chat/completions`;
 
         const sent: Record<string, unknown> = { ...body, model: config.model, n: 1, stream: streaming };
@@ -345,11 +376,12 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                     }
                 }
             } catch (error) {
-                // Not reached at all: nothing was sent. A cut-off while waiting is not the same thing and is owed.
+                // Not reached at all (no connection was made): nothing was sent. A cut-off while waiting, or a connection that broke after the request went out, may have been used and is owed.
                 if (!controller.signal.aborted) {
+                    const reached = !neverReached(error);
                     problem(res, 502, 'The AI could not be reached.', 'upstream_unreachable', 'server_error');
-                    console.warn('[ComputerRelay] The provider was not reached:', providerErrorText(error));
-                    return { usage: undefined, outputChars: 0, cutShort: false, notSent: true };
+                    console.warn(reached ? '[ComputerRelay] The connection to the provider broke:' : '[ComputerRelay] The provider was not reached:', providerErrorText(error));
+                    return { usage: undefined, outputChars: 0, cutShort: reached, notSent: !reached };
                 }
                 if (!res.headersSent && !res.writableEnded) problem(res, 504, 'The AI took too long.', 'upstream_timeout', 'server_error');
                 return { usage: undefined, outputChars: 0, cutShort: true, notSent: false };
