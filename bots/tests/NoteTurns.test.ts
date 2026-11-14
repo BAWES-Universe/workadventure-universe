@@ -121,6 +121,41 @@ describe('a note for a bot', () => {
         expect(order).toEqual(['submitted', 'hearing-failed', 'cleanup transcription', 'cleanup file']);
     });
 
+    it('tries keeping the words at Orbit again when it fails for a moment, before letting go of what the provider holds', async () => {
+        const order: string[] = [];
+        const waits: number[] = [];
+        let failures = 2;
+        orbit.recordVoiceNote.mockImplementation(async (_id: string, event: TurnEvent) => {
+            order.push(event.event);
+            if (event.event === 'heard' && failures-- > 0) throw Object.assign(new Error('bad gateway'), { response: { status: 502 } });
+        });
+        orbit.addVoiceNoteCleanup.mockImplementation(async (job: { kind: string }) => void order.push(`cleanup ${job.kind}`));
+        const sleep = async (ms: number) => void waits.push(ms);
+        expect(await turns({ sleep }).hear('bot-1', 'event-1', { bytes: new Uint8Array([1]) }, SENDER)).toMatchObject({ ok: true });
+        expect(order).toEqual(['submitted', 'heard', 'heard', 'heard', 'cleanup transcription', 'cleanup file']);
+        expect(waits).toHaveLength(2);
+    });
+
+    it('lets go of what the provider holds after the last try, and never tries again when Orbit refuses', async () => {
+        const order: string[] = [];
+        const sleep = async () => undefined;
+        orbit.recordVoiceNote.mockImplementation(async (_id: string, event: TurnEvent) => {
+            order.push(event.event);
+            if (event.event === 'heard') throw new Error('orbit down');
+        });
+        orbit.addVoiceNoteCleanup.mockImplementation(async (job: { kind: string }) => void order.push(`cleanup ${job.kind}`));
+        await turns({ sleep }).hear('bot-1', 'event-1', { bytes: new Uint8Array([1]) }, SENDER);
+        expect(order).toEqual(['submitted', 'heard', 'heard', 'heard', 'cleanup transcription', 'cleanup file']);
+
+        order.length = 0;
+        orbit.recordVoiceNote.mockImplementation(async (_id: string, event: TurnEvent) => {
+            order.push(event.event);
+            if (event.event === 'heard') throw Object.assign(new Error('taken over'), { response: { status: 409 } });
+        });
+        await turns({ sleep }).hear('bot-1', 'event-2', { bytes: new Uint8Array([1]) }, SENDER);
+        expect(order).toEqual(['submitted', 'heard', 'cleanup transcription', 'cleanup file']);
+    });
+
     it('deletes at once, through the provider, what Orbit could not keep as a cleanup job', async () => {
         orbit.addVoiceNoteCleanup.mockImplementation(async (job: { kind: string }) => {
             if (job.kind === 'file') throw new Error('orbit down');

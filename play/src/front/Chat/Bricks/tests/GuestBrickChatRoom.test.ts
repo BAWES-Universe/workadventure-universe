@@ -440,6 +440,58 @@ describe("pictures, files and voice notes to the Brick for guests (plan v3)", ()
         expect(device.saved).toBeNull();
     });
 
+    it("sends the new guest's words on their own while the old guest's files are still going up", async () => {
+        let guest = GUEST;
+        const waiting: Array<() => void> = [];
+        const upload = vi.fn(
+            (file: File) =>
+                new Promise<ReturnType<typeof uploaded>>((resolve) => {
+                    waiting.push(() => resolve(uploaded(file.name, file.type)));
+                })
+        );
+        const { room, asked, answers, settle } = withMedia({ upload, guestId: () => guest });
+        answers.push(() => Promise.resolve({ kind: "reply", text: "Hi.", needsAccount: false }));
+        const sending = room.sendFiles(files("menu.png"));
+        room.sendMessage("Old words");
+        // Signed out, and someone else is the guest on this device now: they write before the old files are up
+        guest = "9d9d9d9d-aaaa-4bbb-8ccc-0123456789ab";
+        room.refresh();
+        room.sendMessage("Hello there");
+        await settle();
+        expect(asked).toHaveLength(1);
+        expect(asked[0].message).toBe("Hello there");
+        expect(asked[0].files).toBeUndefined();
+        waiting.forEach((finish) => finish());
+        await sending;
+        await settle();
+        expect(asked).toHaveLength(1);
+        expect(JSON.stringify(get(room.messages))).not.toContain("Old words");
+        expect(JSON.stringify(get(room.messages))).not.toContain("menu.png");
+    });
+
+    it("sends the new guest's words on their own even when the chat was not looked at again", async () => {
+        let guest = GUEST;
+        const waiting: Array<() => void> = [];
+        const upload = vi.fn(
+            (file: File) =>
+                new Promise<ReturnType<typeof uploaded>>((resolve) => {
+                    waiting.push(() => resolve(uploaded(file.name, file.type)));
+                })
+        );
+        const { room, asked, answers, settle } = withMedia({ upload, guestId: () => guest });
+        answers.push(() => Promise.resolve({ kind: "reply", text: "Hi.", needsAccount: false }));
+        const sending = room.sendFiles(files("menu.png"));
+        guest = "9d9d9d9d-aaaa-4bbb-8ccc-0123456789ab";
+        room.sendMessage("Hello there");
+        await settle();
+        expect(asked).toHaveLength(1);
+        expect(asked[0].message).toBe("Hello there");
+        waiting.forEach((finish) => finish());
+        await sending;
+        await settle();
+        expect(asked).toHaveLength(1);
+    });
+
     it("keeps the files to try again when an upload fails, and the words still go", async () => {
         const upload = vi.fn((file: File) =>
             file.name === "bad.png" ? Promise.reject(new Error("too big")) : Promise.resolve(uploaded(file.name))

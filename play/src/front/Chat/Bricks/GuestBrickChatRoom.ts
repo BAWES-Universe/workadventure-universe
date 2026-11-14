@@ -81,6 +81,8 @@ export interface GuestBrickDeps {
 /** A send while files are still uploading joins them: the words and the files are one message to the Brick. */
 interface PendingUpload {
     texts: string[];
+    /** Who the files went up for: words typed by anyone else never go with them. */
+    owner: { guestId: string | null; startedAt: number | undefined };
 }
 
 /**
@@ -158,6 +160,8 @@ export class GuestBrickChatRoom implements ChatRoom {
             this.chat = undefined;
             this.waiting.clear();
         }
+        // Files still going up for a chat that is gone take no more words: what is typed now goes on its own
+        if (this.pendingUpload && !this.stillOwns(this.pendingUpload.owner)) this.pendingUpload = undefined;
         if (!this.chat) {
             const raw = this.deps.readSaved();
             this.chat = parseGuestChat(raw, guestId, now, this.deps.keepMs);
@@ -239,7 +243,9 @@ export class GuestBrickChatRoom implements ChatRoom {
     readonly sendMessage = (message: string): void => {
         const text = message.trim();
         if (!text) return;
-        // Files of this send are still uploading: the words go with them, as one message
+        // Files of this send are still uploading: the words go with them, as one message. Files that went up for a chat
+        // that is gone (signed out, another guest, a new chat) take no words of the chat here: those go on their own
+        if (this.pendingUpload && !this.stillOwns(this.pendingUpload.owner)) this.pendingUpload = undefined;
         if (this.pendingUpload) {
             this.pendingUpload.texts.push(text);
             return;
@@ -279,9 +285,9 @@ export class GuestBrickChatRoom implements ChatRoom {
         const list = [...files];
         const upload = this.deps.upload;
         if (list.length === 0) return;
-        const pending: PendingUpload = { texts: [] };
-        this.pendingUpload = pending;
         const owner = this.owner();
+        const pending: PendingUpload = { texts: [], owner };
+        this.pendingUpload = pending;
         let uploaded: PromiseSettledResult<GuestUploaded>[] = [];
         try {
             uploaded = upload

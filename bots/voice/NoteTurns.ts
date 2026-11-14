@@ -65,12 +65,16 @@ export interface NoteTurnsOptions {
     now?: () => number;
     /** How many notes this server reads and measures at once (each runs ffmpeg); one more is "busy", never queued. One per core by default. */
     measureAtOnce?: number;
+    /** Waits, between tries of keeping the words at Orbit. */
+    sleep?: (ms: number) => Promise<void>;
 }
 
 const CAPABILITIES_MS = 5 * 60_000;
 const HEARING_MS = 60_000;
 const KEEP_MS = 60 * 60_000;
 const KEEP_MAX = 500;
+/** The waits before keeping the words at Orbit is tried again: what the provider holds is let go only after the last try. */
+const KEEP_WORDS_WAITS_MS = [500, 1500];
 
 /** The parts of Orbit this needs. */
 export const needsAll = (caps: VoiceNoteCapabilities | null): boolean => !!caps && caps.hearing && caps.reservations && caps.turns;
@@ -292,8 +296,9 @@ export class NoteTurns {
         try {
             const heard = lease.reconcile && hearer.reconcile ? await hearer.reconcile(settings, lease.reconcile, hooks) : await hearer.hear(settings, { bytes: measured.bytes, filename: measured.filename }, hooks);
             if (owner && botId) this.options.report?.(botId, providerId, { ok: true });
-            await this.record(turn.id, { event: 'heard', generation: lease.generation, transcript: heard.text, seconds: Math.max(0, Math.ceil(heard.seconds ?? measured.seconds)) });
-            // Kept (or Orbit could not be told, logged above): nothing stays at the provider either way, as the plan says
+            await this.keepWords(turn.id, { event: 'heard', generation: lease.generation, transcript: heard.text, seconds: Math.max(0, Math.ceil(heard.seconds ?? measured.seconds)) });
+            // Kept, or Orbit still could not be told after the tries above (logged): nothing stays at the provider either way, as
+            // the plan says. Without the words at Orbit a guest's turn is not answered, and the guest sends the note again
             await letGo();
             const totalMs = this.now() - started;
             this.log(`heard a ${measured.seconds.toFixed(1)} s note with ${settings.adapter} in ${totalMs} ms (download ${downloadMs}, upload ${heard.uploadMs}, wait ${heard.waitMs})`);
@@ -415,6 +420,30 @@ export class NoteTurns {
         if (!('generation' in lease) || typeof lease.transcript !== 'string') return null;
         await this.record(turnId, { event: 'answer-failed', generation: lease.generation });
         return lease.transcript;
+    }
+
+    /**
+     * Keeps the words heard at Orbit before what the provider holds is let go: tried again a little later when Orbit can't be
+     * reached or fails for a moment, never when it refuses (another server took over). Never throws: a last failure is logged.
+     */
+    private async keepWords(turnId: string, event: TurnEvent): Promise<void> {
+        const sleep = this.options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+        for (let attempt = 0; ; attempt++) {
+            try {
+                // eslint-disable-next-line no-await-in-loop
+                await this.options.orbit.recordVoiceNote(turnId, event, this.timeoutMs);
+                return;
+            } catch (error) {
+                const status = (error as { response?: { status?: number } } | null)?.response?.status;
+                const passing = status === undefined || status >= 500 || status === 429;
+                if (!passing || attempt >= KEEP_WORDS_WAITS_MS.length) {
+                    this.log(`could not tell Orbit "${event.event}" for a turn (${describe(error)})`);
+                    return;
+                }
+                // eslint-disable-next-line no-await-in-loop
+                await sleep(KEEP_WORDS_WAITS_MS[attempt]);
+            }
+        }
     }
 
     /** Says what happened. A refusal (another server took over) or an Orbit that can't be reached is only logged. */
