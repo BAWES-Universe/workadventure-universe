@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Subject } from "rxjs";
 import { get, writable } from "svelte/store";
 import { createCallStore } from "../CallStore";
-import { createCallConnection, CALL_CONNECT_TIMEOUT_MS, type CallSpaceLike } from "../CallConnection";
+import {
+    createCallConnection,
+    CALL_CONNECT_TIMEOUT_MS,
+    PENDING_CALL_SPACE,
+    type CallSpaceLike,
+} from "../CallConnection";
 import type { CallMicGate } from "../../../../Space/CallMicGate";
 import type { CallResult } from "../../../../external-modules/bots/services/callFailure";
 
@@ -149,8 +154,10 @@ describe("carrying a call with a Brick (game #2004)", () => {
             reason: "Nora does not take calls",
         });
         expect(t.deps.joinSpace).not.toHaveBeenCalled();
-        expect(t.state()).toMatchObject({ phase: "ended", endedBy: "unavailable" });
+        // Nothing of a call that never started is left on screen: the person can call again at once
+        expect(t.state()).toBeUndefined();
         expect(t.connection.isActive()).toBe(false);
+        expect(t.gates.at(-1)).toBeUndefined();
     });
 
     it("hangs the bot up when this browser cannot join the space", async () => {
@@ -158,6 +165,30 @@ describe("carrying a call with a Brick (game #2004)", () => {
         expect(await t.connection.begin("b1", "Nora")).toMatchObject({ ok: false, failure: "failed" });
         expect(t.deps.endCall).toHaveBeenCalledWith("b1");
         expect(t.gates.at(-1)).toBeUndefined();
+        expect(t.state()).toBeUndefined();
+    });
+
+    it("keeps the microphone out of every space from the moment Call is tapped, before it is turned on", async () => {
+        const t = setup({ micOn: false });
+        const order: string[] = [];
+        t.deps.setGate.mockImplementation((gate: CallMicGate | undefined) => order.push(`gate:${gate?.spaceName}`));
+        t.microphone.turnOn.mockImplementation(() => order.push("mic on"));
+        await t.connection.begin("b1", "Nora");
+        expect(order.slice(0, 2)).toEqual([`gate:${PENDING_CALL_SPACE}`, "mic on"]);
+    });
+
+    it("is not on until the bot is in the space: this person is listed in it too", async () => {
+        const fake = fakeSpace(["me"]);
+        const space = { ...fake.space, mySpaceUserId: "me" };
+        const t = setup({ space: { ...fake, space } });
+        await t.connection.begin("b1", "Nora");
+        expect(t.state()?.phase).toBe("connecting");
+        fake.joined.next({ spaceUserId: "me" });
+        expect(t.state()?.phase).toBe("connecting");
+        fake.joined.next({ spaceUserId: "bot" });
+        expect(t.state()?.phase).toBe("on");
+        fake.left.next({ spaceUserId: "me" });
+        expect(t.state()?.phase).toBe("on");
     });
 
     it("takes one call at a time", async () => {

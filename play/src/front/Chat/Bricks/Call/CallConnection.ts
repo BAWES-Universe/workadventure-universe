@@ -23,7 +23,7 @@ export interface CallSpaceLike {
 }
 
 export interface CallDeps {
-    store: Pick<typeof botCallStore, "subscribe" | "start" | "send">;
+    store: Pick<typeof botCallStore, "subscribe" | "start" | "send" | "clear">;
     /** The bot server's answer, for this person. */
     startCall(botId: string): Promise<CallResult>;
     /** Tells the bot server the call is over. Never throws. */
@@ -48,6 +48,12 @@ export type BeginResult =
 
 export const CALL_CONNECT_TIMEOUT_MS = 30_000;
 
+/**
+ * Until the call's own space is joined the gate names a space nothing else has, so the microphone goes nowhere: tapping
+ * Call must never let the person's voice reach a nearby bubble while the call is still being set up.
+ */
+export const PENDING_CALL_SPACE = "call__pending";
+
 export function createCallConnection(deps: CallDeps) {
     let active: { botId: string; stop: () => void } | undefined;
 
@@ -62,12 +68,14 @@ export function createCallConnection(deps: CallDeps) {
         let turnedMicrophoneOn = false;
 
         // However the call ends, once: leave the space, tell the bot server, give the microphone back
-        const finish = (by: "you" | "bot" | "quiet" | "unavailable"): void => {
+        const finish = (by: "you" | "bot" | "quiet" | "unavailable", silently = false): void => {
             if (finished) return;
             finished = true;
             abort.abort();
-            // The state is ended first (so the one true line is shown), then the rest follows
+            // The state is ended first (so the one true line is shown), then the rest follows. A call that never
+            // started has no line of its own: the failure is shown as the warning, and the person can try again at once.
             deps.store.send({ type: "end", by });
+            if (silently) deps.store.clear();
             for (const stop of cleanups.splice(0)) stop();
             deps.setGate(undefined);
             if (turnedMicrophoneOn && deps.microphone?.isOn()) deps.microphone.turnOff();
@@ -78,6 +86,8 @@ export function createCallConnection(deps: CallDeps) {
             if (active?.botId === botId) active = undefined;
         };
         active = { botId, stop: () => finish("you") };
+        // Before anything else: no space carries the microphone until the call's own space is joined
+        deps.setGate({ spaceName: PENDING_CALL_SPACE, owner: "bot" });
         // Tapping Call is the person's own action: turn the microphone on if it was off
         if (deps.microphone && !deps.microphone.isOn()) {
             deps.microphone.turnOn();
@@ -105,14 +115,14 @@ export function createCallConnection(deps: CallDeps) {
             return { ok: false, failure: "failed" };
         }
         if (!started.started) {
-            finish("unavailable");
+            finish("unavailable", true);
             return { ok: false, failure: started.failure, reason: started.reason };
         }
 
         try {
             space = await deps.joinSpace(started.spaceName, abort.signal);
         } catch {
-            finish("unavailable");
+            finish("unavailable", true);
             return { ok: false, failure: "failed" };
         }
         if (finished) {
@@ -129,15 +139,21 @@ export function createCallConnection(deps: CallDeps) {
             deps.store.send({ type: "connected", now: deps.now() });
         };
         // The space holds two members: this person and the bot
-        const joined = live.observeUserJoined.subscribe(botIn);
+        const isMe = (user: unknown): boolean =>
+            live.mySpaceUserId !== undefined &&
+            (user as { spaceUserId?: string } | undefined)?.spaceUserId === live.mySpaceUserId;
+        const joined = live.observeUserJoined.subscribe((user) => {
+            if (!isMe(user)) botIn();
+        });
         cleanups.push(() => joined.unsubscribe());
-        const left = live.observeUserLeft.subscribe(() => {
-            if (connected) finish("bot");
+        const left = live.observeUserLeft.subscribe((user) => {
+            if (connected && !isMe(user)) finish("bot");
         });
         cleanups.push(() => left.unsubscribe());
         const lost = live.onLeaveSpace.subscribe(() => finish("unavailable"));
         cleanups.push(() => lost.unsubscribe());
-        if (get(live.usersStore).size > 0) botIn();
+        // The space lists this person too: the bot is anyone else in it
+        if ([...get(live.usersStore).keys()].some((id) => id !== live.mySpaceUserId)) botIn();
 
         const timer = setTimeout(() => {
             if (!connected) finish("unavailable");
