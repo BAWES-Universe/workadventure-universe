@@ -3537,11 +3537,14 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         runTool: (name: string, args: Record<string, unknown>) => Promise<string>;
         final: string;
         usage: { runId: string; attempt: number; userId?: string };
-    }): Promise<{ ended: 'final' | 'no_tool' | 'steps' | 'not_permitted' | 'resting' | 'failed'; error?: string }> {
+    }): Promise<{ ended: 'final' | 'no_tool' | 'steps' | 'not_permitted' | 'resting' | 'failed'; error?: string; status?: number }> {
         const resolved = await this.resolveProvider(opts.providerId, opts.botId);
         if (resolved.resting) return { ended: 'resting' };
         const config = resolved.config;
         const rounds: ReplySteps = { steps: [] };
+        // A model that answers in words instead of calling a tool is asked once more, then it is a no
+        let user = opts.user;
+        let nudged = false;
         for (let round = 1; round <= opts.maxSteps; round++) {
             if (opts.signal?.aborted) return { ended: 'failed', error: 'stopped' };
             if (!(await opts.permit())) return { ended: 'not_permitted' };
@@ -3554,7 +3557,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             const calls = new Map<string, { id: string; name: string; arguments: string }>();
             let failed: string | null = null;
             try {
-                for await (const chunk of this.meteredStream(ledger, config.providerId, opts.system, opts.user, config, opts.tools, opts.signal, undefined, rounds.steps.length > 0 ? rounds : undefined)) {
+                for await (const chunk of this.meteredStream(ledger, config.providerId, opts.system, user, config, opts.tools, opts.signal, undefined, rounds.steps.length > 0 ? rounds : undefined)) {
                     if (chunk.content) content += chunk.content;
                     for (const call of chunk.toolCalls ?? []) {
                         const known = call.id ? calls.get(call.id) : Array.from(calls.values()).pop();
@@ -3589,9 +3592,14 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 ledger.summary(),
                 { channel: 'task', runId: opts.usage.runId, eventId: `${opts.usage.attempt}.${round}`, ...(opts.usage.userId ? { userId: opts.usage.userId } : {}) }
             );
-            if (errored) return { ended: 'failed', error: failed ?? meta?.errorText ?? 'The model did not answer' };
+            if (errored) return { ended: 'failed', error: failed ?? meta?.errorText ?? 'The model did not answer', ...(meta?.errorStatus ? { status: meta.errorStatus } : {}) };
             const pending = Array.from(calls.values()).filter((call) => call.name.trim() !== '');
-            if (pending.length === 0) return { ended: 'no_tool' };
+            if (pending.length === 0) {
+                if (nudged || round >= opts.maxSteps) return { ended: 'no_tool' };
+                nudged = true;
+                user = `${opts.user}\n\nAnswer by calling a tool this time: end the check by calling ${opts.final}, not with plain words.`;
+                continue;
+            }
             const results: { id: string; name: string; text: string }[] = [];
             let finished = false;
             for (const call of pending) {

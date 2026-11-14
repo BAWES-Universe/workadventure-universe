@@ -397,6 +397,15 @@ describe('the model of a check', () => {
         expect(await briefing.run(run({ kind: 'schedule' }), async () => true)).toEqual({ kind: 'failed', error: 'The check did not end with a result.' });
     });
 
+    it('tells the person when the provider said no for good, and stays quiet about a blip or a busy provider', async () => {
+        const failedWith = (status?: number) => modelWith(async () => ({ ended: 'failed', error: 'boom', ...(status ? { status } : {}) })).runner.run(run(), async () => true);
+        expect(await failedWith(401)).toMatchObject({ kind: 'failed', error: expect.stringContaining('would not let it in') });
+        expect(await failedWith(403)).toMatchObject({ kind: 'failed' });
+        expect(await failedWith(400)).toMatchObject({ kind: 'failed', error: expect.stringContaining('turned this check down') });
+        expect(await failedWith(404)).toMatchObject({ kind: 'failed' });
+        for (const status of [408, 409, 429, 500, 503, undefined]) expect(await failedWith(status)).toEqual({ kind: 'unsure' });
+    });
+
     it('is a failure when the model never ended the check, unsure when it could not answer, and stopped when the run may not go on', async () => {
         expect(await modelWith(async () => ({ ended: 'steps' })).runner.run(run(), async () => true)).toMatchObject({ kind: 'failed' });
         expect(await modelWith(async () => ({ ended: 'failed', error: 'timeout' })).runner.run(run(), async () => true)).toEqual({ kind: 'unsure' });
@@ -426,14 +435,16 @@ describe('each model call of a run is on the books, one row each, under the runâ
         const ai = Object.create(AIService.prototype) as AIService;
         const tracked: any[] = [];
         let call = 0;
+        const asked: string[] = [];
         Object.assign(ai, {
             resolveProvider: vi.fn(async () => ({ resting: false, source: 'universe-ai', config: { providerId: 'deepseek-flash' } })),
-            meteredStream: async function* () {
+            meteredStream: async function* (_ledger: unknown, _provider: unknown, _system: unknown, user: string) {
+                asked.push(user);
                 for (const chunk of rounds[call++] ?? []) yield chunk;
             },
             trackUsage: vi.fn(async (...args: unknown[]) => void tracked.push(args)),
         });
-        return { ai: ai as unknown as Pick<AIService, 'runBrickTask'>, tracked };
+        return { ai: ai as unknown as Pick<AIService, 'runBrickTask'>, tracked, asked };
     }
     const base = { botId: 'brick-1', providerId: 'universe-ai', system: 's', user: 'u', tools: [], maxSteps: 4, final: 'finish_check', usage: { runId: 'run-1', attempt: 2, userId: 'sara-uuid' } };
     const done = (tokens: number) => ({ content: '', done: true, metadata: { tokensUsed: tokens, promptTokens: tokens - 10, completionTokens: 10 } });
@@ -481,6 +492,24 @@ describe('each model call of a run is on the books, one row each, under the runâ
         const looping = service([1, 2, 3].map((n) => [{ content: '', done: false, toolCalls: [{ id: `c${n}`, name: 'read_web_page', arguments: '{}' }] }, done(50)]));
         expect(await looping.ai.runBrickTask({ ...base, maxSteps: 3, permit: async () => true, runTool: async () => '{}' })).toEqual({ ended: 'steps' });
         expect(looping.tracked).toHaveLength(3);
+    });
+
+    it('asks once more, in plain words, when the model answers without calling a tool, and then it is a no', async () => {
+        const answered = service([
+            [{ content: 'Nothing new.', done: false }, done(50)],
+            [{ content: '', done: false, toolCalls: [{ id: 'c1', name: 'finish_check', arguments: '{"result":"nothing_new"}' }] }, done(60)],
+        ]);
+        expect(await answered.ai.runBrickTask({ ...base, permit: async () => true, runTool: async () => '{"ok":true}' })).toEqual({ ended: 'final' });
+        expect(answered.asked[0]).toBe('u');
+        expect(answered.asked[1]).toContain('finish_check');
+        const twice = service([[{ content: 'Nothing new.', done: false }, done(50)], [{ content: 'Still nothing.', done: false }, done(50)], [{ content: 'x', done: false }, done(50)]]);
+        expect(await twice.ai.runBrickTask({ ...base, permit: async () => true, runTool: async () => '{}' })).toEqual({ ended: 'no_tool' });
+        expect(twice.asked).toHaveLength(2);
+    });
+
+    it('says which status the provider answered with when a call failed', async () => {
+        const { ai } = service([[{ content: '', done: true, metadata: { error: true, errorText: 'no', errorStatus: 401, tokensUsed: 0 } }]]);
+        expect(await ai.runBrickTask({ ...base, permit: async () => true, runTool: async () => '{}' })).toMatchObject({ ended: 'failed', status: 401 });
     });
 
     it('books a call that failed as an error row, and says it did not finish', async () => {

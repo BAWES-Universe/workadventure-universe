@@ -24,6 +24,9 @@ export interface TaskModelDeps {
     now?: () => Date;
 }
 
+const KEY_TURNED_DOWN = 'The AI this Brick thinks with would not let it in, so the check could not run';
+const ASK_TURNED_DOWN = 'The AI this Brick thinks with turned this check down';
+
 /** What a page gives back to the model at most (it is information for one check, not a file). */
 const PAGE_RESULT_MAX = 12_000;
 
@@ -72,9 +75,16 @@ export class ModelTaskRunner implements BrickTaskModel {
                 return result ? { kind: 'result', result } : { kind: 'failed', error: NO_FINISH_REASON };
             case 'not_permitted':
                 return { kind: 'stopped' };
-            case 'failed':
+            case 'failed': {
+                // A provider that said no for good (the key was turned down, the ask was refused) will say it again: the person is told, not
+                // charged with a try on every lease. A blip, a busy provider or no status at all says nothing about the task.
+                const status = ended.status ?? 0;
+                if (status === 401 || status === 403) return { kind: 'failed', error: KEY_TURNED_DOWN };
+                if (status >= 400 && status < 500 && ![408, 409, 425, 429].includes(status)) return { kind: 'failed', error: ASK_TURNED_DOWN };
+                return { kind: 'unsure' };
+            }
             case 'resting':
-                // The model did not answer (or its key is resting): says nothing about the task, so it is tried again when its lease is over
+                // Its key is resting: says nothing about the task, so it is tried again when its lease is over
                 return { kind: 'unsure' };
             default:
                 return { kind: 'failed', error: NO_FINISH_REASON };
