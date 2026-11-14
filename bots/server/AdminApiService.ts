@@ -6,7 +6,7 @@
 
 import axios, { type AxiosResponse } from 'axios';
 import * as Sentry from '@sentry/node';
-import { parseForgetNotice, type MemoryForgetHandler } from '../memory/ForgetNotice';
+import { parseForgetNotice, parseItemForgets, type ItemForgetHandler, type MemoryForgetHandler } from '../memory/ForgetNotice';
 import { SOMEONE_UNKNOWN } from '../memory/Heard';
 import type { WokaList } from '../matrix/wokaPicture';
 import type { VoiceActiveAnswer, VoiceCredentialsAnswer, VoiceHealthReport, VoiceLimits } from '../voice/VoiceSettings';
@@ -477,6 +477,7 @@ export class AdminApiService {
     // "Not found" answers in a row (30 seconds apart) before a bot is taken as deleted
     private readonly BOT_GONE_AFTER = 3;
     private forgetHandler: MemoryForgetHandler | null = null;
+    private itemForgetHandler: ItemForgetHandler | null = null;
     private privacySyncTimer: NodeJS.Timeout | null = null;
 
     constructor(adminApiUrl?: string, adminApiToken?: string) {
@@ -1500,6 +1501,21 @@ export class AdminApiService {
         this.forgetHandler = handler;
     }
 
+    /** Called with the things a person forgot through Orbit (#2003). */
+    setItemForgetHandler(handler: ItemForgetHandler | null): void {
+        this.itemForgetHandler = handler;
+    }
+
+    private applyItemForgets(botId: string, forgetItems: unknown): void {
+        const items = parseItemForgets(forgetItems);
+        if (!this.itemForgetHandler || items.length === 0) return;
+        try {
+            this.itemForgetHandler(botId, items);
+        } catch (error) {
+            console.error('[AdminApiService] Could not drop forgotten things:', error);
+        }
+    }
+
     private applyForgetNotice(botId: string, forget: unknown): void {
         const notice = parseForgetNotice(forget);
         if (!this.forgetHandler || !notice) return;
@@ -1524,6 +1540,7 @@ export class AdminApiService {
             const hidden = response.data?.hidden === true;
             this.botPrivacyCache.set(botId, { hidden, cachedAt: Date.now() });
             this.applyForgetNotice(botId, response.data?.forget);
+            this.applyItemForgets(botId, response.data?.forgetItems);
             return hidden;
         } catch (error) {
             // Not found (or an Orbit without the setting yet) is a plain "not private", except for a bot last known as

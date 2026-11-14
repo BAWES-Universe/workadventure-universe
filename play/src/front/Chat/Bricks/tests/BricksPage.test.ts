@@ -12,6 +12,12 @@ vi.hoisted(() => {
     } as unknown as typeof ResizeObserver;
 });
 
+vi.hoisted(() => {
+    // The page reads the uploader's address from the page's environment
+    (globalThis as unknown as { window: { env: Record<string, string> } }).window.env = {
+        UPLOADER_URL: "http://uploader.test",
+    };
+});
 const game = vi.hoisted(() => ({
     ensureMyBrick: vi.fn<() => Promise<unknown>>(),
     listMyBricks: vi.fn<() => Promise<unknown>>(),
@@ -73,6 +79,8 @@ vi.mock("../../../external-modules/bots/services/BotApiService", () => ({
         getMyVoiceKeys: game.getMyVoiceKeys,
         getBotPermissions: game.getBotPermissions,
         isInitialized: () => true,
+        getMyMemory: () => Promise.resolve({ items: [] }),
+        getBrickFiles: () => Promise.resolve({}),
         getMyUsage: game.getMyUsage,
         getMyApps: game.getMyApps,
         getMyAppUniverses: game.getMyAppUniverses,
@@ -97,6 +105,8 @@ vi.mock("../../../external-modules/bots/stores/BotCompanionCatalogStore", async 
     };
 });
 vi.mock("../../../Enum/ComputedConst", () => ({ ABSOLUTE_PUSHER_URL: "http://pusher.test/" }));
+// A Brick's page has Memory and Files groups (#2003); their own tests are in MemoryAndFiles.test.ts
+vi.mock("../../../Artifacts/openYourArtifacts", () => ({ openYourArtifacts: vi.fn() }));
 vi.mock("../../../external-modules/bots/stores/BotWokaCatalogStore", () => ({
     botWokaCatalogStore: looks.catalog,
     ensureBotWokaCatalog: looks.ensure,
@@ -572,7 +582,7 @@ describe("the Bricks page (#1995)", () => {
                 "Keeps the family recipes"
             );
             expect(target.querySelector<HTMLElement>('[data-testid="bot-switch"]')).not.toBeNull();
-            // The parts a Brick has so far, in the mock's order. The rest come with their own issues.
+            // The parts a Brick has so far, in the mock's order (Memory and Files after Behavior). The rest come with their own issues.
             const groups = [...target.querySelectorAll<HTMLElement>('[data-testid^="bot-page-group-"]')].map(
                 (group) => group.dataset.testid
             );
@@ -581,6 +591,8 @@ describe("the Bricks page (#1995)", () => {
                 "bot-page-group-say",
                 "bot-page-group-voice",
                 "bot-page-group-behavior",
+                "bot-page-group-memory",
+                "bot-page-group-files",
                 "bot-page-group-access",
                 "bot-page-group-companion",
                 "bot-page-group-advanced",
