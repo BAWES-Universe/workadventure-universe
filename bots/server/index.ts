@@ -250,7 +250,10 @@ async function setupMatrix(): Promise<void> {
     computerSweepInterval.unref?.();
     // Real computers: the runner works the jobs Orbit says are running. A development server that pretends (COMPUTER_PRETEND_RUNNER=yes) has none.
     if (!pretendRunnerOn()) {
-        computerRunner = createComputerRunner({ orbit: runnerOrbitFor(adminApiService), relayUrl: relayUrlFromEnv() });
+        const relayUrl = relayUrlFromEnv();
+        // The host only: never a path, a token or anything after it
+        console.log(`[BotServer] Computer model address for machines: ${relayUrl ? new URL(relayUrl).host : 'none (a job will end with a clear line)'}`);
+        computerRunner = createComputerRunner({ orbit: runnerOrbitFor(adminApiService), relayUrl });
         computerRunner.start(COMPUTER_RUNNER_EVERY_MS);
     }
     console.log(`[BotServer] Matrix direct messages on for ${matrixConfig.domain}`);

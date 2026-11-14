@@ -432,5 +432,12 @@ describe('the bot server’s calls to Orbit', () => {
         expect(relayUrlFromEnv({ COMPUTER_RELAY_URL: 'https://relay.example.test/', BOT_SERVER_URL: 'https://other.example.test' } as never)).toBe('https://relay.example.test');
         expect(relayUrlFromEnv({ BOT_SERVER_URL: 'https://bot-server.example.test/v1/' } as never)).toBe('https://bot-server.example.test');
         expect(relayUrlFromEnv({} as never)).toBeNull();
+        // Else the play server's public https address implies it, the first name replaced; an internal or bare address implies nothing
+        expect(relayUrlFromEnv({ PUSHER_URL: 'https://play.example.test' } as never)).toBe('https://bot-server.example.test');
+        expect(relayUrlFromEnv({ WORKADVENTURE_URL: 'https://play.dev.example.test:8443/' } as never)).toBe('https://bot-server.dev.example.test:8443');
+        expect(relayUrlFromEnv({ PUSHER_URL: 'http://pusher:8080' } as never)).toBeNull();
+        expect(relayUrlFromEnv({ PUSHER_URL: 'http://play.example.test' } as never)).toBeNull();
+        expect(relayUrlFromEnv({ PUSHER_URL: 'https://10.0.0.5' } as never)).toBeNull();
+        expect(relayUrlFromEnv({ PUSHER_URL: 'nonsense' } as never)).toBeNull();
     });
 });

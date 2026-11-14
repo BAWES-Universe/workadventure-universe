@@ -474,8 +474,23 @@ export function runnerOrbitFor(admin: Pick<AdminApiService, 'computerRunningJobs
     };
 }
 
-/** Where the model relay is, for the machine to call: the address chosen for it, or else the bot server's own public address. Null when neither is set. */
+/**
+ * Where the model relay is, for the machine to call, in this order: the address chosen for it (COMPUTER_RELAY_URL), the bot server's public
+ * address (BOT_SERVER_URL), else the one the play server's public address implies (its first name replaced by `bot-server`, the same rule
+ * the game's own front uses). The last is only used when it is an https address; an internal one (http, or a bare host) is no door a machine
+ * outside could use. Null when none fits, and the job then ends with a clear line rather than hand the machine an address it cannot reach.
+ */
 export function relayUrlFromEnv(env: NodeJS.ProcessEnv = process.env): string | null {
-    const value = (env.COMPUTER_RELAY_URL || env.BOT_SERVER_URL || '').trim().replace(/\/+$/, '').replace(/\/v1$/, '');
-    return value || null;
+    const clean = (text: string) => text.trim().replace(/\/+$/, '').replace(/\/v1$/, '');
+    const chosen = clean(env.COMPUTER_RELAY_URL || env.BOT_SERVER_URL || '');
+    if (chosen) return chosen;
+    try {
+        const pusher = new URL((env.PUSHER_URL || env.WORKADVENTURE_URL || '').trim());
+        const labels = pusher.hostname.split('.');
+        if (pusher.protocol !== 'https:' || labels.length < 3 || /^[0-9.]+$/.test(pusher.hostname)) return null;
+        labels[0] = 'bot-server';
+        return `https://${labels.join('.')}${pusher.port ? `:${pusher.port}` : ''}`;
+    } catch {
+        return null;
+    }
 }

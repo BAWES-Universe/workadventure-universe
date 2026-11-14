@@ -3519,7 +3519,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     }
 
     /** Runs use_computer for the person in this direct message. Orbit starts the job and only for the Brick's owner. */
-    private async runComputerToolCall(args: Record<string, unknown>, where: { adminApiService?: AdminApiService; botId?: string; playerId?: number }): Promise<Record<string, unknown>> {
+    private async runComputerToolCall(args: Record<string, unknown>, where: { adminApiService?: AdminApiService; botId?: string; playerId?: number; apps?: string[] }): Promise<Record<string, unknown>> {
         const admin = where.adminApiService ?? this.adminApiService;
         const userId = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId)?.userUuid : undefined;
         if (!admin || !where.botId || !userId || !this.ownBricks.has(where.botId)) return { error: "That can't be done in this chat right now." };
@@ -3528,6 +3528,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             admin,
             botId,
             userId,
+            apps: where.apps,
             onStarted: pretendRunnerOn() ? (jobId) => void runPretendJob(admin, botId, jobId) : undefined,
         });
         // A job started or queued changes what the bar says: read it fresh next time
@@ -4346,7 +4347,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     case COMPUTER_TOOL:
                         result = await this.runComputerToolCall(
                             typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
-                            { adminApiService, botId, playerId }
+                            { adminApiService, botId, playerId, apps: [...new Set([...(toolServerMap?.values() ?? [])].filter((entry) => entry.connectionId || entry.readyMade).map((entry) => entry.serverName).filter((name): name is string => !!name))] }
                         );
                         break;
 
