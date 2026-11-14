@@ -131,6 +131,7 @@ import { COMPUTER_TOOL, computerToolDefinitions, computerToolsNote, isComputerTo
 import { pretendRunnerOn, runPretendJob } from './ComputerPretendRunner';
 import { OFFER_APP_TOOL, appToolDefinitions, appsNote, isAppTool, runAppTool } from './AppTools';
 import { MAKE_BRICK_TOOL, SUGGEST_BRICK_TOOL, brickToolDefinitions, brickToolsNote, isBrickTool, runBrickTool, type BrickNote } from './BrickTools';
+import { CHANGE_TASK_TOOL, KEEP_WORKDAYS_TOOL, MY_TASKS_TOOL, SET_REMINDER_TOOL, isTaskTool, runTaskTool, taskSettingsFor, taskToolDefinitions, taskToolsNote, tasksAreOn, type TaskSettings } from './BrickTasks';
 import { linkOfStore } from '../services/ChatFiles';
 import { addTurnMedia, startTurnMedia, turnMediaNotice, type TurnMedia } from './ArtifactMedia';
 import { charsToFree, StepRoom, stepOf, stepsAsText, withStepsAsText, type ReplySteps } from './replySteps';
@@ -1349,6 +1350,8 @@ export class AIService {
 
             // A Brick's own computer, in its owner's direct messages and only while it is on for them (game #2000)
             const computerOn = channel === 'dm' && botId && playerId !== undefined ? await this.computerOnFor(botId, playerId, adminApiService) : false;
+            // The owner, in their own Brick's direct messages (#2002): Orbit says whether this person may ask it to keep reminders
+            const taskSettings = !options?.onlyForThem && channel === 'dm' && botId && playerId !== undefined ? await this.taskSettingsOf(botId, playerId, botClient, adminApiService) : null;
 
             // Build system prompt. Order matters for provider prompt caching
             // (issue #1333): see ai/systemPrompt.ts.
@@ -1370,6 +1373,8 @@ export class AIService {
                     // Any bot, in a direct message: what it remembers about the person, and forgetting it (#2003)
                     channel === 'dm' && this.memoryToolsOn(botId, botClient) ? memoryToolsNote() : '',
                     computerOn ? computerToolsNote() : '',
+                    // The owner, in their own Brick's direct messages: it can set reminders when they ask (#2002)
+                    taskSettings ? taskToolsNote(taskSettings, Date.now()) : '',
                 ].filter(Boolean).join('\n\n') || undefined,
                 channel,
                 // A direct message with a bot that lives in no room, a Brick (#1995)
@@ -1395,6 +1400,7 @@ export class AIService {
                       this.gatePerson(botId, playerId, botClient, spaceName),
                       computerOn
                   );
+            if (taskSettings) this.offerTaskTools(tools, toolServerMap);
             // In a bubble, what is on an approval card is for one person only: nothing is said before a tool that asks, and
             // nothing from a card is repeated in the chat (#1658). Added at the end, after what the provider caches.
             const nearbyRule = channel === 'world' && botClient && this.approvals && toolServerMap.size > 0 ? NEARBY_ASK_RULE : '';
@@ -1903,7 +1909,7 @@ export class AIService {
                             // Tool calls from a reply that hit its length cap may hold half a file (the repair of broken JSON would still
                             // pass it): the first round reads the cap from this chunk, later rounds from the previous round's last chunk
                             const replyCutOff = !!(followUpIterations === 1 ? chunk.metadata?.truncated : lastFollowUpDoneChunk?.metadata?.truncated);
-                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia, present);
+                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia, present, !!taskSettings);
                             // A card went to one person alone (#1658): the line everyone reads is the whole reply, said instead of the model's own words
                             const sharedLine = sharedLineOf(toolResults);
                             const sharedLineIds = sharedLineIdsOf(toolResults);
@@ -3492,7 +3498,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         else this.ownBricks.delete(botId);
     }
 
-    /** Every Brick that lives in no room and is not deleted: the ones that may have a computer (game #2000). */
+    /** Every Brick that lives in no room and is not deleted: the ones that may have a computer (game #2000) or reminders (#2002). */
     private ownBricks = new Set<string>();
     private computerOnCache = new Map<string, { on: boolean; at: number }>();
 
@@ -3533,6 +3539,44 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     private brickToolsOn(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService): boolean {
         const admin = adminApiService ?? this.adminApiService;
         return !botClient && !!botId && this.helperBricks.has(botId) && !!admin?.isConfigured?.();
+    }
+
+    /**
+     * What Orbit says about this person and this Brick for reminders (#2002), or null: not the owner (a visitor, the Brick for guests), no
+     * Orbit, a room bot, or Orbit could not say. Only for the owner, in their own Brick's direct messages.
+     */
+    private async taskSettingsOf(botId: string, playerId: number, botClient?: BotClient, adminApiService?: AdminApiService): Promise<TaskSettings | null> {
+        if (botClient || !this.ownBricks.has(botId)) return null;
+        const memory = this.conversationMemory?.getMemory(botId, playerId);
+        if (!memory?.userUuid) return null;
+        return taskSettingsFor(adminApiService ?? this.adminApiService, botId, memory.userUuid);
+    }
+
+    /**
+     * Adds the reminder tools to what this reply offers. An App's tool of the same name is not offered beside them, and is not
+     * run for them either: only a reply that offered ours runs ours, so the schema the model sees is the one that runs.
+     */
+    private offerTaskTools(tools: any[], toolServerMap: Map<string, ToolServerEntry>): void {
+        const ours = taskToolDefinitions();
+        const names = new Set<string>(ours.map((tool) => tool.function.name));
+        for (let i = tools.length - 1; i >= 0; i--) if (names.has(tools[i].function.name)) tools.splice(i, 1);
+        for (const name of names) toolServerMap.delete(name);
+        tools.push(...ours);
+    }
+
+    /** Whether Orbit lately said this person is the owner of this Brick: only then is a tool of a reminder's name ours, anywhere else it is a tool server's. */
+    private taskToolsOn(botId?: string, playerId?: number, botClient?: BotClient): boolean {
+        if (botClient || !botId || playerId === undefined) return false;
+        const uuid = this.conversationMemory?.getMemory(botId, playerId)?.userUuid;
+        return !!uuid && this.ownBricks.has(botId) && tasksAreOn(botId, uuid);
+    }
+
+    /** Runs a reminder tool for the person in this direct message (Orbit refuses anyone but the owner). */
+    private async runTaskToolCall(name: string, args: Record<string, unknown>, where: { adminApiService?: AdminApiService; botId?: string; playerId?: number }): Promise<Record<string, unknown>> {
+        const admin = where.adminApiService ?? this.adminApiService;
+        const memory = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId) : undefined;
+        if (!admin || !where.botId || !memory?.userUuid) return { error: "That can't be done in this chat right now." };
+        return runTaskTool(name, args, { admin, botId: where.botId, userId: memory.userUuid });
     }
 
     /** Whether this reply has the two memory tools: a direct message, with a memory that can forget (one kept with Orbit). */
@@ -3928,7 +3972,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         /** This turn's media list (#1510), for an artifact to carry. */
         turnMedia?: TurnMedia[],
         /** Set when other people read the reply (#1993): everyone else who is there, by who they are. */
-        present?: readonly string[]
+        present?: readonly string[],
+        /** This reply was offered the reminder tools (#2002): a call to one of them from a reply that was not offered them is not run. */
+        taskToolsOffered = false
     ): Promise<Array<{ id: string; name: string; result: any }>> {
         // What this reply sends goes to its person alone unless other people read the reply (#1993)
         const only = present === undefined ? playerId : undefined;
@@ -3953,7 +3999,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 // With artifacts off, a tool of the same name belongs to an MCP server: send it down the default branch
                 // So does a file tool's name when Orbit doesn't keep files here (#1508)
                 // And a Brick tool's name anywhere but in a first Brick's direct messages (#1996)
-                switch ((isArtifactTool(toolCall.name) && !artifactsEnabled()) || (isFileTool(toolCall.name) && !this.filesOn(botId, adminApiService)) || (isBrickTool(toolCall.name) && !this.brickToolsOn(botId, botClient, adminApiService)) || (isMemoryTool(toolCall.name) && !this.memoryToolsOn(botId, botClient)) || (isAppTool(toolCall.name) && !this.appToolsOn(botId, botClient, adminApiService)) || (isComputerTool(toolCall.name) && (!!botClient || !this.ownBricks.has(botId ?? ''))) ? '' : toolCall.name) {
+                switch ((isArtifactTool(toolCall.name) && !artifactsEnabled()) || (isFileTool(toolCall.name) && !this.filesOn(botId, adminApiService)) || (isBrickTool(toolCall.name) && !this.brickToolsOn(botId, botClient, adminApiService)) || (isMemoryTool(toolCall.name) && !this.memoryToolsOn(botId, botClient)) || (isAppTool(toolCall.name) && !this.appToolsOn(botId, botClient, adminApiService)) || (isComputerTool(toolCall.name) && (!!botClient || !this.ownBricks.has(botId ?? ''))) || (isTaskTool(toolCall.name) && (!taskToolsOffered || !this.taskToolsOn(botId, playerId, botClient) || !!toolServerMap?.has(toolCall.name))) ? '' : toolCall.name) {
                     case 'get_people_on_map':
                         if (botClient) {
                             const people = botClient.getAllPeople();
@@ -4258,6 +4304,17 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             toolCall.name,
                             typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
                             { botClient, adminApiService, spaceName, botId, playerId, abortSignal, source, present }
+                        );
+                        break;
+
+                    case SET_REMINDER_TOOL:
+                    case MY_TASKS_TOOL:
+                    case CHANGE_TASK_TOOL:
+                    case KEEP_WORKDAYS_TOOL:
+                        result = await this.runTaskToolCall(
+                            toolCall.name,
+                            typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
+                            { adminApiService, botId, playerId }
                         );
                         break;
 
@@ -4640,7 +4697,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         for (const tr of toolResults) {
             // Skip results from media tools and built-in tools — they don't produce URLs to extract
             if (['send_image', 'send_file', 'send_audio', 'send_video', 'get_people_on_map',
-                 'get_bot_position', 'get_areas_on_map', 'navigate_to', READ_WEB_PAGE_TOOL].includes(tr.name) || (isArtifactTool(tr.name) && artifactsEnabled()) || isFileTool(tr.name) || isMemoryTool(tr.name)) {
+                 'get_bot_position', 'get_areas_on_map', 'navigate_to', READ_WEB_PAGE_TOOL].includes(tr.name) || (isArtifactTool(tr.name) && artifactsEnabled()) || isFileTool(tr.name) || isMemoryTool(tr.name) || isTaskTool(tr.name)) {
                 continue;
             }
 
@@ -4716,7 +4773,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         for (const tr of toolResults) {
             // Skip results from our own media tools (they already handled sending)
             if (['send_image', 'send_file', 'send_audio', 'send_video', 'get_people_on_map',
-                 'get_bot_position', 'get_areas_on_map', 'navigate_to', READ_WEB_PAGE_TOOL].includes(tr.name) || (isArtifactTool(tr.name) && artifactsEnabled()) || isFileTool(tr.name) || isMemoryTool(tr.name)) {
+                 'get_bot_position', 'get_areas_on_map', 'navigate_to', READ_WEB_PAGE_TOOL].includes(tr.name) || (isArtifactTool(tr.name) && artifactsEnabled()) || isFileTool(tr.name) || isMemoryTool(tr.name) || isTaskTool(tr.name)) {
                 continue;
             }
 

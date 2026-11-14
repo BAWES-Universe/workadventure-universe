@@ -419,7 +419,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         if (botIdFromMatrixId(this.config.domain, event.sender)) return;
         const connected = connectedAppOf(event.content);
         if (!connected || !this.firstSighting(event.event_id)) return;
-        const note = `[The person signed in to ${connected.name} on its own page, and you may use ${connected.name} now. Carry on with what they asked just before, using it. This line is from the system, not words they typed.]`;
+        const note = `[The person signed in to ${connected.name} on its own page, and you may use ${connected.name} now. Start your answer with the one word “Connected.” in their language, then carry on with what they asked just before, using it. This line is from the system, not words they typed.]`;
         try {
             await this.onMessage({
                 type: 'm.room.message',
@@ -1310,7 +1310,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 // "Make it" tapped on the Brick's suggestion (#1996)
                 ...(!catchUp && offeredBrickOf(content[BRICK_MAKE_KEY]) ? { makeOffered: offeredBrickOf(content[BRICK_MAKE_KEY])! } : {}),
                 // An App was connected from a card (game #2001): a line from the system, nothing is learned about the person from it
-                ...(event.sender && !botIdFromMatrixId(this.config.domain, event.sender) && connectedAppOf(content[APP_CONNECTED_KEY]) ? { note: true } : {}),
+                ...(event.sender && !botIdFromMatrixId(this.config.domain, event.sender) && connectedAppOf(content[APP_CONNECTED_KEY]) ? { note: true, connectedApp: connectedAppOf(content[APP_CONNECTED_KEY])! } : {}),
                 onInterimMessage: async (interim) => {
                     // A lost "let me look" line must not cost the person the real answer, so it never throws.
                     try {

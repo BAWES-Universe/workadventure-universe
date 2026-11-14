@@ -64,7 +64,7 @@
         border-radius: 14px;
         font-size: 13px;
         color: rgb(255 255 255 / 0.8);
-        background: rgb(27 27 41 / 0.96);
+        background: rgb(27 27 41);
     }
     .call-ended.floating {
         position: fixed;

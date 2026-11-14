@@ -8,8 +8,11 @@
     export let userId: number | string;
     export let placeholderSrc: string;
     export let customWidth: string;
+    /** True once there is a picture to show, for a caller that shows something else until then (bind:resolved). */
+    export let resolved = false;
 
     let src: string;
+    $: resolved = !!src;
     let unsubscribe: Unsubscriber | undefined;
     let shownFor: number | string | undefined;
 

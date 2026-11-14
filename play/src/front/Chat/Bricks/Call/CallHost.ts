@@ -4,9 +4,11 @@ import { botApiService } from "../../../external-modules/bots/services/BotApiSer
 import { localUserStore } from "../../../Connection/LocalUserStore";
 import { gameSceneStore } from "../../../Stores/GameSceneStore";
 import { setCallMicGate } from "../../../Space/CallMicGate";
-import { requestedMicrophoneState } from "../../../Stores/MediaStore";
+import { localVoiceIndicatorStore, requestedMicrophoneState } from "../../../Stores/MediaStore";
 import { botCallStore } from "./CallStore";
 import { createCallConnection, type CallSpaceLike } from "./CallConnection";
+import { createCallRuntime } from "./CallRuntime";
+import { nearbyNowFor } from "./NearbyNow";
 
 /**
  * The one call this browser can have with a bot (game #2004), wired to the real game: the bot server, the scene's spaces
@@ -73,4 +75,18 @@ export const stopClearingEndedCalls = botCallStore.subscribe((call) => {
         },
         says ? 6000 : 0
     );
+});
+
+/**
+ * What goes on around a live call: the quiet stretch's clock, the person's own voice, someone walking up, a meeting.
+ * Lives as long as the page does, and does nothing while there is no call.
+ */
+export const callRuntime = createCallRuntime({
+    store: botCallStore,
+    nearby: nearbyNowFor(() => ({
+        uuid: localUserStore.getLocalUser()?.uuid,
+        chatId: localUserStore.getChatId() ?? undefined,
+    })),
+    speaking: localVoiceIndicatorStore,
+    now: () => Date.now(),
 });

@@ -125,6 +125,9 @@
         .call-wrap.floating {
             right: auto;
             width: 408px;
+            /* On a computer the game's action bar runs along the top and draws over this corner (its chat and people
+               buttons covered the call's name), so the bar sits just under it. On a phone that bar is at the bottom. */
+            top: 104px;
         }
     }
     .call-bar {

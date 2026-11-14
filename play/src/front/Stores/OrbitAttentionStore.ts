@@ -27,6 +27,8 @@ export const orbitAttentionCountStore = readable(0, (set) => {
         if (stopped) return;
         if (document.visibilityState === "hidden") return schedule();
         const request = ++latest;
+        // Whenever Orbit is asked anyway, a signed-in player's time zone is kept there too (once per page load)
+        void botApiService.keepTimeZone();
         botApiService
             .getAttentionCount()
             .then((count) => {

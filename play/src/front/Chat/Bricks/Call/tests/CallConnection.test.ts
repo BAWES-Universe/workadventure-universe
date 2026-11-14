@@ -95,6 +95,27 @@ describe("carrying a call with a Brick (game #2004)", () => {
         expect(t.gates.at(-1)).toEqual({ spaceName: SPACE, owner: "bot" });
     });
 
+    it("shows the bot speaking while the call is on, from the sound that comes in from it", async () => {
+        const speaking = writable(false);
+        const added = new Subject<{ showVoiceIndicator: typeof speaking }>();
+        const fake = fakeSpace(["bot"]);
+        const space: CallSpaceLike = {
+            ...fake.space,
+            spacePeerManager: {
+                videoPeerAdded: added,
+                videoPeerRemoved: new Subject(),
+                getVideoForUser: () => undefined,
+            },
+        };
+        const t = setup({ space: { ...fake, space } });
+        await t.connection.begin("b1", "Nora");
+        added.next({ showVoiceIndicator: speaking });
+        speaking.set(true);
+        expect(t.state()?.doing).toBe("speaking");
+        speaking.set(false);
+        expect(t.state()?.doing).toBe("listening");
+    });
+
     it("ends by the bot when the bot leaves the space, and tells the bot server, leaves the space and frees the microphone", async () => {
         const t = setup();
         await t.connection.begin("b1", "Nora");
