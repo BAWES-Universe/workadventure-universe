@@ -129,6 +129,8 @@ export interface DmReplyHooks {
     pointedArtifactIds?: string[];
     /** A line from the system about something the person did (a card they tapped), not words they typed: nothing is learned about them from it. */
     note?: boolean;
+    /** The App the person just connected from a Brick's card (game #2001): the reply's steps line starts with "Connected {name}". */
+    connectedApp?: { app: string; name: string };
     /** The person tapped this starter under a Brick's hello (#1995): the message is the starter's own words. */
     starter?: string;
     /** The person tapped "Make it" on a Brick's suggestion (#1996): the Brick the card described. Their message is the button's own words. */
@@ -273,7 +275,8 @@ export class DmReplyService extends BaseBehavior {
         const waiting = this.waiting.get(key);
         // A note the system wrote is never answered together with what a person typed: the two are kept and learned from differently.
         // Nor is a starter they tapped (#1995): its answer is fixed words, which would leave what they typed unanswered
-        if (waiting && attachments.length === 0 && waiting.note === !!hooks.note && !waiting.starter && !hooks.starter && !hooks.makeOffered) {
+        // Nor an App they just connected: each one gets its own steps line ("Connected Notion"), which one batch cannot show twice
+        if (waiting && attachments.length === 0 && waiting.note === !!hooks.note && !waiting.starter && !hooks.starter && !hooks.makeOffered && !hooks.connectedApp) {
             waiting.texts.push(text);
             // A card replied to in a message that waits is pointed at by the one answer that covers it (game #1781)
             waiting.pointed.push(...(hooks.pointedArtifactIds ?? []));
@@ -284,7 +287,7 @@ export class DmReplyService extends BaseBehavior {
             }));
         }
         const previous = this.queues.get(key);
-        const batch = { texts: [text], pointed: [...(hooks.pointedArtifactIds ?? [])], note: !!hooks.note, starter: !!hooks.starter || !!hooks.makeOffered } as {
+        const batch = { texts: [text], pointed: [...(hooks.pointedArtifactIds ?? [])], note: !!hooks.note, starter: !!hooks.starter || !!hooks.makeOffered || !!hooks.connectedApp } as {
             texts: string[];
             pointed: string[];
             note: boolean;
@@ -557,6 +560,15 @@ export class DmReplyService extends BaseBehavior {
         const showStepsNow = async () => {
             if (steps && hooks.onSteps) await hooks.onSteps(steps.field(), steps.text());
         };
+        // The App the person just connected is the first thing the line says, shown whatever the bot's tool-calls switch says
+        // (it is what they did, not a call the bot made), as in the mock: "Connected Google Calendar · Used Find Events"
+        if (hooks.connectedApp && hooks.onSteps) {
+            const id = `app-connected-${hooks.connectedApp.app}`;
+            steps = new ReplySteps();
+            steps.start([{ id, doing: `Connecting ${hooks.connectedApp.name}`, done: `Connected ${hooks.connectedApp.name}`, group: id }]);
+            steps.finish([{ id, ok: true }]);
+            await showStepsNow();
+        }
         const stopSteps = async () => {
             if (!steps) return;
             steps.stop();

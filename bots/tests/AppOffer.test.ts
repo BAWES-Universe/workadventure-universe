@@ -275,3 +275,99 @@ describe('An App offer in a Brick\'s chat', () => {
         expect(APP_CONNECTED_KEY).toBe(APP_CONNECTED_EVENT);
     });
 });
+
+describe('The line that says an App was connected', () => {
+    const person = { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false };
+    const serviceFor = async (stream: () => AsyncGenerator<any>, showToolCalls: boolean) => {
+        const { DmReplyService } = await import('../server/DmReplyService');
+        const { ConversationMemory } = await import('../memory/ConversationMemory');
+        const service = Object.create(DmReplyService.prototype) as InstanceType<typeof DmReplyService>;
+        Object.assign(service, {
+            playerIds: new Map(),
+            nextPlayerId: -1,
+            loadedBots: new Set([BRICK]),
+            botManager: { getBot: () => null },
+            getBotConfig: async () => ({ botId: BRICK, name: 'Brick', aiProviderRef: 'p' }),
+            aiService: { generateBotResponseStream: vi.fn(stream) },
+            conversationMemory: new ConversationMemory(),
+            conversationStorage: { startConversation: vi.fn(), addMessage: vi.fn(async () => undefined) },
+            shouldShowToolCalls: vi.fn(async () => showToolCalls),
+        });
+        return service;
+    };
+    const find = { id: 'f', doing: 'Looking up events', done: 'Used Find Events', group: 'tool:find_events' };
+
+    it('starts the steps line with "Connected {App}", and keeps it beside the tools the Brick used', async () => {
+        const service = await serviceFor(async function* () {
+            yield { content: '', done: false, reset: true, toolNames: ['find_events'], toolSteps: [find] };
+            yield { content: '', done: false, toolStepResults: [{ id: 'f', ok: true }] };
+            yield { content: 'Connected. Tomorrow: 10:00 standup.', done: false };
+            yield { content: '', done: true, metadata: {} };
+        }, true);
+        const shown: Array<[any, string]> = [];
+        await (service as any).replyNow(BRICK, person, 'note', [], {
+            note: true,
+            connectedApp: { app: 'google-calendar', name: 'Google Calendar' },
+            onSteps: async (field: any, text: string) => void shown.push([structuredClone(field), text]),
+        });
+        // Said at once, before the Brick has done anything
+        expect(shown[0][0]).toMatchObject({ state: 'working', steps: [{ done: 'Connected Google Calendar', state: 'done' }] });
+        expect(shown.at(-1)![0]).toMatchObject({ state: 'done', line: 'Connected Google Calendar · Used Find Events' });
+        expect(shown.at(-1)![1]).toBe('Connected Google Calendar · Used Find Events');
+    });
+
+    it('shows it even when the bot hides its tool calls, since it is what the person did', async () => {
+        const service = await serviceFor(async function* () {
+            yield { content: 'Connected.', done: false };
+            yield { content: '', done: true, metadata: {} };
+        }, false);
+        const shown: Array<[any, string]> = [];
+        await (service as any).replyNow(BRICK, person, 'note', [], {
+            note: true,
+            connectedApp: { app: 'notion', name: 'Notion' },
+            onSteps: async (field: any, text: string) => void shown.push([structuredClone(field), text]),
+        });
+        expect(shown.at(-1)![1]).toBe('Connected Notion');
+    });
+
+    it('gives each App connected in a row its own line, and never answers them as one batch', async () => {
+        const service = await serviceFor(async function* () {
+            yield { content: '', done: true, metadata: {} };
+        }, true);
+        let release: () => void = () => undefined;
+        const gate = new Promise<void>((resolve) => (release = resolve));
+        const replyNow = vi.fn(async () => {
+            await gate;
+            return { text: 'ok', media: [] };
+        });
+        Object.assign(service, { waiting: new Map(), queues: new Map(), replyNow });
+        const apps = [
+            { app: 'google-calendar', name: 'Google Calendar' },
+            { app: 'notion', name: 'Notion' },
+            { app: 'github', name: 'GitHub' },
+        ];
+        // The first is being answered; the other two arrive while it is, one after the other
+        const answers = apps.map((connectedApp) => service.reply(BRICK, person, 'note', [], { note: true, connectedApp }));
+        release();
+        const replies = await Promise.all(answers);
+        expect(replyNow).toHaveBeenCalledTimes(3);
+        expect((replyNow.mock.calls as any[][]).map((call) => call[4].connectedApp)).toEqual(apps);
+        expect(replies.some((reply) => reply?.answeredTogether)).toBe(false);
+    });
+
+    it('adds nothing to an ordinary reply, and tells the Brick to start with "Connected."', async () => {
+        const service = await serviceFor(async function* () {
+            yield { content: 'Hi.', done: false };
+            yield { content: '', done: true, metadata: {} };
+        }, true);
+        const onSteps = vi.fn(async () => undefined);
+        await (service as any).replyNow(BRICK, person, 'hello', [], { onSteps });
+        expect(onSteps).not.toHaveBeenCalled();
+
+        const { bridge, deps } = makeBridge();
+        await bridge.onEvent(invite());
+        await bridge.onEvent(connected());
+        expect(deps.reply.mock.calls[0][2]).toContain('Connected.');
+        expect(deps.reply.mock.calls[0][4]).toMatchObject({ note: true, connectedApp: { app: 'google-calendar', name: 'Google Calendar' } });
+    });
+});
