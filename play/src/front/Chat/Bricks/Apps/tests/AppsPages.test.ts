@@ -256,7 +256,7 @@ describe("the Apps pages (#2001)", () => {
             game.getMyApp.mockResolvedValue(appPage({ app: tavily({ id: "zapier", name: "Zapier" }) }));
             page = new AppsPage({ target, props: { onBack: () => {} } });
             await settle();
-            expect(words(byId("appsAddOwn"))).toBe("Add your own app Paste its MCP link, like Firecrawl");
+            expect(words(byId("appsAddOwn"))).toBe("Add your own app Paste its link, like Firecrawl");
             expect(byId("addAppSheet")).toBeNull();
             await click("appsAddOwn");
             expect(byId("addAppSheet")).not.toBeNull();

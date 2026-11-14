@@ -135,7 +135,7 @@ describe("Add your own app (#2001, mock Part 13)", () => {
     it("starts with only the link, and Next waits for a link", async () => {
         await open();
         expect(words(byId("addAppSheet"))).toContain("Add your own app");
-        expect(words(byId("addAppSheet"))).toContain("Paste the app's MCP link. Universe checks how it signs in.");
+        expect(words(byId("addAppSheet"))).toContain("Paste the app's link. Universe checks how it signs in.");
         expect(byId("addAppName")).toBeNull();
         expect((byId("addAppNext") as HTMLButtonElement).disabled).toBe(true);
         await type("addAppLink", "not a link");

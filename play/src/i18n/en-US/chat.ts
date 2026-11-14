@@ -1481,13 +1481,13 @@ const chat: BaseTranslation = {
             // "Add your own app": the row on the Apps page, and its sheet
             addOwnRow: "Add your own app",
             addOwnRowNotHere: "Not here? Add your own app",
-            addOwnRowHint: "Paste its MCP link, like Firecrawl",
+            addOwnRowHint: "Paste its link, like Firecrawl",
             addOwn: {
                 title: "Add your own app",
-                sub: "Paste the app's MCP link. Universe checks how it signs in.",
+                sub: "Paste the app's link. Universe checks how it signs in.",
                 close: "Close",
                 link: "Link",
-                linkPlaceholder: "https://…/mcp",
+                linkPlaceholder: "https://app.example.com",
                 name: "Name",
                 nameHint: "From the app. Change it any time.",
                 namePlaceholder: "My app",
