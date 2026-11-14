@@ -10,7 +10,7 @@
      * drawn like the game's follow request card (same surface, title size, hint line and pills). Its two actions are the
      * call's own, never the Busy card's: that card's accept resets the person's requested status to Online
      * (BubbleConfirmationModal handleAccept), and a call must never do that (check 63). Nothing here touches the status.
-     * Nobody is interrupted until a tap: until then the newcomer hears nothing of the call and the bot hears nothing of them.
+     * It has no Escape shortcut: Escape belongs to whatever menu or sheet is open, and must not answer this card for the person. Nobody is interrupted until a tap: until then the newcomer hears nothing of the call and the bot hears nothing of them.
      *
      * Not in the mock as confirmed: Claude's pick that Khalid and GPT have not confirmed (mock README).
      */
@@ -19,13 +19,8 @@
     export let onHoldAndTalk: () => void;
     export let onNotNow: () => void;
 
-    const onKeyDown = (e: KeyboardEvent): void => {
-        if (e.key === "Escape") onNotNow();
-    };
     const picture = readable<string | undefined>(undefined);
 </script>
-
-<svelte:window on:keydown={onKeyDown} />
 
 <div
     class="fixed z-[1000] bottom-0 start-0 right-0 m-auto w-max mobile:w-[98vw] md:max-w-[80%]"
