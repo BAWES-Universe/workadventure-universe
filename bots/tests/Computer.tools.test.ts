@@ -228,6 +228,8 @@ describe('who has the computer in a chat (#2000)', () => {
         Object.assign(ai, {
             helperBricks: new Set<string>(),
             ownBricks: new Set<string>(),
+            knownBricks: new Set<string>(),
+            brickOwners: new Map<string, string>(),
             computerOnCache: new Map(),
             adminApiService: { isConfigured: () => true, ...admin },
             conversationMemory: { getMemory: () => ({ userUuid: userUuid ?? undefined }) },

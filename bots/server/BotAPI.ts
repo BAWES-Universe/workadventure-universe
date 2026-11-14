@@ -380,6 +380,21 @@ export class BotAPI {
         return seen.count <= 30;
     }
 
+    private visitSyncCounts = new Map<string, { count: number; since: number }>();
+
+    /** At most `limit` Brick placements (or ends) a minute for one person: far more than walking room to room and tapping, too few to keep Orbit busy. */
+    private visitSyncAllowed(userId: string, limit: number, now = Date.now()): boolean {
+        const seen = this.visitSyncCounts.get(userId);
+        if (!seen || now - seen.since >= 60_000) {
+            this.visitSyncCounts.delete(userId);
+            this.visitSyncCounts.set(userId, { count: 1, since: now });
+            if (this.visitSyncCounts.size > 10_000) this.visitSyncCounts.delete(this.visitSyncCounts.keys().next().value!);
+            return true;
+        }
+        seen.count += 1;
+        return seen.count <= limit;
+    }
+
     private voiceHello(): VoiceHello | null {
         if (this.voiceHelloOption === undefined) this.voiceHelloOption = buildVoiceHello(this.adminApiService);
         return this.voiceHelloOption;
@@ -1226,6 +1241,51 @@ export class BotAPI {
             }
             this.brickChanged?.(botId, req.sessionUserId);
             res.status(204).end();
+        });
+
+        // A person walks into a room, brings their Brick along or ends the visit (game #2005): put the Brick beside them on
+        // this room's map, or take it off. Orbit decides which Brick, if any; the person is the one the Orbit session names, so
+        // nobody can bring anyone else's Brick. Their spot is only where it first appears: it then walks to them.
+        this.app.post('/api/bricks/visit/sync', requireSession, async (req: BotAPIRequest, res: Response) => {
+            const roomId = req.body?.roomId;
+            if (typeof roomId !== 'string' || !roomId.trim() || roomId.length > 2000 || !req.sessionUuid) {
+                res.status(400).json({ error: 'Missing roomId' });
+                return;
+            }
+            const { x, y } = req.body ?? {};
+            const position = typeof x === 'number' && typeof y === 'number' && Number.isFinite(x) && Number.isFinite(y) ? { x, y } : undefined;
+            // Ending a visit is not held up by the room check, and has an allowance of its own that placing never uses up: it only
+            // takes a Brick off the map. Putting a Brick on the map is asked of a room people are really in, as room-enter does.
+            const ending = req.body?.ending === true;
+            if (!req.sessionUserId || !this.visitSyncAllowed(`${ending ? 'end' : 'place'}:${req.sessionUserId}`, ending ? 30 : 60)) {
+                res.status(429).json({ error: 'Too many changes, try again in a minute' });
+                return;
+            }
+            try {
+                if (!ending && !(await this.botManager.hasPlayersIn(roomId, 3, 1000))) {
+                    res.json({ present: false });
+                    return;
+                }
+                // One Brick per person, in a room that exists and whose universe takes visits (Orbit says), and it goes by
+                // itself when its person is not seen in the room: so there is no wait here, and ending a visit is at once
+                // When the person's game saw them come into the room: Orbit moves a visit only on a sighting newer than the last move, so a
+                // late sync from a room they left moves nothing. Whatever is not a plain time is left out (Orbit reads that as now)
+                const entered = req.body?.enteredAt;
+                const client = req.body?.clientId;
+                const since =
+                    !ending && typeof entered === 'number' && Number.isSafeInteger(entered) && entered > 0 && typeof client === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(client)
+                        ? { at: entered, clientId: client }
+                        : undefined;
+                const person = { uuid: req.sessionUuid };
+                const answer =
+                    since === undefined
+                        ? await this.botManager.syncVisitingBrick(roomId, person, ending ? undefined : position, !ending)
+                        : await this.botManager.syncVisitingBrick(roomId, person, position, true, since);
+                res.json({ present: answer.botId !== null, ...(answer.reason ? { reason: answer.reason } : {}) });
+            } catch (error) {
+                console.error('[BotAPI] Error syncing a visiting Brick:', error instanceof Error ? error.message : error);
+                res.status(500).json({ error: 'Could not put the Brick on the map' });
+            }
         });
 
         // "Not now" on a Brick's suggestion (game #1996). Orbit closed the topic when the card was shown; this keeps what

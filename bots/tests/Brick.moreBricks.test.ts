@@ -261,7 +261,7 @@ describe('The two Brick tools', () => {
 describe('Who has the Brick tools', () => {
     function service() {
         const ai = Object.create(AIService.prototype) as AIService;
-        Object.assign(ai, { helperBricks: new Set<string>(), ownBricks: new Set<string>(), adminApiService: { isConfigured: () => true } });
+        Object.assign(ai, { helperBricks: new Set<string>(), knownBricks: new Set<string>(), brickOwners: new Map<string, string>(), ownBricks: new Set<string>(), adminApiService: { isConfigured: () => true } });
         return ai as unknown as { noteBrick: AIService['noteBrick']; brickToolsOn(botId?: string, botClient?: unknown): boolean };
     }
 

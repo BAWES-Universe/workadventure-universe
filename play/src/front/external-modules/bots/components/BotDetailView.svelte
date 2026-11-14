@@ -887,6 +887,10 @@
                 </button>
             </div>
         {/if}
+        {#if brick}
+            <!-- What a Brick says about visiting (game #2005): Bring along, or End visit, under its name -->
+            <slot name="visit" />
+        {/if}
         {#if switchError}
             <p class="bp-error" role="alert">{switchError}</p>
         {/if}

@@ -139,6 +139,12 @@ export interface MembershipButton {
     label: string;
 }
 
+/** A random name for this page load: letters, digits and dashes, long enough never to meet another. */
+function randomPageLoadId(): string {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
 export class BotApiService {
     private accessToken: string | null = null;
     /** The game's token this service signs in with; renewed in place when its OIDC access token runs out. */
@@ -147,6 +153,10 @@ export class BotApiService {
     /** Set up by a room yet: until then a missing Orbit address says nothing about the server */
     private initialized = false;
     private roomId: string | null = null;
+    // When the game saw the player come into this room: sent with each Brick sync so Orbit can tell a late sync from a room they left
+    private enteredRoomAt: number | null = null;
+    // Which page load of the game says so: Orbit compares these times only when the same one said both, since another device has a clock of its own
+    private readonly pageLoadId: string = randomPageLoadId();
     private botServerUrl: string | null = null;
     private sessionTokenPromise: Promise<string | null> | null = null; // Cache login attempt to avoid multiple simultaneous calls
     private readonly initializeListeners = new Set<() => void>();
@@ -195,6 +205,11 @@ export class BotApiService {
         } catch (error) {
             console.error("[BotApiService] Refusing insecure bot-server credential target:", error);
             this.botServerUrl = null;
+        }
+        if (this.roomId !== roomId) {
+            this.enteredRoomAt = Date.now();
+            // The Brick of the room before is not this room's to look after: a room entered again starts its own sync
+            this.stopVisitRecheck();
         }
         this.roomId = roomId;
         this.initializeListeners.forEach((listener) => listener());
@@ -1571,6 +1586,99 @@ export class BotApiService {
         } catch (error) {
             console.warn("Could not tell the bot server about a Brick", error);
         }
+    }
+
+    /**
+     * What a Brick's page says about visiting, for the room the person is in (game #2005): `{ state, place }`. Orbit
+     * answers only its owner. Throws when it refuses or can't be reached.
+     */
+    async getBrickVisit(brickId: string, roomUrl: string): Promise<unknown> {
+        const response = await this.fetch(
+            `/api/bricks/${encodeURIComponent(brickId)}/visit?roomUrl=${encodeURIComponent(roomUrl)}`
+        );
+        return response.json();
+    }
+
+    /**
+     * "Bring along" (game #2005): the Brick walks beside its owner from the room they are in. Whichever Brick walked
+     * with them before goes home. Throws with `status` 409 when the place does not take visiting Bricks or the Brick is
+     * switched off.
+     */
+    async startBrickVisit(brickId: string, roomUrl: string): Promise<unknown> {
+        const response = await this.fetch(`/api/bricks/${encodeURIComponent(brickId)}/visit`, {
+            method: "POST",
+            body: JSON.stringify({ roomUrl }),
+        });
+        return response.json();
+    }
+
+    /** "End visit" (game #2005): the Brick goes home. Only the visit goes; nothing of the Brick changes. */
+    async endBrickVisit(brickId: string): Promise<unknown> {
+        const response = await this.fetch(`/api/bricks/${encodeURIComponent(brickId)}/visit`, { method: "DELETE" });
+        return response.json();
+    }
+
+    /**
+     * Tells the bot server the person walked into a room, brought a Brick along or ended the visit, so the Brick they
+     * walk with is put beside them on this room's map or taken off it (game #2005). `position` is only where it first
+     * appears. Never throws: without it the Brick is put on the map the next time the person walks into a room. Answers
+     * whether the Brick is on the map now; undefined when the bot server could not be asked. `ending` is the sync after an
+     * ended visit: it only takes the Brick off, wherever the person stands.
+     */
+    async syncVisitingBrick(
+        position?: { x: number; y: number },
+        options?: { ending?: boolean }
+    ): Promise<boolean | undefined> {
+        const roomId = this.roomId;
+        if (!this.botServerUrl || !roomId) return undefined;
+        try {
+            const response = await this.fetchBotServer("/api/bricks/visit/sync", {
+                method: "POST",
+                body: JSON.stringify({
+                    roomId,
+                    ...(position ?? {}),
+                    ...(options?.ending
+                        ? { ending: true }
+                        : this.enteredRoomAt !== null
+                        ? { enteredAt: this.enteredRoomAt, clientId: this.pageLoadId }
+                        : {}),
+                }),
+            });
+            const answer = (await response.json()) as { present?: unknown } | null;
+            const present = typeof answer?.present === "boolean" ? answer.present : undefined;
+            // While a Brick walks with its person here it is looked after: a Brick that dropped off the map (its connection
+            // broke, the bot server restarted) is put back by the next sync, and Orbit hears the person is still here
+            if (options?.ending || present === false) this.stopVisitRecheck();
+            else if (present === true) this.startVisitRecheck();
+            return present;
+        } catch (error) {
+            console.warn("Could not put the Brick beside you", error);
+            return undefined;
+        }
+    }
+
+    /** Where the player stands now, for a Brick that has to be put back beside them (the game's own, set once). */
+    setOwnPlaceProvider(provider: (() => { x: number; y: number } | undefined) | undefined): void {
+        this.ownPlaceProvider = provider;
+    }
+
+    private ownPlaceProvider: (() => { x: number; y: number } | undefined) | undefined;
+    private visitRecheck: ReturnType<typeof setInterval> | undefined;
+    private static readonly VISIT_RECHECK_MS = 60_000;
+
+    private startVisitRecheck(): void {
+        if (this.visitRecheck !== undefined) return;
+        this.visitRecheck = setInterval(() => {
+            const place = this.ownPlaceProvider?.();
+            // Without a place the bot server would not put it back: tried again a minute on
+            if (place) void this.syncVisitingBrick(place);
+        }, BotApiService.VISIT_RECHECK_MS);
+    }
+
+    private stopVisitRecheck(): void {
+        if (this.visitRecheck === undefined) return;
+        clearInterval(this.visitRecheck);
+        this.visitRecheck = undefined;
     }
 
     /**

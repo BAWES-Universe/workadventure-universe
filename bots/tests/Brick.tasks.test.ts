@@ -479,7 +479,7 @@ describe('what the bot server asks Orbit', () => {
 describe('who gets them in a reply', () => {
     function ai(memory: { userUuid?: string } | undefined, admin: unknown) {
         const service = Object.create(AIService.prototype) as AIService;
-        Object.assign(service, { ownBricks: new Set<string>(), helperBricks: new Set<string>(), adminApiService: admin, conversationMemory: { getMemory: () => memory } });
+        Object.assign(service, { ownBricks: new Set<string>(), knownBricks: new Set<string>(), brickOwners: new Map<string, string>(), helperBricks: new Set<string>(), adminApiService: admin, conversationMemory: { getMemory: () => memory } });
         return service as unknown as {
             noteBrick: AIService['noteBrick'];
             taskSettingsOf(botId: string, playerId: number, botClient?: unknown, admin?: unknown): Promise<unknown>;

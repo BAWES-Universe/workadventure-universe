@@ -184,7 +184,7 @@ async function setupMatrix(): Promise<void> {
         rooms: botRegistry,
         uploadAttachment,
         noteHearing: (noteHearing = sharedNoteHearing(adminApiService)) ?? undefined,
-        restingLine: (config, text) => dmReplyService.restingLine(config, text),
+        restingLine: (config, text, asker) => dmReplyService.restingLine(config, text, asker),
         waiting: botRegistry,
         wokaPicture: (config) => botWokaPicture(config, { wokaList: (roomUrl, botId) => adminApiService.getBotWokaList(roomUrl, botId) }),
     });

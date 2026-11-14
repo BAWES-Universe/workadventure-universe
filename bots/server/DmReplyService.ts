@@ -376,12 +376,12 @@ export class DmReplyService extends BaseBehavior {
      * One short in-character line from a resting bot, in the language of the person's message. Empty when the bot has
      * no AI provider or the provider fails; the plain note explains it either way. Not kept in memory.
      */
-    async restingLine(config: BotConfiguration, text: string): Promise<string> {
+    async restingLine(config: BotConfiguration, text: string, asker?: string): Promise<string> {
         if (!config.aiProviderRef || !this.aiService || !text.trim()) return '';
         const instructions = `${instructionsFor(config)}\n\n${RESTING_PROMPT}`;
         try {
             // With the bot id, so a bot on Universe AI or on a lent key reaches its key the way its replies do
-            const line = await this.aiService.quickGenerate(config.aiProviderRef, instructions, text.slice(0, 500), config.botId);
+            const line = await this.aiService.quickGenerate(config.aiProviderRef, instructions, text.slice(0, 500), config.botId, undefined, asker);
             return parseEmotionsFromResponse(line).cleanedResponse.trim().slice(0, 300);
         } catch (error) {
             console.warn(`[DmReplyService] Resting line failed for bot ${config.botId}:`, (error as Error)?.message ?? error);
