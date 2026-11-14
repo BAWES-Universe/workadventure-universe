@@ -146,8 +146,10 @@ export function createCallConnection(deps: CallDeps) {
         try {
             space = await deps.joinSpace(started.spaceName, abort.signal);
         } catch {
+            // Hanging up while the space was being joined stops the join: that is no failure, so nothing is said
+            const hungUp = finished;
             finish("unavailable", true);
-            return { ok: false, failure: "failed" };
+            return { ok: false, failure: hungUp ? "cancelled" : "failed" };
         }
         if (finished) {
             const joinedAfterEnd = space;

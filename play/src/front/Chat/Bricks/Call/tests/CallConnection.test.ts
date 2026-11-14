@@ -169,6 +169,25 @@ describe("carrying a call with a Brick (game #2004)", () => {
         expect(t.state()).toBeUndefined();
     });
 
+    it("says nothing when the person hangs up while the space is being joined", async () => {
+        const t = setup();
+        let rejectJoin!: (error: Error) => void;
+        t.deps.joinSpace.mockImplementation(
+            () =>
+                new Promise((_resolve, reject) => {
+                    rejectJoin = reject;
+                })
+        );
+        const begun = t.connection.begin("b1", "Nora");
+        await vi.advanceTimersByTimeAsync(0);
+        t.connection.end();
+        // Ending stops the join, which then fails
+        rejectJoin(new Error("aborted"));
+        expect(await begun).toEqual({ ok: false, failure: "cancelled" });
+        expect(t.deps.endCall).toHaveBeenCalledWith("b1");
+        expect(t.connection.isActive()).toBe(false);
+    });
+
     it("keeps the microphone out of every space from the moment Call is tapped, before it is turned on", async () => {
         const t = setup({ micOn: false });
         const order: string[] = [];
