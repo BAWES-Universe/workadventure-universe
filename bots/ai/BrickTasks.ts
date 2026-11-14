@@ -190,8 +190,12 @@ async function askSettings(admin: Pick<AdminApiService, 'brickItemSettings' | 'i
         kept.delete(key);
         kept.set(key, { at: now, settings });
         if (kept.size > SETTINGS_MAX) kept.delete(kept.keys().next().value!);
-        if (settings) owners.add(key);
-        else owners.delete(key);
+        owners.delete(key);
+        if (settings) {
+            // Added last, so the pairs that went quiet longest ago are the ones let go when there are too many
+            owners.add(key);
+            if (owners.size > SETTINGS_MAX) owners.delete(owners.values().next().value!);
+        }
         return settings;
     } catch (error) {
         console.warn('[BrickTasks] Could not ask Orbit what is kept for the owner:', error instanceof Error ? error.message : error);

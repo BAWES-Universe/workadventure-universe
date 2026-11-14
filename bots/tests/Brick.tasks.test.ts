@@ -173,6 +173,13 @@ describe('what the Brick is told', () => {
         expect(await taskSettingsFor(admin as never, BRICK, SARA, NOW + 61_000)).not.toBeNull();
     });
 
+    it('lets go of the owners that went quiet longest ago, so the list cannot grow without end', async () => {
+        const { admin } = setUp();
+        for (let i = 0; i < 502; i++) await taskSettingsFor(admin as never, `bot-${i}`, SARA, NOW);
+        expect(tasksAreOn('bot-0', SARA)).toBe(false);
+        expect(tasksAreOn('bot-501', SARA)).toBe(true);
+    });
+
     it('keeps a 404 (not the owner) as a no, but not a busy or lapsed Orbit', async () => {
         const busy = { isConfigured: () => true, brickItemSettings: vi.fn(async () => ({ ok: false as const, status: 429, error: 'Slow down' })) };
         expect(await taskSettingsFor(busy as never, 'bot-busy', SARA, NOW)).toBeNull();
