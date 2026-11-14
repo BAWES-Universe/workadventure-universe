@@ -193,6 +193,8 @@ const RESULT_MAX = 1000;
 const ERROR_MAX = 300;
 /** Runs on a model at once on this server (a model call takes a while, and a reminder never waits behind them). Infrastructure, not a product limit. */
 const MODEL_RUNS_AT_ONCE = 3;
+/** How many said-but-unreported results are kept in memory to be reported whole when the run is handed out again. */
+const UNREPORTED_MAX = 200;
 
 const FAILED_WORDS: Record<'no_chat' | 'not_allowed', string> = {
     no_chat: 'Brick could not find its chat with the person to say it in',
@@ -218,6 +220,8 @@ export class BrickRunner {
     private stopped = false;
     /** Runs on a model that this server has in hand (Orbit may hand one out again while it is still being worked on: it is then left to the first). */
     private readonly inFlight = new Set<string>();
+    /** What a run said and then could not report (Orbit did not take the report): reported whole, not as a plain "Said", when it is handed out again. */
+    private readonly unreported = new Map<string, RunReport>();
     private readonly modelRuns = new Set<Promise<void>>();
     private activeModelRuns = 0;
     private readonly waitingForSlot: Array<() => void> = [];
@@ -389,7 +393,9 @@ export class BrickRunner {
         if (!this.model) return;
         // Said before and handed out again: it is not said (or run) a second time
         if (run.deliveredEventId) {
-            await this.api.report(run.runId, { attempt: run.attempt, state: 'done', outcome: 'spoke', result: 'Said in chat' });
+            const kept = this.unreported.get(run.runId);
+            const answer = await this.api.report(run.runId, kept ? { ...kept, attempt: run.attempt } : { attempt: run.attempt, state: 'done', outcome: 'spoke', result: 'Said in chat' });
+            if (answer !== null) this.unreported.delete(run.runId);
             return;
         }
         // Whether the run may still go on: asked before the model starts, before each of its calls and tools, and before it speaks. A blip
@@ -422,7 +428,7 @@ export class BrickRunner {
         const said = await this.say(run, result.message, transactionIdOfRun(run.runId));
         if (said === 'left' || said === 'failed') return;
         const reached = result.kind === 'reached';
-        await this.api.report(run.runId, {
+        const report: RunReport = {
             attempt: run.attempt,
             state: 'done',
             outcome: !reached && result.needsYou ? 'waiting' : 'spoke',
@@ -430,7 +436,15 @@ export class BrickRunner {
             result: (reached ? result.evidence : result.message).slice(0, RESULT_MAX),
             ...(reached ? { reached: true } : {}),
             ...(Object.keys(result.progress).length > 0 ? { progress: result.progress } : {}),
-        });
+        };
+        // It is already said: when Orbit did not take the report, it is kept to be reported whole when the run is handed out again
+        if ((await this.api.report(run.runId, report)) === null) this.keepUnreported(run.runId, report);
+    }
+
+    private keepUnreported(runId: string, report: RunReport): void {
+        this.unreported.delete(runId);
+        this.unreported.set(runId, report);
+        if (this.unreported.size > UNREPORTED_MAX) this.unreported.delete(this.unreported.keys().next().value!);
     }
 
     /** A run that did not work: reported at once, and told to the person once when Orbit says so (it keeps the count). */

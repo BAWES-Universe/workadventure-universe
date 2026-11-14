@@ -2216,6 +2216,8 @@ export class AdminApiService {
                         Authorization: `Bearer ${botServiceToken}`,
                         'Content-Type': 'application/json',
                     },
+                    // A report that never comes back must not hold what waits on it (a run's next step) for ever
+                    timeout: 10_000,
                 }
             );
 

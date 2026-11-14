@@ -272,6 +272,30 @@ describe('a watch, a briefing or a goal runs on a model', () => {
         expect(reports[0].report).toMatchObject({ attempt: 2, state: 'done', outcome: 'spoke' });
     });
 
+    it('reports a goal that was said but could not be reported whole when it is handed out again, not as a plain “said”', async () => {
+        const due = [run({ kind: 'goal', condition: null, outcome: 'My visa in hand' })];
+        const reached: TaskOutcome = { kind: 'result', result: { kind: 'reached', message: 'Your visa is approved', evidence: 'The site shows Issued', progress: { statusLine: 'Done' } } };
+        const { runner, say, api, reports } = setUp(due, result(reached));
+        // Orbit does not take the first report
+        vi.mocked(api.report).mockImplementationOnce(async () => null);
+        await runner.tick();
+        await runner.idle();
+        expect(say).toHaveBeenCalledTimes(1);
+        // Handed out again, said before
+        due.splice(0, 1, run({ kind: 'goal', condition: null, outcome: 'My visa in hand', attempt: 2, deliveredEventId: '$e1' }));
+        await runner.tick();
+        await runner.idle();
+        expect(say).toHaveBeenCalledTimes(1);
+        expect(reports).toHaveLength(1);
+        expect(reports[0].report).toMatchObject({ attempt: 2, state: 'done', outcome: 'spoke', result: 'The site shows Issued', reached: true, progress: { statusLine: 'Done' } });
+        // Reported now: the next hand out is a plain “said”
+        due.splice(0, 1, run({ kind: 'goal', attempt: 3, deliveredEventId: '$e1' }));
+        await runner.tick();
+        await runner.idle();
+        expect(reports[1].report).toMatchObject({ attempt: 3, result: 'Said in chat' });
+        expect(reports[1].report).not.toHaveProperty('reached');
+    });
+
     it('reports a person with no chat as failed, and leaves one it cannot tell about unreported', async () => {
         const noChat = setUp([run({ matrixUserId: null })], result({ kind: 'result', result: { kind: 'tell', message: 'x', needsYou: false, progress: {} } }));
         await noChat.runner.tick();
@@ -510,6 +534,21 @@ describe('each model call of a run is on the books, one row each, under the run�
     it('says which status the provider answered with when a call failed', async () => {
         const { ai } = service([[{ content: '', done: true, metadata: { error: true, errorText: 'no', errorStatus: 401, tokensUsed: 0 } }]]);
         expect(await ai.runBrickTask({ ...base, permit: async () => true, runTool: async () => '{}' })).toMatchObject({ ended: 'failed', status: 401 });
+    });
+
+    it('ends at the first finish that was accepted: nothing after it in the same round runs', async () => {
+        const { ai } = service([
+            [
+                { content: '', done: false, toolCalls: [{ id: 'c1', name: 'finish_check', arguments: '{"result":"tell_them","message":"Price dropped"}' }] },
+                { content: '', done: false, toolCalls: [{ id: 'c2', name: 'finish_check', arguments: '{"result":"nothing_new"}' }] },
+                { content: '', done: false, toolCalls: [{ id: 'c3', name: 'read_web_page', arguments: '{}' }] },
+                done(100),
+            ],
+        ]);
+        const runTool = vi.fn(async () => '{"ok":true}');
+        expect(await ai.runBrickTask({ ...base, permit: async () => true, runTool })).toEqual({ ended: 'final' });
+        expect(runTool).toHaveBeenCalledTimes(1);
+        expect(runTool.mock.calls[0]).toEqual(['finish_check', { result: 'tell_them', message: 'Price dropped' }]);
     });
 
     it('books a call that failed as an error row, and says it did not finish', async () => {

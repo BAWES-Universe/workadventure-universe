@@ -3613,7 +3613,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     console.warn(`[AIService] A step of a goal or task failed (${call.name}):`, error instanceof Error ? error.message : error);
                 }
                 results.push({ id: call.id, name: call.name, text });
-                if (call.name === opts.final && !text.includes('"error"')) finished = true;
+                // The first finish that was accepted ends it: nothing after it in the same round runs or changes what it said
+                if (call.name === opts.final && !text.includes('"error"')) {
+                    finished = true;
+                    break;
+                }
             }
             if (finished) return { ended: 'final' };
             rounds.steps.push(stepOf(round, content, pending, results, reasoning));
