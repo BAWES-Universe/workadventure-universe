@@ -1378,13 +1378,7 @@ export class AIService {
                       this.gatePerson(botId, playerId, botClient, spaceName),
                       computerOn
                   );
-            if (taskSettings) {
-                // An App's tool of the same name is not offered beside ours: what is offered is what is run
-                const ours = taskToolDefinitions();
-                const names = new Set<string>(ours.map((tool) => tool.function.name));
-                for (let i = tools.length - 1; i >= 0; i--) if (names.has(tools[i].function.name)) tools.splice(i, 1);
-                tools.push(...ours);
-            }
+            if (taskSettings) this.offerTaskTools(tools, toolServerMap);
             // In a bubble, what is on an approval card is for one person only: nothing is said before a tool that asks, and
             // nothing from a card is repeated in the chat (#1658). Added at the end, after what the provider caches.
             const nearbyRule = channel === 'world' && botClient && this.approvals && toolServerMap.size > 0 ? NEARBY_ASK_RULE : '';
@@ -3536,6 +3530,18 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         return taskSettingsFor(adminApiService ?? this.adminApiService, botId, memory.userUuid);
     }
 
+    /**
+     * Adds the reminder tools to what this reply offers. An App's tool of the same name is not offered beside them, and is not
+     * run for them either: only a reply that offered ours runs ours, so the schema the model sees is the one that runs.
+     */
+    private offerTaskTools(tools: any[], toolServerMap: Map<string, ToolServerEntry>): void {
+        const ours = taskToolDefinitions();
+        const names = new Set<string>(ours.map((tool) => tool.function.name));
+        for (let i = tools.length - 1; i >= 0; i--) if (names.has(tools[i].function.name)) tools.splice(i, 1);
+        for (const name of names) toolServerMap.delete(name);
+        tools.push(...ours);
+    }
+
     /** Whether Orbit lately said this person is the owner of this Brick: only then is a tool of a reminder's name ours, anywhere else it is a tool server's. */
     private taskToolsOn(botId?: string, playerId?: number, botClient?: BotClient): boolean {
         if (botClient || !botId || playerId === undefined) return false;
@@ -3969,7 +3975,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 // With artifacts off, a tool of the same name belongs to an MCP server: send it down the default branch
                 // So does a file tool's name when Orbit doesn't keep files here (#1508)
                 // And a Brick tool's name anywhere but in a first Brick's direct messages (#1996)
-                switch ((isArtifactTool(toolCall.name) && !artifactsEnabled()) || (isFileTool(toolCall.name) && !this.filesOn(botId, adminApiService)) || (isBrickTool(toolCall.name) && !this.brickToolsOn(botId, botClient, adminApiService)) || (isMemoryTool(toolCall.name) && !this.memoryToolsOn(botId, botClient)) || (isAppTool(toolCall.name) && !this.appToolsOn(botId, botClient, adminApiService)) || (isComputerTool(toolCall.name) && (!!botClient || !this.ownBricks.has(botId ?? ''))) || (isTaskTool(toolCall.name) && !this.taskToolsOn(botId, playerId, botClient)) ? '' : toolCall.name) {
+                switch ((isArtifactTool(toolCall.name) && !artifactsEnabled()) || (isFileTool(toolCall.name) && !this.filesOn(botId, adminApiService)) || (isBrickTool(toolCall.name) && !this.brickToolsOn(botId, botClient, adminApiService)) || (isMemoryTool(toolCall.name) && !this.memoryToolsOn(botId, botClient)) || (isAppTool(toolCall.name) && !this.appToolsOn(botId, botClient, adminApiService)) || (isComputerTool(toolCall.name) && (!!botClient || !this.ownBricks.has(botId ?? ''))) || (isTaskTool(toolCall.name) && (!this.taskToolsOn(botId, playerId, botClient) || !!toolServerMap?.has(toolCall.name))) ? '' : toolCall.name) {
                     case 'get_people_on_map':
                         if (botClient) {
                             const people = botClient.getAllPeople();

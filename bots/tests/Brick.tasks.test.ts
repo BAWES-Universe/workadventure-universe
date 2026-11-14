@@ -15,6 +15,8 @@ vi.mock('../utils/MovementLogger', () => ({ movementLogger: {} }));
 
 import { AdminApiService, type BrickItemView } from '../server/AdminApiService';
 import { AIService } from '../ai/AIService';
+import { MCPConnector } from '../mcp/MCPConnector';
+import { openToolGate } from './helpers/openToolGate';
 import { describeStep, showsAsStep } from '../ai/ToolSteps';
 import { localToInstant, sayMoment, sayNow, timeOfDayOf } from '../ai/BrickTime';
 import {
@@ -513,6 +515,62 @@ describe('who gets them in a reply', () => {
         visit.noteBrick(BRICK, { isDefault: true });
         expect(await visit.taskSettingsOf(BRICK, 1)).toBeNull();
         expect(visit.taskToolsOn(BRICK, 1)).toBe(false);
+    });
+});
+
+describe('an App with a tool named like a reminder tool', () => {
+    const appTool = (name: string) => ({ type: 'function', function: { name, description: 'An App’s own', parameters: { type: 'object', properties: {} } } });
+
+    function owner() {
+        const service = openToolGate(new AIService(null!, null!, '')) as unknown as {
+            ownBricks: Set<string>;
+            conversationMemory: unknown;
+            offerTaskTools(tools: any[], map: Map<string, unknown>): void;
+            executeToolCalls: (...args: unknown[]) => Promise<Array<{ result: unknown }>>;
+            runTaskToolCall: (...args: unknown[]) => Promise<unknown>;
+        };
+        service.ownBricks = new Set([BRICK]);
+        service.conversationMemory = { getMemory: () => ({ userUuid: SARA }) };
+        return service;
+    }
+    const server = { serverId: 's1', serverUrl: 'https://mcp.example', authType: 'none' };
+
+    it('is not offered beside ours when ours are offered, and is not run for them either', () => {
+        const service = owner();
+        const tools = [appTool(SET_REMINDER_TOOL), appTool('lookup')];
+        const map = new Map<string, unknown>([[SET_REMINDER_TOOL, server], ['lookup', server]]);
+        service.offerTaskTools(tools, map);
+        expect(tools.filter((tool) => tool.function.name === SET_REMINDER_TOOL)).toHaveLength(1);
+        expect(tools.find((tool) => tool.function.name === SET_REMINDER_TOOL).function.description).not.toBe('An App’s own');
+        expect(map.has(SET_REMINDER_TOOL)).toBe(false);
+        expect(map.has('lookup')).toBe(true);
+    });
+
+    it('runs as the App’s when this reply did not offer ours, even though Orbit lately said they are the owner', async () => {
+        const { admin } = setUp();
+        await taskSettingsFor(admin as never, BRICK, SARA, NOW);
+        expect(tasksAreOn(BRICK, SARA)).toBe(true);
+        const service = owner();
+        const own = vi.spyOn(service, 'runTaskToolCall' as never).mockResolvedValue({} as never);
+        const theirs = vi.spyOn(MCPConnector, 'executeToolCall').mockResolvedValue('ok' as never);
+        // Orbit could not be asked at the start of this reply, so ours were not offered and the App's tool was
+        const offeredToTheModel = new Map<string, unknown>([[SET_REMINDER_TOOL, server]]);
+        await service.executeToolCalls([{ id: '1', name: SET_REMINDER_TOOL, arguments: '{}' }], undefined, undefined, offeredToTheModel, undefined, undefined, BRICK, 1);
+        expect(theirs).toHaveBeenCalledTimes(1);
+        expect(own).not.toHaveBeenCalled();
+    });
+
+    it('runs ours when ours were offered', async () => {
+        const { admin } = setUp();
+        await taskSettingsFor(admin as never, BRICK, SARA, NOW);
+        const service = owner();
+        const own = vi.spyOn(service, 'runTaskToolCall' as never).mockResolvedValue({ set: true } as never);
+        const theirs = vi.spyOn(MCPConnector, 'executeToolCall').mockResolvedValue('ok' as never);
+        const map = new Map<string, unknown>([[SET_REMINDER_TOOL, server]]);
+        service.offerTaskTools([], map);
+        await service.executeToolCalls([{ id: '1', name: SET_REMINDER_TOOL, arguments: '{}' }], undefined, undefined, map, undefined, undefined, BRICK, 1);
+        expect(own).toHaveBeenCalledTimes(1);
+        expect(theirs).not.toHaveBeenCalled();
     });
 });
 
