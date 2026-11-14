@@ -335,6 +335,17 @@
     /** The last save asked for each Brick: the next one waits for it, so changes reach Orbit in the order they were made. */
     const brickSaving = new Map<string, Promise<boolean>>();
 
+    /**
+     * Typed text that failed stays on the page unsaved: the line says so until that text is saved, and a later save of
+     * another field does not clear it. A name or switch that failed goes back on its own.
+     */
+    function noteBrickSave(change: BrickChange, saved: boolean) {
+        const typed = Object.keys(change).filter((field) => TYPED_FIELDS.has(field));
+        if (saved) typed.forEach((field) => brickUnsaved.delete(field));
+        else typed.forEach((field) => brickUnsaved.add(field));
+        brickError = !saved || brickUnsaved.size > 0 ? $LL.mapEditor.edit.bots.page.telemetry.saveFailed() : null;
+    }
+
     /** Saves a change of a Brick's page through its own route, after any save of it still on its way. False when it was not saved. */
     function saveBrick(change: BrickChange): Promise<boolean> {
         const way = brick;
@@ -350,13 +361,7 @@
             })
             .then((saved) => {
                 if (brickSaving.get(brickId) === run) brickSaving.delete(brickId);
-                // Typed text that failed stays on the page unsaved: the line says so until that text is saved, and a
-                // later save of another field does not clear it. A name or switch that failed goes back on its own.
-                const typed = Object.keys(change).filter((field) => TYPED_FIELDS.has(field));
-                if (saved) typed.forEach((field) => brickUnsaved.delete(field));
-                else typed.forEach((field) => brickUnsaved.add(field));
-                brickError =
-                    !saved || brickUnsaved.size > 0 ? $LL.mapEditor.edit.bots.page.telemetry.saveFailed() : null;
+                noteBrickSave(change, saved);
                 return saved;
             });
         brickSaving.set(brickId, run);
@@ -377,14 +382,18 @@
             if (!currentBot || currentBot.id !== botId) return;
             // Taken template parts this page has not read yet: saving the line or the Personality now would put the old
             // text back over them, so it waits until they are read
+            let read = true;
             if (templateParts.waitsFor(["description", "instructions"])) {
-                if (!(await templateParts.sync())) return;
+                read = await templateParts.sync();
                 if (!currentBot || currentBot.id !== botId) return;
             }
             const now = brickSavedOf(currentBot);
             const change = brickChangeBetween(brickSaved, now);
             if (Object.keys(change).length === 0) return;
-            const saved = await saveBrick(change);
+            // When Orbit could not be reached to read the taken parts, nothing is sent, and that is said like a refused
+            // save: the typed text stays on the page, flagged unsaved, and the next change tries again
+            const saved = read ? await saveBrick(change) : false;
+            if (!read) noteBrickSave(change, false);
             if (currentBot?.id !== botId) return;
             if (saved) {
                 brickSaved = brickSavedAfter(brickSaved, now, change);
