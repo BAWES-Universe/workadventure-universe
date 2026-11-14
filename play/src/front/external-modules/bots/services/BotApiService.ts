@@ -528,12 +528,14 @@ export class BotApiService {
     private timeZoneTries = 0;
     private timeZoneSending = false;
 
-    /** Which Orbit and which account the time zone is being kept for: a new one has not been told yet. */
-    private timeZoneDestination(): string {
-        return `${this.adminUrl ?? ""}|${this.accessToken ?? ""}`;
-    }
+    /**
+     * Counts the times `initialize()` moved to another Orbit or account: an answer that belongs to an older count says
+     * nothing about the current one. A token renewed in the middle of a send does not change it.
+     */
+    private timeZoneGeneration = 0;
 
     private resetTimeZoneKept(): void {
+        this.timeZoneGeneration++;
         this.timeZoneKept = false;
         this.timeZoneTries = 0;
         this.timeZoneSending = false;
@@ -562,7 +564,7 @@ export class BotApiService {
             return;
         }
         if (typeof zone !== "string" || zone.length === 0 || zone.length > 64) return;
-        const destination = this.timeZoneDestination();
+        const generation = this.timeZoneGeneration;
         this.timeZoneSending = true;
         this.timeZoneTries++;
         try {
@@ -571,11 +573,11 @@ export class BotApiService {
                 body: JSON.stringify({ key: "timeZone", value: zone }),
             });
             // An answer from an Orbit or an account the player has since left says nothing about the new one
-            if (this.timeZoneDestination() === destination) this.timeZoneKept = true;
+            if (this.timeZoneGeneration === generation) this.timeZoneKept = true;
         } catch {
             // Not kept this time
         } finally {
-            if (this.timeZoneDestination() === destination) this.timeZoneSending = false;
+            if (this.timeZoneGeneration === generation) this.timeZoneSending = false;
         }
     }
 

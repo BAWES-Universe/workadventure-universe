@@ -112,4 +112,22 @@ describe("keeping the player's time zone in Orbit", () => {
         expect(fetchMock).toHaveBeenCalledTimes(2);
         expect(fetchMock.mock.calls[1][0]).toBe("https://other-orbit.test/api/me/preferences");
     });
+
+    it("tries again after a failed send during which the session token was renewed", async () => {
+        const api = service(SIGNED_IN);
+        const fetchMock = vi
+            .spyOn(globalThis, "fetch")
+            .mockImplementationOnce(() => {
+                // The same player, a renewed access token, while the preference request is on its way
+                (api as unknown as { accessToken: string }).accessToken = "access-renewed";
+                return Promise.resolve(refused(500));
+            })
+            .mockImplementation(() => Promise.resolve(ok()));
+        await api.keepTimeZone();
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        await api.keepTimeZone();
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        await api.keepTimeZone();
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
 });
