@@ -17,6 +17,11 @@ const ADDRESS_PROPERTIES = [
 const ELEMENT_ADDRESS_ATTRIBUTES = ["attr__href", "href", "attr__src", "src", "attr__action", "action"];
 /** How deep a property may nest before the rest is dropped (a safeguard, no event is this deep). */
 const MAX_DEPTH = 6;
+/**
+ * The session replay's recording (rrweb snapshots of the page). It nests far deeper than any other event, so it is
+ * left to the recorder's own masking (every text and input as asterisks, the page address cleaned) and never edited here.
+ */
+const REPLAY_PAYLOAD = "$snapshot_data";
 /** Who an event is from. These are never edited: an edited id would merge different people into one. */
 const IDENTITY_PROPERTIES = ["distinct_id", "$user_id", "$anon_distinct_id"];
 /** Properties that must never leave the browser, whatever put them there. */
@@ -54,7 +59,7 @@ function redact(properties: Record<string, unknown> | undefined, depth = 0): voi
     if (!properties) return;
     for (const key of FORBIDDEN_PROPERTIES) delete properties[key];
     for (const [key, value] of Object.entries(properties)) {
-        if (IDENTITY_PROPERTIES.includes(key)) continue;
+        if (IDENTITY_PROPERTIES.includes(key) || key === REPLAY_PAYLOAD) continue;
         if (typeof value === "string" && ADDRESS_PROPERTIES.includes(key)) {
             properties[key] = withoutQueryOrHash(value);
         } else if (typeof value === "string" && key === "$elements_chain") {

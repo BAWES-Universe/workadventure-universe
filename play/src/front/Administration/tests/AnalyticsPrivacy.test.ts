@@ -112,6 +112,19 @@ describe("keepPrivate", () => {
         expect(cleaned?.properties?.$elements).toEqual([{ tag_name: "a", text: "x" }]);
     });
 
+    it("leaves the replay recording whole, however deep the page nests, and still cleans the rest of that event", () => {
+        let node: Record<string, unknown> = { tagName: "span", text: "*****" };
+        for (let level = 0; level < 20; level++) node = { tagName: "div", childNodes: [node] };
+        const event = keepPrivate({
+            properties: {
+                $current_url: "https://play.test/@/uni/room?token=secret#chat=!x",
+                $snapshot_data: [{ type: 2, data: { node } }],
+            },
+        });
+        expect(event?.properties?.$current_url).toBe("https://play.test/@/uni/room");
+        expect(event?.properties?.$snapshot_data).toEqual([{ type: 2, data: { node } }]);
+    });
+
     it("lets a missing event through", () => {
         expect(keepPrivate(null)).toBeNull();
     });
