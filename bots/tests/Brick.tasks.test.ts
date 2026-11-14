@@ -289,6 +289,34 @@ describe('setting a reminder', () => {
         expect(String(second.note)).toContain('Do not set it again');
     });
 
+    it('makes one reminder when two identical calls of one reply run together', async () => {
+        const { admin, context } = setUp();
+        const args = { text: 'Together', when: '2026-11-15 16:00' };
+        const [first, second] = await Promise.all([runTaskTool(SET_REMINDER_TOOL, args, context), runTaskTool(SET_REMINDER_TOOL, args, context)]);
+        expect(admin.setBrickItem).toHaveBeenCalledTimes(1);
+        expect(first).toMatchObject({ set: true });
+        expect(second).toMatchObject({ set: true, id: first.id });
+        expect(String(second.note)).toContain('Do not set it again');
+    });
+
+    it('does not say a reminder was made when the call that made it was refused', async () => {
+        const { admin, context } = setUp();
+        admin.setBrickItem.mockImplementationOnce(async () => ({ ok: false as const, status: 400, error: 'No' }) as never);
+        const args = { text: 'Refused', when: '2026-11-15 16:00' };
+        const [first, second] = await Promise.all([runTaskTool(SET_REMINDER_TOOL, args, context), runTaskTool(SET_REMINDER_TOOL, args, context)]);
+        expect(first).toHaveProperty('error');
+        expect(second).toHaveProperty('error');
+        expect(admin.setBrickItem).toHaveBeenCalledTimes(1);
+    });
+
+    it('treats a daily reminder read on two different clocks as two reminders when none is kept', async () => {
+        const { admin, context } = setUp({ settings: { timeZone: null } });
+        const args = { text: 'Daily', repeat: 'every_day', when: '2026-11-15 09:00' };
+        await runTaskTool(SET_REMINDER_TOOL, { ...args, time_zone: 'Asia/Kuwait' }, context);
+        await runTaskTool(SET_REMINDER_TOOL, { ...args, time_zone: 'Europe/London' }, context);
+        expect(admin.setBrickItem).toHaveBeenCalledTimes(2);
+    });
+
     it('changes only the words when the model also says repeat none', async () => {
         const { admin, context } = setUp();
         const result = await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'change', text: 'New words', repeat: 'none' }, context);

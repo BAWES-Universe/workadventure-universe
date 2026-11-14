@@ -348,14 +348,35 @@ async function setReminder(args: Record<string, unknown>, settings: TaskSettings
     // "In 20 minutes" is a moment that moves with the clock, so it is keyed on what was asked, not on the moment it came to
     const minutes = repeatOf(args.repeat) === 'none' ? inMinutesOf(args) : null;
     const relative = minutes !== null ? `in ${minutes} min` : null;
-    const key = `${context.botId}|${context.userId}|${words}|${relative ?? JSON.stringify(built.cadence)}`;
+    // The zone is part of what was asked when it is the one a daily time is read on
+    const key = `${context.botId}|${context.userId}|${words}|${relative ?? `${JSON.stringify(built.cadence)}|${timeZone}`}`;
     const before = justSet.get(key);
-    if (before && now - before.at < JUST_SET_MS) return { ...before.result, note: 'Already set a moment ago, once. Do not set it again.' };
+    const again = { note: 'Already set a moment ago, once. Do not set it again.' };
+    if (before && now - before.at < JUST_SET_MS) return { ...before.result, ...again };
+    // Two identical calls in one reply run together: the second waits for the first one's answer instead of making another
+    const inFlight = creating.get(key);
+    if (inFlight) {
+        const first = await inFlight;
+        return 'set' in first ? { ...first, ...again } : first;
+    }
+    const creation = createReminder(key, words, built.cadence, timeZone, settings, context, now);
+    creating.set(key, creation);
+    try {
+        return await creation;
+    } finally {
+        creating.delete(key);
+    }
+}
+
+/** Reminders being made right now, by the same key as justSet. */
+const creating = new Map<string, Promise<Record<string, unknown>>>();
+
+async function createReminder(key: string, words: string, cadence: Record<string, unknown>, timeZone: string, settings: TaskSettings, context: TaskToolContext, now: number): Promise<Record<string, unknown>> {
     const answer = await context.admin.setBrickItem(context.botId, {
         userId: context.userId,
         kind: 'reminder',
         words,
-        cadence: built.cadence,
+        cadence,
         // Kept with the item, so a person who moves is not moved with it; and when none was kept the one they just told us
         timeZone,
     });

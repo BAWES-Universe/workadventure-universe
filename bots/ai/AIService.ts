@@ -1378,7 +1378,13 @@ export class AIService {
                       this.gatePerson(botId, playerId, botClient, spaceName),
                       computerOn
                   );
-            if (taskSettings) tools.push(...taskToolDefinitions());
+            if (taskSettings) {
+                // An App's tool of the same name is not offered beside ours: what is offered is what is run
+                const ours = taskToolDefinitions();
+                const names = new Set<string>(ours.map((tool) => tool.function.name));
+                for (let i = tools.length - 1; i >= 0; i--) if (names.has(tools[i].function.name)) tools.splice(i, 1);
+                tools.push(...ours);
+            }
             // In a bubble, what is on an approval card is for one person only: nothing is said before a tool that asks, and
             // nothing from a card is repeated in the chat (#1658). Added at the end, after what the provider caches.
             const nearbyRule = channel === 'world' && botClient && this.approvals && toolServerMap.size > 0 ? NEARBY_ASK_RULE : '';
@@ -4661,7 +4667,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         for (const tr of toolResults) {
             // Skip results from media tools and built-in tools — they don't produce URLs to extract
             if (['send_image', 'send_file', 'send_audio', 'send_video', 'get_people_on_map',
-                 'get_bot_position', 'get_areas_on_map', 'navigate_to', READ_WEB_PAGE_TOOL].includes(tr.name) || (isArtifactTool(tr.name) && artifactsEnabled()) || isFileTool(tr.name) || isMemoryTool(tr.name)) {
+                 'get_bot_position', 'get_areas_on_map', 'navigate_to', READ_WEB_PAGE_TOOL].includes(tr.name) || (isArtifactTool(tr.name) && artifactsEnabled()) || isFileTool(tr.name) || isMemoryTool(tr.name) || isTaskTool(tr.name)) {
                 continue;
             }
 
@@ -4737,7 +4743,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         for (const tr of toolResults) {
             // Skip results from our own media tools (they already handled sending)
             if (['send_image', 'send_file', 'send_audio', 'send_video', 'get_people_on_map',
-                 'get_bot_position', 'get_areas_on_map', 'navigate_to', READ_WEB_PAGE_TOOL].includes(tr.name) || (isArtifactTool(tr.name) && artifactsEnabled()) || isFileTool(tr.name) || isMemoryTool(tr.name)) {
+                 'get_bot_position', 'get_areas_on_map', 'navigate_to', READ_WEB_PAGE_TOOL].includes(tr.name) || (isArtifactTool(tr.name) && artifactsEnabled()) || isFileTool(tr.name) || isMemoryTool(tr.name) || isTaskTool(tr.name)) {
                 continue;
             }
 

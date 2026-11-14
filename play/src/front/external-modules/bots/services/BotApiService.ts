@@ -168,6 +168,7 @@ export class BotApiService {
         if (this.accessToken !== nextAccessToken) {
             this.clearSessionCache();
             this.sessionTokenPromise = null;
+            this.resetTimeZoneKept();
         }
         this.accessToken = nextAccessToken;
         if (!userAccessToken) this.gameToken = null;
@@ -183,6 +184,7 @@ export class BotApiService {
         if (this.adminUrl !== previousAdminUrl) {
             this.clearSessionCache();
             this.sessionTokenPromise = null;
+            this.resetTimeZoneKept();
         }
 
         try {
@@ -526,6 +528,17 @@ export class BotApiService {
     private timeZoneTries = 0;
     private timeZoneSending = false;
 
+    /** Which Orbit and which account the time zone is being kept for: a new one has not been told yet. */
+    private timeZoneDestination(): string {
+        return `${this.adminUrl ?? ""}|${this.accessToken ?? ""}`;
+    }
+
+    private resetTimeZoneKept(): void {
+        this.timeZoneKept = false;
+        this.timeZoneTries = 0;
+        this.timeZoneSending = false;
+    }
+
     /**
      * Tells Orbit the time zone this player's own device is in (preference `timeZone`), so a Brick reads "tomorrow at
      * 9" on their clock without ever asking where they are (game #2002). Once per page load for a signed-in player,
@@ -549,6 +562,7 @@ export class BotApiService {
             return;
         }
         if (typeof zone !== "string" || zone.length === 0 || zone.length > 64) return;
+        const destination = this.timeZoneDestination();
         this.timeZoneSending = true;
         this.timeZoneTries++;
         try {
@@ -556,11 +570,12 @@ export class BotApiService {
                 method: "PUT",
                 body: JSON.stringify({ key: "timeZone", value: zone }),
             });
-            this.timeZoneKept = true;
+            // An answer from an Orbit or an account the player has since left says nothing about the new one
+            if (this.timeZoneDestination() === destination) this.timeZoneKept = true;
         } catch {
             // Not kept this time
         } finally {
-            this.timeZoneSending = false;
+            if (this.timeZoneDestination() === destination) this.timeZoneSending = false;
         }
     }
 

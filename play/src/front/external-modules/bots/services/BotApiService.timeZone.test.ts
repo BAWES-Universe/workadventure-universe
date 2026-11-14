@@ -75,4 +75,36 @@ describe("keeping the player's time zone in Orbit", () => {
         await api.keepTimeZone();
         expect(fetchMock).toHaveBeenCalledTimes(2);
     });
+
+    it("tells a new Orbit or a new account, not only the first one", async () => {
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() => Promise.resolve(ok()));
+        const api = service(SIGNED_IN);
+        await api.keepTimeZone();
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        api.initialize(SIGNED_IN, "https://other-orbit.test", "room-1", BOTS);
+        await api.keepTimeZone();
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(fetchMock.mock.calls[1][0]).toBe("https://other-orbit.test/api/me/preferences");
+        const otherAccount = `header.${btoa(JSON.stringify({ accessToken: "access-2" }))}.signature`;
+        api.initialize(otherAccount, "https://other-orbit.test", "room-1", BOTS);
+        await api.keepTimeZone();
+        expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+
+    it("does not count an answer that came after the player moved to another Orbit", async () => {
+        let release: (response: Response) => void = () => undefined;
+        const fetchMock = vi
+            .spyOn(globalThis, "fetch")
+            .mockImplementationOnce(() => new Promise<Response>((resolve) => (release = resolve)))
+            .mockImplementation(() => Promise.resolve(ok()));
+        const api = service(SIGNED_IN);
+        const first = api.keepTimeZone();
+        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+        api.initialize(SIGNED_IN, "https://other-orbit.test", "room-1", BOTS);
+        release(ok());
+        await first;
+        await api.keepTimeZone();
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(fetchMock.mock.calls[1][0]).toBe("https://other-orbit.test/api/me/preferences");
+    });
 });
