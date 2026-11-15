@@ -37,10 +37,12 @@ export async function loadBrickHome(brickId: string): Promise<void> {
 /** "Take it out of this room": the Brick goes back to its owner's Bricks. True when it did. */
 export async function takeBrickOutOfHome(brickId: string): Promise<boolean> {
     try {
+        // The room it lived in is the one to tell, which is not always the room the person is in
+        const lived = forBrick === brickId ? get(home) : undefined;
         await botApiService.takeBrickOut(brickId);
         if (forBrick === brickId) home.set(null);
         // The bot server takes it off the map of the room it was standing in
-        const roomUrl = botApiService.getRoomId();
+        const roomUrl = lived?.roomUrl ?? botApiService.getRoomId();
         if (roomUrl) await botApiService.notifyRoomEnter(roomUrl).catch((error: unknown) => console.warn(error));
         return true;
     } catch (error) {
