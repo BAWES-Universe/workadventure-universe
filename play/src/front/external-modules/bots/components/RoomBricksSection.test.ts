@@ -44,12 +44,38 @@ const settle = async () => {
 const answer = (over: Record<string, unknown> = {}) => ({
     roomName: "Headquarters",
     here: [
-        { id: "b1", name: "Recipe Brick", characterTextureId: "brick-red", ownerName: "Khalid", mine: false, since: "2026-11-10T09:00:00.000Z" },
-        { id: "b2", name: "Studio Brick", characterTextureId: "brick-violet", ownerName: "Sara", mine: true, since: "2026-11-11T09:00:00.000Z" },
+        {
+            id: "b1",
+            name: "Recipe Brick",
+            characterTextureId: "brick-red",
+            ownerName: "Khalid",
+            mine: false,
+            since: "2026-11-10T09:00:00.000Z",
+        },
+        {
+            id: "b2",
+            name: "Studio Brick",
+            characterTextureId: "brick-violet",
+            ownerName: "Sara",
+            mine: true,
+            since: "2026-11-11T09:00:00.000Z",
+        },
     ],
     mine: [
-        { id: "m1", name: "Brick", description: "Your own Brick", characterTextureId: "brick-orange", homeElsewhere: false },
-        { id: "m2", name: "Recipe Brick", description: "Keeps the family recipes", characterTextureId: "brick-red", homeElsewhere: true },
+        {
+            id: "m1",
+            name: "Brick",
+            description: "Your own Brick",
+            characterTextureId: "brick-orange",
+            homeElsewhere: false,
+        },
+        {
+            id: "m2",
+            name: "Recipe Brick",
+            description: "Keeps the family recipes",
+            characterTextureId: "brick-red",
+            homeElsewhere: true,
+        },
     ],
     ...over,
 });
@@ -187,7 +213,12 @@ describe("the sheet 'Add one of your Bricks' (#2005)", () => {
         await settle();
         target.querySelectorAll<HTMLElement>('[data-testid="addBrickHere"]')[0].click();
         expect(ui.closeModal).toHaveBeenCalled();
-        expect(onAddHere).toHaveBeenCalledWith({ id: "m1", name: "Brick", description: "Your own Brick", look: "brick-orange" });
+        expect(onAddHere).toHaveBeenCalledWith({
+            id: "m1",
+            name: "Brick",
+            description: "Your own Brick",
+            look: "brick-orange",
+        });
     });
 
     it("says so when the person has no Brick to add", async () => {

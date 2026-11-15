@@ -17,7 +17,16 @@ describe("the Bricks of a room, as Orbit lists them (#2005)", () => {
         const bricks = parseRoomBricks({
             roomName: " Headquarters ",
             here: [row(), row({ id: "b2", name: "Mine", mine: true })],
-            mine: [{ id: "m1", name: "Brick", description: "Your own Brick", characterTextureId: "brick-orange", enabled: true, homeElsewhere: true }],
+            mine: [
+                {
+                    id: "m1",
+                    name: "Brick",
+                    description: "Your own Brick",
+                    characterTextureId: "brick-orange",
+                    enabled: true,
+                    homeElsewhere: true,
+                },
+            ],
         });
         expect(bricks?.roomName).toBe("Headquarters");
         expect(bricks?.here.map((one) => [one.id, one.mine, one.look, one.ownerName, one.since])).toEqual([
@@ -30,7 +39,10 @@ describe("the Bricks of a room, as Orbit lists them (#2005)", () => {
     });
 
     it("leaves out what is not a Brick, and a room with no name says so with an empty name", () => {
-        const bricks = parseRoomBricks({ here: [row({ id: "" }), null, row({ name: "  " }), row()], mine: [{ id: 3 }] });
+        const bricks = parseRoomBricks({
+            here: [row({ id: "" }), null, row({ name: "  " }), row()],
+            mine: [{ id: 3 }],
+        });
         expect(bricks?.here.map((one) => one.id)).toEqual(["b1"]);
         expect(bricks?.mine).toEqual([]);
         expect(bricks?.roomName).toBe("");
@@ -51,7 +63,11 @@ describe("the Bricks of a room, as Orbit lists them (#2005)", () => {
 });
 
 describe("where a Brick lives, as Orbit tells it (#2005)", () => {
-    const home = { roomUrl: "https://play.test/_/acme/hq/lobby.tmj", roomName: "Headquarters", universeName: "Makers Market" };
+    const home = {
+        roomUrl: "https://play.test/_/acme/hq/lobby.tmj",
+        roomName: "Headquarters",
+        universeName: "Makers Market",
+    };
 
     it("reads a home, and nowhere", () => {
         expect(parseBrickHome({ home })).toEqual(home);
