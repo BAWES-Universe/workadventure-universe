@@ -64,7 +64,7 @@ export function taskToolDefinitions(): ToolDefinition[] {
             function: {
                 name: MY_TASKS_TOOL,
                 description:
-                    'What this person has asked you to keep: each with its id, what it says, when it comes next, and when it last went off. Use it before you change, snooze or stop one, and when they ask what you are keeping for them.',
+                    'What this person has asked you to keep: each with its id, what it says, when it comes next, and when it last went off. Use it before you change, snooze or stop one, and when they ask what you are keeping for them. A goal that has asked them a question shows asking: when they answer it, use close or keep_going.',
                 parameters: { type: 'object', properties: {} },
             },
         },
@@ -74,12 +74,13 @@ export function taskToolDefinitions(): ToolDefinition[] {
                 name: CHANGE_TASK_TOOL,
                 description:
                     'Change one the person asked you to keep, when they ask: snooze (it comes back after a while, also right after it went off), pause, resume, cancel (stop it for good), or change (its words or time). ' +
+                    'For a goal that asked them a question (my_tasks shows asking): close (they say it is done, so it stops and is marked done) or keep_going (they say carry on: it goes on as it was and does not ask that again). ' +
                     'Get its id from my_tasks. Tell them plainly what you did, and when it comes next.',
                 parameters: {
                     type: 'object',
                     properties: {
                         id: { type: 'string', description: 'Its id from my_tasks.' },
-                        action: { type: 'string', enum: ['snooze', 'pause', 'resume', 'cancel', 'change'] },
+                        action: { type: 'string', enum: ['snooze', 'pause', 'resume', 'cancel', 'change', 'close', 'keep_going'] },
                         text: { type: 'string', description: 'change: the new words.' },
                         when: { type: 'string', description: 'change: the new date and time on THEIR clock, like "2026-11-15 16:00".' },
                         in_minutes: { type: 'integer', description: 'change: the new time as minutes from now.' },
@@ -291,6 +292,7 @@ function view(item: BrickItemView, now: number, workdays: number[] | null, zone:
         ...(item.nextDueAt ? { next: sayMoment(item.nextDueAt, zone, now) } : {}),
         ...(repeats ? { repeats } : {}),
         ...(item.lastRunAt ? { went_off: sayMoment(item.lastRunAt, zone, now) } : {}),
+        ...(item.asking ? { asking: item.asking === 'date_passed' ? 'it asked them what to do now that its date passed' : 'it asked them whether it is done, because it could not tell' } : {}),
         time_zone: zone,
     };
 }
@@ -414,6 +416,12 @@ async function changeTask(args: Record<string, unknown>, settings: TaskSettings,
         case 'cancel':
             body = { ...base, action: 'delete' };
             break;
+        case 'close':
+            body = { ...base, action: 'done' };
+            break;
+        case 'keep_going':
+            body = { ...base, action: 'keep' };
+            break;
         case 'change': {
             const change: Record<string, unknown> = {};
             const words = text(args.text, TEXT_MAX);
@@ -436,13 +444,14 @@ async function changeTask(args: Record<string, unknown>, settings: TaskSettings,
             break;
         }
         default:
-            return { error: 'The action is snooze, pause, resume, cancel or change.' };
+            return { error: 'The action is snooze, pause, resume, cancel, change, close or keep_going.' };
     }
     const answer = await context.admin.changeBrickItem(context.botId, id, body);
     if (refused(answer)) return refusal(answer);
     const item = answer.item;
     // Whatever was just set under this id is no longer what a repeat of the same ask would find
     for (const [key, kept] of justSet) if (kept.result.id === item.id) justSet.delete(key);
-    const done = action === 'cancel' ? 'cancelled' : action === 'snooze' ? 'snoozed' : action === 'pause' ? 'paused' : action === 'resume' ? 'resumed' : 'changed';
+    const done =
+        action === 'cancel' ? 'cancelled' : action === 'snooze' ? 'snoozed' : action === 'pause' ? 'paused' : action === 'resume' ? 'resumed' : action === 'close' ? 'closed' : action === 'keep_going' ? 'kept_going' : 'changed';
     return { [done]: true, ...view(item, now, settings.workdays, readOn), note: item.nextDueAt ? 'Tell them plainly what you did, and when it comes next.' : 'Tell them plainly what you did.' };
 }
