@@ -745,6 +745,23 @@ describe("Add your own app (#2001, mock Part 13)", () => {
         expect(game.disconnectMyApp).toHaveBeenCalledWith("app-1");
     });
 
+    it("uses a new key when the link goes back to what an unanswered try was made from", async () => {
+        game.addMyApp
+            .mockRejectedValueOnce(new Error("Orbit did not answer in time"))
+            .mockResolvedValueOnce({ id: "app-1" })
+            .mockResolvedValueOnce({ id: "app-2" });
+        await open();
+        await paste(ZAPIER);
+        await click("addAppSignIn");
+        await paste("https://tools.example.com/other");
+        // the earlier try's app was found and taken away; its key is gone with it
+        expect(game.disconnectMyApp).toHaveBeenCalledWith("app-1");
+        await paste(ZAPIER);
+        await click("addAppSignIn");
+        expect(game.addMyApp).toHaveBeenCalledTimes(3);
+        expect(keyOfCall(2)).not.toBe(keyOfCall(0));
+    });
+
     it("looks for the app a try that never answered may have made when the sheet closed before Orbit answered", async () => {
         let fail: (error: Error) => void = () => {};
         game.addMyApp

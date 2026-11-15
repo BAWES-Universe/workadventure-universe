@@ -143,6 +143,8 @@
         const pending = uncertain;
         uncertain = undefined;
         if (!pending) return;
+        // That key is about to be freed (its app taken away): a form that goes back to the same content makes a new app with a new key
+        keyFrom = "";
         try {
             const id = parseNewAppId(await botApiService.addMyApp(pending));
             if (id) await botApiService.disconnectMyApp(id);
