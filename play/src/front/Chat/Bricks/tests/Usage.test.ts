@@ -173,6 +173,13 @@ describe("real numbers (credits and grants)", () => {
         expect(parseUsage(real({ apps: { availableMicros: -1, totalMicros: 5 } }))?.apps).toBeNull();
     });
 
+    it("keeps the Computers section when only its balance could not be read", () => {
+        const computer = parseUsage(real({ computer: { unavailable: true } }))?.computer;
+        expect(computer?.money?.unavailable).toBe(true);
+        // Nothing else is sent and nothing is made up
+        expect(parseUsage(real({ computer: { left: 0.5, words: "half" } }))?.computer).toBeNull();
+    });
+
     it("reads extra credit, what each Brick spent and the tasks, leaving out only the lines it can't read", () => {
         const usage = parseUsage(
             real({

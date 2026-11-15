@@ -393,6 +393,14 @@ describe("the Usage page (#1999)", () => {
         expect(text()).toContain("Usage temporarily unavailable");
     });
 
+    it("says a computer balance it could not read, never a made-up bar", async () => {
+        game.getMyUsage.mockResolvedValue(live({}, { computer: { unavailable: true } }));
+        await open();
+        expect(text()).toContain("Computer");
+        expect(byId("usageComputerBar")).toBeNull();
+        expect(text()).toContain("Usage temporarily unavailable");
+    });
+
     it("shows extra credit only while someone has it: what it covers, what is left, when it ends", async () => {
         await open();
         expect(byId("usageSecCredit")).toBeNull();

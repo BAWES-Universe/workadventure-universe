@@ -311,7 +311,9 @@ export function parseUsage(value: unknown): MyUsage | undefined {
     const computerRaw = isRaw(computer) ? computer : undefined;
     if (computerRaw) {
         const money = parseMoney(computerRaw);
-        const left = money && !money.unavailable ? moneyLeft(money) : fraction(computerRaw.left);
+        // A balance that could not be read has no bar: it still makes the section, which says so
+        const left =
+            money && !money.unavailable ? moneyLeft(money) : fraction(computerRaw.left) ?? (money ? 0 : undefined);
         const computerWords = words(computerRaw.words) ?? (left !== undefined ? usageWordsOf(left) : undefined);
         const startsAgainAt = when(computerRaw.startsAgainAt) ?? money?.renewsAt ?? null;
         if (left !== undefined && computerWords !== undefined && (startsAgainAt || money)) {
