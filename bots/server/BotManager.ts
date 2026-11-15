@@ -1039,6 +1039,22 @@ export class BotManager {
      */
     private visitorChanges: Map<string, number> = new Map();
 
+    /** Visiting Bricks being connected or disconnected in each room right now: the game's own list of the room is behind or ahead of ours meanwhile. */
+    private visitorOpsInFlight: Map<string, number> = new Map();
+
+    private async withVisitorOp<T>(roomUrl: string, work: () => Promise<T>): Promise<T> {
+        this.visitorOpsInFlight.set(roomUrl, (this.visitorOpsInFlight.get(roomUrl) ?? 0) + 1);
+        this.noteVisitorChange(roomUrl);
+        try {
+            return await work();
+        } finally {
+            const left = (this.visitorOpsInFlight.get(roomUrl) ?? 1) - 1;
+            if (left > 0) this.visitorOpsInFlight.set(roomUrl, left);
+            else this.visitorOpsInFlight.delete(roomUrl);
+            this.noteVisitorChange(roomUrl);
+        }
+    }
+
     private noteVisitorChange(roomUrl: string): void {
         this.visitorChanges.set(roomUrl, (this.visitorChanges.get(roomUrl) ?? 0) + 1);
     }
@@ -1086,7 +1102,7 @@ export class BotManager {
         // Where its person stands is where it first appears. Without it the Brick is not put on the map at all (never at the
         // map's corner, to walk across the whole room): the caller says "no position yet" and tries again with one
         if (!start) return { botId: null, reason: 'no_position' };
-        await this.spawnBot(mine.botId, mine, { position: start });
+        await this.withVisitorOp(roomUrl, () => this.spawnBot(mine.botId, mine, { position: start }));
         this.visitors.set(uuid, { botId: mine.botId, roomUrl, ...(since ? { since } : {}) });
         this.noteVisitorChange(roomUrl);
         return { botId: mine.botId };
@@ -1129,7 +1145,10 @@ export class BotManager {
         if (client && instance?.client !== client) return;
         let despawned = false;
         try {
-            if (instance?.config.brick?.visiting?.ownerUuid === uuid) await this.despawnBot(botId);
+            if (instance?.config.brick?.visiting?.ownerUuid === uuid) {
+                const standingIn = this.visitors.get(uuid)?.roomUrl ?? instance.config.roomUrl;
+                await (standingIn ? this.withVisitorOp(standingIn, () => this.despawnBot(botId)) : this.despawnBot(botId));
+            }
             despawned = true;
         } finally {
             // The visitor is dropped after the despawn, not before: dropped first, a Brick whose despawn then failed (the
@@ -1652,7 +1671,7 @@ export class BotManager {
         // What the game counts in a room and what this server counts must be of the same moment: a visiting Brick put on the
         // map, or taken off, while the game was asked is a count from two moments, and the room is left alone this time
         const visitingBefore = new Map<string, string>();
-        const placementOf = (roomId: string) => `${this.visitingBrickCount(roomId)}:${this.visitorChanges.get(roomId) ?? 0}`;
+        const placementOf = (roomId: string) => `${this.visitingBrickCount(roomId)}:${this.visitorChanges.get(roomId) ?? 0}:${this.visitorOpsInFlight.get(roomId) ?? 0}`;
         for (const roomId of this.roomsWithBots.keys()) visitingBefore.set(roomId, placementOf(roomId));
         const waRooms = await this.queryWorkAdventureRooms();
         console.log(`[BotManager] WA rooms query returned ${waRooms.size} rooms`);
@@ -1666,8 +1685,8 @@ export class BotManager {
             const waUserCount = waRooms.get(roomId) || 0;
             // A visiting Brick is in the game's count of the room too, and is no person
             const visiting = this.visitingBrickCount(roomId);
-            if (placementOf(roomId) !== visitingBefore.get(roomId)) {
-                console.log(`[BotManager] Room ${roomId}: a visiting Brick came or went while the game was asked. Checking again next time.`);
+            if ((this.visitorOpsInFlight.get(roomId) ?? 0) > 0 || placementOf(roomId) !== visitingBefore.get(roomId)) {
+                console.log(`[BotManager] Room ${roomId}: a visiting Brick is, or was while the game was asked, being connected, disconnected or replaced. Checking again next time.`);
                 continue;
             }
             const ourBotCount = roomState.botIds.size + visiting;
