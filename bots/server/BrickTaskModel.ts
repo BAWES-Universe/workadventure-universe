@@ -5,6 +5,7 @@
  */
 import type { AIService } from '../ai/AIService';
 import type { BrickTaskModel, DueRun, TaskOutcome } from './BrickRunner';
+import type { TaskApps, TaskAppsSession } from './BrickTaskApps';
 import { FINISH_CHECK_TOOL, NO_FINISH_REASON, READ_PAGE_TOOL, TASK_MAX_STEPS, readFinish, taskPrompt, taskToolDefinitions, type TaskResult } from './BrickTaskRun';
 
 /** What the model of a Brick is told about the Brick itself. */
@@ -21,6 +22,8 @@ export interface TaskModelDeps {
     ai: Pick<AIService, 'runBrickTask'>;
     brick(brickId: string): Promise<TaskBrick | null>;
     readPage(brickId: string, url: string): Promise<Record<string, unknown>>;
+    /** The owner's Apps a run may use (BrickTaskApps); without it a run reads the web and nothing else. */
+    apps?: Pick<TaskApps, 'open'>;
     now?: () => Date;
 }
 
@@ -44,6 +47,13 @@ export class ModelTaskRunner implements BrickTaskModel {
         if (!brick || brick.deleted) return { kind: 'stopped' };
         if (!brick.providerId) return { kind: 'failed', error: 'This Brick has no AI set up to think with' };
 
+        // A run that cannot have its Apps just now goes on with the web alone
+        let apps: TaskAppsSession | null = null;
+        try {
+            apps = (await this.deps.apps?.open(run)) ?? null;
+        } catch {
+            apps = null;
+        }
         let result: TaskResult | null = null;
         const runTool = async (name: string, args: Record<string, unknown>): Promise<string> => {
             if (name === READ_PAGE_TOOL) {
@@ -56,14 +66,16 @@ export class ModelTaskRunner implements BrickTaskModel {
                 result = read.result;
                 return JSON.stringify({ ok: true });
             }
+            if (apps?.has(name)) return apps.call(name, args);
             return JSON.stringify({ error: 'That is not something a check can do.' });
         };
+        const tools = [...taskToolDefinitions(), ...(apps?.definitions ?? [])];
         const ended = await this.deps.ai.runBrickTask({
             botId: run.brickId,
             providerId: brick.providerId,
-            system: taskPrompt(run, { name: brick.name, instructions: brick.instructions }, (this.deps.now ?? (() => new Date()))()),
+            system: taskPrompt(run, { name: brick.name, instructions: brick.instructions }, (this.deps.now ?? (() => new Date()))(), { apps: !!apps }),
             user: 'Do this check now, then end it with finish_check.',
-            tools: taskToolDefinitions(),
+            tools,
             maxSteps: TASK_MAX_STEPS,
             permit,
             runTool,

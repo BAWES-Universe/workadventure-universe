@@ -157,6 +157,16 @@ export class OrbitActions {
         return data.action;
     }
 
+    /**
+     * Like `create`, and says whether the card is new. A card a goal or task puts up that asks the same thing as one still waiting is that card
+     * (Orbit answers 200, not 201): the later check adds no second card and no second message.
+     */
+    async createOrJoin(botId: string, input: NewAction): Promise<{ action: SavedAction; created: boolean }> {
+        const { status, data } = await this.post<{ action: SavedAction }>(botId, 'actions', input, 'to save the action');
+        if (!data?.action) throw new OrbitActionsUnavailable('to save the action');
+        return { action: data.action, created: status === 201 };
+    }
+
     async decide(botId: string, id: string, input: { actorKey: string; revision: number; decision: Decision }): Promise<DecideAnswer> {
         const { data } = await this.post<DecideAnswer>(botId, `actions/${encodeURIComponent(id)}/decision`, input, 'to record the answer');
         return data;

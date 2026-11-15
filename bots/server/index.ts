@@ -21,6 +21,7 @@ import { BrickRunner } from './BrickRunner';
 import { movementLogger } from '../utils/MovementLogger';
 import { DmReplyService, instructionsFor, type DmRoomLink } from './DmReplyService';
 import { ModelTaskRunner } from './BrickTaskModel';
+import { TaskApps } from './BrickTaskApps';
 import { readWebPageForTool } from '../ai/AIService';
 import { botMatrixId, readMatrixConfig } from '../matrix/MatrixConfig';
 import { OrbitActions } from '../mcp/OrbitActions';
@@ -271,6 +272,17 @@ async function setupMatrix(): Promise<void> {
                 return { name: config.name || 'Brick', instructions: instructionsFor(config), providerId: config.aiProviderRef ?? null, deleted: config.brick.deleted === true };
             },
             readPage: (brickId, url) => readWebPageForTool(url, aiService.readCharsFor(brickId)),
+            // The owner's Apps, used as their own chat would, a step that makes, sends or deletes asking on a card first
+            apps: new TaskApps({
+                discover: (brickId) => aiService.appToolsOf(brickId),
+                gate: aiService.gate,
+                approvals,
+                room: (brickId, matrixUserId) => bridge.roomToSpeakIn(brickId, matrixUserId),
+                call: async (brickId, entry, toolName, args, ownerId, use) => {
+                    const config = botManager.getBot(brickId)?.getFullConfig() ?? (await dmReplyService.getBotConfig(brickId).catch(() => null));
+                    return aiService.runApprovedTool(brickId, entry, toolName, args, ownerId, config?.toolTimeoutSeconds, use);
+                },
+            }),
         })
     );
     brickRunner.start(BRICK_DUE_EVERY_MS);

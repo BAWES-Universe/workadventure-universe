@@ -112,6 +112,12 @@ export interface ProposeInput {
     cardOnly?: boolean;
     /** The card is the one before making more than the bot's limit (#1662): its own words, and nothing is remembered from it. */
     batch?: BatchKind;
+    /**
+     * A goal or task puts up this card (#2002): it has its own conversation, `task:{itemId}`, never the chat's, so what the person writes in chat
+     * does not touch it. It asks every time (nothing is remembered from it), waits as long as Orbit's "Scheduled card wait", and the same thing
+     * asked again on a later check joins the card that waits: no second card, and so no second message.
+     */
+    task?: { itemId: string };
 }
 
 export type Proposed =
@@ -159,6 +165,22 @@ const WAITING_RESULT = {
     message:
         "A card asking for the person's OK was shown in this chat. Nothing was done yet. Say in one short line what you asked them to confirm, " +
         'and do not ask again or call the tool again: wait for them to tap. If they type something else instead, the card closes and nothing is done.',
+};
+
+/** What a run is told when a card for its step was put in the person's chat: the card is the message, so the run only ends. */
+const WAITING_TASK_RESULT = {
+    status: 'waiting_for_ok',
+    message:
+        "A card asking for the person's OK was put in their chat. Nothing was done yet, and you do not tell them about it yourself: the card does. " +
+        'Do not call this tool again. End this check now with finish_check, and say in waiting_for what you wait for.',
+};
+
+/** The same, when the person was already asked this very thing on an earlier check and the card still waits. */
+const ALREADY_ASKED_TASK_RESULT = {
+    status: 'waiting_for_ok',
+    message:
+        'The person was already asked this, and the card still waits for them. Nothing was done, and nothing new is said to them. ' +
+        'Do not call this tool again. End this check now with finish_check, and say in waiting_for what you wait for.',
 };
 
 /** The same, in a bubble: the line everyone reads is the bot's whole reply, and nothing from the card goes in it. */
@@ -209,11 +231,13 @@ export class ToolApprovals {
 
     private async proposeNow(input: ProposeInput): Promise<Proposed> {
         const { botId, roomId, person, entry, toolName, args, decision } = input;
-        const nearby = person.playerId !== undefined;
+        const task = input.task;
+        // A goal's card goes to the person's own direct message, never to a bubble
+        const nearby = task ? false : person.playerId !== undefined;
         if (nearby && !this.deps.nearby) return { kind: 'failed', result: NO_CARD_RESULT };
         const base = {
             requesterKey: person.uuid,
-            conversationKey: conversationKeyOf(roomId, nearby),
+            conversationKey: task ? taskKeyOf(task.itemId) : conversationKeyOf(roomId, nearby),
             connectionRef: entry.serverId,
             toolName,
             heading: decision.heading,
@@ -224,21 +248,33 @@ export class ToolApprovals {
         try {
             // The same call asked for again while its card still waits (a turn asked again, or the model repeating itself)
             // is that card: no second card, so one tap can never run it twice
-            if (this.findWaiting(botId, roomId, person.uuid, toolName, args, decision)) return { kind: 'waiting', result: nearby ? WAITING_NEARBY_RESULT : WAITING_RESULT };
-            // Making more than the limit is asked every time: nothing allowed before covers it
-            if (!input.cardOnly && !input.batch && !decision.notReviewed && decision.heading !== 'deletesOrSends') {
+            if (this.findWaiting(botId, roomId, person.uuid, toolName, args, decision)) {
+                return { kind: 'waiting', result: task ? ALREADY_ASKED_TASK_RESULT : nearby ? WAITING_NEARBY_RESULT : WAITING_RESULT };
+            }
+            // Making more than the limit is asked every time: nothing allowed before covers it. A goal's step asks every time too.
+            if (!task && !input.cardOnly && !input.batch && !decision.notReviewed && decision.heading !== 'deletesOrSends') {
                 const grant = await this.deps.orbit.findGrant(botId, base);
                 if (grant) return { kind: 'run' };
             }
-            const wait = (await this.deps.orbit.cardSettings(botId)).cardWaitMinutes;
-            const offer = input.batch ? null : rememberOffer(args, decision.heading, decision.notReviewed);
+            const offer = input.batch || task ? null : rememberOffer(args, decision.heading, decision.notReviewed);
             const words = input.batch ? batchWords(input.batch) : null;
-            const action = await this.deps.orbit.create(botId, {
-                ...base,
-                proposalKey: randomKey(),
-                rememberScope: offer?.scope ?? null,
-                reviewMinutes: wait,
-            });
+            let action: SavedAction;
+            let wait: number;
+            if (task) {
+                // Orbit sets the wait of a goal's card (a super admin's "Scheduled card wait"), and says when it is the card already waiting
+                const saved = await this.deps.orbit.createOrJoin(botId, { ...base, proposalKey: randomKey(), rememberScope: null });
+                if (!saved.created) return { kind: 'waiting', result: ALREADY_ASKED_TASK_RESULT };
+                action = saved.action;
+                wait = Math.max(1, Math.round((Date.parse(action.reviewExpiresAt) - this.now()) / 60_000));
+            } else {
+                wait = (await this.deps.orbit.cardSettings(botId)).cardWaitMinutes;
+                action = await this.deps.orbit.create(botId, {
+                    ...base,
+                    proposalKey: randomKey(),
+                    rememberScope: offer?.scope ?? null,
+                    reviewMinutes: wait,
+                });
+            }
             const facts: CardFacts = {
                 action,
                 title: cardTitle(toolName, words ? words.title : input.toolTitle),
@@ -272,7 +308,7 @@ export class ToolApprovals {
                 return { kind: 'failed', result: NO_CARD_RESULT };
             }
             this.keep(action.id, card);
-            if (!nearby) return { kind: 'waiting', result: WAITING_RESULT };
+            if (!nearby) return { kind: 'waiting', result: task ? WAITING_TASK_RESULT : WAITING_RESULT };
             this.scheduleExpiry(action.id, card);
             // One line for everyone: the bot needs an OK, or it changed what it asks (the person said something else)
             const moment: Moment = this.takeChange(botId, roomId, person.uuid, toolName) ? 'changed' : 'ask';
@@ -327,7 +363,9 @@ export class ToolApprovals {
     private async rebuild(botId: string, roomId: string, person: Asker, id: string): Promise<{ card: Card; action: SavedAction } | null> {
         const action = await this.deps.orbit.read(botId, id);
         const nearby = person.playerId !== undefined;
-        if (!action || action.requesterKey !== person.uuid || action.conversationKey !== conversationKeyOf(roomId, nearby)) return null;
+        // A card of a goal or task is in that goal's own conversation, and is tapped in the person's direct message all the same
+        const own = action?.conversationKey === conversationKeyOf(roomId, nearby) || (!nearby && !!action && taskItemOf(action.conversationKey) !== null);
+        if (!action || action.requesterKey !== person.uuid || !own) return null;
         const wait = (await this.deps.orbit.cardSettings(botId)).cardWaitMinutes;
         const entry = await this.deps.tools.find(botId, action.toolName).catch(() => null);
         // Whether the tool was never checked is not saved with the action: ask the gate again for a card that still waits,
@@ -437,7 +475,7 @@ export class ToolApprovals {
                 case 'reviewAgain':
                     return void (await this.reviewAgain(id, card));
                 case 'askAgain': {
-                    await orbit.revokeGrants(botId, { requesterKey: actorKey, conversationKey: conversationKeyOf(roomId, card.nearby), reason: 'ask_again' });
+                    await orbit.revokeGrants(botId, { requesterKey: actorKey, conversationKey: card.facts.action.conversationKey, reason: 'ask_again' });
                     const action = card.facts.action;
                     // Same card, without "allow more": the next call asks again
                     await this.redraw(id, card, { ...action, revision: action.revision + 1 }, { option: 'approveAndRemember' });
@@ -487,6 +525,7 @@ export class ToolApprovals {
             decision,
             cardOnly: true,
             ...(card.batch ? { batch: card.batch } : {}),
+            ...(taskItemOf(action.conversationKey) ? { task: { itemId: taskItemOf(action.conversationKey)! } } : {}),
         });
         if (proposed.kind === 'failed') await this.tell(botId, roomId, person, "I couldn't show the card. Try again in a moment.");
         // In a bubble there is no reply to carry the line, so it is said here
@@ -859,6 +898,10 @@ export class ToolApprovals {
 
 /** A direct message's room, or a bubble's space: a card belongs to one or the other, never both. */
 const conversationKeyOf = (roomId: string, nearby = false) => `${nearby ? 'near' : 'dm'}:${roomId}`;
+
+/** A goal's or task's own conversation (Orbit's `taskConversationKey`), and the goal or task a conversation key names, if it is one. */
+const taskKeyOf = (itemId: string) => `task:${itemId}`;
+const taskItemOf = (conversationKey: string): string | null => /^task:([0-9a-f-]{36})$/i.exec(conversationKey)?.[1] ?? null;
 
 const changeKey = (botId: string, roomId: string, personUuid: string, toolName: string) => JSON.stringify([botId, roomId, personUuid, toolName]);
 
