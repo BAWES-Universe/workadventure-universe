@@ -12,6 +12,7 @@
     } from "../../Stores/EditModeStore";
     import { mapEditorVisibilityStore } from "../../Stores/MapEditorStore";
     import { mobileLayoutStore } from "../../Stores/MobileLayoutStore";
+    import { warningMessageStore } from "../../Stores/ErrorStore";
     import BotList from "./components/BotList.svelte";
     import BotDetailView from "./components/BotDetailView.svelte";
     import NewBotView from "./components/NewBotView.svelte";
@@ -53,7 +54,6 @@
     import { getBotEditorTool } from "./phaser/BotEditorTool";
     import { botApiService } from "./services/BotApiService";
     import { placeBrickHere } from "./stores/RoomBricksStore";
-    import { warningMessageStore } from "../../Stores/ErrorStore";
     import { IconMapPin } from "@wa-icons";
 
     let detailView: BotDetailView | undefined;
