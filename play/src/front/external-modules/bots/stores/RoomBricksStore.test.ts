@@ -7,6 +7,7 @@ const api = vi.hoisted(() => ({
     placeBrickHome: vi.fn<(id: string, roomUrl: string, spot: unknown) => Promise<unknown>>(),
     takeBrickOut: vi.fn<(id: string) => Promise<void>>(),
     notifyRoomEnter: vi.fn<(roomUrl: string) => Promise<unknown>>(),
+    getBrickHome: vi.fn<(id: string) => Promise<unknown>>(),
 }));
 vi.mock("../services/BotApiService", () => ({ botApiService: api }));
 
@@ -16,7 +17,16 @@ const ROOM = "/@/team/universe/room";
 const HOME = { roomUrl: "https://play.test/@/team/universe/room", roomName: "Headquarters", universeName: "Universe" };
 const answer = (over: Record<string, unknown> = {}) => ({
     roomName: "Headquarters",
-    here: [{ id: "b1", name: "Recipe Brick", characterTextureId: "brick-red", ownerName: "Khalid", mine: false, since: "2026-11-10T09:00:00.000Z" }],
+    here: [
+        {
+            id: "b1",
+            name: "Recipe Brick",
+            characterTextureId: "brick-red",
+            ownerName: "Khalid",
+            mine: false,
+            since: "2026-11-10T09:00:00.000Z",
+        },
+    ],
     mine: [],
     ...over,
 });
@@ -66,7 +76,10 @@ describe("the Bricks of the room being edited (#2005)", () => {
     it("gives a Brick a home at the picked spot, reads the room again and has the bot server put it on the map", async () => {
         api.placeBrickHome.mockResolvedValue({ home: HOME, keyNote: null });
         api.getRoomBricks.mockResolvedValue(answer());
-        const spot = { behaviorType: "idle", behaviorConfig: { assignedSpace: { center: { x: 64, y: 96 }, radius: 0 } } };
+        const spot = {
+            behaviorType: "idle",
+            behaviorConfig: { assignedSpace: { center: { x: 64, y: 96 }, radius: 0 } },
+        };
         await expect(placeBrickHere({ id: "m1" }, spot)).resolves.toEqual({ ok: true, keyNotLent: false });
         expect(api.placeBrickHome).toHaveBeenCalledWith("m1", ROOM, spot);
         expect(api.getRoomBricks).toHaveBeenCalled();
@@ -100,5 +113,52 @@ describe("the Bricks of the room being edited (#2005)", () => {
         api.takeBrickOut.mockRejectedValue(new Error("offline"));
         await expect(takeBrickOut("b1")).resolves.toBe(false);
         expect(api.getRoomBricks).not.toHaveBeenCalled();
+    });
+
+    it("never lets a read begun before a take-out bring the Brick back (Dev desk on #2055)", async () => {
+        api.getRoomBricks.mockResolvedValueOnce(answer());
+        await loadRoomBricks();
+        let late: (value: unknown) => void = () => undefined;
+        api.getRoomBricks.mockReturnValueOnce(
+            new Promise((resolve) => {
+                late = resolve;
+            })
+        );
+        const slow = loadRoomBricks();
+        api.takeBrickOut.mockResolvedValue(undefined);
+        api.getRoomBricks.mockResolvedValueOnce(answer({ here: [] }));
+        await expect(takeBrickOut("b1")).resolves.toBe(true);
+        late(answer());
+        await slow;
+        expect(get(roomBricksStore)?.here).toEqual([]);
+    });
+
+    it("does not hold the Take out button on the bot server, which may take a few seconds for a room with nobody in it", async () => {
+        api.takeBrickOut.mockResolvedValue(undefined);
+        api.getRoomBricks.mockResolvedValue(answer({ here: [] }));
+        api.notifyRoomEnter.mockReturnValue(new Promise<void>(() => {}));
+        await expect(takeBrickOut("b1")).resolves.toBe(true);
+        expect(api.notifyRoomEnter).toHaveBeenCalledWith(ROOM);
+    });
+
+    it("tells the room a Brick is moved out of as well as the one it is placed in", async () => {
+        api.getBrickHome.mockResolvedValue({
+            home: { roomUrl: "/@/team/universe/studio", roomName: "Studio", universeName: "Universe" },
+        });
+        api.placeBrickHome.mockResolvedValue({ home: HOME, keyNote: null });
+        api.getRoomBricks.mockResolvedValue(answer());
+        await expect(placeBrickHere({ id: "m1" }, {})).resolves.toEqual({ ok: true, keyNotLent: false });
+        expect(api.notifyRoomEnter).toHaveBeenCalledWith(ROOM);
+        expect(api.notifyRoomEnter).toHaveBeenCalledWith("/@/team/universe/studio");
+    });
+
+    it("tells only this room when the Brick had no home, or where it lived cannot be read", async () => {
+        api.placeBrickHome.mockResolvedValue({ home: HOME, keyNote: null });
+        api.getRoomBricks.mockResolvedValue(answer());
+        api.getBrickHome.mockResolvedValue({ home: null });
+        await placeBrickHere({ id: "m1" }, {});
+        api.getBrickHome.mockRejectedValue(new Error("offline"));
+        await placeBrickHere({ id: "m1" }, {});
+        expect(api.notifyRoomEnter.mock.calls.map((call) => call[0])).toEqual([ROOM, ROOM]);
     });
 });

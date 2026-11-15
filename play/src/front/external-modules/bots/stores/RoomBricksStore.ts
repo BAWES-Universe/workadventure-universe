@@ -1,7 +1,7 @@
 import { writable } from "svelte/store";
 import type { Readable } from "svelte/store";
 import { botApiService } from "../services/BotApiService";
-import { parsePlaced, parseRoomBricks, type OwnBrickChoice, type RoomBricks } from "../roomBricksModel";
+import { parseBrickHome, parsePlaced, parseRoomBricks, type OwnBrickChoice, type RoomBricks } from "../roomBricksModel";
 
 /**
  * The Bricks of the room being edited (game #2005): the ones that live here and the person's own that can be added.
@@ -14,6 +14,9 @@ export const roomBricksStore: Readable<RoomBricks | undefined> = { subscribe: br
 /** The room the stored answer is for, so a list opened in another room never shows the last one's. */
 let forRoom: string | null = null;
 
+/** Which read is the latest, so one that is slow never puts an older list over a newer one (a Brick just taken out comes back). */
+let newest = 0;
+
 /** Reads the room's Bricks again. Resolves either way. */
 export async function loadRoomBricks(): Promise<void> {
     const roomUrl = botApiService.getRoomId();
@@ -22,12 +25,13 @@ export async function loadRoomBricks(): Promise<void> {
         forRoom = roomUrl;
         bricks.set(undefined);
     }
+    const mine = ++newest;
     try {
         const answer = parseRoomBricks(await botApiService.getRoomBricks(roomUrl));
-        if (forRoom === roomUrl) bricks.set(answer);
+        if (forRoom === roomUrl && mine === newest) bricks.set(answer);
     } catch (error) {
         console.warn("Could not read the Bricks of this room", error);
-        if (forRoom === roomUrl) bricks.set(undefined);
+        if (forRoom === roomUrl && mine === newest) bricks.set(undefined);
     }
 }
 
@@ -41,11 +45,18 @@ export async function placeBrickHere(
     const roomUrl = botApiService.getRoomId();
     if (!roomUrl) return { ok: false };
     try {
+        // A Brick has one home: placing it here moves it out of the room it lived in, which is told too
+        const before = await Promise.resolve()
+            .then(() => botApiService.getBrickHome(brick.id))
+            .then(parseBrickHome, () => undefined);
         const placed = parsePlaced(await botApiService.placeBrickHome(brick.id, roomUrl, spot));
         if (!placed) return { ok: false };
         await loadRoomBricks();
         // The bot server puts it on this room's map: asked the way a room bot's spawn is
-        await botApiService.notifyRoomEnter(roomUrl).catch((error: unknown) => console.warn(error));
+        void botApiService.notifyRoomEnter(roomUrl).catch((error: unknown) => console.warn(error));
+        if (before && before.roomUrl !== roomUrl) {
+            void botApiService.notifyRoomEnter(before.roomUrl).catch((error: unknown) => console.warn(error));
+        }
         return { ok: true, keyNotLent: placed.keyNotLent };
     } catch (error) {
         console.warn("Could not give a Brick a home here", error);
@@ -58,8 +69,9 @@ export async function takeBrickOut(brickId: string): Promise<boolean> {
     try {
         await botApiService.takeBrickOut(brickId);
         await loadRoomBricks();
+        // The bot server takes it off the map in its own time: the button does not wait for a room with nobody in it
         const roomUrl = botApiService.getRoomId();
-        if (roomUrl) await botApiService.notifyRoomEnter(roomUrl).catch((error: unknown) => console.warn(error));
+        if (roomUrl) void botApiService.notifyRoomEnter(roomUrl).catch((error: unknown) => console.warn(error));
         return true;
     } catch (error) {
         console.warn("Could not take a Brick out of this room", error);
@@ -70,5 +82,6 @@ export async function takeBrickOut(brickId: string): Promise<boolean> {
 /** For tests and for a person who signs out without a reload. */
 export function forgetRoomBricks(): void {
     forRoom = null;
+    newest++;
     bricks.set(undefined);
 }

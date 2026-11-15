@@ -410,7 +410,14 @@ export class BotManager {
         // A visiting Brick starts beside its person (#2005)
         const visiting = config.brick?.visiting;
         const home = config.brick?.home;
-        const client = await this.buildClient(botId, config, { position: options.position });
+        // Whose it is is told to the AI service before the bot can hear anyone: a message in the moment between connecting and
+        // being noted would otherwise be answered as for nobody in particular (#2005)
+        const company = visiting ?? home;
+        if (company) this.aiService.noteRoomBrick(botId, { ownerUuid: company.ownerUuid, ownerName: company.ownerName, roomUrl: config.roomUrl });
+        const client = await this.buildClient(botId, config, { position: options.position }).catch((error: unknown) => {
+            if (company && !this.bots.has(botId)) this.aiService.noteRoomBrick(botId, undefined);
+            throw error;
+        });
 
         // Connect bot
         try {
@@ -439,9 +446,6 @@ export class BotManager {
             };
 
             this.bots.set(botId, instance);
-            // A Brick that stands in a room is answered by who is asking, and never uses its owner's things for others (#2005)
-            const company = visiting ?? home;
-            if (company) this.aiService.noteRoomBrick(botId, { ownerUuid: company.ownerUuid, ownerName: company.ownerName, roomUrl: config.roomUrl });
 
             // Register in bot registry
             await this.botRegistry.assignBot(botId);
@@ -456,6 +460,8 @@ export class BotManager {
             // not a connected client standing on the map, and not a connected-looking instance the next sync would find and skip
             if (this.bots.get(botId)?.client === client) {
                 this.bots.delete(botId);
+                this.aiService.noteRoomBrick(botId, undefined);
+            } else if (!this.bots.has(botId)) {
                 this.aiService.noteRoomBrick(botId, undefined);
             }
             try {
@@ -1454,8 +1460,18 @@ export class BotManager {
                             (existingInstance.config.companionTextureId ?? null) !== (bot.companionTextureId ?? null) ||
                             // The voice tag is part of the bot's token, so a change of the owner's choice reconnects it
                             !!existingInstance.config.voiceEnabled !== !!bot.voiceEnabled ||
-                            JSON.stringify(existingInstance.config.assignedSpace) !== JSON.stringify(bot.assignedSpace);
+                            JSON.stringify(existingInstance.config.assignedSpace) !== JSON.stringify(bot.assignedSpace) ||
+                            // A Brick moved to another room (same spot or not) is connected to the room it was in: it joins this one
+                            existingInstance.config.roomUrl !== bot.roomUrl ||
+                            (existingInstance.config.brick?.home?.ownerUuid ?? null) !== (bot.brick?.home?.ownerUuid ?? null);
                         
+                        // This list was read before a Brick that was moved while another room was syncing: a Brick whose room is not
+                        // the one it stands in is only brought here when Orbit still says it lives here now
+                        if (needsRespawn && bot.brick?.home && existingInstance.config.roomUrl !== bot.roomUrl) {
+                            const now = await this.adminApiService.getHomedBricks(bot.roomUrl).catch(() => undefined);
+                            if (!now?.some((current) => current.botId === bot.botId)) continue;
+                        }
+
                         if (needsRespawn) {
                             const reason = existingInstance.status !== 'connected' 
                                 ? `status is ${existingInstance.status}` 
@@ -1752,6 +1768,13 @@ export class BotManager {
                 console.log(
                     `[BotManager] Room ${roomId} has ${realPlayerCount} real player(s) (WA: ${waUserCount} total, bots: ${ourBotCount})`
                 );
+                // Orbit returns a Brick on its own (a deleted room, a switch turned off, a take-out by someone else) and tells nobody:
+                // while people are here, a room with a Brick that lives in it is read again, once a minute, so it is never kept longer
+                if ([...roomState.botIds].some((botId) => this.bots.get(botId)?.config.brick?.home)) {
+                    await this.ensureBotsForRoom(roomId).catch((error: unknown) => {
+                        console.warn(`[BotManager] Could not read Orbit again for room ${roomId}:`, error instanceof Error ? error.message : error);
+                    });
+                }
             }
         }
     }

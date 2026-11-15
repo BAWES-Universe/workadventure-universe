@@ -93,6 +93,25 @@ describe("where a Brick lives (#2005)", () => {
         expect(get(brickHomeStore)).toBeNull();
     });
 
+    it("when it has not read where the Brick lives, reads it first and tells that room (Dev desk on #2055)", async () => {
+        game.getBrickHome.mockResolvedValue({
+            home: { ...HOME, roomUrl: "/@/team/universe/studio", roomName: "Studio" },
+        });
+        game.takeBrickOut.mockResolvedValue({ ok: true });
+        expect(await takeBrickOutOfHome("b1")).toBe(true);
+        expect(game.notifyRoomEnter).toHaveBeenCalledWith("/@/team/universe/studio");
+        expect(game.notifyRoomEnter).not.toHaveBeenCalledWith("/@/team/universe/room");
+    });
+
+    it("does not hold the button on the bot server, which may take a few seconds for a room with nobody in it", async () => {
+        game.getBrickHome.mockResolvedValue({ home: HOME });
+        game.takeBrickOut.mockResolvedValue({ ok: true });
+        game.notifyRoomEnter.mockReturnValue(new Promise<void>(() => {}));
+        await loadBrickHome("b1");
+        expect(await takeBrickOutOfHome("b1")).toBe(true);
+        expect(game.notifyRoomEnter).toHaveBeenCalledWith("/@/team/universe/room");
+    });
+
     it("says it did not work, and changes nothing, when Orbit refused", async () => {
         game.getBrickHome.mockResolvedValue({ home: HOME });
         game.takeBrickOut.mockRejectedValue(new Error("offline"));

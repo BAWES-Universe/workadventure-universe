@@ -107,7 +107,7 @@
         homeBusy = true;
         takeBrickOutOfHome(brick.id)
             .then((done) => {
-                if (!done) warningMessageStore.addWarningMessage($LL.chat.brick.takeItOutFailed({ name: brick.name }));
+                if (!done) warningMessageStore.addWarningMessage($LL.chat.brick.takeOutFailed({ name: brick.name }));
             })
             .catch((error) => console.error(error))
             .finally(() => {

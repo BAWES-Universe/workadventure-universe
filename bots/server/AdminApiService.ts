@@ -309,8 +309,8 @@ export interface BotAccessAnswer {
 const DM_ACCESS_REPORT_EVERY_MS = 60_000;
 let lastDmAccessReportAt = 0;
 
-/** What a Brick that cannot answer people where it visits says to them (#2005): its owner's own key is not lent to this place. */
-export const KEY_NOT_LENT_LINE = "I can't answer here right now. Ask the person I came with.";
+/** What a Brick that cannot answer people where it visits or lives says to them (#2005): its owner's own key is not lent to this place. */
+export const KEY_NOT_LENT_LINE = "I can't answer here right now. Ask my owner.";
 
 /** How long a bot waits for Orbit's access answer before it counts as "could not check". */
 const BOT_ACCESS_TIMEOUT_MS = 4_000;

@@ -12,4 +12,9 @@ export class HomedBrickBehavior extends IdleBehavior {
     protected onMemoryReady(_spaceName: string, _user: SpaceUser & { id: number }): void {
         // Nothing: no greeting, and so nothing for its owner's key to pay for
     }
+
+    /** Nor the greeting that follows a walk to a person (a Brick that led someone here): no one is welcomed on its owner's key. */
+    onSpaceJoined(_spaceName: string): void {
+        this.justCompletedLeading = null;
+    }
 }

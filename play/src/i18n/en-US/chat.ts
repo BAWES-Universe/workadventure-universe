@@ -1102,7 +1102,6 @@ const chat: BaseTranslation = {
         showOnMap: "Show on map",
         takeItOutHere: "Take it out of this room",
         takeItOutOf: "Take it out of {room}",
-        takeItOutFailed: "Couldn't take {name} out. Try again.",
         // A Brick leads you to connect an App (#2001), on the question card. The App is always called an App.
         appCard: {
             // "Connect Notion?" when they asked for it by name; the Brick's own question ("Connect your calendar?") otherwise

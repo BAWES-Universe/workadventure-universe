@@ -4,6 +4,9 @@
  * rule can be unit tested.
  */
 
+/** The longest name the game keeps, for a Brick, whose it is, and the rooms it lives in: one cut everywhere. */
+export const NAME_MAX = 100;
+
 /** One Brick standing in this room, as a manager of the room sees it. */
 export interface RoomBrickRow {
     id: string;
@@ -45,13 +48,13 @@ export function parseRoomBricks(value: unknown): RoomBricks | undefined {
     for (const one of here) {
         const row = one as Record<string, unknown> | null;
         const id = text(row?.id);
-        const name = text(row?.name, 64);
+        const name = text(row?.name, NAME_MAX);
         if (!row || !id || !name) continue;
         rows.push({
             id,
             name,
             look: text(row.characterTextureId),
-            ownerName: text(row.ownerName, 100),
+            ownerName: text(row.ownerName, NAME_MAX),
             mine: row.mine === true,
             since: text(row.since),
         });
@@ -60,7 +63,7 @@ export function parseRoomBricks(value: unknown): RoomBricks | undefined {
     for (const one of mine) {
         const card = one as Record<string, unknown> | null;
         const id = text(card?.id);
-        const name = text(card?.name, 64);
+        const name = text(card?.name, NAME_MAX);
         if (!card || !id || !name) continue;
         choices.push({
             id,
@@ -70,7 +73,7 @@ export function parseRoomBricks(value: unknown): RoomBricks | undefined {
             homeElsewhere: card.homeElsewhere === true,
         });
     }
-    return { roomName: text(roomName, 100) ?? "", here: rows, mine: choices };
+    return { roomName: text(roomName, NAME_MAX) ?? "", here: rows, mine: choices };
 }
 
 /** The Bricks placed by someone else: what the list shows under "Placed by others", each with Take out. */
@@ -92,9 +95,9 @@ export function parseBrickHome(value: unknown): BrickHome | null | undefined {
     if (home === null) return null;
     const card = home as Record<string, unknown> | undefined;
     const roomUrl = text(card?.roomUrl, 2000);
-    const roomName = text(card?.roomName, 100);
+    const roomName = text(card?.roomName, NAME_MAX);
     if (!card || !roomUrl || !roomName) return undefined;
-    return { roomUrl, roomName, universeName: text(card.universeName, 100) ?? "" };
+    return { roomUrl, roomName, universeName: text(card.universeName, NAME_MAX) ?? "" };
 }
 
 /** Orbit's answer to "Add here": where it lives now, and whether others cannot talk to it yet because its key is not lent. */

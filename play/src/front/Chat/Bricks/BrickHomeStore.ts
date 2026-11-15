@@ -42,14 +42,19 @@ export async function loadBrickHome(brickId: string): Promise<void> {
 export async function takeBrickOutOfHome(brickId: string): Promise<boolean> {
     try {
         // The room it lived in is the one to tell, which is not always the room the person is in
-        const lived = forBrick === brickId ? get(home) : undefined;
+        let lived = forBrick === brickId ? get(home) : undefined;
+        // Not read yet: asked now, as the room to tell is the one it lived in, not the one the person stands in
+        if (lived === undefined)
+            lived = await Promise.resolve()
+                .then(() => botApiService.getBrickHome(brickId))
+                .then(parseBrickHome, () => undefined);
         await botApiService.takeBrickOut(brickId);
         // A read that began before it was taken out is about a Brick that no longer lives there
         newest++;
         if (forBrick === brickId) home.set(null);
         // The bot server takes it off the map of the room it was standing in
         const roomUrl = lived?.roomUrl ?? botApiService.getRoomId();
-        if (roomUrl) await botApiService.notifyRoomEnter(roomUrl).catch((error: unknown) => console.warn(error));
+        if (roomUrl) void botApiService.notifyRoomEnter(roomUrl).catch((error: unknown) => console.warn(error));
         return true;
     } catch (error) {
         console.warn("Could not take a Brick out of its room", error);

@@ -9,7 +9,9 @@ vi.mock('@sentry/node', () => ({ captureException: vi.fn() }));
 vi.mock('../utils/MovementLogger', () => ({ movementLogger: {} }));
 vi.mock('../client/BotClient', () => ({
     BotClient: vi.fn().mockImplementation(() => ({
-        connect: vi.fn(async () => undefined),
+        connect: vi.fn(async () => {
+            order.push('connect');
+        }),
         disconnect: vi.fn(async () => undefined),
         isConnected: () => true,
         setAsks: () => undefined,
@@ -24,6 +26,7 @@ import { BotManager } from '../server/BotManager';
 import type { BotConfiguration } from '../server/AdminApiService';
 
 const ROOM = 'https://play.test/_/acme/hq/lobby.tmj';
+const order: string[] = [];
 const brickIn = (brick: Record<string, unknown>) =>
     ({
         botId: 'brick-1',
@@ -41,7 +44,12 @@ async function spawn(config: BotConfiguration) {
     const botManager = new BotManager({ isConfigured: () => true } as never, {} as never);
     const internals = botManager as unknown as { botRegistry: unknown; aiService: { noteRoomBrick: (botId: string, brick: unknown) => void } };
     internals.botRegistry = { assignBot: async () => undefined, unassignBot: async () => undefined };
-    const noteRoomBrick = vi.spyOn(internals.aiService, 'noteRoomBrick');
+    order.length = 0;
+    const original = internals.aiService.noteRoomBrick.bind(internals.aiService);
+    const noteRoomBrick = vi.spyOn(internals.aiService, 'noteRoomBrick').mockImplementation((botId, brick) => {
+        order.push(brick ? 'noted' : 'cleared');
+        original(botId, brick);
+    });
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     await botManager.spawnBot('brick-1', config);
@@ -54,5 +62,10 @@ describe('whose a Brick on the map is told to the AI service', () => {
         expect(home).toHaveBeenCalledWith('brick-1', { ownerUuid: 'uuid-khalid', ownerName: 'Khalid', roomUrl: ROOM });
         const visit = await spawn(brickIn({ visiting: { ownerUuid: 'uuid-khalid', ownerName: 'Khalid' } }));
         expect(visit).toHaveBeenCalledWith('brick-1', { ownerUuid: 'uuid-khalid', ownerName: 'Khalid', roomUrl: ROOM });
+    });
+
+    it('tells the AI service whose it is before the bot can hear anyone (before it connects)', async () => {
+        await spawn(brickIn({ home: { ownerUuid: 'uuid-khalid', ownerName: 'Khalid' } }));
+        expect(order).toEqual(['noted', 'connect']);
     });
 });
