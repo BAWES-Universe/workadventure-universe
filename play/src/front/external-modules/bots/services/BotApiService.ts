@@ -436,6 +436,63 @@ export class BotApiService {
         }
     }
 
+    /** What Orbit said when it refused a call: the words, and the parts a caller may act on */
+    private async readRefusal(response: Response): Promise<{
+        status: number;
+        message: string;
+        isSessionExpired: boolean;
+        code?: string;
+        reason?: string;
+        place?: string;
+    }> {
+        const errorText = await response.text();
+        let message = `API error: ${response.status}`;
+        let isSessionExpired = false;
+        let code: string | undefined;
+        let reason: string | undefined;
+        let place: string | undefined;
+
+        try {
+            const errorJson = JSON.parse(errorText);
+            message = errorJson.message || errorJson.error || message;
+            code = typeof errorJson.code === "string" ? errorJson.code : undefined;
+            // Why a Brick's visit was refused, and in which place (#2005): `lives_in` names the room it lives in
+            reason = typeof errorJson.reason === "string" ? errorJson.reason : undefined;
+            place = typeof errorJson.place === "string" ? errorJson.place : undefined;
+            // Check if it's a session expiration error
+            if (
+                message.toLowerCase().includes("session expired") ||
+                message.toLowerCase().includes("session invalid")
+            ) {
+                isSessionExpired = true;
+            }
+        } catch {
+            message = errorText || message;
+        }
+        return { status: response.status, message, isSessionExpired, code, reason, place };
+    }
+
+    private refusalError(refusal: {
+        status: number;
+        message: string;
+        code?: string;
+        reason?: string;
+        place?: string;
+    }): Error {
+        const error = new Error(refusal.message) as Error & {
+            status?: number;
+            code?: string;
+            reason?: string;
+            place?: string;
+        };
+        error.status = refusal.status;
+        // What Orbit calls this refusal, for a caller that acts on more than the words (a speech server that lists no voices)
+        if (refusal.code !== undefined) error.code = refusal.code;
+        if (refusal.reason !== undefined) error.reason = refusal.reason;
+        if (refusal.place !== undefined) error.place = refusal.place;
+        return error;
+    }
+
     /**
      * Make authenticated API request
      * Uses only an opaque Admin API session in the Authorization header.
@@ -470,30 +527,7 @@ export class BotApiService {
         });
 
         if (!response.ok) {
-            const errorText = await response.text();
-            let errorMessage = `API error: ${response.status}`;
-            let isSessionExpired = false;
-            let errorCode: string | undefined;
-            let errorReason: string | undefined;
-            let errorPlace: string | undefined;
-
-            try {
-                const errorJson = JSON.parse(errorText);
-                errorMessage = errorJson.message || errorJson.error || errorMessage;
-                errorCode = typeof errorJson.code === "string" ? errorJson.code : undefined;
-                // Why a Brick's visit was refused, and in which place (#2005): `lives_in` names the room it lives in
-                errorReason = typeof errorJson.reason === "string" ? errorJson.reason : undefined;
-                errorPlace = typeof errorJson.place === "string" ? errorJson.place : undefined;
-                // Check if it's a session expiration error
-                if (
-                    errorMessage.toLowerCase().includes("session expired") ||
-                    errorMessage.toLowerCase().includes("session invalid")
-                ) {
-                    isSessionExpired = true;
-                }
-            } catch {
-                errorMessage = errorText || errorMessage;
-            }
+            const refusal = await this.readRefusal(response);
 
             // If 401 and we were using session token, clear it and try to refresh
             if (response.status === 401 && sessionToken) {
@@ -518,34 +552,28 @@ export class BotApiService {
                         if (retryResponse.ok) {
                             return retryResponse;
                         }
+                        // The renewed session was taken and Orbit gave its own answer (a 409 for a repeated request key, say):
+                        // that is the answer, not "your session has expired"
+                        if (retryResponse.status !== 401) {
+                            throw this.refusalError(await this.readRefusal(retryResponse));
+                        }
                     }
                 }
             }
 
             // Create a more specific error for session expiration
-            if (isSessionExpired || response.status === 401) {
+            if (refusal.isSessionExpired || response.status === 401) {
                 const authError = new Error(
                     sessionToken
                         ? "Your session has expired. Please re-authenticate to continue managing bots."
                         : "Authentication failed. Please ensure you are logged in."
                 ) as AuthError;
                 authError.isAuthError = true;
-                authError.isSessionExpired = isSessionExpired;
+                authError.isSessionExpired = refusal.isSessionExpired;
                 throw authError;
             }
 
-            const error = new Error(errorMessage) as Error & {
-                status?: number;
-                code?: string;
-                reason?: string;
-                place?: string;
-            };
-            error.status = response.status;
-            // What Orbit calls this refusal, for a caller that acts on more than the words (a speech server that lists no voices)
-            if (errorCode !== undefined) error.code = errorCode;
-            if (errorReason !== undefined) error.reason = errorReason;
-            if (errorPlace !== undefined) error.place = errorPlace;
-            throw error;
+            throw this.refusalError(refusal);
         }
 
         return response;
