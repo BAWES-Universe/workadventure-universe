@@ -417,6 +417,8 @@ export type GuestBrickAllowance =
     | { allowed: false; limit: 'guest' | 'universe'; resetsAt: string };
 
 const BRICK_CALL_TIMEOUT_MS = 8_000;
+/** Pages of running jobs read in one look: far more than a runner will ever hold, so a broken answer cannot walk for ever. */
+const RUNNING_PAGES_MAX = 100;
 
 function brickCardOf(data: unknown): BrickCard | null {
     const card = data as Partial<BrickCard> | null;
@@ -1181,12 +1183,12 @@ export class AdminApiService {
     async startComputerJob(
         viaBotId: string,
         userId: string,
-        ask: { title: string; writes?: boolean }
+        ask: { title: string; brief?: string; writes?: boolean }
     ): Promise<{ ok: true; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null } | { ok: false; reason: string }> {
         const response = await this.brickCall<{ ok?: unknown; reason?: unknown; job?: { id?: unknown; status?: unknown; queuedFor?: unknown }; restoredFrom?: unknown }>(
             'post',
             `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`,
-            { userId, title: ask.title, ...(ask.writes === undefined ? {} : { writes: ask.writes }) }
+            { userId, title: ask.title, ...(ask.brief ? { brief: ask.brief } : {}), ...(ask.writes === undefined ? {} : { writes: ask.writes }) }
         );
         const data = response.data;
         const job = data?.job;
@@ -1201,13 +1203,16 @@ export class AdminApiService {
     }
 
     /** A job as it stands (#2000), or null when it is not there. */
+    /** The job as Orbit has it; null only when Orbit says it is not there (404). Any other failure throws, so the runner asks again rather than take a hiccup for a deleted job. */
     async getComputerJob(viaBotId: string, jobId: string): Promise<{ id: string; status: string; control: string } | null> {
         try {
             const response = await this.brickCall<{ job?: { id?: unknown; status?: unknown; control?: unknown } }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}`);
             const job = response.data?.job;
-            return job && typeof job.id === 'string' && typeof job.status === 'string' ? { id: job.id, status: job.status, control: typeof job.control === 'string' ? job.control : 'brick' } : null;
-        } catch {
-            return null;
+            if (job && typeof job.id === 'string' && typeof job.status === 'string') return { id: job.id, status: job.status, control: typeof job.control === 'string' ? job.control : 'brick' };
+            throw new Error('Orbit gave no job');
+        } catch (error) {
+            if (axios.isAxiosError(error) && error.response?.status === 404) return null;
+            throw error;
         }
     }
 
@@ -1215,6 +1220,93 @@ export class AdminApiService {
     async computerJobAction(viaBotId: string, jobId: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
         const response = await this.brickCall<Record<string, unknown>>('post', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}`, body);
         return response.data ?? {};
+    }
+
+    /**
+     * The three calls the model relay makes of Orbit about a computer's model call (identify the key, take room, settle). The relay
+     * says what to do with each answer, so a status Orbit gives is passed on (a refused key is a 200 with ok: false). Throws when
+     * Orbit cannot be reached or fails.
+     */
+    async computerRelayCall(step: 'identify' | 'authorize' | 'settle', body: Record<string, unknown>): Promise<{ status: number; data: Record<string, unknown> }> {
+        const response = await this.brickCall<Record<string, unknown>>('post', `api/computer/llm/${step}`, body).catch((error: unknown) => {
+            // A 404 from settle means "no such call" (nothing was written): an answer, not a failure
+            if (axios.isAxiosError(error) && error.response && error.response.status < 500) return error.response as AxiosResponse<Record<string, unknown>>;
+            throw error;
+        });
+        return { status: response.status, data: response.data ?? {} };
+    }
+
+    /** The screen gateway's two calls to Orbit (open a socket with a ticket, check an open one): the status is passed on, never thrown for a 4xx. */
+    async computerScreenCall(step: 'open' | 'check', body: Record<string, unknown>): Promise<{ status: number; data: Record<string, unknown> }> {
+        const response = await this.brickCall<Record<string, unknown>>('post', `api/computer/screen/${step}`, body).catch((error: unknown) => {
+            if (axios.isAxiosError(error) && error.response && error.response.status < 500) return error.response as AxiosResponse<Record<string, unknown>>;
+            throw error;
+        });
+        return { status: response.status, data: response.data ?? {} };
+    }
+
+    /**
+     * The jobs Brick is working on now, with the words for the agent (#2000). Orbit gives them a page at a time and every page is read, so no
+     * running job stays out of sight when there are many. Throws when Orbit cannot be reached.
+     */
+    async computerRunningJobs(): Promise<Array<{ jobId: string; botId: string; title: string; brief: string | null; writes: boolean; hasTurn: boolean }>> {
+        const found: Array<{ jobId: string; botId: string; title: string; brief: string | null; writes: boolean; hasTurn: boolean }> = [];
+        const seen = new Set<string>();
+        let cursor: string | null = null;
+        for (let page = 0; page < RUNNING_PAGES_MAX; page++) {
+            // eslint-disable-next-line no-await-in-loop
+            const response: AxiosResponse<{ jobs?: unknown; nextCursor?: unknown }> = await this.brickCall<{ jobs?: unknown; nextCursor?: unknown }>(
+                'get',
+                'api/computer/jobs/running',
+                undefined,
+                cursor ? { cursor } : undefined
+            );
+            const jobs: unknown[] = Array.isArray(response.data?.jobs) ? response.data.jobs : [];
+            for (const entry of jobs) {
+                const job = entry as Record<string, unknown>;
+                if (typeof job?.jobId === 'string' && typeof job.botId === 'string' && typeof job.title === 'string' && !seen.has(job.jobId)) {
+                    seen.add(job.jobId);
+                    found.push({ jobId: job.jobId, botId: job.botId, title: job.title, brief: typeof job.brief === 'string' ? job.brief : null, writes: job.writes !== false, hasTurn: job.hasTurn === true });
+                }
+            }
+            const next: unknown = response.data?.nextCursor;
+            // A cursor that does not move on ends the walk, so a broken answer never loops
+            if (typeof next !== 'string' || next === '' || next === cursor) break;
+            cursor = next;
+        }
+        return found;
+    }
+
+    /** One call to a computer's broker route in Orbit that answers with JSON (prepare, cancel): the status is passed on, never thrown for a 4xx or 5xx. */
+    async computerBroker(jobId: string, step: 'prepare' | 'cancel', body: Record<string, unknown>): Promise<{ status: number; data: Record<string, unknown> }> {
+        const response = await this.brickCall<Record<string, unknown>>('post', `api/computer/jobs/${encodeURIComponent(jobId)}/${step}`, body).catch((error: unknown) => {
+            if (axios.isAxiosError(error) && error.response) return error.response as AxiosResponse<Record<string, unknown>>;
+            throw error;
+        });
+        return { status: response.status, data: response.data ?? {} };
+    }
+
+    /**
+     * Opens a computer's turn in Orbit as a stream: `turn` sends the agent a message, `stream` reconnects to the turn it is on. A 200 is
+     * the events; any other answer is its JSON ({ reason, responseId? }). Throws when Orbit cannot be reached.
+     */
+    async computerOpenTurn(
+        jobId: string,
+        step: 'turn' | 'stream',
+        input: string | null,
+        signal: AbortSignal
+    ): Promise<{ ok: true; body: ReadableStream<Uint8Array> } | { ok: false; status: number; reason: string; responseId?: string }> {
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!this.isConfigured() || !botServiceToken) throw new Error('Orbit is not set up for Bricks');
+        const answer = await fetch(resolveAdminApiEndpoint(this.adminApiUrl, `api/computer/jobs/${encodeURIComponent(jobId)}/${step}`), {
+            method: step === 'turn' ? 'POST' : 'GET',
+            headers: { Authorization: `Bearer ${botServiceToken}`, 'Cache-Control': 'no-store', ...(step === 'turn' ? { 'Content-Type': 'application/json' } : {}), Accept: 'text/event-stream' },
+            ...(step === 'turn' ? { body: JSON.stringify({ input }) } : {}),
+            signal,
+        });
+        if (answer.ok && answer.body) return { ok: true, body: answer.body };
+        const data = (await answer.json().catch(() => ({}))) as { reason?: unknown; responseId?: unknown };
+        return { ok: false, status: answer.status, reason: typeof data.reason === 'string' ? data.reason : 'failed', ...(typeof data.responseId === 'string' ? { responseId: data.responseId } : {}) };
     }
 
     /** Has Orbit stop jobs that stopped renewing and try the ones in line again (#2000). Never throws. */
