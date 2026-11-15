@@ -1,6 +1,7 @@
 <script lang="ts">
     import { onMount } from "svelte";
     import LL, { locale } from "../../../i18n/i18n-svelte";
+    import type { TranslationFunctions } from "../../../i18n/i18n-types";
     import PageButton from "../../external-modules/bots/components/page/PageButton.svelte";
     import PageGroup from "../../external-modules/bots/components/page/PageGroup.svelte";
     import { warningMessageStore } from "../../Stores/ErrorStore";
@@ -71,14 +72,11 @@
     }
 
     const stepClass = (step: string) => (step === "done" ? "done" : step === "doing" ? "now" : "todo");
-    const by = (item: GoalItem) =>
-        item.setBy === "brick" ? $LL.chat.brick.goals.byBrick({ name }) : $LL.chat.brick.goals.byYou();
-    const sub = (item: GoalItem) =>
-        [
-            item.state === "paused" ? $LL.chat.brick.goals.paused() : "",
-            sayWhen(item, Date.now(), $LL, $locale),
-            by(item),
-        ]
+    // $LL and $locale are passed in from the markup, so a change of language redraws these lines
+    const by = (item: GoalItem, ll: TranslationFunctions) =>
+        item.setBy === "brick" ? ll.chat.brick.goals.byBrick({ name }) : ll.chat.brick.goals.byYou();
+    const sub = (item: GoalItem, ll: TranslationFunctions, lang: string) =>
+        [item.state === "paused" ? ll.chat.brick.goals.paused() : "", sayWhen(item, Date.now(), ll, lang), by(item, ll)]
             .filter((bit) => bit !== "")
             .join(" · ");
 </script>
@@ -195,7 +193,8 @@
                             {:else}<IconCalendarRepeat font-size="20" />{/if}
                         </span>
                         <span class="bkg-mtx"
-                            ><span class="bkg-t">{item.words}</span><span class="bkg-cn">{sub(item)}</span></span
+                            ><span class="bkg-t">{item.words}</span><span class="bkg-cn">{sub(item, $LL, $locale)}</span
+                            ></span
                         >
                         {#if item.state === "paused"}
                             <PageButton
