@@ -474,11 +474,16 @@ export class BotApiService {
             let errorMessage = `API error: ${response.status}`;
             let isSessionExpired = false;
             let errorCode: string | undefined;
+            let errorReason: string | undefined;
+            let errorPlace: string | undefined;
 
             try {
                 const errorJson = JSON.parse(errorText);
                 errorMessage = errorJson.message || errorJson.error || errorMessage;
                 errorCode = typeof errorJson.code === "string" ? errorJson.code : undefined;
+                // Why a Brick's visit was refused, and in which place (#2005): `lives_in` names the room it lives in
+                errorReason = typeof errorJson.reason === "string" ? errorJson.reason : undefined;
+                errorPlace = typeof errorJson.place === "string" ? errorJson.place : undefined;
                 // Check if it's a session expiration error
                 if (
                     errorMessage.toLowerCase().includes("session expired") ||
@@ -529,10 +534,17 @@ export class BotApiService {
                 throw authError;
             }
 
-            const error = new Error(errorMessage) as Error & { status?: number; code?: string };
+            const error = new Error(errorMessage) as Error & {
+                status?: number;
+                code?: string;
+                reason?: string;
+                place?: string;
+            };
             error.status = response.status;
             // What Orbit calls this refusal, for a caller that acts on more than the words (a speech server that lists no voices)
             if (errorCode !== undefined) error.code = errorCode;
+            if (errorReason !== undefined) error.reason = errorReason;
+            if (errorPlace !== undefined) error.place = errorPlace;
             throw error;
         }
 

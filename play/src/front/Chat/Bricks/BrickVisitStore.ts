@@ -1,6 +1,7 @@
 import { writable } from "svelte/store";
 import type { Readable } from "svelte/store";
 import { botApiService } from "../../external-modules/bots/services/BotApiService";
+import { loadBrickHome } from "./BrickHomeStore";
 import { parseBrickVisit, type BrickVisit, type BringAlongOutcome } from "./BrickVisit";
 
 /** How long the bot server gets before it is asked again whether the Brick is on the map. */
@@ -101,6 +102,12 @@ export async function bringBrickAlong(brickId: string): Promise<BringAlongOutcom
         return present === true ? undefined : "not_yet";
     } catch (error) {
         const status = (error as { status?: number } | undefined)?.status;
+        const refusal = error as { status?: number; reason?: string; place?: string } | undefined;
+        if (status === 409 && refusal?.reason === "lives_in") {
+            // It has a home in a room (made so since the page was read): the page now shows where, and what to do first
+            loadBrickHome(brickId).catch((failure: unknown) => console.warn(failure));
+            return { livesIn: refusal.place ?? "" };
+        }
         if (status === 409) {
             // The place stopped taking visits, or the Brick was switched off, since the page was read
             const answer = await readBrickVisit(brickId);

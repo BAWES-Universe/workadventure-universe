@@ -80,7 +80,13 @@
         visitBusy = true;
         bringBrickAlong(brick.id)
             .then((refusal) => {
-                if (refusal === "not_yet")
+                if (refusal && typeof refusal === "object")
+                    warningMessageStore.addWarningMessage(
+                        refusal.livesIn
+                            ? $LL.chat.brick.bringAlongLivesIn({ room: refusal.livesIn })
+                            : $LL.chat.brick.bringAlongFailed({ name: brick.name })
+                    );
+                else if (refusal === "not_yet")
                     warningMessageStore.addWarningMessage($LL.chat.brick.bringAlongNotYet({ name: brick.name }));
                 else if (refusal)
                     warningMessageStore.addWarningMessage($LL.chat.brick.bringAlongFailed({ name: brick.name }));
@@ -161,7 +167,7 @@
                         <p class="bkp-visit-line bkp-blocked" data-testid="brickVisitBlocked">
                             {$LL.chat.brick.notTaken({ place: visit.place, name: brick.name })}
                         </p>
-                    {:else if canOfferBringAlong(brick, visit) && !here}
+                    {:else if canOfferBringAlong(brick, visit) && !home}
                         <div class="bkp-visit">
                             <PageButton tall disabled={visitBusy} testId="brickBringAlong" on:click={bringAlong}
                                 ><IconWalk font-size="18" />{$LL.chat.brick.bringAlong()}</PageButton

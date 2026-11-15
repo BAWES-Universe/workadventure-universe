@@ -6,6 +6,7 @@ const api = vi.hoisted(() => ({
     getBrickVisit: vi.fn<(brickId: string, roomUrl: string) => Promise<unknown>>(),
     startBrickVisit: vi.fn<(brickId: string, roomUrl: string) => Promise<unknown>>(),
     endBrickVisit: vi.fn<(brickId: string) => Promise<unknown>>(),
+    getBrickHome: vi.fn<(brickId: string) => Promise<unknown>>(),
     syncVisitingBrick:
         vi.fn<(position?: { x: number; y: number }, options?: { ending?: boolean }) => Promise<boolean | undefined>>(),
 }));
@@ -174,6 +175,16 @@ describe("what the Brick page knows about visiting (#2005)", () => {
 
         api.getBrickVisit.mockResolvedValue({ state: "none", place: "Universe" });
         await expect(bringBrickAlong(A)).resolves.toBe("off");
+        expect(api.syncVisitingBrick).not.toHaveBeenCalled();
+    });
+
+    it("names the room it lives in when Orbit refuses a Brick that has a home, and reads where it lives", async () => {
+        api.startBrickVisit.mockRejectedValue(
+            Object.assign(new Error("conflict"), { status: 409, reason: "lives_in", place: "Studio" })
+        );
+        api.getBrickHome.mockResolvedValue({ home: null });
+        await expect(bringBrickAlong(A)).resolves.toEqual({ livesIn: "Studio" });
+        expect(api.getBrickHome).toHaveBeenCalledWith(A);
         expect(api.syncVisitingBrick).not.toHaveBeenCalled();
     });
 

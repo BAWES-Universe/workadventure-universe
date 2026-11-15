@@ -1227,7 +1227,24 @@ describe("the Bricks page (#1995)", () => {
             await openMade();
             expect(byId("brickShowOnMap")).toBeNull();
             expect(byId("brickTakeOut")?.textContent?.trim()).toBe("Take it out of Studio");
+            // One place at a time: a Brick with a home anywhere is not brought along until it is taken out
+            expect(byId("brickBringAlong")).toBeNull();
+        });
+
+        it("says where it lives, and what to do first, when it was given a home since the page was read", async () => {
+            game.startBrickVisit.mockRejectedValue(
+                Object.assign(new Error("lives in a room"), { status: 409, reason: "lives_in", place: "Studio" })
+            );
+            await openMade();
             expect(byId("brickBringAlong")).not.toBeNull();
+            game.getBrickHome.mockResolvedValue({
+                home: { ...HOME, roomUrl: "/@/team/universe/studio", roomName: "Studio" },
+            });
+            await click("brickBringAlong");
+            expect(game.warn).toHaveBeenCalledWith("It lives in Studio. Take it out first, or place it elsewhere.");
+            expect(game.syncVisitingBrick).not.toHaveBeenCalled();
+            expect(byId("brickTakeOut")?.textContent?.trim()).toBe("Take it out of Studio");
+            expect(byId("brickBringAlong")).toBeNull();
         });
 
         it("points the camera at it on Show on map", async () => {

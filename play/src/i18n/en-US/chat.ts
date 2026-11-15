@@ -1072,6 +1072,7 @@ const chat: BaseTranslation = {
         endVisitLine: "It walks with you from room to room, and goes when you leave or end the visit.",
         notTaken: "{place} doesn't take visiting Bricks. {name} still answers in your direct messages here.",
         bringAlongFailed: "Couldn't bring {name} along. Try again.",
+        bringAlongLivesIn: "It lives in {room}. Take it out first, or place it elsewhere.",
         bringAlongNotYet: "{name} isn't on the map yet. It joins you when you walk into the next room.",
         endVisitFailed: "Couldn't end the visit. Try again.",
         visitingWith: "Visiting with {name}",
@@ -1095,7 +1096,8 @@ const chat: BaseTranslation = {
         ownedBySince: "{name}'s Brick · here since {day}",
         placeFailed: "Couldn't add {name} here. Try again.",
         takeOutFailed: "Couldn't take {name} out. Try again.",
-        keyNotLent: "{name} answers other people here with Universe AI: the key it runs on isn't lent to this universe.",
+        keyNotLent:
+            "{name} answers other people here with Universe AI: the key it runs on isn't lent to this universe.",
         homeLine: "Lives in {room}. Anyone in the room can talk to it. Your own chat with it carries on as before.",
         showOnMap: "Show on map",
         takeItOutHere: "Take it out of this room",
