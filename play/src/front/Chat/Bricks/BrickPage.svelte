@@ -99,7 +99,7 @@
 
     function showOnMap() {
         // It stands on the map of the room it lives in: not on this one (yet) says nothing the person can act on
-        showBrickOnMap(brick.id);
+        showBrickOnMap(brick.id).catch((error: unknown) => console.warn(error));
     }
 
     function takeOut() {

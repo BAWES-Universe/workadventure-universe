@@ -141,6 +141,22 @@ describe("the Bricks of the room being edited (#2005)", () => {
         expect(api.notifyRoomEnter).toHaveBeenCalledWith(ROOM);
     });
 
+    it("tells the room the Brick was taken out of, even when the person walks to another room meanwhile (CodeRabbit on #2055)", async () => {
+        let done: (value: undefined) => void = () => undefined;
+        api.takeBrickOut.mockReturnValue(
+            new Promise<undefined>((resolve) => {
+                done = resolve;
+            })
+        );
+        api.getRoomBricks.mockResolvedValue(answer({ here: [] }));
+        const taking = takeBrickOut("b1");
+        api.getRoomId.mockReturnValue("/@/team/universe/elsewhere");
+        done(undefined);
+        await expect(taking).resolves.toBe(true);
+        expect(api.notifyRoomEnter).toHaveBeenCalledWith(ROOM);
+        expect(api.notifyRoomEnter).not.toHaveBeenCalledWith("/@/team/universe/elsewhere");
+    });
+
     it("tells the room a Brick is moved out of as well as the one it is placed in", async () => {
         api.getBrickHome.mockResolvedValue({
             home: { roomUrl: "/@/team/universe/studio", roomName: "Studio", universeName: "Universe" },

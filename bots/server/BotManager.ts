@@ -194,6 +194,9 @@ export class BotManager {
     private isInitialized = false;
     private roomsWithBots: Map<string, RoomState> = new Map();
     private roomSyncLocks: Map<string, Promise<void>> = new Map(); // Prevent concurrent spawning
+    // One start or replacement of a bot at a time. A Brick that lives in a room is synced by whichever room asks, and the
+    // room locks above do not stop two rooms from starting the same Brick at once
+    private botStartLocks: Map<string, Promise<void>> = new Map();
     private verificationInterval: NodeJS.Timeout | null = null;
     private readonly VERIFICATION_INTERVAL_MS = 60 * 1000; // 1 minute
 
@@ -1374,6 +1377,30 @@ export class BotManager {
     }
 
     /**
+     * Runs one start or replacement of a bot at a time. `waited` says whether another one was ahead of this one.
+     */
+    private async withBotStartLock<T>(botId: string, run: (waited: boolean) => Promise<T>): Promise<T> {
+        let waited = false;
+        let ahead = this.botStartLocks.get(botId);
+        while (ahead) {
+            waited = true;
+            await ahead;
+            ahead = this.botStartLocks.get(botId);
+        }
+        let release!: () => void;
+        const lock = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        this.botStartLocks.set(botId, lock);
+        try {
+            return await run(waited);
+        } finally {
+            this.botStartLocks.delete(botId);
+            release();
+        }
+    }
+
+    /**
      * Internal implementation of ensureBotsForRoom (called with lock held)
      */
     private async _doEnsureBotsForRoom(roomId: string): Promise<void> {
@@ -1447,60 +1474,69 @@ export class BotManager {
             let newBotsSpawned = 0;
             for (const bot of enabledBots) {
                 try {
-                    const existingInstance = this.bots.get(bot.botId);
-                    
-                    // Check if bot is already spawned
-                    if (existingInstance) {
-                        // Check if bot needs respawn (config changed OR disconnected/errored)
-                        const needsRespawn = 
-                            existingInstance.status !== 'connected' ||
-                            existingInstance.config.name !== bot.name ||
-                            existingInstance.config.behaviorType !== bot.behaviorType ||
-                            JSON.stringify(existingInstance.config.characterTextureIds) !== JSON.stringify(bot.characterTextureIds) ||
-                            (existingInstance.config.companionTextureId ?? null) !== (bot.companionTextureId ?? null) ||
-                            // The voice tag is part of the bot's token, so a change of the owner's choice reconnects it
-                            !!existingInstance.config.voiceEnabled !== !!bot.voiceEnabled ||
-                            JSON.stringify(existingInstance.config.assignedSpace) !== JSON.stringify(bot.assignedSpace) ||
-                            // A Brick moved to another room (same spot or not) is connected to the room it was in: it joins this one
-                            existingInstance.config.roomUrl !== bot.roomUrl ||
-                            (existingInstance.config.brick?.home?.ownerUuid ?? null) !== (bot.brick?.home?.ownerUuid ?? null);
-                        
-                        // This list was read before a Brick that was moved while another room was syncing: a Brick whose room is not
-                        // the one it stands in is only brought here when Orbit still says it lives here now
-                        if (needsRespawn && bot.brick?.home && existingInstance.config.roomUrl !== bot.roomUrl) {
+                    await this.withBotStartLock(bot.botId, async (waited) => {
+                        // Read inside the lock: another room may have started or replaced this bot while we waited
+                        const existingInstance = this.bots.get(bot.botId);
+
+                        // A homed Brick is brought here (or replaced) only when Orbit still says it lives in this room. The list
+                        // may have been read before the Brick was moved or taken out while another room was syncing, so it is
+                        // read again when the Brick is not already standing here or when another start was ahead of us
+                        const standsElsewhere = !existingInstance || existingInstance.config.roomUrl !== bot.roomUrl;
+                        if (bot.brick?.home && (waited || standsElsewhere)) {
                             const now = await this.adminApiService.getHomedBricks(bot.roomUrl).catch(() => undefined);
-                            if (!now?.some((current) => current.botId === bot.botId)) continue;
+                            const livesHere = now?.some((current) => current.botId === bot.botId);
+                            // Orbit says it lives elsewhere now: leave it. Orbit could not say: leave one already standing,
+                            // and start one that is not (the list we hold is all we know)
+                            if (now ? !livesHere : !!existingInstance) return;
                         }
+                        const current = this.bots.get(bot.botId);
 
-                        if (needsRespawn) {
-                            const reason = existingInstance.status !== 'connected' 
-                                ? `status is ${existingInstance.status}` 
-                                : `config changed`;
-                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                                console.log(`[BotManager] Bot ${bot.botId} ${reason}, respawning with new config`);
+                        // Check if bot is already spawned
+                        if (current) {
+                            // Check if bot needs respawn (config changed OR disconnected/errored)
+                            const needsRespawn =
+                                current.status !== 'connected' ||
+                                current.config.name !== bot.name ||
+                                current.config.behaviorType !== bot.behaviorType ||
+                                JSON.stringify(current.config.characterTextureIds) !== JSON.stringify(bot.characterTextureIds) ||
+                                (current.config.companionTextureId ?? null) !== (bot.companionTextureId ?? null) ||
+                                // The voice tag is part of the bot's token, so a change of the owner's choice reconnects it
+                                !!current.config.voiceEnabled !== !!bot.voiceEnabled ||
+                                JSON.stringify(current.config.assignedSpace) !== JSON.stringify(bot.assignedSpace) ||
+                                // A Brick moved to another room (same spot or not) is connected to the room it was in: it joins this one
+                                current.config.roomUrl !== bot.roomUrl ||
+                                (current.config.brick?.home?.ownerUuid ?? null) !== (bot.brick?.home?.ownerUuid ?? null);
+
+                            if (needsRespawn) {
+                                const reason = current.status !== 'connected'
+                                    ? `status is ${current.status}`
+                                    : `config changed`;
+                                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                    console.log(`[BotManager] Bot ${bot.botId} ${reason}, respawning with new config`);
+                                }
+                                // Despawn old bot
+                                await this.despawnBot(bot.botId);
+                                // Spawn with new config
+                                await this.spawnBot(bot.botId, bot);
+                                targetRoom.botIds.add(bot.botId);
+                                newBotsSpawned++;
+                            } else {
+                                // Config unchanged, just update the stored config in case other fields changed
+                                current.config = { ...current.config, ...bot };
+                                current.client.setFullConfig(current.config);
+                                targetRoom.botIds.add(bot.botId);
                             }
-                            // Despawn old bot
-                            await this.despawnBot(bot.botId);
-                            // Spawn with new config
-                            await this.spawnBot(bot.botId, bot);
-                            targetRoom.botIds.add(bot.botId);
-                            newBotsSpawned++;
-                        } else {
-                            // Config unchanged, just update the stored config in case other fields changed
-                            existingInstance.config = { ...existingInstance.config, ...bot };
-                            existingInstance.client.setFullConfig(existingInstance.config);
-                            targetRoom.botIds.add(bot.botId);
+                            return;
                         }
-                        continue;
-                    }
 
-                    // Bot not spawned yet, spawn it
-                    await this.spawnBot(bot.botId, bot);
-                    targetRoom.botIds.add(bot.botId);
-                    newBotsSpawned++;
-                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[BotManager] Spawned bot ${bot.botId} for room ${roomId}`);
-                    }
+                        // Bot not spawned yet, spawn it
+                        await this.spawnBot(bot.botId, bot);
+                        targetRoom.botIds.add(bot.botId);
+                        newBotsSpawned++;
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[BotManager] Spawned bot ${bot.botId} for room ${roomId}`);
+                        }
+                    });
                 } catch (error) {
                     console.error(`[BotManager] Failed to spawn bot ${bot.botId} for room ${roomId}:`, error);
                     // Continue spawning other bots even if one fails
@@ -1716,7 +1752,11 @@ export class BotManager {
             return; // Query failed or no rooms
         }
 
-        for (const [roomId, roomState] of this.roomsWithBots.entries()) {
+        // A snapshot of the rooms: reading Orbit again below can drop a room's entry and put it back, and the live map would
+        // then offer the room a second time in this pass, now with a count of the game taken before that
+        for (const roomId of [...this.roomsWithBots.keys()]) {
+            const roomState = this.roomsWithBots.get(roomId);
+            if (!roomState) continue; // dropped by an earlier room in this pass
             const waUserCount = waRooms.get(roomId) || 0;
             // A visiting Brick is in the game's count of the room too, and is no person
             const visiting = this.visitingBrickCount(roomId);

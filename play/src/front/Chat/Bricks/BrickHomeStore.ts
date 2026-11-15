@@ -1,7 +1,12 @@
 import { get, writable } from "svelte/store";
 import type { Readable } from "svelte/store";
 import { botApiService } from "../../external-modules/bots/services/BotApiService";
-import { parseBrickHome, type BrickHome } from "../../external-modules/bots/roomBricksModel";
+import {
+    livesHere,
+    parseBrickHome,
+    parseRoomBricks,
+    type BrickHome,
+} from "../../external-modules/bots/roomBricksModel";
 
 /**
  * Where the Brick the page is open on lives (game #2005): its room, or null when it lives nowhere. Undefined until Orbit
@@ -18,9 +23,15 @@ let newest = 0;
 
 /** Finds the Brick on this room's map and points the camera at it; false when it is not on this map. The game gives it. */
 let locate: (brickId: string) => boolean = () => false;
+/** Points the camera at a spot of this room's map; false when the game cannot. The game gives it. */
+let goToSpot: (spot: { x: number; y: number }) => boolean = () => false;
 
-export function provideBrickLocator(find: (brickId: string) => boolean): void {
+export function provideBrickLocator(
+    find: (brickId: string) => boolean,
+    toSpot: (spot: { x: number; y: number }) => boolean = () => false
+): void {
     locate = find;
+    goToSpot = toSpot;
 }
 
 /** Reads where the Brick lives. Resolves either way. */
@@ -29,6 +40,21 @@ export async function loadBrickHome(brickId: string): Promise<void> {
         forBrick = brickId;
         home.set(undefined);
     }
+    const mine = ++newest;
+    try {
+        const answer = parseBrickHome(await botApiService.getBrickHome(brickId));
+        if (forBrick === brickId && mine === newest) home.set(answer);
+    } catch (error) {
+        console.warn("Could not read where a Brick lives", error);
+    }
+}
+
+/**
+ * Reads the home again for a page that is still open on this Brick, e.g. after Orbit refused something because it has one.
+ * Never switches the page to this Brick: when another is shown by now, the answer is not wanted.
+ */
+export async function refreshBrickHome(brickId: string): Promise<void> {
+    if (forBrick !== brickId) return;
     const mine = ++newest;
     try {
         const answer = parseBrickHome(await botApiService.getBrickHome(brickId));
@@ -49,9 +75,12 @@ export async function takeBrickOutOfHome(brickId: string): Promise<boolean> {
                 .then(() => botApiService.getBrickHome(brickId))
                 .then(parseBrickHome, () => undefined);
         await botApiService.takeBrickOut(brickId);
-        // A read that began before it was taken out is about a Brick that no longer lives there
-        newest++;
-        if (forBrick === brickId) home.set(null);
+        if (forBrick === brickId) {
+            // A read of this Brick that began before it was taken out is about a home it no longer has. A read of another
+            // Brick, a page opened meanwhile, is not touched
+            newest++;
+            home.set(null);
+        }
         // The bot server takes it off the map of the room it was standing in
         const roomUrl = lived?.roomUrl ?? botApiService.getRoomId();
         if (roomUrl) void botApiService.notifyRoomEnter(roomUrl).catch((error: unknown) => console.warn(error));
@@ -62,9 +91,23 @@ export async function takeBrickOutOfHome(brickId: string): Promise<boolean> {
     }
 }
 
-/** "Show on map": the camera goes to the Brick. False when it is not on this map (yet). */
-export function showBrickOnMap(brickId: string): boolean {
-    return locate(brickId);
+/**
+ * "Show on map": the camera goes to the Brick. The game only knows the Bricks it has been sent, which are those near the
+ * view, so one far away is found by the spot Orbit keeps for it. False when it is not on this map (yet).
+ */
+export async function showBrickOnMap(brickId: string): Promise<boolean> {
+    if (locate(brickId)) return true;
+    const roomUrl = botApiService.getRoomId();
+    const here = forBrick === brickId ? get(home) : undefined;
+    if (!roomUrl || !livesHere(here, roomUrl)) return false;
+    try {
+        const bricks = parseRoomBricks(await botApiService.getRoomBricks(roomUrl));
+        const spot = bricks?.here.find((row) => row.id === brickId)?.spot;
+        return !!spot && goToSpot(spot);
+    } catch (error) {
+        console.warn("Could not read where a Brick stands", error);
+        return false;
+    }
 }
 
 /** For tests and for a person who signs out without a reload. */

@@ -66,11 +66,12 @@ export async function placeBrickHere(
 
 /** "Take out": the Brick goes back to its owner's Bricks. True when it did. */
 export async function takeBrickOut(brickId: string): Promise<boolean> {
+    // The room it is taken out of, read before anything is awaited: the person may walk to another room meanwhile
+    const roomUrl = botApiService.getRoomId();
     try {
         await botApiService.takeBrickOut(brickId);
         await loadRoomBricks();
         // The bot server takes it off the map in its own time: the button does not wait for a room with nobody in it
-        const roomUrl = botApiService.getRoomId();
         if (roomUrl) void botApiService.notifyRoomEnter(roomUrl).catch((error: unknown) => console.warn(error));
         return true;
     } catch (error) {

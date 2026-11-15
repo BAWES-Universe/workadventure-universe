@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { livesHere, parseBrickHome, parsePlaced, parseRoomBricks, placedByOthers } from "./roomBricksModel";
+import { livesHere, parseBrickHome, parsePlaced, parseRoomBricks, placedByOthers, spotOf } from "./roomBricksModel";
 
 const row = (over: Record<string, unknown> = {}) => ({
     id: "b1",
@@ -46,6 +46,16 @@ describe("the Bricks of a room, as Orbit lists them (#2005)", () => {
         expect(bricks?.here.map((one) => one.id)).toEqual(["b1"]);
         expect(bricks?.mine).toEqual([]);
         expect(bricks?.roomName).toBe("");
+    });
+
+    it("reads the spot a Brick stands at, and none when Orbit does not give a point", () => {
+        const at = (behaviorConfig: unknown) =>
+            parseRoomBricks({ here: [row({ behaviorConfig })], mine: [] })?.here[0].spot;
+        expect(at({ assignedSpace: { center: { x: 320, y: 160 }, radius: 0 } })).toEqual({ x: 320, y: 160 });
+        expect(at({})).toBeNull();
+        expect(at(undefined)).toBeNull();
+        expect(spotOf({ assignedSpace: { center: { x: "1", y: 2 } } })).toBeNull();
+        expect(spotOf({ assignedSpace: { center: { x: Infinity, y: 2 } } })).toBeNull();
     });
 
     it("is not an answer when it is not shaped like one", () => {

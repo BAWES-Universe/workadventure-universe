@@ -17,6 +17,8 @@ export interface RoomBrickRow {
     mine: boolean;
     /** Since when it has lived here (an ISO date), or null when Orbit did not say. */
     since: string | null;
+    /** The spot it stands at on the room's map, or null when Orbit did not say. Lets the camera go there before the game has sent the Brick. */
+    spot: { x: number; y: number } | null;
 }
 
 /** One of the person's own Bricks that can be added to this room. */
@@ -39,6 +41,15 @@ export interface RoomBricks {
 const text = (value: unknown, max = 200): string | null =>
     typeof value === "string" && value.trim() ? value.trim().slice(0, max) : null;
 
+/** The centre of the spot a Brick's behaviour gives it, when it is a point on the map. */
+export function spotOf(behaviorConfig: unknown): { x: number; y: number } | null {
+    const space = (behaviorConfig as { assignedSpace?: { center?: { x?: unknown; y?: unknown } } } | null | undefined)
+        ?.assignedSpace;
+    const x = space?.center?.x;
+    const y = space?.center?.y;
+    return typeof x === "number" && typeof y === "number" && Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+}
+
 /** Orbit's answer to "which Bricks live in this room?". Undefined when it is not one: the list then shows nothing about Bricks. */
 export function parseRoomBricks(value: unknown): RoomBricks | undefined {
     if (!value || typeof value !== "object") return undefined;
@@ -57,6 +68,7 @@ export function parseRoomBricks(value: unknown): RoomBricks | undefined {
             ownerName: text(row.ownerName, NAME_MAX),
             mine: row.mine === true,
             since: text(row.since),
+            spot: spotOf(row.behaviorConfig),
         });
     }
     const choices: OwnBrickChoice[] = [];

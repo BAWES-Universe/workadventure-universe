@@ -212,6 +212,76 @@ describe('a Brick that lives in a room, moved and returned by Orbit', () => {
         expect(internals.bots.get('brick-1')?.config.roomUrl).toBe(ROOM_B);
     });
 
+    it('is not put on the map of a room by a list that was read before it moved, when no other room has it up yet', async () => {
+        // Room A read its list (with the Brick) just before the Brick was taken out of A. Nothing stands yet, so there is no
+        // instance to compare: the Brick is only started when Orbit still says it lives in A
+        const { botManager, spawn, internals } = manager((_roomUrl, call) => (call === 1 ? [homed('brick-1', ROOM)] : []));
+        await botManager.handlePlayerEnterRoom(ROOM);
+        expect(spawn).not.toHaveBeenCalled();
+        expect(internals.bots.has('brick-1')).toBe(false);
+    });
+
+    it('is started once when two rooms read it at the same time, the second after the first has moved it', async () => {
+        // B starts the Brick (its connection is slow); A, with a list from before the move, comes while B is connecting
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => (release = resolve));
+        const { botManager, spawn, internals } = manager((roomUrl, call) => (roomUrl === ROOM_B ? [homed('brick-1', ROOM_B)] : call === 1 ? [homed('brick-1', ROOM)] : []));
+        spawn.mockImplementation(async (botId: string, cfg: BotConfiguration) => {
+            await gate;
+            internals.bots.set(botId, { botId, client: { setFullConfig: () => undefined }, config: cfg, status: 'connected', lastHeartbeat: 0 });
+            return {} as never;
+        });
+        const inB = botManager.handlePlayerEnterRoom(ROOM_B);
+        const inA = botManager.handlePlayerEnterRoom(ROOM);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        release();
+        await Promise.all([inB, inA]);
+        expect(spawn).toHaveBeenCalledTimes(1);
+        expect(internals.bots.get('brick-1')?.config.roomUrl).toBe(ROOM_B);
+    });
+
+    it('does not run two starts of the same bot at once', async () => {
+        const { botManager } = manager(() => []);
+        const lock = botManager as unknown as { withBotStartLock: <T>(id: string, run: (waited: boolean) => Promise<T>) => Promise<T> };
+        const order: string[] = [];
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => (release = resolve));
+        const first = lock.withBotStartLock('brick-1', async (waited) => {
+            order.push(`first start waited=${waited}`);
+            await gate;
+            order.push('first end');
+        });
+        const second = lock.withBotStartLock('brick-1', async (waited) => {
+            order.push(`second start waited=${waited}`);
+        });
+        const other = lock.withBotStartLock('brick-2', async () => order.push('other bot'));
+        await other;
+        release();
+        await Promise.all([first, second]);
+        expect(order).toEqual(['first start waited=false', 'other bot', 'first end', 'second start waited=true']);
+    });
+
+    it('does not take a room twice in one check when a read of Orbit drops it and puts it back', async () => {
+        // The game says 2 users: the Brick and one person. Reading Orbit renames the Brick (it is started again, which drops the
+        // room's entry for a moment) and adds a second Brick: the room comes back with two bots, and the same count of 2
+        let renamed = false;
+        const { botManager, despawn, internals } = manager(() => (renamed ? [{ ...homed('brick-1'), name: 'Renamed' } as BotConfiguration, homed('brick-2')] : [homed('brick-1')]));
+        despawn.mockImplementation(async (botId: string) => {
+            internals.bots.delete(botId);
+            for (const [roomId, room] of internals.roomsWithBots) {
+                room.botIds.delete(botId);
+                if (room.botIds.size === 0) internals.roomsWithBots.delete(roomId);
+            }
+        });
+        await botManager.handlePlayerEnterRoom(ROOM);
+        internals.queryWorkAdventureRooms = async () => new Map([[ROOM, 2]]);
+        renamed = true;
+        await botManager.verifyRoomOccupancy();
+        expect(despawn.mock.calls.map(([botId]) => botId)).toEqual(['brick-1']);
+        expect([...internals.bots.keys()].sort()).toEqual(['brick-1', 'brick-2']);
+        expect(internals.roomsWithBots.get(ROOM)?.botIds.size).toBe(2);
+    });
+
     it('is read again while people are in the room, so a return Orbit makes by itself is never kept', async () => {
         let lives = true;
         const { botManager, despawn, internals } = manager(() => (lives ? [homed()] : []));

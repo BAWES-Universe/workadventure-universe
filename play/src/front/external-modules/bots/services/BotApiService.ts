@@ -1737,8 +1737,8 @@ export class BotApiService {
      * refuses or can't be reached.
      */
     async getRoomBricks(roomUrl: string): Promise<unknown> {
-        const response = await this.fetch(`/api/brick-homes?roomUrl=${encodeURIComponent(roomUrl)}`);
-        return response.json();
+        // With the deadline brickWrite gives, like the Brick controls beside it: a list or a button that never hears back fails
+        return await this.brickWrite(`/api/brick-homes?roomUrl=${encodeURIComponent(roomUrl)}`, {});
     }
 
     /**
@@ -1750,22 +1750,20 @@ export class BotApiService {
         roomUrl: string,
         spot: { behaviorType?: string; behaviorConfig?: unknown }
     ): Promise<unknown> {
-        const response = await this.fetch(`/api/bricks/${encodeURIComponent(brickId)}/home`, {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/home`, {
             method: "PUT",
             body: JSON.stringify({ roomUrl, ...spot }),
         });
-        return response.json();
     }
 
     /** Where a Brick lives, for its page (game #2005): `{ home }`, with `home` null when it has none. */
     async getBrickHome(brickId: string): Promise<unknown> {
-        const response = await this.fetch(`/api/bricks/${encodeURIComponent(brickId)}/home`);
-        return response.json();
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/home`, {});
     }
 
     /** "Take out" / "Take it out of this room" (game #2005): the Brick goes back to its owner's Bricks, nothing is deleted. */
     async takeBrickOut(brickId: string): Promise<void> {
-        await this.fetch(`/api/bricks/${encodeURIComponent(brickId)}/home`, { method: "DELETE" });
+        await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/home`, { method: "DELETE" });
     }
 
     /**

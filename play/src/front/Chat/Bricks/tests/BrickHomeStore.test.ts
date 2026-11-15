@@ -6,6 +6,7 @@ const game = vi.hoisted(() => ({
     takeBrickOut: vi.fn<(brickId: string) => Promise<unknown>>(),
     notifyRoomEnter: vi.fn<(roomUrl: string) => Promise<void>>(),
     getRoomId: vi.fn<() => string | undefined>(),
+    getRoomBricks: vi.fn<(roomUrl: string) => Promise<unknown>>(),
 }));
 vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService: game }));
 
@@ -14,6 +15,7 @@ import {
     forgetBrickHome,
     loadBrickHome,
     provideBrickLocator,
+    refreshBrickHome,
     showBrickOnMap,
     takeBrickOutOfHome,
 } from "../BrickHomeStore";
@@ -25,6 +27,7 @@ describe("where a Brick lives (#2005)", () => {
         vi.clearAllMocks();
         forgetBrickHome();
         provideBrickLocator(() => false);
+        vi.spyOn(console, "warn").mockImplementation(() => undefined);
         game.getRoomId.mockReturnValue("/@/team/universe/room");
         game.notifyRoomEnter.mockResolvedValue(undefined);
     });
@@ -127,11 +130,93 @@ describe("where a Brick lives (#2005)", () => {
         expect(await takeBrickOutOfHome("b1")).toBe(true);
     });
 
-    it("asks the game to find it on the map for Show on map", () => {
-        const find = vi.fn<(id: string) => boolean>().mockReturnValue(true);
-        expect(showBrickOnMap("b1")).toBe(false);
-        provideBrickLocator(find);
-        expect(showBrickOnMap("b1")).toBe(true);
-        expect(find).toHaveBeenCalledWith("b1");
+    it("never lets a take-out of one Brick drop a read of the Brick the page was opened on meanwhile (CodeRabbit on #2055)", async () => {
+        game.getBrickHome.mockResolvedValueOnce({ home: HOME });
+        await loadBrickHome("b1");
+        // The page moves to b2, whose read is slow; b1's take-out (begun on the page before) finishes meanwhile
+        let answerLate: (value: unknown) => void = () => undefined;
+        game.getBrickHome.mockReturnValueOnce(
+            new Promise((resolve) => {
+                answerLate = resolve;
+            })
+        );
+        const opened = loadBrickHome("b2");
+        game.takeBrickOut.mockResolvedValue({ ok: true });
+        expect(await takeBrickOutOfHome("b1")).toBe(true);
+        answerLate({ home: HOME });
+        await opened;
+        expect(get(brickHomeStore)).toEqual(HOME);
+    });
+
+    it("refreshes the home of the Brick the page is on, and never switches the page to another (CodeRabbit on #2055)", async () => {
+        game.getBrickHome.mockResolvedValueOnce({ home: null });
+        await loadBrickHome("b1");
+        game.getBrickHome.mockResolvedValueOnce({ home: HOME });
+        await refreshBrickHome("b1");
+        expect(get(brickHomeStore)).toEqual(HOME);
+        // The page is on b1: a refresh for b2 (a refusal that came late) is not wanted, and asks nothing
+        game.getBrickHome.mockClear();
+        await refreshBrickHome("b2");
+        expect(game.getBrickHome).not.toHaveBeenCalled();
+        expect(get(brickHomeStore)).toEqual(HOME);
+    });
+
+    it("keeps the home of the page's Brick when a refresh for it fails", async () => {
+        game.getBrickHome.mockResolvedValueOnce({ home: HOME });
+        await loadBrickHome("b1");
+        game.getBrickHome.mockRejectedValueOnce(new Error("offline"));
+        await refreshBrickHome("b1");
+        expect(get(brickHomeStore)).toEqual(HOME);
+    });
+
+    describe("Show on map", () => {
+        const studio = "/@/team/universe/studio";
+        const row = (spot?: unknown) => ({
+            here: [
+                {
+                    id: "b1",
+                    name: "Recipes",
+                    behaviorConfig: spot ? { assignedSpace: { center: spot, radius: 0 } } : {},
+                },
+            ],
+            mine: [],
+            roomName: "Reception",
+        });
+
+        it("asks the game to find it on the map", async () => {
+            const find = vi.fn<(id: string) => boolean>().mockReturnValue(true);
+            await expect(showBrickOnMap("b1")).resolves.toBe(false);
+            provideBrickLocator(find);
+            await expect(showBrickOnMap("b1")).resolves.toBe(true);
+            expect(find).toHaveBeenCalledWith("b1");
+        });
+
+        it("goes to the spot Orbit keeps when the game has not been sent a Brick that lives here and is far away (CodeRabbit on #2055)", async () => {
+            const toSpot = vi.fn<(spot: { x: number; y: number }) => boolean>().mockReturnValue(true);
+            provideBrickLocator(() => false, toSpot);
+            game.getBrickHome.mockResolvedValue({ home: HOME });
+            await loadBrickHome("b1");
+            game.getRoomBricks.mockResolvedValue(row({ x: 4000, y: 2500 }));
+            await expect(showBrickOnMap("b1")).resolves.toBe(true);
+            expect(game.getRoomBricks).toHaveBeenCalledWith("/@/team/universe/room");
+            expect(toSpot).toHaveBeenCalledWith({ x: 4000, y: 2500 });
+        });
+
+        it("says no when the Brick lives in another room, or Orbit cannot say where it stands", async () => {
+            const toSpot = vi.fn<(spot: { x: number; y: number }) => boolean>().mockReturnValue(true);
+            provideBrickLocator(() => false, toSpot);
+            game.getBrickHome.mockResolvedValue({ home: { ...HOME, roomUrl: studio, roomName: "Studio" } });
+            await loadBrickHome("b1");
+            await expect(showBrickOnMap("b1")).resolves.toBe(false);
+            expect(game.getRoomBricks).not.toHaveBeenCalled();
+
+            game.getBrickHome.mockResolvedValue({ home: HOME });
+            await loadBrickHome("b1");
+            game.getRoomBricks.mockResolvedValue(row());
+            await expect(showBrickOnMap("b1")).resolves.toBe(false);
+            game.getRoomBricks.mockRejectedValue(new Error("offline"));
+            await expect(showBrickOnMap("b1")).resolves.toBe(false);
+            expect(toSpot).not.toHaveBeenCalled();
+        });
     });
 });
