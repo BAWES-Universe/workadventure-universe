@@ -1346,7 +1346,8 @@ export class AIService {
             const computerOn = channel === 'dm' && botId && playerId !== undefined ? await this.computerOnFor(botId, playerId, adminApiService) : false;
             // Instant Apps, in the owner's own Brick's direct messages: only what Orbit offers this Brick now (Apps its owner switched on for it)
             const instantListing = !options?.onlyForThem && channel === 'dm' && botId && playerId !== undefined ? await this.instantFor(botId, playerId, botClient, adminApiService) : null;
-            const instantGiveBack = instantListing && botId && playerId !== undefined ? this.instantChargedRuns(botId, playerId).length > 0 : false;
+            // "Didn't work" stays offered for a run that took credit even if Instant is paused or switched off since: Orbit holds the limits and says no when it must
+            const instantGiveBack = !options?.onlyForThem && channel === 'dm' && !botClient && botId && playerId !== undefined && this.ownBricks.has(botId) ? this.instantChargedRuns(botId, playerId).length > 0 : false;
             // The owner, in their own Brick's direct messages (#2002): Orbit says whether this person may ask it to keep reminders
             const taskSettings = !options?.onlyForThem && channel === 'dm' && botId && playerId !== undefined ? await this.taskSettingsOf(botId, playerId, botClient, adminApiService) : null;
 
@@ -3409,8 +3410,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         // Tool: a job on the Brick's own computer (game #2000), the last way after an answer and an app. Only when it is on for its owner.
         if (channel === 'dm' && computerOn && !botClient) tools.push(...computerToolDefinitions());
         // Tools: Instant Apps, exactly the list Orbit gave for this Brick, and "Didn't work" once one of them took credit. Owner only, in their Brick's direct messages.
-        if (channel === 'dm' && instant && !botClient) {
-            tools.push(...instantToolDefinitions(instant));
+        if (channel === 'dm' && !botClient) {
+            if (instant) tools.push(...instantToolDefinitions(instant));
             if (instantGiveBack) tools.push(instantGiveBackDefinition());
         }
 

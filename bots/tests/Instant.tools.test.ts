@@ -468,6 +468,9 @@ describe('in a Brick’s owner chat (AIService)', () => {
         expect(await names('dm')).toEqual(['instant_app_exa_search']);
         expect(await names('dm', true)).toEqual(['instant_app_exa_search', INSTANT_GIVE_BACK_TOOL]);
         expect(await names('world')).toEqual([]);
+        // a run that took credit can still be given back after Instant was paused or switched off
+        const paused = (await ai.buildTools(BRICK, undefined, undefined, 'dm', undefined, undefined, false, null, true)).tools.map((t) => t.function.name).filter((n) => n.startsWith('instant_'));
+        expect(paused).toEqual([INSTANT_GIVE_BACK_TOOL]);
     });
 
     it('runs a tool for the person with their key and this attempt’s own id, and only a tool that is offered now', async () => {
