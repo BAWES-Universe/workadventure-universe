@@ -273,7 +273,9 @@
                     <span class="pg-mid" data-testid={app.kind === "direct" ? "appKeyEnds" : undefined}
                         >{#if github?.login}{github.ownKey
                                 ? gitText.ownKeyAs({ login: github.login })
-                                : gitText.signedInAs({ login: github.login })}{:else if app.kind === "direct"}{app.keyLast4
+                                : gitText.signedInAs({
+                                      login: github.login,
+                                  })}{:else if app.kind === "direct"}{app.keyLast4
                                 ? text.keyEnds({ last4: app.keyLast4 })
                                 : text.addedByYouCard()}{app.keyMode
                                 ? ` · ${app.keyMode === "live" ? text.keyKindLive() : text.keyKindTest()}`
