@@ -1033,6 +1033,16 @@ export class BotManager {
 
     private visitSyncs: Map<string, Promise<VisitSyncAnswer | void>> = new Map();
 
+    /**
+     * How many times a visiting Brick came or went in each room. A Brick replaced by another leaves the count of them as it was,
+     * so the room check compares this too: a change of either means the game's count and ours are of two moments.
+     */
+    private visitorChanges: Map<string, number> = new Map();
+
+    private noteVisitorChange(roomUrl: string): void {
+        this.visitorChanges.set(roomUrl, (this.visitorChanges.get(roomUrl) ?? 0) + 1);
+    }
+
     private async runVisitSync(roomUrl: string, uuid: string, position?: { x: number; y: number }, mayPlace = true, since?: VisitSince): Promise<VisitSyncAnswer> {
         // A sync for a room the person came into before the room the Brick now stands in (it was held up on the way) says
         // nothing about where they are: it must not take down, or hold off, the newer placement. Times are only compared from
@@ -1078,6 +1088,7 @@ export class BotManager {
         if (!start) return { botId: null, reason: 'no_position' };
         await this.spawnBot(mine.botId, mine, { position: start });
         this.visitors.set(uuid, { botId: mine.botId, roomUrl, ...(since ? { since } : {}) });
+        this.noteVisitorChange(roomUrl);
         return { botId: mine.botId };
     }
 
@@ -1130,7 +1141,10 @@ export class BotManager {
                 this.aiService.noteRoomBrick(botId, undefined);
             }
             const visitor = this.visitors.get(uuid);
-            if (visitor?.botId === botId) this.visitors.delete(uuid);
+            if (visitor?.botId === botId) {
+                this.visitors.delete(uuid);
+                this.noteVisitorChange(visitor.roomUrl);
+            }
         }
     }
 
@@ -1637,8 +1651,9 @@ export class BotManager {
 
         // What the game counts in a room and what this server counts must be of the same moment: a visiting Brick put on the
         // map, or taken off, while the game was asked is a count from two moments, and the room is left alone this time
-        const visitingBefore = new Map<string, number>();
-        for (const roomId of this.roomsWithBots.keys()) visitingBefore.set(roomId, this.visitingBrickCount(roomId));
+        const visitingBefore = new Map<string, string>();
+        const placementOf = (roomId: string) => `${this.visitingBrickCount(roomId)}:${this.visitorChanges.get(roomId) ?? 0}`;
+        for (const roomId of this.roomsWithBots.keys()) visitingBefore.set(roomId, placementOf(roomId));
         const waRooms = await this.queryWorkAdventureRooms();
         console.log(`[BotManager] WA rooms query returned ${waRooms.size} rooms`);
         
@@ -1651,7 +1666,7 @@ export class BotManager {
             const waUserCount = waRooms.get(roomId) || 0;
             // A visiting Brick is in the game's count of the room too, and is no person
             const visiting = this.visitingBrickCount(roomId);
-            if (visiting !== (visitingBefore.get(roomId) ?? 0)) {
+            if (placementOf(roomId) !== visitingBefore.get(roomId)) {
                 console.log(`[BotManager] Room ${roomId}: a visiting Brick came or went while the game was asked. Checking again next time.`);
                 continue;
             }

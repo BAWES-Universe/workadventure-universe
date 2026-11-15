@@ -509,6 +509,27 @@ describe('putting the Brick on the map', () => {
         expect(rooms.has(ROOM_A)).toBe(true);
     });
 
+    it('leaves a room alone this time when one visiting Brick was replaced by another while the game was asked, though their number is the same (CodeRabbit on #2023)', async () => {
+        const { botManager, orbit, despawn, internals } = manager();
+        orbit.answer = [visitingConfig('brick-1', ROOM_A), visitingConfig('brick-2', ROOM_A)];
+        await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT);
+        internals.bots.set('room-bot', { botId: 'room-bot', client: { setFullConfig: () => undefined }, config: visitingConfig('room-bot', ROOM_A), status: 'connected', lastHeartbeat: 0 });
+        const rooms = (botManager as unknown as { roomsWithBots: Map<string, { botIds: Set<string>; lastActivity: number }> }).roomsWithBots;
+        rooms.set(ROOM_A, { botIds: new Set(['room-bot']), lastActivity: Date.now() });
+        vi.spyOn(console, 'log').mockImplementation(() => undefined);
+        // The game counted one person and the room's bot (2) when the first Brick had left; the second is on the map when it answers
+        vi.spyOn(botManager as unknown as { queryWorkAdventureRooms: () => Promise<Map<string, number>> }, 'queryWorkAdventureRooms').mockImplementation(async () => {
+            orbit.answer = [];
+            await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT);
+            orbit.answer = [visitingConfig('brick-2', ROOM_A)];
+            await botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, AT);
+            return new Map([[ROOM_A, 2]]);
+        });
+        await botManager.verifyRoomOccupancy();
+        expect(despawn).not.toHaveBeenCalledWith('room-bot');
+        expect(rooms.has(ROOM_A)).toBe(true);
+    });
+
     it('follows its person to the next room: off the old map, on the new one', async () => {
         const { botManager, orbit, spawn, despawn } = manager();
         orbit.answer = [visitingConfig('brick-1', ROOM_A), visitingConfig('brick-1', ROOM_B)];
