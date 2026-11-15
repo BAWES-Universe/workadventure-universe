@@ -58,7 +58,7 @@ export async function signInInPopup(appId: string | Promise<string>): Promise<Re
             if (event.origin !== window.location.origin) return;
             const data = event.data as { type?: unknown; state?: unknown; code?: unknown } | null;
             if (data?.type === "oauth-success") finish("done");
-            else if (data?.type === "oauth-failure") finish("stopped");
+            else if (data?.type === "oauth-failure") finish(signedIn ? "done" : "stopped");
             else if (data?.type === "oauth-github" && typeof data.state === "string" && typeof data.code === "string") {
                 if (finishing) return;
                 finishing = true;

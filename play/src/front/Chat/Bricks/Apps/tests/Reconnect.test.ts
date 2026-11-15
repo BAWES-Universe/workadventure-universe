@@ -90,4 +90,16 @@ describe("finishing a GitHub sign-in from the window that started it", () => {
         window.dispatchEvent(new Event("focus"));
         expect(await result).toBe("done");
     });
+
+    it("is still done when picking where it works fails or is cancelled after it signed in", async () => {
+        game.finishGitHubSignIn.mockResolvedValue({
+            installUrl: "https://github.com/apps/bawes-universe/installations/new?state=I",
+        });
+        const result = signInInPopup("c1");
+        await vi.waitFor(() => expect(popup.location.href).toContain("github.com/login"));
+        handOver({ type: "oauth-github", state: "S", code: "C" });
+        await vi.waitFor(() => expect(popup.location.href).toContain("installations/new"));
+        handOver({ type: "oauth-failure" });
+        expect(await result).toBe("done");
+    });
 });
