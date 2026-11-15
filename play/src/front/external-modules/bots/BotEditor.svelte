@@ -809,8 +809,10 @@
         placeBrickHere(brick, spot)
             .then((placed) => {
                 const ll = get(LL);
-                if (!placed.ok) warningMessageStore.addWarningMessage(ll.chat.brick.placeFailed({ name: brick.name ?? "" }));
-                else if (placed.keyNotLent) warningMessageStore.addWarningMessage(ll.chat.brick.keyNotLent({ name: brick.name ?? "" }));
+                if (!placed.ok)
+                    warningMessageStore.addWarningMessage(ll.chat.brick.placeFailed({ name: brick.name ?? "" }));
+                else if (placed.keyNotLent)
+                    warningMessageStore.addWarningMessage(ll.chat.brick.keyNotLent({ name: brick.name ?? "" }));
             })
             .catch((e) => console.error(e));
     });
@@ -1064,7 +1066,12 @@
             </div>
         </div>
     {:else if currentMode === "list" || currentMode === "placing"}
-        <BotList {bots} onSelectBot={handleSelectBot} onCreateBot={handleCreateBot} onAddBrickHere={handleAddBrickHere} />
+        <BotList
+            {bots}
+            onSelectBot={handleSelectBot}
+            onCreateBot={handleCreateBot}
+            onAddBrickHere={handleAddBrickHere}
+        />
     {:else if currentMode === "create"}
         <NewBotView
             busy={isLoading}
