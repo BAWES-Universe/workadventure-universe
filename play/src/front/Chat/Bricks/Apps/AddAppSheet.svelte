@@ -8,6 +8,7 @@
         NO_DISCOVERY,
         looksLikeLink,
         newAppBody,
+        newRequestKey,
         oauthFieldsDone,
         parseDiscovery,
         parseNewAppId,
@@ -16,6 +17,7 @@
         signsInByItself,
         type Discovery,
         type HeaderRow,
+        type NewApp,
         type OAuthFields,
         type SentAs,
         type SignIn,
@@ -69,6 +71,12 @@
     let createdId: string | undefined;
     /** What that app was made from: if the person changes any of it before trying again, the old app is replaced */
     let createdFrom = "";
+    /**
+     * The key Orbit uses to tell that a try is a repeat of an earlier one, and what it was made for. Every try at the same app
+     * carries the same key, so a try that timed out and then went through is answered with that app, never made a second time.
+     */
+    let requestKey = "";
+    let keyFrom = "";
     /** The sheet was closed: an app that is still being made is taken away again when Orbit answers */
     let closed = false;
     /** The app is connected: from here on closing the sheet keeps it, even while the list of what it can do is still loading */
@@ -111,7 +119,10 @@
         const id = createdId;
         createdId = undefined;
         createdFrom = "";
-        if (!id || signedIn || phase === "connected") return;
+        if (!id) return;
+        // The next app is a new one for Orbit too (the key of an app being taken away would still answer with it)
+        keyFrom = "";
+        if (signedIn || phase === "connected") return;
         botApiService
             .disconnectMyApp(id)
             .catch((error: unknown) => console.warn("Could not drop the unfinished app", error));
@@ -203,11 +214,15 @@
         const from = JSON.stringify(body);
         if (createdId && createdFrom === from) return Promise.resolve(createdId);
         dropUnfinished();
-        return create(body, from);
+        if (keyFrom !== from) {
+            requestKey = newRequestKey();
+            keyFrom = from;
+        }
+        return create({ ...body, requestKey }, from);
     }
 
     /** Makes the app in Orbit, with the way in the person gave */
-    async function create(body: ReturnType<typeof appBody>, from: string): Promise<string> {
+    async function create(body: NewApp, from: string): Promise<string> {
         try {
             const id = parseNewAppId(await botApiService.addMyApp(body));
             if (!id) throw new Error("Orbit did not say which app it made");
@@ -223,6 +238,8 @@
             return id;
         } catch (error) {
             console.warn("Could not add the app", error);
+            // Orbit says this key was used for another app: the next try starts with a fresh one
+            if ((error as { status?: number } | null)?.status === 409) keyFrom = "";
             if (!closed) trouble = "failed";
             throw error;
         }

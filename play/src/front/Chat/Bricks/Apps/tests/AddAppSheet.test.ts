@@ -256,6 +256,7 @@ describe("Add your own app (#2001, mock Part 13)", () => {
             serverUrl: "https://tools.example.com/mcp",
             authType: "bearer",
             authConfig: "sk-ace-5f2c",
+            requestKey: expect.stringMatching(/^[0-9a-f]{32}$/),
         });
         // no sign-in window for a key
         expect(game.reconnect).not.toHaveBeenCalled();
@@ -285,6 +286,7 @@ describe("Add your own app (#2001, mock Part 13)", () => {
             name: "My app",
             serverUrl: "https://tools.example.com/mcp",
             authType: "none",
+            requestKey: expect.stringMatching(/^[0-9a-f]{32}$/),
         });
     });
 
@@ -551,6 +553,83 @@ describe("Add your own app (#2001, mock Part 13)", () => {
         await settle();
         expect(byId("addAppReserved")).toBeNull();
         expect(game.addMyApp).not.toHaveBeenCalled();
+    });
+
+    const keyOfCall = (call: number) => (game.addMyApp.mock.calls[call][0] as { requestKey?: string }).requestKey;
+
+    it("sends the same request key on a repeat try at the same app, so a try that timed out is not made twice", async () => {
+        game.addMyApp.mockRejectedValueOnce(new Error("Orbit did not answer in time"));
+        await open();
+        await paste(ZAPIER);
+        await click("addAppSignIn");
+        expect(words(byId("addAppFailed"))).toBe("That didn't go through. Nothing was added.");
+        expect(game.addMyApp).toHaveBeenCalledTimes(1);
+        // the next tap: Orbit answers the repeated key with the app the first try made
+        await click("addAppSignIn");
+        expect(game.addMyApp).toHaveBeenCalledTimes(2);
+        expect(keyOfCall(0)).toMatch(/^[0-9a-f]{32}$/);
+        expect(keyOfCall(1)).toBe(keyOfCall(0));
+        expect(words(byId("addAppConnected"))).toContain("Connected");
+    });
+
+    it("sends a new request key when the person changes anything the app is made from", async () => {
+        game.discoverMcpOAuthEndpoints.mockResolvedValue({ discovered: false });
+        game.addMyApp.mockRejectedValue(new Error("Orbit did not answer in time"));
+        await open();
+        await paste("https://tools.example.com/mcp");
+        await click("addAppHowKey");
+        await type("addAppKey", "sk-1");
+        await click("addAppAdd");
+        await type("addAppKey", "sk-2");
+        await click("addAppAdd");
+        expect(game.addMyApp).toHaveBeenCalledTimes(2);
+        expect(keyOfCall(1)).not.toBe(keyOfCall(0));
+    });
+
+    it("sends a new request key for a new sheet", async () => {
+        await open();
+        await paste(ZAPIER);
+        await click("addAppSignIn");
+        sheet?.$destroy();
+        document.body.innerHTML = "";
+        target = document.createElement("div");
+        document.body.appendChild(target);
+        await open();
+        await paste(ZAPIER);
+        await click("addAppSignIn");
+        expect(game.addMyApp).toHaveBeenCalledTimes(2);
+        expect(keyOfCall(1)).not.toBe(keyOfCall(0));
+    });
+
+    it("sends a new request key after the first app was taken away, since the old key would answer with it", async () => {
+        game.addMyApp.mockResolvedValueOnce({ id: "app-1" }).mockResolvedValueOnce({ id: "app-2" });
+        game.reconnect.mockImplementationOnce(async (app) => {
+            await app;
+            return "stopped";
+        });
+        await open();
+        await paste(ZAPIER);
+        await click("addAppSignIn");
+        expect(words(byId("addAppStopped"))).not.toBe("");
+        // the link is typed again: the unfinished app goes, and the next one is new for Orbit too
+        await paste(ZAPIER + "?again");
+        await paste(ZAPIER);
+        await click("addAppSignIn");
+        expect(game.disconnectMyApp).toHaveBeenCalledWith("app-1");
+        expect(game.addMyApp).toHaveBeenCalledTimes(2);
+        expect(keyOfCall(1)).not.toBe(keyOfCall(0));
+    });
+
+    it("starts with a fresh request key after Orbit says the key was used for another app (409)", async () => {
+        game.addMyApp.mockRejectedValueOnce(Object.assign(new Error("API error: 409"), { status: 409 }));
+        await open();
+        await paste(ZAPIER);
+        await click("addAppSignIn");
+        expect(words(byId("addAppFailed"))).toBe("That didn't go through. Nothing was added.");
+        await click("addAppSignIn");
+        expect(game.addMyApp).toHaveBeenCalledTimes(2);
+        expect(keyOfCall(1)).not.toBe(keyOfCall(0));
+        expect(words(byId("addAppConnected"))).toContain("Connected");
     });
 
     it("never writes the key into the page's words", async () => {

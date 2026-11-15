@@ -1396,13 +1396,16 @@ export class BotApiService {
         return await this.appsCall("/api/me/apps");
     }
 
-    /** "Add your own app": connects an app by its link. No Brick uses it until the person lets one. Answers `{ id, name }`. */
+    /** "Add your own app": connects an app by its link. No Brick uses it until the person lets one. Answers `{ id, name }`
+     * (201 for a new app, 200 with the first app for a repeated `requestKey`; 409 when the key comes back with a different app). */
     async addMyApp(app: {
         name: string;
         serverUrl: string;
         authType: "none" | "bearer" | "api-key" | "oauth";
         authConfig?: string;
         headers?: Record<string, string>;
+        /** The same key again answers with the app the first try made (200), so a repeat after a timeout makes no second app */
+        requestKey?: string;
     }): Promise<unknown> {
         return await this.appsCall("/api/me/apps", { method: "POST", body: JSON.stringify(app) });
     }
