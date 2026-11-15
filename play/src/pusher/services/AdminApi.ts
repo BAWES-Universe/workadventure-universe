@@ -80,6 +80,11 @@ export const isFetchMemberDataByUuidSuccessResponse = z.object({
         description: "The uuid of the fetched user, it can be an email, an uuid.",
         example: "998ce839-3dea-4698-8b41-ebbdf7688ad9",
     }),
+    userId: extendApi(z.string().optional(), {
+        description:
+            "The admin's own id for the user (never an email or a name), which the game gives to its analytics to tell who the user is. Omitted by admins that have none.",
+        example: "3f0c9d2e-8a41-4b6a-9d55-0c1e7a2b4f10",
+    }),
     tags: extendApi(z.array(z.string()), {
         description: "List of tags related to the user fetched.",
         example: ["editor"],

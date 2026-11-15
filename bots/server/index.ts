@@ -19,7 +19,9 @@ import { BotRegistry } from './BotRegistry';
 import { brickChangedEverywhere, listenForBrickChanges } from './brickChanges';
 import { BrickRunner } from './BrickRunner';
 import { movementLogger } from '../utils/MovementLogger';
-import { DmReplyService, type DmRoomLink } from './DmReplyService';
+import { DmReplyService, instructionsFor, type DmRoomLink } from './DmReplyService';
+import { ModelTaskRunner } from './BrickTaskModel';
+import { readWebPageForTool } from '../ai/AIService';
 import { botMatrixId, readMatrixConfig } from '../matrix/MatrixConfig';
 import { OrbitActions } from '../mcp/OrbitActions';
 import { askOrbitAboutAppUse } from '../mcp/AppUse';
@@ -29,6 +31,10 @@ import { QuestionCards } from '../mcp/QuestionCards';
 import { verifyMatrixRegistration } from '../matrix/verifyMatrixRegistration';
 import { MatrixAppServiceClient } from '../matrix/MatrixAppServiceClient';
 import { MatrixDmBridge, type CarriedPart, type DirectChatAnswer, type GuestChatNote } from '../matrix/MatrixDmBridge';
+import { createComputerModelRelay, relayOrbitFor } from './ComputerModelRelay';
+import { createComputerRunner, relayUrlFromEnv, runnerOrbitFor, type ComputerRunner } from './ComputerRunner';
+import { createScreenGateway, screenOrbitFor, type ScreenGateway } from './ComputerScreenGateway';
+import { pretendRunnerOn } from '../ai/ComputerPretendRunner';
 import { createMatrixAppServiceRouter, type MatrixAppServiceRouter } from '../matrix/MatrixAppServiceRouter';
 import { uploadAttachment } from '../matrix/uploadAttachment';
 import { botWokaPicture } from '../matrix/wokaPicture';
@@ -79,6 +85,8 @@ let dmCards: CardSurface | undefined;
 // bubble to the person who asked alone, with one plain line for everyone (#1658). Built before direct messages, so a bubble
 // has its cards with or without them.
 const aiService = botManager.getAIService();
+// The address a Brick's computer calls for its AI (OpenAI format, /v1): Orbit checks the key and the room, the provider's key stays here
+preRouters.push(createComputerModelRelay({ orbit: relayOrbitFor(adminApiService), routeFor: (botId) => aiService.relayRoute(botId) }));
 // Every bot hears voice notes (plan v3): what a bot's reply would run on decides whether the note is checked against the person's
 // replies before it is heard, and what the hearing provider still holds is deleted until it confirms
 {
@@ -154,8 +162,10 @@ let carryBrick: ((botId: string) => Promise<boolean>) | undefined;
 const BRICK_SWEEP_EVERY_MS = 60 * 60 * 1000;
 // A job that stopped renewing its room is stopped safely and jobs in line are tried again (#2000)
 const COMPUTER_SWEEP_EVERY_MS = 60 * 1000;
+const COMPUTER_RUNNER_EVERY_MS = 10 * 1000;
 let brickSweepInterval: NodeJS.Timeout | undefined;
 let computerSweepInterval: NodeJS.Timeout | undefined;
+let computerRunner: ComputerRunner | undefined;
 /** Ends the retries of listening for Brick changes from other bot servers, at shutdown. */
 let stopBrickListening: (() => void) | undefined;
 /** How often Orbit is asked for the goals and tasks that fell due (#2002). Nothing depends on exactly when: Orbit is the scheduler. */
@@ -163,6 +173,19 @@ const BRICK_DUE_EVERY_MS = 60 * 1000;
 let brickRunner: BrickRunner | undefined;
 
 /** Turns direct messages on once Synapse accepts this bot server's registration; leaves them off otherwise. */
+/** Real computers: Orbit's sweep, and the runner that works the jobs Orbit says are running. They need no Matrix, so they start whether or not direct messages are set up. */
+function startComputers(): void {
+    computerSweepInterval = setInterval(() => void adminApiService.sweepComputers(), COMPUTER_SWEEP_EVERY_MS);
+    computerSweepInterval.unref?.();
+    // A development server that pretends (COMPUTER_PRETEND_RUNNER=yes) has no runner
+    if (pretendRunnerOn()) return;
+    const relayUrl = relayUrlFromEnv();
+    // The host only: never a path, a token or anything after it
+    console.log(`[BotServer] Computer model address for machines: ${relayUrl ? new URL(relayUrl).host : 'none (a job will end with a clear line)'}`);
+    computerRunner = createComputerRunner({ orbit: runnerOrbitFor(adminApiService), relayUrl });
+    computerRunner.start(COMPUTER_RUNNER_EVERY_MS);
+}
+
 async function setupMatrix(): Promise<void> {
     const matrixConfig = readMatrixConfig();
     if (!matrixConfig) return;
@@ -230,20 +253,32 @@ async function setupMatrix(): Promise<void> {
     // Reminders (#2002): what Orbit says is due is said in the owner's own chat with their Brick
     brickRunner = new BrickRunner(
         {
-            claimDue: () => adminApiService.claimDueItems(),
+            claimDue: (kinds) => adminApiService.claimDueItems(kinds),
             checkRun: (runId, attempt) => adminApiService.checkItemRun(runId, attempt),
-            keepDelivered: (runId, eventId) => adminApiService.keepItemDelivered(runId, eventId),
+            keepDelivered: (runId, eventId, report) => adminApiService.keepItemDelivered(runId, eventId, report),
             report: (runId, report) => adminApiService.reportItemRun(runId, report),
+            keepTold: (runId) => adminApiService.keepItemTold(runId),
+            keepHeldTold: (itemId, waitId) => adminApiService.keepItemHeldTold(itemId, waitId),
         },
-        { say: (brickId, matrixUserId, text, transactionId) => bridge.speakInDirectChat(brickId, matrixUserId, text, transactionId) }
+        { say: (brickId, matrixUserId, text, transactionId) => bridge.speakInDirectChat(brickId, matrixUserId, text, transactionId) },
+        console,
+        // Watches, briefings and goals run on the Brick's own model, as system jobs
+        new ModelTaskRunner({
+            ai: aiService,
+            brick: async (brickId) => {
+                const config = await dmReplyService.getBotConfig(brickId);
+                if (!config || !config.brick) return null;
+                return { name: config.name || 'Brick', instructions: instructionsFor(config), providerId: config.aiProviderRef ?? null, deleted: config.brick.deleted === true };
+            },
+            readPage: (brickId, url) => readWebPageForTool(url, aiService.readCharsFor(brickId)),
+        })
     );
     brickRunner.start(BRICK_DUE_EVERY_MS);
-    computerSweepInterval = setInterval(() => void adminApiService.sweepComputers(), COMPUTER_SWEEP_EVERY_MS);
-    computerSweepInterval.unref?.();
     console.log(`[BotServer] Matrix direct messages on for ${matrixConfig.domain}`);
 }
 // Made in start(), once direct messages are settled: their routes are part of the API.
 let botAPI: BotAPI | undefined;
+let screenGateway: ScreenGateway | undefined;
 
 // Start autopilot improvement system (DEVELOPMENT ONLY - fully autonomous)
 // This system runs tests every 30 seconds and creates improvement task files for AI analysis
@@ -338,6 +373,10 @@ async function start() {
 
         // Start API server
         botAPI.start(BOT_SERVER_PORT);
+        // The screen of a Brick's computer: the socket lives here, every decision is Orbit's
+        screenGateway = createScreenGateway({ orbit: screenOrbitFor(adminApiService) });
+        botAPI.addUpgradeHandler((request, socket, head) => screenGateway?.handleUpgrade(request, socket, head) ?? false);
+        startComputers();
         matrixBridge?.start();
 
         console.log(`[BotServer] Bot server started on port ${BOT_SERVER_PORT}`);
@@ -466,6 +505,8 @@ function stopGameLoop(): void {
         clearInterval(gameLoopInterval);
         if (brickSweepInterval) clearInterval(brickSweepInterval);
         if (computerSweepInterval) clearInterval(computerSweepInterval);
+        computerRunner?.stop();
+        screenGateway?.close();
         gameLoopInterval = null;
         console.log('[BotServer] Game loop stopped');
     }

@@ -22,6 +22,7 @@ import { AIProviderRegistry } from './AIProviderRegistry';
 import { sortToolsByName } from './toolOrder';
 import type { MapDataService } from '../server/MapDataService';
 import * as Sentry from '@sentry/node';
+import { sanitizedError } from '../utils/sanitizedError';
 import { MCPConnector, toolTimeoutMs, type ToolServerEntry } from '../mcp/MCPConnector';
 import type { ToolSuggester } from '../mcp/ToolCatalog';
 import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision } from '../mcp/ToolGate';
@@ -186,7 +187,7 @@ function sentOnlyTo(options: TurnOptions | undefined, playerId: number | undefin
 
 /** A bot's provider, resolved by bot id (#374): the settings to call, where they came from, or "resting". */
 /** Where a reply was given and who it was for, sent with its usage (Orbit #491). */
-type UsageTalker = { channel: 'dm' | 'nearby'; userId?: string; isGuest?: boolean; greeting?: boolean };
+type UsageTalker = { channel: 'dm' | 'nearby' | 'task'; userId?: string; isGuest?: boolean; greeting?: boolean; runId?: string; eventId?: string };
 
 type ResolvedProvider =
     | { resting: false; config: AIProviderConfig; source: 'provider' | 'universe-ai' | 'own-key' }
@@ -252,6 +253,8 @@ export class AIService {
      */
     private botCredentialCache: Map<string, { resolved: ResolvedProvider; expiresAt: number; staleUntil: number }> = new Map();
     private readonly BOT_CREDENTIAL_TTL = 30 * 1000;
+    /** How each Brick's computer reaches its AI, kept for the same short time (relayRoute). */
+    private readonly relayRouteCache = new Map<string, { route: { config: AIProviderConfig; source: 'universe-ai' | 'provider' | 'own-key'; keyOwnerId: string | null } | null; expiresAt: number }>();
     /** How long the last answer is still used while Orbit cannot be reached, and how soon Orbit is tried again meanwhile */
     private readonly BOT_CREDENTIAL_STALE_GRACE = 10 * 60 * 1000;
     private readonly BOT_CREDENTIAL_RETRY = 15 * 1000;
@@ -405,8 +408,11 @@ export class AIService {
             }
             return rawResult;
         } catch (mcpError: any) {
-            console.error(`[AIService] Error executing MCP tool ${toolName}:`, mcpError);
-            Sentry.captureException(mcpError instanceof Error ? mcpError : new Error(String(mcpError)));
+            // The error's words can quote what was passed to the tool or what came back (an email, a file), and logs and
+            // Sentry keep what they are given: only the tool's name and the kind of error leave this function
+            const kind = mcpError instanceof Error ? mcpError.name : 'Error';
+            console.error(`[AIService] Error executing MCP tool ${toolName}: ${kind}`);
+            Sentry.captureException(sanitizedError(mcpError, `MCP tool ${toolName} failed (${kind})`), { tags: { area: 'bot-tools' } });
             return { error: `MCP tool error: ${mcpError.message || 'Unknown error'}` };
         }
     }
@@ -568,6 +574,26 @@ export class AIService {
         } catch {
             return null;
         }
+    }
+
+    /**
+     * How a Brick's computer reaches its AI (the model relay): the same answer a reply gets from Orbit, by Brick, with the key still
+     * encrypted. Null when Orbit does not know the Brick or its key is resting (nothing is called then). Kept for the same short
+     * time as a reply's, so a run of calls does not ask Orbit each time; a Brick moved to another AI is followed within seconds.
+     */
+    async relayRoute(botId: string): Promise<{ config: AIProviderConfig; source: 'universe-ai' | 'provider' | 'own-key'; keyOwnerId: string | null } | null> {
+        const cacheKey = `relay:${botId}`;
+        const cached = this.relayRouteCache.get(cacheKey);
+        if (cached && Date.now() < cached.expiresAt) return cached.route;
+        const answer = await this.adminApiService.getBotAiCredentials(botId);
+        let route: { config: AIProviderConfig; source: 'universe-ai' | 'provider' | 'own-key'; keyOwnerId: string | null } | null = null;
+        if (answer && answer.source !== 'resting') {
+            const resolved = this.resolvedFromAnswer(answer);
+            if ('config' in resolved) route = { config: resolved.config, source: resolved.source, keyOwnerId: answer.source === 'own-key' ? (answer.keyOwnerId ?? null) : null };
+        }
+        this.relayRouteCache.set(cacheKey, { route, expiresAt: Date.now() + this.BOT_CREDENTIAL_TTL });
+        if (this.relayRouteCache.size > 500) this.relayRouteCache.delete(this.relayRouteCache.keys().next().value!);
+        return route;
     }
 
     /** A bot's limits as Orbit last served them, the recommended ones until it has (Orbit #666). */
@@ -1115,9 +1141,6 @@ export class AIService {
         let usageProviderId = providerId;
         // A reply through a person's own key tells Orbit how it went, so a key that keeps failing is marked Down
         let reportHealth = false;
-        // A private bot's failure is logged without the error's words, which could quote what was said (#1166). Until the
-        // bot is known not to be private, a failure counts as private.
-        let privateTurn = true;
 
         try {
             // Get provider credentials. A bot on Universe AI or a person's own key is resolved by Orbit for this bot (#374).
@@ -1396,9 +1419,8 @@ export class AIService {
             let completionTokens = 0;
             let error = false;
             let errorStatus: number | undefined;
-            // What the provider said when a call failed, and why the reply's call ended, for the line logged when a
-            // reply comes back with nothing (#1498)
-            let errorText: string | undefined;
+            // Why the reply's call ended, for the line logged when a reply comes back with nothing (#1498). What the
+            // provider said when a call failed is not kept: it can quote the conversation.
             let finishReason: string | undefined;
             let streamCompleted = false;
             let accumulatedContent = '';
@@ -1411,6 +1433,8 @@ export class AIService {
             let followUpStartTime = 0;
             let firstCallStartTime = 0;
             let hadToolCalls = false;
+            // Names of the tools this turn used, for the PostHog trace: names only, never what was passed or came back
+            const turnToolNames: string[] = [];
             let pendingToolCalls: ToolCall[] = [];
             let initialGenCaptured = false;
             let followUpGenCaptured = false;
@@ -1423,7 +1447,7 @@ export class AIService {
             let askedAgainForLength = false;
             // The error a failed call's $ai_generation carries, like the turn's trace does (#1498)
             const failedCall = (failed: boolean, status?: number) =>
-                failed ? { error: replyProblem({ error: true, errorStatus: status, errorText, answered: false, outputTokens: 0, reasoningTokens: 0 }) } : {};
+                failed ? { error: replyProblem({ error: true, errorStatus: status, answered: false, outputTokens: 0, reasoningTokens: 0 }) } : {};
             // skipping code after the loop but still reaching the finally block.
             let followUpInput = '';
             let overallFollowUpStartTime = 0;
@@ -1464,7 +1488,6 @@ export class AIService {
             // text to PostHog. Anything else (usage counts, memory, errors) is unchanged.
             // An answer only its person reads is kept out of them the same way (#1993)
             const privateBot = options?.onlyForThem === true || (await this.isPrivateBot(botId));
-            privateTurn = privateBot;
             // Every PostHog capture of this turn goes through here, so a private bot cannot miss one
             const captureGeneration: typeof captureAiGeneration = (params) => {
                 if (!privateBot) captureAiGeneration(params);
@@ -1667,7 +1690,6 @@ export class AIService {
                         if (chunk.metadata?.error) {
                             followUpFailedForHealth = true;
                             if (chunk.metadata.errorStatus) followUpErrorStatus = chunk.metadata.errorStatus;
-                            errorText ??= chunk.metadata.errorText;
                         }
 
                         // Capture $ai_generation for the initial LLM call NOW —
@@ -1685,8 +1707,7 @@ export class AIService {
                                 sessionId: `conversation-${botId}-player-${playerId}`,
                                 model: config.model,
                                 provider: config.type,
-                                input: userMessageForQwen,
-                                output: firstCallContent,
+                                toolNames: Array.from(toolCallAccumulator.values()).map(tc => tc.name).filter(Boolean),
                                 inputTokens: promptTokens,
                                 cachedInputTokens: cachedPromptTokens,
                                 outputTokens: completionTokens,
@@ -1779,7 +1800,6 @@ export class AIService {
                                     if (retryChunk.done && retryChunk.metadata?.error) {
                                         followUpFailedForHealth = true;
                                         if (retryChunk.metadata.errorStatus) followUpErrorStatus = retryChunk.metadata.errorStatus;
-                                        errorText ??= retryChunk.metadata.errorText;
                                     }
                                 }
                             } catch (retryError) {
@@ -1955,6 +1975,7 @@ export class AIService {
                             );
                             stepRoom.add(step);
 
+                            turnToolNames.push(...pendingToolCalls.map(tc => tc.name).filter(Boolean));
                             pendingToolCalls = [];
                             toolCallAccumulator.clear();
                             hadToolCalls = true;
@@ -1986,7 +2007,6 @@ export class AIService {
                                 const errorBefore = followUpError;
                                 const failedBefore = followUpFailedForHealth;
                                 const errorStatusBefore = followUpErrorStatus;
-                                const errorTextBefore = errorText;
                                 let refusedForLength = false;
                                 for await (const resultChunk of sharedLine ? this.saySharedLine(sharedLine, sharedLineIds) : this.meteredStream(
                                     ledger,
@@ -2021,7 +2041,6 @@ export class AIService {
                                         followUpError = true;
                                         followUpFailedForHealth = true;
                                         if (resultChunk.metadata.errorStatus) followUpErrorStatus = resultChunk.metadata.errorStatus;
-                                        errorText ??= resultChunk.metadata.errorText;
                                     }
                                     // Accumulate content from follow-up response (same as main stream)
                                     if (resultChunk.content) {
@@ -2087,7 +2106,6 @@ export class AIService {
                                 followUpError = errorBefore;
                                 followUpFailedForHealth = failedBefore;
                                 followUpErrorStatus = errorStatusBefore;
-                                errorText = errorTextBefore;
                                 lastFollowUpDoneChunk = null;
                             }
 
@@ -2121,8 +2139,7 @@ export class AIService {
                                             sessionId: `conversation-${botId}-player-${playerId}`,
                                             model: config.model,
                                             provider: config.type,
-                                            input: followUpInput,
-                                            output: followUpContent,
+                                            toolNames: pendingToolCalls.map(tc => tc.name).filter(Boolean),
                                             inputTokens: followUpPromptTokens,
                                             cachedInputTokens: followUpCachedPromptTokens,
                                             outputTokens: followUpCompletionTokens,
@@ -2380,7 +2397,6 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                         if (retryChunk.done && retryChunk.metadata?.error) {
                                             followUpFailedForHealth = true;
                                             if (retryChunk.metadata.errorStatus) followUpErrorStatus = retryChunk.metadata.errorStatus;
-                                            errorText ??= retryChunk.metadata.errorText;
                                         }
                                     }
                                 } catch (retryError) {
@@ -2491,8 +2507,6 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     sessionId: `conversation-${botId}-player-${playerId}`,
                                     model: config.model,
                                     provider: config.type,
-                                    input: followUpInput,
-                                    output: followUpContent,
                                     inputTokens: followUpPromptTokens,
                                     cachedInputTokens: followUpCachedPromptTokens,
                                     outputTokens: followUpCompletionTokens,
@@ -2562,7 +2576,6 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     if (chunk.metadata?.error) {
                         error = true;
                         if (chunk.metadata.errorStatus) errorStatus = chunk.metadata.errorStatus;
-                        errorText ??= chunk.metadata.errorText;
                     }
                     if (chunk.done) {
                         streamCompleted = true;
@@ -2633,8 +2646,6 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                               // is no problem, and any call that ended the reply failing is, whatever was said before it
                               error: !!lastCall?.failed,
                               errorStatus: lastCall?.status,
-                              // A private bot's provider text can quote the conversation: only its status is kept
-                              errorText: privateBot ? 'details left out for a private bot' : lastCall?.errorText,
                               finishReason,
                               answered: !!accumulatedContent.trim() || hadToolCalls,
                               outputTokens: completionTokens,
@@ -2657,8 +2668,6 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             sessionId: `conversation-${botId}-player-${playerId}`,
                             model: config.model,
                             provider: config.type,
-                            input: userMessageForQwen,
-                            output: firstCallContent,
                             inputTokens: followUpPromptTokens > 0 ? (promptTokens - followUpPromptTokens) : promptTokens,
                             cachedInputTokens: followUpCachedPromptTokens !== undefined && cachedPromptTokens !== undefined ? cachedPromptTokens - followUpCachedPromptTokens : cachedPromptTokens,
                             outputTokens: followUpCompletionTokens > 0 ? (completionTokens - followUpCompletionTokens) : completionTokens,
@@ -2689,8 +2698,6 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             sessionId: `conversation-${botId}-player-${playerId}`,
                             model: config.model,
                             provider: config.type,
-                            input: followUpInput,
-                            output: followUpContent,
                             inputTokens: followUpPromptTokens,
                             cachedInputTokens: followUpCachedPromptTokens,
                             outputTokens: followUpCompletionTokens,
@@ -2715,14 +2722,13 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     if (!privateBot && streamCompleted && (accumulatedContent || error || problem)) {
                         const generationLatency = (Date.now() - startTime) / 1000;
                         captureAiTrace({
+                            toolNames: turnToolNames,
                             ...(cacheLedger.read || cacheLedger.write ? { cacheReadTokens: cacheLedger.read, cacheWriteTokens: cacheLedger.write } : {}),
                             distinctId: `bot-${botId}`,
                             traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
                             sessionId: `conversation-${botId}-player-${playerId}`,
                             model: config.model,
                             provider: config.type,
-                            input: message,
-                            output: accumulatedContent || '',
                             inputTokens: promptTokens,
                             cachedInputTokens: cachedPromptTokens,
                             outputTokens: completionTokens,
@@ -2851,7 +2857,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 console.error('[AIService] Error generating response:', error);
             }
             // Before this, a reply that broke here left no trace outside debug mode (#1498)
-            console.error(`[AIService] Bot ${botId} could not answer: ${privateTurn ? (error?.name ?? 'Error') : providerErrorText(error)}`);
+            console.error(`[AIService] Bot ${botId} could not answer: ${error?.name ?? 'Error'}`);
 
             // Track error. What an earlier answer to the same message cost is on the same ledger, so it is kept (#1993).
             if (options?.usage) options.usage.held = undefined;
@@ -3497,7 +3503,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     }
 
     /** Runs use_computer for the person in this direct message. Orbit starts the job and only for the Brick's owner. */
-    private async runComputerToolCall(args: Record<string, unknown>, where: { adminApiService?: AdminApiService; botId?: string; playerId?: number }): Promise<Record<string, unknown>> {
+    private async runComputerToolCall(args: Record<string, unknown>, where: { adminApiService?: AdminApiService; botId?: string; playerId?: number; apps?: string[] }): Promise<Record<string, unknown>> {
         const admin = where.adminApiService ?? this.adminApiService;
         const userId = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId)?.userUuid : undefined;
         if (!admin || !where.botId || !userId || !this.ownBricks.has(where.botId)) return { error: "That can't be done in this chat right now." };
@@ -3506,6 +3512,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             admin,
             botId,
             userId,
+            apps: where.apps,
             onStarted: pretendRunnerOn() ? (jobId) => void runPretendJob(admin, botId, jobId) : undefined,
         });
         // A job started or queued changes what the bar says: read it fresh next time
@@ -3517,6 +3524,112 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     private brickToolsOn(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService): boolean {
         const admin = adminApiService ?? this.adminApiService;
         return !botClient && !!botId && this.helperBricks.has(botId) && !!admin?.isConfigured?.();
+    }
+
+    /**
+     * One run of a goal or task that needs a model (#2002): its own context, never the person's chat, saving nothing into memory. Rounds of
+     * the model and its tools go on until `final` is called (that call ends it, after it ran), the model stops calling tools, or the steps
+     * are used up. Every model call is its own usage row on the task channel under the run's id, so what a run costs is on the books call by
+     * call. `permit` is asked before every model call and every tool: a run that was paused, finished, deleted or changed stops there.
+     */
+    async runBrickTask(opts: {
+        botId: string;
+        providerId: string;
+        system: string;
+        user: string;
+        tools: any[];
+        maxSteps: number;
+        signal?: AbortSignal;
+        permit: () => Promise<boolean>;
+        runTool: (name: string, args: Record<string, unknown>) => Promise<string>;
+        final: string;
+        usage: { runId: string; attempt: number; userId?: string };
+    }): Promise<{ ended: 'final' | 'no_tool' | 'steps' | 'not_permitted' | 'resting' | 'failed'; error?: string; status?: number }> {
+        const resolved = await this.resolveProvider(opts.providerId, opts.botId);
+        if (resolved.resting) return { ended: 'resting' };
+        const config = resolved.config;
+        const rounds: ReplySteps = { steps: [] };
+        // A model that answers in words instead of calling a tool is asked once more, then it is a no
+        let user = opts.user;
+        let nudged = false;
+        for (let round = 1; round <= opts.maxSteps; round++) {
+            if (opts.signal?.aborted) return { ended: 'failed', error: 'stopped' };
+            if (!(await opts.permit())) return { ended: 'not_permitted' };
+            // One ledger for each call: each is a usage row of its own
+            const ledger = new UsageLedger();
+            const startedAt = Date.now();
+            let content = '';
+            let reasoning: string | undefined;
+            let meta: AIStreamChunk['metadata'] | undefined;
+            const calls = new Map<string, { id: string; name: string; arguments: string }>();
+            let failed: string | null = null;
+            try {
+                for await (const chunk of this.meteredStream(ledger, config.providerId, opts.system, user, config, opts.tools, opts.signal, undefined, rounds.steps.length > 0 ? rounds : undefined)) {
+                    if (chunk.content) content += chunk.content;
+                    for (const call of chunk.toolCalls ?? []) {
+                        const known = call.id ? calls.get(call.id) : Array.from(calls.values()).pop();
+                        if (known) {
+                            if (call.arguments && call.arguments !== '{}') known.arguments += call.arguments;
+                            if (call.name) known.name = call.name;
+                        } else if (call.id) {
+                            calls.set(call.id, { id: call.id, name: call.name || '', arguments: call.arguments && call.arguments !== '{}' ? call.arguments : '' });
+                        }
+                    }
+                    if (chunk.done) {
+                        meta = chunk.metadata;
+                        if (chunk.reasoning) reasoning = chunk.reasoning;
+                    }
+                }
+            } catch (error) {
+                failed = providerErrorText(error);
+            }
+            const errored = failed !== null || !!meta?.error;
+            // The call's own row, whether it worked or not: a call that was made was paid for, and one that never started adds a zero
+            await this.trackUsage(
+                opts.botId,
+                config.providerId,
+                {
+                    tokensUsed: meta?.tokensUsed ?? 0,
+                    promptTokens: meta?.promptTokens ?? 0,
+                    completionTokens: meta?.completionTokens ?? 0,
+                    ...(meta?.cacheReadTokens || meta?.cacheWriteTokens ? { cacheReadTokens: meta.cacheReadTokens ?? 0, cacheWriteTokens: meta.cacheWriteTokens ?? 0 } : {}),
+                    latency: Date.now() - startedAt,
+                    error: errored,
+                },
+                ledger.summary(),
+                { channel: 'task', runId: opts.usage.runId, eventId: `${opts.usage.attempt}.${round}`, ...(opts.usage.userId ? { userId: opts.usage.userId } : {}) }
+            );
+            if (errored) return { ended: 'failed', error: failed ?? meta?.errorText ?? 'The model did not answer', ...(meta?.errorStatus ? { status: meta.errorStatus } : {}) };
+            const pending = Array.from(calls.values()).filter((call) => call.name.trim() !== '');
+            if (pending.length === 0) {
+                if (nudged || round >= opts.maxSteps) return { ended: 'no_tool' };
+                nudged = true;
+                user = `${opts.user}\n\nAnswer by calling a tool this time: end the check by calling ${opts.final}, not with plain words.`;
+                continue;
+            }
+            const results: { id: string; name: string; text: string }[] = [];
+            let finished = false;
+            for (const call of pending) {
+                if (!(await opts.permit())) return { ended: 'not_permitted' };
+                const args = this.safeParseToolArgs(call.arguments || '{}');
+                let text: string;
+                try {
+                    text = await opts.runTool(call.name, args);
+                } catch (error) {
+                    text = JSON.stringify({ error: 'That did not work just now.' });
+                    console.warn(`[AIService] A step of a goal or task failed (${call.name}):`, error instanceof Error ? error.message : error);
+                }
+                results.push({ id: call.id, name: call.name, text });
+                // The first finish that was accepted ends it: nothing after it in the same round runs or changes what it said
+                if (call.name === opts.final && !text.includes('"error"')) {
+                    finished = true;
+                    break;
+                }
+            }
+            if (finished) return { ended: 'final' };
+            rounds.steps.push(stepOf(round, content, pending, results, reasoning));
+        }
+        return { ended: 'steps' };
     }
 
     /**
@@ -4324,7 +4437,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     case COMPUTER_TOOL:
                         result = await this.runComputerToolCall(
                             typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
-                            { adminApiService, botId, playerId }
+                            { adminApiService, botId, playerId, apps: [...new Set([...(toolServerMap?.values() ?? [])].filter((entry) => entry.connectionId || entry.readyMade).map((entry) => entry.serverName).filter((name): name is string => !!name))] }
                         );
                         break;
 
