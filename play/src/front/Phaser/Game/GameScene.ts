@@ -2255,7 +2255,8 @@ export class GameScene extends DirtyScene {
                     .then((space) => {
                         this.allUserSpace = space;
                         // Other people see "On a call" next to this person while a call with a Brick lasts (#2004)
-                        this.unsubscribeOnACall = shareOnACall(space);
+                        // A join that answers after the scene closed must not start telling anyone anything
+                        if (!this.cleanupDone) this.unsubscribeOnACall = shareOnACall(space);
                         worldUserProvider = new WorldUserProvider(space);
                         this._worldUserCounter.forward(worldUserProvider.userCount);
                         this._worldPeopleCounter.forward(worldUserProvider.peopleCount);
