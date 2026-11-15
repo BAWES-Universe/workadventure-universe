@@ -861,6 +861,11 @@ export class MatrixDmBridge implements MatrixEventHandler {
         return members.size === 2 && members.has(botUserId) && members.has(matrixUserId);
     }
 
+    /** Whether this room is still only the bot's and this person's, by what the bot was last told (asked right before a card goes into it). */
+    roomStillTheirs(botId: string, roomId: string, matrixUserId: string): boolean {
+        return this.stillTheirs(roomId, this.botUserId(botId), matrixUserId);
+    }
+
     private botUserId(botId: string): string {
         return `@${BOT_LOCALPART_PREFIX}${botId}:${this.config.domain}`;
     }

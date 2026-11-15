@@ -204,6 +204,41 @@ describe('the model of a check with Apps', () => {
         expect(system).not.toMatch(/cannot send anything to anyone, use an app/);
     });
 
+    it('stops at the first card: the next steps of the round are not done, and the card is not said again', async () => {
+        const { apps, call, propose } = setUp({ create: RUN('makesNew'), update: RUN('changesThings') });
+        const finish = { result: 'tell_them', message: 'I asked you on a card.', needs_you: true, status_line: 'Waiting for your OK' };
+        const ai = {
+            runBrickTask: vi.fn(async (opts: any) => {
+                expect(JSON.parse(await opts.runTool('create', { title: 'x' }))).toMatchObject({ status: 'waiting_for_ok' });
+                // Same round, a step that would have run by itself: it is held
+                expect(JSON.parse(await opts.runTool('update', { id: 1 }))).toMatchObject({ error: expect.stringMatching(/already waiting/) });
+                await opts.runTool(FINISH_CHECK_TOOL, finish);
+                return { ended: 'final' };
+            }),
+        };
+        const runner = new ModelTaskRunner({ ai: ai as never, brick: async () => brick, readPage: vi.fn(), apps });
+        // A goal and a watch do not say it again in chat
+        expect(await runner.run(run({ kind: 'goal' }), async () => true)).toMatchObject({ kind: 'result', result: { kind: 'nothing_new', progress: { statusLine: 'Waiting for your OK' } } });
+        expect(await runner.run(run({ kind: 'watch' }), async () => true)).toMatchObject({ kind: 'result', result: { kind: 'nothing_new' } });
+        expect(call).not.toHaveBeenCalled();
+        expect(propose).toHaveBeenCalledTimes(2);
+        // A briefing is always delivered
+        expect(await runner.run(run({ kind: 'schedule' }), async () => true)).toMatchObject({ kind: 'result', result: { kind: 'tell' } });
+    });
+
+    it('speaks as usual when no card waits', async () => {
+        const { apps } = setUp({ search: RUN('looksUp') });
+        const ai = {
+            runBrickTask: vi.fn(async (opts: any) => {
+                await opts.runTool('search', {});
+                await opts.runTool(FINISH_CHECK_TOOL, { result: 'tell_them', message: 'Found it.' });
+                return { ended: 'final' };
+            }),
+        };
+        const runner = new ModelTaskRunner({ ai: ai as never, brick: async () => brick, readPage: vi.fn(), apps });
+        expect(await runner.run(run({ kind: 'goal' }), async () => true)).toMatchObject({ kind: 'result', result: { kind: 'tell', message: 'Found it.' } });
+    });
+
     it('is the web alone, as before, when there are no Apps or they cannot be listed', async () => {
         const ai = { runBrickTask: vi.fn(async () => ({ ended: 'final' })) };
         for (const apps of [undefined, { open: async () => null }, { open: async () => Promise.reject(new Error('down')) }]) {

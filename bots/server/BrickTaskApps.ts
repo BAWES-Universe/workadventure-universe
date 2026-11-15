@@ -41,6 +41,8 @@ export interface TaskAppsSession {
     has(name: string): boolean;
     /** The result as text for the model. Never throws. */
     call(name: string, args: Record<string, unknown>): Promise<string>;
+    /** Whether a card for this check is waiting for the person's OK: the card is the message, and nothing else is done in the check. */
+    waiting(): boolean;
 }
 
 const asText = (value: unknown): string => {
@@ -50,6 +52,8 @@ const asText = (value: unknown): string => {
         return JSON.stringify({ error: 'That gave back something that cannot be read.' });
     }
 };
+
+const HELD_BY_CARD = JSON.stringify({ error: "A card is already waiting for the person's OK in this check, so nothing else is done now. End the check with finish_check (nothing_new) and say nothing about the card." });
 
 const refused = (line: string): string => JSON.stringify({ error: `${line} This was not done, and it cannot be done another way. Say so plainly if it matters.` });
 
@@ -87,10 +91,13 @@ export class TaskApps {
         );
         if (offered.length === 0) return null;
         offered.sort((a, b) => a.function.name.localeCompare(b.function.name));
+        // One card ends the check: a model that asks for more steps in the same round does not get them
+        const state = { waiting: false };
         return {
             definitions: offered,
             has: (name) => servers.has(name),
-            call: (name, args) => this.call(run, name, args, servers.get(name)),
+            call: (name, args) => (state.waiting ? Promise.resolve(HELD_BY_CARD) : this.call(run, name, args, servers.get(name), state)),
+            waiting: () => state.waiting,
         };
     }
 
@@ -116,7 +123,7 @@ export class TaskApps {
         return null;
     }
 
-    private async call(run: DueRun, name: string, args: Record<string, unknown>, entry: ToolServerEntry | undefined): Promise<string> {
+    private async call(run: DueRun, name: string, args: Record<string, unknown>, entry: ToolServerEntry | undefined, state: { waiting: boolean }): Promise<string> {
         if (!entry) return JSON.stringify({ error: 'That is not something a check can do.' });
         try {
             // The check right before the call: the tool, the person and the settings as they are now
@@ -129,13 +136,14 @@ export class TaskApps {
             if (!asks) {
                 return asText(await this.deps.call(run.brickId, entry, name, args, run.userId, { heading, callId: stepId(run.runId, name, args) }));
             }
-            return await this.askFor(run, name, entry, args, {
-                kind: 'ask',
-                heading,
-                notReviewed: false,
-                policyRevision: verdict.policyRevision!,
-                fingerprint: verdict.fingerprint!,
-            });
+            return await this.askFor(
+                run,
+                name,
+                entry,
+                args,
+                { kind: 'ask', heading, notReviewed: false, policyRevision: verdict.policyRevision!, fingerprint: verdict.fingerprint! },
+                state
+            );
         } catch (error) {
             console.warn(`[TaskApps] A step of a goal or task failed (${name}):`, error instanceof Error ? error.message : error);
             return JSON.stringify({ error: 'That did not work just now.' });
@@ -143,7 +151,7 @@ export class TaskApps {
     }
 
     /** The card for this step, in the person's own chat: it waits there, and the run only ends. */
-    private async askFor(run: DueRun, name: string, entry: ToolServerEntry, args: Record<string, unknown>, decision: Extract<GateDecision, { kind: 'ask' }>): Promise<string> {
+    private async askFor(run: DueRun, name: string, entry: ToolServerEntry, args: Record<string, unknown>, decision: Extract<GateDecision, { kind: 'ask' }>, state: { waiting: boolean }): Promise<string> {
         if (!run.matrixUserId) return refused('This needs the person\'s OK on a card, and they have no chat with you to show it in.');
         const room = await this.deps.room(run.brickId, run.matrixUserId);
         if ('reason' in room) {
@@ -162,6 +170,8 @@ export class TaskApps {
         });
         // A card for a goal asks for this occurrence, so a remembered approval never says "run" here
         if (proposed.kind === 'run') return refused('That could not be asked just now.');
+        // A card waits (or already waited): this check ends with it
+        if (proposed.kind === 'waiting') state.waiting = true;
         return JSON.stringify(proposed.result);
     }
 }

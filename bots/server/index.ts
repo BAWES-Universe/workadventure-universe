@@ -150,6 +150,7 @@ const approvals = new ToolApprovals({
             return aiService.runApprovedTool(botId, entry, toolName, args, playerUuid, config?.toolTimeoutSeconds, use);
         },
     },
+    roomStillTheirs: (botId, roomId, matrixUserId) => matrixBridge?.roomStillTheirs(botId, roomId, matrixUserId) ?? false,
     followUp: (outcome) => matrixBridge?.sayHowItEnded(outcome) ?? Promise.resolve(),
 });
 aiService.useApprovals(approvals);

@@ -94,6 +94,8 @@ export interface ApprovalDeps {
     tools: ToolRunner;
     /** The question cards (#1661): taps on them, and what the person types or says while one waits, are theirs. */
     questions?: QuestionCards;
+    /** Whether a room is still only the bot's and this person's, asked right before a goal's card goes into it (the card shows what the step would do). */
+    roomStillTheirs?: (botId: string, roomId: string, matrixUserId: string) => boolean;
     /** The bot tells the person how an approved action ended. Never throws. */
     followUp?: (outcome: Outcome) => Promise<void>;
     now?: () => number;
@@ -302,6 +304,8 @@ export class ToolApprovals {
                 });
             }
             try {
+                // Someone may have joined the room while Orbit saved the card: then it goes nowhere, and the saved step is closed below
+                if (task && person.matrixUserId && this.deps.roomStillTheirs && !this.deps.roomStillTheirs(botId, roomId, person.matrixUserId)) throw new Error('The chat is not only theirs any more');
                 card.eventId = await this.sendCard(card, buildAsk(facts, this.now()), false);
                 card.shownAt = this.now();
             } catch (error) {
@@ -519,9 +523,9 @@ export class ToolApprovals {
         const checked = stale ? null : await this.deps.gate.decide(gateCall(botId, action.toolName, entry, person));
         // A card before making more than the limit comes from a tool that runs right away: it asks again as it did
         // A goal's card for a step that makes, sends or deletes asks again too: its run never does those by itself
-        const askedAnyway = !!card.batch ? checked?.heading === 'makesNew' : !!taskItemOf(action.conversationKey) && !!checked?.heading && TASK_ALWAYS_ASK.includes(checked.heading);
+        const taskCard = !!taskItemOf(action.conversationKey);
         const decision: GateDecision | null =
-            checked?.kind === 'run' && askedAnyway && checked.heading && checked.policyRevision !== undefined && checked.fingerprint
+            checked?.kind === 'run' && checked.policyRevision !== undefined && checked.fingerprint && (card.batch ? checked.heading === 'makesNew' : taskCard && TASK_ALWAYS_ASK.includes(checked.heading))
                 ? { kind: 'ask', heading: checked.heading, notReviewed: false, policyRevision: checked.policyRevision, fingerprint: checked.fingerprint }
                 : checked;
         if (!entry || !decision || decision.kind !== 'ask') {

@@ -83,11 +83,16 @@ class FakeOrbit {
         this.superseded.push(...closed);
         return closed;
     }
+    cancelled: string[] = [];
+    async cancel(_bot: string, id: string) {
+        this.cancelled.push(id);
+        this.actions.set(id, { ...this.actions.get(id)!, status: 'closed', closedReason: 'cancelled' } as SavedAction);
+    }
     async touchGrants() {}
     async revokeGrants() {}
 }
 
-function make(orbit: FakeOrbit, sent: Array<{ content: Record<string, any> }>, run = vi.fn(async () => [{ type: 'text', text: 'Created WEB-12' }]), checked: GateDecision = RUN) {
+function make(orbit: FakeOrbit, sent: Array<{ content: Record<string, any> }>, run = vi.fn(async () => [{ type: 'text', text: 'Created WEB-12' }]), checked: GateDecision = RUN, theirs?: () => boolean) {
     return new ToolApprovals({
         orbit: orbit as never,
         cards: {
@@ -99,6 +104,7 @@ function make(orbit: FakeOrbit, sent: Array<{ content: Record<string, any> }>, r
         },
         gate: { decide: async () => checked } as never,
         tools: { find: async () => ENTRY, run },
+        ...(theirs ? { roomStillTheirs: theirs } : {}),
         now: () => 1_000,
     });
 }
@@ -241,5 +247,23 @@ describe('"Review again" on a goal’s card', () => {
         close();
         await make(orbit, sent).handleTap('b1', ROOM, SARA, review);
         expect(sent).toHaveLength(1);
+    });
+});
+
+describe('a goal’s card and who is in the room', () => {
+    it('is shown while the chat is still only theirs', async () => {
+        const theirs = vi.fn(() => true);
+        const proposed = await make(orbit, sent, undefined, RUN, theirs).propose(input());
+        expect(proposed.kind).toBe('waiting');
+        expect(theirs).toHaveBeenCalledWith('b1', ROOM, '@sara:matrix.test');
+        expect(sent).toHaveLength(1);
+    });
+
+    it('is not sent when someone joined the chat meanwhile, and the saved step is closed so no tap finds it', async () => {
+        const proposed = await make(orbit, sent, undefined, RUN, () => false).propose(input());
+        expect(proposed.kind).toBe('failed');
+        expect(sent).toHaveLength(0);
+        expect(orbit.cancelled).toEqual(['act_1']);
+        expect(orbit.actions.get('act_1')!.status).toBe('closed');
     });
 });

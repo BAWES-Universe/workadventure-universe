@@ -83,8 +83,14 @@ export class ModelTaskRunner implements BrickTaskModel {
             usage: { runId: run.runId, attempt: run.attempt, userId: run.userId },
         });
         switch (ended.ended) {
-            case 'final':
-                return result ? { kind: 'result', result } : { kind: 'failed', error: NO_FINISH_REASON };
+            case 'final': {
+                if (!result) return { kind: 'failed', error: NO_FINISH_REASON };
+                // A card waits for the person: it is the message, so a watch or goal does not say the same thing again in chat.
+                // A briefing is always delivered, so it keeps its own message.
+                const held = result as TaskResult;
+                if (apps?.waiting() && held.kind === 'tell' && run.kind !== 'schedule') return { kind: 'result', result: { kind: 'nothing_new', progress: held.progress } };
+                return { kind: 'result', result };
+            }
             case 'not_permitted':
                 return { kind: 'stopped' };
             case 'failed': {
