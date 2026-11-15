@@ -14,6 +14,7 @@ const game = vi.hoisted(() => ({
     getMyApps: vi.fn<() => Promise<unknown>>(),
     getAppCatalog: vi.fn<() => Promise<unknown>>(),
     getReadyMadeApps: vi.fn<() => Promise<unknown>>(),
+    getInstantApps: vi.fn<() => Promise<unknown>>(),
     getMyApp: vi.fn<(id: string) => Promise<unknown>>(),
     getMyAppUniverses: vi.fn<() => Promise<unknown>>(),
     connectApp: vi.fn<(app: unknown) => Promise<unknown>>(),
@@ -27,6 +28,7 @@ vi.mock("../../../../external-modules/bots/services/BotApiService", () => ({
         getMyApps: game.getMyApps,
         getAppCatalog: game.getAppCatalog,
         getReadyMadeApps: game.getReadyMadeApps,
+        getInstantApps: game.getInstantApps,
         getMyApp: game.getMyApp,
         getMyAppUniverses: game.getMyAppUniverses,
     },
@@ -142,6 +144,7 @@ describe("Search apps and Connect another (#2001)", () => {
         game.getMyApps.mockResolvedValue({ apps: [mine()], bricks: [] });
         game.getAppCatalog.mockResolvedValue(CATALOG);
         game.getReadyMadeApps.mockResolvedValue({ apps: [] });
+        game.getInstantApps.mockResolvedValue({ apps: [] });
         game.getMyAppUniverses.mockResolvedValue({ universes: [] });
         game.getMyApp.mockResolvedValue({ app: mine(), canLetUse: [], lentTo: [], canLendTo: [] });
         game.connectApp.mockResolvedValue({ status: "stopped" });

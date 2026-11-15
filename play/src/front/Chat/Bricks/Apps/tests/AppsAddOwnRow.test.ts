@@ -14,6 +14,7 @@ const game = vi.hoisted(() => ({
     getMyApps: vi.fn<() => Promise<unknown>>(),
     getAppCatalog: vi.fn<() => Promise<unknown>>(),
     getReadyMadeApps: vi.fn<() => Promise<unknown>>(),
+    getInstantApps: vi.fn<() => Promise<unknown>>(),
     getMyApp: vi.fn<(id: string) => Promise<unknown>>(),
     getMyAppUniverses: vi.fn<() => Promise<unknown>>(),
     discoverMcpOAuthEndpoints: vi.fn<(url: string, callback: string) => Promise<unknown>>(),
@@ -29,6 +30,7 @@ vi.mock("../../../../external-modules/bots/services/BotApiService", () => ({
         getMyApps: game.getMyApps,
         getAppCatalog: game.getAppCatalog,
         getReadyMadeApps: game.getReadyMadeApps,
+        getInstantApps: game.getInstantApps,
         getMyApp: game.getMyApp,
         getMyAppUniverses: game.getMyAppUniverses,
         discoverMcpOAuthEndpoints: game.discoverMcpOAuthEndpoints,
@@ -100,6 +102,7 @@ describe("Add your own app on the Apps page (#2001)", () => {
         game.getMyApps.mockResolvedValue({ apps: [], bricks: [] });
         game.getAppCatalog.mockResolvedValue({ apps: [] });
         game.getReadyMadeApps.mockRejectedValue(new Error("API error: 404"));
+        game.getInstantApps.mockResolvedValue({ apps: [] });
         game.getMyAppUniverses.mockResolvedValue({ universes: [] });
     });
 
