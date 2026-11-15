@@ -248,7 +248,7 @@ export class ToolApprovals {
         try {
             // The same call asked for again while its card still waits (a turn asked again, or the model repeating itself)
             // is that card: no second card, so one tap can never run it twice
-            if (this.findWaiting(botId, roomId, person.uuid, toolName, args, decision)) {
+            if (this.findWaiting(botId, roomId, person.uuid, toolName, args, decision, base.conversationKey)) {
                 return { kind: 'waiting', result: task ? ALREADY_ASKED_TASK_RESULT : nearby ? WAITING_NEARBY_RESULT : WAITING_RESULT };
             }
             // Making more than the limit is asked every time: nothing allowed before covers it. A goal's step asks every time too.
@@ -319,11 +319,21 @@ export class ToolApprovals {
         }
     }
 
-    private findWaiting(botId: string, roomId: string, requesterKey: string, toolName: string, args: Record<string, unknown>, decision: Extract<GateDecision, { kind: 'ask' }>): Card | undefined {
+    private findWaiting(
+        botId: string,
+        roomId: string,
+        requesterKey: string,
+        toolName: string,
+        args: Record<string, unknown>,
+        decision: Extract<GateDecision, { kind: 'ask' }>,
+        conversationKey: string
+    ): Card | undefined {
         const wanted = JSON.stringify(args);
         for (const card of this.cards.values()) {
             const action = card.facts.action;
             if (!card.waiting || card.closing || card.botId !== botId || card.roomId !== roomId || card.person.uuid !== requesterKey) continue;
+            // The same chat room holds the chat's cards and each goal's own: only the same conversation's card is the same card
+            if (action.conversationKey !== conversationKey) continue;
             if (action.toolName !== toolName || action.toolFingerprint !== decision.fingerprint || action.heading !== decision.heading || card.facts.notReviewed !== decision.notReviewed) continue;
             if (!(Date.parse(action.reviewExpiresAt) > this.now())) continue;
             if (JSON.stringify(action.arguments) === wanted) return card;

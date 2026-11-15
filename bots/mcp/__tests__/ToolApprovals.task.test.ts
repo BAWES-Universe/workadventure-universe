@@ -23,6 +23,8 @@ const ARGS = { team: 'WEB', title: 'Book the appointment' };
 class FakeOrbit {
     actions = new Map<string, SavedAction>();
     grantLookups = 0;
+    /** Whether a remembered approval covers a call in chat. */
+    remembered = true;
     superseded: string[] = [];
     nextId = 1;
     async cardSettings() {
@@ -37,15 +39,18 @@ class FakeOrbit {
         this.actions.set(action.id, action);
         return { action, created: true };
     }
-    async create(): Promise<SavedAction> {
-        throw new Error('a goal never saves its card as a chat card');
+    /** A chat card, as ever: its own wait, no joining. */
+    async create(_bot: string, input: Record<string, any>): Promise<SavedAction> {
+        const action = { id: `act_${this.nextId++}`, botId: 'b1', status: 'waiting', closedReason: null, revision: 1, reviewExpiresAt: new Date(1_000 + 10 * 60_000).toISOString(), ...input } as SavedAction;
+        this.actions.set(action.id, action);
+        return action;
     }
     async read(_bot: string, id: string) {
         return this.actions.get(id) ?? null;
     }
     async findGrant() {
         this.grantLookups++;
-        return { grantId: 'g1', scope: { fixed: {}, varies: [] } };
+        return this.remembered ? { grantId: 'g1', scope: { fixed: {}, varies: [] } } : null;
     }
     async decide(_bot: string, id: string, input: { revision: number }) {
         const action = this.actions.get(id)!;
@@ -149,6 +154,22 @@ describe('the card a goal puts up', () => {
         // Another step is another card
         await later.propose(input({ args: { team: 'WEB', title: 'Pay the fee' } }));
         expect(sent).toHaveLength(2);
+    });
+
+    it('is its own card for each goal, and apart from the same step asked in chat, in the same room', async () => {
+        orbit.remembered = false;
+        const approvals = make(orbit, sent);
+        const other = '7c1d2e3f-1111-4222-8333-944455556666';
+        await approvals.propose(input());
+        // The same step for another goal, and the same step in chat, are not the card that waits
+        await approvals.propose(input({ task: { itemId: other } }));
+        await approvals.propose(input({ task: undefined }));
+        expect(sent).toHaveLength(3);
+        expect([...orbit.actions.values()].map((a) => a.conversationKey)).toEqual([`task:${ITEM}`, `task:${other}`, `dm:${ROOM}`]);
+        // Asked again, each is still the one card of its own conversation
+        await approvals.propose(input({ task: { itemId: other } }));
+        await approvals.propose(input({ task: undefined }));
+        expect(sent).toHaveLength(3);
     });
 
     it('is tapped in the person’s own chat, also after a restart, and runs the saved step once', async () => {
