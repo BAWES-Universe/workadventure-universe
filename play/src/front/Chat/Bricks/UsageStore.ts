@@ -30,29 +30,55 @@ function isOlder(answer: MyUsage, held: MyUsage | undefined): boolean {
     return answer.version !== null && heldVersion !== null && answer.version < heldVersion;
 }
 
+// Counts the reads that must not be believed any more: a read that began before it changed is ignored when it ends
+let epoch = 0;
+// The read waiting for the one in flight to end (see refreshMyUsage)
+let queued: Promise<void> | undefined;
+
+function startRead(): Promise<void> {
+    const startedAt = changes;
+    const startedEpoch = epoch;
+    const read: Promise<void> = botApiService
+        .getMyUsage()
+        .then((answer) => {
+            // A newer read was asked for while this one was out: this answer may be from before what that read is for
+            if (startedEpoch !== epoch) return;
+            const parsed = parseUsage(answer);
+            // Orbit's answer is older than what the person did meanwhile: keep what they did
+            if (parsed && changes === startedAt && !isOlder(parsed, get(usage))) usage.set(parsed);
+            failed.set(!parsed);
+        })
+        .catch((error: unknown) => {
+            console.warn("Could not read your usage", error);
+            if (startedEpoch === epoch) failed.set(true);
+        })
+        .finally(() => {
+            if (loading === read) loading = undefined;
+            settled.set(true);
+        });
+    loading = read;
+    return read;
+}
+
 /** Reads the person's usage. One request at a time; resolves either way. */
 export function loadMyUsage(): Promise<void> {
     if (!get(userIsConnected)) return Promise.resolve();
-    if (!loading) {
-        const startedAt = changes;
-        loading = botApiService
-            .getMyUsage()
-            .then((answer) => {
-                const parsed = parseUsage(answer);
-                // Orbit's answer is older than what the person did meanwhile: keep what they did
-                if (parsed && changes === startedAt && !isOlder(parsed, get(usage))) usage.set(parsed);
-                failed.set(!parsed);
-            })
-            .catch((error: unknown) => {
-                console.warn("Could not read your usage", error);
-                failed.set(true);
-            })
-            .finally(() => {
-                loading = undefined;
-                settled.set(true);
-            });
-    }
-    return loading;
+    return queued ?? loading ?? startRead();
+}
+
+/**
+ * Reads the usage again, from a request that begins after this call: something has just changed it (a refund), so an
+ * answer already on its way, which may be from before, is ignored. While one is out, one more waits for it to end.
+ */
+export function refreshMyUsage(): Promise<void> {
+    if (!get(userIsConnected)) return Promise.resolve();
+    epoch++;
+    if (!loading) return startRead();
+    queued ??= loading.then(() => {
+        queued = undefined;
+        return startRead();
+    });
+    return queued;
 }
 
 /**
@@ -107,5 +133,7 @@ export function forgetMyUsage(): void {
     settled.set(false);
     failed.set(false);
     loading = undefined;
+    queued = undefined;
+    epoch++;
     changes = 0;
 }

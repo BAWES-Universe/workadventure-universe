@@ -16,8 +16,10 @@
         storageSize,
         type ActivityItem,
         type BotSpend,
+        type ChatUsage,
         type CreditCategory,
         type ExtraCredit,
+        type Replies,
         type ReportOutcome,
     } from "./Usage";
     import UsageMoney from "./UsageMoney.svelte";
@@ -27,6 +29,7 @@
         myUsageFailed,
         myUsageSettled,
         myUsageStore,
+        refreshMyUsage,
         reportMyActivity,
     } from "./UsageStore";
     import { IconChevronDown } from "@wa-icons";
@@ -88,18 +91,25 @@
         : replies.total === 1
         ? text.repliesOfOne({ available: replies.available })
         : text.repliesOf({ available: replies.available, total: replies.total });
-    $: repliesHint = !replies || noLimit ? undefined : repliesHintOf();
+    // Everything it says comes in as a parameter, so a change of language says it again
+    $: repliesHint = !replies || noLimit ? undefined : repliesHintOf(replies, chat, text, extraDay, $locale);
     $: repliesLeft = !replies ? 0 : noLimit ? 1 : replies.total > 0 ? replies.available / replies.total : 0;
 
-    function repliesHintOf(): string | undefined {
-        if (!replies || !chat) return undefined;
+    function repliesHintOf(
+        replies: Replies,
+        chat: ChatUsage | undefined,
+        text: typeof $LL.chat.brick.usage,
+        extraDay: string,
+        locale: string | undefined
+    ): string | undefined {
+        if (!chat) return undefined;
         const parts: string[] = [];
         if (!replies.running) {
             parts.push(
                 replies.windowHours ? text.windowStartsHours({ hours: replies.windowHours }) : text.windowStarts()
             );
         } else if (chat.fullAgainAt) {
-            parts.push(text.repliesResets({ when: fullAgainWhen(chat.fullAgainAt, $locale) }));
+            parts.push(text.repliesResets({ when: fullAgainWhen(chat.fullAgainAt, locale) }));
         }
         if (replies.inProgress > 0) parts.push(text.repliesInProgress({ count: replies.inProgress }));
         const extra = chat.extra;
@@ -193,8 +203,8 @@
             return;
         }
         reported = { ...reported, [item.id]: outcome };
-        // A refund changes what is available: read it again
-        load();
+        // A refund changes what is available: read it again, from a request that begins now (one already out may be older)
+        refreshMyUsage().catch((error) => console.error(error));
     }
 
     function load() {

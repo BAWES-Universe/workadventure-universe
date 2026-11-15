@@ -1569,6 +1569,7 @@ const chat: BaseTranslation = {
             appsCount: "{count:number} app{{s}}",
             noAppMatches: "No app matches “{query:string}”.",
             connectListFailed: "Couldn't load the apps you can connect.",
+            instantListFailed: "Couldn't load the ready-to-use apps, so they are not in these results.",
             signInNote:
                 "You sign in on the app's own page, so Universe never sees your password. You can also just ask a Brick: “connect my Notion”.",
             connectStopped: "The sign-in didn't finish. Nothing was connected.",

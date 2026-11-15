@@ -294,6 +294,59 @@ describe("the Apps pages (#2001)", () => {
             expect(byId("appsLoadFailed")).toBeNull();
         });
 
+        it("keeps the Instant Apps when an older read ends after the newer one", async () => {
+            let answerFirst: (answer: unknown) => void = () => undefined;
+            game.getInstantApps.mockReset();
+            game.getInstantApps
+                .mockReturnValueOnce(
+                    new Promise((resolve) => {
+                        answerFirst = resolve;
+                    })
+                )
+                .mockResolvedValue({
+                    apps: [{ key: "instant-video", name: "Instant video", blurb: "Make short videos" }],
+                });
+            game.getAppCatalog.mockRejectedValueOnce(new Error("offline"));
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            page = new AppsPage({ target, props: { onBack: () => {} } });
+            await settle();
+            expect(byId("appsConnectListFailed")).not.toBeNull();
+            // The retry starts a second read, which answers with the list while the first is still out
+            await click("appsConnectListTryAgain");
+            expect(allById("appsInstantRow")).toHaveLength(1);
+            answerFirst({ apps: [] });
+            await settle();
+            warn.mockRestore();
+            expect(allById("appsInstantRow")).toHaveLength(1);
+            expect(byId("appsInstant")).not.toBeNull();
+        });
+
+        it("says the ready-to-use apps could not be read when a search needs them, and reads them again", async () => {
+            game.getInstantApps.mockReset();
+            game.getInstantApps.mockRejectedValueOnce(new Error("offline")).mockResolvedValue({
+                apps: [{ key: "instant-flights", name: "Instant flights", blurb: "Find flights" }],
+            });
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            page = new AppsPage({ target, props: { onBack: () => {} } });
+            await settle();
+            expect(byId("appsInstantFailed")).toBeNull();
+            const input = byId("appsSearchInput") as HTMLInputElement;
+            input.value = "flights";
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            await settle();
+            // No claim of "no match" and no count that leaves them out
+            expect(byId("appsNoMatch")).toBeNull();
+            expect(byId("appsFound")).toBeNull();
+            expect(words(byId("appsInstantFailed"))).toBe(
+                "Couldn't load the ready-to-use apps, so they are not in these results."
+            );
+            await click("appsInstantTryAgain");
+            warn.mockRestore();
+            expect(byId("appsInstantFailed")).toBeNull();
+            expect(allById("appsInstantRow").map(words)).toEqual(["Instant flights Find flights"]);
+            expect(words(byId("appsFound"))).toBe("1 app");
+        });
+
         it("has Add your own app as its last row, which opens the sheet, and Done opens the new app's page to choose Bricks", async () => {
             game.discoverMcpOAuthEndpoints.mockResolvedValue({
                 discovered: true,

@@ -18,6 +18,7 @@ import {
     askMyUsageForMore,
     forgetMyUsage,
     loadMyUsage,
+    refreshMyUsage,
     myUsageFailed,
     myUsageSettled,
     myUsageStore,
@@ -170,5 +171,32 @@ describe("a person's usage in the game (#1999)", () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
         expect(await reportMyActivity("act_9")).toBeUndefined();
         warn.mockRestore();
+    });
+
+    it("reads again from a request that begins after the call, and ignores the answer already on its way", async () => {
+        let answerOld: (answer: unknown) => void = () => undefined;
+        api.getMyUsage
+            .mockReturnValueOnce(
+                new Promise((resolve) => {
+                    answerOld = resolve;
+                })
+            )
+            .mockResolvedValueOnce({ ...out, storage: { bytes: 222 } });
+        const first = loadMyUsage();
+        const refreshed = refreshMyUsage();
+        // One read waits for the one in flight; asking again does not add another
+        expect(refreshMyUsage()).toBe(refreshed);
+        expect(api.getMyUsage).toHaveBeenCalledTimes(1);
+        answerOld({ ...out, storage: { bytes: 111 } });
+        await first;
+        await refreshed;
+        expect(api.getMyUsage).toHaveBeenCalledTimes(2);
+        expect(get(myUsageStore)?.storageBytes).toBe(222);
+    });
+
+    it("starts the read at once when none is out", async () => {
+        await refreshMyUsage();
+        expect(api.getMyUsage).toHaveBeenCalledTimes(1);
+        expect(get(myUsageStore)?.computer?.canAskForMore).toBe(true);
     });
 });

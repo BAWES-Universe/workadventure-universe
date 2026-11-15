@@ -51,7 +51,7 @@ const usage = (over: Record<string, unknown> = {}) => ({
 const computer = (over: Record<string, unknown> = {}) => ({
     left: 0.62,
     words: "plenty",
-    startsAgainAt: "2026-12-01T00:00:00.000Z",
+    startsAgainAt: "2026-12-01T12:00:00",
     unlimited: false,
     asked: false,
     canAskForMore: false,
@@ -136,7 +136,7 @@ describe("the Usage page (#1999)", () => {
     });
 
     it("says what extra usage gives in one plain line, with nothing about billing", async () => {
-        game.getMyUsage.mockResolvedValue(usage({ extra: { until: "2026-11-30T12:00:00.000Z" } }));
+        game.getMyUsage.mockResolvedValue(usage({ extra: { until: "2026-11-30T12:00:00" } }));
         await open();
         expect(text()).toContain("You have extra usage until 30 Nov");
         expect(text()).toContain("From the Universe team");
@@ -231,7 +231,7 @@ describe("the Usage page (#1999)", () => {
         kind: "monthly",
         availableMicros: 3_200_000,
         totalMicros: 5_000_000,
-        renewsAt: "2026-12-01T00:00:00.000Z",
+        renewsAt: "2026-12-01T12:00:00",
         canAskForMore: false,
         ...over,
     });
@@ -278,7 +278,7 @@ describe("the Usage page (#1999)", () => {
         game.getMyUsage.mockResolvedValue(
             live({
                 replies: replies({ available: 48, total: 60, inProgress: 0 }),
-                extra: { multiplier: 2, noLimit: false, until: "2026-12-31T12:00:00.000Z" },
+                extra: { multiplier: 2, noLimit: false, until: "2026-12-31T12:00:00" },
             })
         );
         await open();
@@ -290,7 +290,7 @@ describe("the Usage page (#1999)", () => {
         game.getMyUsage.mockResolvedValue(
             live({
                 replies: replies({ available: 0, total: 0, inProgress: 0 }),
-                extra: { multiplier: null, noLimit: true, until: "2026-12-31T12:00:00.000Z" },
+                extra: { multiplier: null, noLimit: true, until: "2026-12-31T12:00:00" },
             })
         );
         await open();
@@ -415,7 +415,7 @@ describe("the Usage page (#1999)", () => {
                             covers: ["apps", "computer"],
                             availableMicros: 3_100_000,
                             totalMicros: 5_000_000,
-                            until: "2026-12-31T12:00:00.000Z",
+                            until: "2026-12-31T12:00:00",
                         },
                     ],
                 }
@@ -554,6 +554,50 @@ describe("the Usage page (#1999)", () => {
         expect(byId("usageReported")?.textContent).toBe("Sorry about that. It's been refunded.");
         expect(byId("usageDidntWork")).toBeNull();
         expect(game.getMyUsage).toHaveBeenCalled();
+    });
+
+    it("ends on the new balance when the read that was out returns the old one after the refund", async () => {
+        const before = live({}, { activity: [task()], apps: money({ availableMicros: 1_000_000 }) });
+        const after = live({}, { activity: [task()], apps: money({ availableMicros: 1_920_000 }) });
+        // The first page open reads once and settles; the second open's read is still out when the refund goes through
+        game.getMyUsage.mockResolvedValue(before);
+        await open({ receiptId: "act_1" });
+        page?.$destroy();
+        let answerOld: (answer: unknown) => void = () => undefined;
+        game.getMyUsage
+            .mockReturnValueOnce(
+                new Promise((resolve) => {
+                    answerOld = resolve;
+                })
+            )
+            .mockResolvedValue(after);
+        game.reportActivityProblem.mockResolvedValue({ outcome: "refunded" });
+        page = new UsagePage({ target, props: { onBack: back, receiptId: "act_1" } });
+        await settle();
+        // The old balance is on screen from the earlier visit while the new read is pending
+        expect(text()).toContain("$1 of $5 available");
+        byId("usageDidntWork")?.click();
+        await settle();
+        answerOld(before);
+        await settle();
+        expect(byId("usageReported")?.textContent).toBe("Sorry about that. It's been refunded.");
+        expect(text()).toContain("$1.92 of $5 available");
+        expect(text()).not.toContain("$1 of $5 available");
+    });
+
+    it("says the reset time again in the new language when the language changes while the page is open", async () => {
+        game.getMyUsage.mockResolvedValue(live({ fullAgainAt: "2026-11-25T15:40:00" }));
+        try {
+            await open();
+            expect(text()).toContain("25 Nov, 3:40 PM");
+            loadLocale("fr-FR");
+            setLocale("fr-FR");
+            await settle();
+            expect(text()).toContain("15:40");
+            expect(text()).not.toContain("3:40 PM");
+        } finally {
+            setLocale("en-US");
+        }
     });
 
     it("warns, and keeps the button, when Didn't work could not be sent", async () => {

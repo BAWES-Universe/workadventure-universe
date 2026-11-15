@@ -271,6 +271,17 @@ describe("dollars", () => {
         expect(moneyLeft({ availableMicros: 9_000_000, totalMicros: 5_000_000 })).toBe(1);
         expect(moneyLeft({ availableMicros: 5, totalMicros: 0 })).toBe(0);
     });
+    it("counts both sides of a small credit in the same whole cents, so the bar agrees with the words", () => {
+        const line = (available: number, total: number) =>
+            `${availableText(available, "en-US")} of ${availableText(total, "en-US")}`;
+        // 1.5 cents of 1.5 cents is a full bar beside "$0.01 of $0.01", not a half-full one
+        expect(line(15_000, 15_000)).toBe("$0.01 of $0.01");
+        expect(moneyLeft({ availableMicros: 15_000, totalMicros: 15_000 })).toBe(1);
+        expect(line(14_999, 15_000)).toBe("$0.01 of $0.01");
+        expect(moneyLeft({ availableMicros: 14_999, totalMicros: 15_000 })).toBe(1);
+        expect(line(0, 15_000)).toBe("$0 of $0.01");
+        expect(moneyLeft({ availableMicros: 0, totalMicros: 15_000 })).toBe(0);
+    });
     it("says when a monthly credit renews, in the viewer's own clock", () => {
         const renews = renewsWhen("2026-12-01T03:00:00", "en-US");
         expect(renews).toEqual({ day: "1 Dec", time: "3:00 AM" });

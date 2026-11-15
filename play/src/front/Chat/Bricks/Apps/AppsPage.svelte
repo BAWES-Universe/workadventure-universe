@@ -49,6 +49,10 @@
     let connectListFailed = false;
     // Instant Apps: ready to use, nothing to connect. A list that cannot be read is simply not shown.
     let instant: InstantApp[] = [];
+    // The Instant Apps read failed (false again on a later success), so a search cannot claim anything about them
+    let instantFailed = false;
+    // Only the newest Instant Apps read is applied: an older answer arriving late must not overwrite a newer one
+    let instantRead = 0;
     let query = "";
     let connectingKey: string | undefined;
     let connectNote: "stopped" | "blocked" | "unchecked" | undefined;
@@ -72,10 +76,15 @@
     const keyOf = (app: Connectable) => `${app.kind}:${app.key}`;
 
     async function loadInstant() {
+        const mine = ++instantRead;
         try {
-            instant = parseInstant(await botApiService.getInstantApps()) ?? [];
+            const list = parseInstant(await botApiService.getInstantApps()) ?? [];
+            if (mine !== instantRead) return;
+            instant = list;
+            instantFailed = false;
         } catch (error) {
             console.warn("Could not read the Instant Apps", error);
+            if (mine === instantRead) instantFailed = true;
         }
     }
 
@@ -180,14 +189,14 @@
                     data-testid="appsSearchInput"
                 />
             </label>
-            {#if searching}
+            {#if searching && !instantFailed}
                 <AppSection
                     title={text.appsCount({
                         count: shownConnected.length + shownInstant.length + shownAnother.length,
                     })}
                     testId="appsFound"
                 />
-            {:else if connectedApps.length > 0}
+            {:else if !searching && connectedApps.length > 0}
                 <AppSection title={text.connected()} />
             {/if}
             {#each shownConnected as app (app.id)}
@@ -250,8 +259,16 @@
                         >{text.tryAgain()}</PageButton
                     >
                 </div>
-            {:else if searching && shownConnected.length + shownInstant.length + shownAnother.length === 0}
+            {:else if searching && !instantFailed && shownConnected.length + shownInstant.length + shownAnother.length === 0}
                 <p class="ap-none" data-testid="appsNoMatch">{text.noAppMatches({ query: query.trim() })}</p>
+            {/if}
+            {#if searching && instantFailed}
+                <p class="ap-bad" data-testid="appsInstantFailed">{text.instantListFailed()}</p>
+                <div class="ap-try">
+                    <PageButton tall testId="appsInstantTryAgain" on:click={() => void loadInstant()}
+                        >{text.tryAgain()}</PageButton
+                    >
+                </div>
             {/if}
             <AppRow
                 title={searching ? text.addOwnRowNotHere() : text.addOwnRow()}

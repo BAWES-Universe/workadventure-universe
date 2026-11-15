@@ -410,10 +410,13 @@ export function spentText(microsValue: number, locale: string | undefined): stri
     return dollarText(Math.ceil(Math.max(0, microsValue) / CENT), locale);
 }
 
-/** The bar of a money credit: what is left of what it was, 0 to 1, from the whole cents that are available. */
+/**
+ * The bar of a money credit: what is left of what it was, 0 to 1. Both sides are whole cents cut down the same way as the
+ * words ("$0.01 of $0.01" is a full bar), so the bar never disagrees with the line beside it.
+ */
 export function moneyLeft(money: Pick<Money, "availableMicros" | "totalMicros">): number {
     if (money.totalMicros <= 0) return 0;
-    const total = Math.max(1, Math.round(money.totalMicros / CENT));
+    const total = Math.max(1, Math.floor(money.totalMicros / CENT));
     return Math.min(1, Math.max(0, Math.floor(money.availableMicros / CENT) / total));
 }
 
