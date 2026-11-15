@@ -1329,11 +1329,28 @@ export class BotApiService {
     }
 
     /**
-     * "Ask for more" on the Usage page, when computer time is used up. Only a request to the Universe team: no debt.
-     * Throws when Orbit refuses or can't be reached.
+     * "Ask for more" on the Usage page, when Instant Apps credit or computer time is used up (the category says which;
+     * Orbit reads none as the computer's). Only a request to the Universe team: no debt. Throws when Orbit refuses or
+     * can't be reached.
      */
-    async askForMoreUsage(): Promise<unknown> {
-        const response = await this.fetch("/api/me/usage/ask-for-more", { method: "POST" });
+    async askForMoreUsage(category?: "apps" | "computer"): Promise<unknown> {
+        const response = await this.fetch("/api/me/usage/ask-for-more", {
+            method: "POST",
+            ...(category
+                ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ category }) }
+                : {}),
+        });
+        return response.json();
+    }
+
+    /**
+     * "Didn't work?" on one task in Activity: Orbit looks at it and answers what it came to (refunded, delivered again,
+     * trying again, credit, or just sent). Throws when Orbit refuses or can't be reached.
+     */
+    async reportActivityProblem(activityId: string): Promise<unknown> {
+        const response = await this.fetch(`/api/me/usage/activity/${encodeURIComponent(activityId)}/didnt-work`, {
+            method: "POST",
+        });
         return response.json();
     }
 
@@ -1494,6 +1511,16 @@ export class BotApiService {
     async getReadyMadeApps(): Promise<unknown> {
         try {
             return await this.appsCall("/api/me/apps/ready-made");
+        } catch (error) {
+            if ((error as { status?: number }).status === 404) return { apps: [] };
+            throw error;
+        }
+    }
+
+    /** The Instant Apps, ready to use with nothing to connect. Orbit answers 404 while there are none: that is an empty list. */
+    async getInstantApps(): Promise<unknown> {
+        try {
+            return await this.appsCall("/api/me/apps/instant");
         } catch (error) {
             if ((error as { status?: number }).status === 404) return { apps: [] };
             throw error;

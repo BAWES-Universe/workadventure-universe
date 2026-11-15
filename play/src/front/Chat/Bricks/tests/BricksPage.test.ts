@@ -154,6 +154,16 @@ vi.mock("../../Stores/ChatStore", async () => {
     const store = await import("svelte/store");
     return { bricksPageOpenStore: store.writable(true) };
 });
+// Opening Usage from a chat leaves the chat first, which this test has no chat for: only the request is real
+vi.mock("../OpenUsage", async () => {
+    const store = await import("svelte/store");
+    const requested = store.writable<{ receiptId: string | undefined } | undefined>(undefined);
+    return {
+        usagePageRequest: { subscribe: requested.subscribe },
+        takeUsagePageRequest: () => requested.set(undefined),
+        openUsagePage: (request: { receiptId: string | undefined }) => requested.set(request),
+    };
+});
 vi.mock("../BrickChat", async () => {
     const store = await import("svelte/store");
     return { openBrickChat: game.openBrickChat, openingBrickChats: store.writable(new Set<string>()) };
@@ -165,6 +175,7 @@ import { setLocale } from "../../../../i18n/i18n-svelte";
 import { bricksPageOpenStore } from "../../Stores/ChatStore";
 import { forgetMyBricks } from "../MyBricksStore";
 import { forgetMyUsage } from "../UsageStore";
+import { openUsagePage } from "../OpenUsage";
 import { forgetMyApps } from "../Apps/AppsStore";
 import BricksPage from "../BricksPage.svelte";
 
@@ -1046,6 +1057,69 @@ describe("the Bricks page (#1995)", () => {
             });
             await open();
             expect(byId("bricksUsageRow")?.textContent).toMatch(/Universe AI · almost used up · full again at /);
+        });
+
+        it("says the real count when Orbit sends one, never plenty", async () => {
+            game.getMyUsage.mockResolvedValue({
+                chat: {
+                    left: 0.6,
+                    words: "plenty",
+                    fullAgainAt: null,
+                    replies: { available: 18, total: 30, inProgress: 0, running: true },
+                },
+            });
+            await open();
+            const row = byId("bricksUsageRow")?.textContent?.replace(/\s+/g, " ").trim();
+            expect(row).toBe("Usage Universe AI · 18 of 30 replies");
+        });
+
+        it("says none are available with when they come back, and says how many while none is running", async () => {
+            game.getMyUsage.mockResolvedValue({
+                chat: {
+                    left: 0,
+                    words: "out",
+                    fullAgainAt: new Date(Date.now() + 3_600_000).toISOString(),
+                    replies: { available: 0, total: 30, inProgress: 0, running: true },
+                },
+            });
+            await open();
+            expect(byId("bricksUsageRow")?.textContent).toMatch(/Universe AI · no replies available · resets at /);
+            page?.$destroy();
+            forgetMyUsage();
+            game.getMyUsage.mockResolvedValue({
+                chat: {
+                    left: 1,
+                    words: "plenty",
+                    fullAgainAt: null,
+                    replies: { available: 30, total: 30, inProgress: 0, running: false },
+                },
+            });
+            await open();
+            expect(byId("bricksUsageRow")?.textContent).toContain("Universe AI · 30 replies available");
+        });
+
+        it("opens the Usage page on a receipt when a link under a Brick's answer asks for it", async () => {
+            game.getMyUsage.mockResolvedValue({
+                chat: { left: 1, words: "plenty", fullAgainAt: null },
+                activity: [
+                    {
+                        id: "act_1",
+                        title: "Trip page",
+                        at: new Date().toISOString(),
+                        spentMicros: 60000,
+                        category: "apps",
+                        canReport: true,
+                        lines: [{ label: "Instant research", amountMicros: 60000 }],
+                    },
+                ],
+            });
+            await open();
+            expect(byId("usagePage")).toBeNull();
+            openUsagePage({ receiptId: "act_1" });
+            await settle();
+            expect(byId("usagePage")).not.toBeNull();
+            expect(byId("usageReceipt")).not.toBeNull();
+            expect(byId("bricksPage")).toBeNull();
         });
 
         it("still works when the usage could not be read", async () => {

@@ -17,9 +17,11 @@
         isConnectedApp,
         matchesSearch,
         parseCatalog,
+        parseInstant,
         parseReadyMade,
         toConnectAnother,
         type Connectable,
+        type InstantApp,
     } from "./Connectable";
     import TeamAppsPage from "./TeamAppsPage.svelte";
     import { IconPlanet, IconSearch, IconSparkles } from "@wa-icons";
@@ -42,6 +44,8 @@
     // What Connect another holds: both lists Orbit keeps, read once and narrowed here by what the person types
     let connectable: Connectable[] | undefined;
     let connectListFailed = false;
+    // Instant Apps: ready to use, nothing to connect. A list that cannot be read is simply not shown.
+    let instant: InstantApp[] = [];
     let query = "";
     let connectingKey: string | undefined;
     let connectNote: "stopped" | "blocked" | "unchecked" | undefined;
@@ -59,12 +63,22 @@
         (list ?? []).find((app) => app.connectionId === id)?.blurb ?? "";
     $: shownConnected = connectedApps.filter((app) => matchesSearch(query, app.name, blurbOf(connectable, app.id)));
     $: shownAnother = another.filter((app) => matchesSearch(query, app.name, app.blurb));
+    $: shownInstant = instant.filter((app) => matchesSearch(query, app.name, app.blurb));
 
     // Both lists may hold the same key: the kind tells them apart
     const keyOf = (app: Connectable) => `${app.kind}:${app.key}`;
 
+    async function loadInstant() {
+        try {
+            instant = parseInstant(await botApiService.getInstantApps()) ?? [];
+        } catch (error) {
+            console.warn("Could not read the Instant Apps", error);
+        }
+    }
+
     async function loadConnectable() {
         connectListFailed = false;
+        loadInstant().catch((error) => console.error(error));
         const [listed, readyMade] = await Promise.all([
             botApiService
                 .getAppCatalog()
@@ -158,7 +172,9 @@
             </label>
             {#if searching}
                 <AppSection
-                    title={text.appsCount({ count: shownConnected.length + shownAnother.length })}
+                    title={text.appsCount({
+                        count: shownConnected.length + shownInstant.length + shownAnother.length,
+                    })}
                     testId="appsFound"
                 />
             {:else if connectedApps.length > 0}
@@ -179,6 +195,17 @@
                     warn={app.reconnectRequired}
                     testId="appsRow"
                     onTap={() => (openAppId = app.id)}
+                />
+            {/each}
+            {#if !searching && instant.length > 0}
+                <AppSection title={text.readyToUse()} testId="appsInstant" />
+            {/if}
+            {#each shownInstant as app (app.key)}
+                <AppRow
+                    title={app.name}
+                    hint={app.blurb || undefined}
+                    icon={appIcon(app.name)}
+                    testId="appsInstantRow"
                 />
             {/each}
             {#if !searching && another.length > 0}
@@ -213,7 +240,7 @@
                         >{text.tryAgain()}</PageButton
                     >
                 </div>
-            {:else if searching && shownConnected.length + shownAnother.length === 0}
+            {:else if searching && shownConnected.length + shownInstant.length + shownAnother.length === 0}
                 <p class="ap-none" data-testid="appsNoMatch">{text.noAppMatches({ query: query.trim() })}</p>
             {/if}
             <!-- "Add your own app" goes here (its own sheet): "Not here? Add your own app" while `searching` -->

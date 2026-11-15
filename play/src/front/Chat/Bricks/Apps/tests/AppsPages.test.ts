@@ -14,6 +14,7 @@ const game = vi.hoisted(() => ({
     getMyApps: vi.fn<() => Promise<unknown>>(),
     getAppCatalog: vi.fn<() => Promise<unknown>>(),
     getReadyMadeApps: vi.fn<() => Promise<unknown>>(),
+    getInstantApps: vi.fn<() => Promise<unknown>>(),
     getMyApp: vi.fn<(id: string) => Promise<unknown>>(),
     getMyAppUniverses: vi.fn<() => Promise<unknown>>(),
     getUniverseApps: vi.fn<(id: string) => Promise<unknown>>(),
@@ -41,6 +42,7 @@ vi.mock("../../../../external-modules/bots/services/BotApiService", () => ({
         getMyApps: game.getMyApps,
         getAppCatalog: game.getAppCatalog,
         getReadyMadeApps: game.getReadyMadeApps,
+        getInstantApps: game.getInstantApps,
         getMyApp: game.getMyApp,
         getMyAppUniverses: game.getMyAppUniverses,
         getUniverseApps: game.getUniverseApps,
@@ -193,6 +195,7 @@ describe("the Apps pages (#2001)", () => {
         game.getMyAppUniverses.mockResolvedValue({ universes: [] });
         game.getAppCatalog.mockResolvedValue({ apps: [] });
         game.getReadyMadeApps.mockResolvedValue({ apps: [] });
+        game.getInstantApps.mockResolvedValue({ apps: [] });
         game.getMyApp.mockResolvedValue(appPage());
         game.lendApp.mockResolvedValue({});
         game.changeAppLend.mockResolvedValue({});
@@ -230,6 +233,56 @@ describe("the Apps pages (#2001)", () => {
             expect(rows[0]).toBe("Gmail Used by Brick");
             expect(rows[1]).toBe("Tavily Added by you · Used by Brick");
             expect(byId("appsUniverses")).toBeNull();
+        });
+
+        it("lists the Instant Apps as Ready to use, with no Connect button, and no section when there are none", async () => {
+            page = new AppsPage({ target, props: { onBack: () => {} } });
+            await settle();
+            expect(byId("appsInstant")).toBeNull();
+            expect(allById("appsInstantRow")).toHaveLength(0);
+            page.$destroy();
+            game.getInstantApps.mockResolvedValue({
+                apps: [
+                    { key: "instant-video", name: "Instant video", blurb: "Make short videos" },
+                    { key: "instant-flights", name: "Instant flights", blurb: "" },
+                ],
+            });
+            page = new AppsPage({ target, props: { onBack: () => {} } });
+            await settle();
+            expect(words(byId("appsInstant"))).toBe("Ready to use");
+            const rows = allById("appsInstantRow");
+            expect(rows.map(words)).toEqual(["Instant video Make short videos", "Instant flights"]);
+            expect(rows[0].querySelector('[data-testid="appsConnect"]')).toBeNull();
+            expect(rows[0].tagName).toBe("DIV");
+        });
+
+        it("searches the Instant Apps by name and line, and shows no price or provider", async () => {
+            game.getInstantApps.mockResolvedValue({
+                apps: [
+                    { key: "instant-video", name: "Instant video", blurb: "Make short videos" },
+                    { key: "instant-flights", name: "Instant flights", blurb: "Find flights" },
+                ],
+            });
+            page = new AppsPage({ target, props: { onBack: () => {} } });
+            await settle();
+            const input = byId("appsSearchInput") as HTMLInputElement;
+            input.value = "flights";
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            await settle();
+            expect(allById("appsInstantRow").map(words)).toEqual(["Instant flights Find flights"]);
+            expect(words(byId("appsFound"))).toBe("1 app");
+            expect(document.body.textContent).not.toMatch(/\$|composio|per use|credit/i);
+        });
+
+        it("shows the rest of the page when the Instant Apps could not be read", async () => {
+            game.getInstantApps.mockRejectedValue(new Error("offline"));
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            page = new AppsPage({ target, props: { onBack: () => {} } });
+            await settle();
+            warn.mockRestore();
+            expect(allById("appsRow")).toHaveLength(2);
+            expect(byId("appsInstant")).toBeNull();
+            expect(byId("appsLoadFailed")).toBeNull();
         });
 
         it("says so when no Brick uses an app yet, and when its sign-in ended", async () => {

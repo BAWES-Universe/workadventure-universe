@@ -1,6 +1,8 @@
 import { get } from "svelte/store";
 import { APPS_LINK, openAppsPage } from "./Apps/OpenApps";
 import { openBrickChat } from "./BrickChat";
+import { openUsagePage } from "./OpenUsage";
+import { usageLinkRequest } from "./UsageLink";
 import { loadMyBricks, myBricksStore } from "./MyBricksStore";
 
 /**
@@ -43,6 +45,13 @@ export function brickChatLinks(node: HTMLElement): { destroy: () => void } {
             // "[Apps](#apps)" in a Brick's words (#2001): the Apps page opens here
             event.preventDefault();
             openAppsPage();
+            return;
+        }
+        const usage = usageLinkRequest(href);
+        if (usage) {
+            // "[What it used](#usage=<task>)" (a Brick's answer after a paid task): Usage opens here on that receipt
+            event.preventDefault();
+            openUsagePage(usage);
             return;
         }
         if (!href?.startsWith(BRICK_CHAT_LINK)) return;

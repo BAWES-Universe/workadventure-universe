@@ -1,29 +1,65 @@
 <script lang="ts">
-    import { onMount } from "svelte";
+    import { onMount, tick } from "svelte";
     import LL, { locale } from "../../../i18n/i18n-svelte";
     import PanelHeader from "../../Components/MapEditor/EditMode/PanelHeader.svelte";
     import PageButton from "../../external-modules/bots/components/page/PageButton.svelte";
     import PageNote from "../../external-modules/bots/components/page/PageNote.svelte";
     import PageRow from "../../external-modules/bots/components/page/PageRow.svelte";
+    import { whenLabel } from "../../external-modules/bots/usageModel";
     import { warningMessageStore } from "../../Stores/ErrorStore";
+    import BrickPicture from "./BrickPicture.svelte";
     import { shortDay } from "./Brick";
-    import { fullAgainWhen, storageSize } from "./Usage";
-    import { askMyUsageForMore, loadMyUsage, myUsageFailed, myUsageSettled, myUsageStore } from "./UsageStore";
+    import {
+        availableText,
+        fullAgainWhen,
+        spentText,
+        storageSize,
+        type ActivityItem,
+        type BotSpend,
+        type CreditCategory,
+        type ExtraCredit,
+        type ReportOutcome,
+    } from "./Usage";
+    import UsageMoney from "./UsageMoney.svelte";
+    import {
+        askMyUsageForMore,
+        loadMyUsage,
+        myUsageFailed,
+        myUsageSettled,
+        myUsageStore,
+        reportMyActivity,
+    } from "./UsageStore";
+    import { IconChevronDown } from "@wa-icons";
 
     /**
-     * The Usage page (game #1999), opened from the Usage row of the Bricks page. One bar for what Universe gives the person,
-     * in no unit: it covers text and voice, and only their Bricks on Universe AI. Never a count of replies and never a
-     * price. Someone whose Brick uses a computer also sees its time this month, and what their Bricks keep. When computer
-     * time is used up, "Ask for more" asks the Universe team and creates no debt; chat carries on either way.
+     * The Usage page (game #1999, then the credits and grants work), opened from the Usage row of the Bricks page or from
+     * "What it used" under a Brick's answer. Real numbers, all Orbit's: Universe AI as replies with the time they reset,
+     * Instant Apps and computers as dollars, extra credit, what each Brick spent, and one line for each task that opens to
+     * its receipt. Chat and voice keep their own limits; this page only says them. Opening it starts no window and takes
+     * nothing. "Ask for more" asks the Universe team and creates no debt; chat carries on either way. A balance that cannot
+     * be read says so, never a made-up bar. An older Orbit that sends only the bar and its words is shown by those words.
      */
     export let onBack: () => void;
+    /** A task whose receipt opens first (the link under a Brick's answer) */
+    export let receiptId: string | undefined = undefined;
+    /** What each of the person's Bricks looks like, by id, for By bot */
+    export let looks: Record<string, string | null> = {};
 
     $: text = $LL.chat.brick.usage;
     $: usage = $myUsageStore;
     $: chat = usage?.chat;
+    $: replies = chat?.replies ?? null;
+    $: apps = usage?.apps ?? null;
     $: computer = usage?.computer ?? null;
-    let asking = false;
+    let asking: CreditCategory | undefined;
+    let openId: string | undefined = receiptId;
+    let reporting: string | undefined;
+    // What "Didn't work?" came to, by task: it stays said while the page is open
+    let reported: Record<string, ReportOutcome> = {};
+    let scrolledTo: string | undefined;
+    let body: HTMLDivElement | undefined;
 
+    // The legacy bar: words only, for an Orbit that does not send replies yet
     $: chatTitle = chat ? (chat.words === "out" ? text.out() : chat.words === "low" ? text.low() : text.plenty()) : "";
     $: chatHint = chat?.fullAgainAt ? text.fullAgain({ when: fullAgainWhen(chat.fullAgainAt, $locale) }) : undefined;
     $: computerTitle = computer
@@ -36,17 +72,142 @@
             : text.computerPlenty()
         : "";
 
-    async function onAsk() {
+    // The real counts
+    $: extraDay = chat?.extra?.until ? shortDay(chat.extra.until, $locale) : "";
+    $: noLimit = chat?.extra?.noLimit === true;
+    $: repliesTitle = !replies
+        ? ""
+        : noLimit
+        ? extraDay
+            ? text.noPersonalLimit({ day: extraDay })
+            : text.noPersonalLimitNoDay()
+        : !replies.running
+        ? text.repliesIdle({ count: replies.total })
+        : replies.available === 0
+        ? text.repliesNone()
+        : replies.total === 1
+        ? text.repliesOfOne({ available: replies.available })
+        : text.repliesOf({ available: replies.available, total: replies.total });
+    $: repliesHint = !replies || noLimit ? undefined : repliesHintOf();
+    $: repliesLeft = !replies ? 0 : noLimit ? 1 : replies.total > 0 ? replies.available / replies.total : 0;
+
+    function repliesHintOf(): string | undefined {
+        if (!replies || !chat) return undefined;
+        const parts: string[] = [];
+        if (!replies.running) {
+            parts.push(
+                replies.windowHours ? text.windowStartsHours({ hours: replies.windowHours }) : text.windowStarts()
+            );
+        } else if (chat.fullAgainAt) {
+            parts.push(text.repliesResets({ when: fullAgainWhen(chat.fullAgainAt, $locale) }));
+        }
+        if (replies.inProgress > 0) parts.push(text.repliesInProgress({ count: replies.inProgress }));
+        const extra = chat.extra;
+        if (extra?.multiplier && extraDay) {
+            parts.push(
+                extra.multiplier === 2
+                    ? text.extraTwice({ day: extraDay })
+                    : text.extraTimes({ times: extra.multiplier, day: extraDay })
+            );
+        }
+        return parts.length > 0 ? parts.join(" · ") : undefined;
+    }
+
+    const coversText = (covers: CreditCategory[]) =>
+        covers.length > 1 ? text.coversBoth() : covers[0] === "apps" ? text.coversApps() : text.coversComputers();
+    const creditHint = (credit: ExtraCredit) => {
+        const name = credit.fromName ?? text.extraCreditUniverse();
+        const covers = coversText(credit.covers);
+        return credit.until
+            ? text.extraCreditFrom({ name, covers, day: shortDay(credit.until, $locale) })
+            : text.extraCreditFromNoDay({ name, covers });
+    };
+    const botUses = (bot: BotSpend) =>
+        bot.uses.length > 1
+            ? text.botUsesBoth()
+            : bot.uses[0] === "computer"
+            ? text.botUsesComputer()
+            : text.botUsesApps();
+
+    function paidBy(item: ActivityItem): string {
+        if (item.payer === "you") return text.paidByYou();
+        if (item.payer === "universe") return text.paidByUniverse();
+        return text.paidByName({ name: item.payerName ?? text.extraCreditUniverse() });
+    }
+
+    function activityWhen(at: string): string {
+        const when = whenLabel(at, $locale ?? "en");
+        if (when.kind === "today") return text.activityToday({ time: when.text });
+        return when.kind === "yesterday" ? text.activityYesterday() : when.text;
+    }
+
+    function activityHint(item: ActivityItem): string {
+        const when = activityWhen(item.at);
+        if (item.state === "refunded") return `${when} · ${text.activityRefunded()}`;
+        if (item.state === "checking") return `${when} · ${text.activityChecking()}`;
+        if (item.payer !== "you") return `${when} · ${paidBy(item)}`;
+        const what =
+            item.category === "apps"
+                ? text.activityApps()
+                : item.category === "computer"
+                ? text.activityComputer()
+                : "";
+        return [when, item.spentMicros !== null ? spentText(item.spentMicros, $locale) : "", what]
+            .filter(Boolean)
+            .join(" · ");
+    }
+
+    function lineValue(amountMicros: number | null, note: string | null): string {
+        if (amountMicros !== null) return spentText(amountMicros, $locale);
+        return note ?? text.activityNothingTaken();
+    }
+
+    const reportLine = (outcome: ReportOutcome) =>
+        outcome === "refunded"
+            ? text.reportRefunded()
+            : outcome === "redelivered"
+            ? text.reportRedelivered()
+            : outcome === "retrying"
+            ? text.reportRetrying()
+            : outcome === "credit"
+            ? text.reportCredit()
+            : text.reportSent();
+
+    async function onAsk(category: CreditCategory) {
         if (asking) return;
-        asking = true;
-        const sent = await askMyUsageForMore();
+        asking = category;
+        const sent = await askMyUsageForMore(category);
         // eslint-disable-next-line require-atomic-updates
-        asking = false;
+        asking = undefined;
         if (!sent) warningMessageStore.addWarningMessage(text.askFailed());
+    }
+
+    async function onReport(item: ActivityItem) {
+        if (reporting) return;
+        reporting = item.id;
+        const outcome = await reportMyActivity(item.id);
+        // eslint-disable-next-line require-atomic-updates
+        reporting = undefined;
+        if (!outcome) {
+            warningMessageStore.addWarningMessage(text.reportFailed());
+            return;
+        }
+        reported = { ...reported, [item.id]: outcome };
+        // A refund changes what is available: read it again
+        load();
     }
 
     function load() {
         loadMyUsage().catch((error) => console.error(error));
+    }
+
+    // The task a link asked for scrolls into view once the page has it
+    $: if (receiptId && usage && scrolledTo !== receiptId && usage.activity.some((item) => item.id === receiptId)) {
+        scrolledTo = receiptId;
+        openId = receiptId;
+        tick()
+            .then(() => body?.querySelector(`[data-activity="${receiptId}"]`)?.scrollIntoView?.({ block: "center" }))
+            .catch((error) => console.error(error));
     }
 
     // Read again each time the page opens
@@ -55,56 +216,180 @@
 
 <div class="up flex h-full min-h-0 flex-col" data-testid="usagePage">
     <PanelHeader title={text.title()} {onBack} backLabel={text.backToBricks()} canHide={false} />
-    <div class="body">
+    <div class="body" bind:this={body}>
         {#if !usage}
             {#if !$myUsageSettled}
                 <PageNote>{text.loading()}</PageNote>
             {:else}
-                <p class="up-bad" data-testid="usageLoadFailed">{text.loadFailed()}</p>
+                <div data-testid="usageLoadFailed">
+                    <PageRow title={text.unavailable()} hint={text.unavailableHint()} />
+                </div>
                 <div class="ask">
                     <PageButton tall testId="usageTryAgain" on:click={load}>{text.tryAgain()}</PageButton>
                 </div>
             {/if}
         {:else if chat}
             <div class="sec">{text.universeAi()}</div>
-            <div class="meter" class:low={chat.words === "low" || chat.words === "out"} aria-hidden="true">
-                <span data-testid="usageChatBar" style="width:{Math.round(chat.left * 100)}%" />
-            </div>
-            <PageRow title={chatTitle} hint={chatHint} />
-            {#if usage.extraUntil}
-                <PageRow title={text.extra({ day: shortDay(usage.extraUntil, $locale) })} hint={text.extraFrom()} />
+            {#if chat.unavailable}
+                <PageRow title={text.unavailable()} hint={text.unavailableHint()} />
+            {:else if replies}
+                <div class="meter" class:low={repliesLeft < 0.2} aria-hidden="true">
+                    <span data-testid="usageChatBar" style="width:{Math.round(repliesLeft * 100)}%" />
+                </div>
+                <PageRow title={repliesTitle} hint={repliesHint} />
+                <PageNote>{text.aiNoteReplies()}</PageNote>
+            {:else}
+                <div class="meter" class:low={chat.words === "low" || chat.words === "out"} aria-hidden="true">
+                    <span data-testid="usageChatBar" style="width:{Math.round(chat.left * 100)}%" />
+                </div>
+                <PageRow title={chatTitle} hint={chatHint} />
+                {#if usage.extraUntil}
+                    <PageRow title={text.extra({ day: shortDay(usage.extraUntil, $locale) })} hint={text.extraFrom()} />
+                {/if}
+                <PageNote>{text.aiNote()}</PageNote>
             {/if}
-            <PageNote>{text.aiNote()}</PageNote>
             {#if $myUsageFailed}
                 <p class="up-bad" data-testid="usageStale">{text.loadFailed()}</p>
             {/if}
 
-            {#if computer}
-                <div class="sec">{text.computer()}</div>
-                <div class="meter" class:low={computer.words === "low" || computer.words === "out"} aria-hidden="true">
-                    <span data-testid="usageComputerBar" style="width:{Math.round(computer.left * 100)}%" />
-                </div>
-                <PageRow
-                    title={computerTitle}
-                    hint={text.startsAgain({ day: shortDay(computer.startsAgainAt, $locale) })}
+            {#if apps}
+                <div class="sec" data-testid="usageSecApps">{text.instantApps()}</div>
+                <UsageMoney
+                    category="apps"
+                    money={apps}
+                    note={text.instantNote()}
+                    asking={asking === "apps"}
+                    onAsk={() => onAsk("apps")}
                 />
-                {#if computer.asked}
-                    <PageRow title={text.asked()} hint={text.askedLine()} />
-                {:else if computer.canAskForMore}
-                    <div class="ask">
-                        <PageButton tall go disabled={asking} testId="usageAskForMore" on:click={onAsk}>
-                            {text.askForMore()}
-                        </PageButton>
-                    </div>
-                    <PageNote>{text.askNote()}</PageNote>
+            {/if}
+
+            {#if computer}
+                <div class="sec">{apps || computer.money ? text.computers() : text.computer()}</div>
+                {#if computer.money}
+                    <UsageMoney
+                        category="computer"
+                        money={computer.money}
+                        note={text.computerNote()}
+                        asking={asking === "computer"}
+                        onAsk={() => onAsk("computer")}
+                    />
                 {:else}
-                    <PageNote>{text.computerNote()}</PageNote>
+                    <div
+                        class="meter"
+                        class:low={computer.words === "low" || computer.words === "out"}
+                        aria-hidden="true"
+                    >
+                        <span data-testid="usageComputerBar" style="width:{Math.round(computer.left * 100)}%" />
+                    </div>
+                    <PageRow
+                        title={computerTitle}
+                        hint={text.startsAgain({ day: shortDay(computer.startsAgainAt, $locale) })}
+                    />
+                    {#if computer.asked}
+                        <PageRow title={text.asked()} hint={text.askedLine()} />
+                    {:else if computer.canAskForMore}
+                        <div class="ask">
+                            <PageButton
+                                tall
+                                go
+                                disabled={asking === "computer"}
+                                testId="usageAskForMore"
+                                on:click={() => onAsk("computer")}
+                            >
+                                {text.askForMore()}
+                            </PageButton>
+                        </div>
+                        <PageNote>{text.askNote()}</PageNote>
+                    {:else}
+                        <PageNote>{text.computerNote()}</PageNote>
+                    {/if}
                 {/if}
+            {/if}
+
+            {#if usage.credit.length > 0}
+                <div class="sec" data-testid="usageSecCredit">{text.extraCredit()}</div>
+                {#each usage.credit as credit, index (index)}
+                    <PageRow
+                        title={text.creditOfTotal({
+                            available: availableText(credit.availableMicros, $locale),
+                            total: availableText(credit.totalMicros, $locale),
+                        })}
+                        hint={creditHint(credit)}
+                        on
+                    />
+                    <PageNote>{credit.covers.length > 1 ? text.extraCreditBoth() : text.extraCreditOne()}</PageNote>
+                {/each}
+            {/if}
+
+            {#if usage.bots.length > 0}
+                <div class="sec" data-testid="usageSecBots">{text.byBot()}</div>
+                {#each usage.bots as bot (bot.id)}
+                    <div class="br" data-testid="usageBotRow">
+                        <span class="face"><BrickPicture look={looks[bot.id]} /></span>
+                        <div class="tx">
+                            <div class="t">{bot.name}</div>
+                            <div class="m">
+                                {bot.spentMicros > 0
+                                    ? text.botSpent({ amount: spentText(bot.spentMicros, $locale), uses: botUses(bot) })
+                                    : text.botNone()}
+                            </div>
+                        </div>
+                    </div>
+                {/each}
+            {/if}
+
+            {#if usage.activity.length > 0}
+                <div class="sec" data-testid="usageSecActivity">{text.activity()}</div>
+                {#each usage.activity as item (item.id)}
+                    <button
+                        type="button"
+                        class="act"
+                        class:open={openId === item.id}
+                        aria-expanded={openId === item.id}
+                        data-activity={item.id}
+                        data-testid="usageActivity"
+                        on:click={() => (openId = openId === item.id ? undefined : item.id)}
+                    >
+                        <div class="tx">
+                            <div class="t">{item.title}</div>
+                            <div class="m">{activityHint(item)}</div>
+                        </div>
+                        <span class="chev"><IconChevronDown font-size="18" /></span>
+                    </button>
+                    {#if openId === item.id}
+                        <div class="receipt" data-testid="usageReceipt">
+                            {#each item.lines as line, index (index)}
+                                <div class="rl">
+                                    <span>{line.label}</span><b>{lineValue(line.amountMicros, line.note)}</b>
+                                </div>
+                            {/each}
+                            <div class="rfoot">
+                                <span class="paid">{item.state === "refunded" ? text.refunded() : paidBy(item)}</span>
+                                {#if item.canReport && item.state !== "refunded" && !reported[item.id]}
+                                    <button
+                                        type="button"
+                                        class="dw"
+                                        disabled={reporting === item.id}
+                                        data-testid="usageDidntWork"
+                                        on:click={() => onReport(item)}>{text.didntWork()}</button
+                                    >
+                                {/if}
+                            </div>
+                            {#if reported[item.id]}
+                                <p class="reported" data-testid="usageReported">{reportLine(reported[item.id])}</p>
+                            {/if}
+                        </div>
+                    {/if}
+                {/each}
+                <PageNote>{text.activityNote()}</PageNote>
             {/if}
 
             {#if usage.storageBytes !== null}
                 <div class="sec">{text.storage()}</div>
-                <PageRow title={storageSize(usage.storageBytes)} hint={text.noLimit()} />
+                <PageRow
+                    title={storageSize(usage.storageBytes)}
+                    hint={usage.storagePaidByUniverse ? text.storagePaidByUniverse() : text.noLimit()}
+                />
                 <PageNote>{text.storageNote()}</PageNote>
             {/if}
         {/if}
@@ -176,5 +461,115 @@
     }
     .body :global(.bp-note) {
         padding: 0 8px;
+    }
+    .br,
+    .act {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 6px 8px;
+        border-radius: 12px;
+        min-height: 48px;
+        box-sizing: border-box;
+    }
+    .act {
+        width: 100%;
+        margin: 0;
+        border: 0;
+        background: none;
+        color: inherit;
+        text-align: left;
+        font: inherit;
+        cursor: pointer;
+    }
+    .act.open {
+        background: rgba(255, 255, 255, 0.08);
+    }
+    .chev {
+        display: flex;
+        flex: none;
+        color: rgba(255, 255, 255, 0.6);
+    }
+    .act.open .chev {
+        transform: rotate(180deg);
+    }
+    .face {
+        flex: none;
+        display: flex;
+        width: 32px;
+        height: 32px;
+    }
+    .tx {
+        flex: 1;
+        min-width: 0;
+    }
+    .t {
+        font-size: 14px;
+        font-weight: 600;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .m {
+        font-size: 12px;
+        color: rgba(244, 242, 250, 0.6);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .receipt {
+        margin: 0 8px 4px;
+        padding: 6px 12px 10px;
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.05);
+    }
+    .rl {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 6px 0;
+        font-size: 13px;
+        color: rgba(244, 242, 250, 0.75);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    .rl b {
+        font-weight: 600;
+        color: #fff;
+        text-align: right;
+    }
+    .rfoot {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding-top: 8px;
+        min-height: 36px;
+    }
+    .paid {
+        font-size: 12px;
+        padding: 2px 10px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        color: rgba(244, 242, 250, 0.8);
+    }
+    .dw {
+        min-height: 44px;
+        padding: 0 4px;
+        border: 0;
+        background: none;
+        color: #b9a4ff;
+        font: inherit;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+    }
+    .dw:disabled {
+        opacity: 0.5;
+        cursor: default;
+    }
+    .reported {
+        margin: 6px 0 0;
+        font-size: 13px;
+        line-height: 1.4;
+        color: rgba(244, 242, 250, 0.85);
     }
 </style>
