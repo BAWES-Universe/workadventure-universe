@@ -574,11 +574,10 @@
             : await draftMessageService.loadDraft(draftId);
         if (draft) {
             // A draft saved as a lone <br> counts as empty: the hint shows again.
-            // A key is never kept as a draft: one saved by an earlier version is dropped here, and the empty box replaces it on leaving
-            message =
-                isEmptyMessage(draft.message) || (keysHeldHere && looksLikeAKeyPastedWords(draft.message))
-                    ? ""
-                    : draft.message;
+            // A key is never kept as a draft: one saved by an earlier version is written over at once, not when the chat closes
+            const draftHoldsAKey = keysHeldHere && looksLikeAKeyPastedWords(draft.message);
+            if (draftHoldsAKey) forgetSavedDraft();
+            message = isEmptyMessage(draft.message) || draftHoldsAKey ? "" : draft.message;
             if (draft.replyingToMessageId) {
                 if (room instanceof MatrixChatRoom) {
                     let loadReplyMessage = await room.getMessageById(draft.replyingToMessageId);
@@ -588,6 +587,27 @@
         }
         draftLoaded = true;
     });
+
+    // Writes an empty draft over the saved one, wherever drafts of this chat are kept
+    function forgetSavedDraft() {
+        if (hasSpaceDrafts) {
+            composerDraftStore.save(draftRoomId, {
+                message: "",
+                replyingToMessageId: null,
+                spaceGeneration: spaceGenerationOf(room),
+            });
+        } else if (keepsDraft) {
+            draftMessageService.saveDraft({
+                id: draftId,
+                roomId: room.id,
+                userId: localUserStore.getChatId(),
+                message: "",
+                replyingToMessageId: null,
+            });
+        }
+    }
+    // A key held in the box (typed, pasted or restored before the partner was known to be a bot): what was saved before goes now
+    $: if (keyHeld && draftLoaded) forgetSavedDraft();
 
     onDestroy(() => {
         unsubscribeComposerFocusRequest();

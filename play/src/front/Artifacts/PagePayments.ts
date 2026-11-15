@@ -29,6 +29,8 @@ export const NO_PAY_LINE: PayLine = { checking: false, problem: null, resume: nu
 /** How often an order is asked about, and for how long. The server asks the service itself at most once every few seconds. */
 const POLL_MS = 3_000;
 const POLL_FOR_MS = 20 * 60_000;
+/** How often a closed checkout tab is looked for: on its own clock, not the status questions' */
+const TAB_WATCH_MS = 1_000;
 
 /** Only a plain https address is ever opened. */
 export function safeCheckout(url: string | null | undefined): string | undefined {
@@ -63,6 +65,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
     let busy = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let deadline: ReturnType<typeof setTimeout> | undefined;
+    let tabWatch: ReturnType<typeof setInterval> | undefined;
     let destroyed = false;
 
     // The frame has no origin of its own, so it can only be addressed with "*": the message holds nothing but a status
@@ -87,19 +90,25 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
             over = true;
             if (timer) clearTimeout(timer);
             if (deadline) clearTimeout(deadline);
+            if (tabWatch) clearInterval(tabWatch);
             end(update, status);
         };
         // Twenty minutes without an answer: said plainly, never a silent end. The order may still be counted later.
         deadline = setTimeout(() => finish({ problem: "cant_confirm" }, "cant_confirm"), POLL_FOR_MS);
-        const poll = async () => {
-            if (over || destroyed) return;
-            // The buyer closed the checkout tab before paying: the same checkout is offered again, so the payment is never out of reach
-            if (!linkBack && checkout.popup?.closed === true) {
+        // The buyer closed the checkout tab before paying: the same checkout is offered again, so the payment is never out of reach.
+        // Looked at on its own clock, so a status question that is slow to answer cannot hold the link back.
+        if (checkout.popup) {
+            tabWatch = setInterval(() => {
+                if (over || destroyed || linkBack || checkout.popup?.closed !== true) return;
                 linkBack = true;
+                if (tabWatch) clearInterval(tabWatch);
                 line.update((now) =>
                     now.checking ? { ...now, resume: { url: checkout.url, app: checkout.app } } : now
                 );
-            }
+            }, TAB_WATCH_MS);
+        }
+        const poll = async () => {
+            if (over || destroyed) return;
             try {
                 const answer: ArtifactPay = await pay(options.artifactId, options.chat(), { order: orderId });
                 if (over || destroyed) return;
@@ -164,6 +173,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
             destroyed = true;
             if (timer) clearTimeout(timer);
             if (deadline) clearTimeout(deadline);
+            if (tabWatch) clearInterval(tabWatch);
         },
     };
 }

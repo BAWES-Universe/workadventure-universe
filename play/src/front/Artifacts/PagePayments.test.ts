@@ -219,6 +219,29 @@ describe("a page that takes payments, in the game's window", () => {
         payments.destroy();
     });
 
+    it("gives the link back even while a status question has not been answered", async () => {
+        const popup = { location: { href: "" }, close: vi.fn(), opener: {}, closed: false } as unknown as Window & {
+            closed: boolean;
+        };
+        const pay = vi
+            .fn()
+            .mockResolvedValueOnce({ orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example" })
+            .mockImplementation(() => new Promise<ArtifactPay>(() => undefined));
+        const payments = make(pay, () => popup);
+        ask(payments);
+        await flush();
+        // The first status question goes out and never comes back
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(pay).toHaveBeenCalledTimes(2);
+        popup.closed = true;
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(get(payments.line)).toMatchObject({
+            checking: true,
+            resume: { url: "https://checkout.examplepay.com/c1", app: "Example" },
+        });
+        payments.destroy();
+    });
+
     it("stops asking when the window is closed", async () => {
         const pay = vi
             .fn()
