@@ -93,6 +93,11 @@ export class VisitingBrickBehavior extends IdleBehavior {
         // Nothing: no greeting, and so nothing for its owner's key to pay for
     }
 
+    /** Nor the greeting that follows a walk to a person: no one is welcomed on its owner's key. */
+    onSpaceJoined(_spaceName: string): void {
+        this.justCompletedLeading = null;
+    }
+
     update(deltaTime: number): void {
         super.update(deltaTime);
         this.follow();

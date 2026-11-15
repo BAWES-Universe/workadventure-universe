@@ -156,7 +156,7 @@ describe("a Brick's reply is asked about by who it is for, wherever this server 
         const chunks = await reply(service);
         expect(admin.getAIProviderCredentials).not.toHaveBeenCalled();
         expect(mockGenerateStream).not.toHaveBeenCalled();
-        expect(chunks.map((chunk) => chunk.content).join("")).toContain("Ask the person I came with");
+        expect(chunks.map((chunk) => chunk.content).join("")).toContain("Ask my owner");
     });
 
     it("a Brick on this server's map keeps sending its room, and a flag from Orbit strips the tools even if this server thought the talker was its owner", async () => {
@@ -166,6 +166,56 @@ describe("a Brick's reply is asked about by who it is for, wherever this server 
         await reply(service, "world");
         expect(admin.getBotAiCredentials).toHaveBeenCalledWith("brick-1", { asker: OWNER, roomUrl: "https://play.test/_/a/b/c.tmj" });
         expect(toolNamesSent()).not.toContain("generate_music");
+    });
+
+    describe("a Brick that lives in a room: who each answer is asked as, and the turn that is still under way when it is taken out (Dev desk on #2055)", () => {
+        const HOME_ROOM = "https://play.test/_/a/b/c.tmj";
+        const homedService = (admin: any, memory: any) => {
+            const service = openToolGate(new AIService(memory, admin, "http://admin.local"));
+            service.noteRoomBrick("brick-1", { ownerUuid: OWNER, ownerName: "Khalid", roomUrl: HOME_ROOM });
+            return service;
+        };
+
+        it("(1) someone who is not its owner is asked as themselves, with the room, and gets none of the owner's things", async () => {
+            const { admin, memory } = build(OTHER, () => served({ forOthers: true }));
+            await reply(homedService(admin, memory), "world");
+            expect(admin.getBotAiCredentials).toHaveBeenCalledWith("brick-1", { asker: OTHER, roomUrl: HOME_ROOM });
+            expect(toolNamesSent()).not.toContain("generate_music");
+        });
+
+        it("(2) its owner is asked as the owner", async () => {
+            const { admin, memory } = build(OWNER, () => served());
+            await reply(homedService(admin, memory), "world");
+            expect(admin.getBotAiCredentials).toHaveBeenCalledWith("brick-1", { asker: OWNER, roomUrl: HOME_ROOM });
+        });
+
+        it("(3) a person who cannot be named is asked about as 'unknown', never as the owner", async () => {
+            const { admin, memory } = build(undefined, () => served({ forOthers: true }));
+            await reply(homedService(admin, memory), "world");
+            expect(admin.getBotAiCredentials).toHaveBeenCalledWith("brick-1", { asker: "unknown", roomUrl: HOME_ROOM });
+        });
+
+        it("(4) its own business, with nobody named, is asked as its owner", async () => {
+            const { admin, memory } = build(OWNER, () => served());
+            mockGetOrCreateProvider.mockReturnValue({ generate: vi.fn(async () => ({ content: "ok" })) });
+            await homedService(admin, memory).quickGenerate("universe-ai", "sys", "prompt", "brick-1");
+            expect(admin.getBotAiCredentials).toHaveBeenCalledWith("brick-1", { asker: OWNER });
+        });
+
+        it("taken out while it is answering someone else: the small calls the turn still makes are asked about that person, and never fall back to the owner's key", async () => {
+            const { admin, memory } = build(OTHER, () => served({ forOthers: true }));
+            mockGetOrCreateProvider.mockReturnValue({ generate: vi.fn(async () => ({ content: "ok" })) });
+            const service = homedService(admin, memory);
+            // The room is read again and the Brick is gone from it, in the middle of the turn
+            service.noteRoomBrick("brick-1", undefined);
+            admin.getBotAiCredentials.mockClear();
+            await service.quickGenerate("universe-ai", "sys", "prompt", "brick-1", undefined, OTHER);
+            await service.quickClassify("universe-ai", "task", "message", "brick-1", OTHER);
+            // (the second call may be served from what Orbit just said for that same person)
+            expect(admin.getBotAiCredentials).toHaveBeenCalled();
+            for (const call of admin.getBotAiCredentials.mock.calls) expect(call).toEqual(["brick-1", { asker: OTHER }]);
+            expect(admin.getAIProviderCredentials).not.toHaveBeenCalled();
+        });
     });
 
     it("a bot that is no Brick is asked about as it always was, with no asker", async () => {

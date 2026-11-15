@@ -7,13 +7,15 @@
     import type { BotData, BrickChange, BrickPageWay } from "../../external-modules/bots/types";
     import { warningMessageStore } from "../../Stores/ErrorStore";
     import PageButton from "../../external-modules/bots/components/page/PageButton.svelte";
+    import { livesHere } from "../../external-modules/bots/roomBricksModel";
     import { openAppsPage } from "./Apps/OpenApps";
     import { brickPageBot, shortDay, type BrickCard } from "./Brick";
     import BrickPicture from "./BrickPicture.svelte";
+    import { brickHomeStore, loadBrickHome, showBrickOnMap, takeBrickOutOfHome } from "./BrickHomeStore";
     import { canOfferBringAlong } from "./BrickVisit";
     import { bringBrickAlong, brickVisitStore, endBrickVisit, loadBrickVisit } from "./BrickVisitStore";
     import { brickUndoDays, changeMyBrick, deleteMyBrick } from "./MyBricksStore";
-    import { IconWalk } from "@wa-icons";
+    import { IconCurrentLocation, IconWalk } from "@wa-icons";
 
     /**
      * A Brick's own page (game #1996), opened by a tap on its row on the Bricks page: the bot page every bot has (mock
@@ -37,9 +39,17 @@
     let loadedFor: string | undefined;
     let visitBusy = false;
 
-    // What the page says about visiting (#2005), for the room the person is in: read again for each Brick it opens on
-    $: visit = $brickVisitStore;
+    // What the page says about visiting (#2005), for the room the person is in: read again for each Brick it opens on.
+    // The read comes first: it clears the last Brick's answer at once, and the line after it must see that, not the old one
     $: loadBrickVisit(brick.id).catch((error) => console.error(error));
+    $: visit = $brickVisitStore;
+
+    // Where it lives (#2005): "Show on map" and "Take it out" when it lives in the room the person is in
+    let homeBusy = false;
+    // The read comes first, for the same reason: a read that fails must not leave the last Brick's home on this page
+    $: loadBrickHome(brick.id).catch((error) => console.error(error));
+    $: home = $brickHomeStore;
+    $: here = livesHere(home, botApiService.getRoomId());
 
     $: if (brick.id !== loadedFor) load(brick);
 
@@ -72,7 +82,13 @@
         visitBusy = true;
         bringBrickAlong(brick.id)
             .then((refusal) => {
-                if (refusal === "not_yet")
+                if (refusal && typeof refusal === "object")
+                    warningMessageStore.addWarningMessage(
+                        refusal.livesIn
+                            ? $LL.chat.brick.bringAlongLivesIn({ room: refusal.livesIn })
+                            : $LL.chat.brick.bringAlongFailed({ name: brick.name })
+                    );
+                else if (refusal === "not_yet")
                     warningMessageStore.addWarningMessage($LL.chat.brick.bringAlongNotYet({ name: brick.name }));
                 else if (refusal)
                     warningMessageStore.addWarningMessage($LL.chat.brick.bringAlongFailed({ name: brick.name }));
@@ -80,6 +96,24 @@
             .catch((error) => console.error(error))
             .finally(() => {
                 visitBusy = false;
+            });
+    }
+
+    function showOnMap() {
+        // It stands on the map of the room it lives in: not on this one (yet) says nothing the person can act on
+        showBrickOnMap(brick.id).catch((error: unknown) => console.warn(error));
+    }
+
+    function takeOut() {
+        if (homeBusy) return;
+        homeBusy = true;
+        takeBrickOutOfHome(brick.id)
+            .then((done) => {
+                if (!done) warningMessageStore.addWarningMessage($LL.chat.brick.takeOutFailed({ name: brick.name }));
+            })
+            .catch((error) => console.error(error))
+            .finally(() => {
+                homeBusy = false;
             });
     }
 
@@ -135,7 +169,7 @@
                         <p class="bkp-visit-line bkp-blocked" data-testid="brickVisitBlocked">
                             {$LL.chat.brick.notTaken({ place: visit.place, name: brick.name })}
                         </p>
-                    {:else if canOfferBringAlong(brick, visit)}
+                    {:else if canOfferBringAlong(brick, visit) && !home}
                         <div class="bkp-visit">
                             <PageButton tall disabled={visitBusy} testId="brickBringAlong" on:click={bringAlong}
                                 ><IconWalk font-size="18" />{$LL.chat.brick.bringAlong()}</PageButton
@@ -145,6 +179,23 @@
                             {visit?.place
                                 ? $LL.chat.brick.bringAlongLine({ name: brick.name, place: visit.place })
                                 : $LL.chat.brick.bringAlongLineNoPlace({ name: brick.name })}
+                        </p>
+                    {/if}
+                    {#if home}
+                        <div class="bkp-visit bkp-home">
+                            {#if here}
+                                <PageButton tall testId="brickShowOnMap" on:click={showOnMap}
+                                    ><IconCurrentLocation font-size="18" />{$LL.chat.brick.showOnMap()}</PageButton
+                                >
+                            {/if}
+                            <PageButton tall disabled={homeBusy} testId="brickTakeOut" on:click={takeOut}
+                                >{here
+                                    ? $LL.chat.brick.takeItOutHere()
+                                    : $LL.chat.brick.takeItOutOf({ room: home.roomName })}</PageButton
+                            >
+                        </div>
+                        <p class="bkp-visit-line" data-testid="brickHomeLine">
+                            {$LL.chat.brick.homeLine({ room: home.roomName })}
                         </p>
                     {/if}
                 </svelte:fragment>
@@ -214,6 +265,15 @@
         font-size: 12.5px;
         line-height: 1.45;
         color: rgba(244, 242, 250, 0.64);
+    }
+    .bkp-home {
+        justify-content: flex-start;
+        flex-wrap: wrap;
+        gap: 2px;
+    }
+    /* As in the mock: Show on map is as wide as its words, Take it out fills the rest of the row */
+    .bkp-home :global(.bp-btn:last-child) {
+        flex: 1 1 auto;
     }
     .bkp-blocked {
         margin-top: 0;

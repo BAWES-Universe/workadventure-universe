@@ -13,6 +13,7 @@ import { wokaMenuStore, type WokaMenuData, type WokaMenuAction } from "../../Sto
 import { warningMessageStore } from "../../Stores/ErrorStore";
 import { refreshThisDeviceOnce } from "../../Notification/Push/PushDevice";
 import { provideOwnPosition } from "../../Chat/Bricks/BrickVisitStore";
+import { provideBrickLocator } from "../../Chat/Bricks/BrickHomeStore";
 import { addTemplateAction } from "../../Chat/Bricks/Templates/TemplateCardAction";
 import { getBotServerUrl } from "./services/BotServerUrl";
 import { botApiService } from "./services/BotApiService";
@@ -801,9 +802,30 @@ function ownPlace(): { x: number; y: number } | undefined {
     return player ? { x: player.x, y: player.y } : undefined;
 }
 
+/** Points the camera at a Brick the game has been sent (the Brick page's "Show on map"); false when it is not among them. */
+function showBrick(brickId: string): boolean {
+    const scene = gameManager.getCurrentGameScene();
+    if (!scene) return false;
+    for (const player of scene.MapPlayersByKey.values()) {
+        if (player.userUuid !== `bot-${brickId}`) continue;
+        scene.getCameraManager().setPosition({ x: player.x, y: player.y }, 500);
+        return true;
+    }
+    return false;
+}
+
+/** Points the camera at a spot of this room's map: where a Brick that lives here stands, when the game has not been sent it. */
+function showSpot(spot: { x: number; y: number }): boolean {
+    const scene = gameManager.getCurrentGameScene();
+    if (!scene) return false;
+    scene.getCameraManager().setPosition(spot, 500);
+    return true;
+}
+
 function putVisitingBrickBeside(): void {
-    // The Brick page brings a Brick along from where the person stands
+    // The Brick page brings a Brick along from where the person stands, and shows one that lives here
     provideOwnPosition(ownPlace);
+    provideBrickLocator(showBrick, showSpot);
     // A Brick that dropped off the map while its person is still here is put back beside them
     botApiService.setOwnPlaceProvider(ownPlace);
     const sync = () => {

@@ -6,11 +6,13 @@ const api = vi.hoisted(() => ({
     getBrickVisit: vi.fn<(brickId: string, roomUrl: string) => Promise<unknown>>(),
     startBrickVisit: vi.fn<(brickId: string, roomUrl: string) => Promise<unknown>>(),
     endBrickVisit: vi.fn<(brickId: string) => Promise<unknown>>(),
+    getBrickHome: vi.fn<(brickId: string) => Promise<unknown>>(),
     syncVisitingBrick:
         vi.fn<(position?: { x: number; y: number }, options?: { ending?: boolean }) => Promise<boolean | undefined>>(),
 }));
 vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService: api }));
 
+import { brickHomeStore, forgetBrickHome, loadBrickHome } from "../BrickHomeStore";
 import {
     bringBrickAlong,
     brickVisitStore,
@@ -29,6 +31,7 @@ describe("what the Brick page knows about visiting (#2005)", () => {
         vi.clearAllMocks();
         vi.spyOn(console, "warn").mockImplementation(() => undefined);
         forgetBrickVisit();
+        forgetBrickHome();
         provideOwnPosition(() => ({ x: 100, y: 200 }));
         api.getRoomId.mockReturnValue(ROOM);
         api.syncVisitingBrick.mockResolvedValue(true);
@@ -175,6 +178,35 @@ describe("what the Brick page knows about visiting (#2005)", () => {
         api.getBrickVisit.mockResolvedValue({ state: "none", place: "Universe" });
         await expect(bringBrickAlong(A)).resolves.toBe("off");
         expect(api.syncVisitingBrick).not.toHaveBeenCalled();
+    });
+
+    it("names the room it lives in when Orbit refuses a Brick that has a home, and reads where it lives", async () => {
+        api.startBrickVisit.mockRejectedValue(
+            Object.assign(new Error("conflict"), { status: 409, reason: "lives_in", place: "Studio" })
+        );
+        const home = { roomUrl: "/@/team/universe/studio", roomName: "Studio", universeName: "Universe" };
+        api.getBrickHome.mockResolvedValueOnce({ home: null });
+        await loadBrickHome(A);
+        api.getBrickHome.mockResolvedValue({ home });
+        await expect(bringBrickAlong(A)).resolves.toEqual({ livesIn: "Studio" });
+        expect(api.getBrickHome).toHaveBeenLastCalledWith(A);
+        expect(get(brickHomeStore)).toEqual(home);
+        expect(api.syncVisitingBrick).not.toHaveBeenCalled();
+    });
+
+    it("a refusal that comes late, after the page moved to another Brick, does not switch the page to the first one (CodeRabbit on #2055)", async () => {
+        const mine = { roomUrl: "/@/team/universe/studio", roomName: "Studio", universeName: "Universe" };
+        api.startBrickVisit.mockRejectedValue(
+            Object.assign(new Error("conflict"), { status: 409, reason: "lives_in", place: "Library" })
+        );
+        // B is on the page, with its own home
+        api.getBrickHome.mockResolvedValueOnce({ home: mine });
+        await loadBrickHome(B);
+        api.getBrickHome.mockClear();
+        api.getBrickHome.mockResolvedValue({ home: { ...mine, roomName: "Library" } });
+        await expect(bringBrickAlong(A)).resolves.toEqual({ livesIn: "Library" });
+        expect(api.getBrickHome).not.toHaveBeenCalled();
+        expect(get(brickHomeStore)).toEqual(mine);
     });
 
     it("fails plainly for anything else: no room, a broken answer, a server error", async () => {
