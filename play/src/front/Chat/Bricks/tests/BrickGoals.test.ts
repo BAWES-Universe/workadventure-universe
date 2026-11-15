@@ -142,6 +142,21 @@ describe("goals and tasks on a Brick's page (#2002)", () => {
             ]);
         });
 
+        it("lists none of the checks of a goal that is done, whatever state they say", () => {
+            const items = parseGoalItems({
+                items: [
+                    row({
+                        id: "g",
+                        kind: "goal",
+                        state: "done",
+                        doneAt: "2026-11-12T10:00:00.000Z",
+                        checks: [row({ id: "k", kind: "schedule", parentId: "g", state: "on" })],
+                    }),
+                ],
+            });
+            expect(items.map((one) => one.id)).toEqual(["g"]);
+        });
+
         it("lists Scheduled with a goal's own checks first, then the soonest, and one with nothing due last", () => {
             const at = (hour: number) => new Date(2026, 10, 16, hour, 0).toISOString();
             const parts = groupGoalItems(

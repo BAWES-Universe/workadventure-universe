@@ -136,7 +136,8 @@ export function parseGoalItems(value: unknown): GoalItem[] {
         const item = readItem(one, null);
         if (!item) continue;
         add(item);
-        if (item.kind === "goal" && Array.isArray(row.checks)) {
+        // The checks of a goal that is done are done with it: none of them is listed
+        if (item.kind === "goal" && item.state !== "done" && Array.isArray(row.checks)) {
             for (const check of row.checks) {
                 const read = readItem(check, item.id);
                 if (read && read.state !== "done" && read.kind !== "goal") add(read);
