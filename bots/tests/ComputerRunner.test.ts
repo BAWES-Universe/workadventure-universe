@@ -193,6 +193,60 @@ describe('a job that runs', () => {
     });
 });
 
+describe('a stop, an Orbit that cannot be asked, and a turn that was cut off', () => {
+    const createRunner = (orbit: RunnerOrbit) => createComputerRunner({ orbit, relayUrl: RELAY, sleep: instantly, log: quiet, timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] } });
+
+    it('does not open a turn when the stop came while the machine was being made ready', async () => {
+        const { orbit, seen, setPrepare } = fakeOrbit([done('[[done]]')]);
+        const runner = createRunner(orbit);
+        setPrepare(() => {
+            runner.stop();
+            return { ok: true };
+        });
+        await runner.tick();
+        await runner.idle();
+        expect(seen.turns).toHaveLength(0);
+        expect(finished(seen)).toEqual([]);
+    });
+
+    it('starts nothing from a list of jobs that was asked for before a stop', async () => {
+        const { orbit, seen } = fakeOrbit([done('[[done]]')]);
+        let answer: (jobs: RunnableJob[]) => void = () => undefined;
+        orbit.running = () => new Promise((resolve) => { answer = resolve; });
+        const runner = createRunner(orbit);
+        const ticking = runner.tick();
+        runner.stop();
+        answer([JOB]);
+        await ticking;
+        await runner.idle();
+        expect(seen.prepares).toEqual([]);
+        expect(runner.active()).toEqual([]);
+    });
+
+    it('does not finish a job on the word of a turn when Orbit could not be asked who has the machine', async () => {
+        let looks = 0;
+        const { orbit, seen } = fakeOrbit([done('[[done]]'), done('[[done]]')], () => {
+            looks += 1;
+            // the first look is the job's own, the next ones (after the first turn) cannot be answered, then it is answered again
+            if (looks >= 2 && looks <= 1 + RUNNER_GUARDS.maxBadTurns) throw new Error('Orbit is down');
+            return { status: 'running', control: 'brick' };
+        });
+        await runJob(orbit);
+        expect(seen.turns).toHaveLength(2);
+        expect(seen.turns[1]).toBe(CONTINUE_PROMPT);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+    });
+
+    it('does not take an ending from a turn that was cut off: the machine’s turn may still be running', async () => {
+        const cut: RunnerEvent[] = [{ type: 'created', id: 'r', sessionId: 's' }, { type: 'text', text: 'All done [[done]]' }, { type: 'failed', code: 'model_error', message: 'cut' }];
+        const { orbit, seen } = fakeOrbit([cut, done('[[done]]')]);
+        await runJob(orbit);
+        expect(seen.turns).toHaveLength(2);
+        expect(seen.turns[1]).toBe(CONTINUE_PROMPT);
+        expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+    });
+});
+
 describe('the person’s part', () => {
     it('asks again when the handover did not go through, and does not take the job back as if the person had finished', async () => {
         const { orbit, seen, failHandovers } = fakeOrbit([done('[[handover signin]]'), done('[[done]]')]);
@@ -393,6 +447,15 @@ describe('reading Orbit’s events', () => {
         expect((await all(body(frame({ type: 'failed', code: 'fenced', message: 'x' }), frame({ type: 'text', text: 'after' })))).map((e) => e.type)).toEqual(['failed']);
         expect((await all(body(frame({ type: 'text', text: 'half' }))).then((list) => list.at(-1)))).toMatchObject({ type: 'failed', code: 'stream_ended' });
         expect(await all(body(`event: completed\ndata: ${JSON.stringify({ type: 'completed', outputText: 'end', usage: null })}`))).toEqual([{ type: 'completed', outputText: 'end', usage: null }]);
+    });
+
+    it('keeps the end of a reply that is too long, where the marker that says how it ended is', () => {
+        const long = `${'x'.repeat(250_000)} [[done]]`;
+        const event = runnerEventOf(JSON.stringify({ type: 'completed', outputText: long, usage: null }));
+        expect(event).toMatchObject({ type: 'completed' });
+        const kept = (event as { outputText: string }).outputText;
+        expect(kept).toHaveLength(200_000);
+        expect(kept.endsWith('[[done]]')).toBe(true);
     });
 
     it('leaves out what it cannot read', () => {

@@ -293,6 +293,46 @@ describe('the call', () => {
     });
 });
 
+describe('what a call used when the provider does not say', () => {
+    it('counts tool calls and thinking as what the model wrote, in a whole reply', async () => {
+        upstreamHandler = (_req, res) =>
+            res.json({ choices: [{ message: { role: 'assistant', content: 'OK', reasoning_content: 'y'.repeat(30), tool_calls: [{ function: { name: 'go', arguments: 'z'.repeat(268) } }] } }] });
+        await askAndSettle({ messages });
+        // 2 + 30 + 2 + 268 characters, at three to a token
+        expect(settled()[0].tokens?.output).toBe(Math.ceil(302 / RELAY_GUARDS.charsPerToken));
+    });
+
+    it('counts tool calls as what the model wrote, in a streamed reply', async () => {
+        const piece = (arguments_: string) => `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ function: { arguments: arguments_ } }] } }] })}\n\n`;
+        upstreamHandler = (_req, res) => {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.write(piece('a'.repeat(150)));
+            res.write(piece('b'.repeat(150)));
+            res.end('data: [DONE]\n\n');
+        };
+        await askAndSettle({ messages, stream: true });
+        expect(settled()[0].tokens?.output).toBe(Math.ceil(300 / RELAY_GUARDS.charsPerToken));
+    });
+});
+
+describe('a caller that goes away before the call is sent', () => {
+    it('sends nothing to the provider and gives the room back', async () => {
+        let letGo: () => void = () => undefined;
+        orbit.authorize.mockImplementation(() => new Promise((resolve) => { letGo = () => resolve({ ok: true }); }));
+        const controller = new AbortController();
+        const asked = fetch(`${relayBase}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` }, body: JSON.stringify({ messages }), signal: controller.signal }).catch(() => null);
+        await vi.waitFor(() => expect(orbit.authorize).toHaveBeenCalled(), { timeout: 3000 });
+        controller.abort();
+        await asked;
+        // the close reaches the relay a moment after the abort
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        letGo();
+        await vi.waitFor(() => expect(settled()).toHaveLength(1), { timeout: 3000 });
+        expect(settled()[0]).toEqual({ jobId: JOB, callId: expect.any(String), sent: false });
+        expect(upstreamRequests).toHaveLength(0);
+    });
+});
+
 describe('streaming', () => {
     const sse = (res: express.Response, chunks: string[]) => {
         res.setHeader('Content-Type', 'text/event-stream');

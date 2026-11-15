@@ -53,6 +53,25 @@ export interface InputFilter {
     push(chunk: Buffer): { forward: Buffer[]; close: boolean };
 }
 
+/** Encodings that change the size or form of what the viewer sends. They are asked for by the viewer and would have to be understood here. */
+const FRAMING_ENCODINGS = new Set([-316, -257]);
+
+/** A SetEncodings message without the encodings in FRAMING_ENCODINGS (and with its count made right). */
+function withoutFramingEncodings(message: Buffer): Buffer {
+    const count = message.readUInt16BE(2);
+    const kept: number[] = [];
+    for (let i = 0; i < count; i++) {
+        const encoding = message.readInt32BE(4 + 4 * i);
+        if (!FRAMING_ENCODINGS.has(encoding)) kept.push(encoding);
+    }
+    if (kept.length === count) return message;
+    const out = Buffer.alloc(4 + 4 * kept.length);
+    out[0] = 2;
+    out.writeUInt16BE(kept.length, 2);
+    kept.forEach((encoding, i) => out.writeInt32BE(encoding, 4 + 4 * i));
+    return out;
+}
+
 /**
  * Reads the viewer's side of the screen protocol (RFB) so it can be filtered. After the handshake (version, the security choice, the
  * client's hello) every message is one of a few kinds with a known size. Watch mode drops key events (4, and the QEMU form, 255), pointer
@@ -121,8 +140,11 @@ export function createInputFilter(mode: ScreenMode): InputFilter {
                         size = 8 + length;
                     } else return { forward, close: true };
                     if (buffer.length < size) break;
-                    const message = buffer.subarray(0, size);
+                    let message = buffer.subarray(0, size);
                     buffer = buffer.subarray(size);
+                    // The filter measures the viewer's messages by the plain forms. An encoding that makes the viewer send them longer or
+                    // differently (ExtendedMouseButtons, QEMU pointer motion) is never passed on, so the machine never turns it on
+                    if (type === 2) message = withoutFramingEncodings(message);
                     // Watch: nothing the viewer types, moves, pastes or resizes is sent on (keys 4 and 255, pointer 5, clipboard 6, size 251)
                     if (mode === 'input' || (type !== 4 && type !== 5 && type !== 6 && type !== 251 && type !== 255)) forward.push(message);
                 }
@@ -154,6 +176,8 @@ export function upstreamSocketUrl(link: string): string | null {
 export const SCREEN_PATH = '/computer/screen';
 /** Held back on the way from the machine when the viewer is slower than it: past this the socket is closed instead of piling up. */
 const BACKLOG_MAX = 16 * 1024 * 1024;
+/** The most a viewer may have waiting to be sent to the machine (before it is open, or while it takes it in): what the viewer sends is small. */
+const INPUT_BACKLOG_MAX = 2 * 1024 * 1024;
 
 export interface ScreenGatewayOptions {
     orbit: ScreenOrbit;
@@ -214,7 +238,9 @@ export function createScreenGateway(options: ScreenGatewayOptions): ScreenGatewa
 
         // The viewer may not send before the machine is open: what it sends first waits, in order
         const waiting: Buffer[] = [];
+        let waitingBytes = 0;
         machine.on('open', () => {
+            waitingBytes = 0;
             for (const bytes of waiting.splice(0)) machine.send(bytes);
         });
         viewer.on('message', (data: RawData) => {
@@ -222,8 +248,14 @@ export function createScreenGateway(options: ScreenGatewayOptions): ScreenGatewa
             const bytes = Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data as Buffer);
             const result = filter.push(bytes);
             for (const part of result.forward) {
-                if (machine.readyState === WebSocket.OPEN) machine.send(part);
-                else waiting.push(part);
+                if (machine.readyState === WebSocket.OPEN) {
+                    if (machine.bufferedAmount + part.length > INPUT_BACKLOG_MAX) return end(1013, 'Too much at once');
+                    machine.send(part);
+                } else {
+                    waitingBytes += part.length;
+                    if (waitingBytes > INPUT_BACKLOG_MAX) return end(1013, 'Too much at once');
+                    waiting.push(part);
+                }
             }
             if (result.close) end(1008, 'Not allowed');
         });

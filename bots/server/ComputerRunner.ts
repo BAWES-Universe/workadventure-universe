@@ -180,6 +180,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
     const workers = new Map<string, { controller: AbortController; done: Promise<void> }>();
     let timer: ReturnType<typeof setInterval> | undefined;
     let stopped = false;
+    // Counts each start and stop, so a poll that was asked before a stop can tell it was
+    let generation = 0;
 
     const say = (message: string, error?: unknown) => log.warn(`[ComputerRunner] ${message}`, error instanceof Error ? error.message : '');
 
@@ -218,6 +220,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
 
     /** Sends one turn (or reconnects to the one going) and reads it to its end, renewing the job's room as Orbit says while it does. */
     async function oneTurn(job: RunnableJob, input: string | null, signal: AbortSignal, renewing: Renewing): Promise<TurnResult> {
+        // A stop that came while the machine was being made ready has already fired: its listener would never be told
+        if (signal.aborted) return { kind: 'stopped' };
         const turnController = new AbortController();
         const onStop = () => turnController.abort();
         signal.addEventListener('abort', onStop, { once: true });
@@ -227,6 +231,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             if (turnController.signal.aborted) return;
             try {
                 const answer = await orbit.action(job.botId, job.jobId, { action: 'renew' });
+                // An answer that comes after its turn ended is not this turn's to use: a newer turn may hold a newer deadline by now
+                if (turnController.signal.aborted) return;
                 if (answer.ok === false) {
                     // Its room is gone and Orbit has stopped it: the agent stops too
                     lost = true;
@@ -239,6 +245,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 renewTimer = setTimeout(() => void renew(), next * 1000);
             } catch (error) {
                 // Orbit could not be reached: try again soon, the room is held for a while yet
+                if (turnController.signal.aborted) return;
                 say('Could not renew a job:', error);
                 renewing.nextAt = now() + 15_000;
                 renewTimer = setTimeout(() => void renew(), 15_000);
@@ -363,10 +370,20 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 continue;
             }
 
-            // Only what Orbit still says is Brick's is acted on: if the person took over meanwhile, their hands win and the words are dropped
-            const after = await orbit.job(job.botId, job.jobId).catch(() => undefined);
-            if (after === null || (after && over(after.status))) return;
-            if (after && (after.status !== 'running' || after.control !== 'brick')) {
+            // Only what Orbit still says is Brick's is acted on: if the person took over meanwhile, their hands win and the words are dropped.
+            // An Orbit that cannot be asked is not a yes: the words wait for it, and the agent is nudged on instead
+            let after: Awaited<ReturnType<RunnerOrbit['job']>> | undefined;
+            for (let attempt = 0; attempt < RUNNER_GUARDS.maxBadTurns && after === undefined; attempt++) {
+                if (attempt > 0) await sleep(timing.waitMs, signal);
+                after = await orbit.job(job.botId, job.jobId).catch(() => undefined);
+            }
+            if (signal.aborted) return;
+            if (after === undefined) {
+                input = CONTINUE_PROMPT;
+                continue;
+            }
+            if (after === null || over(after.status)) return;
+            if (after.status !== 'running' || after.control !== 'brick') {
                 const back = await waitForBrick(job, signal);
                 if (back !== 'back') return;
                 input = RESUME_PROMPT;
@@ -378,7 +395,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 continue;
             }
 
-            const ending = endingOf(result.words);
+            // A turn that was cut off may have said its marker, but the machine's turn may still be running: no ending is taken from it
+            const ending = result.failed ? ({ kind: 'none' } as const) : endingOf(result.words);
             if (ending.kind === 'done') return void (await finish(job, 'done'));
             if (ending.kind === 'failed') return void (await finish(job, 'failed'));
             if (ending.kind === 'handover') {
@@ -423,6 +441,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
 
     async function tick(): Promise<void> {
         if (stopped) return;
+        const mine = generation;
         let jobs: RunnableJob[];
         try {
             jobs = await orbit.running();
@@ -430,6 +449,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             say('Could not read the running jobs:', error);
             return;
         }
+        // The runner was stopped (or stopped and started again) while Orbit was asked: this answer is from before, and starts nothing
+        if (stopped || mine !== generation) return;
         for (const job of jobs) {
             if (workers.has(job.jobId) || workers.size >= RUNNER_GUARDS.maxJobs) continue;
             const controller = new AbortController();
@@ -444,6 +465,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         tick,
         start(everyMs) {
             stopped = false;
+            generation += 1;
             if (timer) clearInterval(timer);
             timer = setInterval(() => void tick(), everyMs);
             timer.unref?.();
@@ -451,6 +473,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         },
         stop() {
             stopped = true;
+            generation += 1;
             if (timer) clearInterval(timer);
             timer = undefined;
             for (const { controller } of workers.values()) controller.abort();

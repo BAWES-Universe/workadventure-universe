@@ -6,6 +6,8 @@
 import type { RunnerEvent } from './ComputerRunner';
 
 const text = (value: unknown, max: number): string => (typeof value === 'string' ? value.slice(0, max) : '');
+/** The end of what was said: for a reply the end is what counts (the marker that says how it ended is the last thing in it). */
+const lastOf = (value: unknown, max: number): string => (typeof value === 'string' ? value.slice(-max) : '');
 const count = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.round(value) : null);
 
 export function runnerEventOf(data: string): RunnerEvent | null {
@@ -36,7 +38,7 @@ export function runnerEventOf(data: string): RunnerEvent | null {
         }
         case 'completed': {
             const usage = body.usage && typeof body.usage === 'object' ? (body.usage as Record<string, unknown>) : null;
-            return { type: 'completed', outputText: text(body.outputText, 200_000), usage: usage ? { inputTokens: count(usage.inputTokens), outputTokens: count(usage.outputTokens) } : null };
+            return { type: 'completed', outputText: lastOf(body.outputText, 200_000), usage: usage ? { inputTokens: count(usage.inputTokens), outputTokens: count(usage.outputTokens) } : null };
         }
         case 'failed':
             return { type: 'failed', code: text(body.code, 60) || 'failed', message: text(body.message, 300) };

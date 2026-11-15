@@ -27,6 +27,24 @@ describe('what a viewer may send', () => {
         expect(joined(result.forward)).toEqual(joined([pixelFormat, encodings, update]));
     });
 
+    it('never passes on the encodings that make the viewer send longer or other pointer messages, so the stream stays in step', () => {
+        const withExtras = Buffer.alloc(4 + 4 * 4);
+        withExtras[0] = 2;
+        withExtras.writeUInt16BE(4, 2);
+        [0, -316, 7, -257].forEach((encoding, i) => withExtras.writeInt32BE(encoding, 4 + 4 * i));
+        for (const mode of ['watch', 'input'] as const) {
+            const filter = createInputFilter(mode);
+            shake(filter);
+            const out = joined(filter.push(joined([withExtras, update])).forward);
+            const expected = Buffer.alloc(4 + 4 * 2);
+            expected[0] = 2;
+            expected.writeUInt16BE(2, 2);
+            expected.writeInt32BE(0, 4);
+            expected.writeInt32BE(7, 8);
+            expect(out).toEqual(joined([expected, update]));
+        }
+    });
+
     it('input sends everything on', () => {
         const filter = createInputFilter('input');
         shake(filter);

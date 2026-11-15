@@ -103,15 +103,32 @@ export const RELAY_GUARDS = {
 const SETTLE_DELAYS_MS = [1000, 3000];
 
 /** Waits until a written-to response can take more, or is gone (a wait that never ended would hold the provider call open). */
-const drained = (res: Response) =>
+/** The characters a model wrote as tool calls (the name and the arguments), in a reply or in a piece of one. */
+const toolCallChars = (calls: unknown): number => {
+    if (!Array.isArray(calls)) return 0;
+    let total = 0;
+    for (const call of calls) {
+        const fn = isRecord(call) && isRecord(call.function) ? call.function : null;
+        if (!fn) continue;
+        if (typeof fn.name === 'string') total += fn.name.length;
+        if (typeof fn.arguments === 'string') total += fn.arguments.length;
+    }
+    return total;
+};
+
+const drained = (res: Response, signal: AbortSignal) =>
     new Promise<void>((resolve) => {
         const done = () => {
             res.off('drain', done);
             res.off('close', done);
+            signal.removeEventListener('abort', done);
             resolve();
         };
+        // A caller that stops reading and keeps the connection open must not hold the call past its deadline
+        if (signal.aborted) return resolve();
         res.once('drain', done);
         res.once('close', done);
+        signal.addEventListener('abort', done, { once: true });
     });
 
 /** The words of a provider's error answer: its message when it is JSON with one, else the text as it came. */
@@ -259,6 +276,12 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             else inFlight.set(jobId, left);
         };
 
+        // Whether the caller went away while the route and the room were being asked for: nothing is sent for a caller that is not there
+        let gone = false;
+        res.once('close', () => {
+            if (!res.writableFinished) gone = true;
+        });
+
         const now = new Date();
         const outputCap = outputCapOf(body, config);
         const callId = randomUUID();
@@ -279,7 +302,8 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             }
 
             try {
-                ended = await callProvider({ body, config, streaming, outputCap, res });
+                if (gone || res.destroyed) ended = { usage: undefined, outputChars: 0, cutShort: false, notSent: true };
+                else ended = await callProvider({ body, config, streaming, outputCap, res });
             } catch (error) {
                 console.error('[ComputerRelay] A call failed:', providerErrorText(error));
                 if (!res.headersSent) problem(res, 502, 'The AI did not answer.', 'upstream_error', 'server_error');
@@ -391,24 +415,26 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                 // What the provider said, in words fit for a log: never its key, never the conversation
                 const text = await upstream.text().catch(() => '');
                 const message = providerErrorText(wordsOf(text)).split(key ?? '\u0000').join('[redacted]');
-                console.warn('[ComputerRelay] The provider refused a call:', upstream.status, message);
+                console.warn('[ComputerRelay] The provider refused a call:', upstream.status);
                 problem(res, statusToHermes(upstream.status), message, 'upstream_error', 'server_error');
                 // A call the provider refused was not billed
                 return { usage: { error: true }, outputChars: 0, cutShort: false, notSent: false };
             }
 
             if (!streaming) {
-                const data = (await upstream.json().catch(() => null)) as { usage?: unknown; choices?: Array<{ message?: { content?: unknown } }> } | null;
+                const data = (await upstream.json().catch(() => null)) as { usage?: unknown; choices?: Array<{ message?: { content?: unknown; reasoning_content?: unknown; tool_calls?: unknown } }> } | null;
                 if (!data) {
                     problem(res, 502, 'The AI answered with something unreadable.', 'upstream_error', 'server_error');
                     return { usage: undefined, outputChars: 0, cutShort: false, notSent: false };
                 }
                 res.status(200).json(data);
                 const usage = data.usage as { prompt_tokens?: number; completion_tokens?: number } | undefined;
-                const content = data.choices?.[0]?.message?.content;
+                const message = data.choices?.[0]?.message;
+                // What the model wrote counts whether it was words, thinking or a tool call
+                const written = (typeof message?.content === 'string' ? message.content.length : 0) + (typeof message?.reasoning_content === 'string' ? message.reasoning_content.length : 0) + toolCallChars(message?.tool_calls);
                 return {
                     usage: usage ? { promptTokens: usage.prompt_tokens, completionTokens: usage.completion_tokens, ...readUsageDetail(usage) } : undefined,
-                    outputChars: typeof content === 'string' ? content.length : 0,
+                    outputChars: written,
                     cutShort,
                     notSent: false,
                 };
@@ -432,11 +458,12 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
                 const data = line.slice(5).trim();
                 if (!data || data === '[DONE]') return;
                 try {
-                    const chunk = JSON.parse(data) as { usage?: { prompt_tokens?: number; completion_tokens?: number } | null; choices?: Array<{ delta?: { content?: unknown; reasoning_content?: unknown } }> };
+                    const chunk = JSON.parse(data) as { usage?: { prompt_tokens?: number; completion_tokens?: number } | null; choices?: Array<{ delta?: { content?: unknown; reasoning_content?: unknown; tool_calls?: unknown } }> };
                     if (chunk.usage) usage = { promptTokens: chunk.usage.prompt_tokens, completionTokens: chunk.usage.completion_tokens, ...readUsageDetail(chunk.usage) };
                     for (const choice of chunk.choices ?? []) {
                         if (typeof choice.delta?.content === 'string') outputChars += choice.delta.content.length;
                         if (typeof choice.delta?.reasoning_content === 'string') outputChars += choice.delta.reasoning_content.length;
+                        outputChars += toolCallChars(choice.delta?.tool_calls);
                     }
                 } catch {
                     /* a line that is not JSON says nothing of use */
@@ -444,14 +471,14 @@ export function createComputerModelRelay(deps: RelayDeps): Router {
             };
             try {
                 for await (const chunk of Readable.fromWeb(upstream.body as never) as AsyncIterable<Buffer>) {
-                    if (res.destroyed || res.writableEnded) break;
+                    if (res.destroyed || res.writableEnded || controller.signal.aborted) break;
                     pending += chunk.toString('utf8');
                     let at: number;
                     while ((at = pending.indexOf('\n')) >= 0) {
                         read(pending.slice(0, at).replace(/\r$/, ''));
                         pending = pending.slice(at + 1);
                     }
-                    if (!res.write(chunk)) await drained(res);
+                    if (!res.write(chunk)) await drained(res, controller.signal);
                 }
                 read(pending);
                 if (!res.writableEnded) res.end();
