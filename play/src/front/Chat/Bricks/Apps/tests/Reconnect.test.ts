@@ -102,4 +102,12 @@ describe("finishing a GitHub sign-in from the window that started it", () => {
         handOver({ type: "oauth-failure" });
         expect(await result).toBe("done");
     });
+
+    it("is stopped when the sign-in fails before it finished", async () => {
+        const result = signInInPopup("c1");
+        await vi.waitFor(() => expect(popup.location.href).toContain("github.com/login"));
+        handOver({ type: "oauth-failure" });
+        expect(await result).toBe("stopped");
+        expect(game.finishGitHubSignIn).not.toHaveBeenCalled();
+    });
 });
