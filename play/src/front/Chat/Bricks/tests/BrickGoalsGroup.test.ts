@@ -248,6 +248,18 @@ describe("Goals and tasks group on a Brick's page (#2002)", () => {
         expect(byId("goalDoneRow")).not.toBeNull();
     });
 
+    it("tells the person when Orbit took a tap but the list could not be read again", async () => {
+        await show([goal()]);
+        game.tapBrickItem.mockResolvedValueOnce({});
+        game.getBrickItems.mockRejectedValue(new Error("offline"));
+        await press("goalPause");
+        expect(game.warn).toHaveBeenCalledWith(
+            "Done, but the list could not be refreshed. Close this page and open it again."
+        );
+        expect(game.warn).not.toHaveBeenCalledWith("Couldn't do that. Try again.");
+        expect(byId("goalCard")).not.toBeNull();
+    });
+
     it("does not send a second tap for a row while its tap is still on its way", async () => {
         await show([goal()]);
         let finish: (value: unknown) => void = () => undefined;

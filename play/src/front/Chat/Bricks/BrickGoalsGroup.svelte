@@ -51,8 +51,9 @@
         if (busy.has(item.id)) return;
         busy = new Set([...busy, item.id]);
         list.tap(item.id, action)
-            .then((taken) => {
-                if (!taken) warningMessageStore.addWarningMessage($LL.chat.brick.goals.tapFailed());
+            .then((result) => {
+                if (result === "refused") warningMessageStore.addWarningMessage($LL.chat.brick.goals.tapFailed());
+                else if (result === "stale") warningMessageStore.addWarningMessage($LL.chat.brick.goals.tapStale());
             })
             .catch((error) => console.error(error))
             .finally(() => {

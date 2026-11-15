@@ -333,12 +333,15 @@ export type GoalsState = "loading" | "ready" | "failed";
 /** What a tap does, by the name the screens' route takes. */
 export type GoalTap = "pause" | "resume" | "done" | "reopen" | "snooze" | "keep";
 
+/** How a tap ended: Orbit took it and the list is fresh, Orbit refused it, or Orbit took it but the list could not be read again. */
+export type GoalTapResult = "taken" | "refused" | "stale";
+
 export interface BrickGoalsList {
     items: Readable<GoalItem[]>;
     state: Readable<GoalsState>;
     load(): Promise<void>;
-    /** Sends a tap. The list is read again afterwards, whatever Orbit said: it is the one that knows. True when Orbit took it. */
-    tap(itemId: string, action: GoalTap): Promise<boolean>;
+    /** Sends a tap. The list is read again afterwards, whatever Orbit said: it is the one that knows. */
+    tap(itemId: string, action: GoalTap): Promise<GoalTapResult>;
 }
 
 /** One Brick's goals and tasks. A read that fails says so; it never shows a list it did not read. */
@@ -378,9 +381,11 @@ export function brickGoalsList(brickId: string): BrickGoalsList {
                 console.warn("Could not change a goal or task", error);
                 taken = false;
             }
-            // Read again either way: if it was refused, the list shows how it really stands. A failed read leaves what shows.
-            await read(true);
-            return taken;
+            // Read again either way: if it was refused, the list shows how it really stands.
+            const fresh = await read(true);
+            if (!taken) return "refused";
+            // Orbit took it but the list on screen is the old one: the row would look as if nothing happened
+            return fresh ? "taken" : "stale";
         },
     };
 }

@@ -301,23 +301,23 @@ describe("goals and tasks on a Brick's page (#2002)", () => {
 
             orbit.tapBrickItem.mockResolvedValueOnce({ item: row({ state: "paused" }) });
             orbit.getBrickItems.mockResolvedValueOnce({ items: [row({ state: "paused" })] });
-            expect(await list.tap("i1", "pause")).toBe(true);
+            expect(await list.tap("i1", "pause")).toBe("taken");
             expect(orbit.tapBrickItem).toHaveBeenCalledWith(BRICK, "i1", "pause");
             expect(get(list.items)[0].state).toBe("paused");
 
             orbit.tapBrickItem.mockRejectedValueOnce(new Error("wrong_state"));
             orbit.getBrickItems.mockResolvedValueOnce({ items: [row({ state: "done" })] });
-            expect(await list.tap("i1", "pause")).toBe(false);
+            expect(await list.tap("i1", "pause")).toBe("refused");
             expect(get(list.items)[0].state).toBe("done");
         });
 
-        it("keeps the list it has when the read after a tap fails", async () => {
+        it("keeps the list it has, and says it is stale, when the read after a tap fails", async () => {
             orbit.getBrickItems.mockResolvedValueOnce({ items: [row()] });
             const list = brickGoalsList(BRICK);
             await list.load();
             orbit.tapBrickItem.mockResolvedValueOnce({});
             orbit.getBrickItems.mockRejectedValueOnce(new Error("offline"));
-            expect(await list.tap("i1", "snooze")).toBe(true);
+            expect(await list.tap("i1", "snooze")).toBe("stale");
             expect(get(list.state)).toBe("ready");
             expect(get(list.items)).toHaveLength(1);
         });

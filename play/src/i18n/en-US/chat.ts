@@ -1228,6 +1228,7 @@ const chat: BaseTranslation = {
             loadFailed: "Couldn't read what {name} keeps for you. Try again.",
             retry: "Try again",
             tapFailed: "Couldn't do that. Try again.",
+            tapStale: "Done, but the list could not be refreshed. Close this page and open it again.",
         },
         // Templates and finding Bricks (game #2008): start a new Brick from someone's template, and share one of your own
         templates: {
