@@ -197,6 +197,9 @@ export class BotManager {
     // One start or replacement of a bot at a time. A Brick that lives in a room is synced by whichever room asks, and the
     // room locks above do not stop two rooms from starting the same Brick at once
     private botStartLocks: Map<string, Promise<void>> = new Map();
+    // Rooms whose last read of the Bricks that live there failed: they stay listed, so the room check reads them again
+    // while people are in them, instead of waiting for someone to walk in
+    private homedReadFailed: Set<string> = new Set();
     private verificationInterval: NodeJS.Timeout | null = null;
     private readonly VERIFICATION_INTERVAL_MS = 60 * 1000; // 1 minute
 
@@ -1073,6 +1076,14 @@ export class BotManager {
         }
     }
 
+    private dropVisitorRecordsOf(botId: string): void {
+        for (const [uuid, visitor] of [...this.visitors.entries()]) {
+            if (visitor.botId !== botId) continue;
+            this.visitors.delete(uuid);
+            this.noteVisitorChange(visitor.roomUrl);
+        }
+    }
+
     private noteVisitorChange(roomUrl: string): void {
         this.visitorChanges.set(roomUrl, (this.visitorChanges.get(roomUrl) ?? 0) + 1);
     }
@@ -1430,6 +1441,8 @@ export class BotManager {
                 console.warn('[BotManager] Could not ask Orbit for the Bricks that live in the room:', error instanceof Error ? error.message : error);
                 return undefined;
             });
+            if (homed) this.homedReadFailed.delete(roomId);
+            else this.homedReadFailed.add(roomId);
             const bots = [...roomBots, ...(homed ?? [])];
             
             // Filter to only enabled bots (if enabled field exists)
@@ -1488,6 +1501,9 @@ export class BotManager {
                             // list that may be older than a move or a take-out. The next sync of the room brings it
                             if (!now?.some((current) => current.botId === bot.botId)) return;
                         }
+                        // A Brick that stands here as a room Brick is no one's visitor: a visit it had (Orbit ended it as the home was
+                        // placed) would otherwise be counted next to it as a second bot of the room
+                        if (bot.brick?.home) this.dropVisitorRecordsOf(bot.botId);
                         const current = this.bots.get(bot.botId);
 
                         // Check if bot is already spawned
@@ -1547,8 +1563,11 @@ export class BotManager {
             }
             console.log(`[BotManager] Room ${roomId} has ${targetRoom.botIds.size} bots total`);
             // A room without bots isn't kept, so room ids that have no bots (or don't exist) don't pile up
-            if (targetRoom.botIds.size === 0) {
+            if (targetRoom.botIds.size === 0 && !this.homedReadFailed.has(roomId)) {
                 this.roomsWithBots.delete(roomId);
+            } else if (targetRoom.botIds.size === 0) {
+                // Orbit could not say which Bricks live here: the room stays listed so the room check asks again
+                if (!this.roomsWithBots.has(roomId)) this.roomsWithBots.set(roomId, targetRoom);
             } else {
                 // Respawning the only bot of a room (a changed voice switch, a new name) despawns it, and despawning the last
                 // bot drops the room's entry while this sync still holds the old one: keep the room listed, with its bots,
@@ -1757,6 +1776,12 @@ export class BotManager {
             const roomState = this.roomsWithBots.get(roomId);
             if (!roomState) continue; // dropped by an earlier room in this pass
             const waUserCount = waRooms.get(roomId) || 0;
+            // Kept only for a read of Orbit that failed: with nobody in it, there is nothing to read for
+            if (roomState.botIds.size === 0 && this.visitingBrickCount(roomId) === 0 && waUserCount === 0) {
+                this.roomsWithBots.delete(roomId);
+                this.homedReadFailed.delete(roomId);
+                continue;
+            }
             // A visiting Brick is in the game's count of the room too, and is no person
             const visiting = this.visitingBrickCount(roomId);
             if ((this.visitorOpsInFlight.get(roomId) ?? 0) > 0 || placementOf(roomId) !== visitingBefore.get(roomId)) {
@@ -1809,7 +1834,7 @@ export class BotManager {
                 );
                 // Orbit returns a Brick on its own (a deleted room, a switch turned off, a take-out by someone else) and tells nobody:
                 // while people are here, a room with a Brick that lives in it is read again, once a minute, so it is never kept longer
-                if ([...roomState.botIds].some((botId) => this.bots.get(botId)?.config.brick?.home)) {
+                if (this.homedReadFailed.has(roomId) || [...roomState.botIds].some((botId) => this.bots.get(botId)?.config.brick?.home)) {
                     await this.ensureBotsForRoom(roomId).catch((error: unknown) => {
                         console.warn(`[BotManager] Could not read Orbit again for room ${roomId}:`, error instanceof Error ? error.message : error);
                     });

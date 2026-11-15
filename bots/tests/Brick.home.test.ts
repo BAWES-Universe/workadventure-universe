@@ -312,6 +312,46 @@ describe('a Brick that lives in a room, moved and returned by Orbit', () => {
         expect(internals.bots.get('brick-1')).toBe(standing);
     });
 
+    it('is no one\'s visitor once it stands in the room as a room Brick, so it is not counted twice (Sentry on #2055)', async () => {
+        const visiting = { ...homed('brick-1'), brick: { ownerId: 'user-khalid', isDefault: false, visiting: { ownerUuid: KHALID, ownerName: 'Khalid' } } } as unknown as BotConfiguration;
+        const { botManager, internals } = manager(() => [homed()]);
+        internals.bots.set('brick-1', { botId: 'brick-1', client: { setFullConfig: () => undefined }, config: visiting, status: 'connected', lastHeartbeat: 0 });
+        const visitors = (internals as unknown as { visitors: Map<string, unknown> }).visitors;
+        visitors.set(KHALID, { botId: 'brick-1', roomUrl: ROOM });
+        await botManager.handlePlayerEnterRoom(ROOM);
+        expect(visitors.size).toBe(0);
+        // The owner alone with the Brick: the game counts 2 users, and one of them is a person
+        internals.queryWorkAdventureRooms = async () => new Map([[ROOM, 2]]);
+        await botManager.verifyRoomOccupancy();
+        expect(internals.bots.has('brick-1')).toBe(true);
+    });
+
+    it('is read again by the room check while people are in the room, when Orbit could not say which Bricks live there (Sentry on #2055)', async () => {
+        let down = true;
+        const { botManager, spawn, internals } = manager(() => {
+            if (down) throw new Error('down');
+            return [homed()];
+        });
+        await botManager.handlePlayerEnterRoom(ROOM);
+        expect(spawn).not.toHaveBeenCalled();
+        expect(internals.roomsWithBots.has(ROOM)).toBe(true);
+        down = false;
+        internals.queryWorkAdventureRooms = async () => new Map([[ROOM, 1]]);
+        await botManager.verifyRoomOccupancy();
+        expect(internals.bots.get('brick-1')?.config.roomUrl).toBe(ROOM);
+    });
+
+    it('stops listing a room with no Bricks once nobody is in it', async () => {
+        const { botManager, internals } = manager(() => {
+            throw new Error('down');
+        });
+        await botManager.handlePlayerEnterRoom(ROOM);
+        expect(internals.roomsWithBots.has(ROOM)).toBe(true);
+        internals.queryWorkAdventureRooms = async () => new Map([[ROOM, 0]]);
+        await botManager.verifyRoomOccupancy();
+        expect(internals.roomsWithBots.has(ROOM)).toBe(false);
+    });
+
     it('is read again while people are in the room, so a return Orbit makes by itself is never kept', async () => {
         let lives = true;
         const { botManager, despawn, internals } = manager(() => (lives ? [homed()] : []));
